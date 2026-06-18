@@ -15803,6 +15803,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <button type="button" id="inspBoundaryBtn" onclick="inspBoundaryToggle()" style="background:#fff; border:1px solid #d0d7de; color:#0B1D34; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;" title="Draw or redraw the community perimeter">✏️ Draw boundary</button>
           <div id="inspBoundaryHint" style="display:none; flex:1; min-width:240px; font-size:11.5px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:5px 10px;"></div>
           <div id="inspCoverageBanner" style="display:none; flex:1; min-width:200px; font-size:12px; color:#475569; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:5px 10px;"></div>
+          <div id="inspLiveBanner" style="display:none; flex:1 1 100%; font-size:12px; color:#1e3a8a; background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; padding:5px 10px;"></div>
         </div>
       </div>
 
@@ -18426,6 +18427,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (inspState.markedCleanPropertyIds) {
       for (const pid of inspState.markedCleanPropertyIds) coveredPropertyIds.add(pid);
     }
+    // Multi-tablet: include houses OTHER active inspectors have covered today,
+    // so three drivers don't re-inspect each other's streets (Ed 2026-06-18).
+    if (inspState.liveOtherCoveredIds) {
+      for (const pid of inspState.liveOtherCoveredIds) coveredPropertyIds.add(pid);
+    }
 
     // Add markers
     let stageCounts = { no_violation: 0, courtesy_1: 0, courtesy_2: 0, certified_209: 0, fine_assessed: 0, lawn_force_mow_10day: 0 };
@@ -18528,6 +18534,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     } else {
       setStatus('Map ready · drive the community');
     }
+
+    // Begin polling for other live inspectors (multi-tablet coordination).
+    // Guarded against double-start; runs while the map is up.
+    inspStartLivePoll();
   }
 
   // Core batched-geocode helper — used by BOTH the per-community button
@@ -19662,6 +19672,84 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         },
       });
     }
+  }
+
+  // ---- Multi-tablet live coordination (Ed 2026-06-18) ----
+  // Poll for OTHER active inspectors in this community and draw their trails +
+  // merge the houses they've covered, so 3 tablets running at once don't
+  // overlap. Lightweight: lines update every poll; markers only re-render when
+  // the shared covered-set actually changes.
+  function inspMapDrawOtherRoutes(sessions) {
+    if (!inspState.mapInstance || !inspState.mapLoaded) return;
+    const map = inspState.mapInstance;
+    const live = new Set();
+    for (const s of sessions || []) {
+      if (!s.line || s.line.length < 2) continue;
+      const srcId = `insp-other-${s.inspection_id}`;
+      live.add(srcId);
+      const geojson = { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: s.line } };
+      if (map.getSource(srcId)) {
+        map.getSource(srcId).setData(geojson);
+      } else {
+        map.addSource(srcId, { type: 'geojson', data: geojson });
+        map.addLayer({
+          id: `${srcId}-line`, type: 'line', source: srcId,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': s.color, 'line-width': 4, 'line-opacity': 0.55, 'line-dasharray': [2, 1.5] },
+        });
+      }
+    }
+    // Remove trails for sessions that are no longer active.
+    (inspState._otherRouteIds || []).forEach((srcId) => {
+      if (!live.has(srcId)) {
+        if (map.getLayer(`${srcId}-line`)) map.removeLayer(`${srcId}-line`);
+        if (map.getSource(srcId)) map.removeSource(srcId);
+      }
+    });
+    inspState._otherRouteIds = [...live];
+  }
+
+  async function inspLivePoll() {
+    if (!inspState.communityId || !inspState.mapInstance) return;
+    try {
+      const url = `/api/inspections/live/${encodeURIComponent(inspState.communityId)}${inspState.sessionId ? `?exclude=${encodeURIComponent(inspState.sessionId)}` : ''}`;
+      const r = await fetch(url);
+      if (!r.ok) return;
+      const j = await r.json();
+      inspMapDrawOtherRoutes(j.sessions || []);
+
+      // Merge other tablets' covered houses; re-render markers only on change.
+      const incoming = new Set(j.covered_property_ids || []);
+      const prev = inspState.liveOtherCoveredIds || new Set();
+      let changed = incoming.size !== prev.size;
+      if (!changed) { for (const id of incoming) if (!prev.has(id)) { changed = true; break; } }
+      inspState.liveOtherCoveredIds = incoming;
+      if (changed && typeof inspMapLoadProperties === 'function') inspMapLoadProperties();
+
+      // Banner: how many other inspectors are live right now.
+      const banner = document.getElementById('inspLiveBanner');
+      if (banner) {
+        const n = (j.sessions || []).length;
+        if (n > 0) {
+          banner.style.display = 'block';
+          const chips = (j.sessions || []).map((s) =>
+            `<span style="display:inline-flex; align-items:center; gap:4px; margin-right:10px;"><span style="width:14px; height:4px; background:${s.color}; border-radius:2px; display:inline-block;"></span>${escapeHtml(s.label)} <span style="color:#94a3b8;">(${s.ping_count} pts)</span></span>`
+          ).join('');
+          banner.innerHTML = `👥 <strong>${n}</strong> other inspector${n === 1 ? '' : 's'} live · ${incoming.size} houses covered so far · ${chips}`;
+        } else {
+          banner.style.display = 'none';
+        }
+      }
+    } catch (_) { /* best-effort — never disrupt the drive */ }
+  }
+
+  function inspStartLivePoll() {
+    if (inspState._livePollTimer) return;
+    inspLivePoll();
+    inspState._livePollTimer = setInterval(inspLivePoll, 20000);  // 20s — gentle on cellular
+  }
+  function inspStopLivePoll() {
+    if (inspState._livePollTimer) { clearInterval(inspState._livePollTimer); inspState._livePollTimer = null; }
   }
 
   // Compute + display coverage. When activated:

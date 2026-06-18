@@ -1734,6 +1734,98 @@ router.get('/inspections/:id/route-trace', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/inspections/live/:community_id?exclude=<sessionId>
+// Multi-tablet live coordination (Ed 2026-06-18): when several inspectors drive
+// the same community at once, each tablet polls this to see the OTHER active
+// sessions' trails + the union of houses anyone has already covered today —
+// so nobody re-drives a street or re-inspects a house.
+//
+// "Active today" = inspections for this community started in the last 18h (or
+// still in_progress). Covered = any property photographed today (observations),
+// across every session. Returns one entry per OTHER session with a stable color
+// + a downsampled polyline (cap ~250 points so the payload stays small).
+// ---------------------------------------------------------------------------
+router.get('/inspections/live/:community_id', async (req, res) => {
+  try {
+    const communityId = req.params.community_id;
+    const excludeId = req.query.exclude || null;
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    const since = new Date(Date.now() - 18 * 60 * 60 * 1000).toISOString();
+
+    // Active sessions today for this community (excluding the caller's own).
+    const { data: sessions, error: sErr } = await supabase
+      .from('inspections')
+      .select('id, route_label, started_at, status, total_photos')
+      .eq('community_id', communityId)
+      .or(`started_at.gte.${since},status.eq.in_progress`)
+      .order('started_at', { ascending: true });
+    if (sErr) return res.status(500).json({ error: sErr.message });
+
+    const others = (sessions || []).filter((s) => s.id !== excludeId);
+
+    // Stable color per session id (golden-angle hue spread).
+    const colorFor = (id) => {
+      let h = 0;
+      for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
+      return `hsl(${h}, 70%, 45%)`;
+    };
+    const downsample = (arr, cap) => {
+      if (arr.length <= cap) return arr;
+      const step = Math.ceil(arr.length / cap);
+      const out = [];
+      for (let i = 0; i < arr.length; i += step) out.push(arr[i]);
+      if (out[out.length - 1] !== arr[arr.length - 1]) out.push(arr[arr.length - 1]);
+      return out;
+    };
+
+    const sessionOut = [];
+    for (const s of others) {
+      const { data: pings } = await supabase
+        .from('inspection_route_traces')
+        .select('latitude, longitude, captured_at')
+        .eq('inspection_id', s.id)
+        .order('captured_at', { ascending: true });
+      const line = downsample((pings || []).map((p) => [Number(p.longitude), Number(p.latitude)]), 250);
+      sessionOut.push({
+        inspection_id: s.id,
+        label: s.route_label || `Session ${s.id.slice(0, 4)}`,
+        started_at: s.started_at,
+        status: s.status,
+        color: colorFor(s.id),
+        ping_count: (pings || []).length,
+        line,
+        last_ping_at: (pings && pings.length) ? pings[pings.length - 1].captured_at : null,
+      });
+    }
+
+    // Union of properties anyone has photographed today (covered houses).
+    const covered = new Set();
+    let off = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('property_observations')
+        .select('property_id, created_at')
+        .eq('community_id', communityId)
+        .gte('created_at', since)
+        .range(off, off + 999);
+      if (error) break;
+      (data || []).forEach((o) => o.property_id && covered.add(o.property_id));
+      if (!data || data.length < 1000) break;
+      off += 1000;
+    }
+
+    res.json({
+      sessions: sessionOut,
+      covered_property_ids: [...covered],
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[inspections.live]', err);
+    res.status(500).json({ error: err.message || 'failed to load live coordination' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/inspections/:id/coverage
 // Computes which community properties were/weren't within `radius_m` of any
 // route trace ping during this inspection. Defaults to 50m (about 165ft —
