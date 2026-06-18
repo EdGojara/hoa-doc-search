@@ -1478,6 +1478,104 @@ router.post('/:applicationId/master-plan/:masterPlanId/approve-at-community', ex
   }
 });
 
+// POST /:applicationId/master-plan/bulk-approve-builder-at-community
+// Approves EVERY master plan for the application's builder at the
+// application's community in one call. Use case: operator uploaded a whole
+// builder library (DRB's 19 plans) but didn't tick the community checkbox
+// on any of them. Instead of clicking Fix per-row, one button handles the
+// whole builder x community pair.
+//
+// Conservative: only CREATES missing approval rows; never modifies existing
+// (current-approved or retired). Returns per-plan results so the operator
+// sees which plans got an approval and which were already approved.
+router.post('/:applicationId/master-plan/bulk-approve-builder-at-community', express.json(), async (req, res, next) => {
+  if (!UUID_RE.test(req.params.applicationId)) return next();
+  try {
+    const { data: app } = await supabase
+      .from('builder_applications')
+      .select('id, builder_company_id, community_id')
+      .eq('id', req.params.applicationId)
+      .maybeSingle();
+    if (!app || !app.builder_company_id || !app.community_id) {
+      return res.status(404).json({ error: 'application_or_builder_or_community_not_found' });
+    }
+
+    // All master plans for this builder.
+    const { data: plans } = await supabase
+      .from('master_plans')
+      .select('id, plan_number, elevation, status')
+      .eq('builder_company_id', app.builder_company_id);
+    if (!plans || plans.length === 0) {
+      return res.json({ ok: true, total: 0, created: 0, already_approved: 0, results: [] });
+    }
+
+    // Existing approval rows for this community (any status).
+    const planIds = plans.map((p) => p.id);
+    const { data: existingApprovals } = await supabase
+      .from('master_plan_community_approvals')
+      .select('master_plan_id, retired_at')
+      .in('master_plan_id', planIds)
+      .eq('community_id', app.community_id);
+    const existingByPlanId = new Map();
+    for (const a of (existingApprovals || [])) {
+      existingByPlanId.set(a.master_plan_id, a);
+    }
+
+    // For each plan, either create an approval or note its existing state.
+    let createdCount = 0;
+    let alreadyApprovedCount = 0;
+    let retiredCount = 0;
+    let failedCount = 0;
+    const results = [];
+
+    for (const plan of plans) {
+      const existing = existingByPlanId.get(plan.id);
+      if (existing && !existing.retired_at) {
+        alreadyApprovedCount += 1;
+        results.push({ plan_id: plan.id, plan_number: plan.plan_number, elevation: plan.elevation, status: 'already_approved' });
+        continue;
+      }
+      if (existing && existing.retired_at) {
+        // Skip retired -- operator probably retired it intentionally; don't
+        // auto-unretire as part of a bulk action. Surface so they know.
+        retiredCount += 1;
+        results.push({ plan_id: plan.id, plan_number: plan.plan_number, elevation: plan.elevation, status: 'retired_at_community_skipped', retired_at: existing.retired_at });
+        continue;
+      }
+      // Create the approval.
+      const { error: insErr } = await supabase
+        .from('master_plan_community_approvals')
+        .insert({
+          master_plan_id: plan.id,
+          community_id: app.community_id,
+          approved_at: new Date().toISOString(),
+          approved_by: 'ai-rec-bulk-fix',
+        });
+      if (insErr) {
+        failedCount += 1;
+        results.push({ plan_id: plan.id, plan_number: plan.plan_number, elevation: plan.elevation, status: 'insert_failed', error: insErr.message });
+        continue;
+      }
+      createdCount += 1;
+      results.push({ plan_id: plan.id, plan_number: plan.plan_number, elevation: plan.elevation, status: 'created' });
+    }
+
+    console.log(`[builder_applications] bulk-approve builder=${app.builder_company_id} community=${app.community_id}: created=${createdCount} already=${alreadyApprovedCount} retired-skipped=${retiredCount} failed=${failedCount}`);
+    res.json({
+      ok: true,
+      total: plans.length,
+      created: createdCount,
+      already_approved: alreadyApprovedCount,
+      retired_skipped: retiredCount,
+      failed: failedCount,
+      results,
+    });
+  } catch (err) {
+    console.error('[builder_applications] bulk-approve-builder-at-community failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/:id/recommendation', async (req, res, next) => {
   if (!UUID_RE.test(req.params.id)) return next();
   try {

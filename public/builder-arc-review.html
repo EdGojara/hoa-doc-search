@@ -389,6 +389,20 @@
   }
   .ai-rec-fix-btn:hover { background: #eab308; }
   .ai-rec-fix-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .ai-rec-diag-bulk {
+    margin: 8px 0;
+    padding: 10px 12px;
+    background: rgba(202, 138, 4, 0.10);
+    border: 1px solid rgba(202, 138, 4, 0.30);
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--ink-soft);
+  }
+  .ai-rec-diag-bulk strong {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--ink);
+  }
 
   .finalize-form input,
   .finalize-form textarea {
@@ -1569,11 +1583,22 @@ function renderRecommendation(block, rec, masterPlanDiagnostic) {
     })[f] || f;
     const near = (d.near_matches || []).filter((m) => m.mismatches && m.mismatches.length > 0);
     const cross = d.cross_builder_check || [];
+    // Count how many near-matches have a community_approval mismatch among
+    // their issues. If 2+, offer a bulk action so the operator doesn't have
+    // to click Fix on every elevation of every plan separately.
+    const nearWithCommunityApproval = near.filter((m) => m.mismatches.some((mm) => mm.field === 'community_approval'));
+    const bulkApproveBanner = nearWithCommunityApproval.length >= 2 ? `
+      <div class="ai-rec-diag-bulk">
+        <strong>${nearWithCommunityApproval.length} of these plans need the same fix: approval at this community.</strong>
+        <button class="ai-rec-fix-btn" onclick="docsBulkApproveBuilderAtCommunity(this)">🔧 Approve all ${nearWithCommunityApproval.length} (and any other plans for this builder) at this community</button>
+      </div>
+    ` : '';
     if (near.length > 0 || cross.length > 0) {
       diagnosticBlock = `
         <div class="ai-rec-diagnostic">
           <strong>Why didn't a master plan match?</strong>
           <div class="ai-rec-diag-sub">Submitted: Plan <strong>${escapeHtml(d.submitted.plan_number || '?')}</strong> / Elevation <strong>${escapeHtml(d.submitted.elevation || '?')}</strong></div>
+          ${bulkApproveBanner}
           ${near.length > 0 ? `
             <div class="ai-rec-diag-subhead">Close matches in the library (under this builder):</div>
             <ul class="ai-rec-diag-list">
@@ -1686,6 +1711,30 @@ window.docsFixMasterPlanCommunityApproval = function (masterPlanId, btn) {
     btn,
     'Approved at community',
   );
+};
+
+window.docsBulkApproveBuilderAtCommunity = async function (btn) {
+  const appId = state.selectedId;
+  if (!appId) { alert('No application selected.'); return; }
+  if (!confirm('Approve every master plan for this builder at this community?\n\nOnly missing approvals get created. Already-approved plans stay as-is. Plans that were specifically retired at this community get skipped (not auto-unretired).')) return;
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Approving…';
+  try {
+    const r = await fetch(`/api/builder-applications/${encodeURIComponent(appId)}/master-plan/bulk-approve-builder-at-community`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+    btn.textContent = `✓ ${data.created} approved (${data.already_approved} already · ${data.retired_skipped || 0} retired-skipped${data.failed ? ' · ' + data.failed + ' failed' : ''})`;
+    const panel = btn.closest('.detail') || btn.closest('main') || document;
+    setTimeout(() => loadRecommendation(appId, panel), 800);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+    alert('Bulk approve failed: ' + err.message);
+  }
 };
 
 window.docsRepointMasterPlanBuilder = function (masterPlanId, btn) {
