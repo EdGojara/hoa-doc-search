@@ -515,7 +515,9 @@ async function resolveMasterPlanForExtraction(builderId, planNumber, elevation, 
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024, files: 12 },
+  // 50 MB ceiling — Karla's DRB packets can include large rendered site plans
+  // beyond page 1; extractor only reads page 1 but the whole packet streams in.
+  limits: { fileSize: 50 * 1024 * 1024, files: 12 },
 });
 
 // Bulk upload variant — used by /master-plans/bulk-extract for builder

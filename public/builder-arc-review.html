@@ -633,7 +633,7 @@
         <div id="usDropZone" style="border:2px dashed #cbd5e1; border-radius:10px; padding:28px 20px; text-align:center; background:#f8fafc; cursor:pointer; transition:all 0.15s;">
           <div style="font-size:32px; margin-bottom:6px;">📄</div>
           <div id="usDropLabel" style="font-size:13.5px; color:#475569; font-weight:600;">Drop one or many submission PDFs here, or click to select</div>
-          <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Up to 25 MB each · page 1 should be the structured form · processed sequentially</div>
+          <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Up to 50 MB each · page 1 should be the structured form · processed sequentially</div>
         </div>
         <input type="file" id="usFile" accept="application/pdf" multiple style="display:none;">
         <div id="usFileList" style="margin-top:8px;"></div>
@@ -1979,7 +1979,7 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
   if (!files.length) { status.style.display = 'block'; status.textContent = 'Choose at least one PDF.'; return; }
   for (const f of files) {
     if (f.type !== 'application/pdf') { status.style.display = 'block'; status.textContent = `${f.name}: file must be a PDF.`; return; }
-    if (f.size > 25 * 1024 * 1024) { status.style.display = 'block'; status.textContent = `${f.name}: PDF too large (25 MB max).`; return; }
+    if (f.size > 50 * 1024 * 1024) { status.style.display = 'block'; status.textContent = `${f.name}: PDF too large (50 MB max).`; return; }
   }
 
   // Pull the operator JWT once so we don't re-fetch the session per file.
