@@ -6096,7 +6096,11 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
     ];
 
     // Batch inserts (100/round-trip) with per-row fallback to pinpoint a bad row.
-    const BATCH_SIZE = 100;
+    // 500/batch — a full-community import (Waterview ~1,100 rows) is ~2-3
+    // round-trips instead of ~12, keeping the one-shot apply well under the
+    // request timeout. (Ed 2026-06-18: the 100-row batching risked timing out
+    // on a full report; the script fallback exists for anything larger still.)
+    const BATCH_SIZE = 500;
     for (let i = 0; i < insertPayloads.length; i += BATCH_SIZE) {
       const batch = insertPayloads.slice(i, i + BATCH_SIZE).map((p) => { const { _origR, ...row } = p; return row; });
       const origs = insertPayloads.slice(i, i + BATCH_SIZE).map((p) => p._origR);
