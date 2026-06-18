@@ -1588,7 +1588,11 @@ router.get('/:id/recommendation', async (req, res, next) => {
       .maybeSingle();
     if (error) throw error;
     if (!app) return res.status(404).json({ error: 'application not found' });
-    const recommendation = computeBuilderRecommendation(app);
+    // Hold off on computing the recommendation until AFTER potential auto-link
+    // below. computeBuilderRecommendation reads master_plan_id/fast_track, and
+    // if those got self-healed by the diagnostic we want the headline to
+    // reflect the healed state, not the stale "no match" state.
+    let recommendation = null;
 
     // When the recommendation says "no master plan match," surface WHY --
     // search for near-misses (same plan_number with different elevation,
@@ -1596,6 +1600,7 @@ router.get('/:id/recommendation', async (req, res, next) => {
     // specific field that mismatched. Ed 2026-06-18: stop using staff as
     // the SQL diagnostician. The UI should explain itself.
     let masterPlanDiagnostic = null;
+    let autoLinked = null;
     if (!app.master_plan_id && app.builder_company_id) {
       try {
         const { data: nearMatches } = await supabase
@@ -1652,9 +1657,36 @@ router.get('/:id/recommendation', async (req, res, next) => {
           };
         });
 
+        // AUTO-LINK: if a near-match has ZERO mismatches, the data already
+        // supports fast-track -- the application just wasn't linked at
+        // upload time (typically because the community approval row was
+        // created AFTER the upload via the bulk-approve fix). Self-heal:
+        // update the row + re-run computeBuilderRecommendation so the
+        // operator sees fast-track instead of "no match" on a perfect match.
+        const perfectMatch = analyzed.find((m) => m.mismatches.length === 0);
+        if (perfectMatch) {
+          const { error: linkErr } = await supabase
+            .from('builder_applications')
+            .update({ master_plan_id: perfectMatch.id, fast_track: true })
+            .eq('id', app.id);
+          if (!linkErr) {
+            autoLinked = {
+              master_plan_id: perfectMatch.id,
+              plan_number: perfectMatch.plan_number,
+              elevation: perfectMatch.elevation,
+            };
+            app.master_plan_id = perfectMatch.id;
+            app.fast_track = true;
+            console.log(`[builder_applications.recommendation] auto-linked app ${app.id} to master ${perfectMatch.id} (${perfectMatch.plan_number}/${perfectMatch.elevation}) -- data became valid after upload`);
+          } else {
+            console.warn('[builder_applications.recommendation] auto-link failed:', linkErr.message);
+          }
+        }
+
         masterPlanDiagnostic = {
           submitted: { plan_number: submittedPN, elevation: submittedEv },
           near_matches: analyzed,
+          auto_linked: autoLinked,
           // If no near-matches at all under the current builder, also check
           // OTHER builders with the same plan_number -- helps catch the
           // "master plan tied to a duplicate builder row" failure mode.
@@ -1686,6 +1718,11 @@ router.get('/:id/recommendation', async (req, res, next) => {
         console.warn('[builder_applications] master plan diagnostic failed:', diagErr.message);
       }
     }
+
+    // Compute (or re-compute) the recommendation now that any auto-link has
+    // settled. If we updated master_plan_id above, app already reflects the
+    // new state so the recommendation will render as fast-track.
+    recommendation = computeBuilderRecommendation(app);
 
     res.json({ application_id: app.id, recommendation, master_plan_diagnostic: masterPlanDiagnostic });
   } catch (err) {
