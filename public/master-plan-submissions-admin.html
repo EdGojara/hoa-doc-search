@@ -230,9 +230,14 @@
   }
 
   function renderModal(s, attachments) {
-    const proposed = (s.plan_numbers_proposed || []).map((pn) => ({
-      plan_number: pn, plan_name: '', elevation: '', elevation_orientation: 'standard', square_footage: '', stories: '',
-    }));
+    // Prefer the system's PDF extraction (pre-filled plan/elevation/sqft) so
+    // staff don't retype the document. Fall back to bare proposed plan numbers.
+    const extracted = Array.isArray(s.extracted_plans) ? s.extracted_plans : [];
+    const proposed = extracted.length
+      ? extracted
+      : (s.plan_numbers_proposed || []).map((pn) => ({
+          plan_number: pn, plan_name: '', elevation: '', elevation_orientation: 'standard', square_footage: '', stories: '',
+        }));
 
     const html = `
       <header class="modal-head">
@@ -327,7 +332,7 @@
 
     if (s.status !== 'approved' && s.status !== 'approved_with_conditions' && s.status !== 'denied') {
       const body = $('approvedBody');
-      // Seed with proposed plan numbers (empty elevations to fill in)
+      // Seed with whatever we have (extracted plans, or proposed numbers).
       const seed = proposed.length ? proposed : [{}];
       seed.forEach((p) => body.appendChild(buildRow(p)));
       $('addRowBtn').addEventListener('click', () => body.appendChild(buildRow({})));
@@ -335,6 +340,42 @@
       $('actionApproveCond').addEventListener('click', () => submitDecision(s.id, 'approve_with_conditions'));
       $('actionDeny').addEventListener('click', () => submitDecision(s.id, 'deny'));
       $('actionCancel').addEventListener('click', closeModal);
+
+      // If we don't already have extracted plans, read them from the PDF now so
+      // the operator reviews + approves instead of retyping the document.
+      const hasPdf = (attachments || []).some((a) => /pdf/i.test(a.mime_type || '') || /\.pdf$/i.test(a.original_filename || ''));
+      if (extracted.length === 0 && hasPdf) autoExtractPlans(s.id);
+    }
+  }
+
+  async function autoExtractPlans(id) {
+    const table = $('approvedTable');
+    if (!table) return;
+    const note = document.createElement('div');
+    note.id = 'extractNote';
+    note.style.cssText = 'font-size:12.5px; color:#0B1D34; margin:8px 0; display:flex; align-items:center; gap:6px;';
+    note.innerHTML = '🔍 Reading the submitted plans…';
+    table.parentElement.insertBefore(note, table.nextSibling);
+    try {
+      const r = await fetch('/api/master-plan-submissions/' + id + '/extract-plans', { method: 'POST' });
+      const j = await r.json();
+      // Modal may have been closed/switched while we waited.
+      const body = $('approvedBody');
+      if (!body || !document.body.contains(note)) return;
+      if (r.ok && Array.isArray(j.plans) && j.plans.length) {
+        body.innerHTML = '';
+        j.plans.forEach((p) => body.appendChild(buildRow(p)));
+        note.innerHTML = `✓ Pre-filled ${j.plans.length} plan${j.plans.length === 1 ? '' : 's'} from the PDF — review, adjust if needed, then approve.`;
+        note.style.color = '#166534';
+      } else {
+        note.innerHTML = '⚠ Couldn\'t auto-read the PDF — enter the plan details below.';
+        note.style.color = '#92400e';
+      }
+    } catch (e) {
+      if (document.body.contains(note)) {
+        note.innerHTML = '⚠ Couldn\'t auto-read the PDF — enter the plan details below.';
+        note.style.color = '#92400e';
+      }
     }
   }
 

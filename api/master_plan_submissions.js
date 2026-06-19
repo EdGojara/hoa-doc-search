@@ -333,6 +333,63 @@ router.get('/:id', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// POST /:id/extract-plans — staff — read the submitted PDF and return the
+// structured plan/elevation rows so the approval screen pre-fills (Ed
+// 2026-06-18: no retyping what's already in the document). Caches the result on
+// the submission; pass ?force=1 to re-read.
+// ----------------------------------------------------------------------------
+router.post('/:id/extract-plans', async (req, res) => {
+  try {
+    const { data: submission, error } = await supabase
+      .from('master_plan_submissions')
+      .select('id, extracted_plans')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!submission) return res.status(404).json({ error: 'submission not found' });
+
+    if (!req.query.force && Array.isArray(submission.extracted_plans) && submission.extracted_plans.length) {
+      return res.json({ plans: submission.extracted_plans, cached: true });
+    }
+
+    const { data: atts } = await supabase
+      .from('master_plan_submission_attachments')
+      .select('storage_bucket, storage_path, original_filename, mime_type')
+      .eq('submission_id', submission.id)
+      .order('uploaded_at', { ascending: true });
+    const pdf = (atts || []).find((a) =>
+      (a.mime_type || '').includes('pdf') || /\.pdf$/i.test(a.original_filename || a.storage_path || ''));
+    if (!pdf) return res.json({ plans: [], source: 'none' });
+
+    const { data: blob, error: dlErr } = await supabase.storage
+      .from(pdf.storage_bucket || STORAGE_BUCKET)
+      .download(pdf.storage_path);
+    if (dlErr || !blob) return res.status(502).json({ error: 'could not download the submitted PDF' });
+    const buffer = Buffer.from(await blob.arrayBuffer());
+
+    const { extractPlansFromPdf } = require('../lib/master_plan_extract');
+    const { plans, source } = await extractPlansFromPdf(buffer, pdf.original_filename);
+
+    // Best-effort cache — never block the response on the write (and don't
+    // fail if migration 230 hasn't landed yet; the feature still pre-fills,
+    // it just re-reads each open until the column exists).
+    try {
+      const { error: cacheErr } = await supabase.from('master_plan_submissions')
+        .update({ extracted_plans: plans, plans_extracted_at: new Date().toISOString() })
+        .eq('id', submission.id);
+      if (cacheErr) console.warn('[master_plan_submissions] extracted_plans cache write skipped:', cacheErr.message);
+    } catch (e) {
+      console.warn('[master_plan_submissions] extracted_plans cache write threw:', e.message);
+    }
+
+    res.json({ plans, source, cached: false });
+  } catch (err) {
+    console.error('[master_plan_submissions] extract-plans failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // POST /:id/finalize — staff-only — approve, approve with conditions, or deny.
 //
 // Body:
