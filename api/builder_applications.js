@@ -337,9 +337,11 @@ const extractColorSheetFromPdfBuffer = (buf) => extractFromPdfBuffer(buf, COLOR_
 // submissions. Closes the gap where DRB couldn't use the online portal yet
 // but needed approvals to keep building.
 // ============================================================================
-const SUBMISSION_FORM_EXTRACT_PROMPT = `You are extracting structured data from page 1 of a builder's ARC PLAN SUBMISSION packet for an HOA architectural review.
+const SUBMISSION_FORM_EXTRACT_PROMPT = `You are extracting structured data from the first few pages of a builder's ARC PLAN SUBMISSION packet for an HOA architectural review.
 
 The form has these sections: builder + contact info, property address, plan/elevation, visible sides, attachments confirmation, a materials table (10 rows × Type/Color/Other), masonry + repetition compliance, and a free-text "Other Information" line.
+
+IMPORTANT — the plan number + elevation may NOT be on page 1. Page 1 is often a generic cover application form (contact info + a checklist only). The actual plan designation frequently appears on a LATER page (a title block / plan sheet) printed like "4730 C4 R" or "4505 B R" (= plan 4730, elevation C4, R=right/reversed) or "Palm/1970 elev O". SCAN ALL the pages provided and pull the plan_number + elevation from wherever they appear — do not stop at page 1 and do not return null for plan if it's on a later page.
 
 Extract the following fields. Return null for any field you cannot find — do NOT invent.
 
@@ -360,8 +362,9 @@ PROPERTY:
 
 PLAN:
 - plan_name: e.g., "Palm"
-- plan_number: e.g., "1970"  (when the form shows "Palm/1970", plan_name="Palm" and plan_number="1970")
-- elevation: e.g., "O"
+- plan_number: the MODEL NUMBER ONLY, e.g., "1970" or "4730". When the form shows "Palm/1970", plan_name="Palm", plan_number="1970".
+  LENNAR designations print as "PLAN ELEVATION ORIENTATION" — e.g. "4730 C4 R" means plan_number="4730", elevation="C4", and R=right-facing (orientation, NOT part of the plan number or elevation). Never put the elevation or the R/L into plan_number.
+- elevation: the elevation code ONLY, e.g., "O", "C4", "B". For "4730 C4 R" → elevation="C4" (drop the trailing R/L orientation). Do NOT return "R" or "L" as the elevation.
 - square_footage_heated: heated/cooled square footage as integer
 - lot_type: "interior" | "corner" | "cul_de_sac" | "backs_to_common_area" | "backs_to_thoroughfare" | "flag_lot" | null
   (parse from the "Other Information" line — e.g., "Interior Lot" → "interior")
@@ -430,11 +433,13 @@ Return ONLY valid JSON, no preamble. Empty material rows = null (not {}). Exampl
   "ai_notes": null
 }`;
 
-// Page 1 only -- DRB-style submission packets fit the entire form on page 1;
-// pages 2+ are drawings / site plans the AI doesn't need to see for extraction.
-// Sending more pages = more bytes to base64-encode + larger Anthropic call =
-// closer to Render's request timeout. Ed 2026-06-16: 8MB packet hung at 5min.
-const extractSubmissionFormFromPdfBuffer = (buf) => extractFromPdfBuffer(buf, SUBMISSION_FORM_EXTRACT_PROMPT, 1);
+// First 5 pages (Ed 2026-06-19). Page-1-only worked for DRB packets but lost
+// the plan on Lennar submittals where page 1 is a generic cover form and the
+// plan designation ("4730 C4 R") sits on page 3 — those landed as plan UNKNOWN.
+// The trimmer sends ONLY these 5 pages, never the whole packet, so the
+// 2026-06-16 timeout scar (an 8MB multi-page packet hanging at 5min) is
+// actually mitigated: a huge packet is still capped at its first 5 pages.
+const extractSubmissionFormFromPdfBuffer = (buf) => extractFromPdfBuffer(buf, SUBMISSION_FORM_EXTRACT_PROMPT, 5);
 
 // Resolve community_id from extracted subdivision_name + plat_number. ILIKE
 // match on name with plat as tiebreaker if the subdivision name is ambiguous.
