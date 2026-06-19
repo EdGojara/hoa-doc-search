@@ -15642,6 +15642,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 <div class="tab-content" id="tab-inspect" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
   <div style="max-width: 720px; margin: 0 auto;">
 
+    <!-- Backlog-recovery banner: shown when stuck photos from a previous drive
+         are uploading from this device's local queue. -->
+    <div id="inspBacklogBanner" style="display:none; background:#0B1D34; color:#fff; padding:10px 14px; border-radius:10px; font-size:13px; font-weight:600; margin-bottom:14px; text-align:center;"></div>
+
     <!-- Header -->
     <div style="margin-bottom: 18px;">
       <h2 style="font-family: var(--font-serif, Georgia); font-size: 24px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 4px; letter-spacing: -0.01em;">
@@ -20338,11 +20342,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   let _inspUploaderRunning = false;
   async function inspProcessUploadQueue() {
     if (_inspUploaderRunning) return;
-    if (!inspState.sessionId) return;
     _inspUploaderRunning = true;
     try {
       const items = await inspQueueList();
-      const mine = items.filter((i) => i.metadata && i.metadata.inspection_id === inspState.sessionId);
+      // Flush EVERY queued photo to ITS OWN inspection_id — not just the active
+      // session. Each item carries its target session, so orphaned photos from
+      // an ended/closed-then-reopened drive recover instead of sitting in
+      // IndexedDB forever (Ed 2026-06-19: ~200 photos stuck this way after
+      // multi-device drives — the old code only flushed the active session).
+      const mine = items.filter((i) => i.metadata && i.metadata.inspection_id);
       for (const item of mine) {
         // Respect exponential backoff cooldown
         if (item.last_attempt_at) {
@@ -20362,15 +20370,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           if (item.metadata.paired_wide_photo_id) fd.append('paired_wide_photo_id', item.metadata.paired_wide_photo_id);
           const r = await fetch(`/api/inspections/${item.metadata.inspection_id}/photos`, { method: 'POST', body: fd });
           if (!r.ok) {
-            // 4xx — give up; the photo will be lost. 5xx and network errors retry.
-            if (r.status >= 400 && r.status < 500) {
+            // 409 = inspection closed/voided — RECOVERABLE (reopen it, the photo
+            // re-uploads). Keep it queued + back off; never drop on 409. Only a
+            // true bad-request 400/404 is unrecoverable and gets dropped.
+            if (r.status === 400 || r.status === 404) {
               await inspQueueRemove(item.id);
               const idx = inspState.photos.findIndex((p) => p.id === 'queue-' + item.id);
               if (idx >= 0) inspState.photos[idx] = { ...inspState.photos[idx], pending: false, failed: true, error: `HTTP ${r.status}` };
               inspRenderPhotos();
               continue;
             }
-            throw new Error(`HTTP ${r.status}`);
+            throw new Error(`HTTP ${r.status}`);   // 409 + 5xx + network → retry
           }
           const j = await r.json();
           await inspQueueRemove(item.id);
@@ -20417,12 +20427,47 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     window.addEventListener('online', inspProcessUploadQueue);
   }
   function inspStopUploader() {
-    if (_inspUploaderTimer) {
-      clearInterval(_inspUploaderTimer);
-      _inspUploaderTimer = null;
-    }
-    window.removeEventListener('online', inspProcessUploadQueue);
+    // Don't stop while there's still a backlog to drain — a paused/ended drive
+    // must keep uploading its queued photos.
+    inspQueueList().then((items) => {
+      const pending = (items || []).filter((i) => i.metadata && i.metadata.inspection_id).length;
+      if (pending > 0) return; // keep running until the queue is empty
+      if (_inspUploaderTimer) { clearInterval(_inspUploaderTimer); _inspUploaderTimer = null; }
+      window.removeEventListener('online', inspProcessUploadQueue);
+    }).catch(() => {
+      if (_inspUploaderTimer) { clearInterval(_inspUploaderTimer); _inspUploaderTimer = null; }
+      window.removeEventListener('online', inspProcessUploadQueue);
+    });
   }
+
+  // Recover stuck photos on app load: if this device's IndexedDB still holds
+  // queued photos from a previous drive (multi-device drives stranded ~200 of
+  // them), flush them to their own sessions now — no need to start a new drive.
+  // Ed 2026-06-19.
+  async function inspRecoverBacklogOnLoad() {
+    try {
+      const items = await inspQueueList();
+      const pending = (items || []).filter((i) => i.metadata && i.metadata.inspection_id);
+      if (!pending.length) return;
+      console.log('[insp] recovering', pending.length, 'queued photos from a previous drive');
+      const banner = document.getElementById('inspBacklogBanner');
+      if (banner) {
+        banner.style.display = 'block';
+        banner.textContent = `📤 Uploading ${pending.length} photo${pending.length === 1 ? '' : 's'} from a previous drive…`;
+      }
+      inspStartUploader(); // now flushes every queued item to its own session
+      // Hide the banner once the backlog drains.
+      const watch = setInterval(async () => {
+        const left = ((await inspQueueList()) || []).filter((i) => i.metadata && i.metadata.inspection_id).length;
+        if (banner) {
+          if (left === 0) { banner.textContent = '✓ All recovered photos uploaded.'; setTimeout(() => { banner.style.display = 'none'; }, 4000); clearInterval(watch); }
+          else banner.textContent = `📤 Uploading ${left} photo${left === 1 ? '' : 's'} from a previous drive…`;
+        } else if (left === 0) clearInterval(watch);
+      }, 3000);
+    } catch (e) { console.warn('[insp] backlog recovery failed:', e.message); }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(inspRecoverBacklogOnLoad, 1500));
+  else setTimeout(inspRecoverBacklogOnLoad, 1500);
 
   // ===================================================================
   // PER-PHOTO STATUS POLLING
