@@ -227,6 +227,38 @@ router.post('/public', upload.array('files', 6), async (req, res) => {
       }
     })();
 
+    // Fire-and-forget RECEIPT to the builder so they know it landed without
+    // having to email and ask (Ed 2026-06-18: Teresa C. emailed to verify her
+    // 6/12 submissions — there was no confirmation back to her). Best-effort.
+    (async () => {
+      try {
+        const { sendEmail, isConfigured } = require('../lib/notifications/email');
+        if (!isConfigured() || !b.submitter_email) return;
+        const firstName = (b.submitter_name || '').trim().split(/\s+/)[0] || 'there';
+        const planLine = planNumbers.length
+          ? `Plans: ${planNumbers.join(', ')}.`
+          : '';
+        const attLine = uploadedAttachments.length
+          ? `${uploadedAttachments.length} file${uploadedAttachments.length === 1 ? '' : 's'} came through.`
+          : 'No files were attached — reply to this email if you meant to include plans.';
+        await sendEmail({
+          to: b.submitter_email,
+          bcc: 'acc@bedrocktx.com',
+          subject: `Got it — master plan submission received (${referenceNumber})`,
+          html: `<p>Hi ${firstName},</p>
+            <p>Confirming we received your master plan submission for <strong>${community.name}</strong>. Here's your reference number to hold onto:</p>
+            <p style="font-size:18px; font-weight:700; color:#0B1D34; margin:14px 0;">${referenceNumber}</p>
+            <p>${b.submission_title ? `<strong>${b.submission_title}</strong> — ` : ''}${attLine} ${planLine}</p>
+            <p>It's in our review queue now and we'll follow up as it's processed. Questions in the meantime — just reply here or reach us at <a href="mailto:builders@bedrocktx.com">builders@bedrocktx.com</a>.</p>
+            <p style="margin-top:18px;">Bedrock Association Management<br>
+            <span style="color:#94a3b8; font-size:12px;">community simplified.</span></p>`,
+          text: `Hi ${firstName},\n\nConfirming we received your master plan submission for ${community.name}. Reference: ${referenceNumber}. ${attLine} ${planLine}\n\nIt's in our review queue now and we'll follow up as it's processed. Questions — reply here or builders@bedrocktx.com.\n\nBedrock Association Management\ncommunity simplified.`,
+        });
+      } catch (e) {
+        console.warn('[master_plan_submissions] builder receipt email failed:', e.message);
+      }
+    })();
+
     res.json({
       submission_id: submission.id,
       reference_number: submission.reference_number,

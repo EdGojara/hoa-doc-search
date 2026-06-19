@@ -924,6 +924,32 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
       }
     }
 
+    // Fire-and-forget RECEIPT to the builder so they know it landed without
+    // emailing to ask (Ed 2026-06-18 — same gap as master-plan submissions).
+    // Sent at create time: the application is on file; the PDF uploads in the
+    // follow-on request. Best-effort, never blocks the response.
+    (async () => {
+      try {
+        if (!body.submitter_email) return;
+        const firstName = (body.submitter_name || '').trim().split(/\s+/)[0] || 'there';
+        const propertyShort = (body.street_address || '').split(',')[0];
+        await sendEmail({
+          to: body.submitter_email,
+          bcc: 'acc@bedrocktx.com',
+          subject: `Got it — new construction submission received (${app.reference_number})`,
+          html: `<p>Hi ${firstName},</p>
+            <p>Confirming we received your new construction submission for <strong>${propertyShort}</strong> at ${community.name}. Your reference number:</p>
+            <p style="font-size:18px; font-weight:700; color:#0B1D34; margin:14px 0;">${app.reference_number}</p>
+            <p>Plan ${body.plan_number || ''}${body.elevation ? ` / Elevation ${body.elevation}` : ''} — it's in our review queue now and we'll follow up as it's processed. Questions in the meantime, just reply here or reach <a href="mailto:builders@bedrocktx.com">builders@bedrocktx.com</a>.</p>
+            <p style="margin-top:18px;">Bedrock Association Management<br>
+            <span style="color:#94a3b8; font-size:12px;">community simplified.</span></p>`,
+          text: `Hi ${firstName},\n\nConfirming we received your new construction submission for ${propertyShort} at ${community.name}. Reference: ${app.reference_number}. Plan ${body.plan_number || ''}${body.elevation ? ' / Elevation ' + body.elevation : ''}.\n\nIt's in our review queue now and we'll follow up as it's processed. Questions — reply here or builders@bedrocktx.com.\n\nBedrock Association Management\ncommunity simplified.`,
+        });
+      } catch (e) {
+        console.warn('[builder_applications] builder receipt email failed:', e.message);
+      }
+    })();
+
     res.json({
       ok: true,
       application_id: app.id,
