@@ -49,7 +49,7 @@ const router = express.Router();
 // ---------------------------------------------------------------------------
 router.post('/inspections', async (req, res) => {
   try {
-    const { community_id, mode, route_label, notes, operator_id } = req.body || {};
+    const { community_id, mode, route_label, notes, operator_id, device_label } = req.body || {};
     if (!community_id) return res.status(400).json({ error: 'community_id is required' });
 
     const validModes = ['foot', 'drive_by', 'mounted_camera', 'spot_check'];
@@ -65,6 +65,9 @@ router.post('/inspections', async (req, res) => {
         mode: modeNorm,
         route_label: route_label || null,
         operator_id: operator_id || null,
+        // Who's driving — captured at start so each device/tablet is attributed,
+        // even when several share one login (Ed 2026-06-19).
+        device_label: (device_label && String(device_label).trim().slice(0, 60)) || null,
         notes: notes || null,
         status: 'in_progress',
       })
@@ -2231,7 +2234,7 @@ router.get('/inspections/recent', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
     let q = supabase
       .from('inspections')
-      .select('id, community_id, mode, route_label, started_at, ended_at, total_photos, total_observations, status, notes, communities(name)')
+      .select('id, community_id, mode, route_label, device_label, started_at, ended_at, total_photos, total_observations, status, notes, communities(name)')
       .order('started_at', { ascending: false })
       .limit(limit);
     if (req.query.community_id) q = q.eq('community_id', req.query.community_id);

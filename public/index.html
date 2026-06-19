@@ -15707,6 +15707,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
 
       <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 5px;">Who's driving?</label>
+        <input type="text" id="inspDriverName" placeholder="Your name — so this drive is attributed to you"
+               style="width: 100%; padding: 10px 12px; border: 1px solid #d0d7de; border-radius: 8px; font-size: 14px;">
+        <div style="font-size:11px; color:#94a3b8; margin-top:4px;">Remembered on this device for next time. Helpful when running multiple tablets.</div>
+      </div>
+
+      <div style="margin-bottom: 14px;">
         <label style="display: block; font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 5px;">Route label (optional)</label>
         <input type="text" id="inspRouteLabel" placeholder="e.g. 'Full community', 'Phase 2 streets', 'Complaint follow-up'"
                style="width: 100%; padding: 10px 12px; border: 1px solid #d0d7de; border-radius: 8px; font-size: 14px;">
@@ -19469,12 +19476,26 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   window.inspSetOfficeToolsVisible = inspSetOfficeToolsVisible;
   window.inspToggleOfficeTools = inspToggleOfficeTools;
 
+  // Prefill "Who's driving?" from this device's last driver. #inspDriverName is
+  // static markup so it's present; retry once if the DOM isn't ready yet.
+  function inspPrefillDriver() {
+    const el = document.getElementById('inspDriverName');
+    if (!el) { setTimeout(inspPrefillDriver, 0); return; }
+    if (!el.value) { try { el.value = localStorage.getItem('insp_driver_name') || ''; } catch (_) {} }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', inspPrefillDriver);
+  else inspPrefillDriver();
+
   async function inspStart() {
     const sel = document.getElementById('inspCommunity');
     const err = document.getElementById('inspStartError');
     err.style.display = 'none';
     if (!sel.value) { err.textContent = 'Pick a community first.'; err.style.display = 'block'; return; }
     const routeLabel = document.getElementById('inspRouteLabel').value.trim();
+    // Who's driving — remembered per device so each tablet keeps its driver.
+    const driverEl = document.getElementById('inspDriverName');
+    const driverName = (driverEl && driverEl.value.trim()) || '';
+    if (driverName) { try { localStorage.setItem('insp_driver_name', driverName); } catch (_) {} }
     try {
       const r = await fetch('/api/inspections', {
         method: 'POST',
@@ -19483,6 +19504,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           community_id: sel.value,
           mode: inspState.mode,
           route_label: routeLabel || null,
+          device_label: driverName || null,
         }),
       });
       const j = await r.json();
@@ -25691,7 +25713,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         return `
           <div class="insp-recent-row" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 8px; border-bottom: 1px solid #f1f5f9; gap: 12px; flex-wrap: wrap;">
             <div style="flex: 1; min-width: 180px;">
-              <div style="font-size: 13px; color: #0B1D34; font-weight: 600;">${modeLabel} ${escapeHtml(community)}</div>
+              <div style="font-size: 13px; color: #0B1D34; font-weight: 600;">${modeLabel} ${escapeHtml(community)}${i.device_label ? ` <span style="font-weight:500; color:#475569;">· 👤 ${escapeHtml(i.device_label)}</span>` : ''}</div>
               <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${date} · ${photoStr} · ${statusLabel}</div>
             </div>
             ${actions}
