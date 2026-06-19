@@ -913,6 +913,14 @@ app.use('/api/master-plan-submissions', masterPlanSubmissionsRouter);
 app.get('/admin/master-plan-submissions', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'master-plan-submissions-admin.html'));
 });
+
+// General Ledger / Accounting (read screens — chart of accounts, trial balance,
+// homeowner ledgers, journal entries).
+const glRouter = require('./api/gl');
+app.use('/api/gl', glRouter);
+app.get('/admin/accounting', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'accounting.html'));
+});
 app.get('/admin/community-photos', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'community-photos-admin.html'));
 });
