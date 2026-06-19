@@ -341,9 +341,9 @@
   function buildRow(p) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><input type="text" class="planNum" value="${esc(p.plan_number || '')}" placeholder="4900"></td>
-      <td><input type="text" class="planName" value="${esc(p.plan_name || '')}" placeholder="Tesla"></td>
-      <td><input type="text" class="elev" value="${esc(p.elevation || '')}" placeholder="C4"></td>
+      <td><input type="text" class="planNum" value="${esc(p.plan_number || '')}" placeholder="e.g. 4505"></td>
+      <td><input type="text" class="planName" value="${esc(p.plan_name || '')}" placeholder="e.g. Somerset"></td>
+      <td><input type="text" class="elev" value="${esc(p.elevation || '')}" placeholder="e.g. DEF"></td>
       <td>
         <select class="elevOrient">
           <option value="standard"${p.elevation_orientation === 'standard' || !p.elevation_orientation ? ' selected' : ''}>standard</option>
@@ -351,8 +351,8 @@
           <option value="right"${p.elevation_orientation === 'right' ? ' selected' : ''}>right</option>
         </select>
       </td>
-      <td><input type="number" class="sqft" value="${p.square_footage || ''}" placeholder="1922"></td>
-      <td><input type="number" step="0.5" class="stories" value="${p.stories || ''}" placeholder="1"></td>
+      <td><input type="number" class="sqft" value="${p.square_footage || ''}" placeholder="e.g. 1922"></td>
+      <td><input type="number" step="0.5" class="stories" value="${p.stories || ''}" placeholder="e.g. 1"></td>
       <td><button type="button" class="x">✕</button></td>
     `;
     tr.querySelector('.x').addEventListener('click', () => tr.remove());
@@ -388,7 +388,11 @@
     const approvedPlans = action === 'deny' ? [] : collectApprovedPlans();
 
     if ((action === 'approve' || action === 'approve_with_conditions') && approvedPlans.length === 0) {
-      toast('Add at least one plan row before approving', 'error'); return;
+      const rowCount = document.querySelectorAll('#approvedBody tr').length;
+      toast(rowCount > 0
+        ? 'The plan row is empty — type a Plan # and Elevation. The grey text is just an example.'
+        : 'Add at least one plan row before approving.', 'error');
+      return;
     }
     if (action === 'approve_with_conditions' && !conditions) {
       toast('Conditions are required for approve_with_conditions', 'error'); return;
