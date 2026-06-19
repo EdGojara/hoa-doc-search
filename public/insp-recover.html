@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inspection Photo Recovery</title>
+<style>
+  body { margin:0; font-family:-apple-system,system-ui,sans-serif; background:#0B1D34; color:#fff; padding:24px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:#9fb3c8; font-size:13px; margin-bottom:20px; }
+  .big { font-size:64px; font-weight:800; line-height:1; margin:18px 0 6px; }
+  .card { background:#13294a; border:1px solid #1f3a5f; border-radius:14px; padding:22px; margin-bottom:16px; }
+  button { background:#D4AF37; color:#0B1D34; border:none; padding:14px 22px; border-radius:10px; font-size:16px; font-weight:700; cursor:pointer; width:100%; margin-top:10px; }
+  button:disabled { opacity:0.5; }
+  .row { font-size:12px; color:#9fb3c8; padding:5px 0; border-bottom:1px solid #1f3a5f; font-variant-numeric:tabular-nums; }
+  .ok { color:#86efac; } .warn { color:#fca5a5; }
+  #log { font-size:12px; max-height:240px; overflow:auto; margin-top:10px; }
+  .prog { height:10px; background:#1f3a5f; border-radius:6px; overflow:hidden; margin-top:12px; }
+  .prog > div { height:100%; background:#86efac; width:0%; transition:width .3s; }
+</style>
+</head>
+<body>
+  <h1>📸 Inspection Photo Recovery</h1>
+  <div class="sub">Reads this device's local photo storage directly. Nothing is deleted.</div>
+
+  <div class="card">
+    <div style="font-size:13px; color:#9fb3c8;">Photos stored locally on THIS device:</div>
+    <div class="big" id="count">…</div>
+    <div id="detail" class="sub" style="margin:0;"></div>
+    <button id="uploadBtn" style="display:none;" onclick="uploadAll()">⬆ Upload these photos now</button>
+    <div class="prog" id="progWrap" style="display:none;"><div id="prog"></div></div>
+  </div>
+
+  <div class="card" id="listCard" style="display:none;">
+    <div style="font-size:13px; color:#9fb3c8; margin-bottom:6px;">By drive (inspection):</div>
+    <div id="byInsp"></div>
+  </div>
+
+  <div id="log"></div>
+
+<script>
+  const DB='bedrock_inspect_queue', STORE='pending_photos';
+  const log = (m, cls) => { const d=document.getElementById('log'); d.innerHTML = `<div class="${cls||''}">${m}</div>` + d.innerHTML; };
+
+  function openDb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(DB,1);
+    r.onupgradeneeded=(e)=>{ const db=e.target.result; if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE,{keyPath:'id',autoIncrement:true}); };
+    r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+  function listAll(){ return openDb().then(db=>new Promise((res,rej)=>{ const tx=db.transaction(STORE,'readonly'); const r=tx.objectStore(STORE).getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); })); }
+  function removeItem(id){ return openDb().then(db=>new Promise((res)=>{ const tx=db.transaction(STORE,'readwrite'); tx.objectStore(STORE).delete(id); tx.oncomplete=()=>res(); })); }
+
+  let ITEMS=[];
+  async function scan(){
+    try {
+      ITEMS = await listAll();
+    } catch(e){ document.getElementById('count').textContent='error'; log('Could not open local storage: '+e.message,'warn'); return; }
+    const withId = ITEMS.filter(i=>i.metadata && i.metadata.inspection_id);
+    document.getElementById('count').textContent = ITEMS.length;
+    const det = document.getElementById('detail');
+    if (ITEMS.length===0){ det.innerHTML='This device has no photos waiting in local storage.'; return; }
+    det.innerHTML = withId.length + ' have a drive attached and can be uploaded.';
+    document.getElementById('uploadBtn').style.display='block';
+    // group by inspection
+    const byInsp={}; for(const i of ITEMS){ const k=(i.metadata&&i.metadata.inspection_id)||'(no drive)'; byInsp[k]=(byInsp[k]||0)+1; }
+    document.getElementById('listCard').style.display='block';
+    document.getElementById('byInsp').innerHTML = Object.entries(byInsp).map(([k,n])=>`<div class="row">${n} photo${n===1?'':'s'} · drive ${k.slice(0,8)}</div>`).join('');
+  }
+
+  async function uploadAll(){
+    const btn=document.getElementById('uploadBtn'); btn.disabled=true;
+    document.getElementById('progWrap').style.display='block';
+    const items = ITEMS.filter(i=>i.metadata && i.metadata.inspection_id);
+    let done=0, ok=0, fail=0;
+    for (const item of items){
+      try {
+        const fd=new FormData();
+        fd.append('photo', item.blob, 'photo.jpg');
+        const m=item.metadata;
+        fd.append('captured_at', m.captured_at || new Date().toISOString());
+        if(m.gps_lat!=null) fd.append('gps_lat', m.gps_lat);
+        if(m.gps_lng!=null) fd.append('gps_lng', m.gps_lng);
+        if(m.gps_accuracy_m!=null) fd.append('gps_accuracy_m', m.gps_accuracy_m);
+        if(m.compass_heading_deg!=null) fd.append('compass_heading_deg', m.compass_heading_deg);
+        if(m.property_id) fd.append('property_id', m.property_id);
+        if(m.photo_role) fd.append('photo_role', m.photo_role);
+        const r = await fetch(`/api/inspections/${m.inspection_id}/photos`, { method:'POST', body:fd });
+        if(r.ok){ await removeItem(item.id); ok++; }
+        else { fail++; log(`drive ${String(m.inspection_id).slice(0,8)}: server said ${r.status} — KEEPING photo (not deleted)`, 'warn'); }
+      } catch(e){ fail++; log('network error — KEEPING photo: '+e.message, 'warn'); }
+      done++;
+      document.getElementById('prog').style.width = Math.round(done/items.length*100)+'%';
+      document.getElementById('count').textContent = ITEMS.length - ok;
+    }
+    log(`Done: ${ok} uploaded, ${fail} kept for retry.`, ok>0?'ok':'warn');
+    btn.disabled=false;
+    if(fail>0) log('Photos that failed are NOT deleted — they stay on this device. Tell Ed the status codes above.','warn');
+    scan();
+  }
+
+  scan();
+</script>
+</body>
+</html>
