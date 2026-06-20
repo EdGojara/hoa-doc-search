@@ -210,16 +210,30 @@ router.get('/:communityId/ar-aging', async (req, res) => {
     // Join property addresses + owner names.
     const owners = await _fetchAll('v_current_property_owners', 'property_id, street_address, owner_name', { community_id: cid });
     const ownerByProp = Object.fromEntries(owners.map((o) => [o.property_id, o]));
+    // Collection state per account (status badge + bankruptcy flag). Defensive:
+    // the code can deploy before migration 232 creates the table — degrade to
+    // "no collections" rather than 500 the whole aging screen.
+    let collByProp = {};
+    try {
+      const coll = await _fetchAll('ar_account_collections', 'property_id, collection_status, status_since, bankruptcy_petition_date', { community_id: cid });
+      collByProp = Object.fromEntries(coll.map((c) => [c.property_id, c]));
+    } catch (e) { console.warn('[gl] collections table not ready:', e.message); }
     const homeowners = Object.values(byProp).map((p) => ({
       ...p,
       street_address: (ownerByProp[p.property_id] || {}).street_address || '—',
       owner_name: (ownerByProp[p.property_id] || {}).owner_name || '—',
+      collection_status: (collByProp[p.property_id] || {}).collection_status || 'none',
+      bankruptcy_petition_date: (collByProp[p.property_id] || {}).bankruptcy_petition_date || null,
     })).sort((a, b) => b.total - a.total);
+
+    const collectionSummary = {};
+    for (const h of homeowners) { if (h.collection_status && h.collection_status !== 'none') collectionSummary[h.collection_status] = (collectionSummary[h.collection_status] || 0) + 1; }
 
     res.json({
       as_of: asOf,
       categories: [...categories],
       summary: { total_cents: grandTotal, by_bucket: totalBuckets, by_category: Object.values(byCategory).sort((a, b) => b.total - a.total) },
+      collection_summary: collectionSummary,
       homeowners,
       homeowner_count: homeowners.length,
     });
@@ -236,14 +250,42 @@ router.get('/:communityId/ar-aging/property/:propertyId', async (req, res) => {
     const charges = await _fetchAll('ar_charges',
       'id, charge_date, due_date, description, original_amount_cents, balance_remaining_cents, ar_charge_types:charge_type_id(category, display_name)',
       { community_id: req.params.communityId, property_id: req.params.propertyId, status: 'open' });
-    const rows = charges.filter((c) => Number(c.balance_remaining_cents) > 0).map((c) => ({
-      charge_date: c.charge_date, due_date: c.due_date, description: c.description,
-      category: (c.ar_charge_types && c.ar_charge_types.display_name) || 'other',
-      original_cents: Number(c.original_amount_cents), balance_cents: Number(c.balance_remaining_cents),
-      days_past_due: Math.max(0, Math.floor((Date.parse(asOf) - Date.parse(String(c.due_date).slice(0, 10))) / 86400000)),
-      bucket: _agingBucket(c.due_date, asOf),
-    })).sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
-    res.json({ charges: rows, total_cents: rows.reduce((s, r) => s + r.balance_cents, 0) });
+    // Collection state for this account (status + bankruptcy petition data).
+    // Defensive against the pre-migration window (see ar-aging above).
+    let collRow = null;
+    try {
+      const r = await supabase.from('ar_account_collections')
+        .select('collection_status, status_since, bankruptcy_petition_date, bankruptcy_chapter, bankruptcy_case_number, bankruptcy_discharge_date, bankruptcy_dismissed_date, notes')
+        .eq('community_id', req.params.communityId).eq('property_id', req.params.propertyId).maybeSingle();
+      if (r.error) throw r.error;
+      collRow = r.data;
+    } catch (e) { console.warn('[gl] collections table not ready:', e.message); }
+    const collection = collRow || { collection_status: 'none' };
+    const petition = collection.bankruptcy_petition_date ? String(collection.bankruptcy_petition_date).slice(0, 10) : null;
+
+    const rows = charges.filter((c) => Number(c.balance_remaining_cents) > 0).map((c) => {
+      const chargeDate = String(c.charge_date || c.due_date || '').slice(0, 10);
+      // Pre-petition = charge incurred BEFORE the bankruptcy filing (frozen by the
+      // automatic stay); post-petition = on/after filing (the debtor's ongoing,
+      // collectible obligation). Null when the account isn't in bankruptcy.
+      const petition_phase = petition ? (chargeDate < petition ? 'pre_petition' : 'post_petition') : null;
+      return {
+        charge_date: c.charge_date, due_date: c.due_date, description: c.description,
+        category: (c.ar_charge_types && c.ar_charge_types.display_name) || 'other',
+        original_cents: Number(c.original_amount_cents), balance_cents: Number(c.balance_remaining_cents),
+        days_past_due: Math.max(0, Math.floor((Date.parse(asOf) - Date.parse(String(c.due_date).slice(0, 10))) / 86400000)),
+        bucket: _agingBucket(c.due_date, asOf), petition_phase,
+      };
+    }).sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
+
+    const total_cents = rows.reduce((s, r) => s + r.balance_cents, 0);
+    // When in bankruptcy, split the ledger into the two legally-distinct buckets.
+    const bankruptcy_split = petition ? {
+      petition_date: petition,
+      pre_petition_cents: rows.filter((r) => r.petition_phase === 'pre_petition').reduce((s, r) => s + r.balance_cents, 0),
+      post_petition_cents: rows.filter((r) => r.petition_phase === 'post_petition').reduce((s, r) => s + r.balance_cents, 0),
+    } : null;
+    res.json({ charges: rows, total_cents, collection, bankruptcy_split });
   } catch (err) {
     console.error('[gl] ar-aging property failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -303,6 +345,64 @@ router.get('/:communityId/ap-aging/vendor/:vendorId', async (req, res) => {
     res.json({ invoices: rows, total_cents: rows.reduce((s, r) => s + r.balance_cents, 0) });
   } catch (err) {
     console.error('[gl] ap-aging vendor failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Collections — set/update an account's collection status + bankruptcy data.
+// The pre/post-petition ledger split (in the property drill-down) activates
+// automatically once bankruptcy_petition_date is set.
+// ----------------------------------------------------------------------------
+const COLLECTION_STATUSES = ['none', 'late_notice', 'delinquent_reminder', 'certified_demand', 'board_review', 'payment_plan', 'with_attorney', 'bankruptcy', 'lien_filed', 'foreclosure', 'written_off'];
+const COLLECTION_FIELDS = ['collection_status', 'status_since', 'bankruptcy_petition_date', 'bankruptcy_chapter', 'bankruptcy_case_number', 'bankruptcy_discharge_date', 'bankruptcy_dismissed_date', 'notes'];
+
+router.patch('/:communityId/collections/:propertyId', async (req, res) => {
+  try {
+    const { communityId, propertyId } = req.params;
+    const patch = { community_id: communityId, property_id: propertyId };
+    for (const f of COLLECTION_FIELDS) {
+      if (req.body[f] === undefined) continue;
+      patch[f] = req.body[f] === '' ? null : req.body[f];
+    }
+    if (patch.collection_status && !COLLECTION_STATUSES.includes(patch.collection_status)) {
+      return res.status(400).json({ error: 'invalid_collection_status' });
+    }
+    if (patch.bankruptcy_chapter && !['7', '11', '12', '13'].includes(String(patch.bankruptcy_chapter))) {
+      return res.status(400).json({ error: 'invalid_bankruptcy_chapter' });
+    }
+    const { data, error } = await supabase.from('ar_account_collections')
+      .upsert(patch, { onConflict: 'community_id,property_id' }).select().single();
+    if (error) throw error;
+    res.json({ ok: true, collection: data });
+  } catch (err) {
+    console.error('[gl] collections patch failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// List accounts in collections (status != none), with current balance + owner.
+router.get('/:communityId/collections', async (req, res) => {
+  try {
+    const cid = req.params.communityId;
+    const coll = await _fetchAll('ar_account_collections',
+      'property_id, collection_status, status_since, bankruptcy_petition_date, bankruptcy_chapter, bankruptcy_case_number, notes',
+      { community_id: cid });
+    const active = coll.filter((c) => c.collection_status && c.collection_status !== 'none');
+    const charges = await _fetchAll('ar_charges', 'property_id, balance_remaining_cents', { community_id: cid, status: 'open' });
+    const balByProp = {};
+    for (const c of charges) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
+    const owners = await _fetchAll('v_current_property_owners', 'property_id, street_address, owner_name', { community_id: cid });
+    const ownerByProp = Object.fromEntries(owners.map((o) => [o.property_id, o]));
+    const rows = active.map((c) => ({
+      ...c,
+      balance_cents: balByProp[c.property_id] || 0,
+      street_address: (ownerByProp[c.property_id] || {}).street_address || '—',
+      owner_name: (ownerByProp[c.property_id] || {}).owner_name || '—',
+    })).sort((a, b) => b.balance_cents - a.balance_cents);
+    res.json({ accounts: rows, count: rows.length });
+  } catch (err) {
+    console.error('[gl] collections list failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

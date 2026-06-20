@@ -99,6 +99,23 @@
 
   const BUCKETS = [['current','Current'],['d1_30','1–30'],['d31_60','31–60'],['d61_90','61–90'],['d91_120','91–120'],['d120_plus','120+']];
 
+  // Collection escalation ladder — label + badge color per status.
+  const COLL = {
+    none:                 ['—',                  '#94A3B8','transparent'],
+    late_notice:          ['Late Notice',        '#92400e','#fef3c7'],
+    delinquent_reminder:  ['Delinquent Reminder','#92400e','#fde68a'],
+    certified_demand:     ['Certified Demand',   '#9a3412','#fed7aa'],
+    board_review:         ['Board Review',       '#3730a3','#e0e7ff'],
+    payment_plan:         ['Payment Plan',       '#065f46','#d1fae5'],
+    with_attorney:        ['With Attorney',      '#991b1b','#fee2e2'],
+    bankruptcy:           ['Bankruptcy',         '#fff','#7c3aed'],
+    lien_filed:           ['Lien Filed',         '#991b1b','#fecaca'],
+    foreclosure:          ['Foreclosure',        '#fff','#b91c1c'],
+    written_off:          ['Written Off',        '#64748b','#f1f5f9'],
+  };
+  const collBadge = (st) => { const c = COLL[st] || COLL.none; return st && st !== 'none'
+    ? `<span style="display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; color:${c[1]}; background:${c[2]};">${c[0]}</span>` : ''; };
+
   async function renderArAging() {
     const j = await (await fetch(`/api/gl/${CID}/ar-aging`)).json();
     const cats = j.summary.by_category || [];
@@ -111,8 +128,13 @@
       : `<tr><td colspan="8" class="muted" style="padding:16px; text-align:center;">No open charges — homeowner ledgers are at zero.</td></tr>`;
     const hoRows = (j.homeowners||[]).map((h)=>`<tr style="cursor:pointer;" onclick="arDrill('${h.property_id}','${esc((h.street_address||'').replace(/'/g,''))}')">
         <td>${esc(h.street_address)}</td><td>${esc(h.owner_name)}</td>
+        <td>${collBadge(h.collection_status)}</td>
         ${BUCKETS.map(([k])=>`<td class="num">${h.buckets[k]?fmt(h.buckets[k]):''}</td>`).join('')}
         <td class="num" style="font-weight:600;">${fmt(h.total)}</td><td class="num">${h.oldest_days}</td></tr>`).join('');
+    const cs = j.collection_summary || {};
+    const csChips = Object.keys(cs).length
+      ? `<div style="margin-bottom:14px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;"><span class="sub">In collections:</span>${Object.entries(cs).sort((a,b)=>b[1]-a[1]).map(([st,n])=>`${collBadge(st)} <span class="muted" style="font-size:12px;">×${n}</span>`).join('&nbsp;&nbsp;')}</div>`
+      : '';
     $('body').innerHTML = `
       <div class="summary">
         <div class="stat"><div class="v">${fmt(j.summary.total_cents)}</div><div class="l">Total AR outstanding</div></div>
@@ -125,24 +147,89 @@
       </div>
       <div class="card"><h2 class="sec" style="margin-bottom:4px;">Homeowner ledgers</h2>
         <div class="sub" style="margin-bottom:10px;">Click a row to see every open charge for that homeowner.</div>
-        <table><thead><tr><th>Property</th><th>Owner</th>${BUCKETS.map(([,l])=>`<th class="num">${l}</th>`).join('')}<th class="num">Balance</th><th class="num">Oldest</th></tr></thead>
-        <tbody>${hoRows || `<tr><td colspan="9" class="muted" style="padding:16px; text-align:center;">No homeowner has an open balance.</td></tr>`}</tbody></table>
+        ${csChips}
+        <table><thead><tr><th>Property</th><th>Owner</th><th>Status</th>${BUCKETS.map(([,l])=>`<th class="num">${l}</th>`).join('')}<th class="num">Balance</th><th class="num">Oldest</th></tr></thead>
+        <tbody>${hoRows || `<tr><td colspan="10" class="muted" style="padding:16px; text-align:center;">No homeowner has an open balance.</td></tr>`}</tbody></table>
       </div>
       <div id="drill"></div>`;
   }
 
+  window._arDrillPid = null;
   window.arDrill = async function(pid, label) {
+    window._arDrillPid = pid; window._arDrillLabel = label;
     const d = $('drill'); d.innerHTML = '<div class="muted" style="padding:14px;">Loading charges…</div>';
     const j = await (await fetch(`/api/gl/${CID}/ar-aging/property/${pid}`)).json();
+    const bk = j.bankruptcy_split;
     const rows = (j.charges||[]).map((c)=>`<tr>
       <td>${esc(c.category)}</td><td>${esc(c.description||'')}</td>
       <td>${esc((c.due_date||'').slice(0,10))}</td><td class="num">${c.days_past_due}</td>
+      ${bk?`<td>${c.petition_phase==='pre_petition'?'<span style="color:#7c3aed; font-weight:700; font-size:11px;">PRE</span>':'<span style="color:#065f46; font-weight:700; font-size:11px;">POST</span>'}</td>`:''}
       <td class="num">${fmt(c.original_cents)}</td><td class="num" style="font-weight:600;">${fmt(c.balance_cents)}</td></tr>`).join('');
+
+    // Pre/post-petition split panel (only when a petition date is set).
+    const splitPanel = bk ? `
+      <div style="display:flex; gap:14px; margin:12px 0;">
+        <div style="flex:1; padding:12px; background:#f5f3ff; border:1px solid #ddd6fe; border-radius:8px;">
+          <div style="font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:#7c3aed; font-weight:700;">Pre-petition (stayed)</div>
+          <div style="font-size:22px; font-weight:800; color:#5b21b6;">${fmt(bk.pre_petition_cents)}</div>
+          <div class="muted" style="font-size:11px;">Filed before ${esc(bk.petition_date)} · frozen by the automatic stay (§362)</div>
+        </div>
+        <div style="flex:1; padding:12px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px;">
+          <div style="font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:#065f46; font-weight:700;">Post-petition (collectible)</div>
+          <div style="font-size:22px; font-weight:800; color:#047857;">${fmt(bk.post_petition_cents)}</div>
+          <div class="muted" style="font-size:11px;">Incurred on/after ${esc(bk.petition_date)} · debtor's ongoing obligation</div>
+        </div>
+      </div>` : '';
+
+    const coll = j.collection || { collection_status: 'none' };
+    const opt = (v,l,sel)=>`<option value="${v}"${v===sel?' selected':''}>${l}</option>`;
+    const statusSel = Object.entries(COLL).map(([k,c])=>opt(k, c[0]==='—'?'None':c[0], coll.collection_status||'none')).join('');
+    const val = (x)=> x ? String(x).slice(0,10) : '';
+    const collPanel = `
+      <div style="margin:8px 0 14px; padding:14px; background:#fafbfc; border:1px solid #e5e7eb; border-radius:8px;">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <strong style="font-size:13px;">Collection status</strong>
+          <select id="coll-status" onchange="arToggleBk()" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;">${statusSel}</select>
+          <span class="muted" style="font-size:12px;">${coll.status_since?'since '+esc(val(coll.status_since)):''}</span>
+        </div>
+        <div id="bk-fields" style="margin-top:12px; display:${coll.collection_status==='bankruptcy'?'block':'none'};">
+          <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+            <label style="font-size:12px;">Petition date<br><input type="date" id="bk-petition" value="${esc(val(coll.bankruptcy_petition_date))}" style="padding:5px; border:1px solid #cbd5e1; border-radius:6px;"></label>
+            <label style="font-size:12px;">Chapter<br><select id="bk-chapter" style="padding:5px; border:1px solid #cbd5e1; border-radius:6px;">${['','7','11','12','13'].map(v=>opt(v,v||'—',coll.bankruptcy_chapter||'')).join('')}</select></label>
+            <label style="font-size:12px;">Case number<br><input type="text" id="bk-case" value="${esc(coll.bankruptcy_case_number||'')}" placeholder="e.g. 26-30412" style="padding:5px; border:1px solid #cbd5e1; border-radius:6px;"></label>
+            <label style="font-size:12px;">Discharge / dismissal<br><input type="date" id="bk-discharge" value="${esc(val(coll.bankruptcy_discharge_date))}" style="padding:5px; border:1px solid #cbd5e1; border-radius:6px;"></label>
+          </div>
+          <div class="muted" style="font-size:11px; margin-top:6px;">Setting the petition date splits this ledger into pre- vs post-petition automatically.</div>
+        </div>
+        <div style="margin-top:12px;"><button onclick="arSaveCollection('${pid}')" style="padding:6px 16px; background:var(--navy,#0B1D34); color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Save</button> <span id="coll-saved" class="muted" style="font-size:12px;"></span></div>
+      </div>`;
+
     d.innerHTML = `<div class="card" style="margin-top:16px; border-color:var(--navy);">
-      <h2 class="sec" style="margin-bottom:10px;">${esc(label)} — open charges (${fmt(j.total_cents)})</h2>
-      <table><thead><tr><th>Category</th><th>Description</th><th>Due</th><th class="num">Days late</th><th class="num">Original</th><th class="num">Balance</th></tr></thead>
-      <tbody>${rows||'<tr><td colspan=6 class=muted>No open charges.</td></tr>'}</tbody></table></div>`;
+      <h2 class="sec" style="margin-bottom:4px;">${esc(label)} — open charges (${fmt(j.total_cents)}) ${collBadge(coll.collection_status)}</h2>
+      ${collPanel}
+      ${splitPanel}
+      <table><thead><tr><th>Category</th><th>Description</th><th>Due</th><th class="num">Days late</th>${bk?'<th>Phase</th>':''}<th class="num">Original</th><th class="num">Balance</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan=7 class=muted>No open charges.</td></tr>'}</tbody></table></div>`;
     d.scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
+
+  window.arToggleBk = function() {
+    const st = $('coll-status').value;
+    $('bk-fields').style.display = st==='bankruptcy' ? 'block' : 'none';
+  };
+
+  window.arSaveCollection = async function(pid) {
+    const body = { collection_status: $('coll-status').value };
+    if (body.collection_status === 'bankruptcy') {
+      body.bankruptcy_petition_date = $('bk-petition').value || '';
+      body.bankruptcy_chapter = $('bk-chapter').value || '';
+      body.bankruptcy_case_number = $('bk-case').value || '';
+      body.bankruptcy_discharge_date = $('bk-discharge').value || '';
+    }
+    $('coll-saved').textContent = 'Saving…';
+    const r = await fetch(`/api/gl/${CID}/collections/${pid}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    if (r.ok) { $('coll-saved').textContent = 'Saved ✓'; arDrill(pid, window._arDrillLabel); }
+    else { const j = await r.json().catch(()=>({})); $('coll-saved').textContent = 'Failed: ' + (j.error||r.status); }
   };
 
   async function renderApAging() {
