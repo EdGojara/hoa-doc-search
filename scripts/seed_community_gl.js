@@ -57,22 +57,25 @@ const COA = [
 
 // AR charge types → §209.0063 payment-application priority + GL mapping.
 // gl_revenue / gl_receivable are account_numbers resolved to ids below.
-// type_code, display_name, category (§209.0063), tx_priority_step (1=highest),
-// gl_revenue account, gl_receivable account. Priority follows §209.0063 payment
-// application order: delinquent assessment → interest → collection/attorney →
-// records → other attorney → fines → other fees.
+// type_code, display_name (mirrors Vantaca's category names for 1:1 migration),
+// §209.0063 category, tx_priority_step (1=highest application priority),
+// gl_revenue account, gl_receivable account. Set matches the live Quail Ridge
+// Vantaca AR Aging (Ed 2026-06-19). "Balance Forward" = pre-migration carried
+// balances Vantaca tracks as their own charge buckets.
 const CHARGE_TYPES = [
-  ['assessment_regular',   'Regular Assessment',          'assessment',                      1, '4010', '1200'],
-  ['interest',             'Interest',                    'interest',                        2, '4030', '1200'],
-  ['attorney_fee_collection','Collection / Attorney Fee', 'attorney_fee_assessment_related', 3, '4040', '1200'],
-  ['records_request_fee',  'Records Request Fee',         'records_request_fee',             4, '4090', '1200'],
-  ['attorney_fee_other',   'Attorney Fee (Other)',        'attorney_fee_other',              5, '4040', '1200'],
-  ['fine',                 'Fine',                        'fine',                            6, '4050', '1200'],
-  ['late_fee',             'Late Fee',                    'late_fee',                        7, '4020', '1200'],
-  ['certified_mail_fee',   'Certified Mail Fee',          'other',                           7, '4090', '1200'],
-  ['transfer_fee',         'Transfer Fee',                'transfer_fee',                    7, '4090', '1200'],
-  ['resale_certificate_fee','Resale Certificate Fee',     'resale_certificate_fee',          7, '4090', '1200'],
-  ['nsf_fee',              'NSF / Returned Payment Fee',  'nsf_fee',                         7, '4090', '1200'],
+  ['annual_assessment',       'Annual Assessment',             'assessment',                      1, '4010', '1200'],
+  ['balance_forward_assessment','Balance Forward - Assessment','assessment',                      1, '4010', '1200'],
+  ['late_interest',           'Late Interest',                 'interest',                        2, '4030', '1200'],
+  ['legal_fees_collections',  'Legal Fees - Collections/DRV',  'attorney_fee_assessment_related', 3, '4040', '1200'],
+  ['legal_fee',               'Legal Fee',                     'attorney_fee_other',              5, '4040', '1200'],
+  ['fines',                   'Fines',                         'fine',                            6, '4050', '1200'],
+  ['balance_forward_fines',   'Balance Forward - Fines',       'fine',                            6, '4050', '1200'],
+  ['late_fees',               'Late Fees',                     'late_fee',                        7, '4020', '1200'],
+  ['certified_letter',        'Certified Letter',              'other',                           7, '4090', '1200'],
+  ['drv_certified_letter',    'DRV Certified Letter',          'other',                           7, '4090', '1200'],
+  ['administrative_fee',      'Administrative Fee',            'other',                           7, '4090', '1200'],
+  ['balance_forward_admin_fee','Balance Forward - Admin Fee',  'other',                           7, '4090', '1200'],
+  ['bank_return',             'Bank Return',                   'nsf_fee',                         7, '4090', '1200'],
 ];
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
