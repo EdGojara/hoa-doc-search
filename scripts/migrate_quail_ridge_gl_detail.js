@@ -21,7 +21,8 @@ const { createClient } = require('@supabase/supabase-js');
 const s = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const APPLY = process.argv.includes('--apply');
 const CID = 'a0000000-0000-4000-8000-000000000005';
-const FILE = 'C:/Users/edget/Downloads/GLTrialBalance.xls';
+const fileArg = process.argv.find((a) => a.startsWith('--file='));
+const FILE = fileArg ? fileArg.split('=').slice(1).join('=') : 'C:/Users/edget/Downloads/GLTrialBalance.xls';
 const D = (d) => Math.round(d * 100);
 const num = (v) => { let t = String(v || '').trim(); if (t === '-' || t === '') return 0; const neg = /^\(.*\)$/.test(t); t = t.replace(/[^0-9.]/g, ''); const n = parseFloat(t) || 0; return neg ? -n : n; };
 
@@ -60,12 +61,16 @@ const num = (v) => { let t = String(v || '').trim(); if (t === '-' || t === '') 
 
   if (!APPLY) { console.log('\nDRY RUN — pass --apply to replace monthly summaries with daily detail.'); return; }
 
-  // 3) Remove the monthly summary activity entries (keep the opening entry).
-  const { data: prior } = await s.from('journal_entries').select('id').eq('community_id', CID).eq('source_module', 'vantaca_import');
+  // 3) Idempotent: clear prior vantaca_import entries ONLY within this file's
+  // date range, so re-running one month (or adding a new month) leaves the
+  // other months' detail untouched. Opening entry (opening_entry) is never hit.
+  const { data: prior } = await s.from('journal_entries').select('id')
+    .eq('community_id', CID).eq('source_module', 'vantaca_import')
+    .gte('posting_date', days[0]).lte('posting_date', days[days.length - 1]);
   if (prior && prior.length) {
     await s.from('journal_entry_lines').delete().in('journal_entry_id', prior.map((j) => j.id));
     await s.from('journal_entries').delete().in('id', prior.map((j) => j.id));
-    console.log(`Cleared ${prior.length} monthly summary entries.`);
+    console.log(`Cleared ${prior.length} prior entries in ${days[0]}..${days[days.length - 1]}.`);
   }
 
   // 4) Post one balanced JE per day, with every line preserved.
