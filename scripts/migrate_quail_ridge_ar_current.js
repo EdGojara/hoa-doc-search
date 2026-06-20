@@ -33,8 +33,12 @@ const s = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const APPLY = process.argv.includes('--apply');
 const CID = 'a0000000-0000-4000-8000-000000000005';
 const OPENING_FILE = 'C:/Users/edget/Downloads/AR Aging.xls';
-const GL_FILE = 'C:/Users/edget/Downloads/GLTrialBalance.xls';
-const GL_AR_CONTROL = 20374.91;
+// All 2026 GL detail files (each contributes its account-1300 transactions).
+// Add each new month's export here so the subledger stays tied to the control.
+const GL_FILES = ['C:/Users/edget/Downloads/GLTrialBalance.xls', 'C:/Users/edget/Downloads/GLTrialBalance (1).xls'];
+// The GL AR control (1300) is read live from the trial balance at runtime so
+// the subledger always reconciles to whatever the GL currently says.
+let GL_AR_CONTROL = 0;
 
 const D = (d) => Math.round(d * 100);
 const num = (v) => { let t = String(v || '').trim(); if (t === '-' || t === '') return 0; const neg = /^-/.test(t) || /^\(.*\)$/.test(t); t = t.replace(/[^0-9.]/g, ''); const n = parseFloat(t) || 0; return neg ? -n : n; };
@@ -104,32 +108,39 @@ function catToType(cat) {
     }
   }
 
-  // ---- 2) 2026 activity from GL detail (account 1300) ------------------------
-  const glAoa = XLSX.utils.sheet_to_json(XLSX.readFile(GL_FILE).Sheets['GLTrialBalance'], { header: 1, defval: null, raw: false });
-  let inAR = false;
-  for (const r of glAoa) {
-    const c0 = String((r && r[0]) || '').trim();
-    const m = c0.match(/^(\d{4})\s*-\s*(.+)/);
-    if (m) { inAR = (m[1] === '1300'); continue; }
-    if (!inAR) continue;
-    const date = String((r && r[1]) || '').trim();
-    if (!/\d{2}\/\d{2}\/\d{4}/.test(date)) continue;
-    const desc = String((r && r[3]) || '').trim();
-    const type = String((r && r[12]) || '').trim();
-    const dr = num(r[8]), cr = num(r[10]);
-    const p = resolveByAddr(addrOf(desc));
-    if (!p) { unmatched++; continue; }
-    const b = bucket(p);
-    if (type === 'Owner Charge') {
-      const tc = catToType(catOf(desc));
-      if (!tc) unknownCats.add(catOf(desc));
-      b.charges.push({ type_code: tc || 'other', due: mdyToIso(date), amount_cents: D(dr) });
-    } else if (type === 'Void') {
-      b.pool -= D(dr); // refunded payment pushes balance back up
-    } else {
-      b.pool += D(cr); // Owner Payment / Credit Distribution
+  // ---- 2) 2026 activity from each GL detail file (account 1300) --------------
+  for (const file of GL_FILES) {
+    const wb = XLSX.readFile(file);
+    const glAoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null, raw: false });
+    let inAR = false;
+    for (const r of glAoa) {
+      const c0 = String((r && r[0]) || '').trim();
+      const m = c0.match(/^(\d{4})\s*-\s*(.+)/);
+      if (m) { inAR = (m[1] === '1300'); continue; }
+      if (!inAR) continue;
+      const date = String((r && r[1]) || '').trim();
+      if (!/\d{2}\/\d{2}\/\d{4}/.test(date)) continue;
+      const desc = String((r && r[3]) || '').trim();
+      const type = String((r && r[12]) || '').trim();
+      const dr = num(r[8]), cr = num(r[10]);
+      const p = resolveByAddr(addrOf(desc));
+      if (!p) { unmatched++; continue; }
+      const b = bucket(p);
+      if (type === 'Owner Charge') {
+        const tc = catToType(catOf(desc));
+        if (!tc) unknownCats.add(catOf(desc));
+        b.charges.push({ type_code: tc || 'other', due: mdyToIso(date), amount_cents: D(dr) });
+      } else if (type === 'Void') {
+        b.pool -= D(dr); // refunded payment pushes balance back up
+      } else {
+        b.pool += D(cr); // Owner Payment / Credit Distribution
+      }
     }
   }
+
+  // Read the live GL AR control (1300) so the subledger reconciles to the GL.
+  const { data: tbAr } = await s.from('v_trial_balance').select('total_debits_cents, total_credits_cents, account_number').eq('community_id', CID).eq('account_number', '1300').maybeSingle();
+  GL_AR_CONTROL = (Number(tbAr.total_debits_cents) - Number(tbAr.total_credits_cents)) / 100;
 
   // ---- 3) apply payments per 209.0063 (priority asc, then oldest first) ------
   const prio = (tc) => (ctByCode[tc] ? ctByCode[tc].tx_priority_step : 99);
