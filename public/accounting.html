@@ -42,6 +42,7 @@
   <div class="tabs" id="tabs">
     <div class="tab active" data-v="trial">Trial Balance</div>
     <div class="tab" data-v="tieout">Tie-Out</div>
+    <div class="tab" data-v="owners">Homeowner Accounts</div>
     <div class="tab" data-v="ar">AR Aging — Homeowners</div>
     <div class="tab" data-v="ap">AP Aging — Vendors</div>
     <div class="tab" data-v="bankrec">Bank Rec</div>
@@ -74,6 +75,7 @@
     try {
       if (VIEW==='trial') return renderTrial();
       if (VIEW==='tieout') return renderTieOut();
+      if (VIEW==='owners') return renderOwners();
       if (VIEW==='ar') return renderArAging();
       if (VIEW==='ap') return renderApAging();
       if (VIEW==='bankrec') return renderBankRec();
@@ -291,6 +293,71 @@
       <h2 class="sec" style="margin-bottom:10px;">${esc(label)} — open invoices (${fmt(j.total_cents)})</h2>
       <table><thead><tr><th>Invoice #</th><th>Date</th><th>Due</th><th class="num">Days late</th><th class="num">Total</th><th class="num">Balance</th></tr></thead>
       <tbody>${rows||'<tr><td colspan=6 class=muted>No open invoices.</td></tr>'}</tbody></table></div>`;
+    d.scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
+
+  // -------- HOMEOWNER ACCOUNTS (search + account view) --------
+  const COLL_LABEL = { none:'', late_notice:'Late Notice', delinquent_reminder:'Delinquent Reminder', certified_demand:'Certified Demand', board_review:'Board Review', payment_plan:'Payment Plan', with_attorney:'With Attorney', bankruptcy:'Bankruptcy', lien_filed:'Lien Filed', foreclosure:'Foreclosure', written_off:'Written Off' };
+  function renderOwners() {
+    $('body').innerHTML = `
+      <div class="card" style="margin-bottom:14px;">
+        <h2 class="sec" style="margin-bottom:8px;">Homeowner accounts</h2>
+        <input id="ownerQ" type="text" placeholder="Search by owner name or address…" autocomplete="off"
+          style="width:100%; max-width:480px; padding:10px 12px; font-size:14px; border:1px solid #cbd5e1; border-radius:8px;">
+        <div id="ownerResults" style="margin-top:12px;"></div>
+      </div>
+      <div id="ownerDetail"></div>`;
+    const inp = $('ownerQ'); inp.focus();
+    let t = null;
+    inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(ownerSearch, 200); });
+    ownerSearch();
+  }
+  async function ownerSearch() {
+    const q = ($('ownerQ') ? $('ownerQ').value : '').trim();
+    const j = await (await fetch(`/api/gl/${CID}/owners/search?q=${encodeURIComponent(q)}`)).json();
+    const rows = (j.owners||[]).map((o)=>{
+      const cs = o.collection_status && o.collection_status!=='none' ? `<span style="font-size:11px; color:#b91c1c; font-weight:600; margin-left:8px;">${esc(COLL_LABEL[o.collection_status]||o.collection_status)}</span>` : '';
+      return `<tr style="cursor:pointer;" onclick="ownerAccount('${o.property_id}')">
+        <td>${esc(o.street_address||'')}</td><td>${esc(o.owner_name||'—')}${cs}</td>
+        <td class="num" style="font-weight:600; color:${Number(o.balance_cents)>0?'#b91c1c':'#64748b'};">${fmt(o.balance_cents)}</td></tr>`;
+    }).join('');
+    $('ownerResults').innerHTML = `<div class="sub" style="margin-bottom:6px;">${j.count} owner${j.count===1?'':'s'}${q?` matching “${esc(q)}”`:''}</div>
+      <table><thead><tr><th>Address</th><th>Owner</th><th class="num">Balance</th></tr></thead><tbody>${rows||'<tr><td colspan=3 class=muted>No matches.</td></tr>'}</tbody></table>`;
+  }
+  window.ownerAccount = async function(pid) {
+    const d = $('ownerDetail'); d.innerHTML = '<div class="muted" style="padding:14px;">Loading account…</div>';
+    const j = await (await fetch(`/api/gl/${CID}/owners/${pid}/account`)).json();
+    const o = j.owner || {};
+    const mailing = o.owner_mailing_address || [o.owner_mailing_street, o.owner_mailing_city, o.owner_mailing_state, o.owner_mailing_zip].filter(Boolean).join(', ');
+    const cs = (j.collection && j.collection.collection_status && j.collection.collection_status!=='none')
+      ? `<span style="display:inline-block; padding:3px 10px; background:#fee2e2; color:#991b1b; border-radius:12px; font-size:12px; font-weight:700;">${esc(COLL_LABEL[j.collection.collection_status]||j.collection.collection_status)}</span>` : '';
+    const cats = (j.by_category||[]).map((c)=>`<tr><td>${esc(c.category)}</td><td class="num">${fmt(c.cents)}</td></tr>`).join('');
+    const bk = j.bankruptcy_split ? `<div style="margin:10px 0; padding:10px 12px; background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; font-size:13px;">
+        <strong>Bankruptcy — petition ${esc(j.bankruptcy_split.petition_date)}.</strong>
+        Pre-petition (stayed): <strong>${fmt(j.bankruptcy_split.pre_petition_cents)}</strong> · Post-petition (collectible): <strong>${fmt(j.bankruptcy_split.post_petition_cents)}</strong></div>` : '';
+    const charges = (j.charges||[]).map((c)=>`<tr>
+        <td>${esc(String(c.charge_date||'').slice(0,10))}</td><td>${esc(c.category)}</td>
+        <td class="num">${fmt(c.original_cents)}</td><td class="num" style="font-weight:600;">${fmt(c.balance_cents)}</td>
+        <td class="num">${c.days_past_due}d</td></tr>`).join('');
+    d.innerHTML = `<div class="card" style="border-color:var(--navy);">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+        <div><h2 class="sec" style="margin:0 0 2px;">${esc(o.owner_name||'—')} ${cs}</h2>
+          <div class="muted" style="font-size:13px;">${esc(o.street_address||'')}${o.vantaca_account_id?' · acct '+esc(o.vantaca_account_id):''}</div>
+          <div class="muted" style="font-size:12px; margin-top:2px;">${esc(o.owner_email||'')} ${o.owner_phone?'· '+esc(o.owner_phone):''}${mailing?'<br>Mailing: '+esc(mailing):''}</div>
+        </div>
+        <div style="text-align:right;"><div class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:.5px;">Current balance</div>
+          <div style="font-size:26px; font-weight:800; color:${j.total_cents>0?'#b91c1c':'#047857'};">${fmt(j.total_cents)}</div>
+          <button class="secondary-btn" style="margin-top:6px; font-size:12px; padding:5px 12px; opacity:.6; cursor:not-allowed;" title="Statement generation coming next">📄 Statement (soon)</button>
+        </div>
+      </div>
+      ${bk}
+      <div style="display:flex; gap:24px; flex-wrap:wrap; margin-top:14px;">
+        <div style="flex:1; min-width:240px;"><h4 class="sec" style="font-size:13px; margin:0 0 6px;">Balance by category</h4>
+          <table><tbody>${cats||'<tr><td class=muted>Paid in full ✓</td></tr>'}</tbody></table></div>
+        <div style="flex:2; min-width:300px;"><h4 class="sec" style="font-size:13px; margin:0 0 6px;">Open charges</h4>
+          <table><thead><tr><th>Date</th><th>Category</th><th class="num">Original</th><th class="num">Balance</th><th class="num">Age</th></tr></thead>
+          <tbody>${charges||'<tr><td colspan=5 class=muted>No open charges.</td></tr>'}</tbody></table></div>
+      </div></div>`;
     d.scrollIntoView({behavior:'smooth', block:'nearest'});
   };
 

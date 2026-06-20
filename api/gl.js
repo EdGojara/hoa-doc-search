@@ -303,6 +303,70 @@ router.get('/:communityId/ar-aging/property/:propertyId', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// Homeowner accounts — search any owner by name or address, pull up the account.
+// ----------------------------------------------------------------------------
+router.get('/:communityId/owners/search', async (req, res) => {
+  try {
+    const cid = req.params.communityId;
+    const q = (req.query.q || '').trim().toLowerCase();
+    const owners = await _fetchAll('v_current_property_owners',
+      'property_id, street_address, owner_name, owner_email, owner_phone, vantaca_account_id', { community_id: cid });
+    const charges = await _fetchAll('ar_charges', 'property_id, balance_remaining_cents', { community_id: cid, status: 'open' });
+    const balByProp = {};
+    for (const c of charges) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
+    const coll = await _fetchAll('ar_account_collections', 'property_id, collection_status', { community_id: cid });
+    const collByProp = Object.fromEntries(coll.map((c) => [c.property_id, c.collection_status]));
+    const matched = (q
+      ? owners.filter((o) => (o.owner_name || '').toLowerCase().includes(q) || (o.street_address || '').toLowerCase().includes(q))
+      : owners)
+      .map((o) => ({ ...o, balance_cents: balByProp[o.property_id] || 0, collection_status: collByProp[o.property_id] || 'none' }))
+      .sort((a, b) => (a.street_address || '').localeCompare(b.street_address || ''))
+      .slice(0, 100);
+    res.json({ owners: matched, count: matched.length });
+  } catch (err) {
+    console.error('[gl] owner search failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.get('/:communityId/owners/:propertyId/account', async (req, res) => {
+  try {
+    const cid = req.params.communityId, pid = req.params.propertyId, asOf = _today();
+    const owner = (await _fetchAll('v_current_property_owners', '*', { community_id: cid, property_id: pid }))[0] || null;
+    const charges = (await _fetchAll('ar_charges',
+      'charge_date, due_date, description, original_amount_cents, balance_remaining_cents, ar_charge_types:charge_type_id(category, display_name)',
+      { community_id: cid, property_id: pid, status: 'open' })).filter((c) => Number(c.balance_remaining_cents) > 0);
+    const byCategory = {}; const buckets = _emptyBuckets(); let total = 0;
+    const rows = charges.map((c) => {
+      const cat = (c.ar_charge_types && c.ar_charge_types.display_name) || 'other';
+      const bal = Number(c.balance_remaining_cents); const bucket = _agingBucket(c.due_date, asOf);
+      total += bal; buckets[bucket] += bal;
+      byCategory[cat] = (byCategory[cat] || 0) + bal;
+      return { charge_date: c.charge_date, due_date: c.due_date, description: c.description, category: cat,
+        original_cents: Number(c.original_amount_cents), balance_cents: bal,
+        days_past_due: Math.max(0, Math.floor((Date.parse(asOf) - Date.parse(String(c.due_date).slice(0, 10))) / 86400000)) };
+    }).sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
+    const { data: collRow } = await supabase.from('ar_account_collections')
+      .select('collection_status, status_since, bankruptcy_petition_date, bankruptcy_chapter, bankruptcy_case_number, notes')
+      .eq('community_id', cid).eq('property_id', pid).maybeSingle();
+    const petition = collRow && collRow.bankruptcy_petition_date ? String(collRow.bankruptcy_petition_date).slice(0, 10) : null;
+    const bankruptcy_split = petition ? {
+      petition_date: petition,
+      pre_petition_cents: rows.filter((r) => String(r.charge_date || r.due_date).slice(0, 10) < petition).reduce((s, r) => s + r.balance_cents, 0),
+      post_petition_cents: rows.filter((r) => String(r.charge_date || r.due_date).slice(0, 10) >= petition).reduce((s, r) => s + r.balance_cents, 0),
+    } : null;
+    res.json({
+      owner, as_of: asOf, total_cents: total,
+      by_category: Object.entries(byCategory).map(([category, cents]) => ({ category, cents })).sort((a, b) => b.cents - a.cents),
+      buckets, charges: rows, collection: collRow || { collection_status: 'none' }, bankruptcy_split,
+    });
+  } catch (err) {
+    console.error('[gl] owner account failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // AP aging — open vendor invoices grouped by vendor, aged by due date.
 // ----------------------------------------------------------------------------
 router.get('/:communityId/ap-aging', async (req, res) => {
