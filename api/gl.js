@@ -355,10 +355,19 @@ router.get('/:communityId/owners/:propertyId/account', async (req, res) => {
       pre_petition_cents: rows.filter((r) => String(r.charge_date || r.due_date).slice(0, 10) < petition).reduce((s, r) => s + r.balance_cents, 0),
       post_petition_cents: rows.filter((r) => String(r.charge_date || r.due_date).slice(0, 10) >= petition).reduce((s, r) => s + r.balance_cents, 0),
     } : null;
+    // Transaction ledger (statement history) — defensive against pre-migration.
+    let ledger = [];
+    try {
+      ledger = await _fetchAll('homeowner_ledger_entries',
+        'entry_date, description, charge_cents, payment_cents, running_balance_cents, entry_type, sort_seq',
+        { community_id: cid, property_id: pid });
+      ledger.sort((a, b) => (a.entry_date || '').localeCompare(b.entry_date || '') || (a.sort_seq - b.sort_seq));
+    } catch (e) { /* table not present yet */ }
     res.json({
       owner, as_of: asOf, total_cents: total,
       by_category: Object.entries(byCategory).map(([category, cents]) => ({ category, cents })).sort((a, b) => b.cents - a.cents),
       buckets, charges: rows, collection: collRow || { collection_status: 'none' }, bankruptcy_split,
+      ledger, ledger_through: ledger.length ? ledger[ledger.length - 1].entry_date : null,
     });
   } catch (err) {
     console.error('[gl] owner account failed:', err.message);

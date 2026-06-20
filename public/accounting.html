@@ -357,9 +357,24 @@
         <div style="flex:2; min-width:300px;"><h4 class="sec" style="font-size:13px; margin:0 0 6px;">Open charges</h4>
           <table><thead><tr><th>Date</th><th>Category</th><th class="num">Original</th><th class="num">Balance</th><th class="num">Age</th></tr></thead>
           <tbody>${charges||'<tr><td colspan=5 class=muted>No open charges.</td></tr>'}</tbody></table></div>
-      </div></div>`;
+      </div>
+      ${renderLedger(j)}
+      </div>`;
     d.scrollIntoView({behavior:'smooth', block:'nearest'});
   };
+
+  function renderLedger(j) {
+    const led = j.ledger || [];
+    if (!led.length) return `<div class="sub muted" style="margin-top:14px; padding:10px; background:#f8fafc; border-radius:6px;">Transaction history not loaded yet for this community.</div>`;
+    const rows = led.map((e)=>`<tr>
+      <td>${esc(String(e.entry_date||'').slice(0,10))}</td><td>${esc(e.description||'')}</td>
+      <td class="num">${Number(e.charge_cents)?fmt(e.charge_cents):''}</td>
+      <td class="num" style="color:#047857;">${Number(e.payment_cents)?'('+fmt(e.payment_cents).replace('$','$')+')':''}</td>
+      <td class="num" style="font-weight:600;">${fmt(e.running_balance_cents)}</td></tr>`).join('');
+    return `<div style="margin-top:18px;"><h4 class="sec" style="font-size:13px; margin:0 0 6px;">Transaction history${j.ledger_through?` <span class="muted" style="font-weight:400;">(through ${esc(String(j.ledger_through).slice(0,10))})</span>`:''}</h4>
+      <table><thead><tr><th>Date</th><th>Description</th><th class="num">Charge</th><th class="num">Payment</th><th class="num">Balance</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  }
 
   // -------- SUBLEDGER TIE-OUT (control-account integrity) --------
   async function renderTieOut() {
