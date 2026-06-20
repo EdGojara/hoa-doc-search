@@ -41,7 +41,8 @@
 <div class="wrap">
   <div class="tabs" id="tabs">
     <div class="tab active" data-v="trial">Trial Balance</div>
-    <div class="tab" data-v="ledgers">Homeowner Ledgers</div>
+    <div class="tab" data-v="ar">AR Aging — Homeowners</div>
+    <div class="tab" data-v="ap">AP Aging — Vendors</div>
     <div class="tab" data-v="coa">Chart of Accounts</div>
     <div class="tab" data-v="je">Journal Entries</div>
   </div>
@@ -70,7 +71,8 @@
     $('body').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
     try {
       if (VIEW==='trial') return renderTrial();
-      if (VIEW==='ledgers') return renderLedgers();
+      if (VIEW==='ar') return renderArAging();
+      if (VIEW==='ap') return renderApAging();
       if (VIEW==='coa') return renderCoa();
       if (VIEW==='je') return renderJe();
     } catch (e) { $('body').innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load: '+esc(e.message)+'</div>'; }
@@ -95,25 +97,88 @@
     </div>`;
   }
 
-  async function renderLedgers() {
-    const j = await (await fetch(`/api/gl/${CID}/homeowner-ledgers`)).json();
-    const L = j.ledgers || [];
-    const withBal = L.filter(l=>l.balance_cents>0).length;
-    const rows = L.length ? L.map((l)=>`<tr>
-        <td>${esc(l.street_address||'—')}</td><td>${esc(l.owner_name||'—')}</td>
-        <td class="num" style="${l.balance_cents>0?'color:var(--err); font-weight:600;':'color:var(--ink-faint);'}">${fmt(l.balance_cents)}</td>
-        <td class="num">${l.max_days_past_due||0}</td></tr>`).join('')
-      : '<tr><td colspan="4" class="muted" style="padding:20px; text-align:center;">No homeowner accounts yet.</td></tr>';
+  const BUCKETS = [['current','Current'],['d1_30','1–30'],['d31_60','31–60'],['d61_90','61–90'],['d91_120','91–120'],['d120_plus','120+']];
+
+  async function renderArAging() {
+    const j = await (await fetch(`/api/gl/${CID}/ar-aging`)).json();
+    const cats = j.summary.by_category || [];
+    const sb = j.summary.by_bucket || {};
+    // Category × aging matrix (assessments / late fee / interest / certified, etc.)
+    const catRows = cats.length ? cats.map((c)=>`<tr>
+        <td>${esc(c.label)}</td>
+        ${BUCKETS.map(([k])=>`<td class="num">${c.buckets[k]?fmt(c.buckets[k]):'<span class=muted>—</span>'}</td>`).join('')}
+        <td class="num" style="font-weight:700;">${fmt(c.total)}</td></tr>`).join('')
+      : `<tr><td colspan="8" class="muted" style="padding:16px; text-align:center;">No open charges — homeowner ledgers are at zero.</td></tr>`;
+    const hoRows = (j.homeowners||[]).map((h)=>`<tr style="cursor:pointer;" onclick="arDrill('${h.property_id}','${esc((h.street_address||'').replace(/'/g,''))}')">
+        <td>${esc(h.street_address)}</td><td>${esc(h.owner_name)}</td>
+        ${BUCKETS.map(([k])=>`<td class="num">${h.buckets[k]?fmt(h.buckets[k]):''}</td>`).join('')}
+        <td class="num" style="font-weight:600;">${fmt(h.total)}</td><td class="num">${h.oldest_days}</td></tr>`).join('');
     $('body').innerHTML = `
       <div class="summary">
-        <div class="stat"><div class="v">${j.count}</div><div class="l">Homeowner accounts</div></div>
-        <div class="stat"><div class="v">${withBal}</div><div class="l">With a balance</div></div>
-        <div class="stat"><div class="v">${fmt(j.total_outstanding_cents)}</div><div class="l">Total outstanding</div></div>
+        <div class="stat"><div class="v">${fmt(j.summary.total_cents)}</div><div class="l">Total AR outstanding</div></div>
+        <div class="stat"><div class="v">${j.homeowner_count}</div><div class="l">Homeowners with a balance</div></div>
+        <div class="stat"><div class="v">${cats.length}</div><div class="l">Charge categories</div></div>
       </div>
-      <div class="card"><h2 class="sec" style="margin-bottom:10px;">Homeowner Ledgers</h2>
-      <table><thead><tr><th>Property</th><th>Owner</th><th class="num">Balance</th><th class="num">Days past due</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>`;
+      <div class="card" style="margin-bottom:16px;"><h2 class="sec" style="margin-bottom:10px;">AR by category &amp; age</h2>
+        <table><thead><tr><th>Category</th>${BUCKETS.map(([,l])=>`<th class="num">${l}</th>`).join('')}<th class="num">Total</th></tr></thead>
+        <tbody>${catRows}<tr class="total"><td>Total</td>${BUCKETS.map(([k])=>`<td class="num">${fmt(sb[k]||0)}</td>`).join('')}<td class="num">${fmt(j.summary.total_cents)}</td></tr></tbody></table>
+      </div>
+      <div class="card"><h2 class="sec" style="margin-bottom:4px;">Homeowner ledgers</h2>
+        <div class="sub" style="margin-bottom:10px;">Click a row to see every open charge for that homeowner.</div>
+        <table><thead><tr><th>Property</th><th>Owner</th>${BUCKETS.map(([,l])=>`<th class="num">${l}</th>`).join('')}<th class="num">Balance</th><th class="num">Oldest</th></tr></thead>
+        <tbody>${hoRows || `<tr><td colspan="9" class="muted" style="padding:16px; text-align:center;">No homeowner has an open balance.</td></tr>`}</tbody></table>
+      </div>
+      <div id="drill"></div>`;
   }
+
+  window.arDrill = async function(pid, label) {
+    const d = $('drill'); d.innerHTML = '<div class="muted" style="padding:14px;">Loading charges…</div>';
+    const j = await (await fetch(`/api/gl/${CID}/ar-aging/property/${pid}`)).json();
+    const rows = (j.charges||[]).map((c)=>`<tr>
+      <td>${esc(c.category)}</td><td>${esc(c.description||'')}</td>
+      <td>${esc((c.due_date||'').slice(0,10))}</td><td class="num">${c.days_past_due}</td>
+      <td class="num">${fmt(c.original_cents)}</td><td class="num" style="font-weight:600;">${fmt(c.balance_cents)}</td></tr>`).join('');
+    d.innerHTML = `<div class="card" style="margin-top:16px; border-color:var(--navy);">
+      <h2 class="sec" style="margin-bottom:10px;">${esc(label)} — open charges (${fmt(j.total_cents)})</h2>
+      <table><thead><tr><th>Category</th><th>Description</th><th>Due</th><th class="num">Days late</th><th class="num">Original</th><th class="num">Balance</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan=6 class=muted>No open charges.</td></tr>'}</tbody></table></div>`;
+    d.scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
+
+  async function renderApAging() {
+    const j = await (await fetch(`/api/gl/${CID}/ap-aging`)).json();
+    const sb = j.summary.by_bucket || {};
+    const rows = (j.vendors||[]).map((v)=>`<tr style="cursor:pointer;" onclick="apDrill('${v.vendor_id}','${esc((v.vendor_name||'').replace(/'/g,''))}')">
+      <td>${esc(v.vendor_name)}</td><td>${esc(v.category||'')}</td>
+      ${BUCKETS.map(([k])=>`<td class="num">${v.buckets[k]?fmt(v.buckets[k]):''}</td>`).join('')}
+      <td class="num" style="font-weight:600;">${fmt(v.total)}</td><td class="num">${v.oldest_days}</td></tr>`).join('');
+    $('body').innerHTML = `
+      <div class="summary">
+        <div class="stat"><div class="v">${fmt(j.summary.total_cents)}</div><div class="l">Total AP outstanding</div></div>
+        <div class="stat"><div class="v">${j.vendor_count}</div><div class="l">Vendors owed</div></div>
+      </div>
+      <div class="card"><h2 class="sec" style="margin-bottom:4px;">Vendor aging</h2>
+        <div class="sub" style="margin-bottom:10px;">Click a vendor to see their open invoices.</div>
+        <table><thead><tr><th>Vendor</th><th>Category</th>${BUCKETS.map(([,l])=>`<th class="num">${l}</th>`).join('')}<th class="num">Balance</th><th class="num">Oldest</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="9" class="muted" style="padding:16px; text-align:center;">No open vendor invoices.</td></tr>`}
+        ${j.vendor_count?`<tr class="total"><td colspan="2">Total</td>${BUCKETS.map(([k])=>`<td class="num">${fmt(sb[k]||0)}</td>`).join('')}<td class="num">${fmt(j.summary.total_cents)}</td><td></td></tr>`:''}</tbody></table>
+      </div>
+      <div id="drill"></div>`;
+  }
+
+  window.apDrill = async function(vid, label) {
+    const d = $('drill'); d.innerHTML = '<div class="muted" style="padding:14px;">Loading invoices…</div>';
+    const j = await (await fetch(`/api/gl/${CID}/ap-aging/vendor/${vid}`)).json();
+    const rows = (j.invoices||[]).map((i)=>`<tr>
+      <td>${esc(i.invoice_number||'—')}</td><td>${esc((i.invoice_date||'').slice(0,10))}</td>
+      <td>${esc((i.due_date||'').slice(0,10))}</td><td class="num">${i.days_past_due}</td>
+      <td class="num">${fmt(i.total_cents)}</td><td class="num" style="font-weight:600;">${fmt(i.balance_cents)}</td></tr>`).join('');
+    d.innerHTML = `<div class="card" style="margin-top:16px; border-color:var(--navy);">
+      <h2 class="sec" style="margin-bottom:10px;">${esc(label)} — open invoices (${fmt(j.total_cents)})</h2>
+      <table><thead><tr><th>Invoice #</th><th>Date</th><th>Due</th><th class="num">Days late</th><th class="num">Total</th><th class="num">Balance</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan=6 class=muted>No open invoices.</td></tr>'}</tbody></table></div>`;
+    d.scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
 
   async function renderCoa() {
     const j = await (await fetch(`/api/gl/${CID}/chart-of-accounts`)).json();

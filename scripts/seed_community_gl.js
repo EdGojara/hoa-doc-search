@@ -35,6 +35,8 @@ const COA = [
   ['4010', 'Assessment Income', 'revenue', 'assessment', 'credit', 'OPR'],
   ['4020', 'Late Fee Income', 'revenue', 'fee', 'credit', 'OPR'],
   ['4030', 'Interest Income', 'revenue', 'interest', 'credit', 'OPR'],
+  ['4040', 'Collection & Attorney Fee Income', 'revenue', 'fee', 'credit', 'OPR'],
+  ['4050', 'Fine Income', 'revenue', 'fee', 'credit', 'OPR'],
   ['4090', 'Other Income', 'revenue', 'other', 'credit', 'OPR'],
   // Operating — Expenses
   ['5010', 'Management Fees', 'expense', 'operating_expense', 'debit', 'OPR'],
@@ -55,10 +57,22 @@ const COA = [
 
 // AR charge types → §209.0063 payment-application priority + GL mapping.
 // gl_revenue / gl_receivable are account_numbers resolved to ids below.
+// type_code, display_name, category (§209.0063), tx_priority_step (1=highest),
+// gl_revenue account, gl_receivable account. Priority follows §209.0063 payment
+// application order: delinquent assessment → interest → collection/attorney →
+// records → other attorney → fines → other fees.
 const CHARGE_TYPES = [
-  ['assessment_regular', 'Regular Assessment', 'assessment', 1, '4010', '1200'],
-  ['interest', 'Interest', 'interest', 2, '4030', '1200'],
-  ['late_fee', 'Late Fee', 'late_fee', 7, '4020', '1200'],
+  ['assessment_regular',   'Regular Assessment',          'assessment',                      1, '4010', '1200'],
+  ['interest',             'Interest',                    'interest',                        2, '4030', '1200'],
+  ['attorney_fee_collection','Collection / Attorney Fee', 'attorney_fee_assessment_related', 3, '4040', '1200'],
+  ['records_request_fee',  'Records Request Fee',         'records_request_fee',             4, '4090', '1200'],
+  ['attorney_fee_other',   'Attorney Fee (Other)',        'attorney_fee_other',              5, '4040', '1200'],
+  ['fine',                 'Fine',                        'fine',                            6, '4050', '1200'],
+  ['late_fee',             'Late Fee',                    'late_fee',                        7, '4020', '1200'],
+  ['certified_mail_fee',   'Certified Mail Fee',          'other',                           7, '4090', '1200'],
+  ['transfer_fee',         'Transfer Fee',                'transfer_fee',                    7, '4090', '1200'],
+  ['resale_certificate_fee','Resale Certificate Fee',     'resale_certificate_fee',          7, '4090', '1200'],
+  ['nsf_fee',              'NSF / Returned Payment Fee',  'nsf_fee',                         7, '4090', '1200'],
 ];
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];

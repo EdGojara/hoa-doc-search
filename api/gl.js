@@ -134,4 +134,177 @@ router.get('/:communityId/journal-entries', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// Aging helper — days past due → bucket. Shared by AR + AP.
+// ----------------------------------------------------------------------------
+const AGING_BUCKETS = ['current', 'd1_30', 'd31_60', 'd61_90', 'd91_120', 'd120_plus'];
+function _agingBucket(dueDate, asOf) {
+  if (!dueDate) return 'current';
+  const due = Date.parse(String(dueDate).slice(0, 10));
+  const now = Date.parse(asOf);
+  if (Number.isNaN(due)) return 'current';
+  const days = Math.floor((now - due) / 86400000);
+  if (days <= 0) return 'current';
+  if (days <= 30) return 'd1_30';
+  if (days <= 60) return 'd31_60';
+  if (days <= 90) return 'd61_90';
+  if (days <= 120) return 'd91_120';
+  return 'd120_plus';
+}
+const _emptyBuckets = () => Object.fromEntries(AGING_BUCKETS.map((b) => [b, 0]));
+const _today = () => new Date().toISOString().slice(0, 10);
+
+async function _fetchAll(table, cols, filters) {
+  const out = [];
+  let from = 0;
+  while (true) {
+    let q = supabase.from(table).select(cols).range(from, from + 999);
+    for (const [k, v] of Object.entries(filters || {})) q = q.eq(k, v);
+    const { data, error } = await q;
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+    from += 1000;
+  }
+  return out;
+}
+
+// ----------------------------------------------------------------------------
+// AR aging — per homeowner, broken out by charge CATEGORY (assessment, late
+// fee, interest, certified/attorney fees, etc.) and aged by due date.
+// ----------------------------------------------------------------------------
+router.get('/:communityId/ar-aging', async (req, res) => {
+  try {
+    const cid = req.params.communityId;
+    const asOf = req.query.as_of || _today();
+    const charges = await _fetchAll('ar_charges',
+      'property_id, charge_type_id, balance_remaining_cents, due_date, status, ar_charge_types:charge_type_id(category, display_name)',
+      { community_id: cid, status: 'open' });
+    const open = charges.filter((c) => Number(c.balance_remaining_cents) > 0);
+
+    const categories = new Set();
+    const byCategory = {};       // category -> { label, total, buckets }
+    const byProp = {};           // property_id -> { total, by_category{}, buckets, oldest_days }
+    let grandTotal = 0;
+    const totalBuckets = _emptyBuckets();
+
+    for (const c of open) {
+      const cat = (c.ar_charge_types && c.ar_charge_types.category) || 'other';
+      const label = (c.ar_charge_types && c.ar_charge_types.display_name) || cat;
+      const bal = Number(c.balance_remaining_cents);
+      const bucket = _agingBucket(c.due_date, asOf);
+      categories.add(cat);
+      grandTotal += bal;
+      totalBuckets[bucket] += bal;
+
+      if (!byCategory[cat]) byCategory[cat] = { category: cat, label, total: 0, buckets: _emptyBuckets() };
+      byCategory[cat].total += bal; byCategory[cat].buckets[bucket] += bal;
+
+      if (!byProp[c.property_id]) byProp[c.property_id] = { property_id: c.property_id, total: 0, by_category: {}, buckets: _emptyBuckets(), oldest_days: 0 };
+      const p = byProp[c.property_id];
+      p.total += bal; p.by_category[cat] = (p.by_category[cat] || 0) + bal; p.buckets[bucket] += bal;
+      const days = Math.max(0, Math.floor((Date.parse(asOf) - Date.parse(String(c.due_date).slice(0, 10))) / 86400000));
+      if (days > p.oldest_days) p.oldest_days = days;
+    }
+
+    // Join property addresses + owner names.
+    const owners = await _fetchAll('v_current_property_owners', 'property_id, street_address, owner_name', { community_id: cid });
+    const ownerByProp = Object.fromEntries(owners.map((o) => [o.property_id, o]));
+    const homeowners = Object.values(byProp).map((p) => ({
+      ...p,
+      street_address: (ownerByProp[p.property_id] || {}).street_address || '—',
+      owner_name: (ownerByProp[p.property_id] || {}).owner_name || '—',
+    })).sort((a, b) => b.total - a.total);
+
+    res.json({
+      as_of: asOf,
+      categories: [...categories],
+      summary: { total_cents: grandTotal, by_bucket: totalBuckets, by_category: Object.values(byCategory).sort((a, b) => b.total - a.total) },
+      homeowners,
+      homeowner_count: homeowners.length,
+    });
+  } catch (err) {
+    console.error('[gl] ar-aging failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// AR drill-down — every open charge for one property, by category, with age.
+router.get('/:communityId/ar-aging/property/:propertyId', async (req, res) => {
+  try {
+    const asOf = req.query.as_of || _today();
+    const charges = await _fetchAll('ar_charges',
+      'id, charge_date, due_date, description, original_amount_cents, balance_remaining_cents, ar_charge_types:charge_type_id(category, display_name)',
+      { community_id: req.params.communityId, property_id: req.params.propertyId, status: 'open' });
+    const rows = charges.filter((c) => Number(c.balance_remaining_cents) > 0).map((c) => ({
+      charge_date: c.charge_date, due_date: c.due_date, description: c.description,
+      category: (c.ar_charge_types && c.ar_charge_types.display_name) || 'other',
+      original_cents: Number(c.original_amount_cents), balance_cents: Number(c.balance_remaining_cents),
+      days_past_due: Math.max(0, Math.floor((Date.parse(asOf) - Date.parse(String(c.due_date).slice(0, 10))) / 86400000)),
+      bucket: _agingBucket(c.due_date, asOf),
+    })).sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
+    res.json({ charges: rows, total_cents: rows.reduce((s, r) => s + r.balance_cents, 0) });
+  } catch (err) {
+    console.error('[gl] ar-aging property failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// AP aging — open vendor invoices grouped by vendor, aged by due date.
+// ----------------------------------------------------------------------------
+router.get('/:communityId/ap-aging', async (req, res) => {
+  try {
+    const cid = req.params.communityId;
+    const asOf = req.query.as_of || _today();
+    const invoices = await _fetchAll('ap_invoices',
+      'vendor_id, total_cents, amount_paid_cents, due_date, status, vendors:vendor_id(name, category)',
+      { community_id: cid });
+    const open = invoices.filter((i) => (Number(i.total_cents) - Number(i.amount_paid_cents)) > 0 && !['paid', 'voided'].includes(i.status));
+
+    const byVendor = {};
+    let grandTotal = 0;
+    const totalBuckets = _emptyBuckets();
+    for (const i of open) {
+      const bal = Number(i.total_cents) - Number(i.amount_paid_cents);
+      const bucket = _agingBucket(i.due_date, asOf);
+      const vid = i.vendor_id;
+      grandTotal += bal; totalBuckets[bucket] += bal;
+      if (!byVendor[vid]) byVendor[vid] = { vendor_id: vid, vendor_name: (i.vendors && i.vendors.name) || '—', category: (i.vendors && i.vendors.category) || null, total: 0, open_count: 0, buckets: _emptyBuckets(), oldest_days: 0 };
+      const v = byVendor[vid];
+      v.total += bal; v.open_count += 1; v.buckets[bucket] += bal;
+      const days = Math.max(0, Math.floor((Date.parse(asOf) - Date.parse(String(i.due_date || '').slice(0, 10))) / 86400000));
+      if (days > v.oldest_days) v.oldest_days = days;
+    }
+    res.json({
+      as_of: asOf,
+      summary: { total_cents: grandTotal, by_bucket: totalBuckets },
+      vendors: Object.values(byVendor).sort((a, b) => b.total - a.total),
+      vendor_count: Object.keys(byVendor).length,
+    });
+  } catch (err) {
+    console.error('[gl] ap-aging failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.get('/:communityId/ap-aging/vendor/:vendorId', async (req, res) => {
+  try {
+    const asOf = req.query.as_of || _today();
+    const invoices = await _fetchAll('ap_invoices',
+      'id, vendor_invoice_number, invoice_date, due_date, total_cents, amount_paid_cents, status',
+      { community_id: req.params.communityId, vendor_id: req.params.vendorId });
+    const rows = invoices.filter((i) => (Number(i.total_cents) - Number(i.amount_paid_cents)) > 0 && !['paid', 'voided'].includes(i.status)).map((i) => ({
+      invoice_number: i.vendor_invoice_number, invoice_date: i.invoice_date, due_date: i.due_date,
+      total_cents: Number(i.total_cents), balance_cents: Number(i.total_cents) - Number(i.amount_paid_cents),
+      days_past_due: Math.max(0, Math.floor((Date.parse(asOf) - Date.parse(String(i.due_date || '').slice(0, 10))) / 86400000)),
+      bucket: _agingBucket(i.due_date, asOf),
+    })).sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
+    res.json({ invoices: rows, total_cents: rows.reduce((s, r) => s + r.balance_cents, 0) });
+  } catch (err) {
+    console.error('[gl] ap-aging vendor failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = router;
