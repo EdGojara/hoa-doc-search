@@ -43,6 +43,7 @@
     <div class="tab active" data-v="trial">Trial Balance</div>
     <div class="tab" data-v="ar">AR Aging — Homeowners</div>
     <div class="tab" data-v="ap">AP Aging — Vendors</div>
+    <div class="tab" data-v="bankrec">Bank Rec</div>
     <div class="tab" data-v="coa">Chart of Accounts</div>
     <div class="tab" data-v="je">Journal Entries</div>
   </div>
@@ -73,6 +74,7 @@
       if (VIEW==='trial') return renderTrial();
       if (VIEW==='ar') return renderArAging();
       if (VIEW==='ap') return renderApAging();
+      if (VIEW==='bankrec') return renderBankRec();
       if (VIEW==='coa') return renderCoa();
       if (VIEW==='je') return renderJe();
     } catch (e) { $('body').innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load: '+esc(e.message)+'</div>'; }
@@ -264,6 +266,55 @@
       <h2 class="sec" style="margin-bottom:10px;">${esc(label)} — open invoices (${fmt(j.total_cents)})</h2>
       <table><thead><tr><th>Invoice #</th><th>Date</th><th>Due</th><th class="num">Days late</th><th class="num">Total</th><th class="num">Balance</th></tr></thead>
       <tbody>${rows||'<tr><td colspan=6 class=muted>No open invoices.</td></tr>'}</tbody></table></div>`;
+    d.scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
+
+  // -------- BANK RECONCILIATION --------
+  const fmtDate = (d) => d ? new Date(d+'T00:00:00').toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}) : '—';
+  async function renderBankRec() {
+    const j = await (await fetch(`/api/bank-rec/reconciliations?community_id=${CID}&limit=200`)).json();
+    const recs = (j.reconciliations||[]).sort((a,b)=> (b.period_end||'').localeCompare(a.period_end||'') || ((a.bank_accounts||{}).account_nickname||'').localeCompare((b.bank_accounts||{}).account_nickname||''));
+    if (!recs.length) { $('body').innerHTML = '<div class="card muted" style="padding:24px;">No bank reconciliations imported yet.</div>'; return; }
+    const unbalanced = recs.filter((r)=>r.status==='unbalanced').length;
+    const rows = recs.map((r)=>{
+      const ba = r.bank_accounts||{}; const bal = r.status==='reconciled';
+      return `<tr style="cursor:pointer; ${bal?'':'background:#fff7ed;'}" onclick="bankRecDrill('${r.id}','${esc((ba.account_nickname||'')+' · '+fmtDate(r.period_end))}')">
+        <td>${esc(fmtDate(r.period_end))}</td><td>${esc(ba.account_nickname||'—')}</td>
+        <td class="num">${fmt(r.bank_ending_balance_cents)}</td>
+        <td class="num" style="color:#047857;">${r.deposits_in_transit_total_cents?'+'+fmt(r.deposits_in_transit_total_cents):''}</td>
+        <td class="num" style="color:#b91c1c;">${r.outstanding_checks_total_cents?'−'+fmt(r.outstanding_checks_total_cents):''}</td>
+        <td class="num" style="font-weight:600;">${fmt(r.reconciled_balance_cents)}</td>
+        <td class="num">${fmt(r.gl_ending_balance_cents)}</td>
+        <td class="num" style="font-weight:700; color:${bal?'#047857':'#b91c1c'};">${r.difference_cents?fmt(r.difference_cents):'$0.00'}</td>
+        <td>${bal?'<span style="color:#047857; font-weight:700; font-size:12px;">✓ Balanced</span>':'<span style="color:#b91c1c; font-weight:700; font-size:12px;">⚠ Out of balance</span>'}</td></tr>`;
+    }).join('');
+    $('body').innerHTML = `
+      <div class="summary">
+        <div class="stat"><div class="v">${recs.length}</div><div class="l">Reconciliations on file</div></div>
+        <div class="stat"><div class="v" style="${unbalanced?'color:#b91c1c;':''}">${unbalanced}</div><div class="l">Out of balance (Vantaca)</div></div>
+      </div>
+      <div class="card"><h2 class="sec" style="margin-bottom:4px;">Bank reconciliations by period</h2>
+        <div class="sub" style="margin-bottom:10px;">Bank balance + deposits in transit − outstanding checks = adjusted balance, compared to the GL book balance. Click a row for the uncleared items. Out-of-balance rows are Vantaca's own rec not tying — flagged for review.</div>
+        <table><thead><tr><th>Period</th><th>Account</th><th class="num">Bank Bal.</th><th class="num">+ In Transit</th><th class="num">− Outstanding</th><th class="num">Adj. Balance</th><th class="num">Book (GL)</th><th class="num">Difference</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      </div>
+      <div id="drill"></div>`;
+  }
+
+  window.bankRecDrill = async function(id, label) {
+    const d = $('drill'); d.innerHTML = '<div class="muted" style="padding:14px;">Loading items…</div>';
+    const j = await (await fetch(`/api/bank-rec/reconciliations/${id}`)).json();
+    const items = (j.items||[]).sort((a,b)=>(a.date_ref||'').localeCompare(b.date_ref||''));
+    const rows = items.map((i)=>`<tr>
+      <td>${esc(fmtDate((i.date_ref||'').slice(0,10)))}</td><td>${esc(i.description||'')}</td>
+      <td>${esc(i.check_number||'')}</td>
+      <td>${i.category==='deposit_in_transit'?'<span style="color:#047857; font-size:11px; font-weight:700;">IN TRANSIT</span>':'<span style="color:#b91c1c; font-size:11px; font-weight:700;">OUTSTANDING</span>'}</td>
+      <td class="num" style="font-weight:600;">${fmt(i.amount_cents)}</td></tr>`).join('');
+    const total = items.reduce((sum,i)=>sum+Number(i.amount_cents||0),0);
+    d.innerHTML = `<div class="card" style="margin-top:16px; border-color:var(--navy);">
+      <h2 class="sec" style="margin-bottom:10px;">${esc(label)} — uncleared items (net ${fmt(total)})</h2>
+      <table><thead><tr><th>Date</th><th>Description</th><th>Check #</th><th>Type</th><th class="num">Amount</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan=5 class=muted>No uncleared items — fully cleared.</td></tr>'}</tbody></table></div>`;
     d.scrollIntoView({behavior:'smooth', block:'nearest'});
   };
 
