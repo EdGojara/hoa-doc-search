@@ -29239,6 +29239,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     acc:                { label: 'ACC',                 icon: '🏗️', group: 'Architectural', note: 'Resident applications',              action: () => { if (typeof setAccMode === 'function') setAccMode('review'); else switchTab('acc'); } },
     owner_ar:           { label: 'Owner AR',            icon: '💵', group: 'Financial',  note: 'Receivables · delinquencies',         action: () => switchTab('ownerar') },
     financial:          { label: 'Financial Review',    icon: '📊', group: 'Financial',  note: 'BS · IS · variance',                  action: () => switchTab('finrev') },
+    accounting:         { label: 'Accounting',          icon: '📒', group: 'Financial',  note: 'GL · AR · statements · bank rec',      action: () => { location.href = '/admin/accounting'; } },
     docs:               { label: 'Documents',           icon: '🗂️', group: 'Library',    note: 'Community library · search',          action: () => switchTab('docs') },
     // NOTE on grouped tabs: Meetings / Vendors / Community Profile / Bedrock
     // Office are top-nav GROUPS (data-group="..."), opened via openTabGroup,

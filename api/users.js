@@ -129,6 +129,7 @@ const HOME_TILE_CATALOG = new Set([
   'builder_arc', 'acc', 'owner_ar', 'docs', 'meetings', 'events',
   'vendor', 'community_profile', 'bedrock_office', 'forms_applications',
   'financial', 'board_packets', 'calendar', 'performance', 'quick',
+  'accounting',
 ]);
 
 router.patch('/me/preferences', express.json({ limit: '8kb' }), async (req, res) => {
