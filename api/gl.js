@@ -229,11 +229,21 @@ router.get('/:communityId/ar-aging', async (req, res) => {
     const collectionSummary = {};
     for (const h of homeowners) { if (h.collection_status && h.collection_status !== 'none') collectionSummary[h.collection_status] = (collectionSummary[h.collection_status] || 0) + 1; }
 
+    // Former-owner balances — money owed to/by people who left. Surfaced so a
+    // stranded balance can't hide. Defensive against the pre-migration window.
+    let formerOwners = [];
+    try {
+      const fo = await _fetchAll('former_owner_balances', 'vantaca_account_id, owner_name, property_address, balance_cents, kind, status, gl_account_number, notes', { community_id: cid, status: 'open' });
+      formerOwners = fo.sort((a, b) => Math.abs(Number(b.balance_cents)) - Math.abs(Number(a.balance_cents)));
+    } catch (e) { console.warn('[gl] former_owner_balances not ready:', e.message); }
+
     res.json({
       as_of: asOf,
       categories: [...categories],
       summary: { total_cents: grandTotal, by_bucket: totalBuckets, by_category: Object.values(byCategory).sort((a, b) => b.total - a.total) },
       collection_summary: collectionSummary,
+      former_owners: formerOwners,
+      former_owners_total_cents: formerOwners.reduce((s, f) => s + Number(f.balance_cents), 0),
       homeowners,
       homeowner_count: homeowners.length,
     });

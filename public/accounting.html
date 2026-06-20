@@ -120,6 +120,28 @@
   const collBadge = (st) => { const c = COLL[st] || COLL.none; return st && st !== 'none'
     ? `<span style="display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; color:${c[1]}; background:${c[2]};">${c[0]}</span>` : ''; };
 
+  // Former owners — people who left a balance behind (refund owed, or money owed to HOA).
+  function renderFormerOwners(j) {
+    const fo = j.former_owners || [];
+    if (!fo.length) return '';
+    const total = j.former_owners_total_cents || 0;
+    const rows = fo.map((o)=>{
+      const owes = Number(o.balance_cents) > 0; // + = they owe HOA, - = HOA owes them
+      return `<tr>
+        <td style="font-family:ui-monospace,monospace; color:#5a7390;">${esc(o.vantaca_account_id||'')}</td>
+        <td>${esc(o.owner_name||'—')}</td><td class="muted">${esc(o.property_address||'')}</td>
+        <td>${owes?'<span style="color:#b91c1c; font-size:11px; font-weight:700;">OWES HOA</span>':'<span style="color:#9a3412; font-size:11px; font-weight:700;">REFUND OWED</span>'}</td>
+        <td>${esc(o.gl_account_number||'')}</td>
+        <td class="num" style="font-weight:600;">${fmt(Math.abs(Number(o.balance_cents)))}</td></tr>`;
+    }).join('');
+    return `<div class="card" style="margin-bottom:16px; border-color:#f59e0b; background:#fffbeb;">
+      <h2 class="sec" style="margin-bottom:4px; color:#92400e;">⚑ Former owners — ${fmt(Math.abs(total))} stranded</h2>
+      <div class="sub" style="margin-bottom:10px;">Accounts of owners who have left but still carry a balance. A refund owed should be paid out or escheated; a balance owed to the HOA is a write-off / collection question. These are NOT current homeowners and sit outside the homeowner ledgers below.</div>
+      <table><thead><tr><th>Acct</th><th>Former owner</th><th>Lot</th><th>Type</th><th>GL</th><th class="num">Amount</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </div>`;
+  }
+
   async function renderArAging() {
     const j = await (await fetch(`/api/gl/${CID}/ar-aging`)).json();
     const cats = j.summary.by_category || [];
@@ -149,6 +171,7 @@
         <table><thead><tr><th>Category</th>${BUCKETS.map(([,l])=>`<th class="num">${l}</th>`).join('')}<th class="num">Total</th></tr></thead>
         <tbody>${catRows}<tr class="total"><td>Total</td>${BUCKETS.map(([k])=>`<td class="num">${fmt(sb[k]||0)}</td>`).join('')}<td class="num">${fmt(j.summary.total_cents)}</td></tr></tbody></table>
       </div>
+      ${renderFormerOwners(j)}
       <div class="card"><h2 class="sec" style="margin-bottom:4px;">Homeowner ledgers</h2>
         <div class="sub" style="margin-bottom:10px;">Click a row to see every open charge for that homeowner.</div>
         ${csChips}
