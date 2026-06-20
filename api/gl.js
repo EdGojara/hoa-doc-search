@@ -382,7 +382,7 @@ router.get('/:communityId/owners/:propertyId/statement', async (req, res) => {
     const { renderStatementHTML } = require('../lib/accounting/homeowner_statement');
     const puppeteer = require('puppeteer');
 
-    const { data: comm } = await supabase.from('communities').select('name').eq('id', cid).maybeSingle();
+    const { data: comm } = await supabase.from('communities').select('name, legal_name').eq('id', cid).maybeSingle();
     const owner = (await _fetchAll('v_current_property_owners', '*', { community_id: cid, property_id: pid }))[0] || {};
     const charges = (await _fetchAll('ar_charges',
       'due_date, charge_date, balance_remaining_cents, ar_charge_types:charge_type_id(display_name)',
@@ -400,9 +400,9 @@ router.get('/:communityId/owners/:propertyId/statement', async (req, res) => {
     } catch (e) { /* ledger not loaded */ }
 
     const html = renderStatementHTML({
-      owner, communityName: comm ? comm.name : '', statementDate: asOf, total_cents: total,
+      owner, communityName: comm ? (comm.legal_name || comm.name) : '', statementDate: asOf, total_cents: total,
       by_category: Object.entries(byCategory).map(([category, cents]) => ({ category, cents })).sort((a, b) => b.cents - a.cents),
-      buckets, ledger, ledgerThrough: ledger.length ? ledger[ledger.length - 1].entry_date : null,
+      buckets, ledger, ledgerThrough: asOf,
     });
 
     const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
