@@ -375,6 +375,53 @@ router.get('/:communityId/owners/:propertyId/account', async (req, res) => {
   }
 });
 
+// Homeowner statement — branded PDF rendered from the account + ledger.
+router.get('/:communityId/owners/:propertyId/statement', async (req, res) => {
+  try {
+    const cid = req.params.communityId, pid = req.params.propertyId, asOf = _today();
+    const { renderStatementHTML } = require('../lib/accounting/homeowner_statement');
+    const puppeteer = require('puppeteer');
+
+    const { data: comm } = await supabase.from('communities').select('name').eq('id', cid).maybeSingle();
+    const owner = (await _fetchAll('v_current_property_owners', '*', { community_id: cid, property_id: pid }))[0] || {};
+    const charges = (await _fetchAll('ar_charges',
+      'due_date, charge_date, balance_remaining_cents, ar_charge_types:charge_type_id(display_name)',
+      { community_id: cid, property_id: pid, status: 'open' })).filter((c) => Number(c.balance_remaining_cents) > 0);
+    const byCategory = {}; const buckets = _emptyBuckets(); let total = 0;
+    for (const c of charges) {
+      const cat = (c.ar_charge_types && c.ar_charge_types.display_name) || 'Other';
+      const bal = Number(c.balance_remaining_cents);
+      total += bal; buckets[_agingBucket(c.due_date, asOf)] += bal; byCategory[cat] = (byCategory[cat] || 0) + bal;
+    }
+    let ledger = [];
+    try {
+      ledger = await _fetchAll('homeowner_ledger_entries', 'entry_date, description, charge_cents, payment_cents, running_balance_cents, sort_seq', { community_id: cid, property_id: pid });
+      ledger.sort((a, b) => (a.entry_date || '').localeCompare(b.entry_date || '') || (a.sort_seq - b.sort_seq));
+    } catch (e) { /* ledger not loaded */ }
+
+    const html = renderStatementHTML({
+      owner, communityName: comm ? comm.name : '', statementDate: asOf, total_cents: total,
+      by_category: Object.entries(byCategory).map(([category, cents]) => ({ category, cents })).sort((a, b) => b.cents - a.cents),
+      buckets, ledger, ledgerThrough: ledger.length ? ledger[ledger.length - 1].entry_date : null,
+    });
+
+    const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+      const pdf = await page.pdf({ format: 'Letter', printBackground: true, margin: { top: 0, right: 0, bottom: 0, left: 0 }, preferCSSPageSize: true });
+      const safe = (owner.street_address || 'statement').replace(/[^a-zA-Z0-9]+/g, '-');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `${req.query.inline === '1' ? 'inline' : 'attachment'}; filename="Statement-${safe}-${asOf}.pdf"`);
+      res.setHeader('Cache-Control', 'no-store');
+      res.end(Buffer.from(pdf));
+    } finally { await browser.close(); }
+  } catch (err) {
+    console.error('[gl] statement failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // ----------------------------------------------------------------------------
 // AP aging — open vendor invoices grouped by vendor, aged by due date.
 // ----------------------------------------------------------------------------

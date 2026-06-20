@@ -347,7 +347,7 @@
         </div>
         <div style="text-align:right;"><div class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:.5px;">Current balance</div>
           <div style="font-size:26px; font-weight:800; color:${j.total_cents>0?'#b91c1c':'#047857'};">${fmt(j.total_cents)}</div>
-          <button class="secondary-btn" style="margin-top:6px; font-size:12px; padding:5px 12px; opacity:.6; cursor:not-allowed;" title="Statement generation coming next">📄 Statement (soon)</button>
+          <button class="secondary-btn" style="margin-top:6px; font-size:12px; padding:5px 12px; cursor:pointer;" onclick="window.open('/api/gl/${CID}/owners/${o.property_id}/statement?inline=1','_blank')">📄 View statement</button>
         </div>
       </div>
       ${bk}
