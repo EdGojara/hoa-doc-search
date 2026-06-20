@@ -209,7 +209,7 @@ router.post('/reconciliations/:id/bank-statement', upload.single('file'), async 
     const safeName = (req.file.originalname || 'bank-statement.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
     const storagePath = `bank-statements/${rec.community_id}/${sha.slice(0, 12)}-${safeName}`;
     try {
-      await supabase.storage.from('library').upload(storagePath, req.file.buffer, {
+      await supabase.storage.from('documents').upload(storagePath, req.file.buffer, {
         contentType: req.file.mimetype, upsert: false,
       });
     } catch (e) { /* non-fatal */ }

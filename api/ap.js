@@ -202,7 +202,7 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
     const safeName = (req.file.originalname || 'invoice.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
     const storagePath = `ap-invoices/${sha.slice(0, 12)}-${safeName}`;
     try {
-      await supabase.storage.from('library').upload(storagePath, fileBuffer, {
+      await supabase.storage.from('documents').upload(storagePath, fileBuffer, {
         contentType: 'application/pdf', upsert: false,
       });
     } catch (_) { /* non-fatal — may already exist */ }
