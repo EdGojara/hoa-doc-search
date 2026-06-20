@@ -187,7 +187,10 @@ function catToType(cat) {
   if (!APPLY) { console.log('\nDRY RUN — pass --apply to rebuild the subledger.'); return; }
 
   // ---- 4) replace prior migration rows --------------------------------------
-  await s.from('ar_payments').delete().eq('community_id', CID).eq('source', 'vantaca_migration');
+  // Only AR unapplied credits (source_reference NULL); prepaid-2400 credits are
+  // owned by populate_quail_ridge_prepaids.js (source_reference='prepaid_2400')
+  // and must survive an AR rebuild.
+  await s.from('ar_payments').delete().eq('community_id', CID).eq('source', 'vantaca_migration').is('source_reference', null);
   await s.from('ar_charges').delete().eq('community_id', CID).eq('source_module', 'vantaca_migration');
   for (let i = 0; i < chargeRows.length; i += 200) { const { error } = await s.from('ar_charges').insert(chargeRows.slice(i, i + 200)); if (error) { console.error('charge insert failed:', error.message); process.exit(1); } }
   if (creditRows.length) { const { error } = await s.from('ar_payments').insert(creditRows); if (error) console.warn('credit insert failed:', error.message); }
