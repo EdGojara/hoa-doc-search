@@ -22,12 +22,25 @@
 // ============================================================================
 require('dotenv').config();
 const XLSX = require('xlsx');
+const fs = require('fs');
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
+const { extract: extractBankStatement } = require('../lib/banking/extractors/bank_statement');
 const s = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const APPLY = process.argv.includes('--apply');
 const CID = 'a0000000-0000-4000-8000-000000000005';
 const FILES = ['BankReconciliation.xls', 'BankReconciliation (1).xls', 'BankReconciliation (2).xls', 'BankReconciliation (3).xls', 'BankReconciliation (4).xls'];
 const DIR = 'C:/Users/edget/Downloads/';
+// First Citizens operating-account (-4536) statements, by period end. The
+// statement ending balance ties to each rec's Bank Balance (verified).
+const STMT_FILES = {
+  '2025-12-31': '12-2025 First Citizens Bank Statement - 4536.pdf',
+  '2026-01-31': '01-2026 First Citizens Bank Statement - 4536.pdf',
+  '2026-02-28': '02-2026 First Citizens Bank Statement - 4536.pdf',
+  '2026-03-31': '03-2026 First Citizens Bank Statement - 4536.pdf',
+  '2026-04-30': '04-2026 First Citizens Bank Statement - 4536.pdf',
+  '2026-05-31': '05-2026 First Citizens Bank Statement - 4536.pdf',
+};
 
 const D = (d) => Math.round(d * 100);
 const num = (v) => { let t = String(v || '').trim(); if (t === '-' || t === '') return 0; const neg = /^-/.test(t) || /^\(.*\)$/.test(t); t = t.replace(/[^0-9.]/g, ''); const n = parseFloat(t) || 0; return neg ? -n : n; };
@@ -147,4 +160,44 @@ function parseRecFile(file) {
     }
   }
   console.log(`\nImported ${recCount} reconciliations + ${itemCount} uncleared items across ${periods.length} periods.`);
+
+  // 4) Bank statements (operating account, -4536) — the third leg. Extract via
+  // Claude PDF-binary, store summary + transactions, link to the period's rec.
+  const operatingBaId = baByLast4['4536'];
+  // idempotent: clear prior statement imports for these periods (tx cascade).
+  await s.from('bank_statement_imports').delete().eq('community_id', CID).eq('bank_account_id', operatingBaId).in('statement_period_end', Object.keys(STMT_FILES));
+  // re-fetch recs so we can link by period.
+  const { data: recsForLink } = await s.from('bank_reconciliations').select('id, period_end').eq('community_id', CID).eq('bank_account_id', operatingBaId);
+  const recByPeriod = Object.fromEntries((recsForLink || []).map((r) => [String(r.period_end).slice(0, 10), r.id]));
+
+  let stmtCount = 0, stmtTx = 0;
+  for (const [periodEnd, file] of Object.entries(STMT_FILES)) {
+    const path = DIR + file;
+    if (!fs.existsSync(path)) { console.warn('  statement missing:', file); continue; }
+    const buf = fs.readFileSync(path);
+    const sha = crypto.createHash('sha256').update(buf).digest('hex');
+    let ext;
+    try { ext = await extractBankStatement(buf, 'application/pdf', file); }
+    catch (e) { console.error(`  statement extract failed (${file}):`, e.message); continue; }
+    const { data: bsi, error: bsiErr } = await s.from('bank_statement_imports').insert({
+      management_company_id: mc, community_id: CID, bank_account_id: operatingBaId,
+      statement_period_start: ext.period_start || null, statement_period_end: ext.period_end || periodEnd,
+      beginning_balance_cents: ext.beginning_balance_cents ?? null, ending_balance_cents: ext.ending_balance_cents ?? null,
+      total_deposits_cents: ext.total_deposits_cents ?? null, total_withdrawals_cents: ext.total_withdrawals_cents ?? null,
+      total_fees_cents: ext.total_fees_cents ?? null, total_interest_cents: ext.total_interest_cents ?? null,
+      source_filename: file, source_sha256: sha, source_file_mime: 'application/pdf',
+      extraction_raw: ext, extraction_warnings: ext.warnings || [], status: 'completed',
+    }).select('id').single();
+    if (bsiErr) { console.error(`  statement insert failed (${file}):`, bsiErr.message); continue; }
+    stmtCount++;
+    const txRows = (ext.transactions || []).filter((t) => t.posting_date && t.amount_cents != null).map((t) => ({
+      bank_statement_import_id: bsi.id, posting_date: t.posting_date, amount_cents: t.amount_cents,
+      description: t.description || null, check_number: t.check_number || null, transaction_type: t.transaction_type || 'other',
+    }));
+    if (txRows.length) { const { error } = await s.from('bank_statement_transactions').insert(txRows); if (error) console.warn('  tx insert failed:', error.message); else stmtTx += txRows.length; }
+    // link to the rec for this period (if one exists)
+    if (recByPeriod[periodEnd]) await s.from('bank_reconciliations').update({ bank_statement_import_id: bsi.id }).eq('id', recByPeriod[periodEnd]);
+    console.log(`  ${periodEnd}: ${file} — ending ${(ext.ending_balance_cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}, ${txRows.length} txns${recByPeriod[periodEnd] ? ' (linked)' : ' (no rec)'}`);
+  }
+  console.log(`\nImported ${stmtCount} bank statements + ${stmtTx} statement transactions.`);
 })().catch((e) => { console.error(e.message); process.exit(1); });
