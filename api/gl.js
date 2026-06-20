@@ -350,6 +350,57 @@ router.get('/:communityId/ap-aging/vendor/:vendorId', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// Subledger tie-out — every control account must equal its subledger detail.
+// A non-zero difference is a RED FLAG: the GL and the supporting detail have
+// drifted (a posting hit one but not the other). This is the standing integrity
+// check that makes trustEd trustworthy as the book of record.
+// ----------------------------------------------------------------------------
+router.get('/:communityId/tie-out', async (req, res) => {
+  try {
+    const cid = req.params.communityId;
+    const tb = await _fetchAll('v_trial_balance', 'account_number, total_debits_cents, total_credits_cents', { community_id: cid });
+    // GL balance in the account's natural direction (debit-normal => Dr-Cr).
+    const glMag = (acct, normal) => {
+      const a = tb.find((x) => x.account_number === acct);
+      if (!a) return null;
+      const deb = Number(a.total_debits_cents), cr = Number(a.total_credits_cents);
+      return normal === 'debit' ? deb - cr : cr - deb;
+    };
+    // Subledger totals.
+    const arCharges = (await _fetchAll('ar_charges', 'balance_remaining_cents', { community_id: cid, status: 'open' }))
+      .reduce((a, r) => a + Number(r.balance_remaining_cents), 0);
+    const ownerCredits = (await _fetchAll('ar_payments', 'unapplied_balance_cents', { community_id: cid }))
+      .reduce((a, r) => a + Number(r.unapplied_balance_cents || 0), 0);
+    const apInv = await _fetchAll('ap_invoices', 'total_cents, amount_paid_cents, status', { community_id: cid });
+    const apOpen = apInv.filter((i) => !['paid', 'voided'].includes(i.status))
+      .reduce((a, i) => a + (Number(i.total_cents) - Number(i.amount_paid_cents)), 0);
+
+    // control account, its normal side, and the subledger it must equal.
+    const defs = [
+      { account: '1300', label: 'Accounts Receivable', normal: 'debit', subledger: 'Homeowner charges', sub: arCharges },
+      { account: '2000', label: 'Accounts Payable', normal: 'credit', subledger: 'Open vendor invoices', sub: apOpen },
+      { account: '2400', label: 'Prepaid Owner Assessments', normal: 'credit', subledger: 'Unapplied owner credits', sub: ownerCredits },
+    ];
+    const controls = defs.map((d) => {
+      const gl = glMag(d.account, d.normal);
+      const monitored = gl !== null;
+      const difference = monitored ? gl - d.sub : null;
+      return {
+        account: d.account, label: d.label, subledger: d.subledger,
+        gl_balance_cents: gl, subledger_balance_cents: d.sub,
+        difference_cents: difference,
+        status: !monitored ? 'no_gl_account' : (Math.abs(difference) < 1 ? 'tied' : 'broken'),
+      };
+    });
+    const broken = controls.filter((c) => c.status === 'broken');
+    res.json({ as_of: _today(), all_tied: broken.length === 0, broken_count: broken.length, controls });
+  } catch (err) {
+    console.error('[gl] tie-out failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // Collections — set/update an account's collection status + bankruptcy data.
 // The pre/post-petition ledger split (in the property drill-down) activates
 // automatically once bankruptcy_petition_date is set.

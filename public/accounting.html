@@ -41,6 +41,7 @@
 <div class="wrap">
   <div class="tabs" id="tabs">
     <div class="tab active" data-v="trial">Trial Balance</div>
+    <div class="tab" data-v="tieout">Tie-Out</div>
     <div class="tab" data-v="ar">AR Aging — Homeowners</div>
     <div class="tab" data-v="ap">AP Aging — Vendors</div>
     <div class="tab" data-v="bankrec">Bank Rec</div>
@@ -72,6 +73,7 @@
     $('body').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
     try {
       if (VIEW==='trial') return renderTrial();
+      if (VIEW==='tieout') return renderTieOut();
       if (VIEW==='ar') return renderArAging();
       if (VIEW==='ap') return renderApAging();
       if (VIEW==='bankrec') return renderBankRec();
@@ -268,6 +270,36 @@
       <tbody>${rows||'<tr><td colspan=6 class=muted>No open invoices.</td></tr>'}</tbody></table></div>`;
     d.scrollIntoView({behavior:'smooth', block:'nearest'});
   };
+
+  // -------- SUBLEDGER TIE-OUT (control-account integrity) --------
+  async function renderTieOut() {
+    const j = await (await fetch(`/api/gl/${CID}/tie-out`)).json();
+    const controls = j.controls || [];
+    const rows = controls.map((c)=>{
+      const broken = c.status==='broken';
+      const tied = c.status==='tied';
+      const badge = broken ? '<span style="color:#b91c1c; font-weight:700;">⚠ OUT OF BALANCE</span>'
+        : tied ? '<span style="color:#047857; font-weight:700;">✓ Tied</span>'
+        : '<span class="muted">no GL account</span>';
+      return `<tr style="${broken?'background:#fef2f2;':''}">
+        <td style="font-family:ui-monospace,monospace; color:#5a7390;">${esc(c.account)}</td>
+        <td>${esc(c.label)}</td><td class="muted" style="font-size:12px;">${esc(c.subledger)}</td>
+        <td class="num">${fmt(c.gl_balance_cents)}</td>
+        <td class="num">${fmt(c.subledger_balance_cents)}</td>
+        <td class="num" style="font-weight:700; color:${broken?'#b91c1c':'#047857'};">${c.difference_cents==null?'—':fmt(c.difference_cents)}</td>
+        <td>${badge}</td></tr>`;
+    }).join('');
+    const banner = j.all_tied
+      ? `<div style="padding:14px 18px; background:#dcfce7; border:1px solid #86efac; border-radius:8px; color:#166534; font-weight:700; font-size:15px;">✓ All control accounts tie to their subledgers.</div>`
+      : `<div style="padding:14px 18px; background:#fee2e2; border:1px solid #fca5a5; border-radius:8px; color:#991b1b; font-weight:700; font-size:15px;">⚠ ${j.broken_count} control account${j.broken_count>1?'s are':' is'} out of balance with its subledger — investigate before closing the period.</div>`;
+    $('body').innerHTML = `
+      <div style="margin-bottom:16px;">${banner}</div>
+      <div class="card"><h2 class="sec" style="margin-bottom:4px;">Control-account tie-out</h2>
+        <div class="sub" style="margin-bottom:12px;">Every control account must equal the subledger detail behind it. A non-zero difference means a transaction hit the GL but not the subledger (or vice versa) — the books and the detail have drifted.</div>
+        <table><thead><tr><th>Acct</th><th>Control account</th><th>Subledger</th><th class="num">GL balance</th><th class="num">Subledger</th><th class="num">Difference</th><th>Status</th></tr></thead>
+        <tbody>${rows||'<tr><td colspan=7 class=muted>No control accounts configured.</td></tr>'}</tbody></table>
+      </div>`;
+  }
 
   // -------- BANK RECONCILIATION --------
   const fmtDate = (d) => d ? new Date(d+'T00:00:00').toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}) : '—';
