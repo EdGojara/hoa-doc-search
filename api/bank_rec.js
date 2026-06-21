@@ -492,6 +492,9 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
       vantacaPayouts,
       bankEndingCents,
       glEndingCents,
+      // No legacy Vantaca GL export linked → gl_ending is trustEd's own complete
+      // ledger, so bank items are already booked (don't re-add them to the book side).
+      bookIsComplete: !rec.gl_import_id,
     });
 
     // Wipe previous items for idempotency
@@ -551,7 +554,7 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
 // the difference + status without re-running the whole match.
 async function recomputeRecSummary(recId) {
   const { data: rec } = await supabase.from('bank_reconciliations')
-    .select('bank_ending_balance_cents, gl_ending_balance_cents').eq('id', recId).maybeSingle();
+    .select('bank_ending_balance_cents, gl_ending_balance_cents, gl_import_id').eq('id', recId).maybeSingle();
   if (!rec) return null;
   const { data: items } = await supabase.from('bank_reconciliation_items')
     .select('category, amount_cents').eq('reconciliation_id', recId).limit(5000);
@@ -560,8 +563,9 @@ async function recomputeRecSummary(recId) {
   const dit = sum('deposit_in_transit');
   const bankOnly = sum('bank_only');
   const glOnly = sum('gl_only');
+  const bookIsComplete = !rec.gl_import_id;
   const reconciled = Number(rec.bank_ending_balance_cents || 0) + outstanding + dit;
-  const adjustedGl = Number(rec.gl_ending_balance_cents || 0) + bankOnly;
+  const adjustedGl = Number(rec.gl_ending_balance_cents || 0) + (bookIsComplete ? 0 : bankOnly);
   const difference = reconciled - adjustedGl;
   const balanced = Math.abs(difference) <= 1;
   await supabase.from('bank_reconciliations').update({
