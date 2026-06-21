@@ -30,7 +30,7 @@ const { parseCheckRegister, checksToMatcherShape } = require('../lib/banking/ext
 const { parseGlTrialBalance } = require('../lib/banking/extractors/gl_cash');
 const { reconcile } = require('../lib/banking/matcher');
 const { boundaryReconcile } = require('../lib/banking/boundary_rec');
-const { buildWorksheet } = require('../lib/banking/clearing_worksheet');
+const { buildWorksheet, worksheetFromMatcher } = require('../lib/banking/clearing_worksheet');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -699,10 +699,11 @@ router.get('/worksheet', async (req, res) => {
     const thisStmt = (stmts || []).slice().reverse().find((st) => st.ending_balance_cents != null) || null;
     const bankEnding = thisStmt ? thisStmt.ending_balance_cents : 0;
     const { data: bankRaw } = await supabase.from('bank_statement_transactions')
-      .select('id, posting_date, amount_cents, description, check_number')
+      .select('id, posting_date, amount_cents, description, check_number, transaction_type')
       .in('bank_statement_import_id', (stmts || []).map((x) => x.id)).limit(20000);
     const bankItems = (bankRaw || []).map((b) => ({ id: b.id, date: b.posting_date,
-      amount_cents: Number(b.amount_cents), description: b.description || '', check_number: b.check_number || null }));
+      amount_cents: Number(b.amount_cents), description: b.description || '', check_number: b.check_number || null,
+      transaction_type: b.transaction_type || (b.check_number ? 'check' : (Number(b.amount_cents) >= 0 ? 'deposit' : 'debit')) }));
 
     // Operator Accept/Reopen overrides (defensive: works before migration 242).
     const overrides = {};
@@ -719,7 +720,20 @@ router.get('/worksheet', async (req, res) => {
     const bankBeginning = thisStmt && thisStmt.beginning_balance_cents != null ? thisStmt.beginning_balance_cents : null;
     const glBeginning = glBeginAt(periodStart);
 
-    const full = buildWorksheet({ periodEnd: period_end, glItems, bankItems, overrides, bankEndingCents: bankEnding, glBalanceCents: glBalance });
+    // Reconcile with the MAIN matcher (the one that ties to $0), then shape it
+    // into the worksheet. The lockbox date-batch handles deposits for both eras;
+    // we do NOT feed the Vantaca payout key here — on gross 2026 data it fights
+    // the date-batching and blows the difference up. Ingested (2025) months carry
+    // the opening stake; live (2026) months don't.
+    const isLive = glLive.length > 0;
+    const glEntries = glItems.map((g) => ({ ref: String(g.id), posting_date: g.date,
+      entry_type: g.amount_cents >= 0 ? 'deposit' : 'payment', amount_signed_cents: g.amount_cents,
+      description: g.description, check_number: g.check_number }));
+    const bankTransactions = bankItems.map((b) => ({ id: b.id, posting_date: b.date,
+      amount_cents: b.amount_cents, transaction_type: b.transaction_type, check_number: b.check_number, description: b.description }));
+    const result = reconcile({ bankTransactions, checkRegisterChecks: [], glEntries, vantacaPayouts: [],
+      openingPosition: isLive ? {} : openPos, bankEndingCents: bankEnding, glEndingCents: glBalance, bookIsComplete: true });
+    const full = worksheetFromMatcher(result, { glItems, bankItems, overrides, bankEndingCents: bankEnding, glBalanceCents: glBalance, periodEnd: period_end });
     const inMonth = (d) => d && d >= periodStart && d <= period_end;
     const worksheet = {
       ...full,
