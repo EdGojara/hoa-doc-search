@@ -345,6 +345,22 @@ router.put('/:communityId/billing-policy', express.json(), async (req, res) => {
   }
 });
 
+// Record a homeowner payment (check / lockbox / online) — record-only.
+router.post('/:communityId/owners/:propertyId/payment', express.json(), async (req, res) => {
+  try {
+    const { recordHomeownerPayment } = require('../lib/accounting/record_payment');
+    const r = await recordHomeownerPayment({
+      supabase, communityId: req.params.communityId, propertyId: req.params.propertyId,
+      amountCents: Math.round(Number(req.body.amount_dollars) * 100), paymentDate: req.body.payment_date,
+      source: req.body.source, reference: req.body.reference, dryRun: req.body.dryRun === true,
+    });
+    res.json(r);
+  } catch (err) {
+    console.error('[gl] record payment failed:', err.message);
+    res.status(400).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // Late fee + interest run (and one-click reversal).
 router.post('/:communityId/late-fee-run', express.json(), async (req, res) => {
   try {

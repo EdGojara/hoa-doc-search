@@ -446,7 +446,20 @@
         </div>
         <div style="text-align:right;"><div class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:.5px;">Current balance</div>
           <div style="font-size:26px; font-weight:800; color:${j.total_cents>0?'#b91c1c':'#047857'};">${fmt(j.total_cents)}</div>
-          <button class="secondary-btn" style="margin-top:6px; font-size:12px; padding:5px 12px; cursor:pointer;" onclick="window.open('/api/gl/${CID}/owners/${o.property_id}/statement?inline=1','_blank')">📄 View statement</button>
+          <div style="margin-top:6px; display:flex; gap:6px; justify-content:flex-end;">
+            <button class="secondary-btn" style="font-size:12px; padding:5px 12px; cursor:pointer;" onclick="window.open('/api/gl/${CID}/owners/${o.property_id}/statement?inline=1','_blank')">📄 Statement</button>
+            <button class="secondary-btn" style="font-size:12px; padding:5px 12px; cursor:pointer;" onclick="payToggle('${o.property_id}')">💵 Record payment</button>
+          </div>
+          <div id="payForm" data-pid="${o.property_id}" style="display:none; margin-top:10px; text-align:left; padding:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; min-width:240px;">
+            <div style="font-size:12px; font-weight:700; color:var(--navy); margin-bottom:8px;">Record payment</div>
+            <div style="display:flex; flex-direction:column; gap:7px; font-size:12px;">
+              <label>Amount $<input id="pay_amount" inputmode="decimal" style="width:90px; padding:5px 7px; border:1px solid #cbd5e1; border-radius:5px;"></label>
+              <label>Date <input id="pay_date" type="date" style="padding:5px 7px; border:1px solid #cbd5e1; border-radius:5px;"></label>
+              <label>Method <select id="pay_source" style="padding:5px 7px; border:1px solid #cbd5e1; border-radius:5px;"><option value="mailed_check">Check</option><option value="lockbox">Lockbox</option><option value="vantaca_pay">Online (Vantaca Pay)</option><option value="in_person">In person</option><option value="ach">ACH</option></select></label>
+              <label>Ref # <input id="pay_ref" style="width:120px; padding:5px 7px; border:1px solid #cbd5e1; border-radius:5px;"></label>
+              <div style="margin-top:4px;"><button onclick="recordPayment()" style="padding:6px 14px; background:var(--navy); color:#fff; border:none; border-radius:5px; font-size:12px; font-weight:600; cursor:pointer;">Post payment</button> <span id="pay_msg" style="font-size:11px; margin-left:6px;"></span></div>
+            </div>
+          </div>
         </div>
       </div>
       ${bk}
@@ -460,6 +473,23 @@
       ${renderLedger(j)}
       </div>`;
     d.scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
+
+  window.payToggle = function(pid) {
+    const f = $('payForm'); if (!f) return;
+    f.style.display = f.style.display === 'none' ? 'block' : 'none';
+    if (f.style.display === 'block') { const d = $('pay_date'); if (d && !d.value) d.value = new Date().toISOString().slice(0,10); $('pay_amount').focus(); }
+  };
+  window.recordPayment = async function() {
+    const pid = $('payForm').dataset.pid;
+    const amt = parseFloat(($('pay_amount').value||'').trim());
+    if (!(amt > 0)) { $('pay_msg').textContent = 'Enter an amount'; $('pay_msg').style.color = '#b91c1c'; return; }
+    $('pay_msg').textContent = 'Posting…'; $('pay_msg').style.color = '#64748b';
+    const body = { amount_dollars: amt, payment_date: $('pay_date').value, source: $('pay_source').value, reference: ($('pay_ref').value||'').trim() };
+    const r = await fetch(`/api/gl/${CID}/owners/${pid}/payment`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok || j.error) { $('pay_msg').textContent = j.error || 'Failed'; $('pay_msg').style.color = '#b91c1c'; return; }
+    ownerAccount(pid); // refresh the account with the new balance + ledger entry
   };
 
   function renderLedger(j) {
