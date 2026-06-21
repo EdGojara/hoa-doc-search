@@ -411,41 +411,26 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
     if (!rec) return res.status(404).json({ error: 'rec_not_found' });
     if (!rec.bank_statement_import_id) return res.status(400).json({ error: 'bank_statement_required' });
 
-    // Load bank transactions
-    const { data: bankTx } = await supabase.from('bank_statement_transactions')
-      .select('*')
-      .eq('bank_statement_import_id', rec.bank_statement_import_id)
-      .limit(5000);
-
-    // Load check register checks from vantaca_imports.extraction_raw
+    // Book sources — check register + GL fallback from linked vantaca_imports.
     let checkRegisterChecks = [];
     if (rec.check_register_import_id) {
       const { data: cr } = await supabase.from('vantaca_imports')
         .select('extraction_raw').eq('id', rec.check_register_import_id).maybeSingle();
-      checkRegisterChecks = cr?.extraction_raw?.checks || [];
+      checkRegisterChecks = (cr && cr.extraction_raw && cr.extraction_raw.checks) || [];
     }
-
-    // Load GL entries
     let glEntries = [];
     let glEndingCents = rec.gl_ending_balance_cents;
     if (rec.gl_import_id) {
       const { data: gl } = await supabase.from('vantaca_imports')
         .select('extraction_raw').eq('id', rec.gl_import_id).maybeSingle();
-      glEntries = gl?.extraction_raw?.entries || [];
-      if (glEndingCents == null) glEndingCents = gl?.extraction_raw?.ending_balance_cents;
+      glEntries = (gl && gl.extraction_raw && gl.extraction_raw.entries) || [];
+      if (glEndingCents == null) glEndingCents = gl && gl.extraction_raw && gl.extraction_raw.ending_balance_cents;
     }
 
-    // Prefer the directly-uploaded .xls source reports (jsonb on the rec) when
-    // present. Scope deposits/checks to THIS account + a period window so prior
-    // months' already-cleared items don't masquerade as in transit.
-    let vantacaPayouts = [];
     const periodEnd = rec.period_end || null;
-    // Derive the period start from period_end's month when it isn't set, so the
-    // deposit window stays tight (else prior months' cleared deposits leak in).
     const periodStart = rec.period_start || (periodEnd ? periodEnd.slice(0, 8) + '01' : null);
-    const windowStart = periodStart ? isoMinusDays(periodStart, 12) : null;
-    const inWindow = (d) => !!d && (!windowStart || d >= windowStart) && (!periodEnd || d <= periodEnd);
 
+    // Pick the matching account section from each multi-account report by last4.
     let acctLast4 = null;
     if (rec.bank_account_id) {
       const { data: ba } = await supabase.from('bank_accounts').select('account_last4').eq('id', rec.bank_account_id).maybeSingle();
@@ -457,9 +442,12 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
       return accounts[0];
     };
 
+    // Prefer the uploaded .xls reports. Feed all book items through period end;
+    // multi-statement matching (below) clears what already cleared in prior months.
+    let vantacaPayouts = [];
     if (rec.deposit_register_data && rec.deposit_register_data.parsed) {
       const acct = pickAccount(rec.deposit_register_data.parsed.accounts);
-      glEntries = depositsToGlEntries((acct && acct.deposits || []).filter((d) => inWindow(d.date)));
+      glEntries = depositsToGlEntries((acct && acct.deposits || []).filter((d) => d.date && (!periodEnd || d.date <= periodEnd)));
     }
     if (rec.vantaca_payout_data && rec.vantaca_payout_data.parsed) {
       vantacaPayouts = rec.vantaca_payout_data.parsed.payments || [];
@@ -469,12 +457,40 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
       checkRegisterChecks = checksToMatcherShape((acct && acct.checks || []).filter((c) => !periodEnd || (c.date && c.date <= periodEnd)));
     }
 
+    // Bank side — load ALL of this account's statements from the reports' coverage
+    // start through period end, so a deposit/check that cleared on a PRIOR month's
+    // statement matches instead of showing as in transit / outstanding. Period-end
+    // balance is the latest statement's ending balance.
+    let bankEndingCents = rec.bank_ending_balance_cents;
+    let bankImportIds = [rec.bank_statement_import_id].filter(Boolean);
+    {
+      let coverageStart = periodStart || '1900-01-01';
+      const allDeps = ((rec.deposit_register_data && rec.deposit_register_data.parsed && rec.deposit_register_data.parsed.accounts) || []).flatMap((a) => a.deposits || []);
+      const depDates = allDeps.map((d) => d.date).filter(Boolean).sort();
+      if (depDates.length) coverageStart = depDates[0];
+      if (rec.bank_account_id && periodEnd) {
+        const { data: stmts } = await supabase.from('bank_statement_imports')
+          .select('id, statement_period_end, ending_balance_cents')
+          .eq('bank_account_id', rec.bank_account_id)
+          .lte('statement_period_end', periodEnd)
+          .gte('statement_period_end', coverageStart)
+          .order('statement_period_end', { ascending: true });
+        if (stmts && stmts.length) {
+          bankImportIds = stmts.map((st) => st.id);
+          const last = stmts[stmts.length - 1];
+          if (last && last.ending_balance_cents != null) bankEndingCents = last.ending_balance_cents;
+        }
+      }
+    }
+    const { data: bankTx } = await supabase.from('bank_statement_transactions')
+      .select('*').in('bank_statement_import_id', bankImportIds).limit(20000);
+
     const result = reconcile({
       bankTransactions: bankTx || [],
       checkRegisterChecks,
       glEntries,
       vantacaPayouts,
-      bankEndingCents: rec.bank_ending_balance_cents,
+      bankEndingCents,
       glEndingCents,
     });
 
@@ -530,19 +546,56 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
   }
 });
 
+// Recompute a rec's summary from its current items (after an operator clears /
+// adjusts one). Mirrors the matcher's summary formula so a manual change updates
+// the difference + status without re-running the whole match.
+async function recomputeRecSummary(recId) {
+  const { data: rec } = await supabase.from('bank_reconciliations')
+    .select('bank_ending_balance_cents, gl_ending_balance_cents').eq('id', recId).maybeSingle();
+  if (!rec) return null;
+  const { data: items } = await supabase.from('bank_reconciliation_items')
+    .select('category, amount_cents').eq('reconciliation_id', recId).limit(5000);
+  const sum = (cat) => (items || []).filter((i) => i.category === cat).reduce((a, i) => a + Number(i.amount_cents || 0), 0);
+  const outstanding = sum('outstanding_check');
+  const dit = sum('deposit_in_transit');
+  const bankOnly = sum('bank_only');
+  const glOnly = sum('gl_only');
+  const reconciled = Number(rec.bank_ending_balance_cents || 0) + outstanding + dit;
+  const adjustedGl = Number(rec.gl_ending_balance_cents || 0) + bankOnly;
+  const difference = reconciled - adjustedGl;
+  const balanced = Math.abs(difference) <= 1;
+  await supabase.from('bank_reconciliations').update({
+    outstanding_checks_total_cents: outstanding,
+    deposits_in_transit_total_cents: dit,
+    bank_only_adjustments_cents: bankOnly,
+    gl_only_adjustments_cents: glOnly,
+    reconciled_balance_cents: reconciled,
+    difference_cents: difference,
+    status: balanced ? 'reconciled' : 'unbalanced',
+  }).eq('id', recId);
+  return { difference_cents: difference, balanced };
+}
+
 router.patch('/reconciliations/:id/items/:itemId', express.json(), async (req, res) => {
   try {
-    const { itemId } = req.params;
-    const allowed = ['category', 'operator_notes', 'amount_cents'];
+    const { id, itemId } = req.params;
+    // action:'clear' marks an exception item reconciled (category → matched);
+    // otherwise an explicit field patch (category / amount_cents / notes).
     const patch = {};
-    for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
+    if ((req.body || {}).action === 'clear') {
+      patch.category = 'matched';
+    } else {
+      const allowed = ['category', 'operator_notes', 'amount_cents'];
+      for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
+    }
     patch.match_confidence = 'manual';
     patch.match_method = 'manual';
     patch.reviewed_at = new Date().toISOString();
     const { data, error } = await supabase.from('bank_reconciliation_items')
       .update(patch).eq('id', itemId).select('*').single();
     if (error) throw error;
-    res.json({ item: data });
+    const summary = await recomputeRecSummary(data.reconciliation_id || id);
+    res.json({ item: data, summary });
   } catch (err) {
     console.error('[bank-rec] update item failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
