@@ -17,6 +17,14 @@
   .tabs { display:flex; gap:6px; margin:18px 0 16px; flex-wrap:wrap; }
   .tab { padding:8px 16px; border:1px solid var(--rule); border-radius:999px; background:#fff; cursor:pointer; font-size:13px; font-weight:600; color:var(--ink-soft); }
   .tab.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+  /* Two-level nav: primary group pills (navy) + secondary view pills (gold) */
+  .groupnav { display:flex; gap:8px; margin:18px 0 12px; flex-wrap:wrap; }
+  .gtab { padding:9px 18px; border:1px solid var(--rule); border-radius:999px; background:#fff; cursor:pointer; font-size:14px; font-weight:700; color:var(--ink-soft); }
+  .gtab.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+  .subnav { display:flex; gap:6px; margin:0 0 18px; flex-wrap:wrap; align-items:center; }
+  .stab { padding:6px 14px; border-radius:999px; border:1px solid var(--rule); background:#fff; cursor:pointer; font-size:12.5px; font-weight:600; color:var(--ink-soft); }
+  .stab.active { background:var(--gold); color:var(--navy); border-color:var(--gold); }
+  .subnav.solo { display:none; }
   .card { background:#fff; border:1px solid var(--rule); border-radius:12px; padding:18px 20px; box-shadow:0 1px 2px rgba(0,0,0,0.03); }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th { text-align:left; padding:8px 10px; color:var(--ink-faint); font-size:11px; letter-spacing:0.05em; text-transform:uppercase; border-bottom:2px solid var(--rule); }
@@ -45,35 +53,45 @@
   <select id="commSel"></select>
 </header>
 <div class="wrap">
-  <div class="tabs" id="tabs">
-    <div class="tab active" data-v="trial">Trial Balance</div>
-    <div class="tab" data-v="tieout">Tie-Out</div>
-    <div class="tab" data-v="owners">Homeowner Accounts</div>
-    <div class="tab" data-v="ar">AR Aging — Homeowners</div>
-    <div class="tab" data-v="ap">AP Aging — Vendors</div>
-    <div class="tab" data-v="bankrec">Bank Rec</div>
-    <div class="tab" data-v="coa">Chart of Accounts</div>
-    <div class="tab" data-v="je">Journal Entries</div>
-    <div class="tab" data-v="policy">Billing Policy</div>
-  </div>
+  <div class="groupnav" id="groupnav"></div>
+  <div class="subnav" id="subnav"></div>
   <div id="body"><div class="muted" style="padding:30px; text-align:center;">Loading…</div></div>
 </div>
 <script>
   const $ = (id) => document.getElementById(id);
   const fmt = (cents) => '$' + (Number(cents||0)/100).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
   const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  let CID = null, VIEW = 'trial';
+  // Five workflow groups — daily work (Homeowners, Bills) first; technical
+  // setup (chart, journal entries, policy) tucked into Setup at the end.
+  const GROUPS = [
+    { id:'homeowners', label:'👤 Homeowners', views:[['owners','Accounts'],['ar','AR Aging']] },
+    { id:'bills',      label:'🧾 Bills (AP)', views:[['ap','AP Aging']] },
+    { id:'bank',       label:'🏦 Bank Rec',   views:[['bankrec','Reconciliation']] },
+    { id:'financials', label:'📊 Financials', views:[['trial','Trial Balance'],['tieout','Tie-Out']] },
+    { id:'setup',      label:'⚙️ Setup',      views:[['policy','Billing Policy'],['coa','Chart of Accounts'],['je','Journal Entries']] },
+  ];
+  let CID = null, GROUP = 'homeowners', VIEW = 'owners';
+
+  function renderNav() {
+    const g = GROUPS.find((x)=>x.id===GROUP) || GROUPS[0];
+    $('groupnav').innerHTML = GROUPS.map((x)=>`<div class="gtab ${x.id===GROUP?'active':''}" data-g="${x.id}">${x.label}</div>`).join('');
+    $('subnav').className = 'subnav' + (g.views.length < 2 ? ' solo' : '');
+    $('subnav').innerHTML = g.views.map(([v,lbl])=>`<div class="stab ${v===VIEW?'active':''}" data-v="${v}">${esc(lbl)}</div>`).join('');
+    $('groupnav').querySelectorAll('.gtab').forEach((t)=>t.addEventListener('click',()=>{
+      GROUP = t.dataset.g; VIEW = (GROUPS.find((x)=>x.id===GROUP)||GROUPS[0]).views[0][0]; renderNav(); load();
+    }));
+    $('subnav').querySelectorAll('.stab').forEach((t)=>t.addEventListener('click',()=>{
+      VIEW = t.dataset.v; renderNav(); load();
+    }));
+  }
 
   async function init() {
+    renderNav();  // show the nav immediately — don't block on the data fetch
     const r = await fetch('/api/gl/communities'); const j = await r.json();
     const comms = j.communities || [];
     $('commSel').innerHTML = comms.map((c)=>`<option value="${c.id}">${esc(c.name)}</option>`).join('') || '<option>No GL set up</option>';
     CID = comms[0] && comms[0].id;
     $('commSel').addEventListener('change', (e)=>{ CID = e.target.value; load(); });
-    document.querySelectorAll('.tab').forEach((t)=>t.addEventListener('click',()=>{
-      document.querySelectorAll('.tab').forEach((x)=>x.classList.remove('active')); t.classList.add('active');
-      VIEW = t.dataset.v; load();
-    }));
     if (CID) load(); else $('body').innerHTML = '<div class="card muted">No community has a GL set up yet.</div>';
   }
 

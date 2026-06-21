@@ -41607,24 +41607,29 @@ ${questionsPage}
         { id: '__values',       label: '✨ Values', href: '/training-values.html' },
       ],
     },
-    // 💰 Finance group — added 2026-06-06 per Ed's nav reorg. Three sections:
-    // GL & Books, AP/AR, and Vantaca-side migration substrate. tab-content
-    // IDs unchanged so every existing switchTab + tab-content element keeps
-    // working.
+    // 💰 Finance group — reorganized 2026-06-20 per Ed's "two paths" nav ask.
+    // TWO sections by data source so it's never ambiguous which system is real:
+    //   • trustEd Books — the live double-entry GL. For communities cut over to
+    //     trustEd, the Accounting page is the single home for AR, AP, bank rec,
+    //     and financials. AP entry lives here too until it's folded into the page.
+    //   • Vantaca & Legacy — pre-cutover snapshots + migration tools, for
+    //     communities still on Vantaca and historical reference. Superseded by
+    //     the Accounting page for any community that has cut over.
+    // tab-content IDs unchanged so every switchTab + tab-content keeps working.
     finance: {
       label: '💰 Finance',
       children: [
-        { id: '__accounting',    label: '📒 Accounting',       section: 'GL & Books', href: '/admin/accounting' },
-        { id: 'books',           label: '📚 Books',            section: 'GL & Books' },
-        { id: 'bank-rec',        label: '🧾 Bank Rec',         section: 'GL & Books' },
-        { id: 'ap',              label: '💵 AP',               section: 'AP / AR' },
-        { id: 'ownerar',         label: '💵 Owner AR',         section: 'AP / AR' },
+        { id: '__accounting',    label: '📒 Accounting',       section: 'trustEd Books', href: '/admin/accounting' },
+        { id: 'ap',              label: '💵 Enter Bills (AP)', section: 'trustEd Books' },
+        { id: 'finrev',          label: '📊 Financial Review', section: 'Vantaca & Legacy' },
+        { id: 'ownerar',         label: '💵 Owner AR',         section: 'Vantaca & Legacy' },
+        { id: 'reports',         label: '📑 Reports',          section: 'Vantaca & Legacy' },
         // Per-homeowner transaction history upload (Vantaca CSV → portal display).
         // Migration 195 + api/transactions. Ed 2026-06-08.
-        { id: 'transactions',    label: '📑 Transactions',     section: 'AP / AR' },
-        { id: 'vantaca-imports', label: '📥 Vantaca Imports',  section: 'Vantaca' },
-        { id: 'finrev',          label: '📊 Financial Review', section: 'Vantaca' },
-        { id: 'reports',         label: '📑 Reports',          section: 'Vantaca' },
+        { id: 'transactions',    label: '📑 Transactions',     section: 'Vantaca & Legacy' },
+        { id: 'vantaca-imports', label: '📥 Vantaca Imports',  section: 'Vantaca & Legacy' },
+        { id: 'books',           label: '📚 Books',            section: 'Vantaca & Legacy' },
+        { id: 'bank-rec',        label: '🧾 Bank Rec',         section: 'Vantaca & Legacy' },
       ],
     },
     // 🛠️ Operations group — community day-to-day workflow surfaces.
