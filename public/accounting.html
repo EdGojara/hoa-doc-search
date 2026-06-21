@@ -338,8 +338,44 @@
           <button onclick="saveBillingPolicy()" style="padding:8px 20px; background:var(--navy); color:#fff; border:none; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer;">Save policy</button>
           <span id="bp_saved" class="muted" style="font-size:12px; margin-left:10px;"></span>
         </div>
+      </div>
+      <div class="card" style="max-width:640px; margin-top:16px;">
+        <h2 class="sec" style="margin-bottom:4px;">Late fees &amp; interest run</h2>
+        <div class="sub" style="margin-bottom:12px;">Charges the late fee (on any balance) + interest (on the unpaid assessment balance only) for the month, on the 1st. <strong>Preview first.</strong> Made a mistake? Undo pulls the whole month's run back off every account.</div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <label style="font-size:13px; color:var(--ink-soft);">Month <input id="lfr_month" type="month" value="2026-07" style="padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;"></label>
+          <button onclick="lfrPreview()" style="padding:7px 16px; background:#fff; color:var(--navy); border:1px solid var(--navy); border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Preview</button>
+          <button onclick="lfrRun()" style="padding:7px 16px; background:var(--navy); color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Run</button>
+          <button onclick="lfrReverse()" style="padding:7px 16px; background:#fff; color:#b91c1c; border:1px solid #b91c1c; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Undo this month</button>
+        </div>
+        <div id="lfr_result" style="margin-top:12px; font-size:13px;"></div>
       </div>`;
   }
+  function lfrMonth() { const v = ($('lfr_month')||{}).value || ''; return v; }
+  window.lfrPreview = async function() {
+    const m = lfrMonth(); $('lfr_result').innerHTML = 'Previewing…';
+    const j = await (await fetch(`/api/gl/${CID}/late-fee-run`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ runMonth: m, dryRun: true }) })).json();
+    if (j.error) { $('lfr_result').innerHTML = `<span style="color:#b91c1c;">${esc(j.error)}</span>`; return; }
+    if (j.refused) { $('lfr_result').innerHTML = `<span style="color:#b45309;">${esc(j.refused)}</span>`; return; }
+    const p = j.plan || {};
+    $('lfr_result').innerHTML = `<div style="padding:10px 12px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px;">
+      <strong>Preview — ${esc(p.run_month)}:</strong> ${p.accounts_charged} account(s) · late fees ${fmt(p.late_fee_total_cents)} · interest ${fmt(p.interest_total_cents)} (${p.interest_apr_pct}% APR on assessment) · <strong>total ${fmt(p.grand_total_cents)}</strong>. Nothing posted yet — click Run to post.</div>`;
+  };
+  window.lfrRun = async function() {
+    const m = lfrMonth(); if (!confirm(`Post late fees + interest for ${m} to all delinquent accounts?`)) return;
+    $('lfr_result').innerHTML = 'Posting…';
+    const j = await (await fetch(`/api/gl/${CID}/late-fee-run`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ runMonth: m, dryRun: false }) })).json();
+    if (j.error) { $('lfr_result').innerHTML = `<span style="color:#b91c1c;">${esc(j.error)}</span>`; return; }
+    if (j.refused) { $('lfr_result').innerHTML = `<span style="color:#b45309;">${esc(j.refused)}</span>`; return; }
+    $('lfr_result').innerHTML = `<div style="padding:10px 12px; background:#dcfce7; border:1px solid #86efac; border-radius:8px; color:#166534;">✓ Posted ${j.posted} account(s) — late fees ${fmt(j.late_fee_total_cents)} + interest ${fmt(j.interest_total_cents)} = ${fmt(j.grand_total_cents)} (${esc(j.journal_entry)}).</div>`;
+  };
+  window.lfrReverse = async function() {
+    const m = lfrMonth(); if (!confirm(`Undo the ${m} late-fee/interest run — remove it from every account?`)) return;
+    $('lfr_result').innerHTML = 'Reversing…';
+    const j = await (await fetch(`/api/gl/${CID}/late-fee-reverse`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ runMonth: m }) })).json();
+    if (j.error) { $('lfr_result').innerHTML = `<span style="color:#b91c1c;">${esc(j.error)}</span>`; return; }
+    $('lfr_result').innerHTML = `<div style="padding:10px 12px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b;">↩ ${esc(j.note)} (${j.reversed} charges removed).</div>`;
+  };
   window.saveBillingPolicy = async function() {
     const v = (id) => { const el = $('bp_'+id); return el ? el.value.trim() : ''; };
     const cents = (id) => { const x = parseFloat(v(id)); return Number.isFinite(x) ? Math.round(x*100) : 0; };

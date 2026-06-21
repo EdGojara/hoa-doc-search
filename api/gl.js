@@ -345,6 +345,28 @@ router.put('/:communityId/billing-policy', express.json(), async (req, res) => {
   }
 });
 
+// Late fee + interest run (and one-click reversal).
+router.post('/:communityId/late-fee-run', express.json(), async (req, res) => {
+  try {
+    const { runLateFeesAndInterest } = require('../lib/accounting/late_fee_interest');
+    const r = await runLateFeesAndInterest({ supabase, communityId: req.params.communityId, runMonth: req.body.runMonth, dryRun: req.body.dryRun !== false });
+    res.json(r);
+  } catch (err) {
+    console.error('[gl] late-fee-run failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+router.post('/:communityId/late-fee-reverse', express.json(), async (req, res) => {
+  try {
+    const { reverseLateFeesAndInterest } = require('../lib/accounting/late_fee_interest');
+    const r = await reverseLateFeesAndInterest({ supabase, communityId: req.params.communityId, runMonth: req.body.runMonth });
+    res.json(r);
+  } catch (err) {
+    console.error('[gl] late-fee-reverse failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // ----------------------------------------------------------------------------
 // Homeowner accounts — search any owner by name or address, pull up the account.
 // ----------------------------------------------------------------------------
