@@ -30,6 +30,7 @@ const { parseCheckRegister, checksToMatcherShape } = require('../lib/banking/ext
 const { parseGlTrialBalance } = require('../lib/banking/extractors/gl_cash');
 const { reconcile } = require('../lib/banking/matcher');
 const { boundaryReconcile } = require('../lib/banking/boundary_rec');
+const { buildWorksheet } = require('../lib/banking/clearing_worksheet');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -590,6 +591,97 @@ router.get('/boundary-summary', async (req, res) => {
     console.error('[bank-rec] boundary-summary failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Clearing worksheet — the traditional bank-rec register (GL | Bank columns).
+// Every live GL cash line and bank line through period-end; matches pre-populated,
+// each Accept/Reopen decision persisted (bank_rec_clearing) and carried forward.
+//   GET  /worksheet?community_id=&account_last4=&period_end=
+//   POST /worksheet/clear  { community_id, bank_account_id, side, source_id, status, match_group? }
+// ---------------------------------------------------------------------------
+const WASH_RE = /credit distribution/i;
+
+router.get('/worksheet', async (req, res) => {
+  try {
+    const community_id = req.query.community_id;
+    const period_end = req.query.period_end;
+    if (!community_id || !period_end) return res.status(400).json({ error: 'community_id_and_period_end_required' });
+    const account_last4 = req.query.account_last4 || null;
+
+    let baQ = supabase.from('bank_accounts').select('id, account_last4, gl_account_number').eq('community_id', community_id);
+    if (account_last4) baQ = baQ.eq('account_last4', account_last4);
+    const { data: ba } = await baQ.maybeSingle();
+    if (!ba) return res.status(404).json({ error: 'bank_account_not_found' });
+
+    const tryNums = [ba.gl_account_number, '1000', '1005', '10100'].filter(Boolean);
+    let cashAcctId = null;
+    for (const n of tryNums) {
+      const { data: a } = await supabase.from('chart_of_accounts').select('id').eq('community_id', community_id).eq('account_number', n).maybeSingle();
+      if (a) { cashAcctId = a.id; break; }
+    }
+    if (!cashAcctId) return res.status(404).json({ error: 'cash_account_not_found' });
+
+    // Live GL cash lines through period-end. The live era starts at the earliest
+    // live posting date; the worksheet covers that era (open items carry forward
+    // within it). Opening-balance + credit-distribution-wash lines are excluded.
+    const { data: glRaw } = await supabase.from('journal_entry_lines')
+      .select('id, debit_cents, credit_cents, memo, journal_entries!inner(posting_date, source_module, community_id, status)')
+      .eq('account_id', cashAcctId).lte('journal_entries.posting_date', period_end)
+      .eq('journal_entries.community_id', community_id).limit(100000);
+    const glLive = (glRaw || []).filter((l) => (l.journal_entries.status || 'posted') !== 'voided');
+    const glBalance = glLive.reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
+    const operational = glLive.filter((l) => l.journal_entries.source_module !== 'opening_entry' && !WASH_RE.test(l.memo || ''));
+    const eraStart = operational.length
+      ? operational.map((l) => l.journal_entries.posting_date).sort()[0]
+      : period_end.slice(0, 8) + '01';
+    const glItems = operational.map((l) => {
+      const amt = Number(l.debit_cents) - Number(l.credit_cents);
+      return { id: l.id, date: l.journal_entries.posting_date, amount_cents: amt,
+        description: l.memo || l.journal_entries.description || '',
+        check_number: ((l.memo || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null };
+    }).filter((g) => g.amount_cents !== 0);
+
+    // Bank lines from era start through period-end; ending balance = latest stmt.
+    const { data: stmts } = await supabase.from('bank_statement_imports')
+      .select('id, statement_period_end, ending_balance_cents')
+      .eq('bank_account_id', ba.id).gte('statement_period_end', eraStart).lte('statement_period_end', period_end)
+      .order('statement_period_end', { ascending: true });
+    const bankEnding = (stmts && stmts.length && stmts[stmts.length - 1].ending_balance_cents != null)
+      ? stmts[stmts.length - 1].ending_balance_cents : 0;
+    const { data: bankRaw } = await supabase.from('bank_statement_transactions')
+      .select('id, posting_date, amount_cents, description, check_number')
+      .in('bank_statement_import_id', (stmts || []).map((x) => x.id)).limit(20000);
+    const bankItems = (bankRaw || []).map((b) => ({ id: b.id, date: b.posting_date,
+      amount_cents: Number(b.amount_cents), description: b.description || '', check_number: b.check_number || null }));
+
+    // Operator Accept/Reopen overrides (defensive: works before migration 242).
+    const overrides = {};
+    try {
+      const { data: ov } = await supabase.from('bank_rec_clearing')
+        .select('side, source_id, status, match_group').eq('community_id', community_id).eq('bank_account_id', ba.id);
+      (ov || []).forEach((o) => { overrides[o.side + ':' + o.source_id] = { status: o.status, match_group: o.match_group }; });
+    } catch (e) { /* bank_rec_clearing not migrated yet — no overrides */ }
+
+    const worksheet = buildWorksheet({ periodEnd: period_end, glItems, bankItems, overrides, bankEndingCents: bankEnding, glBalanceCents: glBalance });
+    return res.json({ bank_account_id: ba.id, account_last4: ba.account_last4, era_start: eraStart, worksheet });
+  } catch (err) {
+    console.error('[bank-rec] worksheet failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/worksheet/clear', express.json(), async (req, res) => {
+  try {
+    const { community_id, bank_account_id, side, source_id, status, match_group, note } = req.body || {};
+    if (!community_id || !bank_account_id || !side || !source_id || !status) return res.status(400).json({ error: 'missing_fields' });
+    if (!['gl', 'bank'].includes(side) || !['cleared', 'open'].includes(status)) return res.status(400).json({ error: 'bad_value' });
+    const { error } = await supabase.from('bank_rec_clearing')
+      .upsert({ community_id, bank_account_id, side, source_id: String(source_id), status, match_group: match_group || null, note: note || null, updated_at: new Date().toISOString() },
+        { onConflict: 'bank_account_id,side,source_id' });
+    if (error) return res.status(500).json({ error: safeErrorMessage(error) });
+    return res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // ---------------------------------------------------------------------------
