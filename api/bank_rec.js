@@ -485,6 +485,31 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
     const { data: bankTx } = await supabase.from('bank_statement_transactions')
       .select('*').in('bank_statement_import_id', bankImportIds).limit(20000);
 
+    // Book side: pull the LIVE GL cash balance whenever the GL actually has
+    // activity for this period, so the book is always current — write-offs and
+    // adjustments flow through automatically, no stale snapshot. Periods before
+    // the GL exists (no lines) keep the stored figure (e.g. Vantaca-era months).
+    if (periodEnd && rec.bank_account_id) {
+      const { data: ba2 } = await supabase.from('bank_accounts').select('gl_account_number').eq('id', rec.bank_account_id).maybeSingle();
+      const tryNums = [ba2 && ba2.gl_account_number, '1000', '1005', '10100'].filter(Boolean);
+      let cashAcctId = null;
+      for (const n of tryNums) {
+        const { data: a } = await supabase.from('chart_of_accounts').select('id').eq('community_id', rec.community_id).eq('account_number', n).maybeSingle();
+        if (a) { cashAcctId = a.id; break; }
+      }
+      if (cashAcctId) {
+        const { data: glLines } = await supabase.from('journal_entry_lines')
+          .select('debit_cents, credit_cents, journal_entries!inner(posting_date, community_id)')
+          .eq('account_id', cashAcctId)
+          .lte('journal_entries.posting_date', periodEnd)
+          .eq('journal_entries.community_id', rec.community_id)
+          .limit(20000);
+        if (glLines && glLines.length) {
+          glEndingCents = glLines.reduce((s, l) => s + Number(l.debit_cents) - Number(l.credit_cents), 0);
+        }
+      }
+    }
+
     const result = reconcile({
       bankTransactions: bankTx || [],
       checkRegisterChecks,
