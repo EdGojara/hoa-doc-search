@@ -40,7 +40,14 @@ const num = (v) => { let t = String(v || '').trim(); if (t === '-' || t === '') 
     const iso = `${dm[3]}-${dm[1]}-${dm[2]}`;
     const debit = D(num(r[8])), credit = D(num(r[10]));
     if (debit === 0 && credit === 0) continue;
-    (byDay[iso] = byDay[iso] || []).push({ acctNum: acct, debit, credit, desc: String(r[3] || '').trim(), type: String(r[12] || '').trim() });
+    const desc = String(r[3] || '').trim();
+    // "Credit Distribution" is a SUBLEDGER credit reallocation (redistributing a
+    // homeowner's credit balance across charges), NOT a cash transaction —
+    // Vantaca routes it through the cash account as net-zero Dr/Cr pairs. Skip
+    // those cash legs so the cash ledger stays a clean record of actual money;
+    // the real AR/prepaid legs are preserved. (cleanup: clean_qr_credit_distribution_cash.js)
+    if (acct === '1000' && /credit distribution/i.test(desc)) continue;
+    (byDay[iso] = byDay[iso] || []).push({ acctNum: acct, debit, credit, desc, type: String(r[12] || '').trim() });
   }
   const days = Object.keys(byDay).sort();
   let lineCount = 0;
