@@ -762,7 +762,7 @@
     const rows = data.months.slice().sort((a,b)=>(b.period_end||'').localeCompare(a.period_end||'')).map((m)=>{
       const tied = m.reconciled;
       const resColor = Math.abs(m.residual_cents)<=100 ? '#047857' : (m.residual_cents<0?'#b91c1c':'#b45309');
-      return `<tr style="${tied?'':'background:#fff7ed;'}">
+      return `<tr style="cursor:pointer; ${tied?'':'background:#fff7ed;'}" onclick="wsOpen('${m.period_end}')" title="Open reconciliation worksheet">
         <td>${esc(fmtDate(m.period_end))}</td>
         <td class="num">${fmt(m.book_cents)}</td>
         <td class="num">${fmt(m.bank_cents)}</td>
@@ -776,6 +776,67 @@
       <table><thead><tr><th>Month-end</th><th class="num">Book (GL)</th><th class="num">Bank</th><th class="num">Book − Bank</th><th class="num">Online in transit</th><th class="num">Residual (review)</th><th>Status</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
   }
+
+  // Traditional clearing worksheet: GL | Bank columns, matches pre-checked,
+  // Accept/Reopen per line, uncleared GL items carry forward.
+  window.wsOpen = async function(periodEnd){
+    const d = $('drill'); if(!d) return;
+    d.innerHTML = '<div class="card muted" style="padding:14px;">Loading worksheet…</div>';
+    d.scrollIntoView({behavior:'smooth', block:'start'});
+    let j; try { j = await (await fetch(`/api/bank-rec/worksheet?community_id=${CID}&period_end=${periodEnd}`)).json(); }
+    catch(e){ d.innerHTML='<div class="card" style="padding:14px;color:#b91c1c">Could not load worksheet.</div>'; return; }
+    if (!j || j.error){ d.innerHTML='<div class="card" style="padding:14px;color:#b91c1c">'+esc((j&&j.error)||'error')+'</div>'; return; }
+    const w = j.worksheet; window._wsCtx = { periodEnd, baId: j.bank_account_id };
+    const amt = (c)=>`<span style="color:${c<0?'#b91c1c':'#047857'}">${fmt(c)}</span>`;
+    // matched groups → one block each (bank line(s) ↔ GL line(s))
+    const matchRows = (w.matched||[]).slice().sort((a,b)=>((a.bank[0]||a.gl[0]||{}).date||'').localeCompare((b.bank[0]||b.gl[0]||{}).date||'')).map((g)=>{
+      const cleared = g.status==='cleared';
+      const bankTot=g.bank.reduce((a,x)=>a+x.amount_cents,0), glTot=g.gl.reduce((a,x)=>a+x.amount_cents,0);
+      const bankDesc=g.bank.map(x=>esc((x.description||'').slice(0,30))).join('; ')||'—';
+      const glDesc=g.gl.length>1?`${g.gl.length} GL lines`:esc((g.gl[0]?g.gl[0].description:'').slice(0,34));
+      // toggling the whole group: target each item to the opposite of current
+      const next = cleared?'open':'cleared';
+      const items = [...g.bank.map(x=>['bank',x.id]),...g.gl.map(x=>['gl',x.id])];
+      return `<tr style="${cleared?'':'background:#fff7ed;'}">
+        <td style="text-align:center;">${cleared?'<span style="color:#047857;font-weight:700;">✓</span>':'<span style="color:#b45309;">○</span>'}</td>
+        <td>${esc((g.gl[0]||g.bank[0]||{}).date||'')}</td>
+        <td>${glDesc}</td><td class="num">${amt(glTot)}</td>
+        <td>${bankDesc}</td><td class="num">${amt(bankTot)}</td>
+        <td><button onclick='wsClearGroup(${JSON.stringify(items)},"${next}")' style="padding:2px 9px;border:1px solid var(--rule);border-radius:5px;background:#fff;cursor:pointer;font-size:11px;">${cleared?'Reopen':'Accept'}</button></td></tr>`;
+    }).join('');
+    const openRow = (it,side,label)=>`<tr style="background:#fff7ed;">
+      <td style="text-align:center;"><span style="color:#b45309;">○</span></td>
+      <td>${esc(it.date||'')}</td>
+      <td>${side==='gl'?esc((it.description||'').slice(0,34)):`<span class="muted">${label}</span>`}</td>
+      <td class="num">${side==='gl'?amt(it.amount_cents):''}</td>
+      <td>${side==='bank'?esc((it.description||'').slice(0,34)):`<span class="muted">${label}</span>`}</td>
+      <td class="num">${side==='bank'?amt(it.amount_cents):''}</td><td></td></tr>`;
+    const ditRows=(w.open_deposits_in_transit||[]).map(it=>openRow(it,'gl','(in transit)')).join('');
+    const ocRows=(w.open_outstanding_checks||[]).map(it=>openRow(it,'gl','(outstanding)')).join('');
+    const bankOnlyRows=(w.open_bank_unrecorded||[]).map(it=>openRow(it,'bank','(not in GL)')).join('');
+    const tied = w.reconciled;
+    d.innerHTML = `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
+        <h2 class="sec" style="margin:0;">Reconciliation worksheet — ${esc(fmtDate(periodEnd))}</h2>
+        <span style="font-weight:700;color:${tied?'#047857':'#b45309'};">${tied?'✓ Reconciled':'Difference '+fmt(w.difference_cents)}</span>
+      </div>
+      <div class="sub" style="margin:6px 0 12px;">Bank ${fmt(w.bank_ending_cents)} + deposits in transit ${fmt(w.deposits_in_transit_cents)} − outstanding checks ${fmt(Math.abs(w.outstanding_checks_cents))} = ${fmt(w.reconciled_balance_cents)}, vs GL book ${fmt(w.gl_balance_cents)}. Accept confirms a match; Reopen disputes it; uncleared GL items carry to next month.</div>
+      <table><thead><tr><th>✓</th><th>Date</th><th>GL (book)</th><th class="num">GL amt</th><th>Bank</th><th class="num">Bank amt</th><th></th></tr></thead>
+      <tbody>
+        ${matchRows||''}
+        ${ditRows?`<tr><td colspan="7" style="background:#f8fafc;font-weight:600;font-size:12px;">Deposits in transit (carry forward) — ${fmt(w.deposits_in_transit_cents)}</td></tr>`+ditRows:''}
+        ${ocRows?`<tr><td colspan="7" style="background:#f8fafc;font-weight:600;font-size:12px;">Outstanding checks (carry forward) — ${fmt(Math.abs(w.outstanding_checks_cents))}</td></tr>`+ocRows:''}
+        ${bankOnlyRows?`<tr><td colspan="7" style="background:#fef2f2;font-weight:600;font-size:12px;color:#b91c1c;">On bank, not in GL — needs review</td></tr>`+bankOnlyRows:''}
+      </tbody></table></div>`;
+  };
+  window.wsClearGroup = async function(items, status){
+    const ctx = window._wsCtx; if(!ctx) return;
+    try {
+      await Promise.all(items.map(([side,id])=>fetch('/api/bank-rec/worksheet/clear',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({community_id:CID,bank_account_id:ctx.baId,side,source_id:id,status})})));
+      wsOpen(ctx.periodEnd);
+    } catch(e){ alert('Could not save: '+e.message); }
+  };
 
   async function renderBankRec() {
     const [bj, summaryHtml] = await Promise.all([
