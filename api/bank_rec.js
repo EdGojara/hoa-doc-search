@@ -24,6 +24,9 @@ const multer = require('multer');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { extract: extractBankStatement } = require('../lib/banking/extractors/bank_statement');
+const { parseDepositRegister, depositsToGlEntries } = require('../lib/banking/extractors/deposit_register');
+const { parseVantacaPayPayouts } = require('../lib/banking/extractors/vantaca_pay_payouts');
+const { parseCheckRegister, checksToMatcherShape } = require('../lib/banking/extractors/check_register');
 const { reconcile } = require('../lib/banking/matcher');
 const { safeErrorMessage } = require('./_safe_error');
 
@@ -32,6 +35,15 @@ const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const router = express.Router();
+
+// YYYY-MM-DD minus N days (UTC). Used to widen the deposit window so a late
+// prior-month deposit that clears early this month is still a candidate.
+function isoMinusDays(iso, days) {
+  const d = new Date(iso + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
 
 // ---------------------------------------------------------------------------
 // Bank accounts (config)
@@ -329,6 +341,66 @@ router.post('/reconciliations/:id/gl', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Source-report uploads (.xls): deposit register, payout contents, check
+// register. Each is parsed, the source file retained (documents bucket +
+// library_documents), and the parsed structure stored on the rec as jsonb.
+// ---------------------------------------------------------------------------
+async function retainBankRecSource(file, rec, category, title) {
+  const sha = crypto.createHash('sha256').update(file.buffer).digest('hex');
+  const safeName = (file.originalname || 'report.xls').replace(/[^\w.\-]+/g, '_');
+  const storage_path = `bank-rec/${rec.community_id}/${sha.slice(0, 12)}-${safeName}`;
+  const { error: upErr } = await supabase.storage.from('documents').upload(storage_path, file.buffer, {
+    contentType: file.mimetype || 'application/vnd.ms-excel', upsert: true,
+  });
+  if (upErr) console.warn('[bank-rec] source file upload failed:', upErr.message);
+  let source_document_id = null;
+  const { data: libDoc, error: libErr } = await supabase.from('library_documents').insert({
+    management_company_id: rec.management_company_id || BEDROCK_MGMT_CO_ID,
+    community_id: rec.community_id,
+    category,
+    title,
+    file_name_original: file.originalname || null,
+    file_path: storage_path,
+    file_hash: sha,
+    file_size_bytes: file.size,
+    created_by_mgmt_company: 'Bedrock',
+  }).select('id').single();
+  if (libErr) console.warn('[bank-rec] source retention insert failed:', libErr.message);
+  else source_document_id = libDoc.id;
+  return { storage_path, source_document_id };
+}
+
+async function handleSourceUpload(req, res, { parse, column, category, label }) {
+  const { id } = req.params;
+  if (!req.file) return res.status(400).json({ error: 'file_required' });
+  const { data: rec } = await supabase.from('bank_reconciliations').select('*').eq('id', id).maybeSingle();
+  if (!rec) return res.status(404).json({ error: 'rec_not_found' });
+  let parsed;
+  try { parsed = parse(req.file.buffer); }
+  catch (e) { return res.status(400).json({ error: `could_not_parse_${label}`, detail: e.message }); }
+  const retain = await retainBankRecSource(req.file, rec, category, `${label} — ${rec.period_end || ''}`.trim());
+  const payload = { storage_path: retain.storage_path, source_document_id: retain.source_document_id, uploaded_filename: req.file.originalname || null, parsed };
+  const { error } = await supabase.from('bank_reconciliations').update({ [column]: payload }).eq('id', id);
+  if (error) return res.status(500).json({ error: safeErrorMessage(error) });
+  return res.json({ ok: true, [label]: { accounts: parsed.accounts ? parsed.accounts.length : undefined, count: parsed.payments ? parsed.payments.length : undefined, retained: !!retain.source_document_id } });
+}
+
+router.post('/reconciliations/:id/deposit-register', upload.single('file'), async (req, res) => {
+  try { await handleSourceUpload(req, res, { parse: parseDepositRegister, column: 'deposit_register_data', category: 'bank_rec_source', label: 'deposit_register' }); }
+  catch (err) { console.error('[bank-rec] deposit register upload failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+router.post('/reconciliations/:id/payout-contents', upload.single('file'), async (req, res) => {
+  try { await handleSourceUpload(req, res, { parse: parseVantacaPayPayouts, column: 'vantaca_payout_data', category: 'bank_rec_source', label: 'payout_contents' }); }
+  catch (err) { console.error('[bank-rec] payout contents upload failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+router.post('/reconciliations/:id/check-register-xls', upload.single('file'), async (req, res) => {
+  try { await handleSourceUpload(req, res, { parse: parseCheckRegister, column: 'check_register_data', category: 'bank_rec_source', label: 'check_register' }); }
+  catch (err) { console.error('[bank-rec] check register upload failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// ---------------------------------------------------------------------------
 // Run the matcher
 // ---------------------------------------------------------------------------
 router.post('/reconciliations/:id/run-match', async (req, res) => {
@@ -363,10 +435,45 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
       if (glEndingCents == null) glEndingCents = gl?.extraction_raw?.ending_balance_cents;
     }
 
+    // Prefer the directly-uploaded .xls source reports (jsonb on the rec) when
+    // present. Scope deposits/checks to THIS account + a period window so prior
+    // months' already-cleared items don't masquerade as in transit.
+    let vantacaPayouts = [];
+    const periodEnd = rec.period_end || null;
+    // Derive the period start from period_end's month when it isn't set, so the
+    // deposit window stays tight (else prior months' cleared deposits leak in).
+    const periodStart = rec.period_start || (periodEnd ? periodEnd.slice(0, 8) + '01' : null);
+    const windowStart = periodStart ? isoMinusDays(periodStart, 12) : null;
+    const inWindow = (d) => !!d && (!windowStart || d >= windowStart) && (!periodEnd || d <= periodEnd);
+
+    let acctLast4 = null;
+    if (rec.bank_account_id) {
+      const { data: ba } = await supabase.from('bank_accounts').select('account_last4').eq('id', rec.bank_account_id).maybeSingle();
+      acctLast4 = ba && ba.account_last4 ? ba.account_last4 : null;
+    }
+    const pickAccount = (accounts) => {
+      if (!accounts || !accounts.length) return null;
+      if (acctLast4) { const m = accounts.find((a) => a.account_last4 === acctLast4); if (m) return m; }
+      return accounts[0];
+    };
+
+    if (rec.deposit_register_data && rec.deposit_register_data.parsed) {
+      const acct = pickAccount(rec.deposit_register_data.parsed.accounts);
+      glEntries = depositsToGlEntries((acct && acct.deposits || []).filter((d) => inWindow(d.date)));
+    }
+    if (rec.vantaca_payout_data && rec.vantaca_payout_data.parsed) {
+      vantacaPayouts = rec.vantaca_payout_data.parsed.payments || [];
+    }
+    if (rec.check_register_data && rec.check_register_data.parsed) {
+      const acct = pickAccount(rec.check_register_data.parsed.accounts);
+      checkRegisterChecks = checksToMatcherShape((acct && acct.checks || []).filter((c) => !periodEnd || (c.date && c.date <= periodEnd)));
+    }
+
     const result = reconcile({
       bankTransactions: bankTx || [],
       checkRegisterChecks,
       glEntries,
+      vantacaPayouts,
       bankEndingCents: rec.bank_ending_balance_cents,
       glEndingCents,
     });

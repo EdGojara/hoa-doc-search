@@ -782,16 +782,73 @@
       <div id="drill"></div>`;
   }
 
+  const BR_SOURCES = [
+    { key:'deposit_register_data', ep:'deposit-register',   label:'Deposit Register' },
+    { key:'vantaca_payout_data',   ep:'payout-contents',    label:'Vantaca Pay Payouts' },
+    { key:'check_register_data',   ep:'check-register-xls', label:'Check Register' },
+  ];
+  window.brUpload = async function(recId, ep, input) {
+    const file = input.files && input.files[0]; if (!file) return;
+    const status = input.closest('.br-slot').querySelector('.br-status');
+    status.textContent = 'Uploading ' + file.name + '…'; input.disabled = true;
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const r = await fetch(`/api/bank-rec/reconciliations/${recId}/${ep}`, { method:'POST', body: fd });
+      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || 'upload failed');
+      bankRecDrill(recId, window._brLabel);
+    } catch(e) { status.innerHTML = '<span style="color:var(--err)">'+esc(e.message)+'</span>'; input.disabled = false; }
+  };
+  window.brRun = async function(recId) {
+    const btn = $('br-run'); if (btn) { btn.disabled = true; btn.textContent = 'Reconciling…'; }
+    try {
+      const r = await fetch(`/api/bank-rec/reconciliations/${recId}/run-match`, { method:'POST' });
+      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || 'run failed');
+      await renderBankRec();
+      bankRecDrill(recId, window._brLabel);
+    } catch(e) { if (btn) { btn.disabled = false; btn.textContent = 'Run reconciliation'; } alert('Reconcile failed: '+e.message); }
+  };
+
   window.bankRecDrill = async function(id, label) {
-    const d = $('drill'); d.innerHTML = '<div class="muted" style="padding:14px;">Loading items…</div>';
+    window._brLabel = label;
+    const d = $('drill'); d.innerHTML = '<div class="muted" style="padding:14px;">Loading…</div>';
     const j = await (await fetch(`/api/bank-rec/reconciliations/${id}`)).json();
-    const items = (j.items||[]).sort((a,b)=>(a.date_ref||'').localeCompare(b.date_ref||''));
+    const rec = j.reconciliation || {};
+    // --- source-report upload slots ---
+    const slots = BR_SOURCES.map((sdef)=>{
+      const data = rec[sdef.key];
+      const attached = data && data.parsed;
+      const name = attached ? (data.uploaded_filename || 'attached') : '';
+      return `<div class="br-slot" style="flex:1 1 220px; border:1px solid var(--rule); border-radius:8px; padding:10px;">
+        <div style="font-weight:600; font-size:12.5px; margin-bottom:6px;">${esc(sdef.label)} ${attached?'<span style="color:#047857;">✓</span>':''}</div>
+        <div class="br-status muted" style="font-size:11.5px; margin-bottom:6px;">${attached?esc(name):'Not attached'}</div>
+        <label style="font-size:12px; color:var(--navy); cursor:pointer; font-weight:600;">${attached?'Replace':'Upload'} .xls
+          <input type="file" accept=".xls,.xlsx" style="display:none;" onchange="brUpload('${id}','${sdef.ep}',this)"></label>
+      </div>`;
+    }).join('');
+    const anyAttached = BR_SOURCES.some((s)=>rec[s.key] && rec[s.key].parsed);
+    const sourcesPanel = `<div class="card" style="margin-top:16px;">
+      <h2 class="sec" style="margin-bottom:4px;">${esc(label)}</h2>
+      <div class="sub" style="margin-bottom:10px;">Attach the Vantaca source reports, then run the reconciliation. The matcher clears Vantaca Pay payouts (net of fees/refunds), batched deposits, and outstanding checks — and flags anything that doesn't tie.</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">${slots}</div>
+      <button id="br-run" onclick="brRun('${id}')" ${anyAttached?'':'disabled'} style="padding:8px 16px; border:none; border-radius:6px; background:var(--navy); color:#fff; font-weight:600; cursor:pointer; ${anyAttached?'':'opacity:.5;'}">Run reconciliation</button>
+    </div>`;
+    // --- items ---
+    const all = (j.items||[]).sort((a,b)=>(a.date_ref||'').localeCompare(b.date_ref||''));
+    const uncleared = all.filter((i)=>i.category==='deposit_in_transit'||i.category==='outstanding_check');
+    const review = all.filter((i)=>i.category==='bank_only'||i.category==='gl_only');
+    const matchedCount = all.filter((i)=>i.category==='matched').length;
+    const items = uncleared;
     const rows = items.map((i)=>`<tr>
       <td>${esc(fmtDate((i.date_ref||'').slice(0,10)))}</td><td>${esc(i.description||'')}</td>
       <td>${esc(i.check_number||'')}</td>
       <td>${i.category==='deposit_in_transit'?'<span style="color:#047857; font-size:11px; font-weight:700;">IN TRANSIT</span>':'<span style="color:#b91c1c; font-size:11px; font-weight:700;">OUTSTANDING</span>'}</td>
       <td class="num" style="font-weight:600;">${fmt(i.amount_cents)}</td></tr>`).join('');
     const total = items.reduce((sum,i)=>sum+Number(i.amount_cents||0),0);
+    const reviewPanel = review.length ? `<div class="card" style="margin-top:14px; border-color:#f59e0b;">
+      <h3 class="sec" style="font-size:14px; margin-bottom:8px; color:#92400e;">⚠ Needs review — ${review.length} item(s) that didn't tie</h3>
+      <table><thead><tr><th>Date</th><th>Description</th><th>Where</th><th class="num">Amount</th></tr></thead>
+      <tbody>${review.map((i)=>`<tr><td>${esc(fmtDate((i.date_ref||'').slice(0,10)))}</td><td>${esc(i.description||'')}</td><td><span class="muted" style="font-size:11px;">${i.category==='bank_only'?'on bank, not in books':'in books, not on bank'}</span></td><td class="num">${fmt(i.amount_cents)}</td></tr>`).join('')}</tbody></table></div>` : '';
+    const matchedNote = matchedCount ? `<div class="muted" style="margin-top:8px; font-size:12.5px;">✓ ${matchedCount} item(s) matched and cleared.</div>` : '';
     // Three-way leg: the attached bank statement (begin/end/deposits/withdrawals).
     const bs = (j.sources||{}).bank_statement;
     const stmtPanel = bs ? `
@@ -804,11 +861,14 @@
           <div><span class="muted">Ending</span><br><strong>${fmt(bs.ending_balance_cents)}</strong></div>
         </div>
       </div>` : '';
-    d.innerHTML = `<div class="card" style="margin-top:16px; border-color:var(--navy);">
-      <h2 class="sec" style="margin-bottom:10px;">${esc(label)} — uncleared items (net ${fmt(total)})</h2>
+    d.innerHTML = `${sourcesPanel}
+      <div class="card" style="margin-top:16px; border-color:var(--navy);">
+      <h2 class="sec" style="margin-bottom:10px;">Uncleared items (net ${fmt(total)})</h2>
       ${stmtPanel}
       <table><thead><tr><th>Date</th><th>Description</th><th>Check #</th><th>Type</th><th class="num">Amount</th></tr></thead>
-      <tbody>${rows||'<tr><td colspan=5 class=muted>No uncleared items — fully cleared.</td></tr>'}</tbody></table></div>`;
+      <tbody>${rows||'<tr><td colspan=5 class=muted>No uncleared items — fully cleared.</td></tr>'}</tbody></table>
+      ${matchedNote}</div>
+      ${reviewPanel}`;
     d.scrollIntoView({behavior:'smooth', block:'nearest'});
   };
 
