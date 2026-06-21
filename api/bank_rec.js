@@ -654,17 +654,42 @@ router.get('/worksheet', async (req, res) => {
       .eq('account_id', cashAcctId).lte('journal_entries.posting_date', period_end)
       .eq('journal_entries.community_id', community_id).limit(100000);
     const glLive = (glRaw || []).filter((l) => (l.journal_entries.status || 'posted') !== 'voided');
-    const glBalance = glLive.reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
-    const operational = glLive.filter((l) => l.journal_entries.source_module !== 'opening_entry' && !WASH_RE.test(l.memo || ''));
-    const eraStart = operational.length
-      ? operational.map((l) => l.journal_entries.posting_date).sort()[0]
-      : period_end.slice(0, 8) + '01';
-    const glItems = operational.map((l) => {
-      const amt = Number(l.debit_cents) - Number(l.credit_cents);
-      return { id: l.id, date: l.journal_entries.posting_date, amount_cents: amt,
-        description: l.memo || l.journal_entries.description || '',
-        check_number: ((l.memo || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null };
-    }).filter((g) => g.amount_cents !== 0);
+
+    // Opening anchor + cutover (for the pre-cutover ingested-GL era).
+    const { data: baOpen } = await supabase.from('bank_accounts').select('opening_position').eq('id', ba.id).maybeSingle();
+    const openPos = (baOpen && baOpen.opening_position) || {};
+    const anchor = openPos.gl_anchor || null;
+    const anchorBalance = anchor ? Number(anchor.balance_cents || 0) : 0;
+    const cutover = openPos.as_of_date || null;
+
+    // Book side by era: live trustEd GL when it exists, else the ingested Vantaca
+    // GL cash (bank_rec_gl_cash) on top of the opening anchor — so 2025 months
+    // show real book detail to reconcile against instead of "not in GL".
+    let glItems, glBalance, eraStart, glBeginAt;
+    if (glLive.length) {
+      glBalance = glLive.reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
+      const operational = glLive.filter((l) => l.journal_entries.source_module !== 'opening_entry' && !WASH_RE.test(l.memo || ''));
+      eraStart = operational.length ? operational.map((l) => l.journal_entries.posting_date).sort()[0] : period_end.slice(0, 8) + '01';
+      glItems = operational.map((l) => {
+        const amt = Number(l.debit_cents) - Number(l.credit_cents);
+        return { id: l.id, date: l.journal_entries.posting_date, amount_cents: amt,
+          description: l.memo || l.journal_entries.description || '',
+          check_number: ((l.memo || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null };
+      }).filter((g) => g.amount_cents !== 0);
+      glBeginAt = (d) => glLive.filter((l) => l.journal_entries.posting_date < d).reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
+    } else {
+      const { data: glcash } = await supabase.from('bank_rec_gl_cash')
+        .select('id, posting_date, description, amount_cents, check_number')
+        .eq('community_id', community_id).eq('account_last4', ba.account_last4)
+        .lte('posting_date', period_end).order('posting_date').limit(50000);
+      glBalance = anchorBalance + (glcash || []).reduce((a, g) => a + Number(g.amount_cents), 0);
+      eraStart = cutover || (anchor && anchor.date) || (period_end.slice(0, 8) + '01');
+      glItems = (glcash || []).filter((g) => !cutover || g.posting_date > cutover).map((g) => ({
+        id: g.id, date: g.posting_date, amount_cents: Number(g.amount_cents),
+        description: g.description || '', check_number: g.check_number || ((g.description || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null,
+      })).filter((g) => g.amount_cents !== 0);
+      glBeginAt = (d) => anchorBalance + (glcash || []).filter((g) => g.posting_date < d).reduce((a, g) => a + Number(g.amount_cents), 0);
+    }
 
     // Bank lines from era start through period-end; ending balance = latest stmt.
     const { data: stmts } = await supabase.from('bank_statement_imports')
@@ -692,8 +717,7 @@ router.get('/worksheet', async (req, res) => {
     // the lines that cleared this month + the still-open carry-forward items.
     const periodStart = period_end.slice(0, 8) + '01';
     const bankBeginning = thisStmt && thisStmt.beginning_balance_cents != null ? thisStmt.beginning_balance_cents : null;
-    const glBeginning = glLive.filter((l) => l.journal_entries.posting_date < periodStart)
-      .reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
+    const glBeginning = glBeginAt(periodStart);
 
     const full = buildWorksheet({ periodEnd: period_end, glItems, bankItems, overrides, bankEndingCents: bankEnding, glBalanceCents: glBalance });
     const inMonth = (d) => d && d >= periodStart && d <= period_end;
