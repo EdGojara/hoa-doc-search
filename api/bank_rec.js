@@ -573,9 +573,25 @@ router.get('/boundary-summary', async (req, res) => {
       .select('debit_cents, credit_cents, journal_entries!inner(posting_date, community_id, status)')
       .eq('account_id', cashAcctId).eq('journal_entries.community_id', community_id).limit(100000);
     const liveLines = (glLines || []).filter((l) => (l.journal_entries.status || 'posted') !== 'voided');
-    const bookAt = (ME) => liveLines
-      .filter((l) => l.journal_entries.posting_date <= ME)
-      .reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
+
+    // Pre-cutover months have no live GL — the book lives in the INGESTED Vantaca
+    // GL cash (bank_rec_gl_cash) on top of the opening anchor. Use live when it
+    // exists for the month, else fall back to anchor + ingested (so 2025 months
+    // show their real book balance instead of $0).
+    const { data: glcash } = await supabase.from('bank_rec_gl_cash')
+      .select('posting_date, amount_cents').eq('community_id', community_id).eq('account_last4', ba.account_last4);
+    const { data: baOpen } = await supabase.from('bank_accounts').select('opening_position').eq('id', ba.id).maybeSingle();
+    const anchor = baOpen && baOpen.opening_position && baOpen.opening_position.gl_anchor;
+    const anchorBalance = anchor ? Number(anchor.balance_cents || 0) : 0;
+    const bookAt = (ME) => {
+      const hasLive = liveLines.some((l) => l.journal_entries.posting_date <= ME);
+      if (hasLive) {
+        return liveLines.filter((l) => l.journal_entries.posting_date <= ME)
+          .reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
+      }
+      const ing = (glcash || []).filter((g) => g.posting_date <= ME).reduce((a, g) => a + Number(g.amount_cents), 0);
+      return anchorBalance + ing;
+    };
 
     const { data: payouts } = await supabase.from('bank_rec_payouts')
       .select('trxn_date, payout_date, account_ref, txn_type, amount_cents')
