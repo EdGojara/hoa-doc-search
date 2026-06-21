@@ -370,7 +370,57 @@ async function retainBankRecSource(file, rec, category, title) {
   return { storage_path, source_document_id };
 }
 
-async function handleSourceUpload(req, res, { parse, column, category, label }) {
+// Continuous register: uploads append into community-wide tables (replacing any
+// existing rows in the same account + date range, so a re-upload is idempotent).
+// run-match reads the relevant date range — this is what makes the books
+// continuous and lets cross-month deposits match (Dec deposit clearing in Jan).
+async function _replaceRange(table, community_id, account_last4, dateCol, lo, hi) {
+  let q = supabase.from(table).delete().eq('community_id', community_id).gte(dateCol, lo).lte(dateCol, hi);
+  if (account_last4 != null) q = q.eq('account_last4', account_last4);
+  await q;
+}
+async function _insertChunks(table, rows) {
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await supabase.from(table).insert(rows.slice(i, i + 500));
+    if (error) console.warn(`[bank-rec] ${table} insert failed:`, error.message);
+  }
+}
+async function ingestDeposits(community_id, parsed, filename) {
+  for (const acct of (parsed.accounts || [])) {
+    const deposits = (acct.deposits || []).filter((d) => d.date && d.amount_cents != null);
+    if (!deposits.length) continue;
+    const dates = deposits.map((d) => d.date).sort();
+    await _replaceRange('bank_rec_deposits', community_id, acct.account_last4, 'deposit_date', dates[0], dates[dates.length - 1]);
+    await _insertChunks('bank_rec_deposits', deposits.map((d) => ({
+      community_id, account_last4: acct.account_last4, deposit_date: d.date,
+      description: d.description, check_number: d.check_number, amount_cents: d.amount_cents, source_filename: filename,
+    })));
+  }
+}
+async function ingestChecks(community_id, parsed, filename) {
+  for (const acct of (parsed.accounts || [])) {
+    const checks = (acct.checks || []).filter((c) => c.amount_cents != null);
+    if (!checks.length) continue;
+    const dates = checks.map((c) => c.date).filter(Boolean).sort();
+    if (dates.length) await _replaceRange('bank_rec_checks', community_id, acct.account_last4, 'check_date', dates[0], dates[dates.length - 1]);
+    await _insertChunks('bank_rec_checks', checks.map((c) => ({
+      community_id, account_last4: acct.account_last4, check_date: c.date || null,
+      payee: c.payee, check_number: c.check_number, amount_cents: c.amount_cents, source_filename: filename,
+    })));
+  }
+}
+async function ingestPayouts(community_id, parsed, filename) {
+  const pays = (parsed.payments || []).filter((p) => p.amount_cents != null);
+  if (!pays.length) return;
+  const dates = pays.map((p) => p.trxn_date).filter(Boolean).sort();
+  if (dates.length) await _replaceRange('bank_rec_payouts', community_id, null, 'trxn_date', dates[0], dates[dates.length - 1]);
+  await _insertChunks('bank_rec_payouts', pays.map((p) => ({
+    community_id, trxn_date: p.trxn_date, payout_date: p.payout_date, account_ref: p.account_ref,
+    kind: p.kind, txn_type: p.type, amount_cents: p.amount_cents, source_filename: filename,
+  })));
+}
+
+async function handleSourceUpload(req, res, { parse, column, category, label, ingest }) {
   const { id } = req.params;
   if (!req.file) return res.status(400).json({ error: 'file_required' });
   const { data: rec } = await supabase.from('bank_reconciliations').select('*').eq('id', id).maybeSingle();
@@ -378,6 +428,9 @@ async function handleSourceUpload(req, res, { parse, column, category, label }) 
   let parsed;
   try { parsed = parse(req.file.buffer); }
   catch (e) { return res.status(400).json({ error: `could_not_parse_${label}`, detail: e.message }); }
+  // Continuous register (community-wide) + per-rec retention snapshot.
+  try { if (ingest) await ingest(rec.community_id, parsed, req.file.originalname || null); }
+  catch (e) { console.warn('[bank-rec] continuous ingest failed:', e.message); }
   const retain = await retainBankRecSource(req.file, rec, category, `${label} — ${rec.period_end || ''}`.trim());
   const payload = { storage_path: retain.storage_path, source_document_id: retain.source_document_id, uploaded_filename: req.file.originalname || null, parsed };
   const { error } = await supabase.from('bank_reconciliations').update({ [column]: payload }).eq('id', id);
@@ -386,17 +439,17 @@ async function handleSourceUpload(req, res, { parse, column, category, label }) 
 }
 
 router.post('/reconciliations/:id/deposit-register', upload.single('file'), async (req, res) => {
-  try { await handleSourceUpload(req, res, { parse: parseDepositRegister, column: 'deposit_register_data', category: 'bank_rec_source', label: 'deposit_register' }); }
+  try { await handleSourceUpload(req, res, { parse: parseDepositRegister, column: 'deposit_register_data', category: 'bank_rec_source', label: 'deposit_register', ingest: ingestDeposits }); }
   catch (err) { console.error('[bank-rec] deposit register upload failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 router.post('/reconciliations/:id/payout-contents', upload.single('file'), async (req, res) => {
-  try { await handleSourceUpload(req, res, { parse: parseVantacaPayPayouts, column: 'vantaca_payout_data', category: 'bank_rec_source', label: 'payout_contents' }); }
+  try { await handleSourceUpload(req, res, { parse: parseVantacaPayPayouts, column: 'vantaca_payout_data', category: 'bank_rec_source', label: 'payout_contents', ingest: ingestPayouts }); }
   catch (err) { console.error('[bank-rec] payout contents upload failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 router.post('/reconciliations/:id/check-register-xls', upload.single('file'), async (req, res) => {
-  try { await handleSourceUpload(req, res, { parse: parseCheckRegister, column: 'check_register_data', category: 'bank_rec_source', label: 'check_register' }); }
+  try { await handleSourceUpload(req, res, { parse: parseCheckRegister, column: 'check_register_data', category: 'bank_rec_source', label: 'check_register', ingest: ingestChecks }); }
   catch (err) { console.error('[bank-rec] check register upload failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
@@ -442,19 +495,34 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
       return accounts[0];
     };
 
-    // Prefer the uploaded .xls reports. Feed all book items through period end;
-    // multi-statement matching (below) clears what already cleared in prior months.
+    // Book side — read from the CONTINUOUS register (community-wide), all items
+    // through period end, scoped to this account. Multi-statement matching (below)
+    // clears what already cleared on prior statements; cross-month items (a Dec
+    // deposit clearing in Jan) match because the data is one continuous ledger.
     let vantacaPayouts = [];
-    if (rec.deposit_register_data && rec.deposit_register_data.parsed) {
-      const acct = pickAccount(rec.deposit_register_data.parsed.accounts);
-      glEntries = depositsToGlEntries((acct && acct.deposits || []).filter((d) => d.date && (!periodEnd || d.date <= periodEnd)));
-    }
-    if (rec.vantaca_payout_data && rec.vantaca_payout_data.parsed) {
-      vantacaPayouts = rec.vantaca_payout_data.parsed.payments || [];
-    }
-    if (rec.check_register_data && rec.check_register_data.parsed) {
-      const acct = pickAccount(rec.check_register_data.parsed.accounts);
-      checkRegisterChecks = checksToMatcherShape((acct && acct.checks || []).filter((c) => !periodEnd || (c.date && c.date <= periodEnd)));
+    let coverageStart = null;
+    {
+      const { data: depRows } = await supabase.from('bank_rec_deposits')
+        .select('id, deposit_date, description, check_number, amount_cents')
+        .eq('community_id', rec.community_id).eq('account_last4', acctLast4)
+        .lte('deposit_date', periodEnd).order('deposit_date').limit(20000);
+      if (depRows && depRows.length) {
+        glEntries = depRows.map((d) => ({ ref: 'DEP-' + d.id, posting_date: d.deposit_date, entry_type: 'deposit', amount_signed_cents: Number(d.amount_cents), description: d.description, check_number: d.check_number }));
+        coverageStart = depRows[0].deposit_date;
+      }
+      const { data: chkRows } = await supabase.from('bank_rec_checks')
+        .select('check_number, amount_cents, check_date, payee')
+        .eq('community_id', rec.community_id).eq('account_last4', acctLast4)
+        .or(`check_date.lte.${periodEnd},check_date.is.null`).limit(20000);
+      if (chkRows && chkRows.length) {
+        checkRegisterChecks = chkRows.map((c) => ({ check_number: c.check_number, amount_cents: Number(c.amount_cents), issue_date: c.check_date, payee: c.payee, status: 'issued' }));
+      }
+      const { data: payRows } = await supabase.from('bank_rec_payouts')
+        .select('trxn_date, payout_date, account_ref, kind, txn_type, amount_cents')
+        .eq('community_id', rec.community_id).lte('trxn_date', periodEnd).limit(20000);
+      if (payRows && payRows.length) {
+        vantacaPayouts = payRows.map((p) => ({ trxn_date: p.trxn_date, payout_date: p.payout_date, account_ref: p.account_ref, kind: p.kind, type: p.txn_type, amount_cents: Number(p.amount_cents) }));
+      }
     }
 
     // Bank side — load ALL of this account's statements from the reports' coverage
@@ -464,16 +532,13 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
     let bankEndingCents = rec.bank_ending_balance_cents;
     let bankImportIds = [rec.bank_statement_import_id].filter(Boolean);
     {
-      let coverageStart = periodStart || '1900-01-01';
-      const allDeps = ((rec.deposit_register_data && rec.deposit_register_data.parsed && rec.deposit_register_data.parsed.accounts) || []).flatMap((a) => a.deposits || []);
-      const depDates = allDeps.map((d) => d.date).filter(Boolean).sort();
-      if (depDates.length) coverageStart = depDates[0];
+      const covStart = coverageStart || periodStart || '1900-01-01';
       if (rec.bank_account_id && periodEnd) {
         const { data: stmts } = await supabase.from('bank_statement_imports')
           .select('id, statement_period_end, ending_balance_cents')
           .eq('bank_account_id', rec.bank_account_id)
           .lte('statement_period_end', periodEnd)
-          .gte('statement_period_end', coverageStart)
+          .gte('statement_period_end', covStart)
           .order('statement_period_end', { ascending: true });
         if (stmts && stmts.length) {
           bankImportIds = stmts.map((st) => st.id);
