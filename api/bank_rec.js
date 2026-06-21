@@ -591,6 +591,15 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
     let openingPosition = {};
     let openingForMatch = {};   // stake actually passed to the matcher for THIS period
     let usingGlCash = false;
+    let glDepositsAreGross = false; // live GL books owner payments individually (gross)
+
+    // Vantaca's "Credit Distribution" lines hit the cash account on BOTH sides
+    // (Dr 1000 / Cr 1000, same property, same day) — an internal credit reclass
+    // mis-booked to cash that nets to zero. Not a real cash movement, so it's
+    // excluded from the matchable items (keeps the audit trail clean and stops
+    // phantom +X/−X pairs from stealing real deposit/payment batches). It nets
+    // to zero, so the GL ending balance is unaffected.
+    const isCashWash = (memo) => /credit distribution/i.test(String(memo || ''));
 
     let cashAcctId = null, openingAnchor = null;
     {
@@ -623,6 +632,7 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
       glEndingCents = liveLines.reduce((s, l) => s + Number(l.debit_cents) - Number(l.credit_cents), 0);
       glEntries = liveLines
         .filter((l) => l.journal_entries.source_module !== 'opening_entry')
+        .filter((l) => !isCashWash(l.memo))
         .map((l, i) => {
           const signed = Number(l.debit_cents) - Number(l.credit_cents);
           return {
@@ -641,6 +651,7 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
       const liveDates = liveLines.map((l) => l.journal_entries.posting_date).filter(Boolean).sort();
       coverageStart = liveDates.length ? liveDates[0] : null;
       openingForMatch = {};
+      glDepositsAreGross = true;
     } else {
       const { data: glcash } = await supabase.from('bank_rec_gl_cash')
         .select('id, posting_date, ledger_id, description, amount_cents, check_number')
@@ -655,6 +666,7 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
         const cutover = openingPosition.as_of_date || null;
         glEntries = glcash
           .filter((g) => !cutover || g.posting_date > cutover)
+          .filter((g) => !isCashWash(g.description))
           .map((g) => ({
             ref: 'GLC-' + g.id,
             posting_date: g.posting_date,
@@ -690,6 +702,15 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
       if (chkRows && chkRows.length) {
         checkRegisterChecks = chkRows.map((c) => ({ check_number: c.check_number, amount_cents: Number(c.amount_cents), issue_date: c.check_date, payee: c.payee, status: 'issued' }));
       }
+    }
+
+    // Vantaca Pay payout contents bridge GROSS GL owner-payments to the NET ACH
+    // payout the bank receives (payments minus fees/refunds for a payout date).
+    // Feed them ONLY when the GL books deposits gross (live trustEd GL) or in the
+    // legacy register path. The pre-cutover INGESTED GL already records deposits
+    // net (one cash line per Vantaca payout), so they match the bank directly via
+    // the lockbox pass — adding payouts there double-claims and breaks the tie.
+    if (glDepositsAreGross || !usingGlCash) {
       const { data: payRows } = await supabase.from('bank_rec_payouts')
         .select('trxn_date, payout_date, account_ref, kind, txn_type, amount_cents')
         .eq('community_id', rec.community_id).lte('trxn_date', periodEnd).limit(20000);
