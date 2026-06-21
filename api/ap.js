@@ -226,16 +226,24 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       });
     }
 
-    // 4. Insert library_documents row
-    const { data: libDoc } = await supabase.from('library_documents').insert({
+    // 4. Insert library_documents row — RETENTION: the invoice stays on file and
+    //    links to the bill via source_document_id. Correct schema columns +
+    //    required management_company_id (the prior insert used wrong column names
+    //    and omitted mgmt co, so it silently never archived).
+    const { data: commFull } = await supabase.from('communities').select('management_company_id').eq('id', community.id).maybeSingle();
+    const { data: libDoc, error: libErr } = await supabase.from('library_documents').insert({
+      management_company_id: commFull ? commFull.management_company_id : null,
       community_id: community.id,
-      title: `AP Invoice — ${extracted.vendor_name} #${extracted.vendor_invoice_number || ''}`.trim(),
-      original_filename: req.file.originalname || null,
-      storage_path: storagePath,
       category: 'vendor_invoice',
+      title: `AP Invoice — ${extracted.vendor_name} #${extracted.vendor_invoice_number || ''}`.trim(),
+      file_name_original: req.file.originalname || null,
+      file_name_normalized: `${(community.name || '').trim()} - Vendor Invoice - ${extracted.vendor_name} - ${extracted.vendor_invoice_number || extracted.invoice_date || ''}.pdf`.replace(/\s+/g, ' '),
+      file_path: storagePath,
+      file_hash: sha,
       file_size_bytes: req.file.size,
-      sha256: sha,
+      created_by_mgmt_company: 'Bedrock',
     }).select('id').single();
+    if (libErr) console.warn('[ap] library_documents retention insert failed:', libErr.message);
 
     // 5. Find/create vendor — mgmt-co-level, NOT community-scoped
     const vendorResult = await findOrCreateVendor({
