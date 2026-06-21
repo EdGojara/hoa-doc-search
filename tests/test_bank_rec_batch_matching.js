@@ -28,19 +28,20 @@ function check(name, cond) {
   else { console.log('  ✗', name); failures++; }
 }
 
-// --- Scenario: mirrors the real Quail Ridge batched-payout pattern -----------
+// --- Scenario: real lockbox batching — deposits share a deposit DATE; the bank
+// shows one credit for the batch a few days later ----------------------------
 const bank = [
-  { id: 'b1', posting_date: '2026-02-05', amount_cents: 83000, transaction_type: 'ach_in',  description: 'VANTACA - PAYOUT' }, // = 260+285+285
-  { id: 'b2', posting_date: '2026-02-12', amount_cents: 54500, transaction_type: 'ach_in',  description: 'VANTACA - PAYOUT' }, // = 260+285
-  { id: 'b3', posting_date: '2026-02-16', amount_cents: 26150, transaction_type: 'deposit', description: 'LOCKBOX DEPOSIT' },  // unique → 1:1
-  { id: 'b4', posting_date: '2026-02-20', amount_cents: 99999, transaction_type: 'ach_in',  description: 'VANTACA - PAYOUT' }, // matches nothing → bank_only
+  { id: 'b1', posting_date: '2026-02-05', amount_cents: 83000, transaction_type: 'deposit', description: 'DEPOSIT' },         // 2/3 batch (260+310+260)
+  { id: 'b2', posting_date: '2026-02-12', amount_cents: 54500, transaction_type: 'deposit', description: 'DEPOSIT' },         // 2/10 batch (260+285)
+  { id: 'b3', posting_date: '2026-02-16', amount_cents: 26150, transaction_type: 'deposit', description: 'LOCKBOX DEPOSIT' }, // unique → 1:1
+  { id: 'b4', posting_date: '2026-02-20', amount_cents: 99999, transaction_type: 'ach_in',  description: 'VANTACA - PAYOUT' },// no match → bank_only
 ];
 const gl = [
   { ref: 'g1', posting_date: '2026-02-03', entry_type: 'deposit', amount_signed_cents: 26000, description: 'p1' },
-  { ref: 'g2', posting_date: '2026-02-03', entry_type: 'deposit', amount_signed_cents: 28500, description: 'p2' },
-  { ref: 'g3', posting_date: '2026-02-04', entry_type: 'deposit', amount_signed_cents: 28500, description: 'p3' },
+  { ref: 'g2', posting_date: '2026-02-03', entry_type: 'deposit', amount_signed_cents: 31000, description: 'p2' },
+  { ref: 'g3', posting_date: '2026-02-03', entry_type: 'deposit', amount_signed_cents: 26000, description: 'p3' },
   { ref: 'g4', posting_date: '2026-02-10', entry_type: 'deposit', amount_signed_cents: 26000, description: 'p4' },
-  { ref: 'g5', posting_date: '2026-02-11', entry_type: 'deposit', amount_signed_cents: 28500, description: 'p5' },
+  { ref: 'g5', posting_date: '2026-02-10', entry_type: 'deposit', amount_signed_cents: 28500, description: 'p5' },
   { ref: 'g6', posting_date: '2026-02-16', entry_type: 'deposit', amount_signed_cents: 26150, description: 'lockbox' },
   { ref: 'g7', posting_date: '2026-02-27', entry_type: 'deposit', amount_signed_cents: 28820, description: '001 Items on Deposit Slip (genuine DIT)' },
 ];
@@ -48,15 +49,15 @@ const bankEnd = 83000 + 54500 + 26150 + 99999;
 const glEnd = bankEnd - 99999 + 28820; // drop the phantom bank_only, add the genuine DIT → should balance
 
 const r = reconcile({ bankTransactions: bank, checkRegisterChecks: [], glEntries: gl, bankEndingCents: bankEnd, glEndingCents: glEnd });
-const batches = r.items.filter((i) => i.match_method === 'batch_deposit');
+const dateBatches = r.items.filter((i) => i.match_method === 'lockbox_date_batch');
 
-console.log('Batch-deposit matcher:');
-check('two batched deposits matched', batches.length === 2);
-check('$830 batch grouped 3 payments', batches.some((b) => b.amount_cents === 83000 && b.gl_ref.split(', ').length === 3));
-check('$545 batch grouped 2 payments', batches.some((b) => b.amount_cents === 54500 && b.gl_ref.split(', ').length === 2));
+console.log('Lockbox date-batch matcher:');
+check('two date-grouped batches matched', dateBatches.length === 2);
+check('$830 batch grouped 3 deposits from 2/3', dateBatches.some((b) => b.amount_cents === 83000 && b.gl_ref.split(', ').length === 3));
+check('$545 batch grouped 2 deposits from 2/10', dateBatches.some((b) => b.amount_cents === 54500 && b.gl_ref.split(', ').length === 2));
 check('unambiguous lockbox still matched 1:1', r.items.filter((i) => i.match_method === 'amount_date_proximity').length === 1);
 check('genuine deposit stays in transit ($288.20)', r.summary.counts.deposit_in_transit === 1 && r.summary.deposits_in_transit_total_cents === 28820);
-check('unmatchable bank credit stays bank_only (no false batch)', r.summary.counts.bank_only === 1 && r.summary.bank_only_adjustments_cents === 99999);
+check('unmatchable bank credit stays bank_only (no false match)', r.summary.counts.bank_only === 1 && r.summary.bank_only_adjustments_cents === 99999);
 check('rec balances', r.summary.balanced === true && r.summary.difference_cents === 0);
 
 // --- Guard: subset-sum must not hang on a large all-equal pool ---------------
