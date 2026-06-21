@@ -691,11 +691,16 @@ router.get('/worksheet', async (req, res) => {
       glBeginAt = (d) => anchorBalance + (glcash || []).filter((g) => g.posting_date < d).reduce((a, g) => a + Number(g.amount_cents), 0);
     }
 
-    // Bank lines from era start through period-end; ending balance = latest stmt.
-    const { data: stmts } = await supabase.from('bank_statement_imports')
+    // Bank lines from era start through period-end. For the ingested (pre-cutover)
+    // era the baseline is the cutover (book=bank that day), so start the bank the
+    // month AFTER it — exclude the cutover's own statement, whose items are part
+    // of the settled opening. The live era starts at its first posting date.
+    let stmtQ = supabase.from('bank_statement_imports')
       .select('id, statement_period_end, beginning_balance_cents, ending_balance_cents')
-      .eq('bank_account_id', ba.id).gte('statement_period_end', eraStart).lte('statement_period_end', period_end)
+      .eq('bank_account_id', ba.id).lte('statement_period_end', period_end)
       .order('statement_period_end', { ascending: true });
+    stmtQ = (glLive.length || !cutover) ? stmtQ.gte('statement_period_end', eraStart) : stmtQ.gt('statement_period_end', cutover);
+    const { data: stmts } = await stmtQ;
     const thisStmt = (stmts || []).slice().reverse().find((st) => st.ending_balance_cents != null) || null;
     const bankEnding = thisStmt ? thisStmt.ending_balance_cents : 0;
     const { data: bankRaw } = await supabase.from('bank_statement_transactions')
