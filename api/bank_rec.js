@@ -128,7 +128,7 @@ router.get('/reconciliations', async (req, res) => {
   try {
     const { community_id, status, limit = '50' } = req.query;
     let q = supabase.from('bank_reconciliations')
-      .select('*, communities(name, slug), bank_accounts(account_nickname, bank_name)')
+      .select('*, communities(name, slug), bank_accounts(account_nickname, bank_name, account_last4)')
       .order('period_end', { ascending: false })
       .limit(Math.min(parseInt(limit, 10) || 50, 200));
     if (community_id) q = q.eq('community_id', community_id);
@@ -548,9 +548,13 @@ router.get('/boundary-summary', async (req, res) => {
     const account_last4 = req.query.account_last4 || null;
 
     // bank account + its GL cash account
-    let baQ = supabase.from('bank_accounts').select('id, account_last4, gl_account_number').eq('community_id', community_id);
-    if (account_last4) baQ = baQ.eq('account_last4', account_last4);
-    const { data: ba } = await baQ.maybeSingle();
+    // A community can have several bank accounts — pick the requested one, else
+    // default to the operating-cash account (don't error on multiple rows).
+    const { data: bas } = await supabase.from('bank_accounts')
+      .select('id, account_last4, gl_account_number').eq('community_id', community_id);
+    const ba = account_last4
+      ? (bas || []).find((a) => a.account_last4 === account_last4)
+      : ((bas || []).find((a) => ['1000', '1005', '10100'].includes(String(a.gl_account_number))) || (bas || [])[0]);
     if (!ba) return res.status(404).json({ error: 'bank_account_not_found' });
 
     const tryNums = [ba.gl_account_number, '1000', '1005', '10100'].filter(Boolean);
@@ -609,9 +613,13 @@ router.get('/worksheet', async (req, res) => {
     if (!community_id || !period_end) return res.status(400).json({ error: 'community_id_and_period_end_required' });
     const account_last4 = req.query.account_last4 || null;
 
-    let baQ = supabase.from('bank_accounts').select('id, account_last4, gl_account_number').eq('community_id', community_id);
-    if (account_last4) baQ = baQ.eq('account_last4', account_last4);
-    const { data: ba } = await baQ.maybeSingle();
+    // A community can have several bank accounts — pick the requested one, else
+    // default to the operating-cash account (don't error on multiple rows).
+    const { data: bas } = await supabase.from('bank_accounts')
+      .select('id, account_last4, gl_account_number').eq('community_id', community_id);
+    const ba = account_last4
+      ? (bas || []).find((a) => a.account_last4 === account_last4)
+      : ((bas || []).find((a) => ['1000', '1005', '10100'].includes(String(a.gl_account_number))) || (bas || [])[0]);
     if (!ba) return res.status(404).json({ error: 'bank_account_not_found' });
 
     const tryNums = [ba.gl_account_number, '1000', '1005', '10100'].filter(Boolean);

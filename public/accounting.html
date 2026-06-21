@@ -779,11 +779,12 @@
 
   // Traditional clearing worksheet: GL | Bank columns, matches pre-checked,
   // Accept/Reopen per line, uncleared GL items carry forward.
-  window.wsOpen = async function(periodEnd){
+  window.wsOpen = async function(periodEnd, accountLast4){
     const d = $('drill'); if(!d) return;
     d.innerHTML = '<div class="card muted" style="padding:14px;">Loading worksheet…</div>';
     d.scrollIntoView({behavior:'smooth', block:'start'});
-    let j; try { j = await (await fetch(`/api/bank-rec/worksheet?community_id=${CID}&period_end=${periodEnd}`)).json(); }
+    const acctQ = accountLast4 ? `&account_last4=${accountLast4}` : '';
+    let j; try { j = await (await fetch(`/api/bank-rec/worksheet?community_id=${CID}&period_end=${periodEnd}${acctQ}`)).json(); }
     catch(e){ d.innerHTML='<div class="card" style="padding:14px;color:#b91c1c">Could not load worksheet.</div>'; return; }
     if (!j || j.error){ d.innerHTML='<div class="card" style="padding:14px;color:#b91c1c">'+esc((j&&j.error)||'error')+'</div>'; return; }
     const w = j.worksheet; window._wsCtx = { periodEnd, baId: j.bank_account_id };
@@ -849,7 +850,7 @@
     const unbalanced = recs.filter((r)=>r.status==='unbalanced').length;
     const rows = recs.map((r)=>{
       const ba = r.bank_accounts||{}; const bal = r.status==='reconciled';
-      return `<tr style="cursor:pointer; ${bal?'':'background:#fff7ed;'}" onclick="bankRecDrill('${r.id}','${esc((ba.account_nickname||'')+' · '+fmtDate(r.period_end))}')">
+      return `<tr style="cursor:pointer; ${bal?'':'background:#fff7ed;'}" onclick="wsOpen('${r.period_end}','${ba.account_last4||''}')" title="Open reconciliation worksheet">
         <td>${esc(fmtDate(r.period_end))}</td><td>${esc(ba.account_nickname||'—')}</td>
         <td class="num">${fmt(r.bank_ending_balance_cents)}</td>
         <td class="num" style="color:#047857;">${r.deposits_in_transit_total_cents?'+'+fmt(r.deposits_in_transit_total_cents):''}</td>
