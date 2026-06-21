@@ -67,8 +67,9 @@
     { id:'homeowners', label:'👤 Homeowners', views:[['owners','Accounts'],['ar','AR Aging']] },
     { id:'bills',      label:'🧾 Bills (AP)', views:[['ap','AP Aging']] },
     { id:'bank',       label:'🏦 Bank Rec',   views:[['bankrec','Reconciliation']] },
-    { id:'financials', label:'📊 Financials', views:[['trial','Trial Balance'],['tieout','Tie-Out']] },
-    { id:'setup',      label:'⚙️ Setup',      views:[['policy','Billing Policy'],['coa','Chart of Accounts'],['je','Journal Entries']] },
+    { id:'financials', label:'📊 Financials', views:[['bs','Balance Sheet'],['is','Income Statement'],['eq','Equity'],['trial','Trial Balance'],['tieout','Tie-Out']] },
+    { id:'budget',     label:'📈 Budget',     views:[['bva','Budget vs Actual'],['budget','Budget']] },
+    { id:'setup',      label:'⚙️ Setup',      views:[['periods','Periods'],['policy','Billing Policy'],['coa','Chart of Accounts'],['je','Journal Entries']] },
   ];
   let CID = null, GROUP = 'homeowners', VIEW = 'owners';
 
@@ -107,7 +108,203 @@
       if (VIEW==='bankrec') return renderBankRec();
       if (VIEW==='coa') return renderCoa();
       if (VIEW==='je') return renderJe();
+      if (VIEW==='bs') return renderBalanceSheet();
+      if (VIEW==='is') return renderIncomeStatement();
+      if (VIEW==='eq') return renderEquity();
+      if (VIEW==='bva') return renderBVA();
+      if (VIEW==='budget') return renderBudget();
+      if (VIEW==='periods') return renderPeriods();
     } catch (e) { $('body').innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load: '+esc(e.message)+'</div>'; }
+  }
+
+  // ── Financial statements + budget + periods — consolidated from the old Books
+  //    tab. All compute from the same GL via /api/books/* (journal entries +
+  //    chart of accounts), so they tie to the Trial Balance. fmtDate/fmt/esc are
+  //    the page's existing helpers.
+  const dateInput = (id,val) => `<input type="date" id="${id}" value="${val}" style="padding:6px 8px; border:1px solid var(--rule); border-radius:6px; font-size:13px;">`;
+  const goBtn = (id) => `<button id="${id}" style="padding:7px 14px; border:none; border-radius:6px; background:var(--navy); color:#fff; font-weight:600; cursor:pointer; font-size:13px;">View</button>`;
+  const dToday = () => new Date().toISOString().slice(0,10);
+  const dMonthStart = () => dToday().slice(0,8)+'01';
+  const dYearStart = () => dToday().slice(0,4)+'-01-01';
+
+  async function renderBalanceSheet() {
+    $('body').innerHTML = `<div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
+        <h2 class="sec">Balance Sheet</h2>
+        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">As of</span>${dateInput('bs-asof',dToday())}${goBtn('bs-go')}</div>
+      </div><div id="bs-out" class="muted">Loading…</div></div>`;
+    const run = async () => {
+      const asOf = $('bs-asof').value; if (!asOf) { $('bs-out').innerHTML='Pick a date.'; return; }
+      $('bs-out').innerHTML = 'Loading…';
+      try { const j = await (await fetch(`/api/books/balance-sheet?community_id=${CID}&as_of_date=${asOf}`)).json();
+        if (j.error) throw new Error(j.error); $('bs-out').innerHTML = bsHTML(j);
+      } catch (e) { $('bs-out').innerHTML = `<div style="color:var(--err)">Couldn't load: ${esc(e.message)}</div>`; }
+    };
+    $('bs-go').addEventListener('click', run); run();
+  }
+  function bsHTML(j) {
+    const sec = (title,rows,total) => `<h3 class="sec" style="font-size:14px; margin:16px 0 6px;">${esc(title)}</h3>
+      <table><tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="width:80px; font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}${r.is_computed?' <em class="muted" style="font-size:11px;">(computed)</em>':''}</td><td><span class="pill">${esc(r.fund_code||'—')}</span></td><td class="num">${fmt(r.balance_cents)}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">— none —</td></tr>'}
+        <tr class="total"><td colspan="3">Total ${esc(title)}</td><td class="num">${fmt(total)}</td></tr></tbody></table>`;
+    const t = j.totals;
+    return `<div class="muted" style="margin-bottom:8px;">As of ${fmtDate(j.as_of_date)}</div>
+      ${sec('Assets',j.sections.assets,t.assets_cents)}
+      ${sec('Liabilities',j.sections.liabilities,t.liabilities_cents)}
+      ${sec('Equity / Fund Balance',j.sections.equity,t.equity_cents)}
+      <div style="margin-top:16px; padding:10px 12px; border-radius:8px; font-weight:600; background:${t.balanced?'#dcfce7':'#fee2e2'}; color:${t.balanced?'#166534':'#991b1b'};">
+        ${t.balanced?'✓ Balance Sheet balances':'⚠ Out of balance by '+fmt(t.difference_cents)} · Assets ${fmt(t.assets_cents)} = Liabilities ${fmt(t.liabilities_cents)} + Equity ${fmt(t.equity_cents)}</div>`;
+  }
+
+  async function renderIncomeStatement() {
+    $('body').innerHTML = `<div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
+        <h2 class="sec">Income Statement</h2>
+        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">From</span>${dateInput('is-start',dMonthStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('is-end',dToday())}${goBtn('is-go')}</div>
+      </div><div id="is-out" class="muted">Loading…</div></div>`;
+    const run = async () => {
+      const s=$('is-start').value, e=$('is-end').value; if (!s||!e) { $('is-out').innerHTML='Pick a period.'; return; }
+      $('is-out').innerHTML='Loading…';
+      try { const j = await (await fetch(`/api/books/income-statement?community_id=${CID}&period_start=${s}&period_end=${e}`)).json();
+        if (j.error) throw new Error(j.error); $('is-out').innerHTML = isHTML(j);
+      } catch (err) { $('is-out').innerHTML = `<div style="color:var(--err)">Couldn't load: ${esc(err.message)}</div>`; }
+    };
+    $('is-go').addEventListener('click', run); run();
+  }
+  function isHTML(j) {
+    const sec = (title,rows,pt,yt) => `<h3 class="sec" style="font-size:14px; margin:16px 0 6px;">${esc(title)}</h3>
+      <table><thead><tr><th>Acct</th><th>Account</th><th>Fund</th><th class="num">Period</th><th class="num">YTD</th></tr></thead>
+      <tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}</td><td><span class="pill">${esc(r.fund_code||'—')}</span></td><td class="num">${fmt(r.period_amount_cents)}</td><td class="num">${fmt(r.ytd_amount_cents)}</td></tr>`).join('') : '<tr><td colspan="5" class="muted">— none —</td></tr>'}
+        <tr class="total"><td colspan="3">Total ${esc(title)}</td><td class="num">${fmt(pt)}</td><td class="num">${fmt(yt)}</td></tr></tbody></table>`;
+    const ni = j.totals.period.net_income_cents, col = ni>=0?'#166534':'#991b1b';
+    return `<div class="muted" style="margin-bottom:8px;">${fmtDate(j.period_start)} — ${fmtDate(j.period_end)}</div>
+      ${sec('Revenue',j.sections.revenue,j.totals.period.revenue_cents,j.totals.ytd.revenue_cents)}
+      ${sec('Expenses',j.sections.expenses,j.totals.period.expenses_cents,j.totals.ytd.expenses_cents)}
+      <div style="margin-top:16px; padding:12px; border-radius:8px; background:#f5f8fc; border:2px solid ${col};">
+        <div style="display:flex; justify-content:space-between; font-weight:700;"><span>NET INCOME</span><span style="color:${col};">Period ${fmt(ni)} · YTD ${fmt(j.totals.ytd.net_income_cents)}</span></div></div>`;
+  }
+
+  async function renderEquity() {
+    $('body').innerHTML = `<div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
+        <h2 class="sec">Statement of Equity</h2>
+        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">From</span>${dateInput('eq-start',dYearStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('eq-end',dToday())}${goBtn('eq-go')}</div>
+      </div><div id="eq-out" class="muted">Loading…</div></div>`;
+    const run = async () => {
+      const s=$('eq-start').value, e=$('eq-end').value; if (!s||!e) { $('eq-out').innerHTML='Pick a period.'; return; }
+      $('eq-out').innerHTML='Loading…';
+      try { const j = await (await fetch(`/api/books/equity-statement?community_id=${CID}&period_start=${s}&period_end=${e}`)).json();
+        if (j.error) throw new Error(j.error); $('eq-out').innerHTML = eqHTML(j);
+      } catch (err) { $('eq-out').innerHTML = `<div style="color:var(--err)">Couldn't load: ${esc(err.message)}</div>`; }
+    };
+    $('eq-go').addEventListener('click', run); run();
+  }
+  function eqHTML(j) {
+    const funds = new Set([...Object.keys(j.beginning.by_fund||{}),...Object.keys(j.ending.by_fund||{})]);
+    const rows = [...funds].map((code)=>{ const b=j.beginning.by_fund[code]||{total:0}, e=j.ending.by_fund[code]||{total:0};
+      return `<tr><td style="font-weight:600;">${esc(code==='consolidated'?'Unsegregated':code)}</td><td class="num">${fmt(b.total)}</td><td class="num">${fmt(e.total-b.total)}</td><td class="num" style="font-weight:600;">${fmt(e.total)}</td></tr>`; }).join('');
+    return `<div class="muted" style="margin-bottom:8px;">${fmtDate(j.period_start)} — ${fmtDate(j.period_end)}</div>
+      <table><thead><tr><th>Fund</th><th class="num">Beginning</th><th class="num">Net Change</th><th class="num">Ending</th></tr></thead><tbody>${rows}</tbody></table>
+      <div style="margin-top:12px; padding:10px 12px; background:#f5f8fc; border-radius:8px;">Period Net Income: <strong>${fmt(j.period_net_income_cents)}</strong></div>`;
+  }
+
+  async function renderBVA() {
+    $('body').innerHTML = `<div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
+        <h2 class="sec">Budget vs Actual</h2>
+        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">Through</span>${dateInput('bva-end',dToday())}${goBtn('bva-go')}</div>
+      </div><div id="bva-out" class="muted">Loading…</div></div>`;
+    const run = async () => {
+      const e=$('bva-end').value; if (!e) { $('bva-out').innerHTML='Pick a period end.'; return; }
+      $('bva-out').innerHTML='Loading…';
+      try { const j = await (await fetch(`/api/books/budget-vs-actual?community_id=${CID}&period_end=${e}`)).json();
+        if (j.error) throw new Error(j.error); $('bva-out').innerHTML = bvaHTML(j);
+      } catch (err) { $('bva-out').innerHTML = `<div style="color:var(--err)">Couldn't load: ${esc(err.message)}</div>`; }
+    };
+    $('bva-go').addEventListener('click', run); run();
+  }
+  function bvaHTML(j) {
+    if (!j.has_budget) return `<div class="muted" style="padding:24px; text-align:center;">No budget loaded for fiscal year ${esc(String(j.fiscal_year||''))}. Use the <strong>Budget</strong> tab to upload one.</div>`;
+    const vc = (v) => Math.abs(v)<=1 ? 'var(--ink-soft)' : (v>=0?'#166534':'#991b1b');
+    const rows = (j.rows||[]).map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number)}</td><td>${esc(r.account_name)}</td>
+      <td class="num">${fmt(r.mtd_budget_cents)}</td><td class="num">${fmt(r.mtd_actual_cents)}</td><td class="num" style="color:${vc(r.mtd_variance_cents)};">${fmt(r.mtd_variance_cents)}</td>
+      <td class="num">${fmt(r.ytd_budget_cents)}</td><td class="num">${fmt(r.ytd_actual_cents)}</td><td class="num" style="color:${vc(r.ytd_variance_cents)};">${fmt(r.ytd_variance_cents)}</td>
+      <td class="num">${fmt(r.annual_budget_cents)}</td></tr>`).join('');
+    return `<table><thead><tr><th>#</th><th>Account</th><th class="num">MTD Bud</th><th class="num">MTD Act</th><th class="num">MTD Var</th><th class="num">YTD Bud</th><th class="num">YTD Act</th><th class="num">YTD Var</th><th class="num">Annual</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  async function renderPeriods() {
+    $('body').innerHTML = `<div class="card"><h2 class="sec" style="margin-bottom:12px;">Accounting Periods</h2><div id="per-out" class="muted">Loading…</div></div>`;
+    try {
+      const j = await (await fetch(`/api/books/periods?community_id=${CID}`)).json();
+      const rows = j.periods||[];
+      if (!rows.length) { $('per-out').innerHTML='<div class="muted" style="padding:20px;">No periods set up.</div>'; return; }
+      const badge = (s) => { const ok=s==='open'||s==='reopened'; const bg=ok?'#dcfce7':(s==='closed'?'#fef3c7':'#f1f5f9'), fg=ok?'#166534':(s==='closed'?'#92400e':'#64748b');
+        return `<span style="font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px; background:${bg}; color:${fg};">${esc(s)}</span>`; };
+      $('per-out').innerHTML = `<table><thead><tr><th>FY</th><th>Period</th><th>Start</th><th>End</th><th>Status</th></tr></thead><tbody>${rows.map((p)=>`<tr><td>${esc(String(p.fiscal_year))}</td><td>${esc(String(p.period_number))}</td><td>${fmtDate(p.period_start)}</td><td>${fmtDate(p.period_end)}</td><td>${badge(p.status)}</td></tr>`).join('')}</tbody></table>`;
+    } catch (e) { $('per-out').innerHTML = `<div style="color:var(--err)">Couldn't load: ${esc(e.message)}</div>`; }
+  }
+
+  // Budget upload → extract → match-to-CoA → save (draft/approve)
+  let _coaCache = [], _pendingBudget = null;
+  async function renderBudget() {
+    $('body').innerHTML = `<div class="card">
+      <h2 class="sec" style="margin-bottom:8px;">Budget</h2>
+      <div class="muted" style="margin-bottom:12px; font-size:13px;">Upload an approved annual budget (PDF). trustEd extracts the line items and matches them to your chart of accounts.</div>
+      <div id="bdg-drop" style="border:2px dashed var(--rule); border-radius:10px; padding:26px; text-align:center; cursor:pointer; background:#fafbfc;">
+        <div style="font-size:13px; color:var(--ink-soft);">📄 Drop a budget PDF here or <strong>click to choose</strong></div>
+        <input type="file" id="bdg-file" accept=".pdf" style="display:none;">
+      </div>
+      <div id="bdg-preview"></div>
+      <div id="bdg-list" style="margin-top:14px;" class="muted">Loading…</div></div>`;
+    const drop=$('bdg-drop'), file=$('bdg-file');
+    drop.addEventListener('click',()=>file.click());
+    drop.addEventListener('dragover',(e)=>{e.preventDefault(); drop.style.background='#eef4fb';});
+    drop.addEventListener('dragleave',()=>{drop.style.background='#fafbfc';});
+    drop.addEventListener('drop',(e)=>{e.preventDefault(); drop.style.background='#fafbfc'; if(e.dataTransfer.files[0]) uploadBudget(e.dataTransfer.files[0]);});
+    file.addEventListener('change',()=>{ if(file.files[0]) uploadBudget(file.files[0]); });
+    try { _coaCache = (await (await fetch(`/api/books/coa?community_id=${CID}`)).json()).accounts || []; } catch (e) { _coaCache = []; }
+    try {
+      const ex = ((await (await fetch(`/api/books/budgets?community_id=${CID}`)).json()).budgets) || [];
+      $('bdg-list').innerHTML = ex.length
+        ? `<div class="sec" style="font-size:13px; margin-bottom:6px;">Existing budgets</div>` + ex.map((b)=>`<div style="display:flex; justify-content:space-between; padding:6px 10px; background:#f5f8fc; border-radius:6px; margin-bottom:6px; font-size:12.5px;"><span>FY ${esc(String(b.fiscal_year))} — ${esc(b.status)}${b.source_filename?' · '+esc(b.source_filename):''}</span><span class="muted">${b.approved_at?'Approved '+fmtDate(b.approved_at.slice(0,10)):'Draft'}</span></div>`).join('')
+        : '<div class="muted">No budgets uploaded yet.</div>';
+    } catch (e) { $('bdg-list').innerHTML = ''; }
+  }
+  async function uploadBudget(f) {
+    $('bdg-preview').innerHTML = `<div style="margin-top:12px; padding:14px; background:#f5f8fc; border-radius:8px; color:#315A87;">⏳ Extracting <strong>${esc(f.name)}</strong> (~30s)…</div>`;
+    try {
+      const fd = new FormData(); fd.append('file', f);
+      const j = await (await fetch('/api/books/budgets/preview-pdf', { method:'POST', body:fd })).json();
+      if (j.error) throw new Error(j.error); _pendingBudget = j; renderBudgetPreview(j);
+    } catch (e) { $('bdg-preview').innerHTML = `<div style="margin-top:12px; color:var(--err); padding:12px;">Extraction failed: ${esc(e.message)}</div>`; }
+  }
+  function renderBudgetPreview(payload) {
+    const ex = payload.extraction;
+    const byV={}, byN={}; (_coaCache||[]).forEach((a)=>{ if(a.vantaca_account_number) byV[a.vantaca_account_number]=a; if(a.account_number) byN[a.account_number]=a; });
+    let matched=0, unmatched=0;
+    const lines = (ex.line_items||[]).map((li)=>{ const a=byV[li.account_number]||byN[li.account_number]||null; if(a)matched++; else unmatched++; return {...li,_a:a}; });
+    const tr = lines.map((li)=>`<tr><td style="font-family:ui-monospace,monospace; font-size:11.5px;">${esc(li.account_number)}</td><td style="font-size:11.5px;">${esc(li.account_name)}</td><td style="font-size:11.5px;">${esc(li.account_type||'')}</td><td class="num" style="font-size:11.5px;">${fmt(li.annual_amount_cents)}</td><td style="font-size:11.5px; color:${li._a?'#166534':'#991b1b'};">${li._a?'✓ '+esc(li._a.account_number):'⚠ no match'}</td></tr>`).join('');
+    $('bdg-preview').innerHTML = `<div class="card" style="margin-top:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+        <div><strong>Preview — FY ${esc(String(ex.fiscal_year||'?'))}</strong> · ${matched+unmatched} lines<div class="muted" style="font-size:12px;">${matched} matched, ${unmatched} unmatched</div></div>
+        <div style="display:flex; gap:8px;"><button id="bdg-draft" style="padding:7px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer;">💾 Save Draft</button><button id="bdg-approve" style="padding:7px 12px; border:none; border-radius:6px; background:#166534; color:#fff; cursor:pointer;">✓ Save & Approve</button></div>
+      </div>
+      ${ex.warnings&&ex.warnings.length?`<div style="padding:8px 12px; background:#fef3c7; border-radius:6px; font-size:12px; color:#92400e; margin-bottom:10px;">⚠ ${ex.warnings.map(esc).join('<br>⚠ ')}</div>`:''}
+      <table><thead><tr><th>Source #</th><th>Account</th><th>Type</th><th class="num">Annual</th><th>Match</th></tr></thead><tbody>${tr}</tbody></table>
+      ${unmatched>0?`<div class="muted" style="margin-top:10px; font-size:12px;">⚠ Unmatched accounts are skipped on save. Add the Vantaca account number to your CoA to map them.</div>`:''}
+    </div>`;
+    $('bdg-draft').addEventListener('click',()=>commitBudget('draft'));
+    $('bdg-approve').addEventListener('click',()=>commitBudget('approved'));
+  }
+  async function commitBudget(status) {
+    if (!_pendingBudget) return; const ex = _pendingBudget.extraction;
+    const byV={}, byN={}; (_coaCache||[]).forEach((a)=>{ if(a.vantaca_account_number) byV[a.vantaca_account_number]=a; if(a.account_number) byN[a.account_number]=a; });
+    const matched = (ex.line_items||[]).map((li)=>{ const a=byV[li.account_number]||byN[li.account_number]; return a?{account_id:a.id,fund_id:a.fund_id||null,annual_amount_cents:li.annual_amount_cents,monthly_amounts_cents:li.monthly_amounts_cents}:null; }).filter(Boolean);
+    if (!matched.length) { alert('No matched lines to save.'); return; }
+    try {
+      const j = await (await fetch('/api/books/budgets', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ community_id:CID, fiscal_year:ex.fiscal_year, status, source_filename:_pendingBudget.filename, line_items:matched }) })).json();
+      if (j.error) throw new Error(j.error); alert(`Saved budget — ${j.line_items_count} lines, status ${j.budget.status}.`); _pendingBudget=null; renderBudget();
+    } catch (e) { alert('Save failed: '+e.message); }
   }
 
   async function renderTrial() {
