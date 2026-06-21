@@ -817,69 +817,110 @@
   };
   const brClearBtn = (recId, itemId) => `<button onclick="brClearItem('${recId}','${itemId}')" style="padding:3px 10px; border:1px solid var(--rule); border-radius:5px; background:#fff; cursor:pointer; font-size:11px;">Clear</button>`;
 
+  // Build the structured reconciliation statement data (shared by screen + print).
+  function brBuildStatement(rec, items) {
+    const all = (items||[]).slice().sort((a,b)=>(a.date_ref||'').localeCompare(b.date_ref||''));
+    const dit = all.filter((i)=>i.category==='deposit_in_transit');
+    const oc = all.filter((i)=>i.category==='outstanding_check');
+    const inLedger = all.filter((i)=>i.category==='bank_only'||i.category==='gl_only');
+    const matched = all.filter((i)=>i.category==='matched');
+    const bank = Number(rec.bank_ending_balance_cents||0);
+    const ditTot = Number(rec.deposits_in_transit_total_cents||0);
+    const ocTot = Number(rec.outstanding_checks_total_cents||0); // negative
+    const book = Number(rec.gl_ending_balance_cents||0);
+    const adjusted = bank + ditTot + ocTot;
+    const diff = Number(rec.difference_cents||0);
+    const reconciled = Math.abs(diff) <= 1;
+    return { dit, oc, inLedger, matched, bank, ditTot, ocTot, book, adjusted, diff, reconciled };
+  }
+
   window.bankRecDrill = async function(id, label) {
     window._brLabel = label;
     const d = $('drill'); d.innerHTML = '<div class="muted" style="padding:14px;">Loading…</div>';
     const j = await (await fetch(`/api/bank-rec/reconciliations/${id}`)).json();
     const rec = j.reconciliation || {};
-    // --- source-report upload slots ---
+    window._brData = { id, label, rec, items: j.items||[] };
+    const S = brBuildStatement(rec, j.items);
+
+    // --- upload bank statement + run (the only manual steps) ---
     const slots = BR_SOURCES.map((sdef)=>{
-      const data = rec[sdef.key];
-      const attached = data && data.parsed;
-      const name = attached ? (data.uploaded_filename || 'attached') : '';
-      return `<div class="br-slot" style="flex:1 1 220px; border:1px solid var(--rule); border-radius:8px; padding:10px;">
-        <div style="font-weight:600; font-size:12.5px; margin-bottom:6px;">${esc(sdef.label)} ${attached?'<span style="color:#047857;">✓</span>':''}</div>
-        <div class="br-status muted" style="font-size:11.5px; margin-bottom:6px;">${attached?esc(name):'Not attached'}</div>
-        <label style="font-size:12px; color:var(--navy); cursor:pointer; font-weight:600;">${attached?'Replace':'Upload'} .xls
-          <input type="file" accept=".xls,.xlsx" style="display:none;" onchange="brUpload('${id}','${sdef.ep}',this)"></label>
+      const data = rec[sdef.key]; const attached = data && data.parsed;
+      return `<div class="br-slot" style="flex:1 1 200px; border:1px solid var(--rule); border-radius:8px; padding:9px;">
+        <div style="font-weight:600; font-size:12px; margin-bottom:4px;">${esc(sdef.label)} ${attached?'<span style="color:#047857;">✓</span>':''}</div>
+        <div class="br-status muted" style="font-size:11px; margin-bottom:5px;">${attached?esc(data.uploaded_filename||'attached'):'Not attached'}</div>
+        <label style="font-size:11.5px; color:var(--navy); cursor:pointer; font-weight:600;">${attached?'Replace':'Upload'} .xls<input type="file" accept=".xls,.xlsx" style="display:none;" onchange="brUpload('${id}','${sdef.ep}',this)"></label>
       </div>`;
     }).join('');
-    const anyAttached = BR_SOURCES.some((s)=>rec[s.key] && rec[s.key].parsed);
     const sourcesPanel = `<div class="card" style="margin-top:16px;">
-      <h2 class="sec" style="margin-bottom:4px;">${esc(label)}</h2>
-      <div class="sub" style="margin-bottom:10px;">Attach the Vantaca source reports, then run the reconciliation. The matcher clears Vantaca Pay payouts (net of fees/refunds), batched deposits, and outstanding checks — and flags anything that doesn't tie.</div>
-      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">${slots}</div>
-      <button id="br-run" onclick="brRun('${id}')" ${anyAttached?'':'disabled'} style="padding:8px 16px; border:none; border-radius:6px; background:var(--navy); color:#fff; font-weight:600; cursor:pointer; ${anyAttached?'':'opacity:.5;'}">Run reconciliation</button>
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div class="muted" style="font-size:12px;">Upload the month's statement + registers, then run. The system matches everything and produces the statement below — nothing to clear by hand.</div>
+        <button id="br-run" onclick="brRun('${id}')" style="padding:8px 16px; border:none; border-radius:6px; background:var(--navy); color:#fff; font-weight:600; cursor:pointer;">Run reconciliation</button>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">${slots}</div>
     </div>`;
-    // --- items ---
-    const all = (j.items||[]).sort((a,b)=>(a.date_ref||'').localeCompare(b.date_ref||''));
-    const uncleared = all.filter((i)=>i.category==='deposit_in_transit'||i.category==='outstanding_check');
-    const review = all.filter((i)=>i.category==='bank_only'||i.category==='gl_only');
-    const matchedCount = all.filter((i)=>i.category==='matched').length;
-    const items = uncleared;
-    const rows = items.map((i)=>`<tr>
-      <td>${esc(fmtDate((i.date_ref||'').slice(0,10)))}</td><td>${esc(i.description||'')}</td>
-      <td>${esc(i.check_number||'')}</td>
-      <td>${i.category==='deposit_in_transit'?'<span style="color:#047857; font-size:11px; font-weight:700;">IN TRANSIT</span>':'<span style="color:#b91c1c; font-size:11px; font-weight:700;">OUTSTANDING</span>'}</td>
-      <td class="num" style="font-weight:600;">${fmt(i.amount_cents)}</td>
-      <td style="text-align:right;">${brClearBtn(id, i.id)}</td></tr>`).join('');
-    const total = items.reduce((sum,i)=>sum+Number(i.amount_cents||0),0);
-    const reviewPanel = review.length ? `<div class="card" style="margin-top:14px; border-color:#f59e0b;">
-      <h3 class="sec" style="font-size:14px; margin-bottom:8px; color:#92400e;">⚠ Needs review — ${review.length} item(s) that didn't tie</h3>
-      <table><thead><tr><th>Date</th><th>Description</th><th>Where</th><th class="num">Amount</th><th></th></tr></thead>
-      <tbody>${review.map((i)=>`<tr><td>${esc(fmtDate((i.date_ref||'').slice(0,10)))}</td><td>${esc(i.description||'')}</td><td><span class="muted" style="font-size:11px;">${i.category==='bank_only'?'on bank, not in books':'in books, not on bank'}</span></td><td class="num">${fmt(i.amount_cents)}</td><td style="text-align:right;">${brClearBtn(id, i.id)}</td></tr>`).join('')}</tbody></table></div>` : '';
-    const matchedNote = matchedCount ? `<div class="muted" style="margin-top:8px; font-size:12.5px;">✓ ${matchedCount} item(s) matched and cleared.</div>` : '';
-    // Three-way leg: the attached bank statement (begin/end/deposits/withdrawals).
-    const bs = (j.sources||{}).bank_statement;
-    const stmtPanel = bs ? `
-      <div style="margin:0 0 14px; padding:12px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px;">
-        <div style="font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:#0369a1; font-weight:700; margin-bottom:6px;">Bank statement attached${bs.source_filename?' · '+esc(bs.source_filename):''}</div>
-        <div style="display:flex; gap:22px; flex-wrap:wrap; font-size:13px;">
-          <div><span class="muted">Beginning</span><br><strong>${fmt(bs.beginning_balance_cents)}</strong></div>
-          <div><span class="muted">Deposits</span><br><strong style="color:#047857;">${fmt(bs.total_deposits_cents)}</strong></div>
-          <div><span class="muted">Withdrawals</span><br><strong style="color:#b91c1c;">${fmt(bs.total_withdrawals_cents)}</strong></div>
-          <div><span class="muted">Ending</span><br><strong>${fmt(bs.ending_balance_cents)}</strong></div>
+
+    // --- the reconciliation statement (auditor output) ---
+    const line = (lbl, val, o={}) => `<div style="display:flex; justify-content:space-between; padding:5px 0; ${o.border?'border-top:2px solid var(--navy); font-weight:700; margin-top:2px;':''}"><span>${lbl}</span><span class="num">${fmt(val)}</span></div>`;
+    const sub = (list) => list.length ? `<div style="margin:2px 0 8px 18px;">${list.map((i)=>`<div style="display:flex; justify-content:space-between; font-size:12px; color:var(--ink-soft); padding:1px 0;"><span>${esc(fmtDate((i.date_ref||'').slice(0,10)))} · ${esc((i.description||'').slice(0,46))}${i.check_number?' · #'+esc(i.check_number):''}</span><span class="num">${fmt(Math.abs(i.amount_cents))}</span></div>`).join('')}</div>` : '';
+    const detail = (lbl, list) => list.length ? `<details style="margin-top:8px;"><summary style="cursor:pointer; color:var(--ink-soft); font-size:12.5px;">${lbl}</summary><div style="margin-top:6px; max-height:260px; overflow:auto;">${list.map((i)=>`<div style="display:flex; justify-content:space-between; font-size:11.5px; padding:2px 0; border-bottom:1px solid #f3f4f6;"><span>${esc(fmtDate((i.date_ref||'').slice(0,10)))} · ${esc((i.description||'').slice(0,50))}</span><span class="num">${fmt(i.amount_cents)}</span></div>`).join('')}</div></details>` : '';
+
+    const statement = `<div class="card" style="margin-top:16px; border-color:var(--navy);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h2 class="sec">Bank Reconciliation — ${esc(label)}</h2>
+        <button onclick="brPrint('${id}')" style="padding:6px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer; font-size:12px;">🖨 Print / Save PDF</button>
+      </div>
+      <div style="max-width:580px;">
+        ${line('Balance per bank statement', S.bank)}
+        ${line('Add: Deposits in transit'+(S.dit.length?` (${S.dit.length})`:''), S.ditTot)}
+        ${sub(S.dit)}
+        ${line('Less: Outstanding checks'+(S.oc.length?` (${S.oc.length})`:''), S.ocTot)}
+        ${sub(S.oc)}
+        ${line('Adjusted bank balance', S.adjusted, {border:true})}
+        <div style="height:10px;"></div>
+        ${line('Balance per books (general ledger)', S.book)}
+        <div style="display:flex; justify-content:space-between; padding:8px 0; border-top:2px solid var(--navy); font-weight:700; color:${S.reconciled?'#047857':'#b91c1c'};">
+          <span>${S.reconciled?'✓ RECONCILED':'⚠ Difference — under review'}</span><span class="num">${fmt(S.diff)}</span>
         </div>
-      </div>` : '';
-    d.innerHTML = `${sourcesPanel}
-      <div class="card" style="margin-top:16px; border-color:var(--navy);">
-      <h2 class="sec" style="margin-bottom:10px;">Uncleared items (net ${fmt(total)})</h2>
-      ${stmtPanel}
-      <table><thead><tr><th>Date</th><th>Description</th><th>Check #</th><th>Type</th><th class="num">Amount</th><th></th></tr></thead>
-      <tbody>${rows||'<tr><td colspan=6 class=muted>No uncleared items — fully cleared.</td></tr>'}</tbody></table>
-      ${matchedNote}</div>
-      ${reviewPanel}`;
+      </div>
+      ${detail(`✓ ${S.matched.length} transactions matched &amp; cleared this period (audit trail)`, S.matched)}
+      ${detail(`Bank activity not in the deposit/check registers — ${S.inLedger.length} items (ACH, fees, interest; recorded in the ledger)`, S.inLedger)}
+    </div>`;
+
+    d.innerHTML = sourcesPanel + statement;
     d.scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
+
+  window.brPrint = function(id) {
+    const D = window._brData; if (!D || D.id !== id) return;
+    const S = brBuildStatement(D.rec, D.items);
+    const row = (lbl, val, b) => `<tr style="${b?'border-top:2px solid #0B1D34;font-weight:700;':''}"><td style="padding:5px 0;">${lbl}</td><td style="padding:5px 0;text-align:right;font-family:ui-monospace,monospace;">${fmt(val)}</td></tr>`;
+    const sub = (list) => list.map((i)=>`<tr><td style="padding:1px 0 1px 18px;font-size:11px;color:#555;">${fmtDate((i.date_ref||'').slice(0,10))} · ${esc(i.description||'')}${i.check_number?' · #'+esc(i.check_number):''}</td><td style="padding:1px 0;text-align:right;font-size:11px;color:#555;font-family:ui-monospace,monospace;">${fmt(Math.abs(i.amount_cents))}</td></tr>`).join('');
+    const w = window.open('', '_blank');
+    w.document.write(`<!DOCTYPE html><html><head><title>Bank Reconciliation — ${esc(D.label)}</title><style>
+      body{font-family:system-ui,sans-serif;padding:30px;color:#111;max-width:720px;margin:0 auto;}
+      h1{font-size:18px;color:#0B1D34;margin:0 0 2px;} .meta{color:#666;font-size:12px;margin-bottom:18px;}
+      table{width:100%;border-collapse:collapse;} td{font-size:13px;}
+      .result{margin-top:6px;border-top:2px solid #0B1D34;font-weight:700;font-size:14px;color:${S.reconciled?'#047857':'#b91c1c'};}
+      h3{font-size:12px;color:#0B1D34;margin:18px 0 4px;text-transform:uppercase;letter-spacing:.5px;}
+      .ft{margin-top:24px;border-top:1px solid #ccc;padding-top:6px;font-size:10px;color:#888;}
+      @media print{.noprint{display:none;}}
+    </style></head><body>
+      <div class="noprint" style="text-align:right;margin-bottom:10px;"><button onclick="window.print()" style="background:#0B1D34;color:#fff;border:none;padding:7px 14px;border-radius:5px;cursor:pointer;">Print / Save as PDF</button></div>
+      <h1>Bank Reconciliation</h1>
+      <div class="meta">${esc(D.label)} · prepared by trustEd</div>
+      <table>
+        ${row('Balance per bank statement', S.bank)}
+        ${row('Add: Deposits in transit'+(S.dit.length?` (${S.dit.length})`:''), S.ditTot)}${sub(S.dit)}
+        ${row('Less: Outstanding checks'+(S.oc.length?` (${S.oc.length})`:''), S.ocTot)}${sub(S.oc)}
+        ${row('Adjusted bank balance', S.adjusted, true)}
+        <tr><td style="height:10px;"></td></tr>
+        ${row('Balance per books (general ledger)', S.book)}
+        <tr class="result"><td style="padding:8px 0;">${S.reconciled?'RECONCILED — difference':'Difference (under review)'}</td><td style="padding:8px 0;text-align:right;font-family:ui-monospace,monospace;">${fmt(S.diff)}</td></tr>
+      </table>
+      ${S.inLedger.length?`<h3>Bank activity recorded in the ledger (${S.inLedger.length})</h3><table>${S.inLedger.map((i)=>`<tr><td style="font-size:11px;color:#555;">${fmtDate((i.date_ref||'').slice(0,10))} · ${esc(i.description||'')}</td><td style="text-align:right;font-size:11px;color:#555;font-family:ui-monospace,monospace;">${fmt(i.amount_cents)}</td></tr>`).join('')}</table>`:''}
+      <div class="ft">Generated by trustEd · ${new Date().toLocaleString()} · ${S.matched.length} transactions matched and cleared this period.</div>
+    </body></html>`);
+    w.document.close();
   };
 
   async function renderCoa() {
