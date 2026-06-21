@@ -752,10 +752,39 @@
 
   // -------- BANK RECONCILIATION --------
   const fmtDate = (d) => d ? new Date(d+'T00:00:00').toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}) : '—';
+  // Boundary view: book (GL) vs bank each month = deposits in transit, with the
+  // online settlements explained from the payout key and the rest flagged.
+  async function boundarySummaryCard() {
+    let data;
+    try { data = await (await fetch(`/api/bank-rec/boundary-summary?community_id=${CID}`)).json(); }
+    catch(e){ return ''; }
+    if (!data || !data.months || !data.months.length || data.error) return '';
+    const rows = data.months.slice().sort((a,b)=>(b.period_end||'').localeCompare(a.period_end||'')).map((m)=>{
+      const tied = m.reconciled;
+      const resColor = Math.abs(m.residual_cents)<=100 ? '#047857' : (m.residual_cents<0?'#b91c1c':'#b45309');
+      return `<tr style="${tied?'':'background:#fff7ed;'}">
+        <td>${esc(fmtDate(m.period_end))}</td>
+        <td class="num">${fmt(m.book_cents)}</td>
+        <td class="num">${fmt(m.bank_cents)}</td>
+        <td class="num">${fmt(m.book_minus_bank_cents)}</td>
+        <td class="num" style="color:#047857;">${m.online_in_transit_cents?'+'+fmt(m.online_in_transit_cents):'—'}</td>
+        <td class="num" style="font-weight:700; color:${resColor};">${m.residual_cents?fmt(m.residual_cents):'$0.00'}</td>
+        <td>${tied?'<span style="color:#047857;font-weight:700;font-size:12px;">✓ tied</span>':'<span style="color:#b45309;font-weight:700;font-size:12px;">review</span>'}</td></tr>`;
+    }).join('');
+    return `<div class="card"><h2 class="sec" style="margin-bottom:4px;">Reconciliation summary — book vs bank by month</h2>
+      <div class="sub" style="margin-bottom:10px;">GL cash balance minus the bank statement each month equals deposits in transit. The online portion is settled from the Vantaca payout key (transaction date → payout date); the remaining residual is physical check-deposit timing plus anything genuinely off, flagged for review.</div>
+      <table><thead><tr><th>Month-end</th><th class="num">Book (GL)</th><th class="num">Bank</th><th class="num">Book − Bank</th><th class="num">Online in transit</th><th class="num">Residual (review)</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  }
+
   async function renderBankRec() {
-    const j = await (await fetch(`/api/bank-rec/reconciliations?community_id=${CID}&limit=200`)).json();
+    const [bj, summaryHtml] = await Promise.all([
+      fetch(`/api/bank-rec/reconciliations?community_id=${CID}&limit=200`).then(r=>r.json()),
+      boundarySummaryCard(),
+    ]);
+    const j = bj;
     const recs = (j.reconciliations||[]).sort((a,b)=> (b.period_end||'').localeCompare(a.period_end||'') || ((a.bank_accounts||{}).account_nickname||'').localeCompare((b.bank_accounts||{}).account_nickname||''));
-    if (!recs.length) { $('body').innerHTML = '<div class="card muted" style="padding:24px;">No bank reconciliations imported yet.</div>'; return; }
+    if (!recs.length) { $('body').innerHTML = (summaryHtml||'') + '<div class="card muted" style="padding:24px;">No bank reconciliations imported yet.</div>'; return; }
     const unbalanced = recs.filter((r)=>r.status==='unbalanced').length;
     const rows = recs.map((r)=>{
       const ba = r.bank_accounts||{}; const bal = r.status==='reconciled';
@@ -774,6 +803,7 @@
         <div class="stat"><div class="v">${recs.length}</div><div class="l">Reconciliations on file</div></div>
         <div class="stat"><div class="v" style="${unbalanced?'color:#b91c1c;':''}">${unbalanced}</div><div class="l">Out of balance (Vantaca)</div></div>
       </div>
+      ${summaryHtml||''}
       <div class="card"><h2 class="sec" style="margin-bottom:4px;">Bank reconciliations by period</h2>
         <div class="sub" style="margin-bottom:10px;">Bank balance + deposits in transit − outstanding checks = adjusted balance, compared to the GL book balance. Click a row for the uncleared items. Out-of-balance rows are Vantaca's own rec not tying — flagged for review.</div>
         <table><thead><tr><th>Period</th><th>Account</th><th class="num">Bank Bal.</th><th class="num">+ In Transit</th><th class="num">− Outstanding</th><th class="num">Adj. Balance</th><th class="num">Book (GL)</th><th class="num">Difference</th><th>Status</th></tr></thead>

@@ -29,6 +29,7 @@ const { parseVantacaPayPayouts } = require('../lib/banking/extractors/vantaca_pa
 const { parseCheckRegister, checksToMatcherShape } = require('../lib/banking/extractors/check_register');
 const { parseGlTrialBalance } = require('../lib/banking/extractors/gl_cash');
 const { reconcile } = require('../lib/banking/matcher');
+const { boundaryReconcile } = require('../lib/banking/boundary_rec');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -530,6 +531,65 @@ router.put('/accounts/:id/opening-position', express.json(), async (req, res) =>
     if (error) return res.status(500).json({ error: safeErrorMessage(error) });
     return res.json({ ok: true, opening_position: op });
   } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// ---------------------------------------------------------------------------
+// Boundary reconciliation summary — book vs bank = deposits in transit, by month.
+// The accountant's view: each month-end's GL cash balance vs the bank statement,
+// with the online deposits-in-transit (from the payout settlement key) explained
+// and the rest surfaced as a review residual. Reads live, no persistence.
+//   GET /boundary-summary?community_id=...&account_last4=...
+// ---------------------------------------------------------------------------
+router.get('/boundary-summary', async (req, res) => {
+  try {
+    const community_id = req.query.community_id;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const account_last4 = req.query.account_last4 || null;
+
+    // bank account + its GL cash account
+    let baQ = supabase.from('bank_accounts').select('id, account_last4, gl_account_number').eq('community_id', community_id);
+    if (account_last4) baQ = baQ.eq('account_last4', account_last4);
+    const { data: ba } = await baQ.maybeSingle();
+    if (!ba) return res.status(404).json({ error: 'bank_account_not_found' });
+
+    const tryNums = [ba.gl_account_number, '1000', '1005', '10100'].filter(Boolean);
+    let cashAcctId = null;
+    for (const n of tryNums) {
+      const { data: a } = await supabase.from('chart_of_accounts').select('id').eq('community_id', community_id).eq('account_number', n).maybeSingle();
+      if (a) { cashAcctId = a.id; break; }
+    }
+    if (!cashAcctId) return res.status(404).json({ error: 'cash_account_not_found' });
+
+    // statements (one row per month-end) + all GL cash lines + all payouts
+    const { data: stmts } = await supabase.from('bank_statement_imports')
+      .select('statement_period_end, ending_balance_cents')
+      .eq('bank_account_id', ba.id).order('statement_period_end', { ascending: true });
+    const { data: glLines } = await supabase.from('journal_entry_lines')
+      .select('debit_cents, credit_cents, journal_entries!inner(posting_date, community_id, status)')
+      .eq('account_id', cashAcctId).eq('journal_entries.community_id', community_id).limit(100000);
+    const liveLines = (glLines || []).filter((l) => (l.journal_entries.status || 'posted') !== 'voided');
+    const bookAt = (ME) => liveLines
+      .filter((l) => l.journal_entries.posting_date <= ME)
+      .reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
+
+    const { data: payouts } = await supabase.from('bank_rec_payouts')
+      .select('trxn_date, payout_date, account_ref, txn_type, amount_cents')
+      .eq('community_id', community_id).limit(50000);
+
+    const months = (stmts || [])
+      .filter((st) => st.ending_balance_cents != null)
+      .map((st) => boundaryReconcile({
+        periodEnd: st.statement_period_end,
+        bookCents: bookAt(st.statement_period_end),
+        bankCents: st.ending_balance_cents,
+        payouts: payouts || [],
+      }));
+
+    return res.json({ account_last4: ba.account_last4, months });
+  } catch (err) {
+    console.error('[bank-rec] boundary-summary failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
 });
 
 // ---------------------------------------------------------------------------
