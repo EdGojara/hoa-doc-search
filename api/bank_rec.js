@@ -27,6 +27,7 @@ const { extract: extractBankStatement } = require('../lib/banking/extractors/ban
 const { parseDepositRegister, depositsToGlEntries } = require('../lib/banking/extractors/deposit_register');
 const { parseVantacaPayPayouts } = require('../lib/banking/extractors/vantaca_pay_payouts');
 const { parseCheckRegister, checksToMatcherShape } = require('../lib/banking/extractors/check_register');
+const { parseGlTrialBalance } = require('../lib/banking/extractors/gl_cash');
 const { reconcile } = require('../lib/banking/matcher');
 const { safeErrorMessage } = require('./_safe_error');
 
@@ -453,6 +454,84 @@ router.post('/reconciliations/:id/check-register-xls', upload.single('file'), as
   catch (err) { console.error('[bank-rec] check register upload failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// GL Trial Balance detail (.xls) — the COMPLETE book for pre-cutover periods.
+// Ingests the cash account's transactions into the continuous bank_rec_gl_cash
+// ledger and records the opening anchor (the cash account's beginning balance
+// at the earliest period seen) on the bank account, so run-match can compute
+// the period-end GL cash balance automatically (anchor + cumulative).
+async function ingestGlCash(community_id, parsed, filename, glAccountNumber, acctLast4) {
+  const acct = (parsed.accounts || []).find((a) => a.account_number === glAccountNumber)
+    || (parsed.accounts || []).find((a) => a.account_number === '1000');
+  if (!acct) return { ingested: 0, beginning_cents: null };
+  const txns = (acct.transactions || []).filter((t) => t.date && t.amount_cents != null);
+  if (txns.length) {
+    const dates = txns.map((t) => t.date).sort();
+    await _replaceRange('bank_rec_gl_cash', community_id, acctLast4, 'posting_date', dates[0], dates[dates.length - 1]);
+    await _insertChunks('bank_rec_gl_cash', txns.map((t) => ({
+      community_id, account_last4: acctLast4, gl_account: acct.account_number,
+      posting_date: t.date, ledger_id: t.ledger_id || null, description: t.description || null,
+      amount_cents: t.amount_cents,
+      check_number: (String(t.description || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null,
+      source_filename: filename,
+    })));
+  }
+  return { ingested: txns.length, beginning_cents: acct.beginning_cents };
+}
+
+router.post('/reconciliations/:id/gl-trial-balance', upload.single('file'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    const { data: rec } = await supabase.from('bank_reconciliations').select('*').eq('id', id).maybeSingle();
+    if (!rec) return res.status(404).json({ error: 'rec_not_found' });
+    let parsed;
+    try { parsed = parseGlTrialBalance(req.file.buffer); }
+    catch (e) { return res.status(400).json({ error: 'could_not_parse_gl_trial_balance', detail: e.message }); }
+
+    // Map this rec's bank account → GL cash account number + last4.
+    let glNum = '1000', last4 = null;
+    if (rec.bank_account_id) {
+      const { data: ba } = await supabase.from('bank_accounts')
+        .select('gl_account_number, account_last4, opening_position').eq('id', rec.bank_account_id).maybeSingle();
+      if (ba) { glNum = ba.gl_account_number || '1000'; last4 = ba.account_last4 || null; }
+      // Set / extend the GL anchor to the EARLIEST beginning balance seen.
+      const acct = (parsed.accounts || []).find((a) => a.account_number === glNum)
+        || (parsed.accounts || []).find((a) => a.account_number === '1000');
+      if (acct && parsed.period_start) {
+        const op = (ba && ba.opening_position) || {};
+        if (!op.gl_anchor || parsed.period_start < op.gl_anchor.date) {
+          op.gl_anchor = { date: parsed.period_start, balance_cents: acct.beginning_cents };
+          await supabase.from('bank_accounts').update({ opening_position: op }).eq('id', rec.bank_account_id);
+        }
+      }
+    }
+
+    const out = await ingestGlCash(rec.community_id, parsed, req.file.originalname || null, glNum, last4);
+    await retainBankRecSource(req.file, rec, 'bank_rec_source', `gl_trial_balance — ${parsed.period_start || ''}..${parsed.period_end || ''}`.trim());
+    return res.json({ ok: true, gl_trial_balance: { period: [parsed.period_start, parsed.period_end], cash_account: glNum, ingested: out.ingested } });
+  } catch (err) { console.error('[bank-rec] gl trial balance upload failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// Opening reconciled position ("stake in the ground") for a bank account.
+// { as_of_date, outstanding_checks:[{check_number, amount_cents, issue_date, payee}],
+//   deposits_in_transit:[{amount_cents, date, description}], gl_anchor:{date, balance_cents} }
+// Merges with any existing position so the GL-upload-set anchor isn't clobbered.
+router.put('/accounts/:id/opening-position', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { as_of_date, outstanding_checks, deposits_in_transit, gl_anchor } = req.body || {};
+    const { data: ba } = await supabase.from('bank_accounts').select('opening_position').eq('id', id).maybeSingle();
+    const op = (ba && ba.opening_position) || {};
+    if (as_of_date !== undefined) op.as_of_date = as_of_date;
+    if (Array.isArray(outstanding_checks)) op.outstanding_checks = outstanding_checks;
+    if (Array.isArray(deposits_in_transit)) op.deposits_in_transit = deposits_in_transit;
+    if (gl_anchor !== undefined) op.gl_anchor = gl_anchor;
+    const { error } = await supabase.from('bank_accounts').update({ opening_position: op }).eq('id', id);
+    if (error) return res.status(500).json({ error: safeErrorMessage(error) });
+    return res.json({ ok: true, opening_position: op });
+  } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // ---------------------------------------------------------------------------
 // Run the matcher
 // ---------------------------------------------------------------------------
@@ -495,13 +574,107 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
       return accounts[0];
     };
 
-    // Book side — read from the CONTINUOUS register (community-wide), all items
-    // through period end, scoped to this account. Multi-statement matching (below)
-    // clears what already cleared on prior statements; cross-month items (a Dec
-    // deposit clearing in Jan) match because the data is one continuous ledger.
+    // ------------------------------------------------------------------
+    // BOOK SIDE = the GL cash account (Ed: reconcile to the GL, the COMPLETE
+    // book — not the registers — "it is the foundation of accounting to
+    // reconcile cash"). Two sources, chosen by period:
+    //   • post-cutover: trustEd's live journal_entry_lines for the cash account
+    //   • pre-cutover : the ingested Vantaca GL cash detail (bank_rec_gl_cash)
+    // Operational transactions feed the matcher; the opening / balance-forward
+    // entry is kept in the ending balance but not offered as a matchable item.
+    // The opening reconciled position ("stake in the ground") clears forward so
+    // a community with a decade of history still ties to $0 without a fictional
+    // clean baseline. Registers are only the fallback when no GL cash exists.
+    // ------------------------------------------------------------------
     let vantacaPayouts = [];
     let coverageStart = null;
+    let openingPosition = {};
+    let openingForMatch = {};   // stake actually passed to the matcher for THIS period
+    let usingGlCash = false;
+
+    let cashAcctId = null, openingAnchor = null;
     {
+      const { data: ba2 } = await supabase.from('bank_accounts')
+        .select('gl_account_number, opening_position').eq('id', rec.bank_account_id).maybeSingle();
+      openingPosition = (ba2 && ba2.opening_position) || {};
+      openingAnchor = openingPosition.gl_anchor || null;
+      const tryNums = [ba2 && ba2.gl_account_number, '1000', '1005', '10100'].filter(Boolean);
+      for (const n of tryNums) {
+        const { data: a } = await supabase.from('chart_of_accounts').select('id')
+          .eq('community_id', rec.community_id).eq('account_number', n).maybeSingle();
+        if (a) { cashAcctId = a.id; break; }
+      }
+    }
+
+    // Live trustEd GL cash lines through period end (empty for pre-cutover periods).
+    let liveLines = [];
+    if (cashAcctId && periodEnd) {
+      const { data: ll } = await supabase.from('journal_entry_lines')
+        .select('debit_cents, credit_cents, memo, journal_entries!inner(posting_date, description, source_module, community_id, status)')
+        .eq('account_id', cashAcctId)
+        .lte('journal_entries.posting_date', periodEnd)
+        .eq('journal_entries.community_id', rec.community_id)
+        .limit(50000);
+      liveLines = (ll || []).filter((l) => (l.journal_entries.status || 'posted') !== 'voided');
+    }
+
+    if (liveLines.length) {
+      usingGlCash = true;
+      glEndingCents = liveLines.reduce((s, l) => s + Number(l.debit_cents) - Number(l.credit_cents), 0);
+      glEntries = liveLines
+        .filter((l) => l.journal_entries.source_module !== 'opening_entry')
+        .map((l, i) => {
+          const signed = Number(l.debit_cents) - Number(l.credit_cents);
+          return {
+            ref: 'GLL-' + i,
+            posting_date: l.journal_entries.posting_date,
+            entry_type: signed > 0 ? 'deposit' : 'payment',
+            amount_signed_cents: signed,
+            description: l.memo || l.journal_entries.description || '',
+            check_number: ((l.memo || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null,
+          };
+        })
+        .filter((g) => g.amount_signed_cents !== 0);
+      // Live era starts at the earliest live posting date. The pre-cutover 2025
+      // stake (anchored in Vantaca history) does NOT apply to live-era periods;
+      // a live-era opening stake can be set separately when needed.
+      const liveDates = liveLines.map((l) => l.journal_entries.posting_date).filter(Boolean).sort();
+      coverageStart = liveDates.length ? liveDates[0] : null;
+      openingForMatch = {};
+    } else {
+      const { data: glcash } = await supabase.from('bank_rec_gl_cash')
+        .select('id, posting_date, ledger_id, description, amount_cents, check_number')
+        .eq('community_id', rec.community_id).eq('account_last4', acctLast4)
+        .lte('posting_date', periodEnd).order('posting_date').limit(50000);
+      if (glcash && glcash.length) {
+        usingGlCash = true;
+        // Matchable items start at the cutover (stake date); pre-cutover txns are
+        // already captured in the anchor balance + opening position, so feeding
+        // them here would surface phantom unmatched items whose bank clearings
+        // predate our statement coverage.
+        const cutover = openingPosition.as_of_date || null;
+        glEntries = glcash
+          .filter((g) => !cutover || g.posting_date > cutover)
+          .map((g) => ({
+            ref: 'GLC-' + g.id,
+            posting_date: g.posting_date,
+            entry_type: Number(g.amount_cents) > 0 ? 'deposit' : 'payment',
+            amount_signed_cents: Number(g.amount_cents),
+            description: g.description || '',
+            check_number: g.check_number || ((g.description || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null,
+          }));
+        // Ending balance is the FULL cumulative GL cash balance (anchor + every
+        // ingested transaction through period end), so it ties to the books.
+        const anchorBal = openingAnchor ? Number(openingAnchor.balance_cents || 0) : 0;
+        glEndingCents = anchorBal + glcash.reduce((s, g) => s + Number(g.amount_cents), 0);
+        coverageStart = cutover || (openingAnchor && openingAnchor.date) || null;
+        openingForMatch = openingPosition;
+      }
+    }
+
+    // Legacy fallback — no GL cash for this community/account yet: reconcile
+    // against the registers (deposit register + check register + payouts).
+    if (!usingGlCash) {
       const { data: depRows } = await supabase.from('bank_rec_deposits')
         .select('id, deposit_date, description, check_number, amount_cents')
         .eq('community_id', rec.community_id).eq('account_last4', acctLast4)
@@ -550,41 +723,18 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
     const { data: bankTx } = await supabase.from('bank_statement_transactions')
       .select('*').in('bank_statement_import_id', bankImportIds).limit(20000);
 
-    // Book side: pull the LIVE GL cash balance whenever the GL actually has
-    // activity for this period, so the book is always current — write-offs and
-    // adjustments flow through automatically, no stale snapshot. Periods before
-    // the GL exists (no lines) keep the stored figure (e.g. Vantaca-era months).
-    if (periodEnd && rec.bank_account_id) {
-      const { data: ba2 } = await supabase.from('bank_accounts').select('gl_account_number').eq('id', rec.bank_account_id).maybeSingle();
-      const tryNums = [ba2 && ba2.gl_account_number, '1000', '1005', '10100'].filter(Boolean);
-      let cashAcctId = null;
-      for (const n of tryNums) {
-        const { data: a } = await supabase.from('chart_of_accounts').select('id').eq('community_id', rec.community_id).eq('account_number', n).maybeSingle();
-        if (a) { cashAcctId = a.id; break; }
-      }
-      if (cashAcctId) {
-        const { data: glLines } = await supabase.from('journal_entry_lines')
-          .select('debit_cents, credit_cents, journal_entries!inner(posting_date, community_id)')
-          .eq('account_id', cashAcctId)
-          .lte('journal_entries.posting_date', periodEnd)
-          .eq('journal_entries.community_id', rec.community_id)
-          .limit(20000);
-        if (glLines && glLines.length) {
-          glEndingCents = glLines.reduce((s, l) => s + Number(l.debit_cents) - Number(l.credit_cents), 0);
-        }
-      }
-    }
-
     const result = reconcile({
       bankTransactions: bankTx || [],
       checkRegisterChecks,
       glEntries,
       vantacaPayouts,
+      openingPosition: openingForMatch,
       bankEndingCents,
       glEndingCents,
-      // No legacy Vantaca GL export linked → gl_ending is trustEd's own complete
-      // ledger, so bank items are already booked (don't re-add them to the book side).
-      bookIsComplete: !rec.gl_import_id,
+      // GL cash IS the complete book (live or ingested) → bank items are already
+      // booked; don't re-add them to the book side. Same for a trustEd ledger
+      // with no legacy Vantaca GL export linked.
+      bookIsComplete: usingGlCash || !rec.gl_import_id,
     });
 
     // Wipe previous items for idempotency
