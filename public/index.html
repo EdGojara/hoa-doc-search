@@ -41628,7 +41628,11 @@ ${questionsPage}
         // Migration 195 + api/transactions. Ed 2026-06-08.
         { id: 'transactions',    label: '📑 Transactions',     section: 'Vantaca & Legacy' },
         { id: 'vantaca-imports', label: '📥 Vantaca Imports',  section: 'Vantaca & Legacy' },
-        { id: 'books',           label: '📚 Books',            section: 'Vantaca & Legacy' },
+        // 📚 Books retired 2026-06-20 — its full reporting suite (Balance Sheet,
+        // Income Statement, Equity, Budget, Periods, Journal Entry posting) was
+        // consolidated into the Accounting page (/admin/accounting). The tab
+        // markup + bk* JS remain dormant in this file (nothing navigates to
+        // 'books' now) pending a separate dead-code cleanup.
         { id: 'bank-rec',        label: '🧾 Bank Rec',         section: 'Vantaca & Legacy' },
       ],
     },
