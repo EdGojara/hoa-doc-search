@@ -787,55 +787,70 @@
     let j; try { j = await (await fetch(`/api/bank-rec/worksheet?community_id=${CID}&period_end=${periodEnd}${acctQ}`)).json(); }
     catch(e){ d.innerHTML='<div class="card" style="padding:14px;color:#b91c1c">Could not load worksheet.</div>'; return; }
     if (!j || j.error){ d.innerHTML='<div class="card" style="padding:14px;color:#b91c1c">'+esc((j&&j.error)||'error')+'</div>'; return; }
-    const w = j.worksheet; window._wsCtx = { periodEnd, baId: j.bank_account_id };
-    const amt = (c)=>`<span style="color:${c<0?'#b91c1c':'#047857'}">${fmt(c)}</span>`;
-    // matched groups → one block each (bank line(s) ↔ GL line(s))
-    const matchRows = (w.matched||[]).slice().sort((a,b)=>((a.bank[0]||a.gl[0]||{}).date||'').localeCompare((b.bank[0]||b.gl[0]||{}).date||'')).map((g)=>{
-      const cleared = g.status==='cleared';
+    const w = j.worksheet; window._wsCtx = { periodEnd, baId: j.bank_account_id, acct: accountLast4||'' };
+    const amt = (c)=>`<span style="color:${c<0?'#b91c1c':'#111'}">${fmt(c)}</span>`;
+    const hdr = (t)=>`<tr><td colspan="7" style="background:#f1f5f9;font-weight:700;font-size:12px;padding:6px 8px;">${t}</td></tr>`;
+    // one row per matched group (bank line(s) ↔ GL line(s)); action = accept|reopen
+    const groupRow = (g, action)=>{
       const bankTot=g.bank.reduce((a,x)=>a+x.amount_cents,0), glTot=g.gl.reduce((a,x)=>a+x.amount_cents,0);
-      const bankDesc=g.bank.map(x=>esc((x.description||'').slice(0,30))).join('; ')||'—';
-      const glDesc=g.gl.length>1?`${g.gl.length} GL lines`:esc((g.gl[0]?g.gl[0].description:'').slice(0,34));
-      // toggling the whole group: target each item to the opposite of current
-      const next = cleared?'open':'cleared';
-      const items = [...g.bank.map(x=>['bank',x.id]),...g.gl.map(x=>['gl',x.id])];
-      return `<tr style="${cleared?'':'background:#fff7ed;'}">
-        <td style="text-align:center;">${cleared?'<span style="color:#047857;font-weight:700;">✓</span>':'<span style="color:#b45309;">○</span>'}</td>
+      const bankDesc=g.bank.map(x=>esc((x.description||'').slice(0,28))).join('; ')||'—';
+      const glDesc=g.gl.length>1?`${g.gl.length} GL lines`:esc((g.gl[0]?g.gl[0].description:'').slice(0,30))||'—';
+      const items=[...g.bank.map(x=>['bank',x.id]),...g.gl.map(x=>['gl',x.id])];
+      const newStatus = action==='accept'?'cleared':'open';
+      return `<tr>
+        <td style="text-align:center;">${action==='accept'?'<span style="color:#b45309;">○</span>':'<span style="color:#047857;font-weight:700;">✓</span>'}</td>
         <td>${esc((g.gl[0]||g.bank[0]||{}).date||'')}</td>
         <td>${glDesc}</td><td class="num">${amt(glTot)}</td>
         <td>${bankDesc}</td><td class="num">${amt(bankTot)}</td>
-        <td><button onclick='wsClearGroup(${JSON.stringify(items)},"${next}")' style="padding:2px 9px;border:1px solid var(--rule);border-radius:5px;background:#fff;cursor:pointer;font-size:11px;">${cleared?'Reopen':'Accept'}</button></td></tr>`;
-    }).join('');
-    const openRow = (it,side,label)=>`<tr style="background:#fff7ed;">
+        <td><button onclick='wsClearGroup(${JSON.stringify(items)},"${newStatus}")' style="padding:2px 10px;border:1px solid var(--rule);border-radius:5px;background:${action==='accept'?'#ecfdf5':'#fff'};cursor:pointer;font-size:11px;">${action==='accept'?'Accept':'Reopen'}</button></td></tr>`;
+    };
+    const openRow = (it,side,canAccept)=>`<tr>
       <td style="text-align:center;"><span style="color:#b45309;">○</span></td>
       <td>${esc(it.date||'')}</td>
-      <td>${side==='gl'?esc((it.description||'').slice(0,34)):`<span class="muted">${label}</span>`}</td>
+      <td>${side==='gl'?esc((it.description||'').slice(0,30)):'<span class="muted">— not in GL —</span>'}</td>
       <td class="num">${side==='gl'?amt(it.amount_cents):''}</td>
-      <td>${side==='bank'?esc((it.description||'').slice(0,34)):`<span class="muted">${label}</span>`}</td>
-      <td class="num">${side==='bank'?amt(it.amount_cents):''}</td><td></td></tr>`;
-    const ditRows=(w.open_deposits_in_transit||[]).map(it=>openRow(it,'gl','(in transit)')).join('');
-    const ocRows=(w.open_outstanding_checks||[]).map(it=>openRow(it,'gl','(outstanding)')).join('');
-    const bankOnlyRows=(w.open_bank_unrecorded||[]).map(it=>openRow(it,'bank','(not in GL)')).join('');
+      <td>${side==='bank'?esc((it.description||'').slice(0,30)):'<span class="muted">— not on bank yet —</span>'}</td>
+      <td class="num">${side==='bank'?amt(it.amount_cents):''}</td>
+      <td>${canAccept?`<button onclick='wsClearGroup(${JSON.stringify([[side,it.id]])},"cleared")' style="padding:2px 10px;border:1px solid var(--rule);border-radius:5px;background:#ecfdf5;cursor:pointer;font-size:11px;">Accept</button>`:''}</td></tr>`;
+
+    const proposed = (w.matched||[]).filter(g=>!g.confirmed).sort((a,b)=>((a.bank[0]||a.gl[0]||{}).date||'').localeCompare((b.bank[0]||b.gl[0]||{}).date||''));
+    const confirmed = (w.matched||[]).filter(g=>g.confirmed).sort((a,b)=>((a.bank[0]||a.gl[0]||{}).date||'').localeCompare((b.bank[0]||b.gl[0]||{}).date||''));
+    const reviewRows = proposed.map(g=>groupRow(g,'accept')).join('') + (w.open_bank_unrecorded||[]).map(it=>openRow(it,'bank',true)).join('');
+    const ditRows=(w.open_deposits_in_transit||[]).map(it=>openRow(it,'gl',false)).join('');
+    const ocRows=(w.open_outstanding_checks||[]).map(it=>openRow(it,'gl',false)).join('');
+    const confirmedRows = confirmed.map(g=>groupRow(g,'reopen')).join('');
     const tied = w.reconciled;
+    const bb=(c)=>c==null?'—':fmt(c);
     d.innerHTML = `<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
-        <h2 class="sec" style="margin:0;">Reconciliation worksheet — ${esc(fmtDate(periodEnd))}</h2>
-        <span style="font-weight:700;color:${tied?'#047857':'#b45309'};">${tied?'✓ Reconciled':'Difference '+fmt(w.difference_cents)}</span>
+        <h2 class="sec" style="margin:0;">Reconciliation — ${esc(j.account_last4?('···'+j.account_last4):'')} · ${esc(fmtDate(periodEnd))}</h2>
+        <span style="font-weight:700;font-size:15px;color:${tied?'#047857':'#b45309'};">${tied?'✓ Reconciled':'Out of balance · '+fmt(w.difference_cents)}</span>
       </div>
-      <div class="sub" style="margin:6px 0 12px;">Bank ${fmt(w.bank_ending_cents)} + deposits in transit ${fmt(w.deposits_in_transit_cents)} − outstanding checks ${fmt(Math.abs(w.outstanding_checks_cents))} = ${fmt(w.reconciled_balance_cents)}, vs GL book ${fmt(w.gl_balance_cents)}. Accept confirms a match; Reopen disputes it; uncleared GL items carry to next month.</div>
-      <table><thead><tr><th>✓</th><th>Date</th><th>GL (book)</th><th class="num">GL amt</th><th>Bank</th><th class="num">Bank amt</th><th></th></tr></thead>
+      <div style="display:flex;gap:24px;flex-wrap:wrap;margin:10px 0 4px;font-size:13px;">
+        <div><table style="border:none;"><tbody>
+          <tr><td style="padding:1px 14px 1px 0;color:#64748b;"></td><td class="num" style="font-weight:600;">Bank</td><td class="num" style="font-weight:600;padding-left:18px;">Book (GL)</td></tr>
+          <tr><td style="padding:1px 14px 1px 0;color:#64748b;">Beginning balance</td><td class="num">${bb(w.bank_beginning_cents)}</td><td class="num" style="padding-left:18px;">${bb(w.gl_beginning_cents)}</td></tr>
+          <tr><td style="padding:1px 14px 1px 0;color:#64748b;">Ending balance</td><td class="num" style="font-weight:600;">${fmt(w.bank_ending_cents)}</td><td class="num" style="font-weight:600;padding-left:18px;">${fmt(w.gl_balance_cents)}</td></tr>
+        </tbody></table></div>
+        <div style="font-size:12px;color:#475569;align-self:center;">Bank ${fmt(w.bank_ending_cents)} + in transit ${fmt(w.deposits_in_transit_cents)} − outstanding ${fmt(Math.abs(w.outstanding_checks_cents))} = <b>${fmt(w.reconciled_balance_cents)}</b><br>vs Book (GL) <b>${fmt(w.gl_balance_cents)}</b> → difference <b style="color:${tied?'#047857':'#b45309'};">${fmt(w.difference_cents)}</b></div>
+      </div>
+      <table style="margin-top:6px;"><thead><tr><th>✓</th><th>Date</th><th>GL (book)</th><th class="num">GL amt</th><th>Bank</th><th class="num">Bank amt</th><th></th></tr></thead>
       <tbody>
-        ${matchRows||''}
-        ${ditRows?`<tr><td colspan="7" style="background:#f8fafc;font-weight:600;font-size:12px;">Deposits in transit (carry forward) — ${fmt(w.deposits_in_transit_cents)}</td></tr>`+ditRows:''}
-        ${ocRows?`<tr><td colspan="7" style="background:#f8fafc;font-weight:600;font-size:12px;">Outstanding checks (carry forward) — ${fmt(Math.abs(w.outstanding_checks_cents))}</td></tr>`+ocRows:''}
-        ${bankOnlyRows?`<tr><td colspan="7" style="background:#fef2f2;font-weight:600;font-size:12px;color:#b91c1c;">On bank, not in GL — needs review</td></tr>`+bankOnlyRows:''}
+        ${reviewRows?hdr('⚠ Needs your review — confirm the match or handle the bank item')+reviewRows:''}
+        ${ditRows?hdr('Deposits in transit — carry forward ('+fmt(w.deposits_in_transit_cents)+')')+ditRows:''}
+        ${ocRows?hdr('Outstanding checks — carry forward ('+fmt(Math.abs(w.outstanding_checks_cents))+')')+ocRows:''}
+        ${confirmedRows?hdr('✓ Cleared this month')+confirmedRows:''}
+        ${!reviewRows&&!ditRows&&!ocRows&&!confirmedRows?'<tr><td colspan="7" class="muted" style="padding:14px;">Nothing to reconcile for this month.</td></tr>':''}
       </tbody></table></div>`;
   };
   window.wsClearGroup = async function(items, status){
     const ctx = window._wsCtx; if(!ctx) return;
     try {
-      await Promise.all(items.map(([side,id])=>fetch('/api/bank-rec/worksheet/clear',{method:'POST',headers:{'Content-Type':'application/json'},
+      const r = await Promise.all(items.map(([side,id])=>fetch('/api/bank-rec/worksheet/clear',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({community_id:CID,bank_account_id:ctx.baId,side,source_id:id,status})})));
-      wsOpen(ctx.periodEnd);
+      const bad = r.find(x=>!x.ok);
+      if(bad){ alert('Could not save — apply migration 242 first (clearing state needs its table).'); return; }
+      wsOpen(ctx.periodEnd, ctx.acct);
     } catch(e){ alert('Could not save: '+e.message); }
   };
 

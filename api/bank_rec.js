@@ -652,11 +652,11 @@ router.get('/worksheet', async (req, res) => {
 
     // Bank lines from era start through period-end; ending balance = latest stmt.
     const { data: stmts } = await supabase.from('bank_statement_imports')
-      .select('id, statement_period_end, ending_balance_cents')
+      .select('id, statement_period_end, beginning_balance_cents, ending_balance_cents')
       .eq('bank_account_id', ba.id).gte('statement_period_end', eraStart).lte('statement_period_end', period_end)
       .order('statement_period_end', { ascending: true });
-    const bankEnding = (stmts && stmts.length && stmts[stmts.length - 1].ending_balance_cents != null)
-      ? stmts[stmts.length - 1].ending_balance_cents : 0;
+    const thisStmt = (stmts || []).slice().reverse().find((st) => st.ending_balance_cents != null) || null;
+    const bankEnding = thisStmt ? thisStmt.ending_balance_cents : 0;
     const { data: bankRaw } = await supabase.from('bank_statement_transactions')
       .select('id, posting_date, amount_cents, description, check_number')
       .in('bank_statement_import_id', (stmts || []).map((x) => x.id)).limit(20000);
@@ -671,7 +671,27 @@ router.get('/worksheet', async (req, res) => {
       (ov || []).forEach((o) => { overrides[o.side + ':' + o.source_id] = { status: o.status, match_group: o.match_group }; });
     } catch (e) { /* bank_rec_clearing not migrated yet — no overrides */ }
 
-    const worksheet = buildWorksheet({ periodEnd: period_end, glItems, bankItems, overrides, bankEndingCents: bankEnding, glBalanceCents: glBalance });
+    // Build over the whole era (so carried-forward items match across months),
+    // then present THIS month: beginning balances = prior month-end, and only
+    // the lines that cleared this month + the still-open carry-forward items.
+    const periodStart = period_end.slice(0, 8) + '01';
+    const bankBeginning = thisStmt && thisStmt.beginning_balance_cents != null ? thisStmt.beginning_balance_cents : null;
+    const glBeginning = glLive.filter((l) => l.journal_entries.posting_date < periodStart)
+      .reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
+
+    const full = buildWorksheet({ periodEnd: period_end, glItems, bankItems, overrides, bankEndingCents: bankEnding, glBalanceCents: glBalance });
+    const inMonth = (d) => d && d >= periodStart && d <= period_end;
+    const worksheet = {
+      ...full,
+      bank_beginning_cents: bankBeginning,
+      gl_beginning_cents: glBeginning,
+      period_start: periodStart,
+      // matched lines that CLEARED this month (a bank line dated in the month)
+      matched: full.matched.filter((g) => g.bank.some((b) => inMonth(b.date))),
+      // open bank items are only relevant when they hit the bank this month
+      open_bank_unrecorded: full.open_bank_unrecorded.filter((b) => inMonth(b.date)),
+      // open GL deposits/checks carry forward — keep the cumulative outstanding set
+    };
     return res.json({ bank_account_id: ba.id, account_last4: ba.account_last4, era_start: eraStart, worksheet });
   } catch (err) {
     console.error('[bank-rec] worksheet failed:', err);
