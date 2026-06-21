@@ -54,6 +54,7 @@
     <div class="tab" data-v="bankrec">Bank Rec</div>
     <div class="tab" data-v="coa">Chart of Accounts</div>
     <div class="tab" data-v="je">Journal Entries</div>
+    <div class="tab" data-v="policy">Billing Policy</div>
   </div>
   <div id="body"><div class="muted" style="padding:30px; text-align:center;">Loading…</div></div>
 </div>
@@ -81,6 +82,7 @@
     try {
       if (VIEW==='trial') return renderTrial();
       if (VIEW==='tieout') return renderTieOut();
+      if (VIEW==='policy') return renderBillingPolicy();
       if (VIEW==='owners') return renderOwners();
       if (VIEW==='ar') return renderArAging();
       if (VIEW==='ap') return renderApAging();
@@ -300,6 +302,61 @@
       <table><thead><tr><th>Invoice #</th><th>Date</th><th>Due</th><th class="num">Days late</th><th class="num">Total</th><th class="num">Balance</th></tr></thead>
       <tbody>${rows||'<tr><td colspan=6 class=muted>No open invoices.</td></tr>'}</tbody></table></div>`;
     d.scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
+
+  // -------- BILLING POLICY (per-community assessment / late fee / interest) --------
+  async function renderBillingPolicy() {
+    const j = await (await fetch(`/api/gl/${CID}/billing-policy`)).json();
+    const p = j.policy || {};
+    const dol = (c) => c != null ? (Number(c)/100).toFixed(2) : '';
+    const num = (v, d) => v != null ? v : (d!=null?d:'');
+    const fld = (id, val, attrs='') => `<input id="bp_${id}" value="${val===''?'':esc(val)}" ${attrs} style="width:120px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;">`;
+    const row = (label, input, hint) => `<tr><td style="padding:7px 14px 7px 0; color:var(--ink-soft); font-size:13px;">${label}</td><td style="padding:7px 0;">${input}${hint?` <span class="muted" style="font-size:11px;">${hint}</span>`:''}</td></tr>`;
+    $('body').innerHTML = `
+      <div class="card" style="max-width:640px;">
+        <h2 class="sec" style="margin-bottom:4px;">Billing policy</h2>
+        <div class="sub" style="margin-bottom:14px;">Assessment, late fee, and interest settings for this community. Used by the late-fee &amp; interest run.</div>
+        <h4 class="sec" style="font-size:13px; margin:0 0 4px;">Assessment</h4>
+        <table><tbody>
+          ${row('Amount', '$'+fld('assessment_default_amount_dollars', dol(p.assessment_default_amount_cents), 'inputmode="decimal"'), 'per cycle')}
+          ${row('Cadence', `<select id="bp_assessment_cadence" style="padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;">${['annual','monthly','quarterly','semi_annual'].map(c=>`<option value="${c}" ${p.assessment_cadence===c?'selected':''}>${c}</option>`).join('')}</select>`)}
+          ${row('Due day of month', fld('assessment_due_day_of_month', num(p.assessment_due_day_of_month,1), 'type="number" min="1" max="28"'))}
+        </tbody></table>
+        <h4 class="sec" style="font-size:13px; margin:16px 0 4px;">Late fee</h4>
+        <table><tbody>
+          ${row('Grace period', fld('grace_period_days', num(p.grace_period_days,10), 'type="number" min="0"'), 'days past due before a late fee applies')}
+          ${row('Late fee amount', '$'+fld('late_fee_amount_dollars', dol(p.late_fee_amount_cents), 'inputmode="decimal"'))}
+          ${row('Recurring', `<label style="font-size:13px;"><input type="checkbox" id="bp_late_fee_recurring" ${p.late_fee_recurring?'checked':''}> charge each cycle it stays unpaid</label>`)}
+        </tbody></table>
+        <h4 class="sec" style="font-size:13px; margin:16px 0 4px;">Interest</h4>
+        <table><tbody>
+          ${row('Interest rate (APR)', fld('interest_apr_pct', num(p.interest_apr_pct,0), 'type="number" step="0.01" min="0"')+' %')}
+          ${row('Starts after', fld('interest_start_days_past_due', num(p.interest_start_days_past_due,30), 'type="number" min="0"'), 'days past due')}
+          ${row('Compounding', `<select id="bp_interest_compounding" style="padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;">${['none','monthly','daily'].map(c=>`<option value="${c}" ${p.interest_compounding===c?'selected':''}>${c}</option>`).join('')}</select>`)}
+        </tbody></table>
+        <div style="margin-top:18px;">
+          <button onclick="saveBillingPolicy()" style="padding:8px 20px; background:var(--navy); color:#fff; border:none; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer;">Save policy</button>
+          <span id="bp_saved" class="muted" style="font-size:12px; margin-left:10px;"></span>
+        </div>
+      </div>`;
+  }
+  window.saveBillingPolicy = async function() {
+    const v = (id) => { const el = $('bp_'+id); return el ? el.value.trim() : ''; };
+    const cents = (id) => { const x = parseFloat(v(id)); return Number.isFinite(x) ? Math.round(x*100) : 0; };
+    const body = {
+      assessment_default_amount_cents: cents('assessment_default_amount_dollars'),
+      assessment_cadence: v('assessment_cadence'),
+      assessment_due_day_of_month: parseInt(v('assessment_due_day_of_month'),10) || 1,
+      grace_period_days: parseInt(v('grace_period_days'),10) || 0,
+      late_fee_amount_cents: cents('late_fee_amount_dollars'),
+      late_fee_recurring: $('bp_late_fee_recurring').checked,
+      interest_apr_pct: parseFloat(v('interest_apr_pct')) || 0,
+      interest_start_days_past_due: parseInt(v('interest_start_days_past_due'),10) || 0,
+      interest_compounding: v('interest_compounding'),
+    };
+    const r = await fetch(`/api/gl/${CID}/billing-policy`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    $('bp_saved').textContent = r.ok ? 'Saved ✓' : 'Save failed';
+    $('bp_saved').style.color = r.ok ? '#047857' : '#b91c1c';
   };
 
   // -------- HOMEOWNER ACCOUNTS (search + account view) --------

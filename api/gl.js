@@ -303,6 +303,49 @@ router.get('/:communityId/ar-aging/property/:propertyId', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// Billing policy — per-community assessment amount, late fee, interest, grace.
+// The settings the late-fee/interest run uses. One active row per community.
+// ----------------------------------------------------------------------------
+const POLICY_FIELDS = ['assessment_cadence', 'assessment_default_amount_cents', 'assessment_due_day_of_month', 'reserve_contribution_pct', 'grace_period_days', 'late_fee_amount_cents', 'late_fee_recurring', 'interest_apr_pct', 'interest_compounding', 'interest_start_days_past_due', 'courtesy_letter_days', 'certified_209_notice_days', 'collections_referral_days', 'notes', 'approved_by_board_at'];
+
+router.get('/:communityId/billing-policy', async (req, res) => {
+  try {
+    const { data } = await supabase.from('community_billing_policies').select('*')
+      .eq('community_id', req.params.communityId).is('effective_end_date', null)
+      .order('effective_start_date', { ascending: false }).limit(1).maybeSingle();
+    res.json({ policy: data || null });
+  } catch (err) {
+    console.error('[gl] billing-policy get failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.put('/:communityId/billing-policy', express.json(), async (req, res) => {
+  try {
+    const cid = req.params.communityId;
+    const patch = {};
+    for (const f of POLICY_FIELDS) if (req.body[f] !== undefined) patch[f] = req.body[f] === '' ? null : req.body[f];
+    const { data: existing } = await supabase.from('community_billing_policies').select('id')
+      .eq('community_id', cid).is('effective_end_date', null).maybeSingle();
+    let row;
+    if (existing) {
+      const { data, error } = await supabase.from('community_billing_policies').update(patch).eq('id', existing.id).select().single();
+      if (error) throw error; row = data;
+    } else {
+      const { data, error } = await supabase.from('community_billing_policies').insert({
+        community_id: cid, effective_start_date: _today(),
+        assessment_default_amount_cents: patch.assessment_default_amount_cents || 0, ...patch,
+      }).select().single();
+      if (error) throw error; row = data;
+    }
+    res.json({ ok: true, policy: row });
+  } catch (err) {
+    console.error('[gl] billing-policy save failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // Homeowner accounts — search any owner by name or address, pull up the account.
 // ----------------------------------------------------------------------------
 router.get('/:communityId/owners/search', async (req, res) => {
