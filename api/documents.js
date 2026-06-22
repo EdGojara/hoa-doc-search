@@ -48,7 +48,7 @@ const STORAGE_BUCKET = 'documents';
 
 // Library → askEd-chunks bridge. Auto-runs after every upload + exposed
 // here as manual reindex/coverage routes for one-time backfill.
-const { indexLibraryDoc } = require('../lib/library_reindex');
+const { indexLibraryDoc, ASKED_SKIP_CATEGORIES } = require('../lib/library_reindex');
 
 const router = express.Router();
 
@@ -1897,13 +1897,18 @@ router.post('/governing-health/mark-superseded', express.json(), async (req, res
 router.get('/asked-coverage', async (req, res) => {
   try {
     // Pull library docs once (small set).
-    const { data: libs, error: libsErr } = await supabase
+    const { data: libsRaw, error: libsErr } = await supabase
       .from('library_documents')
       .select('id, community_id, category, status, communities:community_id(name)')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .neq('status', 'missing')
       .not('file_path', 'is', null);
     if (libsErr) return res.status(500).json({ error: libsErr.message });
+
+    // Financial records / transaction data aren't askEd content (figures come
+    // live from the accounting module, not stale PDFs) — don't count them as a
+    // "not indexed" backlog. See ASKED_SKIP_CATEGORIES in lib/library_reindex.js.
+    const libs = (libsRaw || []).filter((d) => !ASKED_SKIP_CATEGORIES.includes(d.category));
 
     // Paginate chunks. Supabase / PostgREST caps a single .select() at 1000
     // rows by default; LPF alone has 840+ legacy chunks, which used to
@@ -2026,7 +2031,9 @@ async function _findUnindexedDocs(supabase, { communityFilter = null, limit = nu
   const { data: docs, error } = await q;
   if (error) throw error;
 
-  let queue = (docs || []).map((d) => ({ ...d, community_name: (d.communities && d.communities.name) || null }));
+  let queue = (docs || [])
+    .filter((d) => !ASKED_SKIP_CATEGORIES.includes(d.category))  // financial records aren't askEd content
+    .map((d) => ({ ...d, community_name: (d.communities && d.communities.name) || null }));
   if (communityFilter) {
     const filt = communityFilter.toLowerCase().split(' at ')[0].trim();
     queue = queue.filter((d) => (d.community_name || '').toLowerCase().includes(filt));
