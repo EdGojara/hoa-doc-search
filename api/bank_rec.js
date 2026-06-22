@@ -684,10 +684,12 @@ router.get('/worksheet', async (req, res) => {
         .lte('posting_date', period_end).order('posting_date').limit(50000);
       glBalance = anchorBalance + (glcash || []).reduce((a, g) => a + Number(g.amount_cents), 0);
       eraStart = cutover || (anchor && anchor.date) || (period_end.slice(0, 8) + '01');
-      glItems = (glcash || []).filter((g) => !cutover || g.posting_date > cutover).map((g) => ({
-        id: g.id, date: g.posting_date, amount_cents: Number(g.amount_cents),
-        description: g.description || '', check_number: g.check_number || ((g.description || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null,
-      })).filter((g) => g.amount_cents !== 0);
+      glItems = (glcash || [])
+        .filter((g) => (!cutover || g.posting_date > cutover) && !WASH_RE.test(g.description || ''))
+        .map((g) => ({
+          id: g.id, date: g.posting_date, amount_cents: Number(g.amount_cents),
+          description: g.description || '', check_number: g.check_number || ((g.description || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null,
+        })).filter((g) => g.amount_cents !== 0);
       glBeginAt = (d) => anchorBalance + (glcash || []).filter((g) => g.posting_date < d).reduce((a, g) => a + Number(g.amount_cents), 0);
     }
 
