@@ -293,6 +293,113 @@ router.post('/reconciliations/:id/bank-statement', upload.single('file'), async 
 });
 
 // ---------------------------------------------------------------------------
+// Community/account-based bank statement upload — NOT tied to a rec record.
+// Feeds the continuous register that the boundary summary + worksheet read by
+// bank_account_id, so a freshly imported month shows up automatically.
+//
+// Idempotent: the same file (sha256) returns the existing import without
+// re-inserting; a different file for the same account+period_end REPLACES the
+// prior statement and its transactions (re-upload of a corrected statement).
+// This is what stops a double-upload from double-counting cash.
+// ---------------------------------------------------------------------------
+router.post('/accounts/:accountId/bank-statement', upload.single('file'), async (req, res) => {
+  try {
+    const { accountId } = req.params;
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+
+    const { data: ba } = await supabase.from('bank_accounts')
+      .select('id, community_id, account_nickname, account_last4').eq('id', accountId).maybeSingle();
+    if (!ba) return res.status(404).json({ error: 'account_not_found' });
+
+    const sha = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+
+    // Exact-dupe guard — same file already imported for this account.
+    const { data: existing } = await supabase.from('bank_statement_imports')
+      .select('id, statement_period_end').eq('bank_account_id', ba.id).eq('source_sha256', sha).maybeSingle();
+    if (existing) {
+      const { count } = await supabase.from('bank_statement_transactions')
+        .select('id', { count: 'exact', head: true }).eq('bank_statement_import_id', existing.id);
+      return res.json({ bank_statement_import: existing, transaction_count: count || 0, duplicate: true });
+    }
+
+    const safeName = (req.file.originalname || 'bank-statement.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `bank-statements/${ba.community_id}/${sha.slice(0, 12)}-${safeName}`;
+    try {
+      await supabase.storage.from('documents').upload(storagePath, req.file.buffer, {
+        contentType: req.file.mimetype, upsert: false,
+      });
+    } catch (e) { /* non-fatal */ }
+
+    let extracted = null, warnings = [];
+    try {
+      extracted = await extractBankStatement(req.file.buffer, req.file.mimetype, req.file.originalname);
+      warnings = extracted.warnings || [];
+    } catch (e) {
+      console.error('[bank-rec] community statement extraction failed:', e.message);
+      return res.status(500).json({ error: 'extraction_failed', detail: e.message });
+    }
+
+    // Replace any prior statement for this account+period (corrected re-upload).
+    if (extracted.period_end) {
+      const { data: priors } = await supabase.from('bank_statement_imports')
+        .select('id').eq('bank_account_id', ba.id).eq('statement_period_end', extracted.period_end);
+      for (const p of (priors || [])) {
+        await supabase.from('bank_statement_transactions').delete().eq('bank_statement_import_id', p.id);
+        await supabase.from('bank_statement_imports').delete().eq('id', p.id);
+      }
+    }
+
+    const { data: bsi, error: bsiErr } = await supabase.from('bank_statement_imports').insert({
+      management_company_id: BEDROCK_MGMT_CO_ID,
+      community_id: ba.community_id,
+      bank_account_id: ba.id,
+      statement_period_start: extracted.period_start || null,
+      statement_period_end: extracted.period_end || null,
+      beginning_balance_cents: extracted.beginning_balance_cents ?? null,
+      ending_balance_cents: extracted.ending_balance_cents ?? null,
+      total_deposits_cents: extracted.total_deposits_cents ?? null,
+      total_withdrawals_cents: extracted.total_withdrawals_cents ?? null,
+      total_fees_cents: extracted.total_fees_cents ?? null,
+      total_interest_cents: extracted.total_interest_cents ?? null,
+      source_filename: req.file.originalname || null,
+      source_storage_path: storagePath,
+      source_sha256: sha,
+      source_file_size_bytes: req.file.size,
+      source_file_mime: req.file.mimetype,
+      extraction_raw: extracted,
+      extraction_warnings: warnings,
+      status: 'completed',
+    }).select('*').single();
+    if (bsiErr) throw bsiErr;
+
+    const txRows = (extracted.transactions || []).filter((t) => t.posting_date && t.amount_cents != null).map((t) => ({
+      bank_statement_import_id: bsi.id,
+      posting_date: t.posting_date,
+      amount_cents: t.amount_cents,
+      description: t.description || null,
+      check_number: t.check_number || null,
+      transaction_type: t.transaction_type || 'other',
+      raw_extracted_text: null,
+    }));
+    if (txRows.length > 0) {
+      const { error: txErr } = await supabase.from('bank_statement_transactions').insert(txRows);
+      if (txErr) console.warn('[bank-rec] community tx insert failed:', txErr.message);
+    }
+
+    res.json({
+      bank_statement_import: bsi,
+      transaction_count: txRows.length,
+      period_end: extracted.period_end || null,
+      ending_balance_cents: extracted.ending_balance_cents ?? null,
+      warnings,
+    });
+  } catch (err) {
+    console.error('[bank-rec] community bank statement upload failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Attach check register or GL — uses existing vantaca_imports row by ID,
 // OR uploads a new one through that flow (operator can do either)
 // ---------------------------------------------------------------------------

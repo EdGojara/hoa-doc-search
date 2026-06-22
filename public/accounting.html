@@ -904,9 +904,42 @@
   };
 
   async function renderBankRec() {
-    const summaryHtml = await boundarySummaryCard();
-    $('body').innerHTML = (summaryHtml || '<div class="card muted" style="padding:24px;">No bank statements imported yet.</div>') + '<div id="drill"></div>';
+    const [summaryHtml, accts] = await Promise.all([
+      boundarySummaryCard(),
+      fetch(`/api/bank-rec/accounts?community_id=${CID}`).then((r)=>r.json()).then((j)=>j.accounts||[]).catch(()=>[]),
+    ]);
+    const acctOpts = accts.map((a)=>`<option value="${a.id}">${esc(a.account_nickname||a.bank_name||'Account')}${a.account_last4?(' ····'+a.account_last4):''}</option>`).join('');
+    const btnStyle = 'padding:8px 16px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-weight:700; cursor:pointer; font-size:13px;';
+    const importCard = `<div class="card" style="margin-bottom:14px;">
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <h2 class="sec" style="font-size:16px; margin:0;">Import bank statement</h2>
+        <select id="brStmtAcct" style="min-width:190px;">${acctOpts || '<option value="">No bank accounts set up</option>'}</select>
+        <input type="file" id="brStmtFile" accept="application/pdf,image/*">
+        <button id="brStmtGo" style="${btnStyle}" onclick="brStmtUpload()">Upload &amp; read</button>
+        <span id="brStmtStatus" class="muted" style="font-size:12.5px;"></span>
+      </div>
+      <div class="sub muted" style="margin-top:8px; font-size:12px;">PDF or photo. We read the transactions + balances; reconciling the GL is automatic. Re-uploading the same month replaces it — no double-counting.</div>
+    </div>`;
+    $('body').innerHTML = importCard + (summaryHtml || '<div class="card muted" style="padding:24px;">No bank statements imported yet — upload one above to start.</div>') + '<div id="drill"></div>';
   }
+
+  window.brStmtUpload = async function() {
+    const acctId = $('brStmtAcct') && $('brStmtAcct').value;
+    const f = $('brStmtFile') && $('brStmtFile').files && $('brStmtFile').files[0];
+    const st = $('brStmtStatus');
+    if (!acctId) { st.textContent = 'Pick an account first.'; return; }
+    if (!f) { st.textContent = 'Choose a file first.'; return; }
+    st.textContent = 'Reading ' + f.name + '…'; $('brStmtGo').disabled = true;
+    try {
+      const fd = new FormData(); fd.append('file', f);
+      const r = await fetch(`/api/bank-rec/accounts/${acctId}/bank-statement`, { method:'POST', body: fd });
+      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || 'upload failed');
+      st.textContent = j.duplicate
+        ? 'Already imported — no change.'
+        : `Imported ${j.transaction_count||0} transactions through ${j.period_end||'?'}. Refreshing…`;
+      setTimeout(renderBankRec, 900);
+    } catch(e) { st.innerHTML = '<span style="color:var(--err)">'+esc(e.message)+'</span>'; $('brStmtGo').disabled = false; }
+  };
 
   const BR_SOURCES = [
     { key:'gl_trial_balance_data', ep:'gl-trial-balance',   label:'GL Trial Balance (book)' },
