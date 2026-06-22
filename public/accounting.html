@@ -65,7 +65,7 @@
   // setup (chart, journal entries, policy) tucked into Setup at the end.
   const GROUPS = [
     { id:'homeowners', label:'👤 Homeowners', views:[['owners','Accounts'],['ar','AR Aging']] },
-    { id:'bills',      label:'🧾 Bills (AP)', views:[['ap','AP Aging']] },
+    { id:'bills',      label:'🧾 Bills (AP)', views:[['ap','AP Aging'],['checks','Print Checks']] },
     { id:'bank',       label:'🏦 Bank Rec',   views:[['bankrec','Reconciliation']] },
     { id:'financials', label:'📊 Financials', views:[['bs','Balance Sheet'],['is','Income Statement'],['eq','Equity'],['trial','Trial Balance'],['tieout','Tie-Out']] },
     { id:'budget',     label:'📈 Budget',     views:[['bva','Budget vs Actual'],['budget','Budget']] },
@@ -105,6 +105,7 @@
       if (VIEW==='owners') return renderOwners();
       if (VIEW==='ar') return renderArAging();
       if (VIEW==='ap') return renderApAging();
+      if (VIEW==='checks') return renderChecks();
       if (VIEW==='bankrec') return renderBankRec();
       if (VIEW==='coa') return renderCoa();
       if (VIEW==='je') return renderJe();
@@ -939,6 +940,130 @@
         : `Imported ${j.transaction_count||0} transactions through ${j.period_end||'?'}. Refreshing…`;
       setTimeout(renderBankRec, 900);
     } catch(e) { st.innerHTML = '<span style="color:var(--err)">'+esc(e.message)+'</span>'; $('brStmtGo').disabled = false; }
+  };
+
+  // ── Print Checks (AP) ──────────────────────────────────────────────────────
+  const CHK_BTN = 'padding:8px 16px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-weight:700; cursor:pointer; font-size:13px;';
+  const CHK_GHOST = 'padding:7px 14px; border-radius:8px; border:1px solid var(--rule); background:#fff; color:var(--navy); font-weight:600; cursor:pointer; font-size:12.5px;';
+  async function renderChecks() {
+    $('body').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
+    const accts = await fetch(`/api/bank-rec/accounts?community_id=${CID}`).then((r)=>r.json()).then((j)=>j.accounts||[]).catch(()=>[]);
+    if (!accts.length) { $('body').innerHTML = '<div class="card muted" style="padding:24px;">No bank accounts set up for this community yet.</div>'; return; }
+    if (!window._chkAcct || !accts.find((a)=>a.id===window._chkAcct)) window._chkAcct = accts[0].id;
+    const acctOpts = accts.map((a)=>`<option value="${a.id}" ${a.id===window._chkAcct?'selected':''}>${esc(a.account_nickname||a.bank_name||'Account')}${a.account_last4?(' ····'+a.account_last4):''}</option>`).join('');
+    $('body').innerHTML = `
+      <div class="card" style="margin-bottom:14px;">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <h2 class="sec" style="margin:0;">Print Checks</h2>
+          <select id="chkAcct" onchange="window._chkAcct=this.value; renderChecks();">${acctOpts}</select>
+          <span id="chkReady" class="muted" style="font-size:12.5px;"></span>
+          <button onclick="chkToggleSetup()" style="margin-left:auto; ${CHK_GHOST}">⚙ Check setup</button>
+        </div>
+        <div id="chkSetup" style="display:none; margin-top:14px; border-top:1px solid var(--rule); padding-top:14px;"></div>
+      </div>
+      <div id="chkPay"></div>
+      <div id="chkRegister"></div>`;
+    chkLoadConfig(); chkLoadPayable(); chkLoadRegister();
+  }
+
+  async function chkLoadConfig() {
+    const j = await fetch(`/api/checks/accounts/${window._chkAcct}/config`).then((r)=>r.json()).catch(()=>({}));
+    const c = j.config || {};
+    window._chkConfig = c;
+    $('chkReady').innerHTML = c.ready_for_print
+      ? '<span class="badge ok">ready to print</span>'
+      : '<span class="badge err">setup incomplete</span> <span class="muted">— add the account number in Check setup</span>';
+    const dollars = (cents)=> cents==null?'':(cents/100);
+    $('chkSetup').innerHTML = `
+      <div class="grid2" style="display:grid; grid-template-columns:1fr 1fr; gap:12px; max-width:640px;">
+        <div class="field"><label class="lbl">Payer (account name)</label><input type="text" value="${esc(c.account_name||'')}" disabled></div>
+        <div class="field"><label class="lbl">Bank</label><input type="text" value="${esc(c.bank_name||'')}" disabled></div>
+        <div class="field"><label class="lbl">Routing # (ABA)</label><input type="text" id="cfg-routing" value="${esc(c.routing||'')}" placeholder="9 digits"></div>
+        <div class="field"><label class="lbl">Account #</label><input type="text" id="cfg-account" placeholder="${c.account_last4?('•••• '+esc(c.account_last4)+' (on file — re-enter to change)'):'full account number'}"></div>
+        <div class="field"><label class="lbl">Next check #</label><input type="text" id="cfg-next" value="${esc(c.next_check_number==null?'':c.next_check_number)}"></div>
+        <div class="field"><label class="lbl">Dual-signature threshold ($, blank = none)</label><input type="text" id="cfg-dual" value="${dollars(c.dual_sig_threshold_cents)}"></div>
+      </div>
+      <div class="muted" style="font-size:12px; margin:8px 0;">Blank check stock: trustEd prints the full check including the MICR line. Confirm your bank accepts laser-printed MICR before the first live run.</div>
+      <button onclick="chkSaveConfig()" style="${CHK_BTN}">Save setup</button>
+      <span id="cfg-status" class="muted" style="margin-left:8px; font-size:12.5px;"></span>`;
+    document.querySelectorAll('#chkSetup .field').forEach((f)=>{ f.style.display='flex'; f.style.flexDirection='column'; f.style.gap='3px'; });
+  }
+  window.chkToggleSetup = function(){ const s=$('chkSetup'); s.style.display = s.style.display==='none'?'block':'none'; };
+  window.chkSaveConfig = async function() {
+    const body = {};
+    const r=$('cfg-routing').value.trim(); if (r) body.routing=r;
+    const a=$('cfg-account').value.trim(); if (a) body.account_number=a;
+    const n=$('cfg-next').value.trim(); if (n!=='') body.next_check_number=parseInt(n,10);
+    const d=$('cfg-dual').value.trim(); body.dual_sig_threshold_cents = d==='' ? null : Math.round(parseFloat(d)*100);
+    $('cfg-status').textContent='Saving…';
+    const j = await fetch(`/api/checks/accounts/${window._chkAcct}/config`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then((r)=>r.json());
+    if (j.error) { $('cfg-status').innerHTML = '<span style="color:var(--err)">'+esc(j.error)+'</span>'; return; }
+    $('cfg-status').textContent='Saved.'; chkLoadConfig();
+  };
+
+  async function chkLoadPayable() {
+    const j = await fetch(`/api/checks/payable?community_id=${CID}`).then((r)=>r.json()).catch(()=>({invoices:[]}));
+    const invs = j.invoices||[];
+    if (!invs.length) { $('chkPay').innerHTML = '<div class="card muted" style="padding:20px;">No approved bills waiting to be paid. Enter and approve bills in Bills (AP), then come back to print checks.</div>'; return; }
+    const rows = invs.map((i)=>`<tr>
+      <td><input type="checkbox" class="chk-inv" value="${i.id}" data-amt="${i.balance_cents}" checked onchange="chkUpdateBar()"></td>
+      <td>${esc(i.vendor_name)}</td><td>${esc(i.vendor_invoice_number||'—')}</td>
+      <td>${esc(fmtDate(i.invoice_date))}</td><td>${esc(i.description||'')}</td>
+      <td class="num">${fmt(i.balance_cents)}</td></tr>`).join('');
+    $('chkPay').innerHTML = `<div class="card" style="margin-bottom:14px;">
+      <h2 class="sec" style="margin-bottom:8px;">Bills ready to pay</h2>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+        <span class="muted" style="font-size:12px;">Payment date</span>${dateInput('chk-date',dToday())}
+        <span id="chk-bar" class="muted" style="font-size:13px;"></span>
+        <button id="chk-print" onclick="chkPrintRun()" style="margin-left:auto; ${CHK_BTN}">Print checks</button>
+      </div>
+      <table><thead><tr><th></th><th>Vendor</th><th>Invoice</th><th>Date</th><th>Description</th><th class="num">Amount</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <div class="muted" style="font-size:12px; margin-top:8px;">One check per vendor — multiple bills for the same vendor combine onto one check with an itemized stub.</div></div>`;
+    chkUpdateBar();
+  }
+  window.chkUpdateBar = function(){
+    const sel=[...document.querySelectorAll('.chk-inv:checked')];
+    const total=sel.reduce((s,c)=>s+Number(c.dataset.amt||0),0);
+    const vendors=new Set(sel.map(c=>c.closest('tr').children[1].textContent)).size;
+    const bar=$('chk-bar'); if(bar) bar.textContent = sel.length? `${sel.length} bill(s) → ${vendors} check(s), ${fmt(total)}` : 'none selected';
+    const btn=$('chk-print'); if(btn) btn.disabled = !sel.length;
+  };
+  window.chkPrintRun = async function() {
+    const ids=[...document.querySelectorAll('.chk-inv:checked')].map(c=>c.value);
+    if (!ids.length) return;
+    if (!window._chkConfig || !window._chkConfig.ready_for_print) {
+      if (!confirm('This account isn’t marked ready (no account number on file), so checks will print as NON-NEGOTIABLE drafts. Continue for a test print?')) return;
+    }
+    const btn=$('chk-print'); btn.disabled=true; btn.textContent='Creating run…';
+    const body={community_id:CID, bank_account_id:window._chkAcct, payment_date:$('chk-date').value, invoice_ids:ids};
+    const j = await fetch('/api/checks/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then((r)=>r.json());
+    if (j.error) { alert('Couldn’t create the run: '+j.error); btn.disabled=false; btn.textContent='Print checks'; return; }
+    window.open(`/api/checks/run/${j.print_run_id}/pdf`, '_blank');
+    renderChecks();
+  };
+
+  async function chkLoadRegister() {
+    const j = await fetch(`/api/checks/register?community_id=${CID}&bank_account_id=${window._chkAcct}`).then((r)=>r.json()).catch(()=>({checks:[]}));
+    if (j.error) { $('chkRegister').innerHTML = `<div class="card" style="color:var(--err)">Check register unavailable: ${esc(j.error)}${/permission/i.test(j.error)?' — apply migration 244.':''}</div>`; return; }
+    const checks=j.checks||[];
+    if (!checks.length) { $('chkRegister').innerHTML='<div class="card muted" style="padding:18px;">No checks issued yet.</div>'; return; }
+    const badge=(s)=> s==='cleared'?'<span class="badge ok">cleared</span>':(s==='voided'?'<span class="badge err">voided</span>':'<span class="pill">'+esc(s)+'</span>');
+    const rows=checks.map((c)=>`<tr>
+      <td style="font-family:ui-monospace,monospace;">${esc(c.check_number)}</td>
+      <td>${esc(fmtDate(c.issue_date))}</td><td>${esc(c.payee_name)}</td>
+      <td class="num">${fmt(c.amount_cents)}</td><td>${badge(c.status)}</td>
+      <td>${c.status!=='voided'&&c.status!=='cleared'?`<a class="link" style="color:var(--err); cursor:pointer;" onclick="chkVoid('${c.id}')">void</a>`:''}</td></tr>`).join('');
+    $('chkRegister').innerHTML=`<div class="card"><h2 class="sec" style="margin-bottom:8px;">Check register</h2>
+      <table><thead><tr><th>Check #</th><th>Date</th><th>Payee</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  }
+  window.chkVoid = async function(id){
+    const reason=prompt('Reason for voiding this check?'); if (reason===null) return;
+    const j=await fetch('/api/checks/void',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({check_register_id:id,reason})}).then((r)=>r.json());
+    if (j.error){ alert('Couldn’t void: '+j.error); return; }
+    if (j.note) alert(j.note);
+    chkLoadRegister();
   };
 
   const BR_SOURCES = [
