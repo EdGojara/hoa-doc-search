@@ -147,17 +147,45 @@ router.get('/owners/:property_id/balance', async (req, res) => {
   }
 });
 
+// Paginated fetch of all of a community's rows from a view/table (honors the
+// PostgREST 1000-row cap — a single .limit() is silently truncated server-side).
+async function _fetchAllForCommunity(table, community_id, cap, select) {
+  const out = [];
+  const page = 1000;
+  for (let from = 0; from < cap; from += page) {
+    const to = Math.min(from + page - 1, cap - 1);
+    const { data, error } = await supabase.from(table).select(select || '*')
+      .eq('community_id', community_id).range(from, to);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < page) break;
+  }
+  return out;
+}
+
 router.get('/aging', async (req, res) => {
   try {
-    const { community_id, limit = '2000' } = req.query;
+    const { community_id, limit = '5000' } = req.query;
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
-    const { data, error } = await supabase
-      .from('v_owner_ar_balance')
-      .select('*, properties(street_address, contacts(full_name))')
-      .eq('community_id', community_id)
-      .order('total_balance_cents', { ascending: false })
-      .limit(Math.min(parseInt(limit, 10) || 2000, 5000));
-    if (error) throw error;
+    const cap = Math.min(parseInt(limit, 10) || 5000, 5000);
+
+    // Balances flat (the view has no direct FK path to contacts, so the nested
+    // embed `properties(contacts(...))` can't resolve). Enrich address + owner
+    // name from the current-owners view by property_id instead.
+    const balances = await _fetchAllForCommunity('v_owner_ar_balance', community_id, cap);
+    const owners = await _fetchAllForCommunity('v_current_property_owners', community_id, cap, 'property_id, street_address, unit, owner_name');
+    const ownerMap = new Map((owners || []).map((o) => [o.property_id, o]));
+
+    const data = (balances || []).map((b) => {
+      const o = ownerMap.get(b.property_id) || {};
+      return Object.assign({}, b, {
+        street_address: o.street_address || null,
+        unit: o.unit || null,
+        owner_name: o.owner_name || null,
+        properties: { street_address: o.street_address || null, contacts: { full_name: o.owner_name || null } },
+      });
+    }).sort((a, b) => Number(b.total_balance_cents || 0) - Number(a.total_balance_cents || 0));
+
     const totals = (data || []).reduce((acc, r) => {
       acc.total_balance += Number(r.total_balance_cents || 0);
       acc.bucket_current += Number(r.bucket_current_cents || 0);
