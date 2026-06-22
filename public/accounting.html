@@ -797,8 +797,11 @@
       const glDesc=g.gl.length>1?`${g.gl.length} GL lines`:esc((g.gl[0]?g.gl[0].description:'').slice(0,30))||'—';
       const items=[...g.bank.map(x=>['bank',x.id]),...g.gl.map(x=>['gl',x.id])];
       const newStatus = action==='accept'?'cleared':'open';
+      const firstCell = action==='accept'
+        ? `<input type="checkbox" class="ws-acc" data-items='${JSON.stringify(items)}' checked style="cursor:pointer;">`
+        : '<span style="color:#047857;font-weight:700;">✓</span>';
       return `<tr>
-        <td style="text-align:center;">${action==='accept'?'<span style="color:#b45309;">○</span>':'<span style="color:#047857;font-weight:700;">✓</span>'}</td>
+        <td style="text-align:center;">${firstCell}</td>
         <td>${esc((g.gl[0]||g.bank[0]||{}).date||'')}</td>
         <td>${glDesc}</td><td class="num">${amt(glTot)}</td>
         <td>${bankDesc}</td><td class="num">${amt(bankTot)}</td>
@@ -835,9 +838,10 @@
         </tbody></table></div>
         <div style="font-size:12px;color:#475569;align-self:center;">Bank ${fmt(w.bank_ending_cents)} + in transit ${fmt(w.deposits_in_transit_cents)} − outstanding ${fmt(Math.abs(w.outstanding_checks_cents))} = <b>${fmt(w.reconciled_balance_cents)}</b><br>vs Book (GL) <b>${fmt(w.gl_balance_cents)}</b> → difference <b style="color:${tied?'#047857':'#b45309'};">${fmt(w.difference_cents)}</b></div>
       </div>
-      <div style="display:flex;align-items:center;gap:12px;background:#f8fafc;border:1px solid var(--rule);border-radius:6px;padding:8px 12px;margin-top:10px;font-size:13px;">
-        <span id="ws-selinfo" style="flex:1;color:#475569;">Tick the bank and book lines that go together, then Match — e.g. a $1,820 deposit and the seven $260 payments in it.</span>
-        <button onclick="wsMatchSelected()" style="padding:4px 16px;border:1px solid #047857;border-radius:5px;background:#ecfdf5;cursor:pointer;font-weight:600;color:#047857;">Match selected</button>
+      <div style="display:flex;align-items:center;gap:10px;background:#f8fafc;border:1px solid var(--rule);border-radius:6px;padding:8px 12px;margin-top:10px;font-size:13px;flex-wrap:wrap;">
+        <span id="ws-selinfo" style="flex:1;min-width:240px;color:#475569;">Proposed matches are pre-checked — click <b>Accept all checked</b>. Or tick bank + book lines that go together and <b>Match selected</b>.</span>
+        <button onclick="wsAcceptAll()" style="padding:4px 16px;border:1px solid #047857;border-radius:5px;background:#ecfdf5;cursor:pointer;font-weight:600;color:#047857;">Accept all checked</button>
+        <button onclick="wsMatchSelected()" style="padding:4px 16px;border:1px solid var(--rule);border-radius:5px;background:#fff;cursor:pointer;font-weight:600;">Match selected</button>
       </div>
       <table style="margin-top:8px;"><thead><tr><th>✓</th><th>Date</th><th>GL (book)</th><th class="num">GL amt</th><th>Bank</th><th class="num">Bank amt</th><th></th></tr></thead>
       <tbody>
@@ -883,6 +887,21 @@
       if(r.find(x=>!x.ok)){ alert('Could not save — apply migration 242 first (clearing state needs its table).'); return; }
       window._wsSel={}; wsOpen(ctx.periodEnd, ctx.acct);
     }catch(e){ alert('Could not match: '+e.message); }
+  };
+  // Bulk-confirm every checked proposed match in one click.
+  window.wsAcceptAll = async function(){
+    const ctx=window._wsCtx; if(!ctx) return;
+    const boxes=Array.from(document.querySelectorAll('input.ws-acc:checked'));
+    if(!boxes.length){ alert('No matches checked to accept.'); return; }
+    const calls=[];
+    boxes.forEach(b=>{ let items=[]; try{ items=JSON.parse(b.dataset.items||'[]'); }catch(e){}
+      items.forEach(([side,id])=>calls.push(fetch('/api/bank-rec/worksheet/clear',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({community_id:CID,bank_account_id:ctx.baId,side,source_id:id,status:'cleared'})}))); });
+    try{
+      const r=await Promise.all(calls);
+      if(r.find(x=>!x.ok)){ alert('Could not save — apply migration 242 first (clearing state needs its table).'); return; }
+      wsOpen(ctx.periodEnd, ctx.acct);
+    }catch(e){ alert('Could not accept: '+e.message); }
   };
 
   async function renderBankRec() {
