@@ -541,6 +541,62 @@ router.put('/accounts/:id/opening-position', express.json(), async (req, res) =>
 // and the rest surfaced as a review residual. Reads live, no persistence.
 //   GET /boundary-summary?community_id=...&account_last4=...
 // ---------------------------------------------------------------------------
+// "Credit Distribution" hits the cash account on both sides (net zero) — an
+// internal subledger reclass, not real cash. Excluded from the matchable items.
+const WASH_RE = /credit distribution/i;
+
+// Reconcile ONE month with the main matcher — the single source of truth shared
+// by the worksheet and the summary so they can never disagree. Era-aware: live
+// trustEd GL when it exists, else the ingested Vantaca GL cash on the opening
+// anchor; bank starts after the cutover for the ingested era. Returns the matcher
+// result plus the inputs the worksheet needs to present it.
+async function reconcileMonthCore(community_id, ba, cashAcctId, period_end) {
+  const { data: glRaw } = await supabase.from('journal_entry_lines')
+    .select('id, debit_cents, credit_cents, memo, journal_entries!inner(posting_date, source_module, community_id, status, description)')
+    .eq('account_id', cashAcctId).lte('journal_entries.posting_date', period_end)
+    .eq('journal_entries.community_id', community_id).limit(100000);
+  const glLive = (glRaw || []).filter((l) => (l.journal_entries.status || 'posted') !== 'voided');
+  const { data: baOpen } = await supabase.from('bank_accounts').select('opening_position').eq('id', ba.id).maybeSingle();
+  const openPos = (baOpen && baOpen.opening_position) || {};
+  const anchor = openPos.gl_anchor || null;
+  const anchorBalance = anchor ? Number(anchor.balance_cents || 0) : 0;
+  const cutover = openPos.as_of_date || null;
+  const isLive = glLive.length > 0;
+  let glItems, glBalance, eraStart, glBeginAt;
+  if (isLive) {
+    glBalance = glLive.reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
+    const operational = glLive.filter((l) => l.journal_entries.source_module !== 'opening_entry' && !WASH_RE.test(l.memo || ''));
+    eraStart = operational.length ? operational.map((l) => l.journal_entries.posting_date).sort()[0] : period_end.slice(0, 8) + '01';
+    glItems = operational.map((l) => { const amt = Number(l.debit_cents) - Number(l.credit_cents); return { id: l.id, date: l.journal_entries.posting_date, amount_cents: amt, description: l.memo || l.journal_entries.description || '', check_number: ((l.memo || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null }; }).filter((g) => g.amount_cents !== 0);
+    glBeginAt = (d) => glLive.filter((l) => l.journal_entries.posting_date < d).reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
+  } else {
+    const { data: glcash } = await supabase.from('bank_rec_gl_cash').select('id, posting_date, description, amount_cents, check_number').eq('community_id', community_id).eq('account_last4', ba.account_last4).lte('posting_date', period_end).order('posting_date').limit(50000);
+    glBalance = anchorBalance + (glcash || []).reduce((a, g) => a + Number(g.amount_cents), 0);
+    eraStart = cutover || (anchor && anchor.date) || (period_end.slice(0, 8) + '01');
+    glItems = (glcash || []).filter((g) => (!cutover || g.posting_date > cutover) && !WASH_RE.test(g.description || '')).map((g) => ({ id: g.id, date: g.posting_date, amount_cents: Number(g.amount_cents), description: g.description || '', check_number: g.check_number || ((g.description || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null })).filter((g) => g.amount_cents !== 0);
+    glBeginAt = (d) => anchorBalance + (glcash || []).filter((g) => g.posting_date < d).reduce((a, g) => a + Number(g.amount_cents), 0);
+  }
+  // The cutover month (and earlier) is the settled baseline — book = bank, nothing
+  // to reconcile. Otherwise the bank starts after the cutover (ingested) / at the
+  // era start (live).
+  const isBaseline = !isLive && cutover && period_end <= cutover;
+  let stmtQ = supabase.from('bank_statement_imports').select('id, statement_period_end, beginning_balance_cents, ending_balance_cents').eq('bank_account_id', ba.id).lte('statement_period_end', period_end).order('statement_period_end', { ascending: true });
+  if (isLive || !cutover) stmtQ = stmtQ.gte('statement_period_end', eraStart);
+  else if (!isBaseline) stmtQ = stmtQ.gt('statement_period_end', cutover);
+  const { data: stmts } = await stmtQ;
+  const thisStmt = (stmts || []).slice().reverse().find((st) => st.ending_balance_cents != null) || null;
+  const bankEnding = thisStmt ? thisStmt.ending_balance_cents : glBalance;
+  let bankItems = [];
+  if (!isBaseline) {
+    const { data: bankRaw } = await supabase.from('bank_statement_transactions').select('id, posting_date, amount_cents, description, check_number, transaction_type').in('bank_statement_import_id', (stmts || []).map((x) => x.id)).limit(20000);
+    bankItems = (bankRaw || []).map((b) => ({ id: b.id, date: b.posting_date, amount_cents: Number(b.amount_cents), description: b.description || '', check_number: b.check_number || null, transaction_type: b.transaction_type || (b.check_number ? 'check' : (Number(b.amount_cents) >= 0 ? 'deposit' : 'debit')) }));
+  }
+  const glEntries = glItems.map((g) => ({ ref: String(g.id), posting_date: g.date, entry_type: g.amount_cents >= 0 ? 'deposit' : 'payment', amount_signed_cents: g.amount_cents, description: g.description, check_number: g.check_number }));
+  const bankTransactions = bankItems.map((b) => ({ id: b.id, posting_date: b.date, amount_cents: b.amount_cents, transaction_type: b.transaction_type, check_number: b.check_number, description: b.description }));
+  const result = reconcile({ bankTransactions, checkRegisterChecks: [], glEntries, vantacaPayouts: [], openingPosition: isLive ? {} : openPos, bankEndingCents: bankEnding, glEndingCents: glBalance, bookIsComplete: true });
+  return { openPos, isLive, eraStart, cutover, glItems, bankItems, glBalance, bankEnding, thisStmt, glBeginAt, result };
+}
+
 router.get('/boundary-summary', async (req, res) => {
   try {
     const community_id = req.query.community_id;
@@ -565,46 +621,27 @@ router.get('/boundary-summary', async (req, res) => {
     }
     if (!cashAcctId) return res.status(404).json({ error: 'cash_account_not_found' });
 
-    // statements (one row per month-end) + all GL cash lines + all payouts
+    // One row per month-end — reconcile each with the SAME engine the worksheet
+    // uses (reconcileMonthCore), so the summary status matches the detail exactly.
     const { data: stmts } = await supabase.from('bank_statement_imports')
       .select('statement_period_end, ending_balance_cents')
       .eq('bank_account_id', ba.id).order('statement_period_end', { ascending: true });
-    const { data: glLines } = await supabase.from('journal_entry_lines')
-      .select('debit_cents, credit_cents, journal_entries!inner(posting_date, community_id, status)')
-      .eq('account_id', cashAcctId).eq('journal_entries.community_id', community_id).limit(100000);
-    const liveLines = (glLines || []).filter((l) => (l.journal_entries.status || 'posted') !== 'voided');
-
-    // Pre-cutover months have no live GL — the book lives in the INGESTED Vantaca
-    // GL cash (bank_rec_gl_cash) on top of the opening anchor. Use live when it
-    // exists for the month, else fall back to anchor + ingested (so 2025 months
-    // show their real book balance instead of $0).
-    const { data: glcash } = await supabase.from('bank_rec_gl_cash')
-      .select('posting_date, amount_cents').eq('community_id', community_id).eq('account_last4', ba.account_last4);
-    const { data: baOpen } = await supabase.from('bank_accounts').select('opening_position').eq('id', ba.id).maybeSingle();
-    const anchor = baOpen && baOpen.opening_position && baOpen.opening_position.gl_anchor;
-    const anchorBalance = anchor ? Number(anchor.balance_cents || 0) : 0;
-    const bookAt = (ME) => {
-      const hasLive = liveLines.some((l) => l.journal_entries.posting_date <= ME);
-      if (hasLive) {
-        return liveLines.filter((l) => l.journal_entries.posting_date <= ME)
-          .reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
-      }
-      const ing = (glcash || []).filter((g) => g.posting_date <= ME).reduce((a, g) => a + Number(g.amount_cents), 0);
-      return anchorBalance + ing;
-    };
-
-    const { data: payouts } = await supabase.from('bank_rec_payouts')
-      .select('trxn_date, payout_date, account_ref, txn_type, amount_cents')
-      .eq('community_id', community_id).limit(50000);
-
-    const months = (stmts || [])
-      .filter((st) => st.ending_balance_cents != null)
-      .map((st) => boundaryReconcile({
-        periodEnd: st.statement_period_end,
-        bookCents: bookAt(st.statement_period_end),
-        bankCents: st.ending_balance_cents,
-        payouts: payouts || [],
-      }));
+    const monthEnds = (stmts || []).filter((st) => st.ending_balance_cents != null).map((st) => st.statement_period_end);
+    const months = [];
+    for (const ME of monthEnds) {
+      const core = await reconcileMonthCore(community_id, ba, cashAcctId, ME);
+      const sum = core.result.summary;
+      months.push({
+        period_end: ME,
+        book_cents: core.glBalance,
+        bank_cents: core.bankEnding,
+        book_minus_bank_cents: core.glBalance - core.bankEnding,
+        deposits_in_transit_cents: sum.deposits_in_transit_total_cents,
+        outstanding_checks_cents: sum.outstanding_checks_total_cents,
+        residual_cents: sum.difference_cents,
+        reconciled: sum.balanced,
+      });
+    }
 
     return res.json({ account_last4: ba.account_last4, months });
   } catch (err) {
@@ -620,8 +657,6 @@ router.get('/boundary-summary', async (req, res) => {
 //   GET  /worksheet?community_id=&account_last4=&period_end=
 //   POST /worksheet/clear  { community_id, bank_account_id, side, source_id, status, match_group? }
 // ---------------------------------------------------------------------------
-const WASH_RE = /credit distribution/i;
-
 router.get('/worksheet', async (req, res) => {
   try {
     const community_id = req.query.community_id;
@@ -646,71 +681,9 @@ router.get('/worksheet', async (req, res) => {
     }
     if (!cashAcctId) return res.status(404).json({ error: 'cash_account_not_found' });
 
-    // Live GL cash lines through period-end. The live era starts at the earliest
-    // live posting date; the worksheet covers that era (open items carry forward
-    // within it). Opening-balance + credit-distribution-wash lines are excluded.
-    const { data: glRaw } = await supabase.from('journal_entry_lines')
-      .select('id, debit_cents, credit_cents, memo, journal_entries!inner(posting_date, source_module, community_id, status)')
-      .eq('account_id', cashAcctId).lte('journal_entries.posting_date', period_end)
-      .eq('journal_entries.community_id', community_id).limit(100000);
-    const glLive = (glRaw || []).filter((l) => (l.journal_entries.status || 'posted') !== 'voided');
-
-    // Opening anchor + cutover (for the pre-cutover ingested-GL era).
-    const { data: baOpen } = await supabase.from('bank_accounts').select('opening_position').eq('id', ba.id).maybeSingle();
-    const openPos = (baOpen && baOpen.opening_position) || {};
-    const anchor = openPos.gl_anchor || null;
-    const anchorBalance = anchor ? Number(anchor.balance_cents || 0) : 0;
-    const cutover = openPos.as_of_date || null;
-
-    // Book side by era: live trustEd GL when it exists, else the ingested Vantaca
-    // GL cash (bank_rec_gl_cash) on top of the opening anchor — so 2025 months
-    // show real book detail to reconcile against instead of "not in GL".
-    let glItems, glBalance, eraStart, glBeginAt;
-    if (glLive.length) {
-      glBalance = glLive.reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
-      const operational = glLive.filter((l) => l.journal_entries.source_module !== 'opening_entry' && !WASH_RE.test(l.memo || ''));
-      eraStart = operational.length ? operational.map((l) => l.journal_entries.posting_date).sort()[0] : period_end.slice(0, 8) + '01';
-      glItems = operational.map((l) => {
-        const amt = Number(l.debit_cents) - Number(l.credit_cents);
-        return { id: l.id, date: l.journal_entries.posting_date, amount_cents: amt,
-          description: l.memo || l.journal_entries.description || '',
-          check_number: ((l.memo || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null };
-      }).filter((g) => g.amount_cents !== 0);
-      glBeginAt = (d) => glLive.filter((l) => l.journal_entries.posting_date < d).reduce((a, l) => a + Number(l.debit_cents) - Number(l.credit_cents), 0);
-    } else {
-      const { data: glcash } = await supabase.from('bank_rec_gl_cash')
-        .select('id, posting_date, description, amount_cents, check_number')
-        .eq('community_id', community_id).eq('account_last4', ba.account_last4)
-        .lte('posting_date', period_end).order('posting_date').limit(50000);
-      glBalance = anchorBalance + (glcash || []).reduce((a, g) => a + Number(g.amount_cents), 0);
-      eraStart = cutover || (anchor && anchor.date) || (period_end.slice(0, 8) + '01');
-      glItems = (glcash || [])
-        .filter((g) => (!cutover || g.posting_date > cutover) && !WASH_RE.test(g.description || ''))
-        .map((g) => ({
-          id: g.id, date: g.posting_date, amount_cents: Number(g.amount_cents),
-          description: g.description || '', check_number: g.check_number || ((g.description || '').match(/check\s*#?\s*(\d+)/i) || [])[1] || null,
-        })).filter((g) => g.amount_cents !== 0);
-      glBeginAt = (d) => anchorBalance + (glcash || []).filter((g) => g.posting_date < d).reduce((a, g) => a + Number(g.amount_cents), 0);
-    }
-
-    // Bank lines from era start through period-end. For the ingested (pre-cutover)
-    // era the baseline is the cutover (book=bank that day), so start the bank the
-    // month AFTER it — exclude the cutover's own statement, whose items are part
-    // of the settled opening. The live era starts at its first posting date.
-    let stmtQ = supabase.from('bank_statement_imports')
-      .select('id, statement_period_end, beginning_balance_cents, ending_balance_cents')
-      .eq('bank_account_id', ba.id).lte('statement_period_end', period_end)
-      .order('statement_period_end', { ascending: true });
-    stmtQ = (glLive.length || !cutover) ? stmtQ.gte('statement_period_end', eraStart) : stmtQ.gt('statement_period_end', cutover);
-    const { data: stmts } = await stmtQ;
-    const thisStmt = (stmts || []).slice().reverse().find((st) => st.ending_balance_cents != null) || null;
-    const bankEnding = thisStmt ? thisStmt.ending_balance_cents : 0;
-    const { data: bankRaw } = await supabase.from('bank_statement_transactions')
-      .select('id, posting_date, amount_cents, description, check_number, transaction_type')
-      .in('bank_statement_import_id', (stmts || []).map((x) => x.id)).limit(20000);
-    const bankItems = (bankRaw || []).map((b) => ({ id: b.id, date: b.posting_date,
-      amount_cents: Number(b.amount_cents), description: b.description || '', check_number: b.check_number || null,
-      transaction_type: b.transaction_type || (b.check_number ? 'check' : (Number(b.amount_cents) >= 0 ? 'deposit' : 'debit')) }));
+    // Reconcile this month with the shared engine (same as the summary card).
+    const core = await reconcileMonthCore(community_id, ba, cashAcctId, period_end);
+    const { glItems, bankItems, glBalance, bankEnding, thisStmt, glBeginAt, result, eraStart } = core;
 
     // Operator Accept/Reopen overrides (defensive: works before migration 242).
     const overrides = {};
@@ -720,26 +693,11 @@ router.get('/worksheet', async (req, res) => {
       (ov || []).forEach((o) => { overrides[o.side + ':' + o.source_id] = { status: o.status, match_group: o.match_group }; });
     } catch (e) { /* bank_rec_clearing not migrated yet — no overrides */ }
 
-    // Build over the whole era (so carried-forward items match across months),
-    // then present THIS month: beginning balances = prior month-end, and only
-    // the lines that cleared this month + the still-open carry-forward items.
+    // Present THIS month: beginning balances = prior month-end; matched lines that
+    // cleared this month + the still-open carry-forward items.
     const periodStart = period_end.slice(0, 8) + '01';
     const bankBeginning = thisStmt && thisStmt.beginning_balance_cents != null ? thisStmt.beginning_balance_cents : null;
     const glBeginning = glBeginAt(periodStart);
-
-    // Reconcile with the MAIN matcher (the one that ties to $0), then shape it
-    // into the worksheet. The lockbox date-batch handles deposits for both eras;
-    // we do NOT feed the Vantaca payout key here — on gross 2026 data it fights
-    // the date-batching and blows the difference up. Ingested (2025) months carry
-    // the opening stake; live (2026) months don't.
-    const isLive = glLive.length > 0;
-    const glEntries = glItems.map((g) => ({ ref: String(g.id), posting_date: g.date,
-      entry_type: g.amount_cents >= 0 ? 'deposit' : 'payment', amount_signed_cents: g.amount_cents,
-      description: g.description, check_number: g.check_number }));
-    const bankTransactions = bankItems.map((b) => ({ id: b.id, posting_date: b.date,
-      amount_cents: b.amount_cents, transaction_type: b.transaction_type, check_number: b.check_number, description: b.description }));
-    const result = reconcile({ bankTransactions, checkRegisterChecks: [], glEntries, vantacaPayouts: [],
-      openingPosition: isLive ? {} : openPos, bankEndingCents: bankEnding, glEndingCents: glBalance, bookIsComplete: true });
     const full = worksheetFromMatcher(result, { glItems, bankItems, overrides, bankEndingCents: bankEnding, glBalanceCents: glBalance, periodEnd: period_end });
     const inMonth = (d) => d && d >= periodStart && d <= period_end;
     const worksheet = {

@@ -767,13 +767,14 @@
         <td class="num">${fmt(m.book_cents)}</td>
         <td class="num">${fmt(m.bank_cents)}</td>
         <td class="num">${fmt(m.book_minus_bank_cents)}</td>
-        <td class="num" style="color:#047857;">${m.online_in_transit_cents?'+'+fmt(m.online_in_transit_cents):'—'}</td>
+        <td class="num" style="color:#047857;">${m.deposits_in_transit_cents?'+'+fmt(m.deposits_in_transit_cents):'—'}</td>
+        <td class="num" style="color:#b91c1c;">${m.outstanding_checks_cents?fmt(m.outstanding_checks_cents):'—'}</td>
         <td class="num" style="font-weight:700; color:${resColor};">${m.residual_cents?fmt(m.residual_cents):'$0.00'}</td>
         <td>${tied?'<span style="color:#047857;font-weight:700;font-size:12px;">✓ tied</span>':'<span style="color:#b45309;font-weight:700;font-size:12px;">review</span>'}</td></tr>`;
     }).join('');
     return `<div class="card"><h2 class="sec" style="margin-bottom:4px;">Reconciliation summary — book vs bank by month</h2>
-      <div class="sub" style="margin-bottom:10px;">GL cash balance minus the bank statement each month equals deposits in transit. The online portion is settled from the Vantaca payout key (transaction date → payout date); the remaining residual is physical check-deposit timing plus anything genuinely off, flagged for review.</div>
-      <table><thead><tr><th>Month-end</th><th class="num">Book (GL)</th><th class="num">Bank</th><th class="num">Book − Bank</th><th class="num">Online in transit</th><th class="num">Residual (review)</th><th>Status</th></tr></thead>
+      <div class="sub" style="margin-bottom:10px;">Each month reconciled with the same engine as the worksheet below: bank + deposits in transit − outstanding checks = book. Click a month to open and work the detail. A non-zero difference is flagged for review.</div>
+      <table><thead><tr><th>Month-end</th><th class="num">Book (GL)</th><th class="num">Bank</th><th class="num">Book − Bank</th><th class="num">+ In transit</th><th class="num">− Outstanding</th><th class="num">Difference</th><th>Status</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
   }
 
