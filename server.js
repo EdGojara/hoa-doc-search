@@ -921,6 +921,9 @@ app.use('/api/gl', glRouter);
 app.get('/admin/accounting', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'accounting.html'));
 });
+app.get('/admin/home-sales', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'home_sales.html'));
+});
 app.get('/admin/community-photos', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'community-photos-admin.html'));
 });
@@ -982,6 +985,9 @@ app.use('/api/books', booksRouter);
 // Phase 2A. Migration 172 + lib/accounting/ar_engine.js power it.
 const { router: arRouter } = require('./api/ar');
 app.use('/api/ar', arRouter);
+
+const homeSalesRouter = require('./api/home_sales');
+app.use('/api/home-sales', homeSalesRouter);
 
 // Banks master — management-company-level bank registry. bank_accounts
 // FK to this table. Migration 173. Bedrock's three banks (First Citizens,

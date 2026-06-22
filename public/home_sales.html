@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Sales · Bedrock</title>
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1f2430; --ink-soft:#475569; --ink-faint:#94a3b8;
+          --rule:#e7e3d8; --bg:#f7f5ef; --ok:#15803d; --err:#b91c1c; --font-serif:'Cormorant Garamond',Georgia,serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:Inter,system-ui,-apple-system,sans-serif; font-size:14px; }
+  header.page { background:var(--navy); color:#fff; padding:18px 26px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; border-bottom:3px solid var(--gold); }
+  header.page h1 { font-family:var(--font-serif); font-weight:600; font-size:26px; margin:0; }
+  header.page h1 em { color:var(--gold); font-style:italic; }
+  .wrap { max-width:1080px; margin:0 auto; padding:22px 26px 60px; }
+  select, input[type=text], input[type=date], input[type=email] { padding:8px 12px; border-radius:8px; border:1px solid var(--rule); background:#fff; color:var(--ink); font-size:14px; }
+  header.page select { border:1px solid rgba(255,255,255,0.3); min-width:210px; }
+  .card { background:#fff; border:1px solid var(--rule); border-radius:12px; padding:18px 20px; box-shadow:0 1px 2px rgba(0,0,0,0.03); margin-bottom:16px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; padding:8px 10px; color:var(--ink-faint); font-size:11px; letter-spacing:0.05em; text-transform:uppercase; border-bottom:2px solid var(--rule); }
+  td { padding:9px 10px; border-bottom:1px solid #f1efe8; vertical-align:top; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .badge { display:inline-block; padding:3px 11px; border-radius:999px; font-size:12px; font-weight:700; }
+  .badge.ok { background:#dcfce7; color:var(--ok); } .badge.err { background:#fee2e2; color:var(--err); }
+  .badge.req { background:#fef3c7; color:#92400e; } .badge.disc { background:#dbeafe; color:#1e40af; } .badge.closed { background:#e2e8f0; color:#334155; }
+  .muted { color:var(--ink-faint); }
+  h2.sec { font-family:var(--font-serif); font-size:20px; color:var(--navy); margin:0 0 4px; }
+  .btn { padding:9px 18px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-size:13.5px; font-weight:700; cursor:pointer; }
+  .btn.gold { background:var(--gold); border-color:var(--gold); color:var(--navy); }
+  .btn.ghost { background:#fff; color:var(--navy); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .field { display:flex; flex-direction:column; gap:4px; margin-bottom:12px; }
+  .field label { font-size:12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.04em; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .kv { display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid #f1efe8; }
+  .kv .k { color:var(--ink-soft); } .kv .v { font-weight:600; }
+  .timeline { list-style:none; padding:0; margin:0; }
+  .timeline li { padding:10px 0 10px 18px; border-left:2px solid var(--rule); position:relative; }
+  .timeline li:before { content:''; position:absolute; left:-6px; top:14px; width:10px; height:10px; border-radius:50%; background:var(--gold); }
+  .timeline li.current:before { background:var(--ok); }
+  .result-ok { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px 16px; }
+  .result-warn { background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:14px 16px; }
+  a.link { color:var(--navy); font-weight:600; cursor:pointer; text-decoration:none; border-bottom:1px dotted var(--ink-faint); }
+</style>
+</head>
+<body>
+<header class="page">
+  <div>
+    <div style="display:flex; gap:20px; align-items:center; margin-bottom:7px; font-size:13px;">
+      <a href="/" style="color:#fff; text-decoration:none; opacity:.85;">&larr; trustEd Home</a>
+    </div>
+    <h1>Bedrock <em>Home Sales</em></h1>
+    <div style="font-size:12px; opacity:.8; margin-top:3px;">Resale disclosures &amp; ownership transfers · <em>community simplified</em></div>
+  </div>
+  <select id="commSel"></select>
+</header>
+<div class="wrap">
+  <div class="row" style="margin-bottom:16px;">
+    <button class="btn gold" id="btnRequest">＋ Log resale request</button>
+    <button class="btn" id="btnScan">📄 Scan closing packet</button>
+  </div>
+  <div id="panel"></div>
+  <div id="list"><div class="muted" style="padding:30px; text-align:center;">Loading…</div></div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fmt = (cents) => '$' + (Number(cents||0)/100).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+  const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const fmtDate = (d) => { if (!d) return '—'; const t = new Date(d + (String(d).length===10?'T00:00:00':'')); return isNaN(t)? d : t.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}); };
+  const dollarsToCents = (v) => { if (v===''||v==null) return null; const n = Number(String(v).replace(/[$,]/g,'')); return Number.isFinite(n)? Math.round(n*100): null; };
+  let CID = null, COMMS = [];
+
+  const STAGE_BADGE = {
+    requested: '<span class="badge req">Requested</span>',
+    disclosed: '<span class="badge disc">Disclosed</span>',
+    closed:    '<span class="badge closed">Closed</span>',
+    cancelled: '<span class="badge">Cancelled</span>',
+  };
+
+  async function init() {
+    const r = await fetch('/api/communities');
+    const j = await r.json();
+    COMMS = j.communities || [];
+    $('commSel').innerHTML = COMMS.map((c)=>`<option value="${c.id}">${esc(c.name)}</option>`).join('') || '<option>No communities</option>';
+    CID = COMMS[0] && COMMS[0].id;
+    $('commSel').addEventListener('change', (e)=>{ CID = e.target.value; clearPanel(); loadList(); });
+    $('btnRequest').addEventListener('click', openRequestFlow);
+    $('btnScan').addEventListener('click', openScanFlow);
+    if (CID) loadList(); else $('list').innerHTML = '<div class="card muted">No managed communities found.</div>';
+  }
+
+  function clearPanel(){ $('panel').innerHTML = ''; }
+
+  // ── The lifecycle list ────────────────────────────────────────────────────
+  async function loadList() {
+    $('list').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
+    try {
+      const r = await fetch(`/api/home-sales?community_id=${CID}`);
+      const j = await r.json(); if (j.error) throw new Error(j.error);
+      const sales = j.sales || [];
+      if (!sales.length) {
+        $('list').innerHTML = '<div class="card muted" style="padding:24px;">No home sales tracked yet. Log a resale request when HomeWise emails, or scan a closing packet when the title mail arrives.</div>';
+        return;
+      }
+      const rows = sales.map((s)=>{
+        const addr = s.properties ? (s.properties.street_address + (s.properties.unit?(' '+s.properties.unit):'')) : '—';
+        const bal = s.status==='closed'
+          ? (s.seller_final_balance_cents===0
+              ? '<span class="badge ok">cleared $0</span>'
+              : `<span class="badge err">${fmt(s.seller_final_balance_cents)}</span>`)
+          : (s.balance_cents===0 ? '<span class="badge ok">$0</span>' : (s.balance_cents!=null?fmt(s.balance_cents):'—'));
+        const drv = s.drv_clean==null ? '—' : (s.drv_clean ? '<span class="badge ok">clean</span>' : `<span class="badge err">${s.open_violations_count||0} open</span>`);
+        return `<tr>
+          <td><a class="link" onclick="openHistory('${s.property_id}')">${esc(addr)}</a></td>
+          <td>${STAGE_BADGE[s.status]||esc(s.status)}</td>
+          <td>${esc(s.seller_name||'—')}${s.buyer_name?(' <span class="muted">→</span> '+esc(s.buyer_name)):''}</td>
+          <td>${s.closing_date?fmtDate(s.closing_date):(s.request_received_at?('req '+fmtDate(s.request_received_at)):'—')}</td>
+          <td>${drv}</td>
+          <td class="num">${bal}</td>
+          <td class="num">${s.transfer_fee_cents!=null?fmt(s.transfer_fee_cents):'—'}</td>
+        </tr>`;
+      }).join('');
+      $('list').innerHTML = `<div class="card">
+        <h2 class="sec">Sales &amp; resale requests</h2>
+        <div class="muted" style="margin-bottom:10px; font-size:12.5px;">Click a property for its full ownership history.</div>
+        <table><thead><tr><th>Property</th><th>Stage</th><th>Seller → Buyer</th><th>Closing / Request</th><th>DRV</th><th class="num">Balance</th><th class="num">Transfer fee</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+    } catch (e) { $('list').innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load: '+esc(e.message)+'</div>'; }
+  }
+
+  // ── Part 1: resale request — pick property, show snapshot, log ─────────────
+  function openRequestFlow() {
+    clearPanel();
+    $('panel').innerHTML = `<div class="card">
+      <h2 class="sec">Log a resale request <span class="muted" style="font-size:13px;">(HomeWise / title)</span></h2>
+      <div class="field"><label>Find the property selling</label>
+        <input type="text" id="rq-search" placeholder="Street address or owner name…" autocomplete="off"></div>
+      <div id="rq-results"></div>
+      <div id="rq-snapshot"></div>
+    </div>`;
+    let t; $('rq-search').addEventListener('input', (e)=>{ clearTimeout(t); t=setTimeout(()=>propSearch(e.target.value, 'rq'), 250); });
+    $('rq-search').focus();
+  }
+
+  async function propSearch(q, ctx) {
+    if (!q || q.trim().length < 2) { $(ctx+'-results').innerHTML = ''; return; }
+    const r = await fetch(`/api/home-sales/properties/search?community_id=${CID}&q=${encodeURIComponent(q)}`);
+    const j = await r.json(); const props = j.properties || [];
+    $(ctx+'-results').innerHTML = props.length ? props.map((p)=>
+      `<div class="row" style="padding:8px 0; border-bottom:1px solid #f1efe8;">
+        <a class="link" onclick="pickProperty('${p.property_id}','${ctx}')">${esc(p.street_address)}${p.unit?(' '+esc(p.unit)):''}</a>
+        <span class="muted" style="font-size:12px;">${esc(p.owner_name||'')}</span></div>`).join('')
+      : '<div class="muted" style="padding:8px 0;">No match.</div>';
+  }
+
+  window.pickProperty = async function(property_id, ctx) {
+    if (ctx === 'rq') {
+      $('rq-results').innerHTML = '';
+      const snap = await fetchSnapshot(property_id);
+      if (!snap) { $('rq-snapshot').innerHTML = '<div class="muted">Couldn\'t load that property.</div>'; return; }
+      $('rq-snapshot').innerHTML = snapshotCard(snap) + `
+        <div class="grid2" style="margin-top:14px;">
+          <div class="field"><label>Requested by</label><input type="text" id="rq-by" placeholder="HomeWise / title company / agent"></div>
+          <div class="field"><label>Source</label><select id="rq-source">
+            <option value="homewise">HomeWise</option><option value="title_company">Title company</option><option value="agent">Agent</option><option value="other">Other</option></select></div>
+        </div>
+        <button class="btn gold" onclick="submitRequest('${property_id}')">Log request</button>`;
+    } else if (ctx === 'sc') {
+      // scan flow manual property pick
+      window._scanProp = property_id;
+      $('sc-results').innerHTML = '';
+      const snap = await fetchSnapshot(property_id);
+      $('sc-prop-chosen').innerHTML = snap ? ('Matched: <b>'+esc(snap.property.street_address)+'</b> — seller of record <b>'+esc(snap.owner?snap.owner.owner_name:'unknown')+'</b>') : '';
+      renderSellerCheck(snap);
+    }
+  };
+
+  async function fetchSnapshot(property_id) {
+    const r = await fetch(`/api/home-sales/property/${property_id}/snapshot?community_id=${CID}`);
+    if (!r.ok) return null;
+    return r.json();
+  }
+
+  function snapshotCard(snap) {
+    const o = snap.owner || {};
+    return `<div class="card" style="background:#fbfaf6;">
+      <div class="kv"><span class="k">Property</span><span class="v">${esc(snap.property.street_address)}${snap.property.unit?(' '+esc(snap.property.unit)):''}</span></div>
+      <div class="kv"><span class="k">Owner of record</span><span class="v">${esc(o.owner_name||'—')}</span></div>
+      <div class="kv"><span class="k">Account balance${snap.balance_as_of?(' (as of '+fmtDate(snap.balance_as_of)+')'):''}</span><span class="v">${snap.balance_is_zero?'<span class="badge ok">$0.00 — cleared</span>':'<span class="badge err">'+fmt(snap.balance_cents)+' owed</span>'}</span></div>
+      <div class="kv"><span class="k">Deed-restriction (DRV) status</span><span class="v">${snap.drv_clean?'<span class="badge ok">Clean — no open violations</span>':'<span class="badge err">'+snap.open_violations_count+' open ('+esc(snap.worst_open_stage||'')+')</span>'}</span></div>
+      <div class="kv" style="border-bottom:none;"><span class="k">Inspection</span><span class="v muted">Schedule a resale inspection to confirm condition</span></div>
+    </div>`;
+  }
+
+  window.submitRequest = async function(property_id) {
+    const body = { community_id: CID, property_id, requested_by: $('rq-by').value || null, request_source: $('rq-source').value };
+    const r = await fetch('/api/home-sales/request', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const j = await r.json(); if (j.error) { alert('Couldn\'t log: '+j.error); return; }
+    clearPanel(); loadList();
+  };
+
+  // ── Part 2: scan the closing packet → record the transfer ──────────────────
+  function openScanFlow() {
+    clearPanel();
+    $('panel').innerHTML = `<div class="card">
+      <h2 class="sec">Scan closing packet <span class="muted" style="font-size:13px;">(title mail + transfer-fee check)</span></h2>
+      <div class="muted" style="margin-bottom:12px; font-size:12.5px;">Upload the cover/transfer letter (PDF or photo). We'll read the buyer, seller, closing date, and fees, then you confirm before ownership updates.</div>
+      <input type="file" id="sc-file" accept="application/pdf,image/*">
+      <button class="btn" id="sc-go" style="margin-left:8px;">Read document</button>
+      <div id="sc-out" style="margin-top:14px;"></div>
+    </div>`;
+    $('sc-go').addEventListener('click', doScan);
+  }
+
+  async function doScan() {
+    const f = $('sc-file').files && $('sc-file').files[0];
+    if (!f) { alert('Choose a file first.'); return; }
+    $('sc-go').disabled = true; $('sc-out').innerHTML = '<div class="muted">Reading the document…</div>';
+    try {
+      const fd = new FormData(); fd.append('file', f); fd.append('community_id', CID);
+      const r = await fetch('/api/home-sales/scan', { method:'POST', body: fd });
+      const j = await r.json();
+      if (j.error) { $('sc-out').innerHTML = '<div class="result-warn">Couldn\'t read it: '+esc(j.error)+(j.raw_extracted?'<pre style="white-space:pre-wrap; font-size:11px;">'+esc(String(j.raw_extracted))+'</pre>':'')+'</div>'; return; }
+      window._scanRaw = j.raw_extracted || null;
+      renderScanForm(j.extracted || {}, j.property_matches || []);
+    } catch (e) { $('sc-out').innerHTML = '<div class="result-warn">'+esc(e.message)+'</div>'; }
+    finally { $('sc-go').disabled = false; }
+  }
+
+  function renderScanForm(ex, matches) {
+    window._scanProp = matches.length === 1 ? matches[0].property_id : null;
+    const matchOpts = matches.map((m)=>`<option value="${m.property_id}">${esc(m.street_address)}${m.unit?(' '+esc(m.unit)):''} — ${esc(m.owner_name||'')}</option>`).join('');
+    $('sc-out').innerHTML = `
+      <div class="card" style="background:#fbfaf6;">
+        <div class="row" style="justify-content:space-between;"><b>What we read</b>
+          <span class="badge ${ex.confidence==='high'?'ok':(ex.confidence==='low'?'err':'req')}">${esc(ex.confidence||'?')} confidence</span></div>
+        ${ex.notes?('<div class="muted" style="margin:6px 0; font-size:12.5px;">Note: '+esc(ex.notes)+'</div>'):''}
+        <div class="field" style="margin-top:10px;"><label>Property (confirm the match)</label>
+          ${matches.length?('<select id="sc-prop">'+matchOpts+'</select>'):'<div class="muted">No address match — search below.</div>'}
+          <input type="text" id="sc-search" placeholder="Search by address/owner if the match is wrong…" autocomplete="off" style="margin-top:6px;">
+          <div id="sc-results"></div><div id="sc-prop-chosen" class="muted" style="font-size:12px; margin-top:4px;"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Buyer (new owner)</label><input type="text" id="sc-buyer" value="${esc(ex.buyer_name||'')}"></div>
+          <div class="field"><label>Closing date</label><input type="date" id="sc-closing" value="${esc(ex.closing_date||'')}"></div>
+          <div class="field"><label>Buyer email</label><input type="email" id="sc-bemail" value="${esc(ex.buyer_email||'')}"></div>
+          <div class="field"><label>Buyer mailing address</label><input type="text" id="sc-bmail" value="${esc(ex.buyer_mailing_address||'')}"></div>
+          <div class="field"><label>Transfer fee → association ($)</label><input type="text" id="sc-tfee" value="${ex.transfer_fee_cents!=null?(ex.transfer_fee_cents/100):''}"></div>
+          <div class="field"><label>Bedrock transfer fee ($)</label><input type="text" id="sc-mfee" value="${ex.management_transfer_fee_cents!=null?(ex.management_transfer_fee_cents/100):''}"></div>
+        </div>
+        <div id="sc-seller-check"></div>
+        <button class="btn gold" id="sc-record" style="margin-top:8px;">Record closing &amp; update ownership</button>
+      </div>`;
+    let t; $('sc-search').addEventListener('input', (e)=>{ clearTimeout(t); t=setTimeout(()=>propSearch(e.target.value,'sc'), 250); });
+    const sel = $('sc-prop');
+    if (sel) { sel.addEventListener('change', async ()=>{ window._scanProp = sel.value; renderSellerCheck(await fetchSnapshot(sel.value)); });
+               window._scanProp = sel.value; fetchSnapshot(sel.value).then(renderSellerCheck); }
+    $('sc-record').addEventListener('click', recordClosing);
+  }
+
+  function renderSellerCheck(snap) {
+    const el = $('sc-seller-check'); if (!el) return;
+    if (!snap) { el.innerHTML = ''; return; }
+    const o = snap.owner || {};
+    el.innerHTML = `<div class="kv"><span class="k">Seller of record</span><span class="v">${esc(o.owner_name||'—')}</span></div>
+      <div class="kv"><span class="k">Seller balance at closing</span><span class="v">${snap.balance_is_zero?'<span class="badge ok">$0.00 — cleared</span>':'<span class="badge err">'+fmt(snap.balance_cents)+' still owed</span>'}</span></div>
+      <div class="kv"><span class="k">DRV</span><span class="v">${snap.drv_clean?'<span class="badge ok">clean</span>':'<span class="badge err">'+snap.open_violations_count+' open</span>'}</span></div>`;
+  }
+
+  async function recordClosing() {
+    const property_id = window._scanProp;
+    if (!property_id) { alert('Confirm the property first.'); return; }
+    const buyer = $('sc-buyer').value.trim();
+    const closing = $('sc-closing').value;
+    if (!buyer) { alert('Buyer name is required.'); return; }
+    if (!closing) { alert('Closing date is required.'); return; }
+    $('sc-record').disabled = true;
+    const body = {
+      community_id: CID, property_id,
+      buyer_name: buyer, closing_date: closing,
+      buyer_email: $('sc-bemail').value || null,
+      buyer_mailing_address: $('sc-bmail').value || null,
+      transfer_fee_cents: dollarsToCents($('sc-tfee').value),
+      management_transfer_fee_cents: dollarsToCents($('sc-mfee').value),
+      raw_extraction: window._scanRaw || null,
+    };
+    try {
+      const r = await fetch('/api/home-sales/record-closing', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const j = await r.json(); if (j.error) throw new Error(j.error);
+      const cleared = j.seller_cleared;
+      $('sc-out').innerHTML = `<div class="${cleared?'result-ok':'result-warn'}">
+        <b>Ownership updated.</b> ${esc(buyer)} is now the owner of record as of ${fmtDate(closing)}; the prior owner moved into history.
+        <div style="margin-top:8px;">Seller's final balance: ${cleared?'<span class="badge ok">$0.00 — cleared at closing</span>':'<span class="badge err">'+fmt(j.seller_final_balance_cents)+' — NOT zero, review before deposit</span>'}</div>
+      </div>`;
+      loadList();
+    } catch (e) { alert('Couldn\'t record: '+e.message); $('sc-record').disabled = false; }
+  }
+
+  // ── Ownership history for a property ───────────────────────────────────────
+  window.openHistory = async function(property_id) {
+    clearPanel();
+    $('panel').innerHTML = '<div class="card muted">Loading history…</div>';
+    const r = await fetch(`/api/home-sales/property/${property_id}/history`);
+    const j = await r.json();
+    const owns = j.ownerships || [], sales = j.sales || [];
+    const tl = owns.map((o)=>{
+      const name = o.contacts ? o.contacts.full_name : '—';
+      const cur = !o.end_date;
+      return `<li class="${cur?'current':''}">
+        <b>${esc(name)}</b> ${cur?'<span class="badge ok" style="font-size:10px;">current</span>':''}
+        <div class="muted" style="font-size:12.5px;">${fmtDate(o.start_date)} → ${o.end_date?fmtDate(o.end_date):'present'}${o.vesting?(' · '+esc(o.vesting)):''}</div>
+      </li>`;
+    }).join('');
+    const saleRows = sales.filter((s)=>s.status==='closed').map((s)=>
+      `<div class="kv"><span class="k">${fmtDate(s.closing_date)} — ${esc(s.seller_name||'')} → ${esc(s.buyer_name||'')}</span>
+       <span class="v">${s.seller_final_balance_cents===0?'<span class="badge ok">cleared</span>':'<span class="badge err">'+fmt(s.seller_final_balance_cents)+'</span>'}${s.transfer_fee_cents!=null?(' · fee '+fmt(s.transfer_fee_cents)):''}</span></div>`).join('');
+    $('panel').innerHTML = `<div class="card">
+      <div class="row" style="justify-content:space-between;"><h2 class="sec">Ownership history</h2><a class="link" onclick="clearPanel()">close</a></div>
+      <ul class="timeline">${tl || '<li class="muted">No ownership records.</li>'}</ul>
+      ${saleRows?('<h2 class="sec" style="margin-top:14px; font-size:16px;">Recorded sales</h2>'+saleRows):''}
+    </div>`;
+    window.scrollTo({top:0, behavior:'smooth'});
+  };
+
+  init();
+</script>
+</body>
+</html>
