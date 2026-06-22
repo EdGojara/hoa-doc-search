@@ -1,0 +1,94 @@
+{
+  "fiscal_year": 2026,
+  "lines": [
+    {
+      "account_number": "4000",
+      "label": "Current Year Assessment Income",
+      "section": "revenue",
+      "annual_cents": 2626000
+    },
+    {
+      "account_number": "5105",
+      "label": "Electricity - Street Lights",
+      "section": "expense",
+      "annual_cents": 480000
+    },
+    {
+      "account_number": "5200",
+      "label": "Landscape Operating & Management",
+      "section": "expense",
+      "annual_cents": 600000
+    },
+    {
+      "account_number": "5250",
+      "label": "Monument Repair & Maintenance",
+      "section": "expense",
+      "annual_cents": 500000
+    },
+    {
+      "account_number": "5440",
+      "label": "Office Supplies",
+      "section": "expense",
+      "annual_cents": 20000
+    },
+    {
+      "account_number": "5605",
+      "label": "Insurance - Directors & Officers",
+      "section": "expense",
+      "annual_cents": 100000
+    },
+    {
+      "account_number": "5610",
+      "label": "Insurance - General Liability",
+      "section": "expense",
+      "annual_cents": 400000
+    },
+    {
+      "account_number": "5615",
+      "label": "Insurance - Other Premiums",
+      "section": "expense",
+      "annual_cents": 11000
+    },
+    {
+      "account_number": "5800",
+      "label": "Postage",
+      "section": "expense",
+      "annual_cents": 20000
+    },
+    {
+      "account_number": "5810",
+      "label": "Management Fees",
+      "section": "expense",
+      "annual_cents": 660000
+    },
+    {
+      "account_number": "5830",
+      "label": "Billings/Collections Expense",
+      "section": "expense",
+      "annual_cents": 50000
+    },
+    {
+      "account_number": "5860",
+      "label": "Legal Fees - Corporate",
+      "section": "expense",
+      "annual_cents": 250000
+    },
+    {
+      "account_number": "5885",
+      "label": "Property Taxes",
+      "section": "expense",
+      "annual_cents": 500
+    },
+    {
+      "account_number": "5900",
+      "label": "Community Events",
+      "section": "expense",
+      "annual_cents": 10000
+    }
+  ],
+  "totals": {
+    "revenue_annual_cents": 2626000,
+    "expense_annual_cents": 3101500,
+    "net_annual_cents": -475500
+  }
+}
