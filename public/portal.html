@@ -1249,7 +1249,12 @@ function renderPortal(ctx) {
 
   // Hero
   $('greeting').textContent = greetingForTime();
-  $('welcomeName').textContent = (ctx.user.name || '').split(' ')[0] || 'Welcome';
+  // Greet the owner(s) of record. A joint owner ("Brett & Alexis Geissler") is
+  // shown in full so no co-owner is dropped; a single owner gets a friendly
+  // first name. Falls back to the login name if the owner name isn't available.
+  const greetName = ((ctx.property && ctx.property.owner_name) || ctx.user.name || '').trim();
+  const isJointOwner = /\s(?:&|and)\s/i.test(greetName);
+  $('welcomeName').textContent = isJointOwner ? greetName : (greetName.split(' ')[0] || 'Welcome');
   $('welcomeCommunity').textContent = ctx.community.name;
   $('propertyLine').textContent = [ctx.property.address, ctx.property.lot_block_section]
     .filter(Boolean).join(' · ');

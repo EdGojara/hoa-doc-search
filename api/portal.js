@@ -1492,6 +1492,25 @@ router.get('/me', async (req, res) => {
     }
     const isBoardMember = isBoardCapable && boardCommunities.length > 0;
 
+    // Owner of record for the focus property — used for the greeting so a joint
+    // owner ("Brett & Alexis Geissler") is never reduced to one name. This is
+    // the canonical contact name, independent of which individual logged in.
+    // Prefer full_name (carries both joint owners) over preferred_name.
+    let ownerOfRecordName = null;
+    try {
+      const { data: ownerRows } = await supabase
+        .from('property_ownerships')
+        .select('is_primary, contacts:contact_id (full_name, preferred_name)')
+        .eq('property_id', prop.id)
+        .is('end_date', null)
+        .limit(5);
+      const primaryOwner = (ownerRows || []).find((r) => r.is_primary) || (ownerRows || [])[0];
+      const oc = primaryOwner && primaryOwner.contacts;
+      if (oc) ownerOfRecordName = oc.full_name || oc.preferred_name || null;
+    } catch (e) {
+      console.warn('[portal /me] owner-of-record lookup failed (non-fatal):', e.message);
+    }
+
     // Light summary array of ALL accessible properties (for the picker UI
     // and the header switcher). We keep the per-property payload SMALL —
     // address + community name + property id — so the picker can render
@@ -1535,6 +1554,7 @@ router.get('/me', async (req, res) => {
       property: {
         id: prop.id,
         address: prop.street_address,
+        owner_name: req._managerView ? (req._managerView.homeowner_name || ownerOfRecordName) : ownerOfRecordName,
         lot_block_section: [
           prop.lot_number && `Lot ${prop.lot_number}`,
           prop.block_number && `Block ${prop.block_number}`,
