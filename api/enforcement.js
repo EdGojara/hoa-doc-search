@@ -427,6 +427,57 @@ router.post('/open-violation', express.json(), async (req, res) => {
       ? new Date(Date.now() + decision.cure_days * 24 * 60 * 60 * 1000).toISOString()
       : null;
 
+    // ── Continuation guard (Ed 2026-06-23) ───────────────────────────────────
+    // If an OPEN violation of the same (or aliased) category already exists on
+    // this property, this re-inspection is CONTINUATION evidence — not a new
+    // case. Log it on the existing violation and return WITHOUT creating a
+    // second violation that would run a parallel §209 cure clock. Stage + clock
+    // on the existing case are left untouched; staff advance it via the normal
+    // re-evaluate / advance-stage tools. (Cross-CATEGORY judgment calls — e.g.
+    // "Fence damage" vs "Fences" — are handled by the manual "Fold into
+    // existing" action; this guard only auto-folds same/aliased category.)
+    try {
+      const aliasIds = await expandCategoryToAliases(obs.category_id);
+      const matchIds = aliasIds && aliasIds.length ? aliasIds : [obs.category_id];
+      const { data: openPriors } = await supabase.from('violations')
+        .select('id, current_stage, continuation_count')
+        .eq('property_id', obs.property_id)
+        .in('primary_category_id', matchIds)
+        .not('current_stage', 'in', '(cured,closed,voided)');
+      if (openPriors && openPriors.length) {
+        const stageRank = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
+        const target = openPriors.sort((a, b) => (stageRank[b.current_stage] || 0) - (stageRank[a.current_stage] || 0))[0];
+        try {
+          await supabase.from('violation_continuations').insert({
+            violation_id: target.id,
+            observation_id: obs.id,
+            inspection_photo_id: obs.inspection_photo_id || null,
+            inspection_id: obs.inspection_id || null,
+            source: 'inspection',
+            notes: 'Auto-logged: re-inspection of an already-open violation — still uncured. Stage + cure clock unchanged.',
+          });
+        } catch (e) { if (e.code !== '23505') throw e; } // already continues a violation — fine
+        const newCount = (Number(target.continuation_count) || 0) + 1;
+        await supabase.from('violations').update({
+          continuation_count: newCount, last_continued_at: new Date().toISOString(),
+        }).eq('id', target.id);
+        if (obs.reviewer_status === 'pending') {
+          await supabase.from('property_observations').update({
+            reviewer_status: 'confirmed', reviewed_at: new Date().toISOString(), reviewer_user_id: actor.id,
+          }).eq('id', obs.id);
+        }
+        await supabase.from('interactions').insert({
+          community_id: obs.community_id, property_id: obs.property_id, violation_id: target.id,
+          observation_id: obs.id, inspection_id: obs.inspection_id, type: 'observation_note', direction: 'internal',
+          subject: 'Re-observed — still uncured', content: 'Re-inspection logged as continuation evidence on the existing open violation; cure clock unchanged.',
+          sent_at: new Date().toISOString(),
+        });
+        return res.json({ ok: true, folded: true, violation_id: target.id, target_stage: target.current_stage, continuation_count: newCount });
+      }
+    } catch (e) {
+      console.warn('[enforcement.open-violation] continuation guard failed; proceeding to create:', e.message);
+    }
+
     // Insert the violation row
     const { data: violation, error: vErr } = await supabase
       .from('violations')
