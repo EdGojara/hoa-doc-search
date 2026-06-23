@@ -7760,6 +7760,107 @@ router.post('/drafts/re-evaluate', express.json(), async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// POST /api/enforcement/drafts/:interactionId/fold-into
+// ----------------------------------------------------------------------------
+// Ed 2026-06-23: a re-inspection re-flagged an already-open issue as a brand-new
+// courtesy_1 violation (e.g. "Fence damage" courtesy_1 spawned while "Fences" is
+// already at certified_209 on the same property). Operator folds the new draft
+// INTO the existing open violation: the current photo + a note become
+// continuation evidence on the existing case, its §209 cure clock is left
+// EXACTLY where it is (no reset), and the duplicate violation + its fresh
+// courtesy letter are voided/rejected so the owner doesn't get a new cure clock.
+//
+// Mirrors the proven board_review path in drafts/re-evaluate, but per-item and
+// with an operator note + the inspection photo captured as evidence.
+//
+// Body: { target_violation_id (required), note (optional) }
+// Returns: { ok, target_violation_id, continuation_count, voided_violation_id }
+// ----------------------------------------------------------------------------
+router.post('/drafts/:interactionId/fold-into', express.json(), async (req, res) => {
+  try {
+    const { interactionId } = req.params;
+    const targetId = req.body && req.body.target_violation_id;
+    const note = (req.body && req.body.note) || null;
+    if (!targetId) return res.status(400).json({ error: 'target_violation_id_required' });
+
+    // 1) The draft → its (duplicate) violation + observation.
+    const { data: interaction } = await supabase.from('interactions')
+      .select('id, violation_id, observation_id, status, content, community_id')
+      .eq('id', interactionId).maybeSingle();
+    if (!interaction) return res.status(404).json({ error: 'draft_not_found' });
+    if (interaction.status === 'sent') return res.status(409).json({ error: 'cannot_fold_a_mailed_letter' });
+    if (!interaction.violation_id) return res.status(400).json({ error: 'draft_has_no_violation' });
+
+    const { data: dup } = await supabase.from('violations')
+      .select('id, property_id, community_id, current_stage, opened_from_observation_id')
+      .eq('id', interaction.violation_id).maybeSingle();
+    if (!dup) return res.status(404).json({ error: 'duplicate_violation_not_found' });
+
+    // 2) The target must be a DIFFERENT, OPEN violation on the SAME property.
+    const { data: target } = await supabase.from('violations')
+      .select('id, property_id, current_stage, continuation_count')
+      .eq('id', targetId).maybeSingle();
+    if (!target) return res.status(404).json({ error: 'target_violation_not_found' });
+    if (target.id === dup.id) return res.status(400).json({ error: 'cannot_fold_into_itself' });
+    if (target.property_id !== dup.property_id) return res.status(400).json({ error: 'target_is_a_different_property' });
+    if (['cured', 'closed', 'voided'].includes(target.current_stage)) {
+      return res.status(400).json({ error: 'target_violation_is_not_open' });
+    }
+
+    // 3) The new photo (evidence) — resolve from the observation chain.
+    const obsId = interaction.observation_id || dup.opened_from_observation_id || null;
+    let inspection_photo_id = null, inspection_id = null;
+    if (obsId) {
+      const { data: obs } = await supabase.from('property_observations')
+        .select('inspection_photo_id, inspection_id').eq('id', obsId).maybeSingle();
+      if (obs) { inspection_photo_id = obs.inspection_photo_id || null; inspection_id = obs.inspection_id || null; }
+    }
+
+    // 4) Log the continuation on the TARGET (append-only evidence).
+    try {
+      await supabase.from('violation_continuations').insert({
+        violation_id: target.id,
+        observation_id: obsId,
+        inspection_photo_id,
+        inspection_id,
+        source: 'manual',
+        notes: note || `Folded from re-inspection draft ${interactionId} — same continuing issue, still uncured.`,
+      });
+    } catch (e) {
+      if (e.code !== '23505') throw e; // 23505 = this observation already continues a violation; non-fatal
+    }
+    // 5) Bump the target's continuity counters. Stage + cure clock untouched.
+    const newCount = (Number(target.continuation_count) || 0) + 1;
+    await supabase.from('violations').update({
+      continuation_count: newCount,
+      last_continued_at: new Date().toISOString(),
+    }).eq('id', target.id);
+
+    // 6) Void the duplicate violation so it doesn't run a parallel clock.
+    await supabase.from('violations').update({
+      current_stage: 'voided',
+      resolved_via: 'voided',
+      resolved_at: new Date().toISOString(),
+      resolved_notes: `Folded into open violation ${target.id} (${target.current_stage}) as continuation evidence — same continuing issue. Voided to avoid a duplicate cure clock.${note ? ' Note: ' + note : ''}`,
+    }).eq('id', dup.id);
+
+    // 7) Cancel the duplicate's fresh courtesy letter so it never mails.
+    await supabase.from('interactions').update({
+      status: 'rejected',
+      notes: `[Folded into violation ${target.id} — continuing issue, no new cure clock. Letter cancelled.]`,
+    }).eq('id', interactionId);
+    if (interaction.content && /\.pdf$/i.test(String(interaction.content))) {
+      try { await supabase.storage.from('violation-letters').remove([interaction.content]); } catch (_) {}
+    }
+
+    res.json({ ok: true, target_violation_id: target.id, continuation_count: newCount, voided_violation_id: dup.id });
+  } catch (err) {
+    console.error('[enforcement] fold-into failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // POST /api/enforcement/drafts/:interactionId/reclassify
 // ----------------------------------------------------------------------------
 // Ed 2026-06-13: "AI assessment is incorrect — I saw trash can, AI said

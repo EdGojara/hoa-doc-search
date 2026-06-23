@@ -22791,6 +22791,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
             <button onclick="inspDraftsTraceOpen('${d.interaction_id}')" style="background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;" title="Why is this item at this stage? Shows prior history + engine decision.">🔍 Trace</button>
             <button onclick="inspDraftsReclassifyOpen('${d.interaction_id}')" style="background:#fef3c7; border:1px solid #fde68a; color:#854d0e; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;" title="AI got it wrong? Pick the right category + fix the description. Letter regenerates automatically.">✏️ Fix</button>
+            <button onclick="inspOpenPropertyDetail('${d.property_id || ''}')" style="background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;" title="Open this homeowner's full history before sending.">🏠 History</button>
+            <button onclick="inspDraftFold('${d.interaction_id}','${d.property_id || ''}','${d.violation_id || ''}')" style="background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;" title="Fold into an existing open violation — keeps the §209 clock running, no new courtesy letter.">🔗 Fold</button>
             <button onclick="inspDraftsReject('${d.interaction_id}')" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">✕ Drop this item from the bundle</button>
           </div>
         </div>
@@ -22816,11 +22818,76 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <button onclick="inspDraftsTraceOpen('${d.interaction_id}')" style="background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Why is this draft at this stage? Shows prior history + engine decision.">🔍 Trace</button>
           <button onclick="inspDraftsReclassifyOpen('${d.interaction_id}')" style="background:#fef3c7; border:1px solid #fde68a; color:#854d0e; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="AI got it wrong? Pick the right category + fix the description. Letter regenerates automatically.">✏️ Fix</button>
           <button onclick="inspDraftsRegenerateLetter('${d.violation_id || ''}', this)" style="background:none; border:1px solid #d0d7de; color:#0B1D34; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Re-render the PDF with the latest template (use after letter template updates)">↻ Regenerate</button>
+          <button onclick="inspOpenPropertyDetail('${d.property_id || ''}')" style="background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Open this homeowner's full history (open violations, ARC, interactions) before sending the letter.">🏠 History</button>
+          <button onclick="inspDraftFold('${d.interaction_id}','${d.property_id || ''}','${d.violation_id || ''}')" style="background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Same uncured issue already has an open violation? Fold this in — keeps the §209 clock running, no new courtesy letter.">🔗 Fold into existing</button>
           <button onclick="inspDraftsReject('${d.interaction_id}')" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:auto;">✕ Reject</button>
         </div>
       </div>
     </div>`;
   }
+
+  // Fold a re-flagged draft into an existing open violation on the same
+  // property: the photo + a note become continuation evidence on that case, its
+  // §209 clock keeps running, and this duplicate + its courtesy letter are voided.
+  window.inspDraftFold = async function (interactionId, propertyId, dupViolationId) {
+    if (!propertyId) { alert('No property is linked to this item.'); return; }
+    let viols = [];
+    try {
+      const r = await fetch(`/api/inspections/property-detail/${encodeURIComponent(propertyId)}`);
+      const j = await r.json();
+      viols = (j.violations || []).filter((v) => v.id !== dupViolationId && !['cured', 'closed', 'voided'].includes(v.current_stage));
+    } catch (e) { alert('Could not load this property’s violations: ' + e.message); return; }
+    if (!viols.length) { alert('No other open violation on this property to fold into.\n\n(Fold is for when the same uncured issue already has an open case — e.g. an existing certified §209.)'); return; }
+
+    const stageRank = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
+    viols.sort((a, b) => (stageRank[b.current_stage] || 0) - (stageRank[a.current_stage] || 0));
+    const opts = viols.map((v, i) => {
+      const stage = (v.current_stage || '').replace(/_/g, ' ');
+      const cat = v.category_label || v.category_code || 'violation';
+      const opened = (v.opened_at || '').slice(0, 10);
+      const cont = v.continuation_count ? ` · re-confirmed ${v.continuation_count}×` : '';
+      return `<label style="display:block; padding:9px 11px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; cursor:pointer;">
+        <input type="radio" name="_foldTarget" value="${escapeHtml(v.id)}" ${i === 0 ? 'checked' : ''}>
+        <b style="color:#0B1D34;">${escapeHtml(cat)}</b>
+        <span style="color:#b45309; font-weight:700; text-transform:uppercase; font-size:11px;"> ${escapeHtml(stage)}</span>
+        <span style="color:#64748b; font-size:12px;"> · opened ${escapeHtml(opened)}${cont}</span>
+      </label>`;
+    }).join('');
+
+    const modal = document.createElement('div');
+    modal.id = '_foldModal';
+    modal.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:2000; display:flex; align-items:center; justify-content:center; padding:20px;';
+    modal.innerHTML = `<div style="background:#fff; border-radius:12px; max-width:540px; width:100%; padding:22px; box-shadow:0 12px 40px rgba(0,0,0,0.25);">
+      <h3 style="margin:0 0 6px; color:#0B1D34; font-size:17px;">Fold into existing violation</h3>
+      <p style="font-size:12.5px; color:#475569; margin:0 0 14px; line-height:1.5;">The current photo + your note attach to the violation you pick as proof it’s still uncured. Its §209 cure clock keeps running where it is, and this new item + its courtesy letter are cancelled — so the owner doesn’t get a fresh clock.</p>
+      ${opts}
+      <textarea id="_foldNote" placeholder="Note (optional) — e.g. &quot;Re-inspected 6/18, fence still down, photo added.&quot;" style="width:100%; min-height:58px; border:1px solid #cbd5e1; border-radius:8px; padding:9px; font-size:13px; margin:8px 0 14px; box-sizing:border-box; font-family:inherit;"></textarea>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button id="_foldCancel" style="padding:9px 16px; border:1px solid #cbd5e1; background:#fff; border-radius:8px; cursor:pointer; font-weight:600;">Cancel</button>
+        <button id="_foldGo" style="padding:9px 18px; border:1px solid #0B1D34; background:#0B1D34; color:#fff; font-weight:700; border-radius:8px; cursor:pointer;">Fold &amp; void duplicate</button>
+      </div>
+    </div>`;
+    document.body.appendChild(modal);
+    const close = () => modal.remove();
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    modal.querySelector('#_foldCancel').onclick = close;
+    modal.querySelector('#_foldGo').onclick = async function () {
+      const sel = modal.querySelector('input[name="_foldTarget"]:checked');
+      if (!sel) { alert('Pick the violation to fold into.'); return; }
+      const note = modal.querySelector('#_foldNote').value || null;
+      this.disabled = true; this.textContent = 'Folding…';
+      try {
+        const r = await fetch(`/api/enforcement/drafts/${encodeURIComponent(interactionId)}/fold-into`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target_violation_id: sel.value, note }),
+        });
+        const j = await r.json();
+        if (!r.ok || j.error) throw new Error(j.error || 'fold failed');
+        close();
+        if (typeof inspDraftsLoad === 'function') inspDraftsLoad();
+      } catch (e) { alert('Fold failed: ' + e.message); this.disabled = false; this.textContent = 'Fold & void duplicate'; }
+    };
+  };
 
   // Toggle every member of a bundle. If all are currently selected, deselect
   // all; otherwise select all.
