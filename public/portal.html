@@ -920,10 +920,21 @@ function greetingForTime() {
   if (h < 17) return 'Good afternoon';
   return 'Good evening';
 }
-function fmtAsOf(iso) {
-  if (!iso) return 'No recent snapshot';
-  const d = new Date(iso);
-  return 'As of ' + d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+function fmtAsOf(bal) {
+  // Accepts the balance object (preferred) or a bare ISO string (legacy).
+  bal = (bal && typeof bal === 'object') ? bal : { as_of: bal };
+  // Parse a date-only string ("YYYY-MM-DD") as LOCAL midnight, not UTC —
+  // otherwise it renders a day early in Central time (the date-string scar).
+  const fmt = (d) => {
+    const dt = (typeof d === 'string' && d.length === 10) ? new Date(d + 'T00:00:00') : new Date(d);
+    return dt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  };
+  // Live trustEd GL (book of record) — the balance is real-time, current
+  // through today. Vantaca snapshot (not live) — show the date it was last
+  // updated, since we can't claim it's current as of today.
+  if (bal.source === 'transactions') return 'As of ' + fmt(new Date());
+  if (bal.as_of) return 'Updated ' + fmt(bal.as_of);
+  return 'No recent snapshot';
 }
 
 function getQueryParams() {
@@ -1275,11 +1286,11 @@ function renderPortal(ctx) {
   if (bal.status === 'current' || (bal.amount_cents === 0)) {
     balVal.textContent = 'Current';
     balVal.classList.add('good');
-    $('balanceAsOf').textContent = fmtAsOf(bal.as_of);
+    $('balanceAsOf').textContent = fmtAsOf(bal);
   } else if (bal.amount_cents > 0) {
     balVal.textContent = dollars(bal.amount_cents);
     balVal.classList.add(bal.status === 'past_due' ? 'bad' : 'warn');
-    $('balanceAsOf').textContent = `Due · ${fmtAsOf(bal.as_of)}`;
+    $('balanceAsOf').textContent = `Due · ${fmtAsOf(bal)}`;
   } else {
     balVal.textContent = 'Not available';
     $('balanceAsOf').textContent = '';
