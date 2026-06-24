@@ -69,7 +69,7 @@
     { id:'bank',       label:'🏦 Bank Rec',   views:[['bankrec','Reconciliation']] },
     { id:'financials', label:'📊 Financials', views:[['bs','Balance Sheet'],['is','Income Statement'],['eq','Equity'],['trial','Trial Balance'],['tieout','Tie-Out']] },
     { id:'budget',     label:'📈 Budget',     views:[['bva','Budget vs Actual'],['budget','Budget']] },
-    { id:'setup',      label:'⚙️ Setup',      views:[['periods','Periods'],['policy','Billing Policy'],['coa','Chart of Accounts'],['je','Journal Entries']] },
+    { id:'setup',      label:'⚙️ Setup',      views:[['onlinepay','Online Payments'],['periods','Periods'],['policy','Billing Policy'],['coa','Chart of Accounts'],['je','Journal Entries']] },
   ];
   let CID = null, GROUP = 'homeowners', VIEW = 'owners';
 
@@ -115,6 +115,7 @@
       if (VIEW==='bva') return renderBVA();
       if (VIEW==='budget') return renderBudget();
       if (VIEW==='periods') return renderPeriods();
+      if (VIEW==='onlinepay') return renderOnlinePay();
     } catch (e) { $('body').innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load: '+esc(e.message)+'</div>'; }
   }
 
@@ -1064,6 +1065,61 @@
     if (j.error){ alert('Couldn’t void: '+j.error); return; }
     if (j.note) alert(j.note);
     chkLoadRegister();
+  };
+
+  // ── Online Payments (Stripe Connect) ───────────────────────────────────────
+  async function renderOnlinePay() {
+    $('body').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
+    const j = await fetch(`/api/payments/connect/status?community_id=${CID}`).then((r)=>r.json()).catch((e)=>({error:e.message}));
+    if (j.error) { $('body').innerHTML = `<div class="card" style="color:var(--err)">${esc(j.error)}</div>`; return; }
+    const badge = !j.has_account ? '<span class="badge err">Not set up</span>'
+      : j.onboarded ? '<span class="badge ok">Ready — accepting payments</span>'
+      : '<span class="badge" style="background:#fef3c7; color:#92400e;">Onboarding incomplete</span>';
+    const BTN = 'padding:9px 18px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-weight:700; cursor:pointer; font-size:13.5px;';
+    const GHOST = 'padding:8px 14px; border-radius:8px; border:1px solid var(--rule); background:#fff; color:var(--navy); font-weight:600; cursor:pointer; font-size:12.5px;';
+    const kv = (k,v)=>`<div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--rule);"><span class="muted">${k}</span><span>${v}</span></div>`;
+    $('body').innerHTML = `
+      <div class="card" style="margin-bottom:14px;">
+        <h2 class="sec">Online payments <span class="muted" style="font-size:13px;">· Stripe</span></h2>
+        <div class="sub muted" style="margin-bottom:12px;">Each community has its own Stripe connected account, so assessment payments settle to that association's own bank — never pooled.</div>
+        ${kv('Status', badge)}
+        ${j.account_id ? kv('Connected account', `<span style="font-family:ui-monospace,monospace; font-size:12px;">${esc(j.account_id)}</span>`) : ''}
+        ${j.has_account && !j.onboarded ? kv('Details submitted', j.details_submitted?'yes':'no') : ''}
+        <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+          <button style="${BTN}" onclick="opConnect()">${j.has_account ? (j.onboarded?'Manage / re-onboard':'Finish onboarding') : 'Set up online payments'}</button>
+          <button style="${GHOST}" onclick="renderOnlinePay()">↻ Refresh status</button>
+        </div>
+        <span id="opStatus" class="muted" style="display:block; margin-top:8px; font-size:12.5px;"></span>
+      </div>
+      ${j.onboarded ? `<div class="card">
+        <h2 class="sec" style="margin-bottom:6px;">Run a test payment</h2>
+        <div class="sub muted" style="margin-bottom:10px;">Sandbox only. Pick any property and we'll create a $1.00 test charge — pay it with Stripe test card <b>4242 4242 4242 4242</b> (any future date/CVC) to confirm money routes to this community's connected account.</div>
+        <input type="text" id="opSearch" placeholder="Search property or owner…" style="padding:8px 12px; border:1px solid var(--rule); border-radius:8px; width:280px;" autocomplete="off">
+        <div id="opResults" style="margin-top:8px;"></div>
+      </div>` : ''}`;
+    const s = $('opSearch');
+    if (s) { let t; s.addEventListener('input', (e)=>{ clearTimeout(t); t=setTimeout(()=>opSearch(e.target.value), 250); }); }
+  }
+  window.opConnect = async function() {
+    const st = $('opStatus'); st.textContent = 'Creating onboarding link…';
+    const j = await fetch('/api/payments/connect/onboard', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({community_id:CID, return_url:location.href})}).then((r)=>r.json()).catch((e)=>({error:e.message}));
+    if (j.error) { st.innerHTML = '<span style="color:var(--err)">'+esc(j.error)+'</span>'; return; }
+    st.textContent = 'Opening Stripe onboarding in a new tab…';
+    window.open(j.onboarding_url, '_blank');
+  };
+  window.opSearch = async function(q) {
+    if (!q || q.trim().length < 2) { $('opResults').innerHTML=''; return; }
+    const j = await fetch(`/api/home-sales/properties/search?community_id=${CID}&q=${encodeURIComponent(q)}`).then((r)=>r.json()).catch(()=>({properties:[]}));
+    $('opResults').innerHTML = (j.properties||[]).map((p)=>`<div style="padding:7px 0; border-bottom:1px solid #f1efe8; display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <span>${esc(p.street_address)}${p.unit?(' '+esc(p.unit)):''} <span class="muted" style="font-size:12px;">${esc(p.owner_name||'')}</span></span>
+      <button style="padding:5px 12px; border-radius:6px; border:1px solid var(--navy); background:#fff; color:var(--navy); font-weight:600; cursor:pointer; font-size:12px;" onclick="opTestPay('${p.property_id}')">Create $1 test charge</button>
+    </div>`).join('') || '<div class="muted" style="padding:6px 0;">No match.</div>';
+  };
+  window.opTestPay = async function(propertyId) {
+    const body = { community_id:CID, property_id:propertyId, amount_cents:100, payment_method:'card', payer:{name:'Test Payer',email:'test@bedrocktx.com'}, success_url:location.href, cancel_url:location.href };
+    const j = await fetch('/api/payments/assessment/create-checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then((r)=>r.json()).catch((e)=>({error:e.message}));
+    if (j.error) { alert('Couldn\'t start test payment: '+(j.hint||j.error)); return; }
+    window.open(j.checkout_url, '_blank');
   };
 
   const BR_SOURCES = [
