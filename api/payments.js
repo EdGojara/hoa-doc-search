@@ -361,9 +361,9 @@ router.post('/webhook',
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     try {
-      if (!stripeLib.isConfigured()) {
-        // Don't 500 — Stripe will retry. Acknowledge so they stop.
-        return res.status(503).send('stripe not configured');
+      if (!stripeLib.webhookReady()) {
+        // Webhook secret not set yet — can't verify. Don't 500 (Stripe retries).
+        return res.status(503).send('webhook secret not configured');
       }
 
       const sigHeader = req.headers['stripe-signature'];
