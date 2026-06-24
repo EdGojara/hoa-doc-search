@@ -356,6 +356,73 @@ router.get('/connect/status', async (req, res) => {
 });
 
 // ============================================================================
+// POST /api/payments/connect/test-onboard   { community_id }   (SANDBOX ONLY)
+// Prefills the connected account with Stripe's documented test KYC via the API
+// (which accepts test values the hosted form's validation rejects, e.g. SSN
+// 000000000) so the operator never has to click through the onboarding form.
+// Refuses unless the key is sk_test_. Returns what's still needed, if anything.
+// ============================================================================
+router.post('/connect/test-onboard', express.json(), async (req, res) => {
+  try {
+    if (!stripeLib.isConfigured()) return res.status(503).json({ error: 'payment_not_configured' });
+    if (!/^sk_test_/.test(process.env.STRIPE_SECRET_KEY || '')) {
+      return res.status(403).json({ error: 'test_mode_only', hint: 'This shortcut only runs with a sk_test_ key.' });
+    }
+    const { community_id } = req.body || {};
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { data: community } = await supabase.from('communities')
+      .select('id, name, hoa_legal_name, stripe_connected_account_id').eq('id', community_id).maybeSingle();
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+    let accountId = community.stripe_connected_account_id;
+    if (!accountId) {
+      const existing = await stripeLib.findConnectedAccountByCommunity(community.id);
+      accountId = existing.account_id;
+      if (!accountId) {
+        const acct = await stripeLib.createConnectedAccount({ communityId: community.id, communityName: community.hoa_legal_name || community.name });
+        if (!acct.ok) return res.status(500).json({ error: acct.error || 'account_create_failed' });
+        accountId = acct.account_id;
+      }
+      await supabase.from('communities').update({ stripe_connected_account_id: accountId, stripe_onboarding_status: 'in_progress' }).eq('id', community.id);
+    }
+
+    const name = community.hoa_legal_name || community.name || 'Test HOA';
+    const addr = { line1: '123 Main St', city: 'Houston', state: 'TX', postal_code: '77001', country: 'US' };
+
+    const u = await stripeLib.updateAccount(accountId, {
+      business_profile: { mcc: '6513', url: 'https://bedrocktx.com', product_description: 'HOA assessment collection' },
+      company: { name, tax_id: '000000000', phone: '+15125551234', address: addr, owners_provided: 'true', directors_provided: 'true', executives_provided: 'true' },
+      tos_acceptance: { date: Math.floor(Date.now() / 1000), ip: '8.8.8.8' },
+    });
+    if (!u.ok) return res.status(500).json({ error: 'company_update_failed', detail: u.error });
+
+    const p = await stripeLib.createPerson(accountId, {
+      first_name: 'Jordan', last_name: 'Tester', email: 'test@bedrocktx.com', phone: '+15125551234',
+      dob: { day: 1, month: 1, year: 1990 }, id_number: '000000000', ssn_last_4: '0000', address: addr,
+      relationship: { representative: 'true', title: 'Manager', owner: 'true', percent_ownership: 100, executive: 'true', director: 'true' },
+    });
+    if (!p.ok) console.warn('[connect test-onboard] person:', p.error); // may already exist
+
+    const e = await stripeLib.createExternalAccount(accountId, {
+      external_account: { object: 'bank_account', country: 'US', currency: 'usd', routing_number: '110000000', account_number: '000123456789' },
+    });
+    if (!e.ok && !/already|external account/i.test(e.error || '')) console.warn('[connect test-onboard] bank:', e.error);
+
+    const reqs = await stripeLib.retrieveAccountRequirements(accountId);
+    const enabled = !!(reqs.ok && reqs.charges_enabled);
+    await supabase.from('communities').update({
+      stripe_onboarding_status: enabled ? 'enabled' : 'restricted',
+      ...(enabled ? { stripe_onboarded_at: new Date().toISOString() } : {}),
+    }).eq('id', community.id);
+
+    res.json({ ok: true, account_id: accountId, charges_enabled: !!reqs.charges_enabled, payouts_enabled: !!reqs.payouts_enabled, still_needed: reqs.currently_due || [], disabled_reason: reqs.disabled_reason || null });
+  } catch (err) {
+    console.error('[payments] test-onboard failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // POST /api/payments/webhook  (raw body required for signature verification)
 // Stripe sends events here. We handle:
 //   checkout.session.completed       → mark payments succeeded, confirm rental

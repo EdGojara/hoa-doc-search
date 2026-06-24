@@ -1087,6 +1087,7 @@
         ${j.has_account && !j.onboarded ? kv('Details submitted', j.details_submitted?'yes':'no') : ''}
         <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
           <button style="${BTN}" onclick="opConnect()">${j.has_account ? (j.onboarded?'Manage / re-onboard':'Finish onboarding') : 'Set up online payments'}</button>
+          ${!j.onboarded ? `<button style="${GHOST}" onclick="opTestOnboard()" title="Sandbox only: fill Stripe's test KYC via the API so you skip the onboarding form.">⚡ Complete test onboarding</button>` : ''}
           <button style="${GHOST}" onclick="renderOnlinePay()">↻ Refresh status</button>
         </div>
         <span id="opStatus" class="muted" style="display:block; margin-top:8px; font-size:12.5px;"></span>
@@ -1106,6 +1107,13 @@
     if (j.error) { st.innerHTML = '<span style="color:var(--err)">'+esc(j.error)+'</span>'; return; }
     st.textContent = 'Opening Stripe onboarding in a new tab…';
     window.open(j.onboarding_url, '_blank');
+  };
+  window.opTestOnboard = async function() {
+    const st = $('opStatus'); st.textContent = 'Completing test onboarding via the API (no form)…';
+    const j = await fetch('/api/payments/connect/test-onboard', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({community_id:CID})}).then((r)=>r.json()).catch((e)=>({error:e.message}));
+    if (j.error) { st.innerHTML = '<span style="color:var(--err)">'+esc(j.error)+(j.detail?(' — '+esc(j.detail)):'')+'</span>'; return; }
+    if (j.charges_enabled) { st.innerHTML = '<span style="color:var(--ok)">✓ Account enabled — refreshing…</span>'; setTimeout(renderOnlinePay, 900); }
+    else { st.innerHTML = 'Prefilled, but Stripe still needs: <b>'+esc((j.still_needed||[]).join(', ')||'(nothing listed)')+'</b>'+(j.disabled_reason?(' · '+esc(j.disabled_reason)):''); }
   };
   window.opSearch = async function(q) {
     if (!q || q.trim().length < 2) { $('opResults').innerHTML=''; return; }
