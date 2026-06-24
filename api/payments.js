@@ -303,10 +303,17 @@ router.post('/connect/onboard', express.json(), async (req, res) => {
 
     let accountId = community.stripe_connected_account_id;
     if (!accountId) {
-      const acct = await stripeLib.createConnectedAccount({ communityId: community.id, communityName: community.hoa_legal_name || community.name });
-      if (!acct.ok) return res.status(500).json({ error: acct.error || 'account_create_failed', stripeCode: acct.stripeCode });
-      accountId = acct.account_id;
-      await supabase.from('communities').update({ stripe_connected_account_id: accountId, stripe_onboarding_status: 'started' }).eq('id', community.id);
+      // Recover an account we already created for this community (DB link may
+      // have been lost on an earlier store failure) before making a new one.
+      const existing = await stripeLib.findConnectedAccountByCommunity(community.id);
+      if (existing.ok && existing.account_id) {
+        accountId = existing.account_id;
+      } else {
+        const acct = await stripeLib.createConnectedAccount({ communityId: community.id, communityName: community.hoa_legal_name || community.name });
+        if (!acct.ok) return res.status(500).json({ error: acct.error || 'account_create_failed', stripeCode: acct.stripeCode });
+        accountId = acct.account_id;
+      }
+      await supabase.from('communities').update({ stripe_connected_account_id: accountId, stripe_onboarding_status: 'in_progress' }).eq('id', community.id);
     }
     const base = return_url || `${req.protocol}://${req.get('host')}/admin/accounting`;
     const link = await stripeLib.createAccountLink({
@@ -330,12 +337,16 @@ router.get('/connect/status', async (req, res) => {
       .select('id, name, stripe_connected_account_id, stripe_onboarding_status').eq('id', community_id).maybeSingle();
     if (!community) return res.status(404).json({ error: 'community_not_found' });
     if (!community.stripe_connected_account_id) return res.json({ ok: true, has_account: false, onboarded: false });
-    if (!stripeLib.isConfigured()) return res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded: community.stripe_onboarding_status === 'complete' });
+    if (!stripeLib.isConfigured()) return res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded: community.stripe_onboarding_status === 'enabled' });
 
     const st = await stripeLib.retrieveAccount(community.stripe_connected_account_id);
     const onboarded = !!(st.ok && st.details_submitted && st.charges_enabled);
-    if (onboarded && community.stripe_onboarding_status !== 'complete') {
-      await supabase.from('communities').update({ stripe_onboarding_status: 'complete' }).eq('id', community.id);
+    const newStatus = onboarded ? 'enabled' : (st.details_submitted ? 'restricted' : 'in_progress');
+    if (community.stripe_onboarding_status !== newStatus) {
+      await supabase.from('communities').update({
+        stripe_onboarding_status: newStatus,
+        ...(onboarded ? { stripe_onboarded_at: new Date().toISOString() } : {}),
+      }).eq('id', community.id);
     }
     res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded, details_submitted: st.details_submitted, charges_enabled: st.charges_enabled, payouts_enabled: st.payouts_enabled });
   } catch (err) {
