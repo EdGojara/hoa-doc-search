@@ -631,6 +631,7 @@
       <span class="label">Account balance</span>
       <span class="value" id="balanceValue">—</span>
       <span class="sub" id="balanceAsOf">—</span>
+      <button id="payNowBtn" onclick="openPayModal()" style="display:none; margin-top:8px; align-self:flex-start; background:#D4AF37; color:#0B1D34; border:none; border-radius:8px; padding:7px 16px; font-weight:700; font-size:13px; cursor:pointer;">Pay now</button>
     </div>
     <div class="stat">
       <span class="label">Compliance status</span>
@@ -936,6 +937,62 @@ function fmtAsOf(bal) {
   if (bal.as_of) return 'Updated ' + fmt(bal.as_of);
   return 'No recent snapshot';
 }
+
+// Pay-your-balance flow → Stripe Checkout. ACH (no fee) or card (+ fee). The
+// full assessment routes to the HOA's connected account; nothing is recorded
+// to the books until Stripe confirms the payment via webhook.
+window.openPayModal = function () {
+  const c = window._payCtx || {};
+  if (!c.property_id || !(c.amount_cents > 0)) return;
+  const amt = c.amount_cents;
+  const cardFee = Math.max(0, Math.round((amt + 30) / (1 - 0.029)) - amt);
+  const usd = (cents) => '$' + (cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const modal = document.createElement('div');
+  modal.id = '_payModal';
+  modal.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:3000; display:flex; align-items:center; justify-content:center; padding:20px;';
+  modal.innerHTML = `<div style="background:#fff; border-radius:14px; max-width:440px; width:100%; padding:24px; box-shadow:0 16px 50px rgba(0,0,0,0.3);">
+    <h3 style="margin:0 0 4px; color:#0B1D34; font-size:19px;">Pay your balance</h3>
+    <p style="margin:0 0 16px; color:#475569; font-size:13.5px;">Amount due: <b>${usd(amt)}</b></p>
+    <label style="display:block; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:10px; cursor:pointer;">
+      <input type="radio" name="_payMethod" value="ach" checked> <b>Bank transfer (ACH)</b>
+      <div style="color:#15803d; font-size:12.5px; margin-left:22px;">No processing fee · ${usd(amt)}</div>
+    </label>
+    <label style="display:block; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:16px; cursor:pointer;">
+      <input type="radio" name="_payMethod" value="card"> <b>Credit / debit card</b>
+      <div style="color:#64748b; font-size:12.5px; margin-left:22px;">Includes a ${usd(cardFee)} card fee · ${usd(amt + cardFee)} total</div>
+    </label>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button id="_payCancel" style="padding:9px 16px; border:1px solid #cbd5e1; background:#fff; border-radius:8px; cursor:pointer; font-weight:600;">Cancel</button>
+      <button id="_payGo" style="padding:9px 18px; border:none; background:#0B1D34; color:#fff; font-weight:700; border-radius:8px; cursor:pointer;">Continue to payment</button>
+    </div>
+    <div id="_payErr" style="color:#b91c1c; font-size:12.5px; margin-top:10px;"></div>
+  </div>`;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  modal.querySelector('#_payCancel').onclick = close;
+  modal.querySelector('#_payGo').onclick = async function () {
+    const method = modal.querySelector('input[name="_payMethod"]:checked').value;
+    this.disabled = true; this.textContent = 'Redirecting…';
+    try {
+      const r = await fetch('/api/payments/assessment/create-checkout', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          community_id: c.community_id, property_id: c.property_id, payment_method: method,
+          payer: { name: c.payer_name, email: c.payer_email },
+          success_url: location.origin + '/portal?paid=1',
+          cancel_url: location.href,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.hint || j.error || 'Could not start payment');
+      location.href = j.checkout_url;
+    } catch (e) {
+      modal.querySelector('#_payErr').textContent = e.message;
+      this.disabled = false; this.textContent = 'Continue to payment';
+    }
+  };
+};
 
 function getQueryParams() {
   const url = new URL(window.location.href);
@@ -1295,6 +1352,16 @@ function renderPortal(ctx) {
     balVal.textContent = 'Not available';
     $('balanceAsOf').textContent = '';
   }
+  // Show "Pay now" when there's a balance due. Stores context for the modal.
+  window._payCtx = {
+    amount_cents: Number(bal.amount_cents) || 0,
+    community_id: (ctx.community && ctx.community.id) || (ctx.property && ctx.property.community_id) || null,
+    property_id: (ctx.property && ctx.property.id) || null,
+    payer_name: (ctx.property && ctx.property.owner_name) || (ctx.user && ctx.user.name) || '',
+    payer_email: (ctx.user && ctx.user.email) || '',
+  };
+  const payBtn = $('payNowBtn');
+  if (payBtn) payBtn.style.display = (window._payCtx.amount_cents > 0 && window._payCtx.property_id) ? 'inline-block' : 'none';
 
   const compVal = $('complianceValue');
   const comp = ctx.compliance || {};

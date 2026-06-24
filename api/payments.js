@@ -287,6 +287,64 @@ router.post('/assessment/create-checkout', express.json({ limit: '32kb' }), asyn
 });
 
 // ============================================================================
+// POST /api/payments/connect/onboard   { community_id, return_url? }   (staff)
+// Ensure the community has a connected account; return the hosted onboarding URL
+// for the board to complete (bank + KYC). Idempotent — reuses an existing account.
+// ============================================================================
+router.post('/connect/onboard', express.json(), async (req, res) => {
+  try {
+    if (!stripeLib.isConfigured()) return res.status(503).json({ error: 'payment_not_configured', hint: 'Set STRIPE_SECRET_KEY first.' });
+    const { community_id, return_url } = req.body || {};
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+
+    const { data: community } = await supabase.from('communities')
+      .select('id, name, hoa_legal_name, stripe_connected_account_id').eq('id', community_id).maybeSingle();
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+    let accountId = community.stripe_connected_account_id;
+    if (!accountId) {
+      const acct = await stripeLib.createConnectedAccount({ communityId: community.id, communityName: community.hoa_legal_name || community.name });
+      if (!acct.ok) return res.status(500).json({ error: acct.error || 'account_create_failed', stripeCode: acct.stripeCode });
+      accountId = acct.account_id;
+      await supabase.from('communities').update({ stripe_connected_account_id: accountId, stripe_onboarding_status: 'started' }).eq('id', community.id);
+    }
+    const base = return_url || `${req.protocol}://${req.get('host')}/admin/accounting`;
+    const link = await stripeLib.createAccountLink({
+      accountId, refreshUrl: base,
+      returnUrl: base + (base.includes('?') ? '&' : '?') + 'stripe_onboarded=1',
+    });
+    if (!link.ok) return res.status(500).json({ error: link.error || 'link_create_failed' });
+    res.json({ ok: true, account_id: accountId, onboarding_url: link.url });
+  } catch (err) {
+    console.error('[payments] connect onboard failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /api/payments/connect/status?community_id   (staff) — onboarding status
+router.get('/connect/status', async (req, res) => {
+  try {
+    const { community_id } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { data: community } = await supabase.from('communities')
+      .select('id, name, stripe_connected_account_id, stripe_onboarding_status').eq('id', community_id).maybeSingle();
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+    if (!community.stripe_connected_account_id) return res.json({ ok: true, has_account: false, onboarded: false });
+    if (!stripeLib.isConfigured()) return res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded: community.stripe_onboarding_status === 'complete' });
+
+    const st = await stripeLib.retrieveAccount(community.stripe_connected_account_id);
+    const onboarded = !!(st.ok && st.details_submitted && st.charges_enabled);
+    if (onboarded && community.stripe_onboarding_status !== 'complete') {
+      await supabase.from('communities').update({ stripe_onboarding_status: 'complete' }).eq('id', community.id);
+    }
+    res.json({ ok: true, has_account: true, account_id: community.stripe_connected_account_id, onboarded, details_submitted: st.details_submitted, charges_enabled: st.charges_enabled, payouts_enabled: st.payouts_enabled });
+  } catch (err) {
+    console.error('[payments] connect status failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // POST /api/payments/webhook  (raw body required for signature verification)
 // Stripe sends events here. We handle:
 //   checkout.session.completed       → mark payments succeeded, confirm rental
