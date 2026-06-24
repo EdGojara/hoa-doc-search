@@ -177,7 +177,12 @@ router.post('/create-checkout-session', express.json({ limit: '128kb' }), async 
       status: 'pending',
       initiated_by: 'homeowner_portal',
     }));
-    await supabase.from('payments').insert(paymentInserts);
+    const { error: rentalLedgerErr } = await supabase.from('payments').insert(paymentInserts);
+    if (rentalLedgerErr) {
+      // Same class of bug as the assessment path — never swallow a ledger write.
+      console.error('[payments] amenity ledger insert failed:', rentalLedgerErr.message);
+      return res.status(500).json({ error: 'payment_ledger_insert_failed', detail: safeErrorMessage(rentalLedgerErr) });
+    }
 
     // Bump rental status to pending_payment so we know they're at checkout
     await supabase
@@ -273,11 +278,21 @@ router.post('/assessment/create-checkout', express.json({ limit: '32kb' }), asyn
     const rows = fees.map((f) => ({
       community_id: community.id, product_type: 'assessment_payment', product_id: b.property_id,
       fee_type: f.fee_type, payee: f.payee,
+      // payee_display_name is NOT NULL — the HOA for the assessment, Bedrock for the card fee.
+      payee_display_name: f.payee === 'community_association'
+        ? (community.hoa_legal_name || community.name)
+        : 'Bedrock Association Management',
       connected_account_id: f.payee === 'community_association' ? community.stripe_connected_account_id : null,
       amount_cents: f.amount_cents, method: 'stripe_checkout', processor: 'stripe',
       processor_session_id: session.session_id, status: 'pending', initiated_by: 'homeowner_portal',
     }));
-    await supabase.from('payments').insert(rows);
+    const { error: ledgerErr } = await supabase.from('payments').insert(rows);
+    if (ledgerErr) {
+      // Never swallow a ledger write — a silent failure here means money moves
+      // with no record and the webhook has nothing to mark paid or post to books.
+      console.error('[payments] assessment ledger insert failed:', ledgerErr.message);
+      return res.status(500).json({ error: 'payment_ledger_insert_failed', detail: safeErrorMessage(ledgerErr) });
+    }
 
     res.json({ ok: true, checkout_url: session.checkout_url, session_id: session.session_id, amount_cents: amt, convenience_fee_cents: convFeeCents, method });
   } catch (err) {
@@ -532,6 +547,17 @@ async function handleCheckoutCompleted(session, eventId) {
     // Fire confirmation email (best-effort; non-fatal on failure)
     try { await sendRentalConfirmationEmail(rentalId); }
     catch (e) { console.warn('[payments] confirmation email failed:', e.message); }
+  } else if (productType === 'assessment_payment') {
+    // Post the payment to the books (AR subledger + GL) for live-GL communities.
+    // Best-effort + idempotent: a failure here must never 500 the webhook (the
+    // money already moved); the module logs/flags for operator reconciliation.
+    try {
+      const { postAssessmentPaymentToBooks } = require('../lib/payments/assessment_posting');
+      const r = await postAssessmentPaymentToBooks(supabase, { sessionId, paymentIntentId });
+      console.log('[payments] assessment posted to books:', JSON.stringify(r));
+    } catch (e) {
+      console.error('[payments] assessment books posting failed:', e.message);
+    }
   }
 }
 
