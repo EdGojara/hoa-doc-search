@@ -43,6 +43,38 @@ function dollars(cents) {
   });
 }
 
+// SANDBOX-ONLY webhook signature diagnostic. Returns enough to distinguish a
+// wrong/whitespace-laden secret from an altered body, WITHOUT leaking the full
+// secret or signatures (prefixes only). Computes the expected signature with
+// both the raw and trimmed secret so a trailing-newline env var is obvious.
+function _webhookSigDiag(rawBody, sigHeader, secret) {
+  const crypto = require('crypto');
+  const parts = String(sigHeader || '').split(',').reduce((a, p) => {
+    const [k, v] = p.split('='); if (k && v) a[k.trim()] = v.trim(); return a;
+  }, {});
+  const t = parts.t, v1 = parts.v1 || '';
+  const bodyStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody || '');
+  const sec = secret || '';
+  const sign = (s) => (t ? crypto.createHmac('sha256', s).update(`${t}.${bodyStr}`).digest('hex') : '');
+  const expRaw = sign(sec), expTrim = sign(sec.trim());
+  return {
+    body_len: bodyStr.length,
+    body_is_buffer: Buffer.isBuffer(rawBody),
+    body_head: bodyStr.slice(0, 24),
+    body_tail: bodyStr.slice(-24),
+    secret_present: !!secret,
+    secret_len: sec.length,
+    secret_prefix: sec.slice(0, 8),
+    secret_has_whitespace: sec !== sec.trim(),
+    ts: t || null,
+    recv_v1_head: v1.slice(0, 12),
+    expected_raw_head: expRaw.slice(0, 12),
+    expected_trim_head: expTrim.slice(0, 12),
+    matches_raw: !!v1 && v1 === expRaw,
+    matches_trimmed: !!v1 && v1 === expTrim,
+  };
+}
+
 async function fetchActiveFees(amenityId) {
   const { data, error } = await supabase
     .from('amenity_fee_schedule')
@@ -463,6 +495,11 @@ router.post('/webhook',
       const verify = stripeLib.verifyWebhookSignature(req.body, sigHeader, process.env.STRIPE_WEBHOOK_SECRET);
       if (!verify.ok) {
         console.warn('[payments] webhook signature verify failed:', verify.error);
+        // SANDBOX-ONLY diagnostic (visible in Stripe's delivery response view) to
+        // pinpoint secret-vs-body. Never runs with a live key; leaks only prefixes.
+        if (/^sk_test_/.test(process.env.STRIPE_SECRET_KEY || '')) {
+          return res.status(400).json({ error: verify.error, diag: _webhookSigDiag(req.body, sigHeader, process.env.STRIPE_WEBHOOK_SECRET) });
+        }
         return res.status(400).send(`signature verify failed: ${verify.error}`);
       }
 
