@@ -17419,7 +17419,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // Escalation hint based on history — if any violation in last 12mo, recommend
     // certified mail for the NEXT one. (Phase 4 will wire this into letter gen.)
     const oneYearAgo = new Date(); oneYearAgo.setMonth(oneYearAgo.getMonth() - 12);
-    const recentViolations = (d.violations || []).filter((v) => v.opened_at && new Date(v.opened_at) >= oneYearAgo);
+    // Only still-open violations count toward escalation — a cured/closed/voided
+    // one closed its chain, so it must NOT drive the "next one is certified mail"
+    // warning (mirrors the server-side escalation rule in _getRecentSameCategory).
+    const recentViolations = (d.violations || []).filter((v) => v.opened_at && new Date(v.opened_at) >= oneYearAgo && !['cured','closed','voided'].includes(v.current_stage));
     const recentSameCategory = {};
     recentViolations.forEach((v) => {
       if (v.category_code) recentSameCategory[v.category_code] = (recentSameCategory[v.category_code] || 0) + 1;

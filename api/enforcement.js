@@ -299,6 +299,11 @@ async function _getRecentSameCategory(propertyId, categoryId, months = 12) {
     .eq('primary_category_id', categoryId)
     .gte('opened_at', cutoff.toISOString())
     .neq('quality_status', 'superseded')   // exclude corrected-out rows
+    // A cured/closed/voided violation CLOSES that enforcement chain — the owner
+    // complied (or the board dismissed it). A new violation after it is a fresh
+    // first occurrence and must reset to Courtesy 1, not keep escalating. Only
+    // still-open priors count toward §209 escalation.
+    .not('current_stage', 'in', '(cured,closed,voided)')
     .order('opened_at', { ascending: false });
   return data || [];
 }
