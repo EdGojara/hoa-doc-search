@@ -396,7 +396,14 @@ ${scopeContent}`
 }
 
 const app = express();
-app.use(express.json());
+// Global JSON body parser — but NOT for the Stripe webhook, which needs the
+// raw, unparsed body to verify the request signature. If express.json()
+// consumes the stream first, the raw bytes are gone and every real webhook
+// fails signature verification (the route's own express.raw() sees nothing).
+app.use((req, res, next) => {
+  if (req.path === '/api/payments/webhook') return next();
+  express.json()(req, res, next);
+});
 
 // ============================================================================
 // Staff password gate — interim protection before the Microsoft 365 / Supabase
