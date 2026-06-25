@@ -8291,4 +8291,43 @@ router.get('/violations/report', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/property/:property_id/cert-status
+// Lightweight: does this property have an OPEN certified §209 (or fine-assessed)
+// violation, and how many days since that notice issued? Drives the photo-
+// lightbox "§209 Certified open — N days old" warning so an operator doesn't
+// re-notice a property that's already in the certified-mail process.
+// ---------------------------------------------------------------------------
+router.get('/property/:property_id/cert-status', async (req, res) => {
+  try {
+    const propertyId = req.params.property_id;
+    if (!propertyId) return res.status(400).json({ error: 'property_id required' });
+    const { data, error } = await supabase
+      .from('violations')
+      .select('id, current_stage, current_stage_started_at, opened_at, primary_category_id, enforcement_categories(label)')
+      .eq('property_id', propertyId)
+      .in('current_stage', ['certified_209', 'fine_assessed'])
+      .order('current_stage_started_at', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    const todayMs = Date.parse(new Date().toISOString().slice(0, 10));
+    const certs = (data || []).map((v) => {
+      const startedAt = v.current_stage_started_at || v.opened_at;
+      const daysOld = startedAt
+        ? Math.floor((todayMs - Date.parse(String(startedAt).slice(0, 10))) / 86400000)
+        : null;
+      return {
+        id: v.id,
+        stage: v.current_stage,
+        category: (v.enforcement_categories && v.enforcement_categories.label) || null,
+        days_old: daysOld,
+        since: startedAt ? String(startedAt).slice(0, 10) : null,
+      };
+    });
+    res.json({ ok: true, certified_open: certs.length > 0, count: certs.length, certs });
+  } catch (err) {
+    console.error('[enforcement.cert-status]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle };

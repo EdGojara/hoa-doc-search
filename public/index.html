@@ -15962,6 +15962,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div id="inspLightboxCounter" style="margin-left:auto; color:#fff; font-size:13px;"></div>
           <button onclick="inspCloseLightbox(event)" style="background:rgba(255,255,255,0.2); color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:16px; cursor:pointer;">×</button>
         </div>
+        <!-- §209 certified-open warning — populated per photo from the property's open enforcement -->
+        <div id="inspLightboxCertWarn" style="display:none;"></div>
         <div style="flex:1; display:flex; align-items:center; justify-content:center; padding:14px; min-height:0;">
           <img id="inspLightboxImg" src="" style="max-width:100%; max-height:100%; display:block; border-radius:8px; box-shadow:0 0 30px rgba(0,0,0,0.5);">
         </div>
@@ -21052,6 +21054,36 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (addBtn) {
       addBtn.style.display = '';
     }
+
+    // §209 certified-open warning — if this photo's property already has an
+    // OPEN certified §209 (or fine-assessed) violation, warn before acting.
+    inspLightboxRenderCertWarn(p.polygon_match_property_id || p.reviewer_confirmed_property_id || null);
+  }
+
+  // Fetch + render the §209-certified-open banner for the lightbox's current
+  // property. Guards against stale async (user paged to another photo).
+  async function inspLightboxRenderCertWarn(propertyId) {
+    const el = document.getElementById('inspLightboxCertWarn');
+    if (!el) return;
+    el.style.display = 'none';
+    el.innerHTML = '';
+    if (!propertyId) return;
+    try {
+      const r = await fetch('/api/enforcement/property/' + encodeURIComponent(propertyId) + '/cert-status');
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.certified_open || !(j.certs || []).length) return;
+      // Still on a photo for THIS property? (avoid showing a stale warning)
+      const cur = _lightboxList[_lightboxIdx];
+      const curProp = cur && (cur.polygon_match_property_id || cur.reviewer_confirmed_property_id);
+      if (curProp !== propertyId) return;
+      const parts = j.certs.map((c) => {
+        const label = c.stage === 'fine_assessed' ? 'Fine assessed' : '§209 Certified';
+        const age = (c.days_old != null) ? `${c.days_old} day${c.days_old === 1 ? '' : 's'} old` : 'age unknown';
+        return `${label} OPEN — ${age}${c.category ? ' · ' + c.category : ''}`;
+      });
+      el.innerHTML = `<div style="background:#7f1d1d; color:#fff; padding:9px 16px; font-size:13px; font-weight:700; text-align:center; letter-spacing:0.02em;">⚠ ${parts.join('&nbsp;&nbsp;|&nbsp;&nbsp;')} &nbsp;—&nbsp; DO NOT RE-NOTICE; continue the existing case</div>`;
+      el.style.display = '';
+    } catch (_) { /* non-fatal — warning is advisory */ }
   }
 
   // Per-observation reject — operator dismisses a single AI finding without
