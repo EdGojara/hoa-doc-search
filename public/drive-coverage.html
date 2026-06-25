@@ -141,8 +141,10 @@
   async function flush(){
     if (!inspectionId || !buffer.length) return;
     var batch = buffer.splice(0, buffer.length);
+    // Post to the EXISTING route-trace ingest (PostGIS-backed inspection_route_traces).
+    var pings = batch.map(function(p){ return { captured_at:p.recorded_at, latitude:p.lat, longitude:p.lng, accuracy_m:p.accuracy_m }; });
     try {
-      var r = await fetch('/api/inspections/'+inspectionId+'/track', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ points: batch }) });
+      var r = await fetch('/api/inspections/'+inspectionId+'/route-trace', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pings: pings }) });
       if (!r.ok) { buffer = batch.concat(buffer); } // requeue on failure
     } catch(e){ buffer = batch.concat(buffer); }
   }

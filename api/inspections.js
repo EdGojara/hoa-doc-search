@@ -82,65 +82,6 @@ router.post('/inspections', async (req, res) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// POST /api/inspections/:id/track — append GPS breadcrumbs (batched)
-// Body: { points: [{ lat, lng, accuracy_m?, recorded_at? }, ...] }
-// Drives the live coverage map so two inspectors don't double-cover streets.
-// ---------------------------------------------------------------------------
-router.post('/inspections/:id/track', async (req, res) => {
-  try {
-    const inspectionId = req.params.id;
-    const points = (req.body && req.body.points) || [];
-    if (!Array.isArray(points) || !points.length) return res.status(400).json({ error: 'points[] required' });
-    if (points.length > 500) return res.status(400).json({ error: 'too many points in one batch (max 500)' });
-
-    const { data: insp } = await supabase
-      .from('inspections').select('id, community_id').eq('id', inspectionId).maybeSingle();
-    if (!insp) return res.status(404).json({ error: 'inspection not found' });
-
-    const nowIso = new Date().toISOString();
-    const rows = [];
-    for (const p of points) {
-      const lat = Number(p.lat), lng = Number(p.lng);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) continue;
-      let rec = nowIso;
-      if (p.recorded_at) { const d = new Date(p.recorded_at); if (!isNaN(d.getTime())) rec = d.toISOString(); }
-      rows.push({
-        inspection_id: inspectionId,
-        community_id: insp.community_id,
-        lat, lng,
-        accuracy_m: (p.accuracy_m != null && Number.isFinite(Number(p.accuracy_m))) ? Number(p.accuracy_m) : null,
-        recorded_at: rec,
-      });
-    }
-    if (!rows.length) return res.status(400).json({ error: 'no valid points' });
-    const { error } = await supabase.from('inspection_track_points').insert(rows);
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ ok: true, stored: rows.length });
-  } catch (err) {
-    console.error('[inspections.track]', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Page through ALL track points for a community since `since` — never
-// silent-truncate at PostgREST's 1000-row cap (CLAUDE.md scar).
-async function _fetchAllTrackPoints(communityId, since) {
-  const out = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase
-      .from('inspection_track_points')
-      .select('inspection_id, lat, lng, recorded_at')
-      .eq('community_id', communityId)
-      .gte('recorded_at', since)
-      .order('recorded_at', { ascending: true })
-      .range(from, from + 999);
-    if (error) throw error;
-    out.push(...(data || []));
-    if (!data || data.length < 1000 || from > 100000) break;
-  }
-  return out;
-}
 // Even-stride downsample so a long path stays a sane payload, keeping the last point.
 function _downsamplePath(arr, max) {
   if (arr.length <= max) return arr;
@@ -152,9 +93,13 @@ function _downsamplePath(arr, max) {
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/inspections/coverage?community_id=&since= — live drive coverage
-// Returns one path per inspection (with track activity since `since`, default
-// last 12h) so the shared map can draw who has covered which streets.
+// GET /api/inspections/coverage?community_id=&since= — live MULTI-inspector
+// drive coverage: one path per active inspection so the shared map shows who
+// has covered which streets (two drivers don't double-cover).
+//
+// Reuses the EXISTING inspection_route_traces ping table (PostGIS-backed) — NOT
+// a parallel store. Ingest stays POST /inspections/:id/route-trace; this just
+// fans those pings out per community for the shared map.
 // ---------------------------------------------------------------------------
 router.get('/inspections/coverage', async (req, res) => {
   try {
@@ -162,23 +107,38 @@ router.get('/inspections/coverage', async (req, res) => {
     if (!communityId) return res.status(400).json({ error: 'community_id required' });
     const since = req.query.since ? new Date(req.query.since).toISOString() : new Date(Date.now() - 12 * 3600 * 1000).toISOString();
 
-    const all = await _fetchAllTrackPoints(communityId, since);
+    // Active/recent inspections for this community (the drivers out today).
+    const { data: insps } = await supabase
+      .from('inspections')
+      .select('id, device_label, route_label, mode, status, created_at')
+      .eq('community_id', communityId)
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    const ids = (insps || []).map((i) => i.id);
+    if (!ids.length) return res.json({ ok: true, since, tracks: [] });
+
+    // Their route pings — paged so a long multi-hour drive isn't 1000-capped.
+    const all = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from('inspection_route_traces')
+        .select('inspection_id, latitude, longitude, captured_at')
+        .in('inspection_id', ids)
+        .order('captured_at', { ascending: true })
+        .range(from, from + 999);
+      if (error) return res.status(500).json({ error: error.message });
+      all.push(...(data || []));
+      if (!data || data.length < 1000 || from > 100000) break;
+    }
     const byInsp = new Map();
     for (const pt of all) {
       if (!byInsp.has(pt.inspection_id)) byInsp.set(pt.inspection_id, []);
       byInsp.get(pt.inspection_id).push(pt);
     }
-    const inspIds = [...byInsp.keys()];
-    let meta = {};
-    if (inspIds.length) {
-      const { data: insps } = await supabase
-        .from('inspections')
-        .select('id, device_label, route_label, mode, status, created_at')
-        .in('id', inspIds);
-      meta = Object.fromEntries((insps || []).map((i) => [i.id, i]));
-    }
-    const tracks = inspIds.map((id) => {
-      const pts = byInsp.get(id); // already time-ordered from the paged query
+    const meta = Object.fromEntries((insps || []).map((i) => [i.id, i]));
+    const tracks = ids.filter((id) => byInsp.has(id)).map((id) => {
+      const pts = byInsp.get(id); // time-ordered from the paged query
       const down = _downsamplePath(pts, 600);
       const m = meta[id] || {};
       const last = pts[pts.length - 1];
@@ -190,9 +150,9 @@ router.get('/inspections/coverage', async (req, res) => {
         status: m.status || null,
         started_at: m.created_at || null,
         point_count: pts.length,
-        last_at: last ? last.recorded_at : null,
-        last: last ? { lat: last.lat, lng: last.lng } : null,
-        path: down.map((p) => [p.lat, p.lng]),
+        last_at: last ? last.captured_at : null,
+        last: last ? { lat: last.latitude, lng: last.longitude } : null,
+        path: down.map((p) => [p.latitude, p.longitude]),
       };
     });
     res.json({ ok: true, since, tracks });
