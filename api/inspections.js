@@ -1611,18 +1611,26 @@ router.get('/inspections/properties', async (req, res) => {
     // Map view skips it for speed.
     const includeHistory = req.query.include_history === '1';
 
-    let q = supabase
-      .from('v_current_property_owners')
-      .select('property_id, street_address, unit, city, latitude, longitude, owner_name, owner_contact_id')
-      .eq('community_id', communityId)
-      .order('street_address', { ascending: true });
-    if (req.query.include_no_geo !== '1') {
-      q = q.not('latitude', 'is', null).not('longitude', 'is', null);
+    // Page through ALL properties — a bare .eq() silently caps at PostgREST's
+    // 1000-row limit, which dropped ~170 houses (a "block") from Waterview's
+    // 1,171-property map and made photos at those lots impossible to tap/assign.
+    // (CLAUDE.md "Supabase 1000-row silent truncation" scar.)
+    let properties = [];
+    for (let from = 0; ; from += 1000) {
+      let q = supabase
+        .from('v_current_property_owners')
+        .select('property_id, street_address, unit, city, latitude, longitude, owner_name, owner_contact_id')
+        .eq('community_id', communityId)
+        .order('street_address', { ascending: true })
+        .range(from, from + 999);
+      if (req.query.include_no_geo !== '1') {
+        q = q.not('latitude', 'is', null).not('longitude', 'is', null);
+      }
+      const { data, error } = await q;
+      if (error) return res.status(500).json({ error: error.message });
+      properties.push(...(data || []));
+      if (!data || data.length < 1000 || from > 50000) break;
     }
-    const { data, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
-
-    let properties = data || [];
 
     // Per-property history aggregates: violations (open/ytd/lifetime) + last inspected.
     // One query per aggregate, grouped by property_id in JS — cheaper than N+1.
@@ -1967,14 +1975,27 @@ router.get('/inspections/:id/coverage', async (req, res) => {
       .maybeSingle();
     if (insErr || !inspection) return res.status(404).json({ error: 'inspection not found' });
 
-    // Get every property in the community with lat/lng
-    const { data: properties, error: pErr } = await supabase
-      .from('properties')
-      .select('id, street_address, unit, latitude, longitude')
-      .eq('community_id', inspection.community_id)
-      .not('latitude', 'is', null)
-      .not('longitude', 'is', null);
-    if (pErr) return res.status(500).json({ error: pErr.message });
+    // Get every property in the community with lat/lng — PAGED (a bare .eq()
+    // caps at 1000, which would silently drop 171 of Waterview's 1,171 houses
+    // from the covered/uncovered math). CLAUDE.md 1000-row truncation scar.
+    let properties = [];
+    {
+      let pErr0 = null;
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase
+          .from('properties')
+          .select('id, street_address, unit, latitude, longitude')
+          .eq('community_id', inspection.community_id)
+          .not('latitude', 'is', null)
+          .not('longitude', 'is', null)
+          .order('id', { ascending: true })
+          .range(from, from + 999);
+        if (error) { pErr0 = error; break; }
+        properties.push(...(data || []));
+        if (!data || data.length < 1000 || from > 50000) break;
+      }
+      if (pErr0) return res.status(500).json({ error: pErr0.message });
+    }
 
     const { data: pings, error: tErr } = await supabase
       .from('inspection_route_traces')
