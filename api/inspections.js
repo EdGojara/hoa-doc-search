@@ -1012,13 +1012,38 @@ router.delete('/inspections/:id', async (req, res) => {
     if (obsIds.length > 0) {
       const { data: openedVios } = await supabase
         .from('violations')
-        .select('id')
-        .in('opened_from_observation_id', obsIds)
-        .limit(1);
-      if (openedVios && openedVios.length > 0) {
-        return res.status(409).json({
-          error: 'This inspection opened one or more violations — cannot delete. Resolve or void the violations first, then retry.',
-        });
+        .select('id, current_stage')
+        .in('opened_from_observation_id', obsIds);
+      const vioIds = (openedVios || []).map((v) => v.id);
+      if (vioIds.length > 0) {
+        // Block ONLY if a letter was actually MAILED (printed) — those are
+        // audit-grade §209 records a discard must not erase. If nothing was
+        // sent, the violations are un-mailed drafts: void them so a re-inspection
+        // starts clean. (The observation delete below nulls their
+        // opened_from_observation_id via ON DELETE SET NULL.)
+        const { data: mailed } = await supabase
+          .from('interactions')
+          .select('id')
+          .in('violation_id', vioIds)
+          .not('printed_at', 'is', null)
+          .limit(1);
+        if (mailed && mailed.length > 0) {
+          return res.status(409).json({
+            error: 'A letter from this inspection was already mailed — it can\'t be discarded. Void those specific violations first, then retry.',
+          });
+        }
+        const toVoid = (openedVios || [])
+          .filter((v) => !['cured', 'closed', 'voided'].includes(v.current_stage))
+          .map((v) => v.id);
+        if (toVoid.length > 0) {
+          const { error: voidErr } = await supabase.from('violations').update({
+            current_stage: 'voided',
+            resolved_at: new Date().toISOString(),
+            resolved_via: 'voided',
+            resolved_notes: `Voided by discard of inspection ${id} — nothing had been mailed (re-inspection).`,
+          }).in('id', toVoid);
+          if (voidErr) return res.status(500).json({ error: `could not void un-sent violations: ${voidErr.message}` });
+        }
       }
     }
 
