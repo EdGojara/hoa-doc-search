@@ -309,6 +309,102 @@ async function _getRecentSameCategory(propertyId, categoryId, months = 12) {
 }
 
 // ---------------------------------------------------------------------------
+// Re-stage an OPEN violation after its escalation inputs changed (e.g. a prior
+// in the same category was cured, closing that chain). Recomputes the stage
+// from the CURRENT (corrected) prior set and DOWNGRADES if the engine now lands
+// lower. Reuses the exact production escalation path — never a parallel copy.
+//
+// Guards (never silently mutate a §209 record):
+//   - Acts only on courtesy_1 / courtesy_2 (informal). Refuses certified_209 /
+//     fine_assessed (a certified notice was issued — cannot be un-sent) and
+//     terminal stages (cured/closed/voided — nothing to re-stage).
+//   - Only ever DOWNGRADES (new rank < current). Never auto-escalates an
+//     already-open case.
+// Returns { changed, from, to, reason }.
+// ---------------------------------------------------------------------------
+const _STAGE_RANK = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
+async function _restageOpenViolation(violationId, opts = {}) {
+  const { data: v } = await supabase
+    .from('violations')
+    .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, quality_status, source')
+    .eq('id', violationId)
+    .maybeSingle();
+  if (!v) return { changed: false, reason: 'not_found' };
+  if (!['courtesy_1', 'courtesy_2'].includes(v.current_stage)) {
+    return { changed: false, reason: `stage_${v.current_stage}_not_restageable` };
+  }
+  if (v.quality_status === 'superseded') return { changed: false, reason: 'superseded' };
+  // Only re-stage violations OUR engine staged. A Vantaca-imported stage encodes
+  // that system's own escalation history (priors that may not be mirrored in
+  // trustEd) — downgrading it from our partial view would be wrong. (null source
+  // = legacy native, treated as ours, per the engine's low-trust convention.)
+  if (v.source && v.source !== 'trustEd_native') return { changed: false, reason: 'imported_stage_authoritative' };
+  if (!v.primary_category_id || !v.property_id) return { changed: false, reason: 'missing_category_or_property' };
+
+  const [priorityWeight, priorViolations] = await Promise.all([
+    _getPriorityWeight(v.community_id, v.primary_category_id),
+    _getRecentSameCategory(v.property_id, v.primary_category_id, 12),
+  ]);
+  const priors = (priorViolations || []).filter((p) => p.id !== v.id); // exclude self
+  const decision = decideEscalation({ prior_violations: priors, priority_weight: priorityWeight, is_cure_lapse: false });
+  const newStage = decision.stage;
+  if (!newStage || newStage === v.current_stage) {
+    return { changed: false, reason: 'no_change', from: v.current_stage, to: v.current_stage };
+  }
+  // Only ever downgrade — re-stage corrects over-escalation; it never silently
+  // escalates an existing open case (that path stays a deliberate staff action).
+  if ((_STAGE_RANK[newStage] ?? 99) >= (_STAGE_RANK[v.current_stage] ?? 0)) {
+    return { changed: false, reason: 'not_a_downgrade', from: v.current_stage, to: newStage };
+  }
+
+  if (opts.dryRun) return { changed: true, from: v.current_stage, to: newStage, reason: 'dry_run', rationale: decision.rationale };
+
+  // Re-anchor the cure clock to the original open date + the new cure window so
+  // the deadline stays tied to the notice date, not the recompute moment.
+  const cureEnd = decision.cure_days > 0
+    ? new Date(new Date(v.opened_at).getTime() + decision.cure_days * 24 * 60 * 60 * 1000).toISOString()
+    : null;
+  const { error: uErr } = await supabase
+    .from('violations')
+    .update({ current_stage: newStage, current_stage_started_at: new Date().toISOString(), cure_period_ends_at: cureEnd })
+    .eq('id', v.id)
+    .eq('current_stage', v.current_stage); // optimistic guard against a concurrent change
+  if (uErr) return { changed: false, reason: uErr.message };
+
+  // Audit trail on the property timeline (best-effort — a logging hiccup must
+  // never crash the re-stage; the stage change is already committed).
+  try {
+    await supabase.from('interactions').insert({
+      community_id: v.community_id, property_id: v.property_id, violation_id: v.id,
+      type: 'observation_note', direction: 'internal',
+      subject: `Stage recalculated: ${v.current_stage} → ${newStage}`,
+      content: `${opts.reason || 'Escalation recomputed'}. ${decision.rationale}`,
+      sent_at: new Date().toISOString(),
+    });
+  } catch (e) { console.warn('[restage] audit interaction insert failed:', e.message); }
+  return { changed: true, from: v.current_stage, to: newStage, reason: opts.reason || 'recomputed' };
+}
+
+// Re-stage every still-open violation in a category on a property (used when a
+// prior is cured/closed — that may reset the chain for its siblings).
+async function _restageCategoryOpenSiblings(propertyId, categoryId, excludeId, reason) {
+  if (!propertyId || !categoryId) return [];
+  const { data: siblings } = await supabase
+    .from('violations')
+    .select('id')
+    .eq('property_id', propertyId)
+    .eq('primary_category_id', categoryId)
+    .neq('id', excludeId)
+    .in('current_stage', ['courtesy_1', 'courtesy_2']);
+  const out = [];
+  for (const s of siblings || []) {
+    const r = await _restageOpenViolation(s.id, { reason });
+    if (r.changed) out.push({ id: s.id, from: r.from, to: r.to });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/enforcement/decide — preview-only
 // ---------------------------------------------------------------------------
 router.post('/decide', express.json(), async (req, res) => {
@@ -3787,7 +3883,7 @@ router.post('/violations/:id/resolve', express.json(), async (req, res) => {
 
     const { data: v, error: vErr } = await supabase
       .from('violations')
-      .select('id, current_stage, property_id, community_id')
+      .select('id, current_stage, property_id, community_id, primary_category_id')
       .eq('id', violationId)
       .maybeSingle();
     if (vErr || !v) return res.status(404).json({ error: 'violation not found' });
@@ -3810,7 +3906,21 @@ router.post('/violations/:id/resolve', express.json(), async (req, res) => {
       .eq('id', violationId);
     if (uErr) return res.status(500).json({ error: uErr.message });
 
-    res.json({ ok: true, violation_id: violationId, new_stage: targetStage, resolved_via: resolvedVia });
+    // Auto-reset: this cure/close may close the enforcement chain for its
+    // category. Recompute any still-open violation in the same category down to
+    // its correct (lower) stage. Downgrade-only; never touches a §209 certified
+    // notice. Best-effort — a re-stage hiccup never fails the cure itself.
+    let restaged = [];
+    try {
+      restaged = await _restageCategoryOpenSiblings(
+        v.property_id, v.primary_category_id, violationId,
+        `Prior violation ${targetStage} (${resolvedVia})`
+      );
+    } catch (e) {
+      console.warn('[enforcement.resolve] sibling re-stage failed (cure still recorded):', e.message);
+    }
+
+    res.json({ ok: true, violation_id: violationId, new_stage: targetStage, resolved_via: resolvedVia, restaged });
   } catch (err) {
     console.error('[enforcement.resolve]', err);
     res.status(500).json({ error: err.message });
@@ -8148,4 +8258,4 @@ router.get('/violations/report', async (req, res) => {
   }
 });
 
-module.exports = { router, processCureLapses, processPostcardReminders };
+module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings };
