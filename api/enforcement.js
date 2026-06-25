@@ -8095,16 +8095,13 @@ router.post('/drafts/:interactionId/reclassify', express.json(), async (req, res
     if (!interaction.violation_id) return res.status(400).json({ error: 'interaction has no linked violation — cannot reclassify' });
     if (interaction.status === 'sent') return res.status(409).json({ error: 'cannot reclassify — letter already mailed' });
 
-    // 2. Get the violation → primary_category_id, observation_id
+    // 2. Get the violation → primary_category_id, observation_id, property/community
     const { data: violation, error: vErr } = await supabase
       .from('violations')
-      .select('id, primary_category_id, opened_from_observation_id, enforcement_categories(label)')
+      .select('id, primary_category_id, property_id, community_id, opened_from_observation_id, enforcement_categories(label)')
       .eq('id', interaction.violation_id)
       .maybeSingle();
     if (vErr || !violation) return res.status(404).json({ error: 'violation not found' });
-
-    const obsId = violation.opened_from_observation_id || interaction.observation_id;
-    if (!obsId) return res.status(400).json({ error: 'no observation linked to this draft — cannot reclassify' });
 
     // 3. Validate the new category exists and capture its label for audit trail
     const { data: newCategory, error: ncErr } = await supabase
@@ -8115,6 +8112,48 @@ router.post('/drafts/:interactionId/reclassify', express.json(), async (req, res
     if (ncErr || !newCategory) return res.status(400).json({ error: 'invalid category_id' });
 
     const priorCategoryLabel = (violation.enforcement_categories && violation.enforcement_categories.label) || '(unknown)';
+
+    // Resolve the observation to write the corrected category + description to.
+    // Some violations (older native / imported) were opened WITHOUT a photo-
+    // observation, so the reclassify used to hard-block ("no observation
+    // linked"). Instead, create an observation from the property's most recent
+    // confirmed photo — the same fallback the drafts queue + letter already use
+    // — and link it to the violation so it becomes first-class going forward.
+    let obsId = violation.opened_from_observation_id || interaction.observation_id;
+    if (!obsId) {
+      if (!violation.property_id) {
+        return res.status(400).json({ error: 'this violation has no property — assign a property before reclassifying' });
+      }
+      const { data: fb } = await supabase
+        .from('inspection_photos')
+        .select('id, inspection_id')
+        .eq('reviewer_confirmed_property_id', violation.property_id)
+        .in('photo_role', ['close_up', 'single'])
+        .order('captured_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!fb || !fb.inspection_id) {
+        return res.status(400).json({ error: 'no inspection photo on this property to attach — capture/assign a photo here first, then reclassify' });
+      }
+      const { data: newObs, error: noErr } = await supabase
+        .from('property_observations')
+        .insert({
+          inspection_id:       fb.inspection_id,
+          inspection_photo_id: fb.id,
+          property_id:         violation.property_id,
+          community_id:        violation.community_id,
+          category_id:         newCategory.id,
+          ai_description:      newDescription,
+          reviewer_status:     'confirmed',
+          reviewer_notes:      `[Observation created by operator reclassify ${new Date().toISOString().slice(0, 10)} — violation had none]`,
+          reviewed_at:         new Date().toISOString(),
+        })
+        .select('id')
+        .single();
+      if (noErr) return res.status(500).json({ error: 'could not create observation: ' + noErr.message });
+      obsId = newObs.id;
+      await supabase.from('violations').update({ opened_from_observation_id: obsId }).eq('id', violation.id);
+    }
 
     // 4. Update the observation — category, description, audit-trail note
     const auditNote = `[Reclassified ${new Date().toISOString().slice(0, 10)}: ${priorCategoryLabel} → ${newCategory.label} by operator]`;
