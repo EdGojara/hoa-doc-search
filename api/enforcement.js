@@ -1903,13 +1903,26 @@ router.get('/drafts', async (req, res) => {
 // ---------------------------------------------------------------------------
 router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
   try {
-    const communityId = req.body && req.body.community_id;
-    // force=true re-renders bundles that are already correctly grouped (e.g. to
-    // pick up a letter-template / address-format change or a stage correction).
-    // property_id scopes that re-render to one property's bundle (the per-bundle
-    // "Regenerate" button) instead of the whole community.
-    const force = !!(req.body && req.body.force);
-    const propertyFilter = req.body && req.body.property_id;
+    const summary = await runAutoBundle({
+      communityId: req.body && req.body.community_id,
+      force: !!(req.body && req.body.force),
+      propertyId: req.body && req.body.property_id,
+    });
+    res.json(summary);
+  } catch (err) {
+    console.error('[enforcement.drafts.auto-bundle]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Auto-bundle / regenerate draft letters. Groups draft letters by property+type
+// into single-envelope bundles. force=true re-renders groups that are ALREADY
+// correctly bundled (to pick up a letter-template / address-format change or a
+// stage correction) AND re-renders loose singletons. property_id / community_id
+// scope the run. Returns a summary; throws on fatal error. Callable directly
+// (bulk regenerate script) as well as from the route above.
+async function runAutoBundle({ communityId = null, force = false, propertyId = null } = {}) {
+    const propertyFilter = propertyId;
     const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'];
 
     // Pull ALL draft-status letters at the courtesy / §209 levels regardless
@@ -1990,15 +2003,19 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
     for (const [, group] of groups) {
       try {
         if (group.length === 1) {
-          // Singleton — assign a bundle_id ONLY if missing. Already-bundled
-          // singletons are left alone (idempotent re-run).
-          if (group[0].bundle_id) continue;
-          const bundleId = cryptoMod.randomUUID();
-          await supabase.from('interactions')
-            .update({ bundle_id: bundleId })
-            .eq('id', group[0].id);
-          singletons += 1;
-          continue;
+          // Singleton. Normally just ensure it has a bundle_id (idempotent
+          // re-run). Under force, fall through to RE-RENDER it as a 1-item
+          // bundle so a format/stage change reaches loose drafts too.
+          if (!force) {
+            if (group[0].bundle_id) continue;
+            const bundleId = cryptoMod.randomUUID();
+            await supabase.from('interactions')
+              .update({ bundle_id: bundleId })
+              .eq('id', group[0].id);
+            singletons += 1;
+            continue;
+          }
+          // force: do not early-return — render below as a single-item bundle.
         }
 
         // Multi-draft group — check if already correctly bundled. If every
@@ -2227,12 +2244,8 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
       }
     }
 
-    res.json({ bundles_created: bundlesCreated, drafts_bundled: draftsBundled, singletons, skipped });
-  } catch (err) {
-    console.error('[enforcement.drafts.auto-bundle]', err);
-    res.status(500).json({ error: err.message });
-  }
-});
+    return { bundles_created: bundlesCreated, drafts_bundled: draftsBundled, singletons, skipped };
+}
 
 // POST /api/enforcement/drafts/approve
 // Body: { interaction_ids: [uuid, ...] }
@@ -8278,4 +8291,4 @@ router.get('/violations/report', async (req, res) => {
   }
 });
 
-module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings };
+module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle };
