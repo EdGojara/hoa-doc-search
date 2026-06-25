@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Drive Coverage — Bedrock</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; font-family:-apple-system,Segoe UI,Roboto,sans-serif; }
+  #map { position:absolute; inset:0; z-index:1; }
+  #bar { position:absolute; top:0; left:0; right:0; z-index:1000; background:var(--navy); color:#fff;
+         padding:8px 10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; box-shadow:0 2px 8px rgba(0,0,0,.3); }
+  #bar select, #bar input { padding:8px 10px; border-radius:8px; border:0; font-size:15px; min-width:0; }
+  #bar select { flex:1 1 130px; } #bar input { flex:1 1 110px; }
+  #startBtn { background:var(--gold); color:var(--navy); font-weight:800; border:0; padding:9px 16px;
+              border-radius:8px; font-size:15px; cursor:pointer; white-space:nowrap; }
+  #startBtn.live { background:#dc2626; color:#fff; }
+  #status { flex-basis:100%; font-size:12.5px; color:#cbd5e1; }
+  #legend { position:absolute; bottom:10px; left:10px; z-index:1000; background:rgba(255,255,255,.94);
+            border-radius:10px; padding:8px 10px; font-size:12.5px; max-width:62%; box-shadow:0 2px 10px rgba(0,0,0,.25); }
+  #legend .row { display:flex; align-items:center; gap:7px; padding:2px 0; }
+  #legend .sw { width:14px; height:6px; border-radius:3px; flex:0 0 auto; }
+  #legend .me { font-weight:800; }
+  .leaflet-top.leaflet-right { margin-top:60px; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <select id="community"><option value="">Loading communities…</option></select>
+  <input id="who" placeholder="Your name" autocomplete="off"/>
+  <button id="startBtn" onclick="toggleShare()">▶ Start</button>
+  <div id="status">Pick your community + name, then Start. Everyone on the same community sees each other's path.</div>
+</div>
+<div id="map"></div>
+<div id="legend" style="display:none;"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  var PALETTE = ['#2563eb','#dc2626','#15803d','#9333ea','#ea580c','#0891b2','#be185d','#4d7c0f'];
+  var map, sat, labels, street, myMarker, myAccCircle;
+  var pathLayers = {};        // inspection_id -> {line, marker}
+  var colorByInsp = {};       // stable color per inspection_id
+  var inspectionId = null;    // my active session
+  var watchId = null, flushTimer = null, pollTimer = null;
+  var buffer = [], lastBuffered = null, firstFit = true;
+
+  function el(id){ return document.getElementById(id); }
+  function setStatus(t){ el('status').textContent = t; }
+
+  // ---- map ----
+  function initMap(){
+    map = L.map('map', { zoomControl:true }).setView([29.76, -95.37], 11); // Houston default
+    sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom:20, attribution:'Esri' });
+    labels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom:20 });
+    street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution:'© OpenStreetMap' });
+    sat.addTo(map); labels.addTo(map);
+    L.control.layers({ 'Satellite': sat, 'Street': street }, { 'Labels': labels }, { position:'topright' }).addTo(map);
+  }
+
+  // ---- communities ----
+  async function loadCommunities(){
+    try {
+      var r = await fetch('/api/communities');
+      var j = await r.json();
+      var list = Array.isArray(j) ? j : (j.communities || j.data || []);
+      list = list.filter(function(c){ return c && c.id && !c.is_demo; });
+      var sel = el('community');
+      sel.innerHTML = '<option value="">— select community —</option>' +
+        list.map(function(c){ return '<option value="'+c.id+'">'+(c.name||c.id)+'</option>'; }).join('');
+      var saved = localStorage.getItem('dc_community'); if (saved) sel.value = saved;
+      var who = localStorage.getItem('dc_who'); if (who) el('who').value = who;
+    } catch(e){ el('community').innerHTML = '<option value="">⚠ could not load communities</option>'; }
+  }
+
+  // ---- distance (meters) ----
+  function metersBetween(a, b){
+    var R=6371000, dLat=(b[0]-a[0])*Math.PI/180, dLng=(b[1]-a[1])*Math.PI/180;
+    var s=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a[0]*Math.PI/180)*Math.cos(b[0]*Math.PI/180)*Math.sin(dLng/2)*Math.sin(dLng/2);
+    return 2*R*Math.asin(Math.sqrt(s));
+  }
+
+  // ---- sharing on/off ----
+  window.toggleShare = async function(){
+    if (inspectionId) { stopSharing(); return; }
+    var communityId = el('community').value, who = (el('who').value||'').trim();
+    if (!communityId) { setStatus('Pick your community first.'); return; }
+    if (!who) { setStatus('Enter your name so the others know which path is yours.'); return; }
+    if (!navigator.geolocation) { setStatus('This device has no GPS / geolocation.'); return; }
+    localStorage.setItem('dc_community', communityId); localStorage.setItem('dc_who', who);
+    setStatus('Starting session…');
+    try {
+      var r = await fetch('/api/inspections', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ community_id: communityId, mode:'drive_by', device_label: who, route_label:'Drive coverage' }) });
+      var j = await r.json();
+      if (!r.ok || !j.inspection) throw new Error(j.error || 'could not start session');
+      inspectionId = j.inspection.id;
+    } catch(e){ setStatus('Could not start: '+e.message); return; }
+
+    buffer = []; lastBuffered = null;
+    watchId = navigator.geolocation.watchPosition(onPosition, onGeoError, { enableHighAccuracy:true, maximumAge:4000, timeout:20000 });
+    flushTimer = setInterval(flush, 12000);
+    el('startBtn').textContent = '■ Stop'; el('startBtn').classList.add('live');
+    setStatus('📍 Sharing your location… drive your route. Others on this community appear in their own color.');
+    startPolling(communityId);
+  };
+
+  function stopSharing(){
+    if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
+    flush(); // send any remaining points
+    if (inspectionId) { fetch('/api/inspections/'+inspectionId, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ status:'completed', ended_at:new Date().toISOString() }) }).catch(function(){}); }
+    inspectionId = null;
+    el('startBtn').textContent = '▶ Start'; el('startBtn').classList.remove('live');
+    setStatus('Stopped sharing. The map keeps showing today’s coverage.');
+  }
+
+  function onGeoError(err){
+    if (err && err.code === 1) setStatus('⚠ Location permission denied. Allow location for this site, then Start again.');
+    else setStatus('⚠ GPS error: ' + (err && err.message ? err.message : 'unavailable') + ' — still trying…');
+  }
+
+  function onPosition(pos){
+    var lat = pos.coords.latitude, lng = pos.coords.longitude, acc = pos.coords.accuracy;
+    // my live dot
+    if (!myMarker) {
+      myMarker = L.circleMarker([lat,lng], { radius:7, color:'#fff', weight:2, fillColor:'#111', fillOpacity:1 }).addTo(map).bindTooltip('You', {permanent:false});
+      map.setView([lat,lng], 16);
+    } else { myMarker.setLatLng([lat,lng]); }
+    if (myAccCircle) map.removeLayer(myAccCircle);
+    if (acc && acc < 200) myAccCircle = L.circle([lat,lng], { radius:acc, color:'#111', weight:0, fillColor:'#111', fillOpacity:0.08 }).addTo(map);
+    // buffer (throttle: ≥12m moved or ≥10s since last buffered)
+    var now = Date.now(), pt = [lat,lng];
+    var far = !lastBuffered || metersBetween(lastBuffered.pt, pt) >= 12;
+    var old = !lastBuffered || (now - lastBuffered.t) >= 10000;
+    if (far || old) { buffer.push({ lat:lat, lng:lng, accuracy_m:acc, recorded_at:new Date().toISOString() }); lastBuffered = { pt:pt, t:now }; }
+  }
+
+  async function flush(){
+    if (!inspectionId || !buffer.length) return;
+    var batch = buffer.splice(0, buffer.length);
+    try {
+      var r = await fetch('/api/inspections/'+inspectionId+'/track', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ points: batch }) });
+      if (!r.ok) { buffer = batch.concat(buffer); } // requeue on failure
+    } catch(e){ buffer = batch.concat(buffer); }
+  }
+
+  // ---- coverage polling + drawing ----
+  function startPolling(communityId){
+    if (pollTimer) clearInterval(pollTimer);
+    drawCoverage(communityId);
+    pollTimer = setInterval(function(){ drawCoverage(communityId); }, 10000);
+  }
+  function colorFor(id){
+    if (!colorByInsp[id]) colorByInsp[id] = PALETTE[Object.keys(colorByInsp).length % PALETTE.length];
+    return colorByInsp[id];
+  }
+  async function drawCoverage(communityId){
+    try {
+      var r = await fetch('/api/inspections/coverage?community_id='+encodeURIComponent(communityId));
+      var j = await r.json();
+      if (!j.ok) return;
+      var seen = {}, legendRows = [], allLatLng = [];
+      (j.tracks||[]).forEach(function(t){
+        seen[t.inspection_id] = true;
+        var mine = t.inspection_id === inspectionId;
+        var col = mine ? '#111' : colorFor(t.inspection_id);
+        var latlngs = (t.path||[]);
+        if (!pathLayers[t.inspection_id]) {
+          pathLayers[t.inspection_id] = {
+            line: L.polyline(latlngs, { color:col, weight: mine?5:4, opacity:0.85 }).addTo(map),
+            marker: t.last ? L.circleMarker([t.last.lat,t.last.lng], { radius:6, color:'#fff', weight:2, fillColor:col, fillOpacity:1 }).addTo(map) : null
+          };
+        } else {
+          pathLayers[t.inspection_id].line.setLatLngs(latlngs).setStyle({ color:col });
+          if (t.last) {
+            if (pathLayers[t.inspection_id].marker) pathLayers[t.inspection_id].marker.setLatLng([t.last.lat,t.last.lng]).setStyle({ fillColor:col });
+            else pathLayers[t.inspection_id].marker = L.circleMarker([t.last.lat,t.last.lng], { radius:6, color:'#fff', weight:2, fillColor:col, fillOpacity:1 }).addTo(map);
+          }
+        }
+        if (pathLayers[t.inspection_id].marker) pathLayers[t.inspection_id].marker.bindTooltip((t.device_label||'inspector')+(mine?' (you)':''), {permanent:false});
+        latlngs.forEach(function(p){ allLatLng.push(p); });
+        legendRows.push('<div class="row'+(mine?' me':'')+'"><span class="sw" style="background:'+col+'"></span>'+(t.device_label||'inspector')+(mine?' (you)':'')+' · '+(t.point_count||0)+' pts</div>');
+      });
+      // remove paths no longer present
+      Object.keys(pathLayers).forEach(function(id){ if (!seen[id]) { var L2=pathLayers[id]; if(L2.line)map.removeLayer(L2.line); if(L2.marker)map.removeLayer(L2.marker); delete pathLayers[id]; } });
+      // legend
+      var lg = el('legend');
+      if (legendRows.length) { lg.style.display='block'; lg.innerHTML = '<div style="font-weight:800;color:#0B1D34;margin-bottom:3px;">Coverage today</div>'+legendRows.join(''); }
+      else { lg.style.display='none'; }
+      // fit once
+      if (firstFit && allLatLng.length) { firstFit=false; try{ map.fitBounds(L.latLngBounds(allLatLng).pad(0.15)); }catch(e){} }
+    } catch(e){ /* transient */ }
+  }
+
+  // boot
+  initMap(); loadCommunities();
+  // If you open the page without sharing, still show whoever's out there once you pick a community.
+  el('community').addEventListener('change', function(){ if (!inspectionId && this.value) startPolling(this.value); });
+})();
+</script>
+</body>
+</html>
