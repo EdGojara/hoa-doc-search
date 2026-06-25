@@ -1904,6 +1904,12 @@ router.get('/drafts', async (req, res) => {
 router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
   try {
     const communityId = req.body && req.body.community_id;
+    // force=true re-renders bundles that are already correctly grouped (e.g. to
+    // pick up a letter-template / address-format change or a stage correction).
+    // property_id scopes that re-render to one property's bundle (the per-bundle
+    // "Regenerate" button) instead of the whole community.
+    const force = !!(req.body && req.body.force);
+    const propertyFilter = req.body && req.body.property_id;
     const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'];
 
     // Pull ALL draft-status letters at the courtesy / §209 levels regardless
@@ -1920,6 +1926,7 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
       .eq('status', 'draft')
       .in('type', letterTypes);
     if (communityId) q = q.eq('community_id', communityId);
+    if (propertyFilter) q = q.eq('property_id', propertyFilter);
     const { data: drafts, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
     if (!drafts || drafts.length === 0) {
@@ -2001,15 +2008,19 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
         // regenerate the consolidated PDF.
         const distinctBundleIds = new Set(group.map((g) => g.bundle_id).filter(Boolean));
         const allShareOne = distinctBundleIds.size === 1 && group.every((g) => g.bundle_id);
-        if (allShareOne) continue;
+        if (allShareOne && !force) continue; // force re-renders an already-bundled group
 
         // Multi-violation bundle: regenerate one consolidated PDF
         const first = group[0];
         const propertyId = first.property_id;
         const communityIdForGroup = first.community_id;
-        const stage = first.type === 'letter_courtesy_1' ? 'courtesy_1'
-                    : first.type === 'letter_courtesy_2' ? 'courtesy_2'
-                    : 'certified_209'; // letter_209 → could be certified or fine_assessed; treat as certified for bundling
+        let stage = first.type === 'letter_courtesy_1' ? 'courtesy_1'
+                  : first.type === 'letter_courtesy_2' ? 'courtesy_2'
+                  : 'certified_209'; // letter_209 → could be certified or fine_assessed; treat as certified for bundling
+        // ↑ fallback only. The authoritative stage is each violation's CURRENT
+        //   stage (overridden below once violations are loaded) — so a draft
+        //   whose violation was re-staged (e.g. courtesy_2 → courtesy_1) renders
+        //   at the corrected stage instead of the stale draft type.
 
         // Pull violations + observations + photos for each member
         const violationIds = group.map((g) => g.violation_id).filter(Boolean);
@@ -2032,6 +2043,15 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
 
         const vById = new Map((vRes.data || []).map((v) => [v.id, v]));
         const oById = new Map((oRes.data || []).map((o) => [o.id, o]));
+        // Override the fallback stage with the violations' CURRENT stage (the
+        // source of truth). If a bundle spans mixed stages, take the most severe
+        // so we never under-state. fine_assessed renders under the §209 path.
+        const _memberStages = group.map((g) => vById.get(g.violation_id)).filter(Boolean).map((v) => v.current_stage);
+        if (_memberStages.length) {
+          const _rank = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
+          const _top = _memberStages.reduce((a, b) => ((_rank[b] ?? -1) > (_rank[a] ?? -1) ? b : a));
+          if (_rank[_top] != null) stage = _top === 'fine_assessed' ? 'certified_209' : _top;
+        }
         const pRow = pRes.data;
         const community = cRes.data;
         if (!pRow || !community) {
