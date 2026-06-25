@@ -17502,6 +17502,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                    <td style="padding:6px 8px; text-align:right; white-space:nowrap;">
                      ${showQualityActions ? `<button onclick="inspViolationVerify('${v.id}')" title="Mark as verified (full weight)" style="background:#fff; border:1px solid #bbf7d0; color:#166534; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Verify</button>` : ''}
                      ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record" style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
+                     ${!['cured','closed','voided'].includes(v.current_stage) ? `<button onclick="inspMarkCured('${v.id}')" title="Close this violation (homeowner-confirmed cure, drive-by spot check, or board dismissal). Auto-resets any open repeat in this category back to Courtesy 1." style="background:#dcfce7; border:1px solid #86efac; color:#15803d; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Cure</button>` : ''}
                      ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" style="background:#0B1D34; color:#fff; border:none; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">📄 Letter</button>` : ''}
                    </td>
                  </tr>${reviewNotesRow}`;
@@ -18022,6 +18023,42 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     } catch (e) {
       if (link) { link.textContent = prev; link.style.pointerEvents = ''; }
       alert('Regenerate failed: ' + e.message);
+    }
+  }
+
+  // Mark a violation cured/closed from the property-detail view. Curing a prior
+  // auto-resets any still-open repeat in the same category to Courtesy 1 (server
+  // side) — we surface that here, then refresh so the history reflects it.
+  async function inspMarkCured(violationId) {
+    if (!violationId) return;
+    const reason = prompt(
+      'Why is this violation being closed? (required for the audit trail)\n\n' +
+      'Examples:\n' +
+      '  • "Owner sent photo of mowed lawn — confirmed cured."\n' +
+      '  • "Drove past 6/25 — fence repaired."\n' +
+      '  • "Board dismissed — special circumstances."'
+    );
+    if (!reason || !reason.trim()) return; // cancelled
+    try {
+      const r = await window._authFetch(`/api/enforcement/violations/${violationId}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resolved_via: 'manual_cured', resolved_notes: reason.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const restaged = j.restaged || [];
+      let msg = '✓ Violation marked cured.';
+      if (restaged.length) {
+        msg += `\n\n${restaged.length} open violation${restaged.length === 1 ? '' : 's'} in the same category reset to Courtesy 1 (the prior chain is closed).`;
+      }
+      // Refresh the property detail so the history + any re-staged siblings update.
+      if (typeof inspPDCurrentPropertyId !== 'undefined' && inspPDCurrentPropertyId) {
+        await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+      }
+      setTimeout(() => alert(msg), 100);
+    } catch (e) {
+      alert('Could not mark cured: ' + e.message);
     }
   }
 
