@@ -23628,7 +23628,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     btn.disabled = true;
     btn.innerHTML = '⏳ Saving…';
     try {
-      // 1. Reclassify the observation + violation
+      // 1. Reclassify the observation + violation. THIS is the save — once it
+      //    succeeds the correction is committed. The letter regen below is a
+      //    best-effort follow-up and must NEVER make a successful save read as
+      //    "Save failed" (that's what made staff re-do corrections that had
+      //    already saved, and the category-move looked like the row vanished).
       const r1 = await window._authFetch(`/api/enforcement/drafts/${encodeURIComponent(interactionId)}/reclassify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -23637,24 +23641,29 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const j1 = await r1.json();
       if (!r1.ok) throw new Error(j1.error || `reclassify HTTP ${r1.status}`);
 
-      // 2. Regenerate the letter PDF with the corrected category + description
+      // 2. Regenerate the letter PDF — best-effort. A failure here becomes a
+      //    soft note, not a thrown error.
       btn.innerHTML = '⏳ Regenerating letter…';
-      const r2 = await window._authFetch('/api/enforcement/generate-letter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ violation_id: violationId, force_regenerate: true }),
-      });
-      const j2 = await r2.json();
-      if (!r2.ok) throw new Error(j2.error || `regenerate HTTP ${r2.status}`);
+      let letterWarn = '';
+      try {
+        const r2 = await window._authFetch('/api/enforcement/generate-letter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ violation_id: violationId, force_regenerate: true }),
+        });
+        if (!r2.ok) {
+          const j2 = await r2.json().catch(() => ({}));
+          letterWarn = ` — but the letter didn't rebuild (${j2.error || ('HTTP ' + r2.status)}). Open the draft and click Regenerate.`;
+        }
+      } catch (e2) {
+        letterWarn = ` — but the letter didn't rebuild (${e2.message || 'network'}). Open the draft and click Regenerate.`;
+      }
 
-      // 3. Refresh the drafts queue + close the modal
+      // 3. The save succeeded — always refresh the queue + close the modal.
       await inspDraftsLoad();
       inspDraftsReclassifyClose();
-
-      // Brief confirmation — operator sees the row already updated in the queue
-      // so the alert is just a "yes that worked" beat.
       setTimeout(() => {
-        alert(`✓ Reclassified to "${j1.new_category_label}" and letter regenerated. Review the updated draft in the queue.`);
+        alert(`✓ Saved — reclassified to "${j1.new_category_label}"${letterWarn || ' and letter regenerated.'} It now appears under "${j1.new_category_label}" in the queue.`);
       }, 50);
     } catch (e) {
       errEl.textContent = e.message || 'Save failed';
