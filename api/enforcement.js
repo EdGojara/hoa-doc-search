@@ -6412,7 +6412,16 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
     const toInsertRow = (item, isTerminal) => {
       const r = item.row;
       const stage = item.current_stage;
-      const terminal = isTerminal || ['cured', 'closed', 'voided'].includes(stage);
+      // Safety net (2026-06-26 scar): a row carries resolved fields ONLY when
+      // its own STAGE is terminal. An open notice stage (courtesy_1/2,
+      // certified_209, fine_assessed) is an OPEN case by definition — never
+      // stamp it closed, even if a caller passes isTerminal=true. A legacy
+      // import left 94 contradictory courtesy_1+cured rows (open stage + closed
+      // flag) that masqueraded as both open and closed; deriving `terminal`
+      // from the stage alone makes that state impossible to write. (isTerminal
+      // is retained in the signature for call-site compatibility; plan.terminal
+      // rows already carry a terminal result_stage, so behavior is unchanged.)
+      const terminal = ['cured', 'closed', 'voided'].includes(stage);
       return {
         property_id: r.property_id,
         community_id: communityId,

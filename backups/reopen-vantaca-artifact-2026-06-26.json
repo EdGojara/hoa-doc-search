@@ -1,0 +1,754 @@
+[
+  {
+    "id": "fbf73d1a-8c28-47dc-bc0f-f76456abba1a",
+    "current_stage": "courtesy_1",
+    "property_id": "69a50d54-6fe2-460c-95c8-83289b8a11cf",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-13T00:00:00+00:00",
+    "resolved_notes": "First Notice - 04/28/2026 - Lizette Cano; Resolved - 05/13/2026 - Martha Bravo"
+  },
+  {
+    "id": "4fb82a7e-14fd-42e3-9238-5a38b0e26764",
+    "current_stage": "courtesy_1",
+    "property_id": "ec6fa668-d23f-438d-982b-e4a6486ad5cd",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "7c29a190-400f-4e23-b5e7-3cacad485ab5",
+    "current_stage": "courtesy_1",
+    "property_id": "2a588a4a-a371-4242-a95c-f840363b4fcb",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "1b138e31-28f4-4c29-9a6b-b5e8d43662d8",
+    "current_stage": "courtesy_1",
+    "property_id": "01052bbf-de12-43e7-8fac-7b596061a6dd",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "719b62f5-a78a-4216-befe-f894f6a7a644",
+    "current_stage": "courtesy_1",
+    "property_id": "01052bbf-de12-43e7-8fac-7b596061a6dd",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "45b19ace-a1e3-4a65-a6e5-a853bd9c2cbe",
+    "current_stage": "courtesy_1",
+    "property_id": "0e95fb50-b5fe-425a-afc9-801e511ff988",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "21e647a3-4679-49e2-93ec-67bef3faa07e",
+    "current_stage": "courtesy_1",
+    "property_id": "96657514-0a26-4ef9-9dd9-04da2116a0bb",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "458dbf33-cf02-4c84-b3b7-1905968ab027",
+    "current_stage": "courtesy_1",
+    "property_id": "7ae5578f-9045-4f9d-99a8-93130b71482f",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "2e771bdb-e08b-4a0d-adae-5f40bc8bc840",
+    "current_stage": "courtesy_1",
+    "property_id": "20d3b061-251a-42d4-b954-a0f9bf1fd73f",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "89147545-7fa8-4640-a653-643b37790871",
+    "current_stage": "courtesy_1",
+    "property_id": "20d3b061-251a-42d4-b954-a0f9bf1fd73f",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "6aeac563-d8c4-4c14-8914-ea1947b05280",
+    "current_stage": "courtesy_1",
+    "property_id": "dd8dae8e-e290-4a4d-b3cd-75f12dd58c0d",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "f1d2e9f9-4dc4-45b7-9094-855a992613b4",
+    "current_stage": "courtesy_1",
+    "property_id": "d382ae75-89cf-43c3-a021-3d7d90c90275",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "f123fb8c-9cde-445c-8c03-76a55047af70",
+    "current_stage": "courtesy_1",
+    "property_id": "2e4d49ed-9826-4216-8a44-61a38eec2398",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "97b5a516-220f-408a-a3a4-ec4812bfec15",
+    "current_stage": "courtesy_1",
+    "property_id": "1afa7377-b441-4dc3-b17a-a923c96e6866",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "cdaabb16-751a-4429-93b3-519ba3d1bd4a",
+    "current_stage": "courtesy_1",
+    "property_id": "fdc53f29-cb65-4010-ba8d-20c8e8535f22",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "c53e5085-7244-4892-b776-a8d5e3ec53cd",
+    "current_stage": "courtesy_1",
+    "property_id": "fdc53f29-cb65-4010-ba8d-20c8e8535f22",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "19b490df-f3b3-4d77-a194-2620484436ce",
+    "current_stage": "courtesy_1",
+    "property_id": "f229030d-1805-4d14-af05-9ed4b58bad61",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "19485071-dc66-47f2-bc6d-5f845ea17eac",
+    "current_stage": "courtesy_1",
+    "property_id": "8da26054-ac3f-4e7c-a0f3-3e4c0ea2bdc9",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "c3243137-23e6-471b-881d-ccc6bdc58556",
+    "current_stage": "courtesy_1",
+    "property_id": "78b9eea7-29b0-42d6-8f8e-13443e8e7f98",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "95417ea9-f0ba-4787-9553-21e3d2d2205f",
+    "current_stage": "courtesy_1",
+    "property_id": "f1b8453b-8652-4af6-9d7e-24ddd1958aad",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "8760bec1-31ba-4935-bc16-a9b7bf12aeba",
+    "current_stage": "courtesy_1",
+    "property_id": "e82d0ed7-c41c-4d08-a146-0af2ef43234d",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "3970052a-bda2-4410-99eb-afe4fc05fe8f",
+    "current_stage": "courtesy_1",
+    "property_id": "dabbf107-1309-4227-b97b-0e96aa3ce1cd",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "c6c3adee-b5e7-49fb-adaa-ca7713b06edc",
+    "current_stage": "courtesy_1",
+    "property_id": "0f0cde95-3f76-4eba-bf84-ff81ded44e4d",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "f40ebd7c-8421-4487-b02c-78cbe0bbd74b",
+    "current_stage": "courtesy_1",
+    "property_id": "2af68cf3-1091-4dc8-8fa8-659e46aa2666",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "25349029-96e6-4d3f-8466-a3bfbbfd0a23",
+    "current_stage": "courtesy_1",
+    "property_id": "6d74d8d5-9517-4aaa-88f3-860785318f6a",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "2aa093f3-0627-45ce-bddc-776b02ba5642",
+    "current_stage": "courtesy_1",
+    "property_id": "a8049da5-b886-4d25-b9e2-51c3b03914c3",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "cdda7dca-79eb-4b91-8bd9-d71198bb0ea5",
+    "current_stage": "courtesy_1",
+    "property_id": "9168ee97-472d-4b2e-af89-75bca9373c7c",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "a768c602-02be-4565-9fa8-a4fa34789375",
+    "current_stage": "courtesy_1",
+    "property_id": "ce53f381-ff39-4805-be57-f65592fb851d",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "ecad4d54-41dc-48f7-922f-e3bf78505c5e",
+    "current_stage": "courtesy_1",
+    "property_id": "c17c8fcf-d5de-475a-85bc-cae24ea5dfad",
+    "resolved_via": "voided",
+    "resolved_at": "2026-04-27T00:00:00+00:00",
+    "resolved_notes": "Void - 04/27/2026 - Lizette Cano"
+  },
+  {
+    "id": "95e19230-6c64-4491-a9bc-a35160760a94",
+    "current_stage": "courtesy_1",
+    "property_id": "16a15e35-f35b-46f1-9e41-34b7673090f1",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-19T00:00:00+00:00",
+    "resolved_notes": "First Notice - 04/28/2026 - Jennifer Flores; Resolved - 05/19/2026 - Jennifer Flores; First Notice - 05/19/2026 - Jennifer Flores; Closed - 05/19/2026 - Jennifer Flores"
+  },
+  {
+    "id": "d988e999-b229-4406-8823-68d39824097a",
+    "current_stage": "courtesy_2",
+    "property_id": "2f88cb92-9b3b-4b99-869a-1b74dc7f2b78",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-13T00:00:00+00:00",
+    "resolved_notes": "Second Notice - 04/28/2026 - Lizette Cano; First Notice - 03/26/2026 - Jennifer Flores; Resolved - 05/13/2026 - Jennifer Flores"
+  },
+  {
+    "id": "ae8aa597-6162-442c-bdf9-0a9594a46b0a",
+    "current_stage": "courtesy_1",
+    "property_id": "6acff0b4-731e-4cf5-8d54-32968a34c816",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "fcfe6821-db56-4bb5-946d-f376001ea4bc",
+    "current_stage": "courtesy_1",
+    "property_id": "16a15e35-f35b-46f1-9e41-34b7673090f1",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-19T00:00:00+00:00",
+    "resolved_notes": "Jennifer Flores"
+  },
+  {
+    "id": "5c13e5aa-1606-4c5e-9fcb-c3537ea16036",
+    "current_stage": "courtesy_1",
+    "property_id": "61ab75c3-2a8a-44ee-a7a7-110ac8930ed5",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "396bf52a-cb99-442a-a443-c9e67b1e70b6",
+    "current_stage": "courtesy_1",
+    "property_id": "4139d1cf-7ccd-4b95-918a-12ca63799ca8",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "54285560-d3fb-4552-8702-b05e922ca925",
+    "current_stage": "courtesy_1",
+    "property_id": "2af68cf3-1091-4dc8-8fa8-659e46aa2666",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "d5512c5c-e941-4dc9-b271-6d26ea6eb783",
+    "current_stage": "courtesy_1",
+    "property_id": "ce53f381-ff39-4805-be57-f65592fb851d",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "c64c5805-0c22-4c35-bd43-a09c6dec6f0c",
+    "current_stage": "courtesy_1",
+    "property_id": "6d74d8d5-9517-4aaa-88f3-860785318f6a",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "5d5d189a-a040-471a-9cd5-9163445e23a2",
+    "current_stage": "courtesy_1",
+    "property_id": "da8211c6-008a-49d3-9951-500d1c83abaa",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "92080127-6a60-4759-a966-801662978ba5",
+    "current_stage": "courtesy_1",
+    "property_id": "cf17839d-fea3-42f6-b32a-afbd404b5f4a",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "e35adae8-5977-40e9-b089-7a271f044ca5",
+    "current_stage": "courtesy_1",
+    "property_id": "9f002e94-577a-4d83-aeae-5f79a7d25591",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "4f1ef3d8-f804-43df-862f-cd37453ad547",
+    "current_stage": "courtesy_1",
+    "property_id": "be81ed3d-2c98-4aad-a61a-489ecb0c6990",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "605ea3f2-d94b-4dd5-9215-137ef92a36c5",
+    "current_stage": "courtesy_1",
+    "property_id": "98eabcb8-9610-4570-9a56-08f2db2b507c",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "ff95f564-4c99-4291-bde5-8b1785e817b0",
+    "current_stage": "courtesy_1",
+    "property_id": "ce53f381-ff39-4805-be57-f65592fb851d",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "19edde82-ac6c-47d9-9693-fcee471e9102",
+    "current_stage": "courtesy_1",
+    "property_id": "3d21b003-1995-450f-b1fe-64595a378b59",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "93d6cb9d-5ff4-4f93-8d08-89a538b719f4",
+    "current_stage": "courtesy_1",
+    "property_id": "9c88b0ab-e925-4ec6-9fe6-7abf75c689ae",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "a956f69d-2ced-4fde-8695-9dceba9af5e5",
+    "current_stage": "courtesy_1",
+    "property_id": "94a7caa8-84ae-4ce2-bbdb-dd57d3e37178",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "48a76b57-27bb-47ca-8bfb-f9ebe21a886b",
+    "current_stage": "courtesy_1",
+    "property_id": "3eb9f39d-f31f-41dc-a0b7-c956a90d1c6e",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "1643ed5f-58a7-4c43-b95f-bad4ab59abe7",
+    "current_stage": "courtesy_1",
+    "property_id": "1e7e4f15-4643-4aae-a057-5b4abfbe9609",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "63285e70-e7b9-4daf-b30d-4b4cabc556bb",
+    "current_stage": "courtesy_1",
+    "property_id": "8d8cb2b5-91cc-4bb9-9b1a-212b6981fff9",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "93de4639-b099-4684-b15e-4d59dc45b59a",
+    "current_stage": "courtesy_1",
+    "property_id": "3082788d-204d-4880-a643-1b0978e24a9f",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "4fc3a775-3587-49f0-84da-ecc4fb9c5c11",
+    "current_stage": "courtesy_1",
+    "property_id": "3d21b003-1995-450f-b1fe-64595a378b59",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "a4f0a263-22db-4491-b50f-9b08cbfa6e81",
+    "current_stage": "courtesy_1",
+    "property_id": "2b0b093c-a009-4475-8212-d732723bafe1",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "63d30d7c-4354-43eb-87b8-e84411fb488e",
+    "current_stage": "courtesy_1",
+    "property_id": "fbf14a42-f094-4f8c-87a6-0d0e76ab2023",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "a81de5c5-0395-4443-b561-6606496c71a8",
+    "current_stage": "courtesy_1",
+    "property_id": "77c1aba2-ea4b-47a0-bd32-ca2b70192954",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "5cf120a1-ec8c-4334-8d7a-5a2a58a29180",
+    "current_stage": "courtesy_1",
+    "property_id": "b532472a-1b74-4276-8dea-8f5266471645",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "d3886297-a698-4808-987c-3d554ae1a6df",
+    "current_stage": "courtesy_1",
+    "property_id": "356fe63a-9a82-4fe9-833d-467a1563af0d",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "ffa59a24-d369-4a2c-ad14-3d200a6c5c06",
+    "current_stage": "courtesy_1",
+    "property_id": "8210d661-f939-4b92-9f05-7f06ef05e382",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "7e219812-01c6-4e22-9b16-ba5422997aa0",
+    "current_stage": "courtesy_1",
+    "property_id": "cbbcfb08-46a3-44b4-9d95-59a7a0554030",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "1b5e7303-c489-4b99-a3d4-b233aef28058",
+    "current_stage": "courtesy_1",
+    "property_id": "2b0b093c-a009-4475-8212-d732723bafe1",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "42ccaa87-da42-483e-a489-06f79af0216b",
+    "current_stage": "courtesy_1",
+    "property_id": "fbf14a42-f094-4f8c-87a6-0d0e76ab2023",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "a38e6518-2f1d-4381-874f-56ce421fbab2",
+    "current_stage": "courtesy_1",
+    "property_id": "602326c5-ad0e-4704-be2a-02b36f2f55a9",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "64b782b3-f95b-4133-a16e-5e1238d3bc76",
+    "current_stage": "courtesy_1",
+    "property_id": "b2a72468-4550-4ee2-962a-2bd94d132f7d",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "b7f45522-3a76-4d65-9f35-2d18e7ace29c",
+    "current_stage": "courtesy_1",
+    "property_id": "1fca12d1-2664-4c52-ad49-7d8c22284987",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "4bab69af-5423-4acf-8a5c-47cf6076188c",
+    "current_stage": "courtesy_1",
+    "property_id": "274e8a69-7740-41e9-bbe2-093efcdf9ef8",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "7b3be024-f67a-4806-8892-83ba0db74e37",
+    "current_stage": "courtesy_1",
+    "property_id": "16a8fe81-6119-4a1f-82fc-11bdaa286098",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "4c09b84f-502f-4a58-947b-0c3c88072929",
+    "current_stage": "courtesy_1",
+    "property_id": "84002c26-d4e3-498a-8194-266d6742e2d6",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "09072053-4283-402d-aeb4-94c3f4f934ec",
+    "current_stage": "courtesy_1",
+    "property_id": "af30f513-ad00-4acf-993c-1cbf01513682",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "886d55df-e0f7-4a32-a825-e86399407c65",
+    "current_stage": "courtesy_1",
+    "property_id": "bafa7df0-cdf9-40d7-b076-def0be89a5d1",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "494ced84-ee94-44ee-b41c-70382f6bf06b",
+    "current_stage": "courtesy_1",
+    "property_id": "30e48832-36e5-4569-8040-3f05261844ac",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "ea3ebe01-2321-4ed3-9d0d-9e216b403c54",
+    "current_stage": "courtesy_1",
+    "property_id": "1fca12d1-2664-4c52-ad49-7d8c22284987",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "19c0d3a1-3367-4467-acdf-0c1e3e3579a2",
+    "current_stage": "courtesy_1",
+    "property_id": "2dbf427d-51b9-4e19-a9c4-3ea201679e31",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "537c83c8-519b-4cae-b2be-2d5fb7f801df",
+    "current_stage": "courtesy_1",
+    "property_id": "16a8fe81-6119-4a1f-82fc-11bdaa286098",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "ec5c2254-0bc7-43d8-bc54-14908da13fdb",
+    "current_stage": "courtesy_1",
+    "property_id": "84002c26-d4e3-498a-8194-266d6742e2d6",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "766b871f-28f9-4063-a4f6-2f408129f778",
+    "current_stage": "courtesy_1",
+    "property_id": "4bbce00b-96fa-42cb-b60e-300e6e631aae",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "23ab7253-86f4-49a6-bf22-fee2623fdad2",
+    "current_stage": "courtesy_1",
+    "property_id": "72fb4073-2d58-46cf-b5c1-78bcafae7ed6",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "5fe82cd6-46c0-4c1b-bad7-bc15a6278b60",
+    "current_stage": "courtesy_1",
+    "property_id": "37104fe8-b8b4-445f-ab64-e0d243252c15",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "beb78859-ce2c-411a-a41c-30ab4df7c44c",
+    "current_stage": "courtesy_1",
+    "property_id": "a081bf9d-25cd-4b67-bfc2-31e169bb6b0f",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "2250ffda-2d06-4928-99fa-842ad9726703",
+    "current_stage": "courtesy_1",
+    "property_id": "c182e63f-8ca0-445d-a7a6-6c9c450e5891",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "56c38a7b-8e18-41f6-b8bc-02387706687b",
+    "current_stage": "courtesy_1",
+    "property_id": "fb948f3d-bb99-4c34-aaeb-94fe2f3ec53b",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "7717dd3e-b4f2-4b32-8ca5-247106a98534",
+    "current_stage": "courtesy_1",
+    "property_id": "db9e8dc6-41d4-4bde-8603-5a02a83d6c62",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "70ebb98f-f3c4-47e9-a004-b7aaf581216f",
+    "current_stage": "courtesy_1",
+    "property_id": "6acff0b4-731e-4cf5-8d54-32968a34c816",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "07256f97-d028-422f-b986-0adefd00afed",
+    "current_stage": "courtesy_1",
+    "property_id": "0b1d76a5-4ee2-4793-b69b-4b8956a92b0a",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "5cd64bfe-e9a4-4b02-be18-3ceb73c46903",
+    "current_stage": "courtesy_1",
+    "property_id": "37104fe8-b8b4-445f-ab64-e0d243252c15",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "8ac7832e-d8ee-42bc-8617-d96263e47a0f",
+    "current_stage": "courtesy_1",
+    "property_id": "a081bf9d-25cd-4b67-bfc2-31e169bb6b0f",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "cf14abc2-e2a3-4a30-b1fb-9dbfd5f06113",
+    "current_stage": "courtesy_1",
+    "property_id": "ce7bbdf2-78f0-4aca-a71d-9ab346d06b01",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "43b1f355-c161-47cd-ad72-9d7a4344c05d",
+    "current_stage": "courtesy_1",
+    "property_id": "41c31ed2-a6a9-4598-865c-c2eef7fa8a8b",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "1d7ae245-b7a3-406e-ad85-3732a05f29e5",
+    "current_stage": "courtesy_1",
+    "property_id": "33682319-1fdd-4ab8-82b1-ff274ba1ed53",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "c58dbaac-1b51-4884-b99e-ebaf5c0bd102",
+    "current_stage": "courtesy_1",
+    "property_id": "355c935a-c08d-4c7a-b2bc-d193f0962458",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "4d32c541-a4f7-421c-9479-1a1a56748d4e",
+    "current_stage": "courtesy_1",
+    "property_id": "2822c62e-5749-4185-aab3-a0e4ce3c2fc4",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "cf719fc9-219d-4270-a7a2-ce7935aa209a",
+    "current_stage": "courtesy_1",
+    "property_id": "ce53f381-ff39-4805-be57-f65592fb851d",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "3d60a235-5af2-4e08-b7a7-7985f3f223f0",
+    "current_stage": "courtesy_1",
+    "property_id": "92716630-d2ba-4c3f-8183-cb048b436ab9",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "6bf0e1ed-c717-4f70-9564-ce6eadd5bb26",
+    "current_stage": "courtesy_1",
+    "property_id": "da3b6c8d-b306-4355-928d-5b0695b6c56f",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  },
+  {
+    "id": "52b5ba31-bc64-48bb-8aae-22fb3c6c11d6",
+    "current_stage": "courtesy_1",
+    "property_id": "52061984-ad5f-414a-887d-d7ff3227e796",
+    "resolved_via": "cured",
+    "resolved_at": "2026-05-06T00:00:00+00:00",
+    "resolved_notes": "Closed"
+  }
+]
