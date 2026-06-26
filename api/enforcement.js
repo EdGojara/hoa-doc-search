@@ -8319,12 +8319,51 @@ router.post('/drafts/:interactionId/reclassify', express.json(), async (req, res
       .eq('id', violation.id);
     if (vUpErr) return res.status(500).json({ error: 'violation update failed: ' + vUpErr.message });
 
+    // 6. Auto-fold: if the property now has ANOTHER open case in the new
+    // category, this reclassified violation is a duplicate (Ed: reclassifying to
+    // match should merge, not leave two). Fold it into the established case
+    // (which survives + keeps its clock); this one's photo becomes continuation
+    // evidence, and this one is voided + its letter cancelled. Escalating up
+    // stays a deliberate action (cure-expiry auto-advance or the Fold modal).
+    let foldedIntoExisting = null;
+    try {
+      const { data: existing } = await supabase.from('violations')
+        .select('id, current_stage, continuation_count')
+        .eq('property_id', violation.property_id)
+        .eq('primary_category_id', newCategory.id)
+        .neq('id', violation.id)
+        .not('current_stage', 'in', '(cured,closed,voided)')
+        .neq('quality_status', 'superseded')
+        .order('opened_at', { ascending: true })
+        .limit(1).maybeSingle();
+      if (existing) {
+        try {
+          await supabase.from('violation_continuations').insert({
+            violation_id: existing.id, observation_id: obsId, source: 'manual',
+            notes: `Reclassified draft ${interactionId} into "${newCategory.label}", which already had an open case — folded here (same continuing issue, still uncured).`,
+          });
+        } catch (e) { if (e.code !== '23505') throw e; }
+        await supabase.from('violations').update({
+          continuation_count: (Number(existing.continuation_count) || 0) + 1, last_continued_at: new Date().toISOString(),
+        }).eq('id', existing.id);
+        await supabase.from('violations').update({
+          current_stage: 'voided', resolved_via: 'voided', resolved_at: new Date().toISOString(),
+          resolved_notes: `Reclassified to "${newCategory.label}" which already had open case ${existing.id} — folded in + voided to avoid a duplicate cure clock.`,
+        }).eq('id', violation.id);
+        await supabase.from('interactions').update({
+          status: 'rejected', notes: `[Reclassified into existing open case ${existing.id} — letter cancelled.]`,
+        }).eq('id', interactionId);
+        foldedIntoExisting = existing.id;
+      }
+    } catch (e) { console.warn('[drafts.reclassify] auto-fold check failed:', e.message); }
+
     res.json({
       ok: true,
       violation_id: violation.id,
       observation_id: obsId,
       prior_category_label: priorCategoryLabel,
       new_category_label: newCategory.label,
+      folded_into_existing: foldedIntoExisting,
     });
   } catch (err) {
     console.error('[drafts.reclassify]', err);

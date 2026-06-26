@@ -23732,6 +23732,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const j1 = await r1.json();
       if (!r1.ok) throw new Error(j1.error || `reclassify HTTP ${r1.status}`);
 
+      // If the new category already had an open case here, the backend folded
+      // this one in + voided it — no letter to regenerate, just refresh.
+      if (j1.folded_into_existing) {
+        await inspDraftsLoad();
+        inspDraftsReclassifyClose();
+        setTimeout(() => alert(`✓ Reclassified to "${j1.new_category_label}" — that category already had an open case at this property, so this was folded into it (one case, no duplicate). Escalate it from the property view if it's a repeat.`), 50);
+        return;
+      }
+
       // 2. Regenerate the letter PDF — best-effort. A failure here becomes a
       //    soft note, not a thrown error.
       btn.innerHTML = '⏳ Regenerating letter…';
