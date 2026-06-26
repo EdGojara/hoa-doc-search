@@ -144,6 +144,16 @@
       }
     }
 
+    /* "⋯ More" overflow menu on inspection rows — tucks the power-user
+       actions (Re-analyze / Back-fill orphans / Discard / Force delete)
+       behind one button so the everyday path is just View photos +
+       Finalize. Native <details>; we hide the disclosure triangle and
+       pop the menu as an absolutely-positioned card. */
+    .insp-more > summary { list-style: none; cursor: pointer; }
+    .insp-more > summary::-webkit-details-marker { display: none; }
+    .insp-more[open] > summary { background: #f1f5f9 !important; }
+    .insp-more-menu button { width: 100%; text-align: left; }
+
     .tab-content { display: none; flex: 1; flex-direction: column; overflow: hidden; }
     .tab-content.active { display: flex; }
 
@@ -26019,40 +26029,57 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             📸 View photos
           </button>
         ` : '';
+        // Everyday-path buttons broken out so the rare ones can be tucked
+        // behind "⋯ More". Front-line stays: View photos + Finalize (active)
+        // or View photos + Reopen (closed). Resume surfaces up front only
+        // while a drive is still unfinished (in_progress/paused).
+        const isUnfinished = (i.status === 'in_progress' || i.status === 'paused');
+        const resumeBtn = `
+          <button type="button" onclick="inspResume('${i.id}')"
+                  style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                  title="Reload this inspection into the live capture UI — add more photos, delete the wrong ones, retry analyze, then Finalize when done.">
+            📷 Resume
+          </button>`;
+        const finalizeBtn = `
+          <button type="button" onclick="inspFinalize('${i.id}')"
+                  style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                  title="Mark this inspection as the permanent record (status: closed). Do this AFTER you've reviewed the photos and confirmed the violations. It stays visible here as 🔒 Finalized — staff can still Reopen if a correction is needed.">
+            🔒 Finalize
+          </button>`;
+        const discardBtn = `
+          <button type="button" onclick="inspDiscard('${i.id}')"
+                  style="background: #fff; color: #991b1b; border: 1px solid #fecaca; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                  title="Delete this inspection + every photo, observation, and draft letter it produced. Refuses if any violation was already opened.">
+            🗑️ Discard
+          </button>`;
+        const reopenBtn = `
+          <button type="button" onclick="inspResume('${i.id}')"
+                  style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                  title="Reopen this inspection and load it back into the live capture UI — add photos, fix observations, then Finalize again.">
+            🔓 Reopen &amp; resume
+          </button>`;
+        // Overflow menu — only renders if it has contents. Native <details>
+        // so no extra JS; the disclosure triangle is hidden via CSS.
+        const moreMenu = (inner) => inner.trim() ? `
+          <details class="insp-more" style="position: relative;">
+            <summary style="background: #fff; color: #475569; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600;">⋯ More</summary>
+            <div class="insp-more-menu" style="position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 8px 24px rgba(11,29,52,0.14); padding: 6px; display: flex; flex-direction: column; gap: 6px; min-width: 190px;">
+              ${inner}
+            </div>
+          </details>` : '';
         const closedActions = isClosed ? `
-          <div class="insp-recent-actions" style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
+          <div class="insp-recent-actions" style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; align-items: flex-start;">
             ${viewPhotosBtn}
-            ${analyzeBtn}
-            ${backfillBtn}
-            <button type="button" onclick="inspResume('${i.id}')"
-                    style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                    title="Reopen this inspection and load it back into the live capture UI — add photos, fix observations, then Finalize again.">
-              🔓 Reopen &amp; resume
-            </button>
-            ${adminForceDeleteBtn}
+            ${reopenBtn}
+            ${moreMenu(`${analyzeBtn}${backfillBtn}${adminForceDeleteBtn}`)}
           </div>
         ` : '';
         const activeActions = (!isTerminal) ? `
-          <div class="insp-recent-actions" style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
+          <div class="insp-recent-actions" style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; align-items: flex-start;">
             ${viewPhotosBtn}
-            ${analyzeBtn}
-            ${backfillBtn}
-            <button type="button" onclick="inspResume('${i.id}')"
-                    style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                    title="Reload this inspection into the live capture UI — add more photos, delete the wrong ones, retry analyze, then Finalize when done.">
-              📷 Resume
-            </button>
-            <button type="button" onclick="inspFinalize('${i.id}')"
-                    style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                    title="Mark this inspection as the permanent record (status: closed). It will stay visible here as 🔒 Finalized — staff can still Reopen if a correction is needed.">
-              🔒 Finalize
-            </button>
-            <button type="button" onclick="inspDiscard('${i.id}')"
-                    style="background: #fff; color: #991b1b; border: 1px solid #fecaca; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                    title="Delete this inspection + every photo, observation, and draft letter it produced. Refuses if any violation was already opened.">
-              🗑️ Discard
-            </button>
-            ${adminForceDeleteBtn}
+            ${isUnfinished ? resumeBtn : ''}
+            ${finalizeBtn}
+            ${moreMenu(`${isUnfinished ? '' : resumeBtn}${analyzeBtn}${backfillBtn}${discardBtn}${adminForceDeleteBtn}`)}
           </div>
         ` : '';
         const actions = isClosed ? closedActions : activeActions;
