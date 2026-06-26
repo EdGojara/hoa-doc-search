@@ -1743,6 +1743,28 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       }
     }
 
+    // Sweep any OTHER draft letters for this violation. A violation has ONE
+    // current stage, so a draft at a DIFFERENT stage — left behind when a
+    // reduce/advance changed the stage — is stale. priorToDelete above only
+    // catches a same-stage prior; without this sweep the Drafts queue shows two
+    // letters for one violation (Ed 2026-06-26: Erika Helms had a stale
+    // courtesy_2 draft sitting next to the live courtesy_1).
+    try {
+      const { data: staleDrafts } = await supabase
+        .from('interactions')
+        .select('id, content')
+        .eq('violation_id', violation.id)
+        .eq('status', 'draft')
+        .like('type', 'letter_%')
+        .neq('id', inter.id);
+      for (const s of (staleDrafts || [])) {
+        if (s.content && /\.pdf$/i.test(String(s.content))) {
+          try { await supabase.storage.from('violation-letters').remove([s.content]); } catch (_) {}
+        }
+        try { await supabase.from('interactions').delete().eq('id', s.id); } catch (_) {}
+      }
+    } catch (e) { console.warn('[enforcement.generate-letter] stale-draft sweep failed:', e.message); }
+
     // Signed URL for immediate download
     const { data: sd } = await supabase.storage.from(LETTERS_BUCKET).createSignedUrl(storagePath, 60 * 60);
 
