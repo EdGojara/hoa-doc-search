@@ -532,22 +532,52 @@ router.post('/open-violation', express.json(), async (req, res) => {
     // If an OPEN violation of the same (or aliased) category already exists on
     // this property, this re-inspection is CONTINUATION evidence — not a new
     // case. Log it on the existing violation and return WITHOUT creating a
-    // second violation that would run a parallel §209 cure clock. Stage + clock
-    // on the existing case are left untouched; staff advance it via the normal
-    // re-evaluate / advance-stage tools. (Cross-CATEGORY judgment calls — e.g.
+    // second violation that would run a parallel §209 cure clock. If the
+    // existing case's cure window has expired, this re-observation AUTO-ADVANCES
+    // it one courtesy step (courtesy_1 → courtesy_2); the §209 certified step is
+    // gated for staff. (Cross-CATEGORY judgment calls — e.g.
     // "Fence damage" vs "Fences" — are handled by the manual "Fold into
     // existing" action; this guard only auto-folds same/aliased category.)
     try {
       const aliasIds = await expandCategoryToAliases(obs.category_id);
       const matchIds = aliasIds && aliasIds.length ? aliasIds : [obs.category_id];
       const { data: openPriors } = await supabase.from('violations')
-        .select('id, current_stage, continuation_count')
+        .select('id, current_stage, continuation_count, cure_period_ends_at')
         .eq('property_id', obs.property_id)
         .in('primary_category_id', matchIds)
         .not('current_stage', 'in', '(cured,closed,voided)');
       if (openPriors && openPriors.length) {
         const stageRank = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
         const target = openPriors.sort((a, b) => (stageRank[b.current_stage] || 0) - (stageRank[a.current_stage] || 0))[0];
+
+        // Auto-escalation: if the existing case's cure window has EXPIRED and
+        // it's still uncured (this re-observation proves it), advance one
+        // courtesy step. GATE at §209 — courtesy_2 → certified stays a staff
+        // decision (we only flag it eligible). Still inside the cure window →
+        // just log continuation; the owner still has time to cure.
+        const now = new Date();
+        const cureExpired = !!(target.cure_period_ends_at && new Date(target.cure_period_ends_at) < now);
+        let advancedTo = null, eligibleForCertified = false;
+        if (cureExpired && target.current_stage === 'courtesy_1') {
+          const { data: comm } = await supabase.from('communities')
+            .select('letter_cure_days_courtesy_2').eq('id', obs.community_id).maybeSingle();
+          const cureDays = (comm && Number(comm.letter_cure_days_courtesy_2)) || 20;
+          const { data: adv } = await supabase.from('violations').update({
+            current_stage: 'courtesy_2',
+            current_stage_started_at: now.toISOString(),
+            cure_period_ends_at: new Date(now.getTime() + cureDays * 86400000).toISOString(),
+          }).eq('id', target.id).eq('current_stage', 'courtesy_1').select('id'); // optimistic race guard
+          if (adv && adv.length) advancedTo = 'courtesy_2';
+        } else if (cureExpired && target.current_stage === 'courtesy_2') {
+          eligibleForCertified = true;
+        }
+
+        const outcomeNote = advancedTo
+          ? 'Re-observed after the cure period expired — auto-advanced to Courtesy 2; a new cure clock started.'
+          : eligibleForCertified
+            ? 'Re-observed after the Courtesy 2 cure period expired — ELIGIBLE for §209 certified notice (staff review before sending).'
+            : 'Re-observed, still within the cure window — continuation logged; stage + cure clock unchanged.';
+
         try {
           await supabase.from('violation_continuations').insert({
             violation_id: target.id,
@@ -555,25 +585,32 @@ router.post('/open-violation', express.json(), async (req, res) => {
             inspection_photo_id: obs.inspection_photo_id || null,
             inspection_id: obs.inspection_id || null,
             source: 'inspection',
-            notes: 'Auto-logged: re-inspection of an already-open violation — still uncured. Stage + cure clock unchanged.',
+            notes: 'Auto-logged: ' + outcomeNote,
           });
         } catch (e) { if (e.code !== '23505') throw e; } // already continues a violation — fine
         const newCount = (Number(target.continuation_count) || 0) + 1;
         await supabase.from('violations').update({
-          continuation_count: newCount, last_continued_at: new Date().toISOString(),
+          continuation_count: newCount, last_continued_at: now.toISOString(),
         }).eq('id', target.id);
         if (obs.reviewer_status === 'pending') {
           await supabase.from('property_observations').update({
-            reviewer_status: 'confirmed', reviewed_at: new Date().toISOString(), reviewer_user_id: actor.id,
+            reviewer_status: 'confirmed', reviewed_at: now.toISOString(), reviewer_user_id: actor.id,
           }).eq('id', obs.id);
         }
         await supabase.from('interactions').insert({
           community_id: obs.community_id, property_id: obs.property_id, violation_id: target.id,
           observation_id: obs.id, inspection_id: obs.inspection_id, type: 'observation_note', direction: 'internal',
-          subject: 'Re-observed — still uncured', content: 'Re-inspection logged as continuation evidence on the existing open violation; cure clock unchanged.',
-          sent_at: new Date().toISOString(),
+          subject: advancedTo ? 'Re-observed — advanced to Courtesy 2'
+            : (eligibleForCertified ? 'Re-observed — eligible for §209 certified' : 'Re-observed — still uncured'),
+          content: outcomeNote,
+          sent_at: now.toISOString(),
         });
-        return res.json({ ok: true, folded: true, violation_id: target.id, target_stage: target.current_stage, continuation_count: newCount });
+        return res.json({
+          ok: true, folded: true, violation_id: target.id,
+          target_stage: advancedTo || target.current_stage,
+          advanced_to: advancedTo, eligible_for_certified: eligibleForCertified,
+          continuation_count: newCount,
+        });
       }
     } catch (e) {
       console.warn('[enforcement.open-violation] continuation guard failed; proceeding to create:', e.message);
