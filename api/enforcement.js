@@ -2029,9 +2029,9 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
     if (communityId) q = q.eq('community_id', communityId);
     if (propertyFilter) q = q.eq('property_id', propertyFilter);
     const { data: drafts, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) throw new Error(error.message);   // callable directly — no res in scope
     if (!drafts || drafts.length === 0) {
-      return res.json({ bundles_created: 0, drafts_bundled: 0, singletons: 0, skipped: 0 });
+      return { bundles_created: 0, drafts_bundled: 0, singletons: 0, skipped: 0 };
     }
 
     // Per-community §209 bundling-opt-out config (migration 133). When TRUE,
