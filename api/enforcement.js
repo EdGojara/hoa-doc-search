@@ -7561,9 +7561,13 @@ router.get('/category-aliases', async (req, res) => {
 // category (slug not in the 21 standard seed), ask Claude to map it to one
 // of the standard 21 or mark as truly distinct. Insert ai_suggested rows
 // for any non-null mapping. Operator confirms each via /:id/confirm.
-router.post('/category-aliases/ai-suggest', express.json(), async (req, res) => {
-  try {
-    const force = !!(req.body && req.body.force);
+// Reusable category-alias detector — called by the endpoint below AND the
+// daily 'category_alias_detect' scheduler job, so equivalences (Vantaca
+// "Fences" ≡ trustEd "fence_damage", etc.) are DETECTED automatically, not
+// only when a human clicks a button. Inserts ai_suggested rows; a human still
+// confirms each via /:id/confirm (confirmation is what gates the engine math).
+// Returns a summary object; throws on hard failure.
+async function detectCategoryAliases({ force = false } = {}) {
 
     // The 21 standard categories from migration 050 — these are the
     // canonical destinations the AI can map TO.
@@ -7581,13 +7585,13 @@ router.post('/category-aliases/ai-suggest', express.json(), async (req, res) => 
       .select('id, slug, label, description')
       .order('display_order');
     if (!allCats || allCats.length === 0) {
-      return res.json({ suggested: 0, skipped: 0, message: 'No categories found.' });
+      return { suggested: 0, skipped: 0, message: 'No categories found.' };
     }
 
     const canonicalCats = allCats.filter((c) => STANDARD_SLUGS.has(c.slug));
     const nonCanonicalCats = allCats.filter((c) => !STANDARD_SLUGS.has(c.slug));
     if (nonCanonicalCats.length === 0) {
-      return res.json({ suggested: 0, skipped: 0, message: 'No non-standard categories to map.' });
+      return { suggested: 0, skipped: 0, message: 'No non-standard categories to map.' };
     }
 
     // Skip categories that already have a mapping unless force=true
@@ -7602,21 +7606,26 @@ router.post('/category-aliases/ai-suggest', express.json(), async (req, res) => 
     }
 
     if (toMap.length === 0) {
-      return res.json({ suggested: 0, skipped: nonCanonicalCats.length, message: 'All non-standard categories already have mappings. Use force=true to re-suggest.' });
+      return { suggested: 0, skipped: nonCanonicalCats.length, message: 'All non-standard categories already have mappings. Use force=true to re-suggest.' };
     }
 
-    // Build the prompt for Claude — batch all categories in one call
     const canonicalDescriptions = canonicalCats
       .map((c) => `- ${c.slug}: ${c.label} — ${c.description || '(no description)'}`)
       .join('\n');
-    const toMapJson = toMap.map((c) => ({
-      id: c.id,
-      slug: c.slug,
-      label: c.label,
-      description: c.description || null,
-    }));
 
-    const prompt = `You are mapping non-standard HOA violation categories to their semantic equivalents from a canonical list of 21 standard categories.
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    // Batch the categories. A single call truncates past ~30 categories
+    // (max_tokens) and returns an unclosed JSON array; chunking keeps every
+    // response whole. A bad chunk is skipped, not fatal — important for the
+    // unattended scheduled run.
+    const BATCH = 20;
+    const suggestions = [];
+    for (let start = 0; start < toMap.length; start += BATCH) {
+      const chunk = toMap.slice(start, start + BATCH);
+      const toMapJson = chunk.map((c) => ({ id: c.id, slug: c.slug, label: c.label, description: c.description || null }));
+      const prompt = `You are mapping non-standard HOA violation categories to their semantic equivalents from a canonical list of 21 standard categories.
 
 CANONICAL STANDARD CATEGORIES:
 ${canonicalDescriptions}
@@ -7642,26 +7651,24 @@ Return a JSON array, one entry per non-standard category. Each entry:
 
 Return ONLY the JSON array, no preamble.`;
 
-    const Anthropic = require('@anthropic-ai/sdk');
-    const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const completion = await client.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 4000,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const text = (completion.content && completion.content[0] && completion.content[0].text) || '';
-    // Extract JSON array — Claude usually returns just the array, but be defensive
-    const match = text.match(/\[[\s\S]*\]/);
-    if (!match) {
-      console.error('[category-aliases.ai-suggest] could not extract JSON from model response:', text.slice(0, 500));
-      return res.status(500).json({ error: 'AI returned unparseable response. Check logs.' });
-    }
-    let suggestions;
-    try {
-      suggestions = JSON.parse(match[0]);
-    } catch (e) {
-      return res.status(500).json({ error: 'AI JSON parse failed: ' + e.message });
+      const completion = await client.messages.create({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: prompt }],
+      });
+      let text = (completion.content && completion.content[0] && completion.content[0].text) || '';
+      text = text.replace(/```json\s*/gi, '').replace(/```/g, ''); // strip code fences
+      const match = text.match(/\[[\s\S]*\]/);
+      if (!match) {
+        console.error('[category-aliases.detect] unparseable chunk response:', text.slice(0, 300));
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(match[0]);
+        if (Array.isArray(parsed)) suggestions.push(...parsed);
+      } catch (e) {
+        console.warn('[category-aliases.detect] chunk JSON parse failed:', e.message);
+      }
     }
 
     const slugToId = new Map(canonicalCats.map((c) => [c.slug, c.id]));
@@ -7701,12 +7708,18 @@ Return ONLY the JSON array, no preamble.`;
       });
     }
 
-    res.json({
+    return {
       suggested: inserted,
       considered: toMap.length,
       distinct_categories_returned_null: suggestions.filter((s) => !s.canonical_slug).length,
       written,
-    });
+    };
+}
+
+router.post('/category-aliases/ai-suggest', express.json(), async (req, res) => {
+  try {
+    const summary = await detectCategoryAliases({ force: !!(req.body && req.body.force) });
+    res.json(summary);
   } catch (err) {
     console.error('[category-aliases.ai-suggest]', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -8709,4 +8722,4 @@ router.post('/violations/:violationId/cure-days', express.json(), async (req, re
   }
 });
 
-module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle };
+module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases };
