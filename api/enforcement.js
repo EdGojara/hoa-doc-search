@@ -5810,6 +5810,80 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
   }
 });
 
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:violationId/reduce-stage
+// ---------------------------------------------------------------------------
+// Manual one-step DOWN-stage — the mirror of advance-stage. Used when a case
+// was over-escalated: e.g. a deduped duplicate from the same drive bumped a
+// first occurrence up to Courtesy 2, or the auto-downgrade couldn't act
+// (it refuses superseded / certified rows). Steps current_stage down one
+// conventional level and CLEARS the cure clock so the operator regenerates the
+// correct lower-stage letter. Deliberate staff action; refuses terminal/
+// resolved rows and refuses to go below Courtesy 1.
+//
+// Body (JSON): { override_stage?, note? }
+// ===========================================================================
+router.post('/violations/:violationId/reduce-stage', express.json(), async (req, res) => {
+  try {
+    const violationId = req.params.violationId;
+    if (!violationId) return res.status(400).json({ error: 'violation_id required' });
+
+    const { data: violation, error: vErr } = await supabase
+      .from('violations')
+      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, resolved_at')
+      .eq('id', violationId)
+      .maybeSingle();
+    if (vErr) throw vErr;
+    if (!violation) return res.status(404).json({ error: 'violation_not_found' });
+    if (violation.resolved_at || ['cured', 'closed', 'voided'].includes(violation.current_stage)) {
+      return res.status(409).json({ error: 'violation is resolved/closed; cannot reduce' });
+    }
+
+    // One conventional step down. (Mirror of the advance ladder.)
+    const conventionalPrev = {
+      'fine_assessed':  'certified_209',
+      'certified_209':  'courtesy_2',
+      'courtesy_2':     'courtesy_1',
+    };
+    const prevStage = (req.body && req.body.override_stage) || conventionalPrev[violation.current_stage];
+    if (!prevStage) {
+      return res.status(409).json({ error: `cannot reduce a ${violation.current_stage} violation — already at the first stage` });
+    }
+    const note = (req.body && req.body.note) || null;
+
+    const now = new Date().toISOString();
+    const { error: upErr } = await supabase
+      .from('violations')
+      .update({
+        current_stage: prevStage,
+        current_stage_started_at: now,
+        last_action_at: now,
+        // Clear the higher-stage cure deadline; the corrected lower-stage letter
+        // sets the right one when it's generated.
+        cure_period_ends_at: null,
+      })
+      .eq('id', violationId)
+      .eq('current_stage', violation.current_stage); // optimistic guard against a concurrent change
+    if (upErr) throw upErr;
+
+    // Audit trail on the property timeline (best-effort).
+    try {
+      await supabase.from('interactions').insert({
+        community_id: violation.community_id, property_id: violation.property_id, violation_id: violationId,
+        type: 'observation_note', direction: 'internal',
+        subject: `Stage reduced: ${violation.current_stage} → ${prevStage}`,
+        content: note || 'Operator reduced the enforcement stage (over-escalation correction).',
+        sent_at: now,
+      });
+    } catch (e) { console.warn('[violations/reduce-stage] audit insert failed:', e.message); }
+
+    res.json({ ok: true, previous_stage: violation.current_stage, new_stage: prevStage });
+  } catch (err) {
+    console.error('[violations/reduce-stage] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ===========================================================================
 // GET /api/enforcement/property/:propertyId/violation-summary
 // ---------------------------------------------------------------------------

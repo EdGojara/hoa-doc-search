@@ -17515,6 +17515,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                      ${showQualityActions ? `<button onclick="inspViolationVerify('${v.id}')" title="Mark as verified (full weight)" style="background:#fff; border:1px solid #bbf7d0; color:#166534; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Verify</button>` : ''}
                      ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record" style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
                      ${['courtesy_1','courtesy_2','certified_209'].includes(v.current_stage) ? `<button onclick="inspAdvanceStage('${v.id}','${v.current_stage}')" title="Advance to the next enforcement stage (Courtesy 2 → Certified §209, etc.). Deliberate staff action — you still generate + mail the certified notice; the cure clock starts when it goes out." style="background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↑ Advance</button>` : ''}
+                     ${['courtesy_2','certified_209','fine_assessed'].includes(v.current_stage) ? `<button onclick="inspReduceStage('${v.id}','${v.current_stage}')" title="Reduce to the previous stage (Courtesy 2 → Courtesy 1, Certified → Courtesy 2). Use when a case was over-escalated — e.g. a deduped duplicate bumped a first occurrence up a level. Clears the cure clock; regenerate the lower-stage letter." style="background:#eff6ff; border:1px solid #93c5fd; color:#1e40af; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↓ Reduce</button>` : ''}
                      ${!['cured','closed','voided'].includes(v.current_stage) ? `<button onclick="inspMarkCured('${v.id}')" title="Close this violation (homeowner-confirmed cure, drive-by spot check, or board dismissal). Auto-resets any open repeat in this category back to Courtesy 1." style="background:#dcfce7; border:1px solid #86efac; color:#15803d; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Cure</button>` : ''}
                      ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" style="background:#0B1D34; color:#fff; border:none; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">📄 Letter</button>` : ''}
                    </td>
@@ -18084,6 +18085,29 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       setTimeout(() => alert('✓ Advanced to ' + newStage + '. Generate the letter for the new stage when ready.'), 100);
     } catch (e) {
       alert('Could not advance: ' + e.message);
+    }
+  }
+
+  async function inspReduceStage(violationId, currentStage) {
+    if (!violationId) return;
+    const PREV = { courtesy_2: 'Courtesy 1', certified_209: 'Courtesy 2', fine_assessed: 'Certified §209' };
+    const prevLabel = PREV[currentStage] || 'the previous stage';
+    const note = prompt('Reduce this violation back to ' + prevLabel + '?\n\nUse this when it was over-escalated — e.g. a duplicate from the same drive bumped a first occurrence up a level.\n\nOptional note (why it is being reduced):', '');
+    if (note === null) return; // cancelled
+    try {
+      const r = await window._authFetch(`/api/enforcement/violations/${violationId}/reduce-stage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: note || undefined }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const newStage = (j.new_stage || prevLabel).toString().replace(/_/g, ' ');
+      if (typeof inspPDCurrentPropertyId !== 'undefined' && inspPDCurrentPropertyId) {
+        await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+      }
+      setTimeout(() => alert('✓ Reduced to ' + newStage + '. The cure clock was cleared — regenerate the lower-stage letter when ready.'), 100);
+    } catch (e) {
+      alert('Could not reduce: ' + e.message);
     }
   }
 
