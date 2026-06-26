@@ -6476,6 +6476,23 @@
 
   function hpRenderInteractions(slot, propertyId, interactions) {
     const todayIso = new Date().toISOString();
+    // Same disposition treatment as the enforcement property-detail view — a
+    // letter draft must not read as if it was mailed. (Shares the endpoint, so
+    // status/printed_at are present.)
+    const _isLetterType = (t) => t && (t.startsWith('letter_') || t === 'ai_draft');
+    const interactionDisposition = (i) => {
+      const method = escapeHtml((i.delivery_method || '').replace(/_/g, ' '));
+      if (!_isLetterType(i.type)) return method || '—';
+      const st = (i.status || '').toLowerCase();
+      if (st === 'draft') return `<span style="display:inline-block; background:#fef3c7; color:#92400e; border:1px solid #fcd34d; padding:1px 7px; border-radius:10px; font-size:10px; font-weight:700; white-space:nowrap;">✎ Draft — not mailed</span>`;
+      if (['rejected', 'discarded', 'voided', 'cancelled'].includes(st)) return `<span style="display:inline-block; background:#f1f5f9; color:#64748b; border:1px solid #e2e8f0; padding:1px 7px; border-radius:10px; font-size:10px; font-weight:700;">✕ ${escapeHtml(st)}</span>`;
+      if (i.printed_at || st === 'sent' || st === 'mailed') {
+        const when = i.printed_at || i.sent_at;
+        const lbl = (i.delivery_method === 'certified_mail') ? '📬 certified mail' : `📬 ${method || 'mailed'}`;
+        return `<span style="color:#15803d; font-weight:600; white-space:nowrap;">${lbl}</span>${when ? `<div style="color:#94a3b8; font-size:10px;">${new Date(when).toLocaleDateString()}</div>` : ''}`;
+      }
+      return method || '—';
+    };
     const followUpBadge = (i) => {
       if (!i.follow_up_due_at) return '';
       const overdue = i.follow_up_due_at < todayIso;
@@ -6504,14 +6521,14 @@
            <tbody>
              ${interactions.slice(0, 24).map((i) => `
                <tr style="border-bottom:1px solid #f1f5f9; vertical-align:top;">
-                 <td style="padding:8px;">${i.sent_at ? new Date(i.sent_at).toLocaleDateString() : '—'}</td>
+                 <td style="padding:8px;">${(i.sent_at || i.created_at) ? new Date(i.sent_at || i.created_at).toLocaleDateString() : '—'}</td>
                  <td style="padding:8px;">${escapeHtml((i.type || '').replace(/_/g, ' '))}${sourceTag(i.source)}</td>
                  <td style="padding:8px; color:#475569;">
                    <div>${escapeHtml(i.subject || '—')}${followUpBadge(i)}</div>
                    ${i.preview ? `<div style="color:#64748b; font-size:11.5px; margin-top:3px; white-space:pre-wrap;">${escapeHtml(i.preview)}</div>` : ''}
                    ${chips(i)}
                  </td>
-                 <td style="padding:8px; color:#64748b;">${escapeHtml((i.delivery_method || '').replace(/_/g, ' '))}</td>
+                 <td style="padding:8px; color:#64748b;">${interactionDisposition(i)}</td>
                </tr>`).join('')}
            </tbody>
          </table>`;
@@ -17546,6 +17563,28 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // drag-dropped email files render with clickable attachment chips and
     // a follow-up indicator. Ed 2026-06-16.
     const isLetterType = (t) => t && (t.startsWith('letter_') || t === 'ai_draft');
+    // Disposition cell for the Method column. A letter has a lifecycle —
+    // draft → mailed | rejected — and showing only "first class mail" made
+    // an unsent DRAFT read as if it had gone out. Make the real state explicit.
+    const interactionDisposition = (i) => {
+      const method = escapeHtml((i.delivery_method || '').replace(/_/g, ' '));
+      if (!isLetterType(i.type)) return method || '—';
+      const st = (i.status || '').toLowerCase();
+      if (st === 'draft') {
+        return `<span style="display:inline-block; background:#fef3c7; color:#92400e; border:1px solid #fcd34d; padding:1px 7px; border-radius:10px; font-size:10px; font-weight:700; white-space:nowrap;">✎ Draft — not mailed</span>`;
+      }
+      if (['rejected', 'discarded', 'voided', 'cancelled'].includes(st)) {
+        return `<span style="display:inline-block; background:#f1f5f9; color:#64748b; border:1px solid #e2e8f0; padding:1px 7px; border-radius:10px; font-size:10px; font-weight:700;">✕ ${escapeHtml(st)}</span>`;
+      }
+      // Actually mailed (printed via the mail queue, or marked sent).
+      if (i.printed_at || st === 'sent' || st === 'mailed') {
+        const when = i.printed_at || i.sent_at;
+        const lbl = (i.delivery_method === 'certified_mail') ? '📬 certified mail' : `📬 ${method || 'mailed'}`;
+        return `<span style="color:#15803d; font-weight:600; white-space:nowrap;">${lbl}</span>${when ? `<div style="color:#94a3b8; font-size:10px;">${new Date(when).toLocaleDateString()}</div>` : ''}`;
+      }
+      // Status not fetched / unknown — degrade to the raw method (old behavior).
+      return method || '—';
+    };
     const todayIso = new Date().toISOString();
     const followUpBadge = (i) => {
       if (!i.follow_up_due_at) return '';
@@ -17578,14 +17617,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
            <tbody>
              ${d.interactions.slice(0, 24).map((i) => `
                <tr style="border-bottom:1px solid #f1f5f9; vertical-align:top;" data-interaction-id="${i.id}">
-                 <td style="padding:8px;">${i.sent_at ? new Date(i.sent_at).toLocaleDateString() : '—'}</td>
+                 <td style="padding:8px;">${(i.sent_at || i.created_at) ? new Date(i.sent_at || i.created_at).toLocaleDateString() : '—'}</td>
                  <td style="padding:8px;">${escapeHtml((i.type || '').replace(/_/g, ' '))}${sourceBadgeI(i.source)}</td>
                  <td style="padding:8px; color:#475569;">
                    <div>${escapeHtml(i.subject || '—')}${followUpBadge(i)}</div>
                    ${i.preview ? `<div style="color:#64748b; font-size:11.5px; margin-top:3px; white-space:pre-wrap;">${escapeHtml(i.preview)}</div>` : ''}
                    ${attachmentChips(i)}
                  </td>
-                 <td style="padding:8px; color:#64748b;">${escapeHtml((i.delivery_method || '').replace(/_/g, ' '))}</td>
+                 <td style="padding:8px; color:#64748b;">${interactionDisposition(i)}</td>
                  <td style="padding:8px;">
                    ${isLetterType(i.type)
                      ? `<a href="#" onclick="event.preventDefault(); inspEvidenceToggle('${i.id}')" style="color:#0B1D34; font-size:11px; font-weight:600; text-decoration:none;">📡 Show trail</a>`

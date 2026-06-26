@@ -2097,9 +2097,9 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
       // follow_up_due_at so the staff timeline can render dropped email
       // files and overdue follow-up indicators.
       supabase.from('interactions')
-        .select('id, type, direction, subject, sent_at, delivery_method, violation_id, content, attachments, follow_up_due_at, source, notes')
+        .select('id, type, direction, subject, sent_at, delivery_method, violation_id, content, attachments, follow_up_due_at, source, notes, status, printed_at, created_at')
         .eq('property_id', propertyId)
-        .order('sent_at', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(50),
       // Inspections that touched this property (via observations)
       supabase.from('property_observations')
