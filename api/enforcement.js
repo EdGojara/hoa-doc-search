@@ -3928,13 +3928,24 @@ router.post('/violations/:id/resolve', express.json(), async (req, res) => {
       ? 'closed'
       : 'cured';
 
+    // violations.resolved_via is CHECK-constrained to ('cured','fine','withdrawn',
+    // 'voided') (migration 050). Map the endpoint's granular reason onto that set;
+    // the specific reason rides along in resolved_notes so nothing is lost.
+    const RESOLVED_VIA_DB = {
+      manual_cured: 'cured',
+      manual_owner_confirmed: 'cured',
+      manual_board_dismissed: 'withdrawn',
+      manual_other: 'withdrawn',
+    };
+    const resolvedViaDb = RESOLVED_VIA_DB[resolvedVia] || 'cured';
+
     const { error: uErr } = await supabase
       .from('violations')
       .update({
         current_stage: targetStage,
-        resolved_via: resolvedVia,
+        resolved_via: resolvedViaDb,
         resolved_at: new Date().toISOString(),
-        resolved_notes: resolvedNotes,
+        resolved_notes: `[${resolvedVia}] ${resolvedNotes}`,
       })
       .eq('id', violationId);
     if (uErr) return res.status(500).json({ error: uErr.message });
