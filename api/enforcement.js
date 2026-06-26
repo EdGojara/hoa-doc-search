@@ -1295,7 +1295,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     const { data: violation, error: vErr } = await supabase
       .from('violations')
       .select(`
-        id, property_id, community_id, current_stage, cure_period_ends_at,
+        id, property_id, community_id, current_stage, cure_period_ends_at, cure_days_override,
         opened_at, opened_from_observation_id, primary_category_id, board_priority_at_open,
         enforcement_categories ( slug, label, description ),
         communities ( name )
@@ -1647,6 +1647,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         category_description: violation.enforcement_categories && violation.enforcement_categories.description,
         board_priority_at_open: violation.board_priority_at_open,
       },
+      cure_days_override: violation.cure_days_override || null, // migration 247 — operator grace override
       property: {
         street_address: pRow.street_address,
         unit:           pRow.unit,
@@ -1804,7 +1805,7 @@ router.get('/drafts', async (req, res) => {
 
     const [vRes, pRes, oRes] = await Promise.all([
       supabase.from('violations')
-        .select('id, primary_category_id, current_stage, cure_period_ends_at, board_priority_at_open, enforcement_categories(label)')
+        .select('id, primary_category_id, current_stage, cure_period_ends_at, cure_days_override, board_priority_at_open, enforcement_categories(label)')
         .in('id', violationIds.length ? violationIds : ['00000000-0000-0000-0000-000000000000']),
       supabase.from('v_current_property_owners')
         .select('property_id, street_address, unit, city, owner_name, owner_mailing_address')
@@ -1883,6 +1884,7 @@ router.get('/drafts', async (req, res) => {
         violation: v ? {
           current_stage: v.current_stage,
           cure_period_ends_at: v.cure_period_ends_at,
+          cure_days_override: v.cure_days_override || null,
           board_priority_at_open: v.board_priority_at_open,
           category_label: v.enforcement_categories && v.enforcement_categories.label,
         } : null,
@@ -2087,7 +2089,7 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
 
         const [vRes, oRes, pRes, cRes] = await Promise.all([
           supabase.from('violations')
-            .select('id, primary_category_id, current_stage, cure_period_ends_at, opened_at, board_priority_at_open, opened_from_observation_id, enforcement_categories(slug, label, description)')
+            .select('id, primary_category_id, current_stage, cure_period_ends_at, cure_days_override, opened_at, board_priority_at_open, opened_from_observation_id, enforcement_categories(slug, label, description)')
             .in('id', violationIds.length ? violationIds : ['00000000-0000-0000-0000-000000000000']),
           supabase.from('property_observations')
             .select('id, ai_description, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
@@ -2229,6 +2231,10 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
         // reflects whatever the operator saved for this stage.
         const { loadOverrides: _loadCopyOverrides } = require('../lib/enforcement/letter_copy');
         const _bundleCopyOverrides = await _loadCopyOverrides(supabase, communityIdForGroup, stage);
+        // Operator cure-days override (migration 247) — most grace wins for a bundle.
+        const _bundleCureOverride = orderedGroup
+          .map((d) => Number((vById.get(d.violation_id) || {}).cure_days_override) || 0)
+          .reduce((a, b) => Math.max(a, b), 0) || null;
         const pdfBuffer = await renderViolationLetterBundlePdf({
           property: {
             street_address: pRow.street_address, unit: pRow.unit,
@@ -2237,6 +2243,7 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
           owner: { full_name: pRow.owner_name, mailing_address: pRow.owner_mailing_address },
           community,
           stage,
+          cure_days_override: _bundleCureOverride,
           letter_date: new Date(), // placeholder — Mail Queue lock-and-batch re-stamps with postmark
           wide_photo_buffer: widePhotoBuffer,
           violations: violationsCtx,
@@ -2784,7 +2791,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         // Fetch violation + joined data needed for regeneration
         const { data: vio } = await supabase
           .from('violations')
-          .select('id, property_id, community_id, current_stage, primary_category_id, opened_at, board_priority_at_open, opened_from_observation_id')
+          .select('id, property_id, community_id, current_stage, primary_category_id, opened_at, board_priority_at_open, opened_from_observation_id, cure_days_override')
           .eq('id', L.violation_id)
           .maybeSingle();
         if (!vio) { skipped.push({ id: L.id, reason: 'violation not found' }); continue; }
@@ -2895,6 +2902,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             category_label: catRow && catRow.label,
             board_priority_at_open: vio.board_priority_at_open,
           },
+          cure_days_override: vio.cure_days_override || null, // migration 247 — survives mailing
           property: {
             street_address: pRow.street_address, unit: pRow.unit,
             city: pRow.city, state: pRow.state, zip: pRow.zip, lot_number: pRow.lot_number,
@@ -8472,6 +8480,46 @@ router.get('/property/:property_id/cert-status', async (req, res) => {
     res.json({ ok: true, certified_open: certs.length > 0, count: certs.length, certs });
   } catch (err) {
     console.error('[enforcement.cert-status]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:violationId/cure-days   { days }
+// Operator override for the cure-window length (migration 247). Set a larger
+// number to grant extra grace (e.g. 30 days when mailing late); pass null/blank
+// to clear and fall back to the per-community stage default. Regenerates the
+// draft letter so the PDF reflects the new window. Cure still runs from the
+// postmark date — the override only changes the day count.
+// ---------------------------------------------------------------------------
+router.post('/violations/:violationId/cure-days', express.json(), async (req, res) => {
+  try {
+    const violationId = req.params.violationId;
+    if (!violationId) return res.status(400).json({ error: 'violation_id required' });
+    const raw = req.body ? req.body.days : null;
+    const days = (raw === null || raw === '' || raw === undefined) ? null : Math.round(Number(raw));
+    if (days !== null && (!Number.isFinite(days) || days < 1 || days > 180)) {
+      return res.status(400).json({ error: 'days must be 1-180 (or null to clear)' });
+    }
+    const { data: v } = await supabase
+      .from('violations').select('id, property_id, community_id, current_stage').eq('id', violationId).maybeSingle();
+    if (!v) return res.status(404).json({ error: 'violation_not_found' });
+    if (['cured', 'closed', 'voided'].includes(v.current_stage)) {
+      return res.status(409).json({ error: `violation is ${v.current_stage}; nothing to send` });
+    }
+    // Update the override + reflect it on the draft "cure by" display. The real
+    // cure date is re-stamped to (postmark + days) when the batch is mailed.
+    const upd = { cure_days_override: days };
+    if (days !== null) upd.cure_period_ends_at = new Date(Date.now() + days * 86400000).toISOString();
+    const { error: uErr } = await supabase.from('violations').update(upd).eq('id', violationId);
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    // Regenerate the draft letter(s) for this property so the PDF shows the new window.
+    let regenerated = null;
+    try { regenerated = await runAutoBundle({ communityId: v.community_id, force: true, propertyId: v.property_id }); }
+    catch (e) { console.warn('[enforcement.cure-days] regenerate failed:', e.message); }
+    res.json({ ok: true, violation_id: violationId, cure_days_override: days, regenerated });
+  } catch (err) {
+    console.error('[enforcement.cure-days]', err);
     res.status(500).json({ error: err.message });
   }
 });

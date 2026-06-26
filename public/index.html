@@ -22950,7 +22950,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           ${isCertified ? `<span style="background:#fecaca; color:#7f1d1d; padding:1px 7px; border-radius:99px; font-size:10px; font-weight:700; letter-spacing:0.05em;">CERTIFIED MAIL</span>` : ''}
         </div>
         <div style="font-size:12px; color:#475569; margin-bottom:3px;">→ ${ownerLine}</div>
-        <div style="font-size:12px; color:#0B1D34; margin-bottom:3px;">${escapeHtml(d.violation && d.violation.category_label || '—')} · cure by ${cureDate}</div>
+        <div style="font-size:12px; color:#0B1D34; margin-bottom:3px;">${escapeHtml(d.violation && d.violation.category_label || '—')} · cure by ${cureDate}${d.violation && d.violation.cure_days_override ? ` <span style="background:#fef9c3; color:#854d0e; padding:0 6px; border-radius:99px; font-size:10px; font-weight:700;">${d.violation.cure_days_override}-day grace</span>` : ''}${d.violation_id ? ` <button onclick="inspDraftsEditCureDays('${d.violation_id}','${(d.violation && d.violation.cure_days_override) || ''}')" title="Set the cure window in days (counted from the mailing date) — e.g. grant extra grace when sending late. The certified clock still runs from the postmark." style="background:none; border:none; color:#2563eb; cursor:pointer; font-size:11px; padding:0 2px; text-decoration:underline;">✎ cure days</button>` : ''}</div>
         ${d.observation && d.observation.ai_description ? `<div style="font-size:11.5px; color:#64748b; font-style:italic; margin-bottom:5px;">"${escapeHtml(d.observation.ai_description)}"</div>` : ''}
         <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
           ${confidence ? `<span style="color:${confColor}; font-weight:600;">Confidence: ${escapeHtml(confidence)}</span>` : ''}
@@ -22964,6 +22964,40 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </div>
       </div>
     </div>`;
+  }
+
+  // Operator cure-window override (migration 247). Lets staff grant extra grace
+  // (e.g. 30 days) when sending late. Days count from the mailing/postmark date;
+  // the certified §209 clock is unaffected. Regenerates the letter.
+  async function inspDraftsEditCureDays(violationId, currentOverride) {
+    if (!violationId) return;
+    const input = prompt(
+      'Cure window — number of days the homeowner has to cure, counted from the MAILING (postmark) date.\n\n' +
+      'Standard is 20 (courtesy) / 30 (certified). Set a larger number to grant extra grace when sending late.\n\n' +
+      'Enter days (1–180), or leave blank to clear the override and use the standard window:',
+      currentOverride || ''
+    );
+    if (input === null) return; // cancelled
+    const s = String(input).trim();
+    const days = s === '' ? null : parseInt(s, 10);
+    if (days !== null && (!Number.isInteger(days) || days < 1 || days > 180)) {
+      alert('Enter a whole number of days between 1 and 180 (or leave blank to clear).');
+      return;
+    }
+    try {
+      const r = await window._authFetch('/api/enforcement/violations/' + violationId + '/cure-days', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (typeof inspDraftsLoad === 'function') await inspDraftsLoad();
+      setTimeout(() => alert(days === null
+        ? '✓ Cure override cleared — back to the standard window.'
+        : '✓ Cure window set to ' + days + ' days from the mailing date. Letter regenerated.'), 100);
+    } catch (e) {
+      alert('Could not update the cure window: ' + e.message);
+    }
   }
 
   // Fold a re-flagged draft into an existing open violation on the same
