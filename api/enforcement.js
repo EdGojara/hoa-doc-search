@@ -3474,10 +3474,25 @@ router.post('/violations/:id/correct', express.json(), async (req, res) => {
       .single();
     if (corrErr) return res.status(500).json({ error: 'failed to record correction: ' + corrErr.message });
 
+    // Superseding/voiding a violation removes it from its category's prior count
+    // — a still-open sibling may now be over-staged (e.g. two found on one drive,
+    // one corrected away). Re-stage open siblings down to their correct stage.
+    // Same downgrade-only, certified-safe cascade used on cure. Best-effort.
+    let restaged = [];
+    try {
+      restaged = await _restageCategoryOpenSiblings(
+        original.property_id, original.primary_category_id, originalId,
+        `Sibling corrected (${body.correction_type})`
+      );
+    } catch (e) {
+      console.warn('[violations.correct] sibling re-stage failed (correction still recorded):', e.message);
+    }
+
     res.json({
       ok: true,
       correction,
       replacement_violation_id: replacementId,
+      restaged,
     });
   } catch (err) {
     console.error('[violations.correct]', err);
