@@ -2465,7 +2465,7 @@ router.get('/mail-queue/summary', async (req, res) => {
     if (communityId) q = q.eq('community_id', communityId);
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
-    const summary = { first_class_mail: 0, certified_mail: 0, by_community: {} };
+    const summary = { first_class_mail: 0, certified_mail: 0, locked_first_class: 0, locked_certified: 0, by_community: {} };
     (data || []).forEach((row) => {
       if (row.delivery_method === 'first_class_mail') summary.first_class_mail += 1;
       if (row.delivery_method === 'certified_mail')   summary.certified_mail   += 1;
@@ -2474,9 +2474,116 @@ router.get('/mail-queue/summary', async (req, res) => {
       if (row.delivery_method === 'first_class_mail') summary.by_community[cName].first_class += 1;
       if (row.delivery_method === 'certified_mail')   summary.by_community[cName].certified  += 1;
     });
+    // LOCKED = postmarked + PDF generated but not yet confirmed mailed. These
+    // stay visible (and re-downloadable) so a missed/failed download can't
+    // strand a letter. (Falls back gracefully if migration 248 isn't applied.)
+    try {
+      let lq = supabase
+        .from('interactions')
+        .select('id, delivery_method')
+        .in('type', letterTypes)
+        .not('printed_at', 'is', null)
+        .is('mailed_at', null);
+      if (communityId) lq = lq.eq('community_id', communityId);
+      const { data: locked } = await lq;
+      (locked || []).forEach((row) => {
+        if (row.delivery_method === 'first_class_mail') summary.locked_first_class += 1;
+        if (row.delivery_method === 'certified_mail')   summary.locked_certified   += 1;
+      });
+    } catch (_) { /* mailed_at column not present yet — locked counts stay 0 */ }
     res.json({ summary, total_pending: (data || []).length });
   } catch (err) {
     console.error('[mail-queue.summary]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/mail-queue/redownload
+//   Re-merge the stored PDFs of LOCKED letters (printed_at set, mailed_at NULL)
+//   into one combined PDF WITHOUT changing any state. Recovers a missed/failed
+//   download — a locked batch can be re-downloaded any number of times until
+//   it's confirmed mailed, so a download can never strand a letter again.
+// ---------------------------------------------------------------------------
+const _MAIL_LETTER_TYPES = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
+router.post('/mail-queue/redownload', express.json(), async (req, res) => {
+  try {
+    const deliveryMethod = (req.body && req.body.delivery_method) || 'first_class_mail';
+    const communityId = req.body && req.body.community_id;
+    let q = supabase
+      .from('interactions')
+      .select('id, content, created_at')
+      .in('type', _MAIL_LETTER_TYPES)
+      .eq('delivery_method', deliveryMethod)
+      .not('printed_at', 'is', null)
+      .is('mailed_at', null)
+      .order('created_at', { ascending: true });
+    if (communityId) q = q.eq('community_id', communityId);
+    const { data: letters, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    if (!letters || !letters.length) {
+      return res.status(404).json({ error: 'No locked letters to re-download — they may already be confirmed mailed.' });
+    }
+    const { PDFDocument } = require('pdf-lib');
+    const out = await PDFDocument.create();
+    let merged = 0;
+    for (const L of letters) {
+      if (!L.content) continue;
+      try {
+        const { data: blob } = await supabase.storage.from('violation-letters').download(L.content);
+        if (!blob) continue;
+        const src = await PDFDocument.load(Buffer.from(await blob.arrayBuffer()));
+        const pages = await out.copyPages(src, src.getPageIndices());
+        pages.forEach((p) => out.addPage(p));
+        merged++;
+      } catch (e) { console.warn('[mail-queue.redownload] skip', L.id, e.message); }
+    }
+    if (!merged) return res.status(500).json({ error: 'Could not assemble any letter PDFs from storage.' });
+    const mergedBytes = await out.save();
+    const methodLabel = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="bedrock-mail-batch-${methodLabel}-redownload-${stamp}.pdf"`);
+    res.setHeader('X-Bedrock-Included', merged);
+    res.end(Buffer.from(mergedBytes));
+  } catch (err) {
+    console.error('[mail-queue.redownload]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/mail-queue/confirm-mailed
+//   Second step of the two-step flow: after the locked batch is printed and
+//   physically mailed, the operator confirms it. Sets mailed_at on every LOCKED
+//   letter (printed_at set, mailed_at NULL) for the delivery method so they
+//   leave the "awaiting confirmation" section. Nothing is deleted — confirmed
+//   letters remain in the system (sent history), re-viewable.
+// ---------------------------------------------------------------------------
+router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
+  try {
+    const deliveryMethod = (req.body && req.body.delivery_method) || 'first_class_mail';
+    const communityId = req.body && req.body.community_id;
+    let q = supabase
+      .from('interactions')
+      .select('id')
+      .in('type', _MAIL_LETTER_TYPES)
+      .eq('delivery_method', deliveryMethod)
+      .not('printed_at', 'is', null)
+      .is('mailed_at', null);
+    if (communityId) q = q.eq('community_id', communityId);
+    const { data: letters, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    if (!letters || !letters.length) return res.json({ confirmed: 0 });
+    const now = new Date().toISOString();
+    const { error: uErr } = await supabase
+      .from('interactions')
+      .update({ mailed_at: now, status: 'sent', sent_at: now })
+      .in('id', letters.map((l) => l.id));
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    res.json({ confirmed: letters.length });
+  } catch (err) {
+    console.error('[mail-queue.confirm-mailed]', err);
     res.status(500).json({ error: err.message });
   }
 });

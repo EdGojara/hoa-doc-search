@@ -23892,7 +23892,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (!wrap) return;
     const fc = summary.first_class_mail || 0;
     const cm = summary.certified_mail || 0;
-    if (fc === 0 && cm === 0) {
+    const lfc = summary.locked_first_class || 0;
+    const lcm = summary.locked_certified || 0;
+    if (fc === 0 && cm === 0 && lfc === 0 && lcm === 0) {
       wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">No letters waiting to print. Approve drafts in the Drafts queue above to populate.</div>';
       return;
     }
@@ -23947,6 +23949,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </button>
         </div>
       </div>
+      ${(lfc || lcm) ? `
+      <div style="margin-top:12px; padding:12px; border:1.5px solid #fbbf24; border-radius:10px; background:#fffbeb;">
+        <div style="font-size:12px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">🔒 Locked — printed, awaiting mail confirmation</div>
+        <div style="font-size:11.5px; color:#78350f; margin-bottom:9px;">These were locked + postmarked but not yet confirmed mailed. Re-download as many times as you need — they will NOT disappear until you confirm they're in the mail.</div>
+        ${lfc ? `<div style="display:flex; gap:8px; align-items:center; margin-bottom:7px; flex-wrap:wrap;">
+          <span style="font-size:12.5px; font-weight:600; color:#0B1D34; min-width:110px;">📨 First-class: ${lfc}</span>
+          <button onclick="inspMailQueueRedownload('first_class_mail')" style="flex:1; min-width:130px; padding:7px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⬇ Re-download PDF</button>
+          <button onclick="inspMailQueueConfirmMailed('first_class_mail')" style="flex:1; min-width:130px; padding:7px; background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✓ Confirm mailed</button>
+        </div>` : ''}
+        ${lcm ? `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <span style="font-size:12.5px; font-weight:600; color:#7f1d1d; min-width:110px;">⚠ Certified: ${lcm}</span>
+          <button onclick="inspMailQueueRedownload('certified_mail')" style="flex:1; min-width:130px; padding:7px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⬇ Re-download PDF</button>
+          <button onclick="inspMailQueueConfirmMailed('certified_mail')" style="flex:1; min-width:130px; padding:7px; background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✓ Confirm mailed</button>
+        </div>` : ''}
+      </div>` : ''}
       ${byCommHtml ? `<div style="margin-top:12px; padding-top:10px; border-top:1px solid #e2e8f0;"><div style="font-size:11px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:3px;">By community</div>${byCommHtml}</div>` : ''}
       <div style="margin-top:12px; padding:8px 10px; background:#f0f9ff; border:1px solid #93c5fd; border-radius:6px; font-size:11.5px; color:#1e40af;">
         🔒 <strong>Lock dates + print</strong> regenerates each letter with today's date as the postmark and recalculates every cure deadline from today. Required for certified §209 letters under Tex. Prop. Code §209.006 — the cure clock legally starts at mailing. The "skip lock" option exists only for letters where dates were already locked in a prior session.
@@ -23960,6 +23977,49 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div id="inspMailQueueDetails" style="display:none; margin-top:10px;"></div>
     `;
   }
+
+  // Re-download a LOCKED batch (printed + postmarked but not yet confirmed
+  // mailed). Re-merges the stored PDFs without changing any state, so a
+  // missed/failed download can always be recovered.
+  async function inspMailQueueRedownload(deliveryMethod) {
+    const label = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
+    try {
+      const r = await window._authFetch('/api/enforcement/mail-queue/redownload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delivery_method: deliveryMethod }),
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
+      const blob = await r.blob();
+      const included = r.headers.get('X-Bedrock-Included');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bedrock-mail-batch-${label}-redownload-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setTimeout(() => alert(`✓ Re-downloaded ${included || ''} letter${included == '1' ? '' : 's'}. Check your Downloads folder. They stay in the queue until you Confirm mailed.`), 200);
+    } catch (e) { alert('Re-download failed: ' + e.message); }
+  }
+  window.inspMailQueueRedownload = inspMailQueueRedownload;
+
+  // Confirm a locked batch was physically printed + mailed. Sets mailed_at so
+  // it leaves "awaiting confirmation" — nothing is deleted; it stays as sent
+  // history.
+  async function inspMailQueueConfirmMailed(deliveryMethod) {
+    const label = deliveryMethod === 'certified_mail' ? 'certified' : 'first-class';
+    if (!confirm(`Confirm the ${label} batch was printed and physically mailed?\n\nThis marks them mailed and clears them from "awaiting confirmation." They stay in the system as sent history and can still be reviewed. Only do this once they're actually in the mail.`)) return;
+    try {
+      const r = await window._authFetch('/api/enforcement/mail-queue/confirm-mailed', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delivery_method: deliveryMethod }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      alert(`✓ ${j.confirmed} letter${j.confirmed === 1 ? '' : 's'} confirmed mailed.`);
+      await inspMailQueueLoad();
+    } catch (e) { alert('Confirm failed: ' + e.message); }
+  }
+  window.inspMailQueueConfirmMailed = inspMailQueueConfirmMailed;
 
   // Send letters via Lob — Lob prints + mails + tracks. Bedrock never
   // touches the physical letter. Works for BOTH certified (with tracking +
