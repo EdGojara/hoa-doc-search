@@ -723,7 +723,19 @@ app.get('/', (req, res, next) => {
   return next();
 });
 
-app.use(express.static('public'));
+// Static assets. HTML files (the staff app, portal pages) get `no-cache` so the
+// browser MUST revalidate against the server before reusing a copy — otherwise
+// a deploy ships but operators keep seeing the old page until a hard-refresh
+// (the recurring "I deployed but the UI is stale" trap). Revalidation is cheap:
+// unchanged files come back 304 via etag. Fingerprinted/static assets (images,
+// css) keep express.static's default caching.
+app.use(express.static('public', {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
 
 // ----------------------------------------------------------------------------
 // Short-URL redirect for owner-facing form downloads.
