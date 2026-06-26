@@ -5747,17 +5747,28 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
       || 'other';
     const note = (req.body && req.body.note) || null;
 
-    // Update the violation row
+    // Update the violation row. (This table has no last_action_at / notes
+    // columns — the note rides on an audit interaction below.)
+    const nowTs = new Date().toISOString();
     const { error: upErr } = await supabase
       .from('violations')
       .update({
         current_stage: nextStage,
-        current_stage_started_at: new Date().toISOString(),
-        last_action_at: new Date().toISOString(),
-        notes: note ? `${note}\n---\n(previous notes preserved on history table)` : undefined,
+        current_stage_started_at: nowTs,
       })
       .eq('id', violationId);
     if (upErr) throw upErr;
+
+    // Audit trail on the property timeline (best-effort).
+    try {
+      await supabase.from('interactions').insert({
+        community_id: violation.community_id, property_id: violation.property_id, violation_id: violationId,
+        type: 'observation_note', direction: 'internal',
+        subject: `Stage advanced: ${violation.current_stage} → ${nextStage}`,
+        content: note || 'Operator advanced the enforcement stage.',
+        sent_at: nowTs,
+      });
+    } catch (e) { console.warn('[violations/advance-stage] audit insert failed:', e.message); }
 
     // Optionally record the new letter at the same time
     let letterResult = null;
@@ -5857,7 +5868,6 @@ router.post('/violations/:violationId/reduce-stage', express.json(), async (req,
       .update({
         current_stage: prevStage,
         current_stage_started_at: now,
-        last_action_at: now,
         // Clear the higher-stage cure deadline; the corrected lower-stage letter
         // sets the right one when it's generated.
         cure_period_ends_at: null,
@@ -5899,8 +5909,8 @@ router.get('/property/:propertyId/violation-summary', async (req, res) => {
       .select(`
         id, property_id, community_id, primary_category_id,
         current_stage, current_stage_started_at,
-        opened_at, last_action_at, resolved_at, resolved_via,
-        source, confidence_weight, summary
+        opened_at, resolved_at, resolved_via,
+        source, confidence_weight
       `)
       .eq('property_id', propertyId)
       .order('opened_at', { ascending: false })
