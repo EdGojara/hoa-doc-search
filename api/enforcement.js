@@ -3457,31 +3457,62 @@ router.post('/violations/:id/correct', express.json(), async (req, res) => {
       .maybeSingle();
     if (oErr || !original) return res.status(404).json({ error: 'violation not found' });
 
-    // Optionally create a replacement violation
+    // Optionally create a replacement violation. BUT if the property already
+    // has an OPEN case in the target category, FOLD into that one instead of
+    // opening a parallel violation (Ed: reclassifying into an existing category
+    // must not create a conflict). Escalating up stays the deliberate Advance
+    // check; we only re-stage the folded case DOWN below if it's now over-staged.
     let replacementId = null;
+    let foldedIntoExisting = false;
     if (body.replacement && (body.correction_type === 'reclassified' ||
                               body.correction_type === 'wrong_property' ||
                               body.correction_type === 'reissued')) {
       const r = body.replacement;
-      const { data: created, error: cErr } = await supabase
-        .from('violations')
-        .insert({
-          property_id:         r.property_id || original.property_id,
-          community_id:        r.community_id || original.community_id,
-          primary_category_id: r.primary_category_id || original.primary_category_id,
-          board_priority_at_open: r.board_priority_at_open || original.board_priority_at_open,
-          current_stage:       r.current_stage || original.current_stage,
-          opened_at:           r.opened_at || original.opened_at,
-          opened_from_observation_id: original.opened_from_observation_id,
-          source:              'manual_entry',
-          confidence_weight:   1.0,
-          quality_status:      'verified',
-          review_notes:        `Replacement for corrected violation ${originalId}. Reason: ${body.reason}`,
-        })
+      const newPropId = r.property_id || original.property_id;
+      const newCommId = r.community_id || original.community_id;
+      const newCatId = r.primary_category_id || original.primary_category_id;
+      const { data: existingOpen } = await supabase.from('violations')
         .select('id')
-        .single();
-      if (cErr) return res.status(500).json({ error: 'failed to create replacement: ' + cErr.message });
-      replacementId = created.id;
+        .eq('property_id', newPropId)
+        .eq('primary_category_id', newCatId)
+        .neq('id', originalId)
+        .not('current_stage', 'in', '(cured,closed,voided)')
+        .neq('quality_status', 'superseded')
+        .order('opened_at', { ascending: false })
+        .limit(1);
+      if (existingOpen && existingOpen.length) {
+        replacementId = existingOpen[0].id;
+        foldedIntoExisting = true;
+        try {
+          await supabase.from('interactions').insert({
+            community_id: newCommId, property_id: newPropId, violation_id: replacementId,
+            type: 'observation_note', direction: 'internal',
+            subject: 'Reclassified into existing open case',
+            content: `Violation ${originalId} reclassified (${body.correction_type}) into a category that already had an open case — folded here instead of opening a parallel violation. Reason: ${body.reason}`,
+            sent_at: new Date().toISOString(),
+          });
+        } catch (_) { /* note is best-effort */ }
+      } else {
+        const { data: created, error: cErr } = await supabase
+          .from('violations')
+          .insert({
+            property_id:         newPropId,
+            community_id:        newCommId,
+            primary_category_id: newCatId,
+            board_priority_at_open: r.board_priority_at_open || original.board_priority_at_open,
+            current_stage:       r.current_stage || original.current_stage,
+            opened_at:           r.opened_at || original.opened_at,
+            opened_from_observation_id: original.opened_from_observation_id,
+            source:              'manual_entry',
+            confidence_weight:   1.0,
+            quality_status:      'verified',
+            review_notes:        `Replacement for corrected violation ${originalId}. Reason: ${body.reason}`,
+          })
+          .select('id')
+          .single();
+        if (cErr) return res.status(500).json({ error: 'failed to create replacement: ' + cErr.message });
+        replacementId = created.id;
+      }
     }
 
     // Mark original superseded
@@ -3525,10 +3556,18 @@ router.post('/violations/:id/correct', express.json(), async (req, res) => {
       console.warn('[violations.correct] sibling re-stage failed (correction still recorded):', e.message);
     }
 
+    // If we folded into an existing case in the target category, recompute its
+    // stage too (downgrade-only; escalating up stays the manual Advance check).
+    if (foldedIntoExisting && replacementId) {
+      try { await _restageOpenViolation(replacementId, { reason: 'Reclassified violation folded into this open case' }); }
+      catch (e) { console.warn('[violations.correct] folded-case re-stage failed:', e.message); }
+    }
+
     res.json({
       ok: true,
       correction,
       replacement_violation_id: replacementId,
+      folded_into_existing: foldedIntoExisting,
       restaged,
     });
   } catch (err) {
