@@ -7726,8 +7726,93 @@ router.post('/category-aliases/ai-suggest', express.json(), async (req, res) => 
   }
 });
 
+// Reconcile violations that are ALREADY open under categories a freshly-confirmed
+// alias just unified. Confirming the alias fixes future observations; this fixes
+// the cases sitting open right now (e.g. trustEd "Trash bins visible" + Vantaca
+// "Trash Cans/Recycling Containers" both open as separate Courtesy 1 on the same
+// property). Per-property merge rule:
+//   - If any open row in the unified group is certified_209/fine_assessed, KEEP
+//     that one and fold the rest in (never lose the higher stage / certified clock).
+//   - Otherwise (all courtesy), keep the newest (native preferred) and escalate it
+//     to Courtesy 2 when there are 2+ distinct observation DAYS (a re-observation
+//     after a prior notice), else leave at Courtesy 1. Caps auto-escalation at
+//     Courtesy 2 — crossing into certified §209 stays a deliberate human Advance.
+// Folded rows are voided with an audit note; nothing is mailed (letters still
+// route through the Drafts review). Returns { merged_groups, voided }.
+async function _reconcileAliasedOpenViolations(canonicalCategoryId) {
+  const groupIds = await expandCategoryToAliases(canonicalCategoryId);
+  if (!groupIds || groupIds.length < 2) return { merged_groups: 0, voided: 0 };
+
+  // Page through every OPEN violation in the unified category group.
+  let open = [];
+  for (let from = 0; ; from += 1000) {
+    const { data } = await supabase.from('violations')
+      .select('id, property_id, community_id, current_stage, opened_at, source, primary_category_id')
+      .in('primary_category_id', groupIds)
+      .is('resolved_at', null)
+      .not('current_stage', 'in', '(cured,closed,voided)')
+      .range(from, from + 999);
+    if (!data || !data.length) break;
+    open = open.concat(data);
+    if (data.length < 1000) break;
+  }
+
+  const byProp = new Map();
+  for (const v of open) {
+    if (!byProp.has(v.property_id)) byProp.set(v.property_id, []);
+    byProp.get(v.property_id).push(v);
+  }
+
+  let mergedGroups = 0, voided = 0;
+  for (const [propId, vios] of byProp) {
+    if (vios.length < 2) continue;
+    // Survivor: highest stage, then newest, then native over import.
+    vios.sort((a, b) => {
+      const sr = (_STAGE_RANK[b.current_stage] || 0) - (_STAGE_RANK[a.current_stage] || 0);
+      if (sr) return sr;
+      const dt = new Date(b.opened_at || 0) - new Date(a.opened_at || 0);
+      if (dt) return dt;
+      return (a.source === 'trustEd_native' ? -1 : 0) - (b.source === 'trustEd_native' ? -1 : 0);
+    });
+    const survivor = vios[0];
+    const losers = vios.slice(1);
+    const anyCert = vios.some((v) => ['certified_209', 'fine_assessed'].includes(v.current_stage));
+    const distinctDays = new Set(vios.map((v) => (v.opened_at || '').slice(0, 10))).size;
+    let newStage = survivor.current_stage;
+    if (!anyCert) newStage = distinctDays >= 2 ? 'courtesy_2' : 'courtesy_1';
+
+    const now = new Date().toISOString();
+    for (const l of losers) {
+      const { error } = await supabase.from('violations').update({
+        current_stage: 'voided', resolved_via: 'voided', resolved_at: now,
+        resolved_notes: `Folded into ${survivor.id} — same real-world issue under a confirmed category alias. Was ${l.current_stage} (${l.source}).`,
+      }).eq('id', l.id).is('resolved_at', null);
+      if (!error) voided++;
+    }
+    if (newStage !== survivor.current_stage) {
+      await supabase.from('violations').update({
+        current_stage: newStage, current_stage_started_at: now,
+      }).eq('id', survivor.id);
+    }
+    try {
+      await supabase.from('interactions').insert({
+        community_id: survivor.community_id, property_id: propId, violation_id: survivor.id,
+        type: 'observation_note', direction: 'internal',
+        subject: `Merged ${vios.length} aliased violations → one ${newStage.replace(/_/g, ' ')} case`,
+        content: anyCert
+          ? `Category alias confirmed: folded ${losers.length} courtesy duplicate(s) into the open certified case (same issue, different labels).`
+          : `Category alias confirmed: folded ${losers.length} duplicate(s) into this case and ${newStage === 'courtesy_2' ? `escalated to Courtesy 2 (${distinctDays} distinct observation days — a re-observation after the first notice)` : 'kept at Courtesy 1 (single observation day)'}.`,
+        sent_at: now,
+      });
+    } catch (e) { /* audit note best-effort */ }
+    mergedGroups++;
+  }
+  return { merged_groups: mergedGroups, voided };
+}
+
 // POST /api/enforcement/category-aliases/:id/confirm
-// Confirms an ai_suggested mapping. Engine queries pick it up immediately.
+// Confirms an ai_suggested mapping. Engine queries pick it up immediately, AND
+// any violations already open under the now-unified categories are merged.
 router.post('/category-aliases/:id/confirm', express.json(), async (req, res) => {
   try {
     const { id } = req.params;
@@ -7738,7 +7823,11 @@ router.post('/category-aliases/:id/confirm', express.json(), async (req, res) =>
       .select('id, alias_category_id, canonical_category_id, status')
       .single();
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ alias: data });
+    // Reconcile cases already open under the two now-unified categories.
+    let reconciled = { merged_groups: 0, voided: 0 };
+    try { reconciled = await _reconcileAliasedOpenViolations(data.canonical_category_id); }
+    catch (e) { console.warn('[category-aliases.confirm] reconcile failed:', e.message); }
+    res.json({ alias: data, reconciled });
   } catch (err) {
     res.status(500).json({ error: safeErrorMessage(err) });
   }
@@ -8722,4 +8811,4 @@ router.post('/violations/:violationId/cure-days', express.json(), async (req, re
   }
 });
 
-module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases };
+module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations };
