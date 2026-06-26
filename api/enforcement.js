@@ -8143,12 +8143,33 @@ router.post('/drafts/:interactionId/fold-into', express.json(), async (req, res)
     } catch (e) {
       if (e.code !== '23505') throw e; // 23505 = this observation already continues a violation; non-fatal
     }
-    // 5) Bump the target's continuity counters. Stage + cure clock untouched.
+    // 5) Bump the target's continuity counters.
     const newCount = (Number(target.continuation_count) || 0) + 1;
     await supabase.from('violations').update({
       continuation_count: newCount,
       last_continued_at: new Date().toISOString(),
     }).eq('id', target.id);
+
+    // 5b) Optional manual escalation — operator can advance the target up the
+    // ladder when linking (e.g. a Vantaca Courtesy 1 + this re-observation =
+    // Courtesy 2). Only ever an UPGRADE; resets the cure clock for the new stage.
+    const STAGE_RANK = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
+    const ADVANCE_OK = ['courtesy_2', 'certified_209', 'fine_assessed'];
+    let advancedTo = null;
+    const adv = req.body && req.body.advance_to_stage;
+    if (adv && ADVANCE_OK.includes(adv) && (STAGE_RANK[adv] > (STAGE_RANK[target.current_stage] ?? 0))) {
+      const { data: comm } = await supabase.from('communities')
+        .select('letter_cure_days_courtesy_2, letter_cure_days_certified_209').eq('id', dup.community_id).maybeSingle();
+      const cureDays = adv === 'courtesy_2'
+        ? Number((comm && comm.letter_cure_days_courtesy_2) || 20)
+        : Number((comm && comm.letter_cure_days_certified_209) || 30);
+      await supabase.from('violations').update({
+        current_stage: adv,
+        current_stage_started_at: new Date().toISOString(),
+        cure_period_ends_at: new Date(Date.now() + cureDays * 86400000).toISOString(),
+      }).eq('id', target.id);
+      advancedTo = adv;
+    }
 
     // 6) Void the duplicate violation so it doesn't run a parallel clock.
     await supabase.from('violations').update({
@@ -8167,7 +8188,7 @@ router.post('/drafts/:interactionId/fold-into', express.json(), async (req, res)
       try { await supabase.storage.from('violation-letters').remove([interaction.content]); } catch (_) {}
     }
 
-    res.json({ ok: true, target_violation_id: target.id, continuation_count: newCount, voided_violation_id: dup.id });
+    res.json({ ok: true, target_violation_id: target.id, continuation_count: newCount, voided_violation_id: dup.id, advanced_to: advancedTo });
   } catch (err) {
     console.error('[enforcement] fold-into failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

@@ -23035,7 +23035,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <h3 style="margin:0 0 6px; color:#0B1D34; font-size:17px;">Fold into existing violation</h3>
       <p style="font-size:12.5px; color:#475569; margin:0 0 14px; line-height:1.5;">The current photo + your note attach to the violation you pick as proof it’s still uncured. Its §209 cure clock keeps running where it is, and this new item + its courtesy letter are cancelled — so the owner doesn’t get a fresh clock.</p>
       ${opts}
-      <textarea id="_foldNote" placeholder="Note (optional) — e.g. &quot;Re-inspected 6/18, fence still down, photo added.&quot;" style="width:100%; min-height:58px; border:1px solid #cbd5e1; border-radius:8px; padding:9px; font-size:13px; margin:8px 0 14px; box-sizing:border-box; font-family:inherit;"></textarea>
+      <textarea id="_foldNote" placeholder="Note (optional) — e.g. &quot;Re-inspected 6/18, fence still down, photo added.&quot;" style="width:100%; min-height:58px; border:1px solid #cbd5e1; border-radius:8px; padding:9px; font-size:13px; margin:8px 0 10px; box-sizing:border-box; font-family:inherit;"></textarea>
+      <div style="margin-bottom:14px;">
+        <label style="display:block; font-size:11px; color:#64748b; font-weight:600; text-transform:uppercase; margin-bottom:4px;">Escalate the case when linking?</label>
+        <select id="_foldAdvance" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:13px;">
+          <option value="">Keep its current stage</option>
+          <option value="courtesy_2">↑ Bump to Courtesy 2</option>
+          <option value="certified_209">↑ Bump to Certified §209</option>
+        </select>
+        <div style="font-size:11px; color:#94a3b8; margin-top:3px;">Advancing resets the cure clock for the new stage. A certified notice is still generated + mailed by you.</div>
+      </div>
       <div style="display:flex; gap:8px; justify-content:flex-end;">
         <button id="_foldCancel" style="padding:9px 16px; border:1px solid #cbd5e1; background:#fff; border-radius:8px; cursor:pointer; font-weight:600;">Cancel</button>
         <button id="_foldGo" style="padding:9px 18px; border:1px solid #0B1D34; background:#0B1D34; color:#fff; font-weight:700; border-radius:8px; cursor:pointer;">Fold &amp; void duplicate</button>
@@ -23049,16 +23058,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const sel = modal.querySelector('input[name="_foldTarget"]:checked');
       if (!sel) { alert('Pick the violation to fold into.'); return; }
       const note = modal.querySelector('#_foldNote').value || null;
+      const advance = modal.querySelector('#_foldAdvance').value || null;
       this.disabled = true; this.textContent = 'Folding…';
       try {
         const r = await fetch(`/api/enforcement/drafts/${encodeURIComponent(interactionId)}/fold-into`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ target_violation_id: sel.value, note }),
+          body: JSON.stringify({ target_violation_id: sel.value, note, advance_to_stage: advance }),
         });
         const j = await r.json();
         if (!r.ok || j.error) throw new Error(j.error || 'fold failed');
         close();
         if (typeof inspDraftsLoad === 'function') inspDraftsLoad();
+        if (j.advanced_to) setTimeout(() => alert('✓ Linked + escalated the case to ' + j.advanced_to.replace(/_/g, ' ') + '. Generate the letter for the new stage when ready.'), 100);
       } catch (e) { alert('Fold failed: ' + e.message); this.disabled = false; this.textContent = 'Fold & void duplicate'; }
     };
   };
