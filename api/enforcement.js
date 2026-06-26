@@ -1782,6 +1782,11 @@ router.get('/drafts', async (req, res) => {
         bundle_id, letter_fee_cents
       `)
       .eq('status', 'draft')
+      // Violation-letter drafts ONLY. Without this, OTHER draft-status
+      // interactions — e.g. ai_draft email replies from the responder engine —
+      // leak into this queue and render as broken letters ("no photo / cure
+      // by — / not ready") because they have no violation or observation.
+      .like('type', 'letter_%')
       .order('created_at', { ascending: false })
       .limit(limit);
     if (communityId) q = q.eq('community_id', communityId);
