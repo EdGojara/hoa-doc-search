@@ -17504,6 +17504,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                    <td style="padding:6px 8px; text-align:right; white-space:nowrap;">
                      ${showQualityActions ? `<button onclick="inspViolationVerify('${v.id}')" title="Mark as verified (full weight)" style="background:#fff; border:1px solid #bbf7d0; color:#166534; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Verify</button>` : ''}
                      ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record" style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
+                     ${['courtesy_1','courtesy_2','certified_209'].includes(v.current_stage) ? `<button onclick="inspAdvanceStage('${v.id}','${v.current_stage}')" title="Advance to the next enforcement stage (Courtesy 2 → Certified §209, etc.). Deliberate staff action — you still generate + mail the certified notice; the cure clock starts when it goes out." style="background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↑ Advance</button>` : ''}
                      ${!['cured','closed','voided'].includes(v.current_stage) ? `<button onclick="inspMarkCured('${v.id}')" title="Close this violation (homeowner-confirmed cure, drive-by spot check, or board dismissal). Auto-resets any open repeat in this category back to Courtesy 1." style="background:#dcfce7; border:1px solid #86efac; color:#15803d; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Cure</button>` : ''}
                      ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" style="background:#0B1D34; color:#fff; border:none; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">📄 Letter</button>` : ''}
                    </td>
@@ -18047,6 +18048,35 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // Mark a violation cured/closed from the property-detail view. Curing a prior
   // auto-resets any still-open repeat in the same category to Courtesy 1 (server
   // side) — we surface that here, then refresh so the history reflects it.
+  // Deliberate staff "check" to move a case up the ladder (Courtesy 2 →
+  // Certified §209, etc.). The system never auto-issues certified — this is the
+  // human gate. The certified letter is still generated + mailed separately.
+  async function inspAdvanceStage(violationId, currentStage) {
+    if (!violationId) return;
+    const NEXT = { courtesy_1: 'Courtesy 2', courtesy_2: 'Certified §209', certified_209: 'Fine assessed' };
+    const nextLabel = NEXT[currentStage] || 'the next stage';
+    const certWarn = currentStage === 'courtesy_2'
+      ? '\n\n⚠ This moves it to CERTIFIED §209. You still generate + mail the certified notice — the system does NOT send it. The statutory cure clock starts when it actually goes out.'
+      : '';
+    const note = prompt('Advance this violation to ' + nextLabel + '?' + certWarn + '\n\nOptional note (why it is being advanced):', '');
+    if (note === null) return; // cancelled
+    try {
+      const r = await window._authFetch(`/api/enforcement/violations/${violationId}/advance-stage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: note || undefined }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const newStage = (j.new_stage || j.current_stage || nextLabel).toString().replace(/_/g, ' ');
+      if (typeof inspPDCurrentPropertyId !== 'undefined' && inspPDCurrentPropertyId) {
+        await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+      }
+      setTimeout(() => alert('✓ Advanced to ' + newStage + '. Generate the letter for the new stage when ready.'), 100);
+    } catch (e) {
+      alert('Could not advance: ' + e.message);
+    }
+  }
+
   async function inspMarkCured(violationId) {
     if (!violationId) return;
     const reason = prompt(
