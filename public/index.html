@@ -22818,10 +22818,23 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     </div>`;
 
     // Render bundle cards first (multi-violation), then loose drafts
+    // Sort key: street NAME alphabetically, then house NUMBER ascending — so
+    // "19303 Stable Meadow Dr" files under S and orders by number, making a
+    // property easy to find while reviewing (Ed 2026-06-26).
+    const _addrKey = (addr) => {
+      const sx = String(addr || '');
+      const m = sx.match(/^\s*(\d+)\s+(.+)$/);
+      return m ? { name: m[2].toLowerCase().trim(), num: parseInt(m[1], 10) }
+               : { name: sx.toLowerCase().trim(), num: 0 };
+    };
+    const _addrCmp = (a, b) => a.key.name.localeCompare(b.key.name) || (a.key.num - b.key.num);
+
     const bundleCards = [...bundleMap.entries()].map(([bundleId, members]) => {
+      const first0 = members[0];
+      const key = _addrKey(first0.property && first0.property.street_address);
       if (members.length === 1) {
         // Singleton bundle — render as a regular row (same as loose drafts)
-        return inspDraftsRenderRow(members[0], { isBundle: false });
+        return { key, html: inspDraftsRenderRow(members[0], { isBundle: false }) };
       }
       // Multi-violation bundle — card with header + sub-rows
       const first = members[0];
@@ -22838,7 +22851,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const feeDollars = (first.letter_fee_cents || 0) / 100;
       const memberRows = members.map((m, i) => inspDraftsRenderRow(m, { isBundle: true, subIndex: i + 1 })).join('');
 
-      return `<div style="border:2px solid #d4af37; border-radius:10px; margin:10px 0; overflow:hidden; background:#fffbeb;">
+      return { key, html: `<div style="border:2px solid #d4af37; border-radius:10px; margin:10px 0; overflow:hidden; background:#fffbeb;">
         <div style="padding:10px 14px; background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); display:flex; gap:10px; align-items:center; border-bottom:1px solid #f3d894;">
           <input type="checkbox" ${allSelected ? 'checked' : (someSelected ? '' : '')} onchange="inspDraftsToggleBundle('${bundleId}')" style="cursor:pointer; transform:scale(1.2);" />
           <div style="flex:1; min-width:0;">
@@ -22851,12 +22864,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </div>
         </div>
         ${memberRows}
-      </div>`;
-    }).join('');
+      </div>` };
+    });
 
-    const looseRows = looseDrafts.map((d) => inspDraftsRenderRow(d, { isBundle: false })).join('');
+    const looseCards = looseDrafts.map((d) => ({
+      key: _addrKey(d.property && d.property.street_address),
+      html: inspDraftsRenderRow(d, { isBundle: false }),
+    }));
 
-    wrap.innerHTML = summaryBar + selectionToolbar + bundleCards + looseRows;
+    // One list, interleaved + sorted by street name then house number.
+    const sortedHtml = [...bundleCards, ...looseCards].sort(_addrCmp).map((x) => x.html).join('');
+    wrap.innerHTML = summaryBar + selectionToolbar + sortedHtml;
     inspDraftsUpdateApproveBtn();
   }
 
