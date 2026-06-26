@@ -17659,18 +17659,34 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const soon = c.days_left <= 30;
       return `<span style="display:inline-block; background:${soon ? '#fef3c7' : '#dcfce7'}; color:${soon ? '#92400e' : '#166534'}; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:700; margin-left:6px;" title="Certified ${c.issued_at} · valid through ${c.valid_through}">⏱ certified ${c.days_since}d ago · ${c.days_left}d left</span>`;
     };
+    // "Do not re-notice" is a §209-CERTIFIED concept — it applies only while a
+    // certified notice's statutory cure clock is running. Courtesy stages don't
+    // have that rule; their next observation ADVANCES the ladder. So the banner
+    // tone/wording keys off whether a certified case is open (Ed 2026-06-26).
+    const certVios = openVios.filter((v) => ['certified_209', 'fine_assessed'].includes(v.current_stage));
+    const courtesyVios = openVios.filter((v) => !['certified_209', 'fine_assessed'].includes(v.current_stage));
+    const hasCert = certVios.length > 0;
+    const nextStageLabel = { courtesy_1: 'Courtesy 2', courtesy_2: 'Certified §209' };
+    const bannerBg = hasCert ? '#fef2f2' : '#fff7ed';
+    const bannerBorder = hasCert ? '#fca5a5' : '#fdba74';
+    const bannerTitleColor = hasCert ? '#991b1b' : '#9a3412';
+    const bannerTitle = hasCert
+      ? `⚠ §209 certified open (${certVios.length}) — DO NOT RE-NOTICE · cure clock running`
+      : `⚖ Open courtesy enforcement (${courtesyVios.length}) — continue the existing case; next observation advances the ladder`;
     const openEnforcementHtml = openVios.length === 0
       ? `<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12.5px; color:#166534;">✓ No open enforcement carried in — clean as of the last Vantaca report.</div>`
-      : `<div style="background:#fff7ed; border:1.5px solid #fdba74; border-radius:8px; padding:11px 13px; margin-bottom:14px;">
-           <div style="font-size:12px; font-weight:800; color:#9a3412; letter-spacing:0.03em; text-transform:uppercase; margin-bottom:8px;">⚖ Open enforcement carried in (${openVios.length}) — do not re-notice</div>
+      : `<div style="background:${bannerBg}; border:1.5px solid ${bannerBorder}; border-radius:8px; padding:11px 13px; margin-bottom:14px;">
+           <div style="font-size:12px; font-weight:800; color:${bannerTitleColor}; letter-spacing:0.03em; text-transform:uppercase; margin-bottom:8px;">${bannerTitle}</div>
            ${openVios.map((v) => {
              const st = (v.current_stage || '').replace(/_/g, ' ');
-             return `<div style="padding:5px 0; border-bottom:1px solid #fed7aa;">
+             const isCert = ['certified_209', 'fine_assessed'].includes(v.current_stage);
+             const nxt = nextStageLabel[v.current_stage];
+             return `<div style="padding:5px 0; border-bottom:1px solid ${hasCert ? '#fecaca' : '#fed7aa'};">
                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
                  <div style="font-size:12.5px; color:#0B1D34; font-weight:600;">${escapeHtml(v.category_label || v.category_code || '—')}</div>
-                 <div style="display:flex; align-items:center; flex-wrap:wrap;">
-                   <span style="font-size:11.5px; color:#9a3412; font-weight:600; text-transform:capitalize;">${escapeHtml(st)}</span>
-                   ${certBadge(v)}
+                 <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
+                   <span style="font-size:11.5px; color:${isCert ? '#991b1b' : '#9a3412'}; font-weight:600; text-transform:capitalize;">${escapeHtml(st)}</span>
+                   ${isCert ? certBadge(v) : (nxt ? `<span style="font-size:10.5px; color:#854d0e; background:#fef9c3; padding:1px 7px; border-radius:99px;">next obs → ${nxt}</span>` : '')}
                  </div>
                </div>
                ${noteTrail(v)}
