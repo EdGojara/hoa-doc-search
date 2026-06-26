@@ -1814,7 +1814,7 @@ router.get('/drafts', async (req, res) => {
 
     const [vRes, pRes, oRes] = await Promise.all([
       supabase.from('violations')
-        .select('id, primary_category_id, current_stage, cure_period_ends_at, cure_days_override, board_priority_at_open, enforcement_categories(label)')
+        .select('id, primary_category_id, current_stage, resolved_at, cure_period_ends_at, cure_days_override, board_priority_at_open, enforcement_categories(label)')
         .in('id', violationIds.length ? violationIds : ['00000000-0000-0000-0000-000000000000']),
       supabase.from('v_current_property_owners')
         .select('property_id, street_address, unit, city, owner_name, owner_mailing_address')
@@ -1923,7 +1923,20 @@ router.get('/drafts', async (req, res) => {
       };
     }));
 
-    res.json({ drafts: enrichedAll });
+    // Drop stale drafts whose underlying violation was voided/resolved after
+    // the letter was drafted (deduped, discarded, or cured). The interaction
+    // stays status='draft' but the case is closed — it should not sit in the
+    // send queue. Drafts with no violation yet (observation-only) are kept.
+    const liveDrafts = enrichedAll.filter((d) => {
+      if (!d.violation_id) return true;
+      const v = violationById.get(d.violation_id);
+      if (!v) return true;
+      return !v.resolved_at && !['voided', 'closed', 'cured'].includes(v.current_stage);
+    });
+    const hidden = enrichedAll.length - liveDrafts.length;
+    if (hidden > 0) console.warn(`[enforcement.drafts] hid ${hidden} draft(s) for voided/resolved violations`);
+
+    res.json({ drafts: liveDrafts });
   } catch (err) {
     console.error('[enforcement.drafts]', err);
     res.status(500).json({ error: err.message });
