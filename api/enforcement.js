@@ -352,7 +352,7 @@ async function _restageOpenViolation(violationId, opts = {}) {
     _getRecentSameCategory(v.property_id, v.primary_category_id, 12),
   ]);
   const priors = (priorViolations || []).filter((p) => p.id !== v.id); // exclude self
-  const decision = decideEscalation({ prior_violations: priors, priority_weight: priorityWeight, is_cure_lapse: false });
+  const decision = decideEscalation({ prior_violations: priors, priority_weight: priorityWeight, is_cure_lapse: false, occurrence_date: v.opened_at });
   const newStage = decision.stage;
   if (!newStage || newStage === v.current_stage) {
     return { changed: false, reason: 'no_change', from: v.current_stage, to: v.current_stage };
