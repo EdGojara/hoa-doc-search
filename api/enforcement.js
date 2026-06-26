@@ -5720,7 +5720,7 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
 
     const { data: violation, error: vErr } = await supabase
       .from('violations')
-      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, resolved_at')
+      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, resolved_at, quality_status')
       .eq('id', violationId)
       .maybeSingle();
     if (vErr) throw vErr;
@@ -5750,12 +5750,19 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
     // Update the violation row. (This table has no last_action_at / notes
     // columns — the note rides on an audit interaction below.)
     const nowTs = new Date().toISOString();
+    const advPatch = {
+      current_stage: nextStage,
+      current_stage_started_at: nowTs,
+    };
+    // Advancing affirms this is the LIVE case — clear a stale 'superseded' flag
+    // so the new-stage letter is sendable (same fix as reduce-stage).
+    if (violation.quality_status === 'superseded') {
+      advPatch.quality_status = 'verified';
+      advPatch.confidence_weight = 1.0;
+    }
     const { error: upErr } = await supabase
       .from('violations')
-      .update({
-        current_stage: nextStage,
-        current_stage_started_at: nowTs,
-      })
+      .update(advPatch)
       .eq('id', violationId);
     if (upErr) throw upErr;
 
@@ -5841,7 +5848,7 @@ router.post('/violations/:violationId/reduce-stage', express.json(), async (req,
 
     const { data: violation, error: vErr } = await supabase
       .from('violations')
-      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, resolved_at')
+      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, resolved_at, quality_status')
       .eq('id', violationId)
       .maybeSingle();
     if (vErr) throw vErr;
@@ -5863,15 +5870,24 @@ router.post('/violations/:violationId/reduce-stage', express.json(), async (req,
     const note = (req.body && req.body.note) || null;
 
     const now = new Date().toISOString();
+    const patch = {
+      current_stage: prevStage,
+      current_stage_started_at: now,
+      // Clear the higher-stage cure deadline; the corrected lower-stage letter
+      // sets the right one when it's generated.
+      cure_period_ends_at: null,
+    };
+    // Reducing affirms this is the LIVE case. Clear a stale 'superseded' flag
+    // (left over from a consolidation/correction) so the Letter button returns
+    // and it counts toward escalation again — otherwise the operator reduces a
+    // case but still can't send its letter.
+    if (violation.quality_status === 'superseded') {
+      patch.quality_status = 'verified';
+      patch.confidence_weight = 1.0;
+    }
     const { error: upErr } = await supabase
       .from('violations')
-      .update({
-        current_stage: prevStage,
-        current_stage_started_at: now,
-        // Clear the higher-stage cure deadline; the corrected lower-stage letter
-        // sets the right one when it's generated.
-        cure_period_ends_at: null,
-      })
+      .update(patch)
       .eq('id', violationId)
       .eq('current_stage', violation.current_stage); // optimistic guard against a concurrent change
     if (upErr) throw upErr;
