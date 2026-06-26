@@ -332,6 +332,7 @@ router.get('/property/:id', async (req, res) => {
       .select('id, current_stage, current_stage_started_at, cure_period_ends_at, opened_at, primary_category_id, enforcement_categories:primary_category_id(label)')
       .eq('property_id', propertyId)
       .not('current_stage', 'in', '(cured,closed,voided)')
+      .is('resolved_at', null)   // resolved_at IS NULL = the true open flag (cured rows keep their stage)
       .order('opened_at', { ascending: false });
 
     // Substrate docs linked to this property

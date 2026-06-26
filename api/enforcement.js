@@ -303,7 +303,13 @@ async function _getRecentSameCategory(propertyId, categoryId, months = 12) {
     // complied (or the board dismissed it). A new violation after it is a fresh
     // first occurrence and must reset to Courtesy 1, not keep escalating. Only
     // still-open priors count toward §209 escalation.
+    // NOTE: a cured/voided row KEEPS its courtesy/certified current_stage (we
+    // only set resolved_via + resolved_at on resolution). So current_stage
+    // alone is not enough — resolved_at IS NULL is the true "open" flag. Without
+    // it, closed Vantaca notices (resolved_at set, stage still courtesy_N) get
+    // counted as live escalation priors.
     .not('current_stage', 'in', '(cured,closed,voided)')
+    .is('resolved_at', null)
     .order('opened_at', { ascending: false });
   return data || [];
 }
@@ -545,7 +551,8 @@ router.post('/open-violation', express.json(), async (req, res) => {
         .select('id, current_stage, continuation_count, cure_period_ends_at')
         .eq('property_id', obs.property_id)
         .in('primary_category_id', matchIds)
-        .not('current_stage', 'in', '(cured,closed,voided)');
+        .not('current_stage', 'in', '(cured,closed,voided)')
+        .is('resolved_at', null);   // resolved_at IS NULL = the true open flag (cured rows keep their stage)
       if (openPriors && openPriors.length) {
         const stageRank = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
         const target = openPriors.sort((a, b) => (stageRank[b.current_stage] || 0) - (stageRank[a.current_stage] || 0))[0];
@@ -795,7 +802,8 @@ router.get('/violations/duplicate-check', async (req, res) => {
     let has_recent_closed = false;
 
     for (const v of (vios || [])) {
-      const isClosed = CLOSED_STAGES.has(v.current_stage);
+      // resolved_at set = closed even if current_stage still reads courtesy/certified.
+      const isClosed = CLOSED_STAGES.has(v.current_stage) || !!v.resolved_at;
       const openedAt = v.opened_at ? new Date(v.opened_at).getTime() : null;
       const daysAgo = openedAt ? Math.floor((now - openedAt) / 86400000) : null;
 
@@ -899,6 +907,7 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
         .eq('property_id', propertyId)
         .eq('primary_category_id', categoryId)
         .not('current_stage', 'in', '("cured","closed","voided")')
+        .is('resolved_at', null)   // resolved_at IS NULL = the true open flag (cured rows keep their stage)
         .order('opened_at', { ascending: false })
         .limit(1);
       if (existingOpen && existingOpen.length > 0) {
@@ -3490,6 +3499,7 @@ router.post('/violations/:id/correct', express.json(), async (req, res) => {
         .eq('primary_category_id', newCatId)
         .neq('id', originalId)
         .not('current_stage', 'in', '(cured,closed,voided)')
+        .is('resolved_at', null)   // resolved_at IS NULL = the true open flag (cured rows keep their stage)
         .neq('quality_status', 'superseded')
         .order('opened_at', { ascending: false })
         .limit(1);
@@ -3877,15 +3887,18 @@ router.post('/violations/:id/assess-fine', express.json(), async (req, res) => {
     const body = req.body || {};
     const { data: v, error: vErr } = await supabase
       .from('violations')
-      .select('id, property_id, community_id, primary_category_id, current_stage, quality_status')
+      .select('id, property_id, community_id, primary_category_id, current_stage, quality_status, resolved_at')
       .eq('id', violationId)
       .maybeSingle();
     if (vErr || !v) return res.status(404).json({ error: 'violation not found' });
     if (v.quality_status === 'superseded') {
       return res.status(400).json({ error: 'violation is superseded; cannot assess fine on corrected record' });
     }
-    if (v.current_stage === 'cured' || v.current_stage === 'closed' || v.current_stage === 'voided') {
-      return res.status(400).json({ error: `violation is in terminal stage '${v.current_stage}'; cannot fine` });
+    // resolved_at set = the case is closed even if current_stage still reads a
+    // courtesy/certified label (cured rows keep their stage). Never fine a
+    // resolved violation.
+    if (v.resolved_at || v.current_stage === 'cured' || v.current_stage === 'closed' || v.current_stage === 'voided') {
+      return res.status(400).json({ error: `violation is resolved/closed; cannot fine` });
     }
 
     // Count prior violations same property + category in last 12mo (this one counts as the current offense)
@@ -4020,12 +4033,13 @@ router.post('/violations/:id/resolve', express.json(), async (req, res) => {
 
     const { data: v, error: vErr } = await supabase
       .from('violations')
-      .select('id, current_stage, property_id, community_id, primary_category_id')
+      .select('id, current_stage, property_id, community_id, primary_category_id, resolved_at')
       .eq('id', violationId)
       .maybeSingle();
     if (vErr || !v) return res.status(404).json({ error: 'violation not found' });
-    if (v.current_stage === 'cured' || v.current_stage === 'closed' || v.current_stage === 'voided') {
-      return res.status(400).json({ error: `violation already in terminal stage '${v.current_stage}'` });
+    // resolved_at set = already closed (cured rows keep their courtesy stage).
+    if (v.resolved_at || v.current_stage === 'cured' || v.current_stage === 'closed' || v.current_stage === 'voided') {
+      return res.status(400).json({ error: `violation already resolved/closed` });
     }
 
     const targetStage = (resolvedVia === 'manual_board_dismissed' || resolvedVia === 'manual_other')
@@ -5693,13 +5707,14 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
 
     const { data: violation, error: vErr } = await supabase
       .from('violations')
-      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at')
+      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, resolved_at')
       .eq('id', violationId)
       .maybeSingle();
     if (vErr) throw vErr;
     if (!violation) return res.status(404).json({ error: 'violation_not_found' });
-    if (['cured', 'closed', 'voided'].includes(violation.current_stage)) {
-      return res.status(409).json({ error: `violation is already ${violation.current_stage}; cannot advance` });
+    // resolved_at set = closed even if current_stage still reads courtesy/certified.
+    if (violation.resolved_at || ['cured', 'closed', 'voided'].includes(violation.current_stage)) {
+      return res.status(409).json({ error: `violation is already resolved/closed; cannot advance` });
     }
 
     // Determine the next stage. Operator override wins; otherwise use the
@@ -5844,7 +5859,8 @@ router.get('/property/:propertyId/violation-summary', async (req, res) => {
 
     const result = (violations || []).map((v) => {
       const letters = lettersByViolation.get(v.id) || [];
-      const isOpen = !['cured', 'closed', 'voided'].includes(v.current_stage);
+      // resolved_at set = closed (cured rows keep their courtesy/certified stage).
+      const isOpen = !v.resolved_at && !['cured', 'closed', 'voided'].includes(v.current_stage);
       return {
         ...v,
         category_label: catLabels.get(v.primary_category_id) || null,
@@ -5925,7 +5941,7 @@ router.post('/violations/bulk-attach-letters', upload.array('pdfs', 50), async (
 
     const { data: violations, error: vErr } = await supabase
       .from('violations')
-      .select('id, property_id, current_stage, opened_at, source')
+      .select('id, property_id, current_stage, opened_at, source, resolved_at')
       .eq('community_id', communityId)
       .order('opened_at', { ascending: false })
       .limit(10000);
@@ -5956,7 +5972,7 @@ router.post('/violations/bulk-attach-letters', upload.array('pdfs', 50), async (
     function pickTargetViolation(propertyId) {
       const list = violationsByProperty.get(propertyId) || [];
       if (list.length === 0) return null;
-      const open = list.find((v) => !['cured', 'closed', 'voided'].includes(v.current_stage));
+      const open = list.find((v) => !v.resolved_at && !['cured', 'closed', 'voided'].includes(v.current_stage));
       return open || list[0];
     }
 
@@ -7739,6 +7755,7 @@ router.get('/drafts/:interactionId/trace', async (req, res) => {
             .select('id, current_stage, opened_at, source, enforcement_categories(slug, label)')
             .eq('property_id', dp.id)
             .not('current_stage', 'in', '(cured,closed,voided)')
+            .is('resolved_at', null)   // resolved_at IS NULL = the true open flag (cured rows keep their stage)
             .order('opened_at', { ascending: false })
             .limit(10);
           duplicatePropertyRows.push({
@@ -7832,6 +7849,7 @@ router.get('/drafts/:interactionId/trace', async (req, res) => {
           .select('id, current_stage, opened_at, source, primary_category_id, enforcement_categories(slug, label)')
           .eq('property_id', violation.property_id)
           .not('current_stage', 'in', '(cured,closed,voided)')
+          .is('resolved_at', null)   // resolved_at IS NULL = the true open flag (cured rows keep their stage)
           .order('opened_at', { ascending: false })
           .limit(30);
         return (data || []).map((v) => ({
@@ -8333,6 +8351,7 @@ router.post('/drafts/:interactionId/reclassify', express.json(), async (req, res
         .eq('primary_category_id', newCategory.id)
         .neq('id', violation.id)
         .not('current_stage', 'in', '(cured,closed,voided)')
+        .is('resolved_at', null)   // resolved_at IS NULL = the true open flag (cured rows keep their stage)
         .neq('quality_status', 'superseded')
         .order('opened_at', { ascending: true })
         .limit(1).maybeSingle();

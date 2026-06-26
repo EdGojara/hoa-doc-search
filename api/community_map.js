@@ -511,6 +511,7 @@ router.get('/property/:propertyId', async (req, res) => {
         `)
         .eq('property_id', propertyId)
         .not('current_stage', 'in', '(cured,closed,voided)')
+        .is('resolved_at', null)   // resolved_at IS NULL = the true open flag (cured rows keep their stage)
         .order('opened_at', { ascending: false })
         .limit(20);
       if (vsErr) {

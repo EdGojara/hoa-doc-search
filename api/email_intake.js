@@ -860,6 +860,7 @@ router.get('/:id/violation-candidates', async (req, res) => {
       .select('id, property_id, primary_category_id, current_stage, current_stage_started_at, opened_at, cure_period_ends_at, enforcement_categories(label, code)')
       .eq('community_id', intake.community_id)
       .not('current_stage', 'in', '(cured,closed,voided)')
+      .is('resolved_at', null)   // resolved_at IS NULL = the true open flag (cured rows keep their stage)
       .order('opened_at', { ascending: false })
       .limit(200);
     if (vErr) throw vErr;
