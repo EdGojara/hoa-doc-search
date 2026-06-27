@@ -104,11 +104,32 @@ function parseFile(path) {
     if (sum !== lastRun) runMismatch.push(`${o.acct}: sum ${D(sum)} ≠ running ${D(lastRun)}`);
   }
 
-  // Map vantaca_account_id -> property_id / contact_id.
-  const { data: props } = await s.from('properties').select('id, vantaca_account_id').eq('community_id', CID);
-  const propByV = Object.fromEntries((props || []).filter((p) => p.vantaca_account_id).map((p) => [String(p.vantaca_account_id), p.id]));
-  const { data: contacts } = await s.from('contacts').select('id, vantaca_account_id').eq('community_id', CID);
-  const contactByV = Object.fromEntries((contacts || []).filter((c) => c.vantaca_account_id).map((c) => [String(c.vantaca_account_id), c.id]));
+  // Map vantaca_account_id -> property_id / contact_id. Paginate: PostgREST caps
+  // responses at 1000 rows, and large communities (Waterview = 1,171 props) would
+  // silently truncate, falsely flagging owners as unmatched (CLAUDE.md scar).
+  const fetchAll = async (table, cols) => {
+    const out = []; const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await s.from(table).select(cols).eq('community_id', CID).range(from, from + PAGE - 1);
+      if (error) { console.error(`${table} fetch failed:`, error.message); process.exit(1); }
+      out.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+    return out;
+  };
+  const props = await fetchAll('properties', 'id, vantaca_account_id');
+  const propByV = Object.fromEntries(props.filter((p) => p.vantaca_account_id).map((p) => [String(p.vantaca_account_id), p.id]));
+  // contacts has no community_id column; contact_id is optional (the portal keys on
+  // property_id + vantaca_account_id). Resolve it best-effort via vantaca_account_id
+  // for the owners we have; tolerate absence rather than halt.
+  const contactByV = {};
+  try {
+    const acctList = owners.map((o) => o.acct);
+    for (let i = 0; i < acctList.length; i += 500) {
+      const { data } = await s.from('contacts').select('id, vantaca_account_id').in('vantaca_account_id', acctList.slice(i, i + 500));
+      for (const c of (data || [])) if (c.vantaca_account_id) contactByV[String(c.vantaca_account_id)] = c.id;
+    }
+  } catch (_) { /* contact_id stays null — not required */ }
   let matched = 0, unmatched = [];
   for (const o of owners) { o.property_id = propByV[o.acct] || null; o.contact_id = contactByV[o.acct] || null; if (o.property_id) matched++; else unmatched.push(o.acct); }
 
