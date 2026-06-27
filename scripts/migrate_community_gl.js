@@ -64,6 +64,21 @@ const CONFIG = {
     currentYearSurplusAccount: '3000',
     interfundOK: true,
   },
+  // Canyon Gate: takeover ~Oct 2025 (clean Vantaca setup, per-fund FB already
+  // used). 3 funds; reserve has real expenditures (5711-5718 RSRV-*); Adopt-A-
+  // School revenue/expense. No active reserve-contribution transfer.
+  'canyon-gate': {
+    fundOverrides: {
+      '1200': 'RES', '4205': 'RES',                                        // Reserve cash + Edward Jones unrealized gains (not on 12/31 BS)
+      '4010': 'RES', '4120': 'RES',                                        // Reserve contribution / interest
+      '5711': 'RES', '5712': 'RES', '5713': 'RES', '5714': 'RES', '5716': 'RES', '5718': 'RES', // RSRV-* expenditures
+      '1250': 'ADO',                                                       // Adopt-A-School cash (not on 12/31 BS)
+      '4050': 'ADO', '4125': 'ADO', '4130': 'ADO', '5950': 'ADO',          // Adopt-A-School rev/exp
+    },
+    fundBalanceAccount: { OPR: '3050', RES: '3020', ADO: '3030' },
+    currentYearSurplusAccount: '3000',
+    interfundOK: true,
+  },
 };
 
 const arg = (k, d) => { const a = process.argv.find((x) => x.startsWith(`--${k}=`)); return a ? a.split('=').slice(1).join('=') : d; };
@@ -214,12 +229,20 @@ function classify(num) {
     //    stays = Vantaca. Operating FB keeps the remainder — which is where any
     //    BS-vs-GL year-end adjustment + interfund drift sits, documented and visible
     //    on the operating FB line. (For a clean community it's exactly the BS value.)
+    // Set each non-operating fund's FB to its target, accounting for what the
+    // BRIDGE already placed there: delta = target − post-bridge value. When the
+    // source already splits per fund (Canyon Gate: 3020/3030 populated), the
+    // bridge set them and delta is just the small year-end close into them; when
+    // it lumps everything in operating FB (LOPF/Waterview: 3020/3030 dormant=0),
+    // delta is the full move. Either way the offset to operating FB keeps the
+    // entry net-zero within equity, so total equity stays = Vantaca.
     const opFb = cfg.fundBalanceAccount[funds[0].code];
     for (const f of funds.slice(1)) {
-      const amt = fbTarget[f.code]; if (amt === 0) continue;
       const fb = cfg.fundBalanceAccount[f.code];
-      if (amt > 0) { lines.push({ number: fb, debit: amt, credit: 0, memo: `${f.name} fund balance (per-fund reclass)` }); lines.push({ number: opFb, debit: 0, credit: amt, memo: `Reclass ${f.name} FB out of ${funds[0].name}` }); }
-      else { lines.push({ number: fb, debit: 0, credit: -amt, memo: `${f.name} fund balance (per-fund reclass)` }); lines.push({ number: opFb, debit: -amt, credit: 0, memo: `Reclass ${f.name} FB out of ${funds[0].name}` }); }
+      const delta = (fbTarget[f.code] || 0) - (nextBeg[fb] || 0);
+      if (delta === 0) continue;
+      if (delta > 0) { lines.push({ number: fb, debit: delta, credit: 0, memo: `${f.name} fund balance (per-fund reclass)` }); lines.push({ number: opFb, debit: 0, credit: delta, memo: `Reclass ${f.name} FB vs ${funds[0].name}` }); }
+      else { lines.push({ number: fb, debit: 0, credit: -delta, memo: `${f.name} fund balance (per-fund reclass)` }); lines.push({ number: opFb, debit: -delta, credit: 0, memo: `Reclass ${f.name} FB vs ${funds[0].name}` }); }
     }
     const dr = lines.reduce((a, l) => a + l.debit, 0), cr = lines.reduce((a, l) => a + l.credit, 0);
     // Operating FB absorbs the balancing amount: its own per-fund restructure
