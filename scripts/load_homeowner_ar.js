@@ -93,15 +93,21 @@ function parseFile(path) {
   // Sort each owner's txns by date for stable row order + correct running check.
   for (const o of owners) o.txns.sort((a, b) => a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : 0);
 
-  // Per-owner: summed amount must equal the last running balance shown.
+  // Per-owner: summed amount must equal the last running balance shown (parse
+  // check). The tie-out subtotal uses each owner's balance AS OF --asof when
+  // given (e.g. the GL cutoff date), so the subledger reconciles to a GL that
+  // lags the subledger's current date. All txns are still loaded for the portal.
+  const asof = arg('asof');
   let runMismatch = [];
   let subtotal = 0;
   for (const o of owners) {
     const sum = o.txns.reduce((a, t) => a + t.amount, 0);
     const lastRun = o.txns.length ? o.txns[o.txns.length - 1].running : 0;
-    o.endBal = sum;
-    subtotal += sum;
     if (sum !== lastRun) runMismatch.push(`${o.acct}: sum ${D(sum)} ≠ running ${D(lastRun)}`);
+    let asofBal = lastRun;
+    if (asof) { asofBal = 0; for (const t of o.txns) if (t.iso <= asof) asofBal = t.running; }
+    o.endBal = asofBal;
+    subtotal += asofBal;
   }
 
   // Map vantaca_account_id -> property_id / contact_id. Paginate: PostgREST caps
@@ -190,9 +196,18 @@ function parseFile(path) {
   }
   console.log(`Inserted ${rows.length} transactions across ${owners.length} owners.`);
 
-  // Verify via the live view that resolveCurrentAR reads.
-  const { data: vb } = await s.from('v_homeowner_current_balance').select('balance_cents').eq('community_id', CID);
-  const liveTotal = (vb || []).reduce((a, r) => a + Number(r.balance_cents), 0);
-  console.log(`\nLive v_homeowner_current_balance total: ${D(liveTotal)}  ${liveTotal === glNet ? '= GL AR net ✓' : 'Δ ' + D(liveTotal - glNet) + ' ✗'}`);
+  // Verify via the live view resolveCurrentAR reads. PAGINATE — the view has one
+  // row per owner-group, which exceeds 1000 for large communities and would
+  // silently undercount (CLAUDE.md 1000-row scar). Compare to the loaded CURRENT
+  // total (sum of all amounts); the GL tie was already checked at --asof above.
+  const loadedCurrent = rows.reduce((a, r) => a + r.amount_cents, 0);
+  let liveTotal = 0;
+  for (let from = 0; ; from += 1000) {
+    const { data: vb } = await s.from('v_homeowner_current_balance').select('balance_cents').eq('community_id', CID).range(from, from + 999);
+    for (const r of (vb || [])) liveTotal += Number(r.balance_cents);
+    if (!vb || vb.length < 1000) break;
+  }
+  console.log(`\nLive v_homeowner_current_balance: ${D(liveTotal)} ${liveTotal === loadedCurrent ? '= loaded current total ✓' : 'Δ ' + D(liveTotal - loadedCurrent) + ' ✗ (other committed batches present?)'}`);
+  if (asof) console.log(`(GL tie verified at ${asof}; live total is current — differs by post-${asof} activity.)`);
   console.log(`\nDONE. ${comm.name} homeowner AR subledger loaded.`);
 })().catch((e) => { console.error(e.stack || e.message); process.exit(1); });
