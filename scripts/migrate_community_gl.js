@@ -34,7 +34,7 @@
 //     (we restructured it on purpose), and each fund nets to zero.
 //
 // Idempotent: opening='opening_entry', detail='vantaca_import',
-// close='year_end_close'; a re-run clears only those in the posted date range.
+// close='closing_entry'; a re-run clears only those in the posted date range.
 // ----------------------------------------------------------------------------
 // PER-COMMUNITY CONFIG — the only thing that varies. Fund of an account comes
 // from the balance sheet where present; income-statement accounts not on the
@@ -287,14 +287,16 @@ function classify(num) {
   const pid = (iso) => periodId[Number(iso.slice(0, 4))][Number(iso.slice(5, 7))];
 
   const range0 = days[0], range1 = days[days.length - 1];
-  const { data: prior } = await s.from('journal_entries').select('id').eq('community_id', CID).in('source_module', ['opening_entry', 'vantaca_import', 'year_end_close']).gte('posting_date', range0).lte('posting_date', range1);
+  const { data: prior } = await s.from('journal_entries').select('id').eq('community_id', CID).in('source_module', ['opening_entry', 'vantaca_import', 'closing_entry']).gte('posting_date', range0).lte('posting_date', range1);
   if (prior && prior.length) { await s.from('journal_entry_lines').delete().in('journal_entry_id', prior.map((j) => j.id)); await s.from('journal_entries').delete().in('id', prior.map((j) => j.id)); console.log(`Cleared ${prior.length} prior entries.`); }
 
   // Opening (OPENING MODE only)
   if (!conversionMode && opening.length) {
     let dr = 0, cr = 0; for (const o of opening) { if (o.cents > 0) dr += o.cents; else cr += -o.cents; }
-    const { data: je } = await s.from('journal_entries').insert({ community_id: CID, period_id: pid(`${fiscalYears[0]}-01-01`), posting_date: `${fiscalYears[0]}-01-01`, reference: `JE-${fiscalYears[0]}-OPEN`, description: `Opening balances migrated from Vantaca (fund-split, ${bs.asOf})`, source_module: 'opening_entry', total_debits_cents: dr, total_credits_cents: cr, status: 'posted' }).select('id').single();
-    await s.from('journal_entry_lines').insert(opening.map((o, i) => ({ journal_entry_id: je.id, line_number: i + 1, account_id: acctId[o.number], debit_cents: o.cents > 0 ? o.cents : 0, credit_cents: o.cents < 0 ? -o.cents : 0, memo: `Opening ${o.fund_code} ${bs.asOf}` })));
+    const { data: je, error: jeErr } = await s.from('journal_entries').insert({ community_id: CID, period_id: pid(`${fiscalYears[0]}-01-01`), posting_date: `${fiscalYears[0]}-01-01`, reference: `JE-${fiscalYears[0]}-OPEN`, description: `Opening balances migrated from Vantaca (fund-split, ${bs.asOf})`, source_module: 'opening_entry', total_debits_cents: dr, total_credits_cents: cr, status: 'posted' }).select('id').single();
+    if (jeErr || !je) { console.error(`Opening JE insert failed: ${jeErr ? jeErr.message : 'no row returned'}`); process.exit(1); }
+    const { error: olErr } = await s.from('journal_entry_lines').insert(opening.map((o, i) => ({ journal_entry_id: je.id, line_number: i + 1, account_id: acctId[o.number], debit_cents: o.cents > 0 ? o.cents : 0, credit_cents: o.cents < 0 ? -o.cents : 0, memo: `Opening ${o.fund_code} ${bs.asOf}` })));
+    if (olErr) { console.error(`Opening JE lines insert failed: ${olErr.message}`); process.exit(1); }
     console.log(`Posted opening JE (${opening.length} lines).`);
   }
 
@@ -303,17 +305,20 @@ function classify(num) {
   for (const d of days) {
     const lines = byDay[d];
     const dr = lines.reduce((a, l) => a + l.debit_cents, 0), cr = lines.reduce((a, l) => a + l.credit_cents, 0);
-    const { data: je } = await s.from('journal_entries').insert({ community_id: CID, period_id: pid(d), posting_date: d, reference: `JE-D-${d.replace(/-/g, '')}`, description: `Daily activity ${d} (migrated from Vantaca GL detail)`, source_module: 'vantaca_import', total_debits_cents: dr, total_credits_cents: cr, status: 'posted' }).select('id').single();
+    const { data: je, error: jeErr } = await s.from('journal_entries').insert({ community_id: CID, period_id: pid(d), posting_date: d, reference: `JE-D-${d.replace(/-/g, '')}`, description: `Daily activity ${d} (migrated from Vantaca GL detail)`, source_module: 'vantaca_import', total_debits_cents: dr, total_credits_cents: cr, status: 'posted' }).select('id').single();
+    if (jeErr || !je) { console.error(`Daily JE ${d} insert failed: ${jeErr ? jeErr.message : 'no row returned'}`); process.exit(1); }
     const rows = lines.map((l, i) => ({ journal_entry_id: je.id, line_number: i + 1, account_id: acctId[l.accountNumber], debit_cents: l.debit_cents, credit_cents: l.credit_cents, memo: (l.type ? l.type + ': ' : '') + (l.description || '').slice(0, 180) }));
-    for (let i = 0; i < rows.length; i += 200) await s.from('journal_entry_lines').insert(rows.slice(i, i + 200));
+    for (let i = 0; i < rows.length; i += 200) { const { error: dlErr } = await s.from('journal_entry_lines').insert(rows.slice(i, i + 200)); if (dlErr) { console.error(`Daily JE ${d} lines insert failed: ${dlErr.message}`); process.exit(1); } }
     posted++; postedLines += rows.length;
   }
   console.log(`Posted ${posted} daily entries, ${postedLines} lines.`);
 
   if (closeEntry) {
     const dr = closeEntry.lines.reduce((a, l) => a + l.debit, 0), cr = closeEntry.lines.reduce((a, l) => a + l.credit, 0);
-    const { data: je } = await s.from('journal_entries').insert({ community_id: CID, period_id: pid(closeEntry.date), posting_date: closeEntry.date, reference: `JE-${closeYear}-CLOSE`, description: `Year-end close ${closeYear} + multi-fund fund-balance restructure (Operating/Reserve/Savings)`, source_module: 'year_end_close', total_debits_cents: dr, total_credits_cents: cr, status: 'posted' }).select('id').single();
-    await s.from('journal_entry_lines').insert(closeEntry.lines.map((l, i) => ({ journal_entry_id: je.id, line_number: i + 1, account_id: acctId[l.number], debit_cents: l.debit, credit_cents: l.credit, memo: l.memo })));
+    const { data: je, error: jeErr } = await s.from('journal_entries').insert({ community_id: CID, period_id: pid(closeEntry.date), posting_date: closeEntry.date, reference: `JE-${closeYear}-CLOSE`, description: `Year-end close ${closeYear} + multi-fund fund-balance restructure (Operating/Reserve/Savings)`, source_module: 'closing_entry', total_debits_cents: dr, total_credits_cents: cr, status: 'posted' }).select('id').single();
+    if (jeErr || !je) { console.error(`Close JE insert failed: ${jeErr ? jeErr.message : 'no row returned'}`); process.exit(1); }
+    const { error: clErr } = await s.from('journal_entry_lines').insert(closeEntry.lines.map((l, i) => ({ journal_entry_id: je.id, line_number: i + 1, account_id: acctId[l.number], debit_cents: l.debit, credit_cents: l.credit, memo: l.memo })));
+    if (clErr) { console.error(`Close JE lines insert failed: ${clErr.message}`); process.exit(1); }
     console.log(`Posted ${closeYear} close (${closeEntry.lines.length} lines).`);
   }
 
