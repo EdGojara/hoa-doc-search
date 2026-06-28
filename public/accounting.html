@@ -756,28 +756,48 @@
   const fmtDate = (d) => d ? new Date(d+'T00:00:00').toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}) : '—';
   // Boundary view: book (GL) vs bank each month = deposits in transit, with the
   // online settlements explained from the payout key and the rest flagged.
+  // EVERY account for the community, each with its month-by-month rec (book vs
+  // bank). Driven by the uploads above — "do all the accounts from the system."
   async function boundarySummaryCard() {
-    let data;
-    try { data = await (await fetch(`/api/bank-rec/boundary-summary?community_id=${CID}`)).json(); }
+    let accts = [];
+    try { accts = (await (await fetch(`/api/bank-rec/accounts?community_id=${CID}`)).json()).accounts || []; }
     catch(e){ return ''; }
-    if (!data || !data.months || !data.months.length || data.error) return '';
-    const rows = data.months.slice().sort((a,b)=>(b.period_end||'').localeCompare(a.period_end||'')).map((m)=>{
-      const tied = m.reconciled;
-      const resColor = Math.abs(m.residual_cents)<=100 ? '#047857' : (m.residual_cents<0?'#b91c1c':'#b45309');
-      return `<tr style="cursor:pointer; ${tied?'':'background:#fff7ed;'}" onclick="wsOpen('${m.period_end}')" title="Open reconciliation worksheet">
-        <td>${esc(fmtDate(m.period_end))}</td>
-        <td class="num">${fmt(m.book_cents)}</td>
-        <td class="num">${fmt(m.bank_cents)}</td>
-        <td class="num">${fmt(m.book_minus_bank_cents)}</td>
-        <td class="num" style="color:#047857;">${m.deposits_in_transit_cents?'+'+fmt(m.deposits_in_transit_cents):'—'}</td>
-        <td class="num" style="color:#b91c1c;">${m.outstanding_checks_cents?fmt(m.outstanding_checks_cents):'—'}</td>
-        <td class="num" style="font-weight:700; color:${resColor};">${m.residual_cents?fmt(m.residual_cents):'$0.00'}</td>
-        <td>${tied?'<span style="color:#047857;font-weight:700;font-size:12px;">✓ tied</span>':'<span style="color:#b45309;font-weight:700;font-size:12px;">review</span>'}</td></tr>`;
+    if (!accts.length) return '';
+    const summaries = await Promise.all(accts.map(async (a) => {
+      if (!a.account_last4) return { acct: a, months: [] };
+      try { const d = await (await fetch(`/api/bank-rec/boundary-summary?community_id=${CID}&account_last4=${a.account_last4}`)).json(); return { acct: a, months: (d && d.months) || [] }; }
+      catch(e){ return { acct: a, months: [] }; }
+    }));
+    const withStmts = summaries.filter((s)=>s.months.length).length;
+    const allTied = summaries.filter((s)=>s.months.length && s.months.every((m)=>m.reconciled)).length;
+    const header = `<div class="card" style="margin-bottom:12px;">
+      <h2 class="sec" style="margin:0 0 4px;">All accounts — reconciliation status</h2>
+      <div class="sub muted" style="font-size:12.5px;"><strong>${withStmts}</strong> of <strong>${accts.length}</strong> accounts have statements uploaded · <strong>${allTied}</strong> fully reconciled. Drop statements above to reconcile the rest; click any month to open its worksheet.</div></div>`;
+    const cards = summaries.map(({ acct, months }) => {
+      const nm = esc(acct.account_nickname || acct.bank_name || 'Account') + (acct.account_last4 ? (' ····' + acct.account_last4) : '');
+      if (!months.length) {
+        return `<div class="card" style="margin-bottom:10px; opacity:.72;"><div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong style="font-size:13.5px;">${nm}</strong>
+          <span class="muted" style="font-size:12px;">${acct.account_last4 ? 'awaiting statements' : 'no account # yet — upload a statement'}</span></div></div>`;
+      }
+      const tied = months.every((m)=>m.reconciled);
+      const rows = months.slice().sort((a,b)=>(b.period_end||'').localeCompare(a.period_end||'')).map((m)=>{
+        const t = m.reconciled;
+        const rc = Math.abs(m.residual_cents)<=100 ? '#047857' : (m.residual_cents<0?'#b91c1c':'#b45309');
+        return `<tr style="cursor:pointer; ${t?'':'background:#fff7ed;'}" onclick="wsOpen('${m.period_end}','${acct.account_last4}')" title="Open reconciliation worksheet">
+          <td>${esc(fmtDate(m.period_end))}</td><td class="num">${fmt(m.book_cents)}</td><td class="num">${fmt(m.bank_cents)}</td>
+          <td class="num" style="color:#047857;">${m.deposits_in_transit_cents?'+'+fmt(m.deposits_in_transit_cents):'—'}</td>
+          <td class="num" style="color:#b91c1c;">${m.outstanding_checks_cents?fmt(m.outstanding_checks_cents):'—'}</td>
+          <td class="num" style="font-weight:700; color:${rc};">${m.residual_cents?fmt(m.residual_cents):'$0.00'}</td>
+          <td>${t?'<span style="color:#047857;font-weight:700;font-size:12px;">✓ tied</span>':'<span style="color:#b45309;font-weight:700;font-size:12px;">review</span>'}</td></tr>`;
+      }).join('');
+      return `<div class="card" style="margin-bottom:10px;"><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <strong style="font-size:13.5px;">${nm}</strong>
+          <span style="font-size:12px; font-weight:700; color:${tied?'#047857':'#b45309'};">${tied?'✓ all months tied':'needs review'}</span></div>
+        <table><thead><tr><th>Month-end</th><th class="num">Book (GL)</th><th class="num">Bank</th><th class="num">+ In transit</th><th class="num">− Outstanding</th><th class="num">Difference</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
     }).join('');
-    return `<div class="card"><h2 class="sec" style="margin-bottom:4px;">Reconciliation summary — book vs bank by month</h2>
-      <div class="sub" style="margin-bottom:10px;">Each month reconciled with the same engine as the worksheet below: bank + deposits in transit − outstanding checks = book. Click a month to open and work the detail. A non-zero difference is flagged for review.</div>
-      <table><thead><tr><th>Month-end</th><th class="num">Book (GL)</th><th class="num">Bank</th><th class="num">Book − Bank</th><th class="num">+ In transit</th><th class="num">− Outstanding</th><th class="num">Difference</th><th>Status</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>`;
+    return header + cards;
   }
 
   // Traditional clearing worksheet: GL | Bank columns, matches pre-checked,
