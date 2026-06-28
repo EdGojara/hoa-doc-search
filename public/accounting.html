@@ -910,37 +910,62 @@
       boundarySummaryCard(),
       fetch(`/api/bank-rec/accounts?community_id=${CID}`).then((r)=>r.json()).then((j)=>j.accounts||[]).catch(()=>[]),
     ]);
-    const acctOpts = accts.map((a)=>`<option value="${a.id}">${esc(a.account_nickname||a.bank_name||'Account')}${a.account_last4?(' ····'+a.account_last4):''}</option>`).join('');
-    const btnStyle = 'padding:8px 16px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-weight:700; cursor:pointer; font-size:13px;';
+    window._brAccts = accts;
+    const noAccts = !accts.length;
     const importCard = `<div class="card" style="margin-bottom:14px;">
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <h2 class="sec" style="font-size:16px; margin:0;">Import bank statement</h2>
-        <select id="brStmtAcct" style="min-width:190px;">${acctOpts || '<option value="">No bank accounts set up</option>'}</select>
-        <input type="file" id="brStmtFile" accept="application/pdf,image/*">
-        <button id="brStmtGo" style="${btnStyle}" onclick="brStmtUpload()">Upload &amp; read</button>
-        <span id="brStmtStatus" class="muted" style="font-size:12.5px;"></span>
-      </div>
-      <div class="sub muted" style="margin-top:8px; font-size:12px;">PDF or photo. We read the transactions + balances; reconciling the GL is automatic. Re-uploading the same month replaces it — no double-counting.</div>
+      <h2 class="sec" style="font-size:16px; margin:0 0 6px;">Upload bank statements</h2>
+      <div class="sub muted" style="font-size:12px; margin-bottom:10px;">Drop one or more statement PDFs at once. Each is auto-routed to its account by the account number in the filename (override below if needed). We read the balances + transactions and reconcile the GL automatically; re-uploading a month replaces it.</div>
+      ${noAccts ? '<div class="muted" style="color:var(--err); font-size:12.5px;">No bank accounts set up for this community yet.</div>'
+        : `<input type="file" id="brFiles" accept="application/pdf,image/*,.xls,.xlsx" multiple onchange="brFilesChosen(this)" style="font-size:13px;">
+           <div id="brFileList" style="margin-top:12px;"></div>`}
     </div>`;
-    $('body').innerHTML = importCard + (summaryHtml || '<div class="card muted" style="padding:24px;">No bank statements imported yet — upload one above to start.</div>') + '<div id="drill"></div>';
+    $('body').innerHTML = importCard + (summaryHtml || '<div class="card muted" style="padding:24px;">No bank statements imported yet — drop one above to start.</div>') + '<div id="drill"></div>';
   }
 
-  window.brStmtUpload = async function() {
-    const acctId = $('brStmtAcct') && $('brStmtAcct').value;
-    const f = $('brStmtFile') && $('brStmtFile').files && $('brStmtFile').files[0];
-    const st = $('brStmtStatus');
-    if (!acctId) { st.textContent = 'Pick an account first.'; return; }
-    if (!f) { st.textContent = 'Choose a file first.'; return; }
-    st.textContent = 'Reading ' + f.name + '…'; $('brStmtGo').disabled = true;
-    try {
-      const fd = new FormData(); fd.append('file', f);
-      const r = await fetch(`/api/bank-rec/accounts/${acctId}/bank-statement`, { method:'POST', body: fd });
-      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || 'upload failed');
-      st.textContent = j.duplicate
-        ? 'Already imported — no change.'
-        : `Imported ${j.transaction_count||0} transactions through ${j.period_end||'?'}. Refreshing…`;
-      setTimeout(renderBankRec, 900);
-    } catch(e) { st.innerHTML = '<span style="color:var(--err)">'+esc(e.message)+'</span>'; $('brStmtGo').disabled = false; }
+  function brAcctOptions(selectedFor) {
+    const m = (String(selectedFor || '').match(/(\d{3,5})\D*\.(pdf|xls|xlsx|png|jpe?g)$/i) || [])[1];
+    return (window._brAccts || []).map((a) =>
+      `<option value="${a.id}" ${a.account_last4 && m && m.slice(-4) === a.account_last4 ? 'selected' : ''}>${esc(a.account_nickname || a.bank_name || 'Account')}${a.account_last4 ? (' ····' + a.account_last4) : ''}</option>`
+    ).join('');
+  }
+  window.brFilesChosen = function(input) {
+    window._brFiles = Array.from((input && input.files) || []);
+    const el = $('brFileList'); if (!el) return;
+    if (!window._brFiles.length) { el.innerHTML = ''; return; }
+    const rows = window._brFiles.map((f, i) => {
+      const m = (f.name.match(/(\d{3,5})\D*\.(pdf|xls|xlsx|png|jpe?g)$/i) || [])[1];
+      return `<tr>
+        <td style="padding:6px 8px; font-size:12.5px;">${esc(f.name)}</td>
+        <td style="padding:6px 8px;"><select id="brsel-${i}" style="min-width:230px; font-size:12.5px;">${brAcctOptions(f.name)}</select></td>
+        <td id="brstat-${i}" style="padding:6px 8px; font-size:12px;" class="muted">${m ? 'matched ····' + m.slice(-4) : 'pick account'}</td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<table style="width:100%; border-collapse:collapse;">
+      <thead><tr>
+        <th style="text-align:left; padding:6px 8px; font-size:11px; letter-spacing:.04em;" class="muted">FILE</th>
+        <th style="text-align:left; padding:6px 8px; font-size:11px; letter-spacing:.04em;" class="muted">ACCOUNT</th>
+        <th style="text-align:left; padding:6px 8px; font-size:11px; letter-spacing:.04em;" class="muted">STATUS</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <button id="brUpAll" onclick="brUploadAll()" style="margin-top:12px; padding:8px 18px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-weight:700; cursor:pointer; font-size:13px;">Upload ${window._brFiles.length} statement${window._brFiles.length > 1 ? 's' : ''}</button>`;
+  };
+  window.brUploadAll = async function() {
+    const files = window._brFiles || [];
+    const btn = $('brUpAll'); if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+    let done = 0, dupes = 0, errs = 0;
+    for (let i = 0; i < files.length; i++) {
+      const sel = $('brsel-' + i), stat = $('brstat-' + i);
+      if (!sel || !sel.value) { if (stat) stat.textContent = 'no account'; errs++; continue; }
+      if (stat) stat.innerHTML = '<span class="muted">reading…</span>';
+      try {
+        const fd = new FormData(); fd.append('file', files[i]);
+        const r = await fetch(`/api/bank-rec/accounts/${sel.value}/bank-statement`, { method: 'POST', body: fd });
+        const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || 'upload failed');
+        if (j.duplicate) { dupes++; if (stat) stat.innerHTML = '<span class="muted">already imported</span>'; }
+        else { done++; if (stat) stat.innerHTML = `<span style="color:#1a7f37; font-weight:600;">✓ ${j.transaction_count || 0} txns · ${j.period_end || '?'}</span>`; }
+      } catch (e) { errs++; if (stat) stat.innerHTML = '<span style="color:var(--err)">' + esc(e.message) + '</span>'; }
+    }
+    if (btn) { btn.textContent = `${done} uploaded${dupes ? `, ${dupes} dupes` : ''}${errs ? `, ${errs} failed` : ''} — refreshing…`; }
+    setTimeout(renderBankRec, errs ? 2500 : 1400);
   };
 
   // ── Print Checks (AP) ──────────────────────────────────────────────────────
