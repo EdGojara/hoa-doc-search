@@ -177,29 +177,43 @@ async function getInspectionCompletionStatus(inspectionId) {
   const { data: obs } = await supabase
     .from('property_observations').select('id').eq('inspection_id', inspectionId);
   const obsIds = (obs || []).map((o) => o.id);
-  if (!obsIds.length) return { open_violations: 0, pending_letters: 0, ready: true };
+  if (!obsIds.length) return { open_violations: 0, pending_letters: 0, ready: true, missing: [] };
   const vios = [];
   for (let i = 0; i < obsIds.length; i += 200) {
     const { data } = await supabase
-      .from('violations').select('id, current_stage, resolved_at')
+      .from('violations')
+      .select('id, current_stage, resolved_at, properties(street_address), enforcement_categories(label)')
       .in('opened_from_observation_id', obsIds.slice(i, i + 200));
     vios.push(...(data || []));
   }
-  const openIds = vios
-    .filter((v) => !v.resolved_at && !['cured', 'closed', 'voided'].includes(v.current_stage))
-    .map((v) => v.id);
-  if (!openIds.length) return { open_violations: 0, pending_letters: 0, ready: true };
+  const openVios = vios.filter((v) => !v.resolved_at && !['cured', 'closed', 'voided'].includes(v.current_stage));
+  if (!openVios.length) return { open_violations: 0, pending_letters: 0, ready: true, missing: [] };
+  const openIds = openVios.map((v) => v.id);
+  // printed = has a letter with printed_at set; anyLetter = has any letter row
+  // (draft/approved) so the UI can say "generate" vs "print the existing draft".
   const printed = new Set();
+  const anyLetter = new Set();
   for (let i = 0; i < openIds.length; i += 200) {
     const { data } = await supabase
-      .from('interactions').select('violation_id')
+      .from('interactions').select('violation_id, printed_at')
       .in('type', INSP_LETTER_TYPES)
-      .in('violation_id', openIds.slice(i, i + 200))
-      .not('printed_at', 'is', null);
-    (data || []).forEach((r) => r.violation_id && printed.add(r.violation_id));
+      .in('violation_id', openIds.slice(i, i + 200));
+    (data || []).forEach((r) => {
+      if (!r.violation_id) return;
+      anyLetter.add(r.violation_id);
+      if (r.printed_at) printed.add(r.violation_id);
+    });
   }
-  const pending = openIds.filter((id) => !printed.has(id)).length;
-  return { open_violations: openIds.length, pending_letters: pending, ready: pending === 0 };
+  const missing = openVios
+    .filter((v) => !printed.has(v.id))
+    .map((v) => ({
+      violation_id: v.id,
+      street_address: (v.properties && v.properties.street_address) || null,
+      category: (v.enforcement_categories && v.enforcement_categories.label) || null,
+      stage: v.current_stage,
+      has_draft: anyLetter.has(v.id),   // letter exists, just not printed → approve+print
+    }));
+  return { open_violations: openIds.length, pending_letters: missing.length, ready: missing.length === 0, missing };
 }
 
 // GET /api/inspections/:id/completion-status — drives the gated "Complete

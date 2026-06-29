@@ -25543,6 +25543,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <button id="inspReviewCompleteBtn" onclick="inspReviewComplete()" title="" style="display:none; margin-left:auto; background:#15803d; color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">✓ Complete inspection</button>
         <button onclick="inspCloseReview()" style="margin-left:8px; background:rgba(255,255,255,0.2); color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:14px; cursor:pointer;">× Close</button>
       </div>
+      <!-- Letters-needed checklist: when completion is blocked, the violations
+           missing a printed letter list HERE with a one-click Generate button,
+           so the screen that blocks you also lets you fix it (Ed 2026-06-29). -->
+      <div id="inspReviewLetterGate" style="display:none; background:#fffbeb; border-bottom:1px solid #fde68a; padding:10px 16px; color:#0B1D34; font-size:12.5px;"></div>
       <div style="flex:1; display:flex; min-height:0;">
         <!-- Sidebar — houses with photo strips -->
         <div id="inspReviewSidebar" style="width:300px; max-width:35%; background:#1a2a3e; overflow-y:auto; border-right:1px solid #243651;">
@@ -25804,35 +25808,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspReviewRenderMain();
       inspReviewUpdateFilterChips();
 
-      // Gated "Complete inspection" button — the END-of-flow action, lives here
-      // on the photos, not in the list. Enabled only once every open
-      // violation's letter is printed (server enforces it too). Hidden for
-      // already-completed/voided inspections.
-      try {
-        const btn = document.getElementById('inspReviewCompleteBtn');
-        const st = j.inspection && j.inspection.status;
-        if (btn) {
-          if (st === 'closed' || st === 'voided') {
-            btn.style.display = 'none';
-          } else {
-            btn.style.display = '';
-            btn.disabled = true; btn.textContent = '✓ Checking letters…';
-            const cr = await fetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/completion-status');
-            const cs = await cr.json().catch(() => ({ ready: false }));
-            if (cs.ready) {
-              btn.disabled = false;
-              btn.style.opacity = '1'; btn.style.cursor = 'pointer';
-              btn.textContent = '✓ Complete inspection';
-              btn.title = 'Closes the whole inspection and moves it to Completed. All letters are printed.';
-            } else {
-              btn.disabled = true;
-              btn.style.opacity = '0.55'; btn.style.cursor = 'not-allowed';
-              btn.textContent = `✓ Complete — print ${cs.pending_letters} letter${cs.pending_letters === 1 ? '' : 's'} first`;
-              btn.title = `${cs.pending_letters} of ${cs.open_violations} violations still need their letter printed (Mail Queue). Complete unlocks once they're printed.`;
-            }
-          }
-        }
-      } catch (_) { /* leave button hidden on error */ }
+      // Gated "Complete inspection" button + the letters-needed checklist.
+      window._inspReview.status = j.inspection && j.inspection.status;
+      try { await inspReviewRefreshGate(inspectionId); } catch (_) {}
     } catch (e) {
       console.error('[inspector] inspViewSessionPhotos failed:', e);
       document.getElementById('inspReviewSidebar').innerHTML =
@@ -25847,6 +25825,70 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (id) await inspFinalize(id);
   }
   window.inspReviewComplete = inspReviewComplete;
+
+  // Render the Complete button + the letters-needed checklist for a drive.
+  // Re-callable so it refreshes after a letter is generated.
+  async function inspReviewRefreshGate(inspectionId) {
+    const btn = document.getElementById('inspReviewCompleteBtn');
+    const gate = document.getElementById('inspReviewLetterGate');
+    const st = window._inspReview && window._inspReview.status;
+    if (!btn || !gate) return;
+    if (st === 'closed' || st === 'voided') { btn.style.display = 'none'; gate.style.display = 'none'; return; }
+    btn.style.display = '';
+    btn.disabled = true; btn.textContent = '✓ Checking letters…'; btn.style.opacity = '0.55';
+    let cs;
+    try {
+      const cr = await fetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/completion-status');
+      cs = await cr.json();
+    } catch (_) { gate.style.display = 'none'; return; }
+    if (cs.ready) {
+      btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
+      btn.textContent = '✓ Complete inspection';
+      btn.title = 'Closes the whole inspection and moves it to Completed. All letters are printed.';
+      gate.style.display = 'none';
+      return;
+    }
+    // Blocked: show the count on the button + the per-violation checklist.
+    btn.disabled = true; btn.style.opacity = '0.55'; btn.style.cursor = 'not-allowed';
+    btn.textContent = `✓ Complete — ${cs.pending_letters} letter${cs.pending_letters === 1 ? '' : 's'} left`;
+    btn.title = `${cs.pending_letters} of ${cs.open_violations} violations still need a printed letter. Generate any missing below, then approve + print in the Mail Queue.`;
+    const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const rows = (cs.missing || []).map((m) => {
+      const action = m.has_draft
+        ? `<span style="color:#92400e; font-weight:600;">📋 drafted — approve &amp; print in Mail Queue</span>`
+        : `<button onclick="inspReviewGenerateLetter('${m.violation_id}', this)" style="background:#0B1D34; color:#fff; border:0; padding:4px 10px; border-radius:5px; font-size:11.5px; font-weight:600; cursor:pointer;">📄 Generate letter</button>`;
+      return `<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:5px 0; border-top:1px solid #fde68a;">
+        <span><strong>${esc(m.street_address || '(no address)')}</strong> — ${esc(m.category || '?')} <span style="color:#92400e;">[${esc(m.stage)}]</span></span>
+        ${action}</div>`;
+    }).join('');
+    gate.innerHTML = `<div style="font-weight:700; margin-bottom:4px;">⚠ ${cs.pending_letters} violation${cs.pending_letters === 1 ? '' : 's'} still need a letter before this inspection can be completed:</div>${rows}
+      <div style="margin-top:8px; color:#64748b; font-size:11.5px;">Generate any missing letters here → then <strong>approve + print</strong> them in the Mail Queue → Complete unlocks.</div>`;
+    gate.style.display = 'block';
+  }
+  window.inspReviewRefreshGate = inspReviewRefreshGate;
+
+  // Generate a missing letter right from the completion checklist, then refresh.
+  async function inspReviewGenerateLetter(violationId, btn) {
+    if (!violationId) return;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+    try {
+      const r = await window._authFetch('/api/enforcement/generate-letter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ violation_id: violationId, force_regenerate: true }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (j.letter_url) window.open(j.letter_url, '_blank');
+      // Refresh the gate — the violation now has a draft (approve+print next).
+      const id = window._inspReview && window._inspReview.inspectionId;
+      if (id) await inspReviewRefreshGate(id);
+    } catch (e) {
+      alert('Letter generation failed: ' + e.message);
+      if (btn) { btn.disabled = false; btn.textContent = '📄 Generate letter'; }
+    }
+  }
+  window.inspReviewGenerateLetter = inspReviewGenerateLetter;
 
   function inspCloseReview() {
     const m = document.getElementById('inspReviewModal');
