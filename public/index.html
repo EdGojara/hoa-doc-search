@@ -26154,13 +26154,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   async function inspLoadRecent() {
     const wrap = document.getElementById('inspRecentList');
     try {
-      const r = await fetch('/api/inspections/recent?limit=10');
+      const r = await fetch('/api/inspections/recent?limit=25');
       const j = await r.json();
       if (!j.inspections || j.inspections.length === 0) {
         wrap.innerHTML = '<div style="color: #94a3b8; font-size: 12px; text-align: center; padding: 12px 0;">No inspections yet.</div>';
         return;
       }
-      wrap.innerHTML = j.inspections.map((i) => {
+      const rowHtml = (i) => {
         const date = i.started_at ? new Date(i.started_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
         const community = i.communities?.name || '—';
         const modeLabel = { foot: '🚶', drive_by: '🚗', mounted_camera: '📷', spot_check: '📍' }[i.mode] || '?';
@@ -26170,7 +26170,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           captured: 'Captured',
           ai_analyzed: 'Analyzed',
           reviewed: 'Reviewed',
-          closed: '🔒 Finalized',
+          closed: '✓ Completed',
         })[i.status] || i.status;
         // Closed (finalized) inspections get a Reopen action so staff can
         // un-finalize and edit. Voided inspections are filtered out server-side.
@@ -26228,14 +26228,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const resumeBtn = `
           <button type="button" onclick="inspResume('${i.id}')"
                   style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                  title="Reload this inspection into the live capture UI — add more photos, delete the wrong ones, retry analyze, then Finalize when done.">
+                  title="Reload this inspection into the live capture UI — add more photos, delete the wrong ones, retry analyze. Complete the inspection only after letters print.">
             📷 Resume
           </button>`;
         const finalizeBtn = `
           <button type="button" onclick="inspFinalize('${i.id}')"
                   style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                  title="Mark this inspection as the permanent record (status: closed). Do this AFTER you've reviewed the photos and confirmed the violations. It stays visible here as 🔒 Finalized — staff can still Reopen if a correction is needed.">
-            🔒 Finalize
+                  title="Closes the WHOLE inspection — do this LAST, after the violation letters are printed. Moves it to Completed. Not for ending a drive (that's Resume/leave open). You can still Reopen later if a correction is needed.">
+            ✓ Complete inspection
           </button>`;
         const discardBtn = `
           <button type="button" onclick="inspDiscard('${i.id}')"
@@ -26246,7 +26246,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const reopenBtn = `
           <button type="button" onclick="inspResume('${i.id}')"
                   style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                  title="Reopen this inspection and load it back into the live capture UI — add photos, fix observations, then Finalize again.">
+                  title="Reopen this completed inspection and load it back into the live capture UI — add photos, fix observations, then Complete it again.">
             🔓 Reopen &amp; resume
           </button>`;
         // Overflow menu — only renders if it has contents. Native <details>
@@ -26283,7 +26283,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             ${actions}
           </div>
         `;
-      }).join('');
+      };
+      // Split: Open = still being worked (not closed/voided); Completed =
+      // closed after letters printed. Voided rows are filtered server-side.
+      const openOnes = j.inspections.filter((i) => i.status !== 'closed' && i.status !== 'voided');
+      const doneOnes = j.inspections.filter((i) => i.status === 'closed');
+      const section = (title, hint, rows, emptyMsg) => `
+        <div style="font-size:12px; font-weight:700; color:#0B1D34; letter-spacing:0.04em; text-transform:uppercase; padding:10px 6px 4px;">${title} <span style="color:#94a3b8; font-weight:500; text-transform:none; letter-spacing:0;">${hint}</span></div>
+        ${rows.length ? rows.map(rowHtml).join('') : `<div style="color:#94a3b8; font-size:12px; padding:4px 8px 10px;">${emptyMsg}</div>`}`;
+      wrap.innerHTML =
+        section('Open inspections', '· drives still in progress — complete after letters print', openOnes, 'Nothing open — every drive is completed.') +
+        section('Completed inspections', '· closed after letters printed', doneOnes, 'No completed inspections yet.');
     } catch (e) {
       wrap.innerHTML = `<div style="color: #b91c1c; font-size: 12px; padding: 12px;">Couldn't load recent inspections.</div>`;
     }
