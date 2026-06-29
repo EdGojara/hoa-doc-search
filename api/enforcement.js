@@ -1534,6 +1534,17 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         .eq('primary_category_id', violation.primary_category_id)
         .neq('id', violation.id)
         .gte('opened_at', yearAgo.toISOString())
+        // A §209 letter must only cite prior notices that STILL STAND. A
+        // voided/cured/closed notice is not a valid prior — citing it as the
+        // basis for escalation is indefensible (17715 Sunset River Lane, two
+        // voided notices printed under a certified letter, 2026-06-29). Mirror
+        // the escalation query (_getRecentSameCategory): exclude terminal stages
+        // AND any row with resolved_at set (voided/cured rows keep their
+        // courtesy/certified current_stage; resolved_at IS NULL is the true
+        // "still stands" flag).
+        .not('current_stage', 'in', '(cured,closed,voided)')
+        .is('resolved_at', null)
+        .neq('quality_status', 'superseded')
         .order('opened_at', { ascending: false })
         .limit(10);
       priorViolations = pv || [];
