@@ -19731,6 +19731,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspState.sessionId = j.inspection.id;
       inspState.communityId = sel.value;
       inspState.communityName = sel.options[sel.selectedIndex].textContent;
+      try { inspPersistActiveSession(); } catch (_) {}   // remember the drive across reloads
       inspState.photoCount = 0;
       inspState.photos = [];
       inspState.isPaused = false;
@@ -26312,6 +26313,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const j = await r.json().catch(() => ({}));
         throw new Error(j.error || `discard failed (${r.status})`);
       }
+      try { inspClearActiveSession(id); } catch (_) {}
       inspLoadRecent();
     } catch (e) {
       alert('Could not discard: ' + e.message);
@@ -26356,6 +26358,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (j.deleted_photos) parts.push(`${j.deleted_photos} photo${j.deleted_photos === 1 ? '' : 's'}`);
       if (j.deleted_pending_letters) parts.push(`${j.deleted_pending_letters} draft letter${j.deleted_pending_letters === 1 ? '' : 's'}`);
       alert('✓ Force-deleted inspection.' + (parts.length ? '\n\nCleaned up: ' + parts.join(' · ') : ''));
+      try { inspClearActiveSession(id); } catch (_) {}
       inspLoadRecent();
     } catch (e) {
       alert('Force-delete failed: ' + e.message);
@@ -26454,6 +26457,76 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
   window.inspTrashDays = inspTrashDays;
 
+  // --- Active-session persistence (Ed 2026-06-29) --------------------------
+  // The active drive lived only in inspState (memory). Mobile browsers reload
+  // backgrounded tabs on long drives, dropping it — so the operator hit Start
+  // again and spawned a NEW session per reload (4 Eaglewood sessions in one
+  // drive). Persist a lightweight POINTER (id + community + timestamp) and
+  // restore the in-progress drive on load. Pointer only — this never touches
+  // photos, observations, or the inspection row.
+  const INSP_ACTIVE_KEY = 'insp_active_session';
+  function inspPersistActiveSession() {
+    try {
+      if (!inspState.sessionId) return;
+      localStorage.setItem(INSP_ACTIVE_KEY, JSON.stringify({
+        id: inspState.sessionId,
+        communityId: inspState.communityId || null,
+        communityName: inspState.communityName || '',
+        ts: Date.now(),
+      }));
+    } catch (_) {}
+  }
+  function inspClearActiveSession(id) {
+    try {
+      if (id) { // only clear if the pointer matches this id (don't nuke a different live drive)
+        const raw = localStorage.getItem(INSP_ACTIVE_KEY);
+        if (raw) { const o = JSON.parse(raw); if (o && o.id && o.id !== id) return; }
+      }
+      localStorage.removeItem(INSP_ACTIVE_KEY);
+    } catch (_) {}
+  }
+  window.inspPersistActiveSession = inspPersistActiveSession;
+  window.inspClearActiveSession = inspClearActiveSession;
+
+  // On Inspect-tab open: if a recent in-progress drive is saved, drop back into
+  // it instead of the blank Start card. Read-only restore — verifies status
+  // first, resumes ONLY in_progress/paused, and clears the pointer if the
+  // session is finalized, voided, gone, or stale (>18h). Never reopens a closed
+  // session, never deletes anything.
+  let _inspRestoreTried = false;
+  async function inspRestoreActiveSession() {
+    if (_inspRestoreTried) return;
+    if (inspState.sessionId) { _inspRestoreTried = true; return; } // already in a session
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(INSP_ACTIVE_KEY) || 'null'); } catch (_) {}
+    if (!saved || !saved.id) { _inspRestoreTried = true; return; }
+    _inspRestoreTried = true;
+    if (saved.ts && (Date.now() - saved.ts) > 18 * 3600 * 1000) { inspClearActiveSession(); return; } // stale
+    try {
+      const r = await fetch(`/api/inspections/${encodeURIComponent(saved.id)}`);
+      if (!r.ok) { if (r.status === 404) inspClearActiveSession(); return; }
+      const j = await r.json();
+      const insp = j.inspection;
+      if (!insp) { inspClearActiveSession(); return; }
+      if (insp.status === 'in_progress' || insp.status === 'paused') {
+        if (typeof inspResume === 'function') await inspResume(saved.id); // existing hydration; no reopen for these statuses
+      } else {
+        inspClearActiveSession(); // finalized / voided — pointer is stale
+      }
+    } catch (_) { /* offline — leave pointer, retry next load */ }
+  }
+  window.inspRestoreActiveSession = inspRestoreActiveSession;
+
+  // If a reload lands directly on the Inspect tab (the common mobile-capture
+  // case), restore without waiting for a tab click. Guarded to the inspect tab
+  // so it never pulls the operator off another tab.
+  document.addEventListener('DOMContentLoaded', () => setTimeout(() => {
+    try {
+      const t = document.getElementById('tab-inspect');
+      if (t && t.classList.contains('active')) inspRestoreActiveSession();
+    } catch (_) {}
+  }, 1200));
+
   async function inspResume(id) {
     if (!id) return;
     // If we already have a different session active, warn before stomping it.
@@ -26518,6 +26591,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         } catch (_) {}
       }
       inspState.communityName = communityName;
+      try { inspPersistActiveSession(); } catch (_) {}   // refresh the across-reload pointer
 
       // Swap panels: hide Start, show Active capture
       const startCard = document.getElementById('inspStartCard');
@@ -26608,6 +26682,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const j = await r.json().catch(() => ({}));
         throw new Error(j.error || `finalize failed (${r.status})`);
       }
+      try { inspClearActiveSession(id); } catch (_) {}   // drive is closed; forget the pointer
       inspLoadRecent();
     } catch (e) {
       alert('Could not finalize: ' + e.message);
@@ -26629,6 +26704,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     window.switchTab = function (tab) {
       const result = orig.apply(this, arguments);
       if (tab === 'inspect') {
+        try { inspRestoreActiveSession(); } catch (e) { console.warn('[inspect] restore session', e); }
         try { inspLoadCommunities(); } catch (e) { console.warn('[inspect] load communities', e); }
         try { inspQueueLoadCommunityOptions(); } catch (e) { console.warn('[inspect] load queue filter', e); }
         try { inspLoadRecent(); }      catch (e) { console.warn('[inspect] load recent', e); }
