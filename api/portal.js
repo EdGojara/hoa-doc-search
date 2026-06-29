@@ -47,6 +47,25 @@ const MIMIC_COOKIE_TTL_MIN = 30;
 
 const router = express.Router();
 
+// SINGLE SOURCE OF TRUTH for "which submission page does each builder land on."
+// Keyed on builder_companies.company_name; value MUST be a real route in
+// server.js. Used by /api/portal/me (real builder sessions) AND the builder
+// dashboard's "New submission" link via my-submissions (incl. manager preview,
+// which is what was sending Lennar previews to the DRB page — 2026-06-29).
+// Add a line when onboarding a new builder/community pair.
+const BUILDER_LANDING_URLS = {
+  'DRB Group': '/builders/august-meadows-drb',
+  'Lennar':    '/builders/still-creek-lennar',
+};
+// First matching company wins; fall back to the dashboard so a builder is never
+// dead-ended.
+function resolveBuilderLandingUrl(companyNames) {
+  for (const name of (companyNames || [])) {
+    if (BUILDER_LANDING_URLS[name]) return BUILDER_LANDING_URLS[name];
+  }
+  return '/builder-dashboard.html';
+}
+
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
@@ -1097,13 +1116,6 @@ router.get('/me', async (req, res) => {
     //     order of preference; the FIRST match wins
     //   - When NO mapping matches, fall back to the dashboard so the
     //     builder isn't dead-ended — they can navigate from there
-    const BUILDER_LANDING_URLS = {
-      // Onboarded:
-      'DRB Group':  '/builders/august-meadows-drb',
-      // Lennar at Still Creek Ranch — wired 2026-06-11.
-      'Lennar':     '/builders/still-creek-lennar',
-    };
-
     const isBuilder = user.role === 'builder';
     if (isBuilder) {
       const { data: builderLinks } = await supabase
@@ -1115,13 +1127,7 @@ router.get('/me', async (req, res) => {
         .map((b) => b.builder_companies)
         .filter(Boolean);
 
-      let landingUrl = '/builder-dashboard.html';
-      for (const c of companies) {
-        if (BUILDER_LANDING_URLS[c.company_name]) {
-          landingUrl = BUILDER_LANDING_URLS[c.company_name];
-          break;
-        }
-      }
+      const landingUrl = resolveBuilderLandingUrl(companies.map((c) => c.company_name));
 
       return res.json({
         user: {
@@ -3883,4 +3889,5 @@ module.exports = {
   // (migration 080). Exported here so the linkage table is the single
   // source of truth for "what does this portal user have access to."
   resolvePortalUser,
+  resolveBuilderLandingUrl,
 };

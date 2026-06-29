@@ -492,16 +492,25 @@
       // URL. Pull it from /me so it stays data-driven — DRB users get the
       // August Meadows DRB form, Lennar users get the Still Creek Lennar
       // form (when wired), zero hardcoding in this file.
-      try {
-        const meRes = await fetch('/api/portal/me', { credentials: 'same-origin' });
-        if (meRes.ok) {
-          const me = await meRes.json();
-          if (me.user && me.user.landing_url) {
-            const link = document.getElementById('newSubmissionLink');
-            if (link) link.href = me.user.landing_url;
+      // Prefer the landing URL from THIS response — it reflects the builder
+      // actually being viewed, including manager preview (?as_builder_id),
+      // which /api/portal/me can't resolve (it only knows the staff user).
+      // That gap was sending Lennar previews to the DRB form. Fall back to /me
+      // for a real builder session, then to the static default.
+      const link = document.getElementById('newSubmissionLink');
+      if (link && data.landing_url && data.landing_url !== '/builder-dashboard.html') {
+        link.href = data.landing_url;
+      } else {
+        try {
+          const meRes = await fetch('/api/portal/me', { credentials: 'same-origin' });
+          if (meRes.ok) {
+            const me = await meRes.json();
+            if (link && me.user && me.user.landing_url && me.user.landing_url !== '/builder-dashboard.html') {
+              link.href = me.user.landing_url;
+            }
           }
-        }
-      } catch (_) { /* keep the static default href */ }
+        } catch (_) { /* keep the static default href */ }
+      }
 
       document.getElementById('pageSub').textContent =
         `${data.counts.total} total submission${data.counts.total === 1 ? '' : 's'} · ${data.counts.pending} in progress · ${data.counts.decided} decided`;

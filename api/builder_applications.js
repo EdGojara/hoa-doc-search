@@ -4953,8 +4953,14 @@ router.get('/portal/my-submissions', async (req, res) => {
       if (PENDING_STATUSES.has(a.status)) pending.push(row); else decided.push(row);
     }
 
+    // Correct "New submission" landing URL for the builder being viewed —
+    // works for both real builder sessions AND manager preview (?as_builder_id),
+    // which /api/portal/me can't resolve (it only knows the staff user). Same
+    // server-side map as /me, so there's one source of truth.
+    const { resolveBuilderLandingUrl } = require('./portal');
     res.json({
       builder_companies: builderCompanies,
+      landing_url: resolveBuilderLandingUrl(builderCompanies.map((c) => c.name)),
       pending,
       decided,
       counts: {
