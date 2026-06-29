@@ -17509,6 +17509,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const label = { vantaca_import: 'Vantaca', predecessor_import: 'Predecessor', manual_entry: 'Manual', legacy_unknown: 'Legacy' }[s] || s;
       return `<span style="background:#f1f5f9; color:#64748b; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:600; margin-left:4px;">${label}</span>`;
     };
+    // Open violations on this property — used to gate + populate the "just a
+    // photo for…" picker (only meaningful when there are 2+ open violations).
+    const _openVios = (d.violations || []).filter((x) => !x.resolved_at && !['cured', 'closed', 'voided'].includes(x.current_stage));
+    window._inspPDOpenVios = _openVios.map((x) => ({ id: x.id, label: (x.enforcement_categories && x.enforcement_categories.label) || x.current_stage }));
+    const canDemote = _openVios.length >= 2;
     const viosHtml = (d.violations || []).length === 0
       ? '<div style="color:#94a3b8; font-size:12.5px; padding:8px;">No violations on record.</div>'
       : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
@@ -17553,6 +17558,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                      ${['courtesy_1','courtesy_2','certified_209'].includes(v.current_stage) ? `<button onclick="inspAdvanceStage('${v.id}','${v.current_stage}')" title="Advance to the next enforcement stage (Courtesy 2 → Certified §209, etc.). Deliberate staff action — you still generate + mail the certified notice; the cure clock starts when it goes out." style="background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↑ Advance</button>` : ''}
                      ${['courtesy_2','certified_209','fine_assessed'].includes(v.current_stage) ? `<button onclick="inspReduceStage('${v.id}','${v.current_stage}')" title="Reduce to the previous stage (Courtesy 2 → Courtesy 1, Certified → Courtesy 2). Use when a case was over-escalated — e.g. a deduped duplicate bumped a first occurrence up a level. Clears the cure clock; regenerate the lower-stage letter." style="background:#eff6ff; border:1px solid #93c5fd; color:#1e40af; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↓ Reduce</button>` : ''}
                      ${!['cured','closed','voided'].includes(v.current_stage) ? `<button onclick="inspMarkCured('${v.id}')" title="Close this violation (homeowner-confirmed cure, drive-by spot check, or board dismissal). Auto-resets any open repeat in this category back to Courtesy 1." style="background:#dcfce7; border:1px solid #86efac; color:#15803d; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Cure</button>` : ''}
+                     ${(showLetterBtn && canDemote) ? `<button onclick="inspDemoteToPhotoPick('${v.id}')" title="Not a separate violation — attach this photo to another violation as its identifying/establishing shot (e.g. a front-of-house shot taken so a tight side-shot shows which house). Voids this one; the other letter then shows both photos." style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">📎 Just a photo for…</button>` : ''}
                      ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" style="background:#0B1D34; color:#fff; border:none; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">📄 Letter</button>` : ''}
                    </td>
                  </tr>${reviewNotesRow}`;
@@ -18237,6 +18243,51 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (btn) { btn.disabled = false; btn.textContent = '📄 Generate letter'; }
     }
   }
+
+  // "Just a photo for…" — this isn't a separate violation; pick which real
+  // violation its photo belongs to (rare: an ID/establishing shot for a tight
+  // side-shot). Attaches the photo + voids this one; the other letter shows both.
+  async function inspDemoteToPhotoPick(spuriousId) {
+    const targets = (window._inspPDOpenVios || []).filter((v) => v.id !== spuriousId);
+    if (!targets.length) { alert('No other open violation on this property to attach the photo to.'); return; }
+    const old = document.getElementById('inspDemotePicker'); if (old) old.remove();
+    const ov = document.createElement('div');
+    ov.id = 'inspDemotePicker';
+    ov.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.45); z-index:10000; display:flex; align-items:center; justify-content:center;';
+    ov.innerHTML = `<div style="background:#fff; border-radius:12px; padding:18px 20px; max-width:440px; width:90%; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+      <div style="font-weight:700; color:#0B1D34; font-size:15px; margin-bottom:4px;">Attach this photo to which violation?</div>
+      <div style="font-size:12.5px; color:#64748b; margin-bottom:12px;">This isn't a separate violation — its photo becomes the identifying shot on the one you pick. This violation is then voided, and the other letter shows both photos.</div>
+      ${targets.map((t) => `<button onclick="inspDemoteToPhoto('${spuriousId}','${t.id}')" style="display:block; width:100%; text-align:left; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; margin-bottom:8px; font-size:13px; font-weight:600; color:#0B1D34; cursor:pointer;">📎 ${escapeHtml(t.label)}</button>`).join('')}
+      <button onclick="document.getElementById('inspDemotePicker').remove()" style="margin-top:4px; background:#fff; border:1px solid #cbd5e1; color:#475569; padding:7px 14px; border-radius:6px; font-size:12.5px; cursor:pointer;">Cancel</button>
+    </div>`;
+    ov.addEventListener('click', (e) => { if (e.target === ov) ov.remove(); });
+    document.body.appendChild(ov);
+  }
+  window.inspDemoteToPhotoPick = inspDemoteToPhotoPick;
+
+  async function inspDemoteToPhoto(spuriousId, targetId) {
+    const picker = document.getElementById('inspDemotePicker'); if (picker) picker.remove();
+    try {
+      const r = await window._authFetch('/api/enforcement/violations/' + encodeURIComponent(spuriousId) + '/demote-to-photo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_violation_id: targetId }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      // Regenerate the target's letter so it now includes both photos.
+      try {
+        await window._authFetch('/api/enforcement/generate-letter', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ violation_id: targetId, force_regenerate: true }),
+        });
+      } catch (_) {}
+      if (inspPDCurrentPropertyId) await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+      setTimeout(() => alert('✓ Done — that photo is now the ID shot on the other violation, and this one was voided. The letter shows both photos.'), 100);
+    } catch (e) {
+      alert('Could not attach: ' + e.message);
+    }
+  }
+  window.inspDemoteToPhoto = inspDemoteToPhoto;
 
   // Close modal on outside click
   document.addEventListener('DOMContentLoaded', () => {

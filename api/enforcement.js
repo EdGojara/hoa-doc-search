@@ -9001,6 +9001,95 @@ router.get('/certified-list', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:violationId/demote-to-photo
+//   Body: { target_violation_id }
+// "This isn't a separate violation — it's just another photo for that one."
+// Used (rarely) when the AI made a second violation out of an establishing /
+// address shot taken to identify the house for a tight side-shot (e.g. a fence
+// close-up that doesn't show which house it is). Attaches THIS violation's
+// photo to the target as its wide/identification shot (reusing the existing
+// paired_wide_photo_id machinery the letter already renders), then voids THIS
+// violation. The target's letter then shows both photos under one item.
+// ---------------------------------------------------------------------------
+router.post('/violations/:violationId/demote-to-photo', express.json(), async (req, res) => {
+  try {
+    const spuriousId = req.params.violationId;
+    const targetId = req.body && req.body.target_violation_id;
+    if (!spuriousId || !targetId) return res.status(400).json({ error: 'violation_id and target_violation_id required' });
+    if (spuriousId === targetId) return res.status(400).json({ error: 'cannot attach a violation to itself' });
+
+    // Load both violations + the photo behind each (via opening observation).
+    const loadPhoto = async (vid) => {
+      const { data: v } = await supabase
+        .from('violations')
+        .select('id, property_id, community_id, current_stage, resolved_at, opened_from_observation_id')
+        .eq('id', vid).maybeSingle();
+      if (!v) return { error: 'not_found' };
+      let photoId = null;
+      if (v.opened_from_observation_id) {
+        const { data: o } = await supabase
+          .from('property_observations').select('inspection_photo_id')
+          .eq('id', v.opened_from_observation_id).maybeSingle();
+        photoId = o && o.inspection_photo_id;
+      }
+      return { v, photoId };
+    };
+    const sp = await loadPhoto(spuriousId);
+    const tg = await loadPhoto(targetId);
+    if (sp.error || !sp.v) return res.status(404).json({ error: 'violation_not_found' });
+    if (tg.error || !tg.v) return res.status(404).json({ error: 'target_violation_not_found' });
+    if (sp.v.property_id !== tg.v.property_id) return res.status(400).json({ error: 'violations are on different properties' });
+    if (!sp.photoId) return res.status(400).json({ error: 'this violation has no photo to attach' });
+    if (tg.v.resolved_at || ['cured', 'closed', 'voided'].includes(tg.v.current_stage)) {
+      return res.status(409).json({ error: 'target violation is resolved/closed' });
+    }
+
+    // Make the spurious photo the wide/ID shot (constraint: a 'wide' photo must
+    // have paired_wide_photo_id NULL), and pair it onto the target's close-up.
+    const { error: e1 } = await supabase
+      .from('inspection_photos')
+      .update({ photo_role: 'wide', paired_wide_photo_id: null })
+      .eq('id', sp.photoId);
+    if (e1) throw e1;
+    if (tg.photoId) {
+      const { error: e2 } = await supabase
+        .from('inspection_photos')
+        .update({ paired_wide_photo_id: sp.photoId, photo_role: 'close_up' })
+        .eq('id', tg.photoId);
+      if (e2) throw e2;
+    }
+
+    // Void the spurious violation — it was never its own violation.
+    const now = new Date().toISOString();
+    const { error: e3 } = await supabase
+      .from('violations')
+      .update({
+        current_stage: 'voided', resolved_via: 'voided', resolved_at: now,
+        resolved_notes: `Not a separate violation — its photo was attached to violation ${targetId} as the establishing/identification shot.`,
+      })
+      .eq('id', spuriousId)
+      .neq('current_stage', 'voided');
+    if (e3) throw e3;
+
+    // Audit note on the timeline.
+    try {
+      await supabase.from('interactions').insert({
+        community_id: sp.v.community_id || tg.v.community_id, property_id: sp.v.property_id, violation_id: targetId,
+        type: 'observation_note', direction: 'internal',
+        subject: 'Photo attached as establishing/ID shot',
+        content: 'A photo the AI had opened as a separate violation was reclassified as the identification shot for this violation (regenerate the letter to include both photos).',
+        sent_at: now,
+      });
+    } catch (_) {}
+
+    res.json({ ok: true, target_violation_id: targetId, attached_photo_id: sp.photoId });
+  } catch (err) {
+    console.error('[enforcement.demote-to-photo]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/enforcement/violations/:violationId/cure-days   { days }
 // Operator override for the cure-window length (migration 247). Set a larger
 // number to grant extra grace (e.g. 30 days when mailing late); pass null/blank
