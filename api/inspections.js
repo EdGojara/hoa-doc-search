@@ -229,20 +229,10 @@ router.patch('/inspections/:id', async (req, res) => {
     const { status, notes, ended_at } = req.body || {};
     const validStatuses = ['in_progress', 'paused', 'captured', 'ai_analyzed', 'reviewed', 'closed', 'voided'];
 
-    // GATE: completing an inspection (→ closed) requires every open violation's
-    // letter to be printed first. Admin reopen→re-edit is unaffected (that goes
-    // to in_progress). Skip the gate for admins forcing it via ?force=1.
-    if (status === 'closed' && req.query.force !== '1') {
-      const cs = await getInspectionCompletionStatus(id);
-      if (!cs.ready) {
-        return res.status(409).json({
-          error: 'letters_not_printed',
-          message: `${cs.pending_letters} of ${cs.open_violations} violation${cs.open_violations === 1 ? '' : 's'} still need a printed letter before this inspection can be completed. Print the letters in the Mail Queue, then complete.`,
-          pending_letters: cs.pending_letters,
-          open_violations: cs.open_violations,
-        });
-      }
-    }
+    // Completing is NOT blocked by unsent letters (Ed 2026-06-29 — complete +
+    // reminder, never a hard gate). The UI warns about pending letters before
+    // closing; they stay in the Mail Queue as their own to-do. The
+    // completion-status endpoint still powers that reminder.
 
     // REOPEN is admin-only: flipping a COMPLETED (closed) inspection back to an
     // open status requires admin access (Ed 2026-06-29). Defense in depth — the

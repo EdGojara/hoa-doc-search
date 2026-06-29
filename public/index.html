@@ -25834,24 +25834,23 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const st = window._inspReview && window._inspReview.status;
     if (!btn || !gate) return;
     if (st === 'closed' || st === 'voided') { btn.style.display = 'none'; gate.style.display = 'none'; return; }
-    btn.style.display = '';
-    btn.disabled = true; btn.textContent = '✓ Checking letters…'; btn.style.opacity = '0.55';
+    // Complete is NEVER disabled (complete + reminder). Always green + clickable;
+    // inspFinalize warns about any unsent letters before closing.
+    btn.style.display = ''; btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
+    btn.textContent = '✓ Complete inspection';
     let cs;
     try {
       const cr = await fetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/completion-status');
       cs = await cr.json();
     } catch (_) { gate.style.display = 'none'; return; }
     if (cs.ready) {
-      btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
-      btn.textContent = '✓ Complete inspection';
-      btn.title = 'Closes the whole inspection and moves it to Completed. All letters are printed.';
+      btn.title = 'All letters sent. Completes the inspection and moves it to Completed.';
       gate.style.display = 'none';
       return;
     }
-    // Blocked: show the count on the button + the per-violation checklist.
-    btn.disabled = true; btn.style.opacity = '0.55'; btn.style.cursor = 'not-allowed';
-    btn.textContent = `✓ Complete — ${cs.pending_letters} letter${cs.pending_letters === 1 ? '' : 's'} left`;
-    btn.title = `${cs.pending_letters} of ${cs.open_violations} violations still need a printed letter. Generate any missing below, then approve + print in the Mail Queue.`;
+    // Not blocked — just a reminder: show what's still unsent + a one-click way
+    // to handle it. Completing anyway is fine; letters stay in the Mail Queue.
+    btn.title = `${cs.pending_letters} letter(s) still unsent — you can complete anyway (they stay in the Mail Queue) or generate/print them below first.`;
     const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const rows = (cs.missing || []).map((m) => {
       const action = m.has_draft
@@ -25861,8 +25860,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <span><strong>${esc(m.street_address || '(no address)')}</strong> — ${esc(m.category || '?')} <span style="color:#92400e;">[${esc(m.stage)}]</span></span>
         ${action}</div>`;
     }).join('');
-    gate.innerHTML = `<div style="font-weight:700; margin-bottom:4px;">⚠ ${cs.pending_letters} violation${cs.pending_letters === 1 ? '' : 's'} still need a letter before this inspection can be completed:</div>${rows}
-      <div style="margin-top:8px; color:#64748b; font-size:11.5px;">Generate any missing letters here → then <strong>approve + print</strong> them in the Mail Queue → Complete unlocks.</div>`;
+    gate.innerHTML = `<div style="font-weight:700; margin-bottom:4px;">📬 ${cs.pending_letters} letter${cs.pending_letters === 1 ? '' : 's'} still to send (you can Complete now — these stay in the Mail Queue):</div>${rows}
+      <div style="margin-top:8px; color:#64748b; font-size:11.5px;">Generate any missing letters here → <strong>approve + print</strong> in the Mail Queue. Or just Complete; nothing is lost.</div>`;
     gate.style.display = 'block';
   }
   window.inspReviewRefreshGate = inspReviewRefreshGate;
@@ -26323,8 +26322,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const endDriveBtn = `
           <button type="button" onclick="inspEndDriveById('${i.id}')"
                   style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                  title="End the drive — stops capturing and keeps the inspection OPEN for review. You complete it later from the photos, after the letters are printed.">
+                  title="End the drive — stops capturing and keeps the inspection OPEN for review.">
             ⏹ End drive
+          </button>`;
+        // Complete — right on the row now (Ed 2026-06-29: no hunting). Never
+        // blocked; if letters are still unsent inspFinalize warns first and
+        // they stay in the Mail Queue.
+        const completeBtn = `
+          <button type="button" onclick="inspFinalize('${i.id}')"
+                  style="background: #15803d; color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                  title="Complete this inspection and move it to Completed. If letters are still unsent you'll get a reminder — they stay in the Mail Queue to send.">
+            ✓ Complete
           </button>`;
         const discardBtn = `
           <button type="button" onclick="inspDiscard('${i.id}')"
@@ -26356,14 +26364,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             ${moreMenu(`${analyzeBtn}${backfillBtn}${adminForceDeleteBtn}`)}
           </div>
         ` : '';
-        // Open: drive controls only — Resume / Pause / End drive (+ View
-        // photos). No Complete here; that lives on the photo-review screen.
+        // Open: View photos · (drive controls) · ✓ Complete. Complete is the
+        // obvious end action, right here — no hunting into other screens.
         const activeActions = (!isTerminal) ? `
           <div class="insp-recent-actions" style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; align-items: flex-start;">
             ${viewPhotosBtn}
             ${isUnfinished ? resumeBtn : ''}
             ${i.status === 'in_progress' ? pauseBtn : ''}
             ${isUnfinished ? endDriveBtn : ''}
+            ${completeBtn}
             ${moreMenu(`${isUnfinished ? '' : resumeBtn}${analyzeBtn}${backfillBtn}${discardBtn}${adminForceDeleteBtn}`)}
           </div>
         ` : '';
@@ -26770,12 +26779,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // permanent record for this community walkthrough. Stays visible in the
   // recent list but marked 🔒 Finalized and no longer offers Discard/Finalize.
   async function inspFinalize(id) {
-    if (!confirm(
-      'Complete this inspection?\n\n' +
-      'This closes the WHOLE inspection — do it after the violation letters are printed. ' +
-      'It moves to Completed. An admin can reopen it later if a correction is needed.\n\n' +
-      'Click OK to complete, Cancel to keep it open.'
-    )) return;
+    // Complete + reminder (never blocked): if letters are still unsent, say so
+    // clearly and let the user decide — they stay in the Mail Queue either way.
+    let pending = 0;
+    try {
+      const cr = await fetch('/api/inspections/' + encodeURIComponent(id) + '/completion-status');
+      const cs = await cr.json();
+      pending = (cs && cs.pending_letters) || 0;
+    } catch (_) {}
+    const msg = pending > 0
+      ? `Complete this inspection?\n\n⚠ ${pending} letter${pending === 1 ? '' : 's'} still need${pending === 1 ? 's' : ''} to go out. You can complete now — ${pending === 1 ? 'it stays' : 'they stay'} in the Mail Queue to send. Or Cancel and send ${pending === 1 ? 'it' : 'them'} first.\n\nComplete anyway?`
+      : 'Complete this inspection?\n\nIt moves to Completed. An admin can reopen it later if a correction is needed.';
+    if (!confirm(msg)) return;
     try {
       const r = await fetch(`/api/inspections/${id}`, {
         method: 'PATCH',
@@ -26783,14 +26798,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         body: JSON.stringify({ status: 'closed', ended_at: new Date().toISOString() }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        // Gate: letters not printed yet. Show the count, not a raw error.
-        if (r.status === 409 && j.error === 'letters_not_printed') {
-          alert('Can\'t complete yet — ' + (j.message || 'letters still need printing.') );
-          return;
-        }
-        throw new Error(j.error || `complete failed (${r.status})`);
-      }
+      if (!r.ok) throw new Error(j.error || `complete failed (${r.status})`);
       try { inspClearActiveSession(id); } catch (_) {}   // inspection closed; forget the pointer
       inspLoadRecent();
       try { if (typeof inspCloseReview === 'function') inspCloseReview(); } catch (_) {}
