@@ -178,17 +178,72 @@ router.delete('/:id', async (req, res) => {
 });
 
 // PATCH /community/:community_id/trash-schedule
+// Saves the schedule JSONB AND (when company_name is provided) upserts the
+// trash hauler as a community_contacts row of category 'trash', so the company
+// entered once in the trash block also shows in the directory + on the portal.
+// The schedule is MERGED over the existing value, never replaced wholesale —
+// posting only the visible fields must not wipe keys the UI doesn't render
+// (recycling_days, curbside_deadline, vendor_contact_id).
 router.patch('/community/:community_id/trash-schedule', express.json({ limit: '8kb' }), async (req, res) => {
   try {
-    const schedule = req.body?.trash_schedule || null;
+    const cid = req.params.community_id;
+    const posted = (req.body && req.body.trash_schedule) || {};
+    const companyName = (req.body?.company_name || '').trim();
+    const companyPhone = (req.body?.company_phone || '').trim();
+
+    // 1) Merge over existing so we never clobber keys the caller didn't send.
+    const { data: comm } = await supabase
+      .from('communities').select('trash_schedule').eq('id', cid).maybeSingle();
+    const existing = (comm && comm.trash_schedule) || {};
+    const merged = { ...existing, ...posted };
+
+    // 2) Upsert the hauler as a category='trash' contact so it lands in the
+    //    directory. Canonical home is the contact row; the schedule links to it
+    //    by vendor_contact_id (single source of truth — no duplicated name).
+    let trashContact = null;
+    if (companyName) {
+      let vendorId = merged.vendor_contact_id || null;
+      if (vendorId) {
+        const { data: vc } = await supabase
+          .from('community_contacts').select('id').eq('id', vendorId).maybeSingle();
+        if (!vc) vendorId = null; // referenced contact was deleted — re-find/create
+      }
+      if (!vendorId) {
+        const { data: existingTrash } = await supabase
+          .from('community_contacts').select('id')
+          .eq('community_id', cid).eq('category', 'trash')
+          .order('display_order').limit(1);
+        if (existingTrash && existingTrash.length) vendorId = existingTrash[0].id;
+      }
+      if (vendorId) {
+        const { data } = await supabase
+          .from('community_contacts')
+          .update({ name: companyName, phone: companyPhone || null })
+          .eq('id', vendorId).select('*').single();
+        trashContact = data;
+      } else {
+        const { data } = await supabase
+          .from('community_contacts')
+          .insert({
+            community_id: cid, category: 'trash', name: companyName,
+            phone: companyPhone || null, display_order: 40, is_published: true,
+          })
+          .select('*').single();
+        trashContact = data;
+        vendorId = data && data.id;
+      }
+      merged.vendor_contact_id = vendorId || null;
+    }
+
+    // 3) Persist the merged schedule.
     const { data, error } = await supabase
       .from('communities')
-      .update({ trash_schedule: schedule })
-      .eq('id', req.params.community_id)
+      .update({ trash_schedule: merged })
+      .eq('id', cid)
       .select('id, name, slug, trash_schedule')
       .single();
     if (error) throw error;
-    res.json({ ok: true, community: data });
+    res.json({ ok: true, community: data, trash_contact: trashContact });
   } catch (err) {
     console.error('[community-contacts] trash-schedule update failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

@@ -259,6 +259,14 @@ async function onCommunityChange() {
     state.community = data.community;
     state.contacts = data.contacts || [];
     state.trashSchedule = data.community?.trash_schedule || {};
+    // Company name/phone live on the linked trash contact (single source of
+    // truth). Prefer the schedule's vendor_contact_id; fall back to any
+    // category='trash' contact so a hauler added in the directory still shows.
+    const vId = state.trashSchedule.vendor_contact_id;
+    const trashContact = (vId && state.contacts.find(c => c.id === vId))
+      || state.contacts.find(c => c.category === 'trash') || null;
+    state.trashCompanyName = trashContact?.name || '';
+    state.trashCompanyPhone = trashContact?.phone || '';
     render();
   } catch (err) {
     toast('Could not load contacts: ' + err.message, 'error');
@@ -268,31 +276,59 @@ async function onCommunityChange() {
 function render() {
   const html = `
     <div class="panel">
-      <h2>Trash + recycling <em>schedule</em></h2>
-      <div class="sub">Days are surfaced on every homeowner's portal at /portal/contacts.</div>
+      <h2>Trash <em>company</em> + schedule</h2>
+      <div class="sub">The hauler + pickup days. The company auto-saves into the Contacts directory below, and the days show on every homeowner's portal at /portal/contacts.</div>
+
+      <div class="schedule-grid">
+        <div class="field">
+          <label>Trash company</label>
+          <input id="trashCompany" value="${escapeHtml(state.trashCompanyName || '')}" placeholder="e.g., Best Trash, Republic Services, GFL">
+          <div class="helper">Saves as a Trash contact in the directory below.</div>
+        </div>
+        <div class="field">
+          <label>Trash company phone</label>
+          <input id="trashCompanyPhone" value="${escapeHtml(state.trashCompanyPhone || '')}" placeholder="(281) 313-2378">
+        </div>
+      </div>
 
       <div class="field">
-        <label>Collection days</label>
+        <label>Pickup days (trash)</label>
         <div class="day-checks" id="dayChecks">
           ${DAYS.map(d => {
             const on = (state.trashSchedule.collection_days || []).includes(d);
             return `<label class="${on ? 'checked' : ''}"><input type="checkbox" value="${d}" ${on ? 'checked' : ''} style="display:none;">${d.charAt(0).toUpperCase() + d.slice(1)}</label>`;
           }).join('')}
         </div>
-        <div class="helper">Click to toggle. Most HOAs have 1-2 collection days per week.</div>
+        <div class="helper">Click to toggle. Most HOAs have 1-2 pickup days per week.</div>
+      </div>
+
+      <div class="field">
+        <label>Recycling days</label>
+        <div class="day-checks" id="recycleChecks">
+          ${DAYS.map(d => {
+            const on = (state.trashSchedule.recycling_days || []).includes(d);
+            return `<label class="${on ? 'checked' : ''}"><input type="checkbox" value="${d}" ${on ? 'checked' : ''} style="display:none;">${d.charAt(0).toUpperCase() + d.slice(1)}</label>`;
+          }).join('')}
+        </div>
+        <div class="helper">Leave empty if recycling runs with trash or isn't offered.</div>
       </div>
 
       <div class="schedule-grid">
         <div class="field">
+          <label>Curb-out deadline (optional)</label>
+          <input id="curbsideDeadline" value="${escapeHtml(state.trashSchedule.curbside_deadline || '')}" placeholder="e.g., 7:00 AM">
+        </div>
+        <div class="field">
           <label>Heavy trash pattern (optional)</label>
           <input id="heavyPattern" value="${escapeHtml(state.trashSchedule.heavy_trash_pattern || '')}" placeholder="e.g., 1st Wednesday of each month">
         </div>
-        <div class="field">
-          <label style="display:flex; align-items:center; gap:6px;">
-            <input type="checkbox" id="holidayPause" ${state.trashSchedule.holidays_no_service ? 'checked' : ''}>
-            <span>No service on federal holidays (delayed by one day)</span>
-          </label>
-        </div>
+      </div>
+
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="holidayPause" ${state.trashSchedule.holidays_no_service ? 'checked' : ''}>
+          <span>No service on federal holidays (delayed by one day)</span>
+        </label>
       </div>
 
       <div class="field">
@@ -300,7 +336,7 @@ function render() {
         <textarea id="trashNotes" placeholder="e.g., 'Place trash at curb by 7:00am' or vendor pickup-window instructions">${escapeHtml(state.trashSchedule.notes || '')}</textarea>
       </div>
 
-      <button class="save-btn" onclick="saveTrashSchedule()">Save schedule</button>
+      <button class="save-btn" onclick="saveTrashSchedule()">Save trash info</button>
     </div>
 
     <div class="panel">
@@ -329,8 +365,8 @@ function render() {
   `;
   $('content').innerHTML = html;
 
-  // Wire day-check toggles
-  document.querySelectorAll('#dayChecks label').forEach(l => {
+  // Wire day-check toggles (both trash + recycling pill groups)
+  document.querySelectorAll('#dayChecks label, #recycleChecks label').forEach(l => {
     l.addEventListener('click', (e) => {
       if (e.target.tagName === 'INPUT') return;
       const cb = l.querySelector('input');
@@ -421,8 +457,11 @@ async function deleteContact(id) {
 
 async function saveTrashSchedule() {
   const days = Array.from(document.querySelectorAll('#dayChecks input:checked')).map(i => i.value);
+  const recDays = Array.from(document.querySelectorAll('#recycleChecks input:checked')).map(i => i.value);
   const schedule = {
     collection_days: days,
+    recycling_days: recDays,
+    curbside_deadline: $('curbsideDeadline').value.trim() || null,
     heavy_trash_pattern: $('heavyPattern').value.trim() || null,
     holidays_no_service: $('holidayPause').checked,
     notes: $('trashNotes').value.trim() || null,
@@ -431,12 +470,18 @@ async function saveTrashSchedule() {
     const r = await fetch(`/api/community-contacts/community/${state.selectedCommunityId}/trash-schedule`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trash_schedule: schedule }),
+      body: JSON.stringify({
+        trash_schedule: schedule,
+        company_name: $('trashCompany').value.trim(),
+        company_phone: $('trashCompanyPhone').value.trim(),
+      }),
     });
     const result = await r.json();
     if (!result.ok) throw new Error(result.error);
-    state.trashSchedule = schedule;
-    toast('Trash schedule saved.', 'success');
+    // Re-fetch so the directory reflects the upserted Trash contact and the
+    // company fields re-bind from the canonical contact row.
+    await onCommunityChange();
+    toast('Trash info saved — company is now in the directory below.', 'success');
   } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 </script>
