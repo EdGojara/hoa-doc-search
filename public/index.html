@@ -25540,7 +25540,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <button onclick="inspReviewSetFilter('violation')" id="inspReviewFilterViolation" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">⚠ Violations</button>
         <button onclick="inspReviewSetFilter('clean')" id="inspReviewFilterClean" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">✓ AI said clean</button>
         <button onclick="inspReviewSetFilter('pending')" id="inspReviewFilterPending" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">❓ Not analyzed</button>
-        <button onclick="inspCloseReview()" style="margin-left:auto; background:rgba(255,255,255,0.2); color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:14px; cursor:pointer;">× Close</button>
+        <button id="inspReviewCompleteBtn" onclick="inspReviewComplete()" title="" style="display:none; margin-left:auto; background:#15803d; color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">✓ Complete inspection</button>
+        <button onclick="inspCloseReview()" style="margin-left:8px; background:rgba(255,255,255,0.2); color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:14px; cursor:pointer;">× Close</button>
       </div>
       <div style="flex:1; display:flex; min-height:0;">
         <!-- Sidebar — houses with photo strips -->
@@ -25802,6 +25803,36 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspReviewRenderSidebar();
       inspReviewRenderMain();
       inspReviewUpdateFilterChips();
+
+      // Gated "Complete inspection" button — the END-of-flow action, lives here
+      // on the photos, not in the list. Enabled only once every open
+      // violation's letter is printed (server enforces it too). Hidden for
+      // already-completed/voided inspections.
+      try {
+        const btn = document.getElementById('inspReviewCompleteBtn');
+        const st = j.inspection && j.inspection.status;
+        if (btn) {
+          if (st === 'closed' || st === 'voided') {
+            btn.style.display = 'none';
+          } else {
+            btn.style.display = '';
+            btn.disabled = true; btn.textContent = '✓ Checking letters…';
+            const cr = await fetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/completion-status');
+            const cs = await cr.json().catch(() => ({ ready: false }));
+            if (cs.ready) {
+              btn.disabled = false;
+              btn.style.opacity = '1'; btn.style.cursor = 'pointer';
+              btn.textContent = '✓ Complete inspection';
+              btn.title = 'Closes the whole inspection and moves it to Completed. All letters are printed.';
+            } else {
+              btn.disabled = true;
+              btn.style.opacity = '0.55'; btn.style.cursor = 'not-allowed';
+              btn.textContent = `✓ Complete — print ${cs.pending_letters} letter${cs.pending_letters === 1 ? '' : 's'} first`;
+              btn.title = `${cs.pending_letters} of ${cs.open_violations} violations still need their letter printed (Mail Queue). Complete unlocks once they're printed.`;
+            }
+          }
+        }
+      } catch (_) { /* leave button hidden on error */ }
     } catch (e) {
       console.error('[inspector] inspViewSessionPhotos failed:', e);
       document.getElementById('inspReviewSidebar').innerHTML =
@@ -25809,6 +25840,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
   window.inspViewSessionPhotos = inspViewSessionPhotos;
+
+  // Complete the inspection from the photo-review screen (the end-of-flow step).
+  async function inspReviewComplete() {
+    const id = window._inspReview && window._inspReview.inspectionId;
+    if (id) await inspFinalize(id);
+  }
+  window.inspReviewComplete = inspReviewComplete;
 
   function inspCloseReview() {
     const m = document.getElementById('inspReviewModal');
@@ -26231,11 +26269,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                   title="Reload this inspection into the live capture UI — add more photos, delete the wrong ones, retry analyze. Complete the inspection only after letters print.">
             📷 Resume
           </button>`;
-        const finalizeBtn = `
-          <button type="button" onclick="inspFinalize('${i.id}')"
-                  style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                  title="Closes the WHOLE inspection — do this LAST, after the violation letters are printed. Moves it to Completed. Not for ending a drive (that's Resume/leave open). You can still Reopen later if a correction is needed.">
-            ✓ Complete inspection
+        // Drive controls for open inspections (Ed 2026-06-29): the top list
+        // only pauses / ends the DRIVE. Completing the whole inspection happens
+        // later, from the photos, after letters print.
+        const pauseBtn = `
+          <button type="button" onclick="inspPauseById('${i.id}', this)"
+                  style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                  title="Pause this drive — stops the time-on-drive clock. Resume when you start again.">
+            ⏸ Pause
+          </button>`;
+        const endDriveBtn = `
+          <button type="button" onclick="inspEndDriveById('${i.id}')"
+                  style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                  title="End the drive — stops capturing and keeps the inspection OPEN for review. You complete it later from the photos, after the letters are printed.">
+            ⏹ End drive
           </button>`;
         const discardBtn = `
           <button type="button" onclick="inspDiscard('${i.id}')"
@@ -26258,18 +26305,23 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               ${inner}
             </div>
           </details>` : '';
+        // Completed: View photos + (admin-only) Reopen. Reopen is gated to
+        // admins both here and server-side (Ed 2026-06-29).
         const closedActions = isClosed ? `
           <div class="insp-recent-actions" style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; align-items: flex-start;">
             ${viewPhotosBtn}
-            ${reopenBtn}
+            ${isAdminUser ? reopenBtn : ''}
             ${moreMenu(`${analyzeBtn}${backfillBtn}${adminForceDeleteBtn}`)}
           </div>
         ` : '';
+        // Open: drive controls only — Resume / Pause / End drive (+ View
+        // photos). No Complete here; that lives on the photo-review screen.
         const activeActions = (!isTerminal) ? `
           <div class="insp-recent-actions" style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; align-items: flex-start;">
             ${viewPhotosBtn}
             ${isUnfinished ? resumeBtn : ''}
-            ${finalizeBtn}
+            ${i.status === 'in_progress' ? pauseBtn : ''}
+            ${isUnfinished ? endDriveBtn : ''}
             ${moreMenu(`${isUnfinished ? '' : resumeBtn}${analyzeBtn}${backfillBtn}${discardBtn}${adminForceDeleteBtn}`)}
           </div>
         ` : '';
@@ -26677,10 +26729,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // recent list but marked 🔒 Finalized and no longer offers Discard/Finalize.
   async function inspFinalize(id) {
     if (!confirm(
-      'Finalize this inspection?\n\n' +
-      'It will be marked as the permanent record for this community walkthrough. ' +
-      'After finalizing, it cannot be edited — only viewed.\n\n' +
-      'Click OK to finalize, Cancel to keep it open.'
+      'Complete this inspection?\n\n' +
+      'This closes the WHOLE inspection — do it after the violation letters are printed. ' +
+      'It moves to Completed. An admin can reopen it later if a correction is needed.\n\n' +
+      'Click OK to complete, Cancel to keep it open.'
     )) return;
     try {
       const r = await fetch(`/api/inspections/${id}`, {
@@ -26688,16 +26740,54 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'closed', ended_at: new Date().toISOString() }),
       });
+      const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || `finalize failed (${r.status})`);
+        // Gate: letters not printed yet. Show the count, not a raw error.
+        if (r.status === 409 && j.error === 'letters_not_printed') {
+          alert('Can\'t complete yet — ' + (j.message || 'letters still need printing.') );
+          return;
+        }
+        throw new Error(j.error || `complete failed (${r.status})`);
       }
-      try { inspClearActiveSession(id); } catch (_) {}   // drive is closed; forget the pointer
+      try { inspClearActiveSession(id); } catch (_) {}   // inspection closed; forget the pointer
       inspLoadRecent();
+      try { if (typeof inspCloseReview === 'function') inspCloseReview(); } catch (_) {}
     } catch (e) {
-      alert('Could not finalize: ' + e.message);
+      alert('Could not complete: ' + e.message);
     }
   }
+  window.inspFinalize = inspFinalize;
+
+  // Pause a drive from the list (Ed 2026-06-29) — stops the time-on-drive clock.
+  async function inspPauseById(id, btn) {
+    try {
+      if (btn) { btn.disabled = true; btn.textContent = '⏸ Pausing…'; }
+      const r = await fetch(`/api/inspections/${encodeURIComponent(id)}/pause`, { method: 'POST' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        if (!(j.error === 'not_in_progress' || j.error === 'already_paused')) throw new Error(j.error || `pause failed (${r.status})`);
+      }
+      inspLoadRecent();
+    } catch (e) { alert('Could not pause: ' + e.message); inspLoadRecent(); }
+  }
+  window.inspPauseById = inspPauseById;
+
+  // End the DRIVE from the list — stop capturing, keep the inspection open for
+  // review. Does NOT complete it (that's the gated step on the photos screen).
+  async function inspEndDriveById(id) {
+    if (!confirm('End the drive?\n\nThis stops capturing and keeps the inspection OPEN for review. You complete it later from the photos, after the letters print.')) return;
+    try {
+      const r = await fetch(`/api/inspections/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'captured', ended_at: new Date().toISOString() }),
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `end failed (${r.status})`); }
+      try { inspClearActiveSession(id); } catch (_) {}
+      inspLoadRecent();
+    } catch (e) { alert('Could not end drive: ' + e.message); }
+  }
+  window.inspEndDriveById = inspEndDriveById;
 
   // Auto-load when the Inspect tab is opened.
   // The switchTab function is defined LATER in this file (in the main app

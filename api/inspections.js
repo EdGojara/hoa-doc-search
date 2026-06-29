@@ -166,11 +166,81 @@ router.get('/inspections/coverage', async (req, res) => {
 // PATCH /api/inspections/:id — update status / notes / ended_at
 // Body: { status?, notes?, ended_at? }
 // ---------------------------------------------------------------------------
+// Letter interactions ride the mail queue; printed_at set = printed.
+const INSP_LETTER_TYPES = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
+
+// Completion readiness for an inspection: it can only be COMPLETED once every
+// OPEN violation it opened has a PRINTED letter (Ed 2026-06-29 — completing is
+// the last step, after letters print). A drive with no open violations is
+// always ready (nothing to print).
+async function getInspectionCompletionStatus(inspectionId) {
+  const { data: obs } = await supabase
+    .from('property_observations').select('id').eq('inspection_id', inspectionId);
+  const obsIds = (obs || []).map((o) => o.id);
+  if (!obsIds.length) return { open_violations: 0, pending_letters: 0, ready: true };
+  const vios = [];
+  for (let i = 0; i < obsIds.length; i += 200) {
+    const { data } = await supabase
+      .from('violations').select('id, current_stage, resolved_at')
+      .in('opened_from_observation_id', obsIds.slice(i, i + 200));
+    vios.push(...(data || []));
+  }
+  const openIds = vios
+    .filter((v) => !v.resolved_at && !['cured', 'closed', 'voided'].includes(v.current_stage))
+    .map((v) => v.id);
+  if (!openIds.length) return { open_violations: 0, pending_letters: 0, ready: true };
+  const printed = new Set();
+  for (let i = 0; i < openIds.length; i += 200) {
+    const { data } = await supabase
+      .from('interactions').select('violation_id')
+      .in('type', INSP_LETTER_TYPES)
+      .in('violation_id', openIds.slice(i, i + 200))
+      .not('printed_at', 'is', null);
+    (data || []).forEach((r) => r.violation_id && printed.add(r.violation_id));
+  }
+  const pending = openIds.filter((id) => !printed.has(id)).length;
+  return { open_violations: openIds.length, pending_letters: pending, ready: pending === 0 };
+}
+
+// GET /api/inspections/:id/completion-status — drives the gated "Complete
+// inspection" button on the photo-review screen.
+router.get('/inspections/:id/completion-status', async (req, res) => {
+  try { res.json(await getInspectionCompletionStatus(req.params.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.patch('/inspections/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { status, notes, ended_at } = req.body || {};
     const validStatuses = ['in_progress', 'paused', 'captured', 'ai_analyzed', 'reviewed', 'closed', 'voided'];
+
+    // GATE: completing an inspection (→ closed) requires every open violation's
+    // letter to be printed first. Admin reopen→re-edit is unaffected (that goes
+    // to in_progress). Skip the gate for admins forcing it via ?force=1.
+    if (status === 'closed' && req.query.force !== '1') {
+      const cs = await getInspectionCompletionStatus(id);
+      if (!cs.ready) {
+        return res.status(409).json({
+          error: 'letters_not_printed',
+          message: `${cs.pending_letters} of ${cs.open_violations} violation${cs.open_violations === 1 ? '' : 's'} still need a printed letter before this inspection can be completed. Print the letters in the Mail Queue, then complete.`,
+          pending_letters: cs.pending_letters,
+          open_violations: cs.open_violations,
+        });
+      }
+    }
+
+    // REOPEN is admin-only: flipping a COMPLETED (closed) inspection back to an
+    // open status requires admin access (Ed 2026-06-29). Defense in depth — the
+    // button is also admin-gated client-side.
+    if (status && status !== 'closed' && status !== 'voided') {
+      const { data: cur } = await supabase.from('inspections').select('status').eq('id', id).maybeSingle();
+      if (cur && cur.status === 'closed') {
+        const { requireAdmin } = require('./users');
+        const ctx = await requireAdmin(req, res);
+        if (!ctx) return; // requireAdmin already responded 403
+      }
+    }
 
     const patch = { updated_at: new Date().toISOString() };
     if (status !== undefined) {
