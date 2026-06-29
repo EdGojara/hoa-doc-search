@@ -296,7 +296,7 @@ function render() {
         <div class="day-checks" id="dayChecks">
           ${DAYS.map(d => {
             const on = (state.trashSchedule.collection_days || []).includes(d);
-            return `<label class="${on ? 'checked' : ''}"><input type="checkbox" value="${d}" ${on ? 'checked' : ''} style="display:none;">${d.charAt(0).toUpperCase() + d.slice(1)}</label>`;
+            return `<label class="${on ? 'checked' : ''}" data-day="${d}">${d.charAt(0).toUpperCase() + d.slice(1)}</label>`;
           }).join('')}
         </div>
         <div class="helper">Click to toggle. Most HOAs have 1-2 pickup days per week.</div>
@@ -307,7 +307,7 @@ function render() {
         <div class="day-checks" id="recycleChecks">
           ${DAYS.map(d => {
             const on = (state.trashSchedule.recycling_days || []).includes(d);
-            return `<label class="${on ? 'checked' : ''}"><input type="checkbox" value="${d}" ${on ? 'checked' : ''} style="display:none;">${d.charAt(0).toUpperCase() + d.slice(1)}</label>`;
+            return `<label class="${on ? 'checked' : ''}" data-day="${d}">${d.charAt(0).toUpperCase() + d.slice(1)}</label>`;
           }).join('')}
         </div>
         <div class="helper">Leave empty if recycling runs with trash or isn't offered.</div>
@@ -365,14 +365,10 @@ function render() {
   `;
   $('content').innerHTML = html;
 
-  // Wire day-check toggles (both trash + recycling pill groups)
+  // Wire day-check toggles (both trash + recycling pill groups). Class-only —
+  // no hidden checkbox, so there's no native label-activation double-toggle.
   document.querySelectorAll('#dayChecks label, #recycleChecks label').forEach(l => {
-    l.addEventListener('click', (e) => {
-      if (e.target.tagName === 'INPUT') return;
-      const cb = l.querySelector('input');
-      cb.checked = !cb.checked;
-      l.classList.toggle('checked', cb.checked);
-    });
+    l.addEventListener('click', () => l.classList.toggle('checked'));
   });
 }
 
@@ -456,8 +452,8 @@ async function deleteContact(id) {
 }
 
 async function saveTrashSchedule() {
-  const days = Array.from(document.querySelectorAll('#dayChecks input:checked')).map(i => i.value);
-  const recDays = Array.from(document.querySelectorAll('#recycleChecks input:checked')).map(i => i.value);
+  const days = Array.from(document.querySelectorAll('#dayChecks label.checked')).map(l => l.dataset.day);
+  const recDays = Array.from(document.querySelectorAll('#recycleChecks label.checked')).map(l => l.dataset.day);
   const schedule = {
     collection_days: days,
     recycling_days: recDays,
