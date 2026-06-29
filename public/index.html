@@ -26370,7 +26370,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       }
       // By-day grid — for each weekday, which communities are clear to write
       // trash violations (the "which ones on what days" view).
-      const WEEK = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      // Drives only run on weekdays (no weekend drives, no weekend pickup), so
+      // the grid + clear-day lists are Mon-Fri only.
+      const WEEK = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
       const scheduled = comms.filter((c) => c.has_schedule);
       html += `<div style="margin-top:14px; font-weight:700; font-size:13px; color:#0B1D34;">By day — where trash violations are clear</div>`;
       if (!scheduled.length) {
@@ -26383,7 +26385,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         }).join('');
       }
       html += `<details style="margin-top:12px;"><summary style="cursor:pointer; font-size:12.5px; color:#475569;">By community — each one's clear days + collection days</summary>`;
-      html += comms.map((c) => `<div style="font-size:12.5px; padding:5px 0; border-top:1px solid #e2e8f0;"><strong>${c.name}</strong><br><span style="color:#15803d;">Clear: ${c.has_schedule ? daysList(c.clear_days) : '(no schedule set)'}</span> &nbsp;·&nbsp; <span style="color:#b91c1c;">Collects: ${daysList(c.collection_days)}</span></div>`).join('');
+      html += comms.map((c) => `<div style="font-size:12.5px; padding:5px 0; border-top:1px solid #e2e8f0;"><strong>${c.name}</strong><br><span style="color:#15803d;">Clear: ${c.has_schedule ? daysList(c.clear_days.filter((d) => WEEK.includes(d))) : '(no schedule set)'}</span> &nbsp;·&nbsp; <span style="color:#b91c1c;">Collects: ${daysList(c.collection_days)}</span></div>`).join('');
       html += `</details>`;
       panel.innerHTML = html;
       panel.dataset.loaded = '1';
