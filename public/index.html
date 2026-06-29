@@ -26368,7 +26368,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         html += `<div style="color:#a16207; font-weight:700; font-size:13px; margin:12px 0 4px;">❓ No trash schedule on file</div>`;
         html += unknown.map((c) => `<div style="font-size:13px; padding:2px 0;"><strong>${c.name}</strong> <span style="color:#94a3b8;">— add it on the Contacts page</span></div>`).join('');
       }
-      html += `<details style="margin-top:12px;"><summary style="cursor:pointer; font-size:12.5px; color:#475569;">All communities — clear days for trash violations</summary>`;
+      // By-day grid — for each weekday, which communities are clear to write
+      // trash violations (the "which ones on what days" view).
+      const WEEK = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      const scheduled = comms.filter((c) => c.has_schedule);
+      html += `<div style="margin-top:14px; font-weight:700; font-size:13px; color:#0B1D34;">By day — where trash violations are clear</div>`;
+      if (!scheduled.length) {
+        html += `<div style="font-size:12.5px; color:#a16207; padding:4px 0;">No communities have trash days set yet — add collection days on the Contacts page and they'll fill in here.</div>`;
+      } else {
+        html += WEEK.map((d) => {
+          const here = scheduled.filter((c) => c.clear_days.includes(d)).map((c) => c.name);
+          const isToday = d === j.today;
+          return `<div style="font-size:12.5px; padding:5px 0; border-top:1px solid #e2e8f0; ${isToday ? 'background:#fef9c3; border-radius:4px; padding-left:6px;' : ''}"><strong>${cap(d)}${isToday ? ' · today' : ''}:</strong> ${here.length ? here.join(', ') : '<span style="color:#94a3b8;">— none (all communities collect this day)</span>'}</div>`;
+        }).join('');
+      }
+      html += `<details style="margin-top:12px;"><summary style="cursor:pointer; font-size:12.5px; color:#475569;">By community — each one's clear days + collection days</summary>`;
       html += comms.map((c) => `<div style="font-size:12.5px; padding:5px 0; border-top:1px solid #e2e8f0;"><strong>${c.name}</strong><br><span style="color:#15803d;">Clear: ${c.has_schedule ? daysList(c.clear_days) : '(no schedule set)'}</span> &nbsp;·&nbsp; <span style="color:#b91c1c;">Collects: ${daysList(c.collection_days)}</span></div>`).join('');
       html += `</details>`;
       panel.innerHTML = html;
