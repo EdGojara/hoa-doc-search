@@ -17,6 +17,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { parseVantacaViolations } = require('../lib/enforcement/vantaca_violation_import');
 const { markStaleCourtesyClosed } = require('../lib/enforcement/vantaca_reconcile');
 const { defaultWeightForSource } = require('../lib/enforcement/source_weights');
+const { aiMapCategories } = require('../lib/enforcement/ai_category_mapper');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const arg = (k) => { const a = process.argv.find((x) => x.startsWith(`--${k}=`)); return a ? a.split('=').slice(1).join('=') : null; };
@@ -65,18 +66,35 @@ const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.
     return null;
   };
 
-  // 3) Match
-  let noProp = 0, noCat = 0;
+  // 3) Match. Substring match first; rows that find a property but no category
+  //    go to an AI label->slug pass (same mapper the UI import uses) before we
+  //    give up on them — Vantaca labels are more specific than our canonical
+  //    set, so a third can fall through substring match alone.
+  let noProp = 0;
   const matched = [];
+  const unmatchedCat = [];
   for (const r of parsed.rows) {
     let prop = r.vantaca_account_id ? byAcct.get(String(r.vantaca_account_id)) : null;
     if (!prop && r.street_address) prop = byStreet.get(r.street_address.toLowerCase().trim());
     if (!prop) { noProp++; continue; }
     const cat = resolveCategory(r.category_label);
-    if (!cat) { noCat++; continue; }
+    if (!cat) { unmatchedCat.push({ ...r, property_id: prop.id }); continue; }
     matched.push({ ...r, property_id: prop.id, category_id: cat.id });
   }
-  console.log(`matched: ${matched.length} · no property: ${noProp} · no category: ${noCat}`);
+  let aiResolved = 0;
+  if (unmatchedCat.length) {
+    const labels = unmatchedCat.map((r) => r.category_label);
+    const aiMap = await aiMapCategories(labels, cats);
+    for (const r of unmatchedCat) {
+      const slug = r.category_label && aiMap[r.category_label];
+      const cat = slug ? catBySlug.get(String(slug).toLowerCase()) : null;
+      if (!cat) continue;
+      matched.push({ ...r, category_id: cat.id });
+      aiResolved++;
+    }
+  }
+  const noCat = unmatchedCat.length - aiResolved;
+  console.log(`matched: ${matched.length} (substring + ${aiResolved} AI-mapped) · no property: ${noProp} · no category: ${noCat}`);
 
   // 4) Staleness closure
   const { rows: finalRows, stale_closed, cutoff } = markStaleCourtesyClosed(matched);
