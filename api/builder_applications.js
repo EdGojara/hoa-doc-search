@@ -72,6 +72,7 @@ Each entry in the array:
 Plus top-level fields about the PDF as a whole:
 - ai_confidence: "high" | "medium" | "low" — your overall confidence in the extraction
 - ai_notes: Any caveats
+- declared_elevations: An object mapping each plan_number to the COMPLETE list of elevation codes the schedule-of-plans table / cover sheet says that plan HAS — even if you couldn't extract a detail row for every one. This is the source-of-truth roster. Example: {"6512":["A","B","C"]}. If the cover lists Plan 6512 with elevations A, B, C, put all three here even if only A and B had detail pages you could read. This lets us catch a dropped elevation. Leave a plan out only if the document never states its full elevation set.
 
 Look at: the title block (usually top-right or bottom of the cover sheet), the schedule of plans table (often a grid showing each elevation's footprint + sqft), square footage callouts, elevation header labels on per-elevation detail pages.
 
@@ -80,6 +81,7 @@ Return ONLY valid JSON, no preamble:
   "elevations": [
     {"plan_number":"6512","plan_name":"Tuscany","elevation":"A","square_footage":2150,"stories":2}
   ],
+  "declared_elevations": {"6512":["A","B","C"]},
   "ai_confidence":"high",
   "ai_notes":"Schedule of plans on page 1 lists A, B, C."
 }
@@ -142,11 +144,36 @@ async function extractMasterPlanFromPdfBuffer(pdfBuffer) {
   const txt = (resp.content || []).map((c) => c.text || '').join('').trim();
   const jsonMatch = txt.match(/\{[\s\S]*\}/);
   if (!jsonMatch) return { extracted: null, raw: txt };
+  let parsed;
   try {
-    return { extracted: JSON.parse(jsonMatch[0]), raw: txt };
+    parsed = JSON.parse(jsonMatch[0]);
   } catch (_) {
     return { extracted: null, raw: txt };
   }
+  // Cross-check: the schedule's DECLARED elevation roster vs what we actually
+  // extracted, per plan. Catches a dropped elevation before it silently
+  // becomes a short approval (Glenbrook 4502 lost F in the 6/12 Tier 5
+  // extraction and no one noticed until Lennar asked, 2026-06-29). Attaches
+  // missing_elevations = { planNumber: [codes...] } so callers can flag it.
+  try {
+    const norm = (x) => String(x == null ? '' : x).trim().toUpperCase();
+    const extractedByPlan = {};
+    for (const e of (Array.isArray(parsed.elevations) ? parsed.elevations : [])) {
+      const pn = norm(e && e.plan_number);
+      if (!pn) continue;
+      (extractedByPlan[pn] = extractedByPlan[pn] || new Set()).add(norm(e && e.elevation));
+    }
+    const declared = parsed.declared_elevations && typeof parsed.declared_elevations === 'object' ? parsed.declared_elevations : {};
+    const missing = {};
+    for (const [pn, codes] of Object.entries(declared)) {
+      const want = (Array.isArray(codes) ? codes : []).map(norm).filter(Boolean);
+      const have = extractedByPlan[norm(pn)] || new Set();
+      const gap = want.filter((c) => !have.has(c));
+      if (gap.length) missing[norm(pn)] = gap;
+    }
+    parsed.missing_elevations = missing;
+  } catch (_) { parsed.missing_elevations = {}; }
+  return { extracted: parsed, raw: txt };
 }
 
 // Infer the builder_company_id from a library_documents.title formatted as
@@ -2807,6 +2834,15 @@ If you can identify the plan number + at least one elevation, return what you ca
         // row when extraction returns nothing usable so the operator can
         // still see + edit the filename in the grid.
         const elevations = Array.isArray(extracted?.elevations) ? extracted.elevations : [];
+        // Dropped-elevation guard: the schedule declared elevations we never
+        // extracted. Surfaced per-row so the operator sees it in the grid and
+        // doesn't approve a short set (the Glenbrook 4502/F miss).
+        const missingEl = (extracted && extracted.missing_elevations) || {};
+        const missingNote = Object.keys(missingEl).length
+          ? '⚠ Schedule lists elevations not extracted — ' +
+            Object.entries(missingEl).map(([pn, codes]) => `${pn}: missing ${codes.join(', ')}`).join('; ') +
+            '. Add them before approving or re-upload a clearer set.'
+          : null;
         if (elevations.length > 0) {
           elevations.forEach((elev, idx) => {
             out.push({
@@ -2819,7 +2855,8 @@ If you can identify the plan number + at least one elevation, return what you ca
               square_footage: elev?.square_footage ?? null,
               stories: elev?.stories ?? null,
               ai_confidence: extracted?.ai_confidence || null,
-              ai_notes: idx === 0 ? (extracted?.ai_notes || null) : null,
+              ai_notes: idx === 0 ? [extracted?.ai_notes, missingNote].filter(Boolean).join(' · ') || null : null,
+              missing_elevations: idx === 0 ? missingEl : null,
               elevation_index: idx + 1,
               elevation_count: elevations.length,
               raw_extracted: idx === 0 ? aiRaw : null,
