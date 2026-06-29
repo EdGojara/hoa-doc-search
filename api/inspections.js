@@ -688,6 +688,13 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                 .eq('property_id', resolvedPropertyId)
                 .eq('primary_category_id', categoryId)
                 .gte('opened_at', cutoff.toISOString())
+                // Only priors that STILL STAND count toward §209 escalation. A
+                // voided/cured/closed notice closed that chain — a new violation
+                // after it is a fresh courtesy_1. Without this, a re-photographed
+                // house with a dead prior escalates toward certified with no
+                // standing basis (the 2026-06-29 certified-with-no-reason scar).
+                .not('current_stage', 'in', '(cured,closed,voided)')
+                .is('resolved_at', null)
                 .neq('quality_status', 'superseded');  // exclude corrected-out rows
 
               const decision = decideEscalation({
@@ -3043,7 +3050,12 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       .select('id, primary_category_id, opened_at, current_stage, resolved_via, quality_status, confidence_weight, source')
       .eq('property_id', obs.property_id)
       .eq('primary_category_id', obs.category_id)
-      .gte('opened_at', new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString());
+      .gte('opened_at', new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString())
+      // Only still-standing priors count — exclude voided/cured/closed +
+      // superseded (2026-06-29 certified-with-no-reason scar).
+      .not('current_stage', 'in', '(cured,closed,voided)')
+      .is('resolved_at', null)
+      .neq('quality_status', 'superseded');
 
     // Pull the community + category priority + fine config
     const { data: communityRow } = await supabase
@@ -3912,13 +3924,17 @@ router.post('/inspections/photos/:photoId/add-violation', express.json(), async 
         .select('id, opened_at, primary_category_id, current_stage, quality_status, confidence_weight, source')
         .eq('property_id', resolvedPropertyId)
         .eq('primary_category_id', category_id)
-        .gte('opened_at', cutoff.toISOString());
+        .gte('opened_at', cutoff.toISOString())
+        // Only still-standing priors count — exclude voided/cured/closed +
+        // superseded (2026-06-29 certified-with-no-reason scar).
+        .not('current_stage', 'in', '(cured,closed,voided)')
+        .is('resolved_at', null)
+        .neq('quality_status', 'superseded');
 
       const decision = decideEscalation({
-        severity,
-        priorityWeight,
-        priors: priors || [],
-        confidenceWeight: 1.0, // operator override → full confidence
+        prior_violations: priors || [],
+        priority_weight: priorityWeight,
+        occurrence_date: new Date().toISOString(),
       });
 
       const { data: viol, error: vErr } = await supabase

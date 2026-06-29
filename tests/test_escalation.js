@@ -39,6 +39,24 @@ const cases = [
     opts: { occurrence_date: daysAgo(90) },
     want: 'courtesy_1',
   },
+  // CLOSED-CHAIN backstop (2026-06-29 certified-with-no-reason scar): a prior
+  // that was voided/cured closes the chain and must NOT count — even if a
+  // caller passes it unfiltered. A new violation after it is a fresh courtesy_1.
+  {
+    name: '2 VOIDED priors (resolved_at set) → courtesy_1 (closed chain ignored)',
+    priors: [prior(daysAgo(60), { resolved_at: daysAgo(50), resolved_via: 'voided' }), prior(daysAgo(30), { resolved_at: daysAgo(20), resolved_via: 'voided' })],
+    want: 'courtesy_1',
+  },
+  {
+    name: '2 CURED priors (resolved_at set) → courtesy_1 (complied; chain closed)',
+    priors: [prior(daysAgo(60), { resolved_at: daysAgo(50), resolved_via: 'cured' }), prior(daysAgo(30), { resolved_at: daysAgo(20), resolved_via: 'cured' })],
+    want: 'courtesy_1',
+  },
+  {
+    name: '1 standing prior + 1 voided prior → courtesy_2 (only the standing one counts)',
+    priors: [prior(daysAgo(60)), prior(daysAgo(30), { resolved_at: daysAgo(20), resolved_via: 'voided' })],
+    want: 'courtesy_2',
+  },
 ];
 
 let pass = 0, fail = 0;
