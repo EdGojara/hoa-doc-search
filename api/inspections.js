@@ -916,7 +916,11 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                       },
                       governing_doc:    govDocForAuto,
                       prior_violations: priorsForLetter,
-                      photo_buffer:     req.file.buffer,
+                      // Null-safe: not every code path into this block has a
+                      // request file (a missing buffer must not throw and kill
+                      // the whole letter draft — the letter renders fine w/o the
+                      // inline photo). Was an unguarded throw vector.
+                      photo_buffer:     (req.file && req.file.buffer) ? req.file.buffer : null,
                       options: {
                         sender_name:  (commRow && commRow.letter_sender_name)  || null,
                         sender_title: (commRow && commRow.letter_sender_title) || null,
@@ -966,7 +970,28 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
 
                     console.log(`[auto-draft] violation ${vio.id} drafted as ${decision.stage} (${decision.mail_type}), ${decision.cure_days}d cure`);
                   } catch (letterErr) {
-                    console.warn('[auto-draft] letter PDF generation failed:', letterErr.message);
+                    console.warn('[auto-draft] letter PDF generation failed for violation', vio.id, ':', letterErr.message);
+                    // Don't leave the violation SILENTLY letter-less (the 5019
+                    // Grand Chateau gap, 2026-06-29). Record a visible note on
+                    // the property timeline so staff know to generate it by
+                    // hand. The completion gate also blocks closing the
+                    // inspection until every open violation has a printed letter.
+                    try {
+                      await supabase.from('interactions').insert({
+                        community_id:   insp.community_id,
+                        property_id:    resolvedPropertyId,
+                        violation_id:   vio.id,
+                        observation_id: observationId,
+                        inspection_id:  inspectionId,
+                        type:           'observation_note',
+                        direction:      'internal',
+                        subject:        'Auto-draft letter FAILED — needs manual generation',
+                        content:        `The ${decision.stage} letter did not auto-draft (${letterErr.message}). Open this violation and use 📄 Letter to generate it before completing the inspection.`,
+                        sent_at:        new Date().toISOString(),
+                      });
+                    } catch (noteErr) {
+                      console.warn('[auto-draft] failure-note insert also failed:', noteErr.message);
+                    }
                   }
                 }
               }
