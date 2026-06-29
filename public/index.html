@@ -26304,6 +26304,26 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   //
   // If the inspection is currently 'closed' (finalized), this first flips
   // status back to 'in_progress' so capture endpoints accept new photos.
+  // Self-contained toast so Resume (and friends) is never a silent button.
+  // No global toast helper exists in this page; this floats above the capture
+  // bar and auto-hides.
+  function _inspToast(msg, kind) {
+    try {
+      let t = document.getElementById('_inspToast');
+      if (!t) {
+        t = document.createElement('div'); t.id = '_inspToast';
+        t.style.cssText = 'position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:99999;max-width:90vw;padding:11px 16px;border-radius:8px;font-size:13.5px;font-weight:600;box-shadow:0 8px 28px rgba(0,0,0,.35);color:#fff;text-align:center;';
+        document.body.appendChild(t);
+      }
+      t.style.background = kind === 'error' ? '#991b1b' : '#15803d';
+      t.textContent = msg;
+      t.style.display = 'block';
+      clearTimeout(t._h);
+      t._h = setTimeout(() => { t.style.display = 'none'; }, 4000);
+    } catch (_) {}
+  }
+  window._inspToast = _inspToast;
+
   async function inspResume(id) {
     if (!id) return;
     // If we already have a different session active, warn before stomping it.
@@ -26317,9 +26337,22 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const insp = j.inspection;
       if (!insp) throw new Error('inspection not found');
 
-      // If closed/voided, flip back to in_progress so the upload endpoints stop
-      // rejecting writes (POST /photos refuses status='closed'|'voided').
-      if (insp.status === 'closed' || insp.status === 'voided') {
+      // Make the drive actually live again, by status:
+      //  - paused  → POST /resume (closes the open pause segment, flips to
+      //              in_progress). This is what the in-drive Resume does; the
+      //              Recent-list button used to skip it, so a paused drive
+      //              "resumed" from here stayed paused and looked like nothing
+      //              happened.
+      //  - closed/voided → PATCH in_progress so upload endpoints stop rejecting.
+      if (insp.status === 'paused') {
+        const pr = await fetch(`/api/inspections/${encodeURIComponent(id)}/resume`, { method: 'POST' });
+        if (!pr.ok) {
+          const pj = await pr.json().catch(() => ({}));
+          // 'not_paused' just means it's already running — not an error worth aborting on.
+          if (pj.error && pj.error !== 'not_paused') throw new Error(pj.error);
+        }
+        insp.status = 'in_progress';
+      } else if (insp.status === 'closed' || insp.status === 'voided') {
         const pr = await fetch(`/api/inspections/${encodeURIComponent(id)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -26372,6 +26405,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const cntLbl = document.getElementById('inspPhotoCount');
       if (cntLbl) cntLbl.textContent = inspState.photoCount;
 
+      // Drive is live again — clear any paused client state + paused banner.
+      inspState.isPaused = false;
+      if (typeof inspApplyPausedUi === 'function') inspApplyPausedUi(false);
+
       inspRenderPhotos();
       if (typeof inspUpdateCaptureUi === 'function') inspUpdateCaptureUi();
       inspStartLocationWatch();
@@ -26381,9 +26418,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (typeof inspSetView === 'function') inspSetView('list');
 
       const panel = document.getElementById('inspActivePanel');
-      if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (panel) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        _inspToast(`Resumed ${inspState.communityName || 'inspection'} — ${inspState.photoCount} photo${inspState.photoCount === 1 ? '' : 's'}. Scroll up to the capture panel.`);
+      } else {
+        // Capture panel isn't in the DOM on this view — say so instead of
+        // completing silently (the old "Resume does nothing" symptom).
+        _inspToast('Resumed, but the capture panel isn\'t open on this screen. Open the Inspect tab to continue the drive.', 'error');
+      }
     } catch (e) {
-      alert('Could not resume: ' + e.message);
+      _inspToast('Could not resume: ' + e.message, 'error');
     }
   }
 
