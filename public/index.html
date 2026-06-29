@@ -21365,10 +21365,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       }
     }
     document.getElementById('inspAddVioStatus').textContent = '';
-    document.getElementById('inspAddVioModal').style.display = 'flex';
+    document.getElementById('inspAddViolationModal').style.display = 'flex';
   }
   function inspCloseAddViolation() {
-    document.getElementById('inspAddVioModal').style.display = 'none';
+    document.getElementById('inspAddViolationModal').style.display = 'none';
     _addVioPhotoId = null;
   }
   async function inspSubmitAddViolation() {
@@ -21392,19 +21392,29 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (!r.ok) throw new Error(j.error || j.message || 'failed');
       statusEl.textContent = '✓ Violation added — draft letter queued.';
       statusEl.style.color = '#15803d';
-      // Update local lightbox state so the badge flips immediately
-      const p = _lightboxFullList.find(x => x.id === _addVioPhotoId);
-      if (p) {
-        p.ai_verdict = 'violation';
-        if (!p.observations) p.observations = [];
-        p.observations.push({ id: j.observation_id, is_violation: true, category_id, severity });
-      }
-      inspLightboxApplyFilter();
-      inspUpdateLightboxFilterButtons();
-      inspRenderLightbox();
+      // Refresh whichever viewer is open — lightbox OR the review modal.
+      try {
+        if (Array.isArray(_lightboxFullList)) {
+          const p = _lightboxFullList.find(x => x.id === _addVioPhotoId);
+          if (p) {
+            p.ai_verdict = 'violation';
+            if (!p.observations) p.observations = [];
+            p.observations.push({ id: j.observation_id, is_violation: true, category_id, severity });
+          }
+          if (typeof inspLightboxApplyFilter === 'function') inspLightboxApplyFilter();
+          if (typeof inspUpdateLightboxFilterButtons === 'function') inspUpdateLightboxFilterButtons();
+          if (typeof inspRenderLightbox === 'function') inspRenderLightbox();
+        }
+      } catch (_) {}
+      try {
+        const rm = document.getElementById('inspReviewModal');
+        if (rm && rm.style.display !== 'none' && window._inspReview && window._inspReview.inspectionId) {
+          inspViewSessionPhotos(window._inspReview.inspectionId);  // re-render with the new violation
+        }
+      } catch (_) {}
       setTimeout(() => {
         inspCloseAddViolation();
-        document.getElementById('inspAddVioNotes').value = '';
+        const n = document.getElementById('inspAddVioNotes'); if (n) n.value = '';
       }, 1000);
     } catch (e) {
       statusEl.textContent = '✗ ' + e.message;
@@ -25591,7 +25601,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <button onclick="inspReviewSetFilter('violation')" id="inspReviewFilterViolation" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">⚠ Violations</button>
         <button onclick="inspReviewSetFilter('clean')" id="inspReviewFilterClean" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">✓ AI said clean</button>
         <button onclick="inspReviewSetFilter('pending')" id="inspReviewFilterPending" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">❓ Not analyzed</button>
-        <button id="inspReviewCompleteBtn" onclick="inspReviewComplete()" title="" style="display:none; margin-left:auto; background:#15803d; color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">✓ Complete inspection</button>
+        <button id="inspReviewAddVioBtn" onclick="inspReviewAddViolation()" title="Add a violation the AI missed on the photo you're looking at — back at the office you often spot more in the same shot. You can add several to one photo." style="margin-left:auto; background:#dc2626; color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">+ Add violation (this photo)</button>
+        <button id="inspReviewCompleteBtn" onclick="inspReviewComplete()" title="" style="display:none; margin-left:8px; background:#15803d; color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">✓ Complete inspection</button>
         <button onclick="inspCloseReview()" style="margin-left:8px; background:rgba(255,255,255,0.2); color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:14px; cursor:pointer;">× Close</button>
       </div>
       <!-- Letters-needed checklist: when completion is blocked, the violations
@@ -25876,6 +25887,29 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (id) await inspFinalize(id);
   }
   window.inspReviewComplete = inspReviewComplete;
+
+  // "+ Add violation" from the review screen — opens the same add-violation
+  // form (reused) for the photo currently on screen. Lets the reviewer add a
+  // violation the AI missed, stacking multiple on one photo (Ed 2026-06-29).
+  async function inspReviewAddViolation() {
+    const r = window._inspReview || {};
+    const photo = (r.photos || [])[r.selectedPhotoIdx];
+    if (!photo || !photo.id) { alert('Pick a photo first.'); return; }
+    _addVioPhotoId = photo.id;
+    if (!_addVioCategoriesLoaded) {
+      try {
+        const res = await fetch('/api/enforcement/categories');
+        const j = await res.json();
+        const sel = document.getElementById('inspAddVioCategory');
+        if (sel) sel.innerHTML = '<option value="">— select category —</option>' +
+          (j.categories || []).map((c) => `<option value="${c.id}">${(c.label || c.slug || '').replace(/</g, '&lt;')}</option>`).join('');
+        _addVioCategoriesLoaded = true;
+      } catch (e) { alert('Could not load categories: ' + e.message); return; }
+    }
+    const st = document.getElementById('inspAddVioStatus'); if (st) st.textContent = '';
+    document.getElementById('inspAddViolationModal').style.display = 'flex';
+  }
+  window.inspReviewAddViolation = inspReviewAddViolation;
 
   // Render the Complete button + the letters-needed checklist for a drive.
   // Re-callable so it refreshes after a letter is generated.
