@@ -8917,6 +8917,79 @@ router.get('/property/:property_id/cert-status', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/enforcement/certified-list   (optional ?community_id=)
+// Every OPEN certified §209 case, grouped by community, with days since the
+// certified notice and cure-window status. Drives the "Certified §209 cases"
+// panel on the Cures tab — the at-a-glance picture of what's escalated in each
+// community. Each case carries property_id so the UI can link to the account.
+// ---------------------------------------------------------------------------
+router.get('/certified-list', async (req, res) => {
+  try {
+    const communityId = req.query.community_id || null;
+    const todayMs = Date.parse(new Date().toISOString().slice(0, 10));
+    const daysBetween = (a, b) => Math.floor((a - b) / 86400000);
+
+    // Paginate — certified cases are portfolio-wide and can exceed the 1000 cap.
+    const rows = [];
+    let from = 0;
+    while (true) {
+      let q = supabase
+        .from('violations')
+        .select('id, community_id, property_id, current_stage_started_at, opened_at, cure_period_ends_at, communities(name), properties(street_address, unit), enforcement_categories(label)')
+        .eq('current_stage', 'certified_209')
+        .range(from, from + 999);
+      if (communityId) q = q.eq('community_id', communityId);
+      const { data, error } = await q;
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+      from += 1000;
+    }
+
+    const byCommunity = new Map();
+    for (const v of rows) {
+      const since = v.current_stage_started_at || v.opened_at;
+      const daysSince = since ? daysBetween(todayMs, Date.parse(String(since).slice(0, 10))) : null;
+      let cureStatus = null, cureDaysLeft = null;
+      if (v.cure_period_ends_at) {
+        cureDaysLeft = daysBetween(Date.parse(String(v.cure_period_ends_at).slice(0, 10)), todayMs);
+        cureStatus = cureDaysLeft < 0 ? 'expired' : (cureDaysLeft === 0 ? 'due_today' : 'open');
+      }
+      const key = v.community_id;
+      if (!byCommunity.has(key)) {
+        byCommunity.set(key, { id: v.community_id, name: (v.communities && v.communities.name) || 'Unknown', cases: [] });
+      }
+      byCommunity.get(key).cases.push({
+        violation_id: v.id,
+        property_id: v.property_id,
+        street_address: (v.properties && v.properties.street_address) || null,
+        unit: (v.properties && v.properties.unit) || null,
+        category: (v.enforcement_categories && v.enforcement_categories.label) || null,
+        days_since_certified: daysSince,
+        since_date: since ? String(since).slice(0, 10) : null,
+        cure_period_ends_at: v.cure_period_ends_at ? String(v.cure_period_ends_at).slice(0, 10) : null,
+        cure_status: cureStatus,
+        cure_days_left: cureDaysLeft,
+      });
+    }
+
+    // Sort cases oldest-first (most overdue attention) within each community;
+    // communities by case count descending.
+    const communities = [...byCommunity.values()].map((c) => {
+      c.cases.sort((a, b) => (b.days_since_certified || 0) - (a.days_since_certified || 0));
+      c.count = c.cases.length;
+      c.oldest_days = c.cases.length ? c.cases[0].days_since_certified : null;
+      return c;
+    }).sort((a, b) => b.count - a.count);
+
+    res.json({ generated_at: new Date().toISOString(), total: rows.length, communities });
+  } catch (err) {
+    console.error('[enforcement.certified-list]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/enforcement/violations/:violationId/cure-days   { days }
 // Operator override for the cure-window length (migration 247). Set a larger
 // number to grant extra grace (e.g. 30 days when mailing late); pass null/blank

@@ -16905,6 +16905,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     </div>
   </div>
 
+  <!-- CERTIFIED §209 CASES — Ed 2026-06-29: per-community picture of what's
+       escalated to certified mail, with days since the certified notice.
+       Click an address to open that account's history. -->
+  <div style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; margin-bottom:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+      <h3 style="font-size:14px; color:var(--navy, #0B1D34); margin:0;">📜 Certified §209 cases <span style="color:#64748b; font-weight:500;">— what's escalated in each community</span></h3>
+      <button class="secondary-btn" onclick="curesCertifiedLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+    </div>
+    <div id="curesCertifiedPanel"><div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div></div>
+  </div>
+
   <!-- CURE-LAPSE PROCESSOR — moved from Inspect tab 2026-06-13.
        Auto-runs daily at 06:00 Central; manual Preview + Process here. -->
   <div style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; margin-bottom:14px;">
@@ -22781,8 +22792,56 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (otherSel) otherSel.value = sel.value;
     if (typeof curePipelineLoad === 'function') curePipelineLoad();
     if (typeof inspCureLapsePreview === 'function') inspCureLapsePreview();
+    if (typeof curesCertifiedLoad === 'function') curesCertifiedLoad();
   }
   window.curesQueueFilterChange = curesQueueFilterChange;
+
+  // Certified §209 cases — per-community list of what's escalated, with days
+  // since the certified notice. Respects the Cures community filter.
+  async function curesCertifiedLoad() {
+    const panel = document.getElementById('curesCertifiedPanel');
+    if (!panel) return;
+    const sel = document.getElementById('curesCommunityFilter');
+    const communityId = sel && sel.value ? sel.value : '';
+    panel.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
+    try {
+      const url = '/api/enforcement/certified-list' + (communityId ? ('?community_id=' + encodeURIComponent(communityId)) : '');
+      const r = await fetch(url);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      const comms = j.communities || [];
+      if (!comms.length) { panel.innerHTML = '<div style="color:#64748b; font-size:12.5px; padding:10px 0;">No open certified §209 cases.</div>'; return; }
+      const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const cureBadge = (c) => {
+        if (c.cure_status === 'expired') return `<span style="color:#b91c1c; font-weight:600;">cure expired ${Math.abs(c.cure_days_left)}d ago</span>`;
+        if (c.cure_status === 'due_today') return `<span style="color:#a16207; font-weight:600;">cure due today</span>`;
+        if (c.cure_status === 'open') return `<span style="color:#64748b;">${c.cure_days_left}d left to cure</span>`;
+        return `<span style="color:#cbd5e1;">no cure date</span>`;
+      };
+      let html = `<div style="font-size:12px; color:#64748b; margin-bottom:10px;">${j.total} open certified §209 case${j.total === 1 ? '' : 's'} across ${comms.length} ${comms.length === 1 ? 'community' : 'communities'}. Click an address to open the account history. “Days since certified” counts from when the certified notice issued.</div>`;
+      html += comms.map((c) => {
+        const rows = c.cases.map((x) => `
+          <tr style="border-top:1px solid #f1f5f9;">
+            <td style="padding:5px 8px;"><span style="color:#1E2761; font-weight:600; cursor:pointer; text-decoration:underline; text-decoration-style:dotted;" onclick="homesOpenProperty('${x.property_id}')">${esc(x.street_address || '(no address)')}${x.unit ? ' #' + esc(x.unit) : ''}</span></td>
+            <td style="padding:5px 8px; color:#334155;">${esc(x.category || '—')}</td>
+            <td style="padding:5px 8px; text-align:right; font-weight:600; color:${x.days_since_certified >= 60 ? '#b91c1c' : '#0B1D34'};">${x.days_since_certified == null ? '—' : x.days_since_certified + 'd'}</td>
+            <td style="padding:5px 8px; font-size:11.5px;">${cureBadge(x)}</td>
+          </tr>`).join('');
+        return `
+          <details open style="margin-bottom:10px; border:1px solid #e2e8f0; border-radius:8px;">
+            <summary style="cursor:pointer; padding:9px 12px; font-weight:700; color:#0B1D34; font-size:13px; background:#f8fafc; border-radius:8px 8px 0 0;">${esc(c.name)} <span style="color:#64748b; font-weight:500;">— ${c.count} case${c.count === 1 ? '' : 's'}, oldest ${c.oldest_days == null ? '—' : c.oldest_days + 'd'}</span></summary>
+            <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+              <thead><tr style="color:#94a3b8; font-size:10.5px; text-transform:uppercase; letter-spacing:0.05em;"><th style="text-align:left; padding:5px 8px;">Address</th><th style="text-align:left; padding:5px 8px;">Violation</th><th style="text-align:right; padding:5px 8px;">Days since cert.</th><th style="text-align:left; padding:5px 8px;">Cure</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </details>`;
+      }).join('');
+      panel.innerHTML = html;
+    } catch (e) {
+      panel.innerHTML = `<div style="color:#b91c1c; font-size:12.5px; padding:10px 0;">Couldn't load certified cases: ${e.message}</div>`;
+    }
+  }
+  window.curesCertifiedLoad = curesCertifiedLoad;
 
   async function curesLoadCommunityOptions() {
     const sel = document.getElementById('curesCommunityFilter');
@@ -26580,6 +26639,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       }
       if (tab === 'cures') {
         try { curesLoadCommunityOptions(); } catch (e) { console.warn('[cures] load filter', e); }
+        try { curesCertifiedLoad(); } catch (e) { console.warn('[cures] load certified', e); }
         try { curePipelineLoad(); } catch (e) { console.warn('[cures] load pipeline', e); }
         try { inspCureLapsePreview(); } catch (e) { console.warn('[cures] load cure-lapse', e); }
         try { inspCureLapseAutoStatusLoad(); } catch (e) { console.warn('[cures] load cure-lapse status', e); }
