@@ -15753,6 +15753,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <button class="action-btn" id="inspStartBtn" onclick="inspStart()" style="width: 100%;">Start inspection</button>
       <div id="inspStartError" style="display:none; color:#b91c1c; font-size: 13px; margin-top: 8px;"></div>
 
+      <!-- Trash-violation day helper — Ed 2026-06-29: trash-container-left-out
+           violations only hold up on a NON-collection day (on collection day
+           every can is legitimately at the curb). Shows which communities are
+           clear to write trash violations today, driven by the trash schedule
+           set on the Contacts page. -->
+      <button type="button" onclick="inspTrashDays()" style="width:100%; margin-top:8px; background:#fff; color:#0B1D34; border:1px solid #d0d7de; border-radius:8px; padding:9px 12px; font-size:13px; font-weight:600; cursor:pointer;">🗑️ When can I write trash violations?</button>
+      <div id="inspTrashDaysPanel" style="display:none; margin-top:10px; border:1px solid #e2e8f0; border-radius:10px; padding:14px; background:#f8fafc;"></div>
+
       <!-- Voice DRV mode — Ed 2026-06-10: full-screen dashboard-mount
            inspection. Pick community + your name, mount phone, drive
            slow, tap-to-talk per violation. Hands stay on the wheel.
@@ -26323,6 +26331,53 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     } catch (_) {}
   }
   window._inspToast = _inspToast;
+
+  // Trash-violation day helper. Trash-container-left-out violations are only
+  // defensible on a NON-collection day, so this surfaces which communities are
+  // clear to write them today (and each community's full clear-day list),
+  // driven by the trash_schedule set on the Contacts page.
+  async function inspTrashDays() {
+    const panel = document.getElementById('inspTrashDaysPanel');
+    if (!panel) return;
+    if (panel.style.display !== 'none' && panel.dataset.loaded === '1') {
+      panel.style.display = 'none'; panel.dataset.loaded = ''; return;   // toggle closed
+    }
+    panel.style.display = 'block';
+    panel.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading trash schedules…</div>';
+    try {
+      const r = await fetch('/api/inspections/trash-inspection-days');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+      const daysList = (ds) => (ds && ds.length) ? ds.map(cap).join(', ') : '—';
+      const comms = j.communities || [];
+      const clear = comms.filter((c) => c.today_status === 'clear');
+      const collect = comms.filter((c) => c.today_status === 'collection');
+      const unknown = comms.filter((c) => c.today_status === 'unknown');
+      let html = `<div style="font-weight:700; color:#0B1D34; margin-bottom:6px;">Today is ${cap(j.today)}</div>`;
+      html += `<div style="font-size:12.5px; color:#475569; margin-bottom:12px;">Trash-container violations only hold up on a day cans shouldn't be at the curb. Skip them on a community's collection day.</div>`;
+      if (clear.length) {
+        html += `<div style="color:#15803d; font-weight:700; font-size:13px; margin:0 0 4px;">✅ Clear to write trash violations today</div>`;
+        html += clear.map((c) => `<div style="font-size:13px; padding:2px 0;"><strong>${c.name}</strong> <span style="color:#94a3b8;">— collects ${daysList(c.collection_days)}</span></div>`).join('');
+      }
+      if (collect.length) {
+        html += `<div style="color:#b91c1c; font-weight:700; font-size:13px; margin:12px 0 4px;">🚫 Trash collected today — skip trash write-ups</div>`;
+        html += collect.map((c) => `<div style="font-size:13px; padding:2px 0;"><strong>${c.name}</strong></div>`).join('');
+      }
+      if (unknown.length) {
+        html += `<div style="color:#a16207; font-weight:700; font-size:13px; margin:12px 0 4px;">❓ No trash schedule on file</div>`;
+        html += unknown.map((c) => `<div style="font-size:13px; padding:2px 0;"><strong>${c.name}</strong> <span style="color:#94a3b8;">— add it on the Contacts page</span></div>`).join('');
+      }
+      html += `<details style="margin-top:12px;"><summary style="cursor:pointer; font-size:12.5px; color:#475569;">All communities — clear days for trash violations</summary>`;
+      html += comms.map((c) => `<div style="font-size:12.5px; padding:5px 0; border-top:1px solid #e2e8f0;"><strong>${c.name}</strong><br><span style="color:#15803d;">Clear: ${c.has_schedule ? daysList(c.clear_days) : '(no schedule set)'}</span> &nbsp;·&nbsp; <span style="color:#b91c1c;">Collects: ${daysList(c.collection_days)}</span></div>`).join('');
+      html += `</details>`;
+      panel.innerHTML = html;
+      panel.dataset.loaded = '1';
+    } catch (e) {
+      panel.innerHTML = `<div style="color:#b91c1c; font-size:13px;">Couldn't load: ${e.message}</div>`;
+    }
+  }
+  window.inspTrashDays = inspTrashDays;
 
   async function inspResume(id) {
     if (!id) return;

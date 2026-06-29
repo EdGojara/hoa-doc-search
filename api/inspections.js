@@ -2355,6 +2355,27 @@ router.get('/inspections/:id/observations', async (req, res) => {
   }
 });
 
+// GET /api/inspections/trash-inspection-days
+// Per active community: trash collection days vs the days that are CLEAR for
+// writing trash-container-left-out violations (any non-collection day). Drives
+// the "When can I write trash violations?" button in the inspect UI.
+router.get('/inspections/trash-inspection-days', async (req, res) => {
+  try {
+    const { computeWindows, centralWeekday } = require('../lib/enforcement/trash_inspection_windows');
+    const { data, error } = await supabase
+      .from('communities')
+      .select('id, name, slug, trash_schedule, active')
+      .eq('active', true)
+      .order('name');
+    if (error) throw error;
+    const today = centralWeekday(new Date());
+    res.json({ today, communities: computeWindows(data || [], today) });
+  } catch (err) {
+    console.error('[inspections.trash-inspection-days]', err);
+    res.status(500).json({ error: err.message || 'failed' });
+  }
+});
+
 router.get('/inspections/recent', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
@@ -2389,6 +2410,7 @@ router.get('/inspections/:id', async (req, res, next) => {
   const RESERVED = new Set([
     'active', 'recent', 'offices', 'observations', 'photos',
     'properties', 'geocode-debug', 'geocode-status', 'geocode-community',
+    'trash-inspection-days',
   ]);
   if (RESERVED.has(req.params.id)) return next();
   try {
