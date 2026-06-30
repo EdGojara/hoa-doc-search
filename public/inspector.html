@@ -456,7 +456,7 @@ function startStatPolling() {
     } catch (_) {}
   };
   tick();
-  setInterval(tick, 15000);
+  setInterval(tick, 30000);   // 30s (was 15s) — halves the live-status DB polling
 }
 
 // -----------------------------

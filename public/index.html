@@ -20095,7 +20095,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   function inspStartLivePoll() {
     if (inspState._livePollTimer) return;
     inspLivePoll();
-    inspState._livePollTimer = setInterval(inspLivePoll, 20000);  // 20s — gentle on cellular
+    inspState._livePollTimer = setInterval(inspLivePoll, 30000);  // 30s — gentle on cellular + DB IO
   }
   function inspStopLivePoll() {
     if (inspState._livePollTimer) { clearInterval(inspState._livePollTimer); inspState._livePollTimer = null; }
@@ -20815,12 +20815,28 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
   function inspStartObservationsPoll() {
     if (inspState.observationsPollTimer) return;
-    inspState.observationsPollTimer = setInterval(inspPollObservations, 4000);
-    setTimeout(inspPollObservations, 1500);
+    // Adaptive cadence (Ed 2026-06-30, DB-IO reduction). The old fixed 4s poll
+    // queried /observations every 4 seconds for the WHOLE drive — even when
+    // every photo was already analyzed and nothing was pending. On a 2-hour
+    // drive that's ~1,800 needless queries. Now: poll fast (5s) only while a
+    // photo is still being analyzed or was just captured; back off to 20s once
+    // things settle (which is most of the drive). Pure cadence change — status
+    // badges just refresh a few seconds later when idle; capture is unaffected.
+    const tick = async () => {
+      await inspPollObservations();
+      if (!inspState.sessionId) return;  // stopped while we were awaiting
+      const analyzing = (inspState.observations || []).some((o) => !o.ai_description && !o.category_label);
+      const recentCapture = (inspState.photos || []).some(
+        (p) => p && p.captured_at && (Date.now() - new Date(p.captured_at).getTime()) < 30000
+      );
+      const delay = (analyzing || recentCapture) ? 5000 : 20000;
+      inspState.observationsPollTimer = setTimeout(tick, delay);
+    };
+    inspState.observationsPollTimer = setTimeout(tick, 1500);
   }
   function inspStopObservationsPoll() {
     if (inspState.observationsPollTimer) {
-      clearInterval(inspState.observationsPollTimer);
+      clearTimeout(inspState.observationsPollTimer);
       inspState.observationsPollTimer = null;
     }
   }
