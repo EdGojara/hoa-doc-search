@@ -637,6 +637,47 @@ roster size memorized. Make it structurally impossible to ship a
 truncated result: the helper everywhere, no per-endpoint heroics, no
 "I'll remember to add `.range()` next time."
 
+### Live UI: don't wipe before you have the replacement; rehydrate from the server
+
+**Scar**: 2026-06-30, Laurie was mid-drive on the Inspect tab at Still Creek
+when the house pins vanished and she couldn't tap to capture. Three distinct
+faults, one incident:
+
+1. **Clear-then-fetch wipe.** `inspMapLoadProperties` removed every map marker
+   FIRST, then fetched `/api/inspections/properties`, silently swallowing
+   failures (`catch (_) {}`). A single dropped request on a moving tablet
+   (cellular blip) cleared all 344 house pins and never restored them — capture
+   blocked mid-drive. Fix: fetch FIRST; only clear+rebuild on a successful,
+   non-empty response. On failure (or empty while pins are already on screen),
+   keep the on-screen pins, show a non-blocking "couldn't refresh — retrying"
+   status, and retry on a timer. Commit `95d11dd`.
+
+2. **Client-only state lost on reload.** The GPS breadcrumb (`routePingsAll`)
+   and the route polyline lived only in browser memory. A close/reopen (resume)
+   started the trail blank even though every ping was saved server-side — the
+   operator's "where I've driven" coverage looked gone. Fix: on resume,
+   rehydrate from the server (`GET /:id/route-trace`) and redraw. (Covered
+   houses already restored — from photos; the trail did not.) Commit `0f0e188`.
+
+3. **1000-row cap on the trail read** — a live instance of the Supabase
+   truncation scar above. `GET /:id/route-trace` was an unpaginated select; at
+   1,191 pings it returned only the first 1,000, so even the rehydrated trail
+   ended ~191 points early. Fix: page through with `.range()` until a short
+   page.
+
+**Rules**:
+- **Never destroy rendered UI before its replacement is confirmed in hand.**
+  Fetch → confirm non-empty → THEN swap. A failed/empty refresh must leave the
+  last good render in place, never a blank screen. Same family as "DROP VIEW
+  loses GRANTs → map went blank" and "preview shows 0 on a capped query": a
+  blank/zero state must never be the silent result of a transient failure.
+- **Anything the operator relies on across a reload rehydrates from the
+  server.** Client-side accumulators (trails, buffers, selection state) are a
+  live cache, never the source of truth. On resume, reload them — and confirm
+  the read isn't itself capped (point 3).
+- Mid-drive surfaces get this scrutiny first: an inspector on cellular WILL hit
+  dropped requests and WILL close/reopen the tab. Build for it.
+
 ---
 
 ## Database conventions

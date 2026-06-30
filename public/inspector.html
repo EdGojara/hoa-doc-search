@@ -191,7 +191,12 @@
 'use strict';
 
 const POLL_MS = 30000;          // ping every 30s while active
-const MAX_PINGS_ON_MAP = 200;   // cap polyline length for perf
+// Polyline length cap. 200 was far too low — it silently trimmed a long drive's
+// coverage trail to the last ~200 points (and on resume would re-trim away the
+// rehydrated history on the first new ping). Leaflet handles thousands of
+// points fine; keep a high cap purely as a pathological-case backstop.
+const MAX_PINGS_ON_MAP = 8000;
+const INSPECTOR_ACTIVE_KEY = 'inspector_active_session';
 
 let activeInspection = null;    // { id, community_id, started_at, mode, route_label }
 let watchId = null;             // navigator.geolocation watchPosition handle
@@ -306,6 +311,7 @@ $('startBtn').addEventListener('click', async () => {
           device_label: deviceLabel,
           community_name: $('communityPicker').selectedOptions[0]?.textContent || '',
         };
+        persistActiveSession();   // so a reload resumes THIS drive, not a new one
         enterLiveView();
       } catch (e) {
         $('startError').style.display = 'block';
@@ -419,6 +425,7 @@ async function postPing(pos) {
       return;
     }
     logPing(`Ping ${body.lat.toFixed(5)}, ${body.lng.toFixed(5)} ✓`);
+    persistActiveSession();   // refresh the resume pointer's timestamp
   } catch (e) {
     logPing('Ping network error: ' + e.message, true);
   }
@@ -473,6 +480,7 @@ $('endBtn').addEventListener('click', async () => {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     alert('Drive ended. ' + ($('statPings').textContent || '0') + ' pings logged. Open trustEd → Reports → Inspections to review.');
     // Reset to pre-drive
+    clearActiveSession();   // drive ended — don't resume it on next load
     activeInspection = null;
     if (map) { map.remove(); map = null; }
     trailLatLngs = [];
@@ -488,10 +496,93 @@ $('endBtn').addEventListener('click', async () => {
 });
 
 // -----------------------------
+// Resume support (Ed 2026-06-30)
+// -----------------------------
+// Previously this tablet had NO resume: a reload (or opening it from the home
+// "Active Drives" row, which passes ?resume=<id>) dropped to the Start screen,
+// and tapping Start created a SECOND drive — orphaning the live one and losing
+// the on-screen trail. Now we persist a pointer to the active drive and, on
+// boot, drop back into it and rebuild the trail from the server.
+function persistActiveSession() {
+  try {
+    if (!activeInspection) return;
+    localStorage.setItem(INSPECTOR_ACTIVE_KEY, JSON.stringify({ id: activeInspection.id, ts: Date.now() }));
+  } catch (_) {}
+}
+function clearActiveSession() {
+  try { localStorage.removeItem(INSPECTOR_ACTIVE_KEY); } catch (_) {}
+}
+
+// Rebuild the green trail from the server so coverage survives close/reopen.
+// Must run AFTER enterLiveView() (which creates `trail` + `map`).
+async function seedTrailFromServer(id) {
+  try {
+    const r = await fetch('/api/inspections/' + encodeURIComponent(id) + '/route-trace');
+    if (!r.ok) return;
+    const j = await r.json();
+    const pts = (j.pings || [])
+      .filter((p) => p && p.latitude != null && p.longitude != null)
+      .map((p) => [Number(p.latitude), Number(p.longitude)]);
+    if (!pts.length) return;
+    trailLatLngs = pts.slice(-MAX_PINGS_ON_MAP);
+    if (trail) trail.setLatLngs(trailLatLngs);
+    const last = trailLatLngs[trailLatLngs.length - 1];
+    if (map && last) map.setView(last, 16);
+    logPing('Restored ' + pts.length + ' pings of trail from server.');
+  } catch (_) { /* offline — trail rebuilds from new pings */ }
+}
+
+// Drop back into an in-progress/paused drive. Returns true if resumed.
+async function resumeInspection(id) {
+  if (!id) return false;
+  try {
+    const r = await fetch('/api/inspections/' + encodeURIComponent(id));
+    if (!r.ok) { clearActiveSession(); return false; }
+    const j = await r.json();
+    const insp = j.inspection;
+    if (!insp || (insp.status !== 'in_progress' && insp.status !== 'paused')) {
+      clearActiveSession(); return false;   // finalized / voided / gone — don't reopen
+    }
+    if (insp.status === 'paused') {
+      try { await fetch('/api/inspections/' + encodeURIComponent(id) + '/resume', { method: 'POST' }); } catch (_) {}
+    }
+    activeInspection = {
+      id: insp.id,
+      community_id: insp.community_id,
+      mode: insp.mode,
+      route_label: insp.route_label,
+      started_at: insp.started_at,
+      device_label: insp.device_label || localStorage.getItem('inspectorDeviceLabel') || null,
+      community_name: (insp.communities && insp.communities.name) || '',
+    };
+    persistActiveSession();
+    enterLiveView();
+    await seedTrailFromServer(id);   // rebuild the trail before the watch appends new pings
+    return true;
+  } catch (_) { clearActiveSession(); return false; }
+}
+
+// -----------------------------
 // Boot
 // -----------------------------
 restoreDeviceLabel();
-loadCommunities();
+(async () => {
+  const params = new URLSearchParams(location.search);
+  let resumed = false;
+  const resumeId = params.get('resume');
+  if (resumeId) resumed = await resumeInspection(resumeId);
+  if (!resumed) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(INSPECTOR_ACTIVE_KEY) || 'null');
+      if (saved && saved.id && (!saved.ts || (Date.now() - saved.ts) < 18 * 3600 * 1000)) {
+        resumed = await resumeInspection(saved.id);
+      } else if (saved) {
+        clearActiveSession();   // stale (>18h) — drop the pointer
+      }
+    } catch (_) {}
+  }
+  if (!resumed) loadCommunities();   // no active drive — normal Start screen
+})();
 
 // Persist device label as user types
 $('deviceLabel').addEventListener('blur', persistDeviceLabel);
