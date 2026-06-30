@@ -18609,24 +18609,54 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // Fetches properties for the active community, clears existing markers,
   // re-renders. Called from inspMapInit and from inspRunGeocoder after
   // backfill so the map updates without rebuilding the Mapbox instance.
-  async function inspMapLoadProperties() {
+  async function inspMapLoadProperties(opts) {
     if (!inspState.mapInstance || !inspState.communityId) return;
     const statusEl = document.getElementById('inspMapStatus');
     const setStatus = (html) => { if (statusEl) statusEl.innerHTML = html; };
+    const _retry = (opts && opts._retry) || 0;
 
-    // Clear existing markers
+    // FETCH FIRST — never clear the pins until good data is in hand.
+    // Scar (Laurie, Still Creek 2026-06-30): the loader used to remove every
+    // marker and THEN fetch, silently swallowing failures. One dropped request
+    // on a moving tablet (cellular blip) wiped all the house pins and never
+    // restored them, blocking capture mid-drive. Now: fetch, and only
+    // replace markers on a successful, non-empty response; otherwise keep
+    // whatever is on screen and retry on a short timer.
+    // include_history=1 returns worst_open_stage per property so we can color
+    // pins by violation severity during the walk.
+    let propsResp = null;
+    let fetchOk = false;
+    try {
+      const r = await fetch(`/api/inspections/properties?community_id=${encodeURIComponent(inspState.communityId)}&include_history=1`);
+      if (r.ok) { propsResp = await r.json(); fetchOk = true; }
+    } catch (_) { /* network blip — handled below */ }
+
+    const hadMarkers = !!(inspState.propertyMarkers && inspState.propertyMarkers.length > 0);
+    const gotProps = fetchOk && propsResp && Array.isArray(propsResp.properties) && propsResp.properties.length > 0;
+
+    // Refresh failed, OR came back empty while houses were already on screen →
+    // keep the existing pins (do NOT blank her map), warn, and retry shortly.
+    if (!gotProps && hadMarkers) {
+      setStatus('⚠️ Couldn\'t refresh houses (signal?) — showing the last loaded set. Retrying… <span style="color:#64748b;">Your pins are still tappable.</span>');
+      if (_retry < 8) setTimeout(() => inspMapLoadProperties({ _retry: _retry + 1 }), 4000);
+      return;
+    }
+    // Fetch failed on a cold map (nothing rendered yet) → show error + retry,
+    // but don't proceed to wipe/redraw with empty data.
+    if (!fetchOk && !hadMarkers) {
+      setStatus('⚠️ Couldn\'t load houses (signal?). Retrying…');
+      if (_retry < 8) setTimeout(() => inspMapLoadProperties({ _retry: _retry + 1 }), 4000);
+      return;
+    }
+    // Good response in hand (possibly a legitimately-empty cold map that needs
+    // geocoding — that path is handled by the status messaging below).
+    if (!propsResp) propsResp = { properties: [], total_count: 0, geo_count: 0, missing_geo_count: 0 };
+
+    // NOW it's safe to clear + rebuild — we have fresh data to replace them with.
     for (const m of inspState.propertyMarkers) {
       try { m.remove(); } catch (_) {}
     }
     inspState.propertyMarkers = [];
-
-    // Fetch fresh data — include_history=1 returns worst_open_stage per
-    // property so we can color pins by violation severity during the walk.
-    let propsResp = { properties: [], total_count: 0, geo_count: 0, missing_geo_count: 0 };
-    try {
-      const r = await fetch(`/api/inspections/properties?community_id=${encodeURIComponent(inspState.communityId)}&include_history=1`);
-      if (r.ok) propsResp = await r.json();
-    } catch (_) { /* tolerate */ }
 
     // Stash the property list globally so the Review queue's manual property
     // picker (inspReviewRenderUnlinkedPhoto) has a dropdown source for
