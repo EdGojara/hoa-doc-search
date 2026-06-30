@@ -33,7 +33,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
-const { renderBuilderLetterHTML } = require('../lib/builder_letter');
+const { renderBuilderLetterHTML, renderMasterPlanApprovalLetterHTML, groupMasterPlansForLetter } = require('../lib/builder_letter');
 const { sendEmail } = require('../lib/notifications/email');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -619,8 +619,7 @@ async function nextBuilderReferenceNumber(community) {
 }
 
 // Lazy puppeteer (HTML → PDF) — same pattern as server.js:renderLetterPdfBuffer
-async function renderBuilderLetterPdfBuffer(letterArgs) {
-  const html = renderBuilderLetterHTML(letterArgs);
+async function htmlToPdfBuffer(html) {
   const puppeteer = require('puppeteer');
   const browser = await puppeteer.launch({
     headless: 'new',
@@ -640,6 +639,14 @@ async function renderBuilderLetterPdfBuffer(letterArgs) {
   } finally {
     try { await browser.close(); } catch (_) {}
   }
+}
+
+async function renderBuilderLetterPdfBuffer(letterArgs) {
+  return htmlToPdfBuffer(renderBuilderLetterHTML(letterArgs));
+}
+
+async function renderMasterPlanLetterPdfBuffer(letterArgs) {
+  return htmlToPdfBuffer(renderMasterPlanApprovalLetterHTML(letterArgs));
 }
 
 function letterStoragePath({ communitySlug, year, referenceNumber }) {
@@ -2309,6 +2316,361 @@ router.post('/:id/send', express.json({ limit: '256kb' }), async (req, res) => {
     });
   } catch (err) {
     console.error('[builder_applications] send failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// GROUPED MASTER-PLAN APPROVAL LETTER (Ed 2026-06-30)
+// ----------------------------------------------------------------------------
+// "is the master plan approvals producing an approval letter — we don't have to
+//  do them individually we can do them by group for the master plans."
+//
+// One letter per builder per community listing every currently-approved plan +
+// elevation. Renders → uploads → stores in master_plan_approval_letters → can
+// be reviewed in Outlook (.eml) and emailed to the builder as the confirmation.
+// The builder portal reads these so the builder can SEE their approved library.
+// ============================================================================
+
+// Pull every plan a builder has APPROVED at a community (approval = an active,
+// non-retired master_plan_community_approvals row). Bounded by builder size.
+async function gatherApprovedMasterPlans(builderCompanyId, communityId) {
+  const { data, error } = await supabase
+    .from('master_plans')
+    .select('id, plan_number, plan_name, elevation, square_footage, stories, status, master_plan_community_approvals!inner(community_id, retired_at)')
+    .eq('builder_company_id', builderCompanyId)
+    .eq('master_plan_community_approvals.community_id', communityId)
+    .is('master_plan_community_approvals.retired_at', null)
+    .neq('status', 'retired')
+    .limit(2000);
+  if (error) throw error;
+  return data || [];
+}
+
+// Build the email envelope for a stored master-plan approval letter. Shared by
+// /eml-export (Outlook review) and /send so the preview is byte-identical to
+// what Resend ships. forceRegenerate re-renders from the LIVE approved set (so
+// a letter previewed before sending reflects any approvals added since it was
+// generated), and refreshes the stored PDF.
+async function buildMasterPlanEmailEnvelope(letterId, opts = {}) {
+  const { forceRegenerate = false } = opts;
+  const { data: letter, error: lErr } = await supabase
+    .from('master_plan_approval_letters')
+    .select(`
+      *,
+      community:communities(id, name, slug),
+      builder_company:builder_companies(id, company_name, primary_contact_name, primary_contact_email, mailing_address)
+    `)
+    .eq('id', letterId)
+    .single();
+  if (lErr) throw new Error(lErr.message);
+  if (!letter) { const e = new Error('approval letter not found'); e.statusCode = 404; throw e; }
+
+  let pdfBuffer;
+  if (forceRegenerate && !letter.email_sent_at) {
+    const rows = await gatherApprovedMasterPlans(letter.builder_company_id, letter.community_id);
+    const grouped = groupMasterPlansForLetter(rows);
+    const letterArgs = {
+      community: letter.community.name,
+      builder_company_name: letter.builder_company.company_name,
+      builder_contact_name: letter.builder_company.primary_contact_name || '',
+      builder_mailing_address: letter.builder_company.mailing_address || '',
+      plans: grouped,
+      reference_number: letter.reference_number,
+      signer_name: letter.generated_by || undefined,
+    };
+    pdfBuffer = await renderMasterPlanLetterPdfBuffer(letterArgs);
+    try {
+      const fresh = await uploadLetterPdf({
+        pdfBuffer,
+        communitySlug: letter.community.slug,
+        referenceNumber: letter.reference_number,
+      });
+      await supabase
+        .from('master_plan_approval_letters')
+        .update({
+          plans_snapshot: grouped,
+          plan_count: grouped.length,
+          elevation_count: grouped.reduce((n, p) => n + (p.elevations ? p.elevations.length : 0), 0),
+          letter_pdf_path: fresh.path,
+          letter_signed_url: fresh.signed_url,
+          letter_signed_url_expires_at: fresh.signed_url_expires_at,
+        })
+        .eq('id', letter.id);
+      letter.letter_pdf_path = fresh.path;
+      letter.plan_count = grouped.length;
+      letter.elevation_count = letterArgs.plans.reduce((n, p) => n + p.elevations.length, 0);
+    } catch (e) {
+      console.warn('[builder_applications.buildMasterPlanEmailEnvelope] storage refresh skipped:', e.message);
+    }
+  } else {
+    if (!letter.letter_pdf_path) { const e = new Error('no letter PDF on record'); e.statusCode = 400; throw e; }
+    const { data: dl, error: dlErr } = await supabase.storage.from(STORAGE_BUCKET).download(letter.letter_pdf_path);
+    if (dlErr) throw new Error(`failed to read letter PDF: ${dlErr.message}`);
+    pdfBuffer = Buffer.from(await dl.arrayBuffer());
+  }
+
+  const { sanitizeNameForLetter } = require('../lib/builder_letter');
+  const greetingName = sanitizeNameForLetter(letter.builder_company.primary_contact_name) || 'Team';
+  const toEmail = letter.builder_company.primary_contact_email || '';
+  const subject = letter.email_subject
+    || `Approved master plans — ${letter.builder_company.company_name} in ${letter.community.name}`;
+  const html = `
+      <p>${greetingName},</p>
+      <p>Attached is the current list of master plans approved for <strong>${(letter.builder_company.company_name || '').replace(/</g, '&lt;')}</strong> in ${(letter.community.name || '').replace(/</g, '&lt;')} — ${letter.plan_count} plan${letter.plan_count === 1 ? '' : 's'}, ${letter.elevation_count} elevation${letter.elevation_count === 1 ? '' : 's'}. Homes built to these approved plans can be submitted for individual lots through the builder portal and are processed on an expedited basis.</p>
+      <p>Reference: <strong>${(letter.reference_number || '').replace(/</g, '&lt;')}</strong></p>
+      <p>To add a new plan or elevation, submit through the portal or write to <a href="mailto:builders@bedrocktx.com">builders@bedrocktx.com</a>.</p>
+      <p style="color:#555; font-size:11px; margin-top:24px;">
+        Sent on behalf of the ${(letter.community.name || '').replace(/</g, '&lt;')} Architectural Control Committee by Bedrock Association Management.
+      </p>`;
+  const filename = `${(letter.reference_number || 'master-plan-approval').replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`;
+  return { letter, community: letter.community, builderCompany: letter.builder_company, toEmail, subject, html, text: plaintextFromHtml(html), pdfBuffer, filename };
+}
+
+// Send a stored master-plan approval letter via Resend. Shared by the generate
+// route (send:true) and the explicit /send route.
+async function sendMasterPlanLetter(letterId, toOverride) {
+  const env = await buildMasterPlanEmailEnvelope(letterId, { forceRegenerate: false });
+  if (env.letter.email_sent_at) { const e = new Error('already sent'); e.statusCode = 400; throw e; }
+  const toEmail = toOverride || env.toEmail;
+  if (!toEmail) { const e = new Error('no_recipient_email — set the builder company primary contact email, or pass "to"'); e.statusCode = 400; throw e; }
+  const send = await sendEmail({
+    to: toEmail,
+    subject: env.subject,
+    html: env.html,
+    text: env.text,
+    attachments: [{ filename: env.filename, content: env.pdfBuffer.toString('base64') }],
+    replyTo: 'builders@bedrocktx.com',
+    bcc: [ARCHIVE_BCC],
+    tags: [
+      { name: 'module', value: 'arc_master_plan' },
+      { name: 'community', value: env.community.slug || 'unknown' },
+    ],
+  });
+  await supabase
+    .from('master_plan_approval_letters')
+    .update({
+      email_to: toEmail,
+      email_sent_at: send.ok ? new Date().toISOString() : null,
+      email_message_id: send.vendor_message_id || null,
+    })
+    .eq('id', letterId);
+  if (send.ok) {
+    await supabase
+      .from('interactions')
+      .update({ status: 'sent', sent_at: new Date().toISOString() })
+      .eq('community_id', env.community.id)
+      .eq('type', 'letter_other')
+      .eq('original_external_id', env.letter.reference_number);
+  }
+  return { send, toEmail };
+}
+
+// POST /api/builder-applications/master-plan/approval-letter
+// Body: { application_id?  OR (builder_company_id + community_id),
+//         generated_by (required), send?: boolean, to?: string }
+// Renders + stores the grouped approval letter. If send:true, also emails it.
+router.post('/master-plan/approval-letter', express.json(), async (req, res) => {
+  try {
+    const { generated_by, send, to } = req.body || {};
+    if (!generated_by) return res.status(400).json({ error: 'generated_by is required' });
+
+    let builderCompanyId = req.body.builder_company_id;
+    let communityId = req.body.community_id;
+    if (req.body.application_id) {
+      if (!UUID_RE.test(req.body.application_id)) return res.status(400).json({ error: 'invalid application_id' });
+      const { data: app } = await supabase
+        .from('builder_applications')
+        .select('builder_company_id, community_id')
+        .eq('id', req.body.application_id)
+        .maybeSingle();
+      if (!app) return res.status(404).json({ error: 'application not found' });
+      builderCompanyId = app.builder_company_id;
+      communityId = app.community_id;
+    }
+    if (!builderCompanyId || !communityId) {
+      return res.status(400).json({ error: 'builder_company_id and community_id (or application_id) are required' });
+    }
+
+    const [{ data: community }, { data: builderCompany }] = await Promise.all([
+      supabase.from('communities').select('id, name, slug').eq('id', communityId).maybeSingle(),
+      supabase.from('builder_companies').select('id, company_name, primary_contact_name, primary_contact_email, mailing_address').eq('id', builderCompanyId).maybeSingle(),
+    ]);
+    if (!community) return res.status(404).json({ error: 'community not found' });
+    if (!builderCompany) return res.status(404).json({ error: 'builder company not found' });
+
+    const rows = await gatherApprovedMasterPlans(builderCompanyId, communityId);
+    const grouped = groupMasterPlansForLetter(rows);
+    if (!grouped.length) {
+      // Catastrophic-output guard: never render an empty "approved plans" letter.
+      return res.status(400).json({ error: `no approved master plans for ${builderCompany.company_name} at ${community.name} — approve plans first, then generate the letter` });
+    }
+    const elevationCount = grouped.reduce((n, p) => n + p.elevations.length, 0);
+
+    // Sequential reference per (builder, community): MP-<SLUG>-<YEAR>-NNNN
+    const { count } = await supabase
+      .from('master_plan_approval_letters')
+      .select('id', { count: 'exact', head: true })
+      .eq('builder_company_id', builderCompanyId)
+      .eq('community_id', communityId);
+    const seq = (count || 0) + 1;
+    const ref = `MP-${String(community.slug || 'COMM').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)}-${new Date().getFullYear()}-${String(seq).padStart(4, '0')}`;
+
+    const letterArgs = {
+      community: community.name,
+      builder_company_name: builderCompany.company_name,
+      builder_contact_name: builderCompany.primary_contact_name || '',
+      builder_mailing_address: builderCompany.mailing_address || '',
+      plans: grouped,
+      reference_number: ref,
+      signer_name: generated_by,
+    };
+    const pdfBuffer = await renderMasterPlanLetterPdfBuffer(letterArgs);
+    const uploaded = await uploadLetterPdf({ pdfBuffer, communitySlug: community.slug, referenceNumber: ref });
+
+    const subject = `Approved master plans — ${builderCompany.company_name} in ${community.name}`;
+    const { data: letter, error: insErr } = await supabase
+      .from('master_plan_approval_letters')
+      .insert({
+        community_id: communityId,
+        builder_company_id: builderCompanyId,
+        reference_number: ref,
+        plan_count: grouped.length,
+        elevation_count: elevationCount,
+        plans_snapshot: grouped,
+        letter_pdf_path: uploaded.path,
+        letter_signed_url: uploaded.signed_url,
+        letter_signed_url_expires_at: uploaded.signed_url_expires_at,
+        email_subject: subject,
+        email_to: builderCompany.primary_contact_email || null,
+        generated_by,
+      })
+      .select('*')
+      .single();
+    if (insErr) throw insErr;
+
+    // Universal memory sink (audit trail). original_external_id = ref so /send
+    // can flip this row to status='sent'.
+    try {
+      await supabase.from('interactions').insert({
+        community_id: communityId,
+        type: 'letter_other',
+        direction: 'outbound',
+        status: 'draft',
+        subject,
+        delivery_method: 'email',
+        attachments: [{ type: 'pdf', storage_path: uploaded.path, label: 'Master plan approval letter', bucket: STORAGE_BUCKET }],
+        source: 'forward',
+        original_external_id: ref,
+        notes: `Master plan approval — ${builderCompany.company_name} • ${grouped.length} plans / ${elevationCount} elevations • ${community.name}`,
+      });
+    } catch (err) {
+      console.warn('[builder_applications] master-plan interactions insert failed:', err.message);
+    }
+
+    let sendResult = null;
+    if (send === true) {
+      try {
+        const r = await sendMasterPlanLetter(letter.id, to);
+        sendResult = { ok: r.send.ok, sent_to: r.toEmail, skipped: !!r.send.skipped, error: r.send.error || null };
+      } catch (e) {
+        sendResult = { ok: false, error: e.message };
+      }
+    }
+
+    res.json({
+      ok: true,
+      letter_id: letter.id,
+      reference_number: ref,
+      plan_count: grouped.length,
+      elevation_count: elevationCount,
+      plans: grouped,
+      letter_signed_url: uploaded.signed_url,
+      recipient: builderCompany.primary_contact_email || null,
+      sent: sendResult,
+    });
+  } catch (err) {
+    console.error('[builder_applications] master-plan approval-letter failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /api/builder-applications/master-plan/approval-letter/:id/eml-export
+// Outlook draft (X-Unsent:1) for review before sending — same pattern as the
+// per-application letter. forceRegenerate so the preview reflects the live set.
+router.get('/master-plan/approval-letter/:id/eml-export', async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next();
+  try {
+    const env = await buildMasterPlanEmailEnvelope(req.params.id, { forceRegenerate: true });
+    const eml = buildEmlFile({
+      from: '"Bedrock ARC" <builders@bedrocktx.com>',
+      to: env.toEmail,
+      subject: env.subject,
+      html: env.html,
+      pdfBuffer: env.pdfBuffer,
+      pdfFilename: env.filename,
+    });
+    const filenameSafe = (env.letter.reference_number || 'master-plan-approval').replace(/[^A-Za-z0-9._-]/g, '_');
+    res.setHeader('Content-Type', 'message/rfc822');
+    res.setHeader('Content-Disposition', `attachment; filename="${filenameSafe}.eml"`);
+    res.send(eml);
+  } catch (err) {
+    console.error('[builder_applications.master-plan eml-export]', err.message);
+    res.status(err.statusCode || 500).json({ error: err.message || 'eml export failed' });
+  }
+});
+
+// POST /api/builder-applications/master-plan/approval-letter/:id/send
+// Body: { to?: string } — defaults to builder primary contact email.
+router.post('/master-plan/approval-letter/:id/send', express.json(), async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next();
+  try {
+    const r = await sendMasterPlanLetter(req.params.id, req.body && req.body.to);
+    if (!r.send.ok) {
+      return res.status(r.send.skipped ? 503 : 502).json({
+        ok: false,
+        skipped: !!r.send.skipped,
+        error: r.send.error || 'email send failed',
+        hint: r.send.skipped ? 'Set RESEND_API_KEY + RESEND_FROM_EMAIL in env to enable email.' : null,
+      });
+    }
+    res.json({ ok: true, sent_to: r.toEmail, sent_at: new Date().toISOString() });
+  } catch (err) {
+    console.error('[builder_applications.master-plan send]', err.message);
+    res.status(err.statusCode || 500).json({ error: err.message || 'send failed' });
+  }
+});
+
+// GET /api/builder-applications/master-plan/approval-letters?community_id=&builder_company_id=
+// Staff list of generated grouped approval letters (most recent first).
+router.get('/master-plan/approval-letters', async (req, res) => {
+  try {
+    let q = supabase
+      .from('master_plan_approval_letters')
+      .select(`
+        id, reference_number, plan_count, elevation_count, generated_by, generated_at,
+        email_to, email_sent_at, letter_pdf_path,
+        community:communities(id, name, slug),
+        builder_company:builder_companies(id, company_name)
+      `)
+      .order('generated_at', { ascending: false })
+      .limit(500);
+    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+    if (req.query.builder_company_id) q = q.eq('builder_company_id', req.query.builder_company_id);
+    const { data, error } = await q;
+    if (error) throw error;
+    // Fresh signed URLs for download (stored one may be expired).
+    const letters = await Promise.all((data || []).map(async (l) => {
+      let download_url = null;
+      if (l.letter_pdf_path) {
+        const { data: signed } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(l.letter_pdf_path, 60 * 60);
+        download_url = signed?.signedUrl || null;
+      }
+      return { ...l, download_url };
+    }));
+    res.json({ ok: true, letters });
+  } catch (err) {
+    console.error('[builder_applications] list master-plan letters failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

@@ -311,6 +311,17 @@
     <h1 id="pageTitle">Your <em>submissions</em></h1>
     <p class="page-sub" id="pageSub">—</p>
 
+    <!-- APPROVED MASTER PLANS (Ed 2026-06-30) — the builder's pre-approved
+         plan library per community, with the grouped approval letter to
+         download. Hidden until at least one approved plan exists. -->
+    <div class="section" id="masterPlansSection" style="display:none;">
+      <div class="section-head">
+        <h2 class="section-title">Approved master plans</h2>
+        <span class="section-count" id="masterPlansCount">—</span>
+      </div>
+      <div class="section-body" id="masterPlansBody"></div>
+    </div>
+
     <!-- PENDING SECTION (top) -->
     <div class="section">
       <div class="section-head">
@@ -537,9 +548,61 @@
 
       document.getElementById('loading').style.display = 'none';
       document.getElementById('content').style.display = 'block';
+
+      // Approved master plans — non-blocking; the section stays hidden if the
+      // builder has no approved plans (or the call isn't available in this
+      // session context).
+      loadMasterPlanApprovals(asBuilderId);
     } catch (e) {
       document.getElementById('loading').innerHTML = `<div style="color:#991b1b;">Couldn't load: ${escapeHtml(e.message)}</div>`;
     }
+  }
+
+  async function loadMasterPlanApprovals(asBuilderId) {
+    try {
+      const url = asBuilderId
+        ? '/api/portal/builder/master-plan-approvals?as_builder_id=' + encodeURIComponent(asBuilderId)
+        : '/api/portal/builder/master-plan-approvals';
+      const r = await fetch(url, { credentials: 'same-origin' });
+      if (!r.ok) return; // degrade silently — section stays hidden
+      const data = await r.json();
+      const groups = (data && data.groups) || [];
+      if (!groups.length) return;
+
+      const totalPlans = groups.reduce((n, g) => n + (g.plan_count || 0), 0);
+      const body = groups.map((g) => {
+        const planLines = (g.plans || []).map((p) => {
+          const series = p.plan_name ? ' · ' + escapeHtml(p.plan_name) : '';
+          const elevs = (p.elevations || []).length ? ' — Elevations ' + (p.elevations || []).map(escapeHtml).join(', ') : '';
+          const sqft = (p.square_footage_min != null)
+            ? ' · ' + (p.square_footage_min === p.square_footage_max
+                ? p.square_footage_min.toLocaleString()
+                : p.square_footage_min.toLocaleString() + '–' + (p.square_footage_max || p.square_footage_min).toLocaleString()) + ' sqft'
+            : '';
+          return `<div class="row-plan" style="margin:3px 0;">Plan <strong>${escapeHtml(p.plan_number)}</strong>${series}${elevs}${sqft}</div>`;
+        }).join('');
+
+        const letterBtn = (g.letter && g.letter.download_url)
+          ? `<a class="letter-link" href="${escapeHtml(g.letter.download_url)}" target="_blank" rel="noopener">📄 Approval letter</a>`
+          : '<span class="letter-missing">Approval letter not generated yet</span>';
+
+        return `
+          <div class="row">
+            <div class="row-main">
+              <h3 class="row-addr">${escapeHtml(g.community.name || '—')}</h3>
+              <p class="row-meta"><span class="dim">${g.plan_count} plan${g.plan_count === 1 ? '' : 's'} · ${g.elevation_count} elevation${g.elevation_count === 1 ? '' : 's'} approved</span></p>
+              <div style="margin-top:8px;">${planLines}</div>
+            </div>
+            <div class="row-side">${letterBtn}</div>
+          </div>
+        `;
+      }).join('');
+
+      document.getElementById('masterPlansBody').innerHTML = body;
+      document.getElementById('masterPlansCount').textContent =
+        totalPlans + ' plan' + (totalPlans === 1 ? '' : 's') + ' approved';
+      document.getElementById('masterPlansSection').style.display = 'block';
+    } catch (_) { /* leave section hidden */ }
   }
 
   // Sign-out click handler intentionally removed alongside the anchor.

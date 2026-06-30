@@ -47,6 +47,17 @@
   var watchId = null, flushTimer = null, pollTimer = null;
   var buffer = [], lastBuffered = null, firstFit = true;
 
+  // ---- read-only live view (Ed 2026-06-30) ----------------------------------
+  // Opened from the home "Active Drives" banner with ?view=1. In this mode the
+  // page NEVER shares location and NEVER starts a session — it only polls the
+  // existing coverage feed and draws where people are. This is the admin
+  // "watch the drive without disrupting the inspector" surface. ?focus=<id>
+  // centers on one drive and labels it permanently.
+  var _params = new URLSearchParams(location.search);
+  var VIEW_MODE = _params.get('view') === '1';
+  var FOCUS_ID = _params.get('focus') || null;
+  var PRESELECT_COMMUNITY = _params.get('community_id') || null;
+
   function el(id){ return document.getElementById(id); }
   function setStatus(t){ el('status').textContent = t; }
 
@@ -164,43 +175,66 @@
       var r = await fetch('/api/inspections/coverage?community_id='+encodeURIComponent(communityId));
       var j = await r.json();
       if (!j.ok) return;
-      var seen = {}, legendRows = [], allLatLng = [];
+      var seen = {}, legendRows = [], allLatLng = [], focusLast = null;
       (j.tracks||[]).forEach(function(t){
         seen[t.inspection_id] = true;
         var mine = t.inspection_id === inspectionId;
+        var focused = VIEW_MODE && FOCUS_ID && t.inspection_id === FOCUS_ID;
         var col = mine ? '#111' : colorFor(t.inspection_id);
+        var weight = focused ? 6 : (mine ? 5 : 4);
         var latlngs = (t.path||[]);
+        if (focused && t.last) focusLast = [t.last.lat, t.last.lng];
         if (!pathLayers[t.inspection_id]) {
           pathLayers[t.inspection_id] = {
-            line: L.polyline(latlngs, { color:col, weight: mine?5:4, opacity:0.85 }).addTo(map),
-            marker: t.last ? L.circleMarker([t.last.lat,t.last.lng], { radius:6, color:'#fff', weight:2, fillColor:col, fillOpacity:1 }).addTo(map) : null
+            line: L.polyline(latlngs, { color:col, weight: weight, opacity:0.85 }).addTo(map),
+            marker: t.last ? L.circleMarker([t.last.lat,t.last.lng], { radius: focused?8:6, color:'#fff', weight:2, fillColor:col, fillOpacity:1 }).addTo(map) : null
           };
         } else {
-          pathLayers[t.inspection_id].line.setLatLngs(latlngs).setStyle({ color:col });
+          pathLayers[t.inspection_id].line.setLatLngs(latlngs).setStyle({ color:col, weight: weight });
           if (t.last) {
-            if (pathLayers[t.inspection_id].marker) pathLayers[t.inspection_id].marker.setLatLng([t.last.lat,t.last.lng]).setStyle({ fillColor:col });
-            else pathLayers[t.inspection_id].marker = L.circleMarker([t.last.lat,t.last.lng], { radius:6, color:'#fff', weight:2, fillColor:col, fillOpacity:1 }).addTo(map);
+            if (pathLayers[t.inspection_id].marker) pathLayers[t.inspection_id].marker.setLatLng([t.last.lat,t.last.lng]).setStyle({ fillColor:col, radius: focused?8:6 });
+            else pathLayers[t.inspection_id].marker = L.circleMarker([t.last.lat,t.last.lng], { radius: focused?8:6, color:'#fff', weight:2, fillColor:col, fillOpacity:1 }).addTo(map);
           }
         }
-        if (pathLayers[t.inspection_id].marker) pathLayers[t.inspection_id].marker.bindTooltip((t.device_label||'inspector')+(mine?' (you)':''), {permanent:false});
+        if (pathLayers[t.inspection_id].marker) pathLayers[t.inspection_id].marker.bindTooltip((t.device_label||'inspector')+(mine?' (you)':''), {permanent: focused});
         latlngs.forEach(function(p){ allLatLng.push(p); });
-        legendRows.push('<div class="row'+(mine?' me':'')+'"><span class="sw" style="background:'+col+'"></span>'+(t.device_label||'inspector')+(mine?' (you)':'')+' · '+(t.point_count||0)+' pts</div>');
+        legendRows.push('<div class="row'+(mine||focused?' me':'')+'"><span class="sw" style="background:'+col+'"></span>'+(t.device_label||'inspector')+(mine?' (you)':'')+' · '+(t.point_count||0)+' pts</div>');
       });
       // remove paths no longer present
       Object.keys(pathLayers).forEach(function(id){ if (!seen[id]) { var L2=pathLayers[id]; if(L2.line)map.removeLayer(L2.line); if(L2.marker)map.removeLayer(L2.marker); delete pathLayers[id]; } });
       // legend
       var lg = el('legend');
-      if (legendRows.length) { lg.style.display='block'; lg.innerHTML = '<div style="font-weight:800;color:#0B1D34;margin-bottom:3px;">Coverage today</div>'+legendRows.join(''); }
-      else { lg.style.display='none'; }
-      // fit once
-      if (firstFit && allLatLng.length) { firstFit=false; try{ map.fitBounds(L.latLngBounds(allLatLng).pad(0.15)); }catch(e){} }
+      if (legendRows.length) { lg.style.display='block'; lg.innerHTML = '<div style="font-weight:800;color:#0B1D34;margin-bottom:3px;">'+(VIEW_MODE?'Live view · today':'Coverage today')+'</div>'+legendRows.join(''); }
+      else { lg.style.display='none'; if (VIEW_MODE) setStatus('No active drive yet — waiting for the first GPS ping…'); }
+      // fit once — in focus view, center on the watched drive; otherwise fit all
+      if (firstFit) {
+        if (VIEW_MODE && focusLast) { firstFit=false; try{ map.setView(focusLast, 16); }catch(e){} }
+        else if (allLatLng.length) { firstFit=false; try{ map.fitBounds(L.latLngBounds(allLatLng).pad(0.15)); }catch(e){} }
+      }
     } catch(e){ /* transient */ }
   }
 
   // boot
-  initMap(); loadCommunities();
-  // If you open the page without sharing, still show whoever's out there once you pick a community.
-  el('community').addEventListener('change', function(){ if (!inspectionId && this.value) startPolling(this.value); });
+  async function boot(){
+    initMap();
+    await loadCommunities();
+    // If you open the page without sharing, still show whoever's out there once you pick a community.
+    el('community').addEventListener('change', function(){ if (!inspectionId && this.value) startPolling(this.value); });
+
+    if (VIEW_MODE) {
+      // Read-only: strip every control that could start a session. The page
+      // becomes a pure observer — no Start button, no name field, no GPS.
+      document.title = 'Live View — Bedrock';
+      el('startBtn').style.display = 'none';
+      el('who').style.display = 'none';
+      setStatus('👁 Live view (read-only). You are not sharing your location — this only shows where the team is.');
+      if (PRESELECT_COMMUNITY) {
+        el('community').value = PRESELECT_COMMUNITY;
+        startPolling(PRESELECT_COMMUNITY);
+      }
+    }
+  }
+  boot();
 })();
 </script>
 </body>

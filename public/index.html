@@ -30242,16 +30242,26 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (drives.length === 0) { banner.style.display = 'none'; return; }
       banner.style.display = 'block';
       document.getElementById('activeDrivesCount').textContent = String(drives.length);
+      // "View live" is an admin capability (watching where staff are is a
+      // privacy-sensitive surface — Ed 2026-06-30). It opens the read-only
+      // coverage map; it never opens the inspector tablet and never writes,
+      // so it cannot disrupt the active inspector's session.
+      const isAdmin = (window.currentUser && window.currentUser.role === 'admin');
       const list = document.getElementById('activeDrivesList');
       list.innerHTML = drives.map((d) => {
         const esc = (s) => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
         const community = d.community?.name || '(community)';
+        const communityId = d.community?.id || '';
         const dev = d.device_label || 'Tablet';
         const min = d.started_at
           ? Math.max(0, Math.round((Date.now() - new Date(d.started_at).getTime()) / 60000))
           : 0;
         const idle = d.minutes_idle != null ? ` · last ping ${d.minutes_idle}m ago` : '';
         const staleCls = d.is_stale ? ' stale' : '';
+        const viewBtn = (isAdmin && communityId) ? `
+            <button onclick="event.stopPropagation(); window.open('/drive-coverage.html?view=1&community_id=${encodeURIComponent(communityId)}&focus=${encodeURIComponent(d.id)}','_blank')"
+                    title="Watch this drive live on the map (read-only — does not open or disrupt the tablet)"
+                    style="background:#fbbf24; color:#0B1D34; border:0; padding:5px 12px; border-radius:5px; font-size:11px; font-weight:700; cursor:pointer; white-space:nowrap;">👁 View live</button>` : '';
         return `
           <div class="active-drive-row${staleCls}" style="display:flex; gap:10px; align-items:center;">
             <div style="flex:1; min-width:0; cursor:pointer;" onclick="window.open('/inspector.html?resume=${encodeURIComponent(d.id)}','_blank')">
@@ -30259,6 +30269,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               <div class="sub">${d.mode === 'drive_by' ? '🚗 Drive-by' : d.mode === 'foot' ? '🚶 On foot' : '📍 ' + d.mode}${d.route_label ? ' · ' + esc(d.route_label) : ''}</div>
             </div>
             <div class="stats" style="text-align:right;">${d.ping_count || 0} pings · ${min}m on route${idle}</div>
+            ${viewBtn}
             <button onclick="event.stopPropagation(); endActiveDriveFromHome('${d.id}', '${esc(community).replace(/'/g, "\\'")}')"
                     title="End this drive from here without opening the tablet view"
                     style="background:#fff; color:#b91c1c; border:1px solid #fecaca; padding:5px 12px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">✕ End</button>

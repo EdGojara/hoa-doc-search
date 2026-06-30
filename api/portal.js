@@ -3875,6 +3875,155 @@ router.get('/vendor-directory/vendor', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /api/portal/builder/master-plan-approvals
+// Builder-facing read: the builder's currently-approved master plans grouped by
+// community, plus the latest grouped approval letter (download link) per
+// community. This is what makes a builder's approved plan library VISIBLE in
+// the portal — Teresa @ Lennar reported (2026-06-30) she could not see her
+// master-plan approvals. Scoped to the logged-in builder's own companies only.
+// ----------------------------------------------------------------------------
+router.get('/builder/master-plan-approvals', async (req, res) => {
+  try {
+    const { portalUserId } = resolvePortalUser(req);
+    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+    const { data: user } = await supabase
+      .from('portal_users')
+      .select('id, role, status, email')
+      .eq('id', portalUserId)
+      .single();
+    if (!user || user.status === 'revoked') return res.status(401).json({ error: 'session no longer valid' });
+
+    let companies = [];
+    const isManager = user.role === 'manager' && user.status === 'active';
+    const asBuilderId = (req.query.as_builder_id || '').toString().trim() || null;
+
+    if (user.role === 'builder') {
+      const { data: builderLinks } = await supabase
+        .from('portal_user_builders')
+        .select('builder_companies(id, company_name)')
+        .eq('portal_user_id', user.id)
+        .is('revoked_at', null);
+      companies = (builderLinks || []).map((b) => b.builder_companies).filter(Boolean);
+    } else if (isManager && asBuilderId) {
+      // Manager preview — same scope check as my-submissions (migration 227).
+      const { data: scopeRows } = await supabase
+        .from('portal_manager_builder_scope')
+        .select('builder_company_id')
+        .eq('portal_user_id', portalUserId)
+        .is('revoked_at', null);
+      const scope = scopeRows || [];
+      const inScope = scope.some((s) => s.builder_company_id === null) || scope.some((s) => s.builder_company_id === asBuilderId);
+      if (!inScope) return res.status(403).json({ error: 'builder_not_in_manager_scope' });
+      const { data: bc } = await supabase
+        .from('builder_companies')
+        .select('id, company_name')
+        .eq('id', asBuilderId)
+        .maybeSingle();
+      if (!bc) return res.status(404).json({ error: 'builder_not_found' });
+      companies = [bc];
+    } else if (isManager && !asBuilderId) {
+      // Manager without a builder picked — nothing to scope to; UI hides section.
+      return res.json({ ok: true, groups: [], manager_picker_required: true });
+    } else {
+      return res.status(403).json({ error: 'builder access required' });
+    }
+
+    if (!companies.length) return res.json({ ok: true, groups: [] });
+    const companyIds = companies.map((c) => c.id);
+    const companyNameById = new Map(companies.map((c) => [c.id, c.company_name]));
+
+    // Approved (non-retired) master plans for these builders, with the
+    // community on each approval row.
+    const { data: rows, error: rErr } = await supabase
+      .from('master_plans')
+      .select('id, builder_company_id, plan_number, plan_name, elevation, square_footage, stories, status, master_plan_community_approvals!inner(community_id, retired_at, communities:community_id(id, name, slug))')
+      .in('builder_company_id', companyIds)
+      .is('master_plan_community_approvals.retired_at', null)
+      .neq('status', 'retired')
+      .limit(2000);
+    if (rErr) throw rErr;
+
+    // Group by (builder_company, community).
+    const { groupMasterPlansForLetter } = require('../lib/builder_letter');
+    const groupsMap = new Map();
+    for (const row of (rows || [])) {
+      const approvals = Array.isArray(row.master_plan_community_approvals)
+        ? row.master_plan_community_approvals
+        : (row.master_plan_community_approvals ? [row.master_plan_community_approvals] : []);
+      for (const ap of approvals) {
+        if (!ap || ap.retired_at) continue;
+        const comm = ap.communities;
+        if (!comm) continue;
+        const key = `${row.builder_company_id}::${comm.id}`;
+        if (!groupsMap.has(key)) {
+          groupsMap.set(key, {
+            community: { id: comm.id, name: comm.name, slug: comm.slug },
+            builder_company_id: row.builder_company_id,
+            builder_company_name: companyNameById.get(row.builder_company_id) || '',
+            _rows: [],
+          });
+        }
+        groupsMap.get(key)._rows.push({
+          plan_number: row.plan_number,
+          plan_name: row.plan_name,
+          elevation: row.elevation,
+          square_footage: row.square_footage,
+          stories: row.stories,
+        });
+      }
+    }
+
+    // Latest approval letter per (builder, community) for the download link.
+    const { data: letters } = await supabase
+      .from('master_plan_approval_letters')
+      .select('id, community_id, builder_company_id, reference_number, generated_at, email_sent_at, letter_pdf_path')
+      .in('builder_company_id', companyIds)
+      .order('generated_at', { ascending: false })
+      .limit(1000);
+    const latestLetterByKey = new Map();
+    for (const l of (letters || [])) {
+      const k = `${l.builder_company_id}::${l.community_id}`;
+      if (!latestLetterByKey.has(k)) latestLetterByKey.set(k, l);
+    }
+
+    const groups = await Promise.all(Array.from(groupsMap.values()).map(async (g) => {
+      const plans = groupMasterPlansForLetter(g._rows);
+      const key = `${g.builder_company_id}::${g.community.id}`;
+      const l = latestLetterByKey.get(key);
+      let letter = null;
+      if (l) {
+        let download_url = null;
+        if (l.letter_pdf_path) {
+          const { data: signed } = await supabase.storage.from('documents').createSignedUrl(l.letter_pdf_path, 60 * 60);
+          download_url = signed?.signedUrl || null;
+        }
+        letter = {
+          reference_number: l.reference_number,
+          generated_at: l.generated_at,
+          sent: !!l.email_sent_at,
+          download_url,
+        };
+      }
+      return {
+        community: g.community,
+        builder_company_name: g.builder_company_name,
+        plan_count: plans.length,
+        elevation_count: plans.reduce((n, p) => n + p.elevations.length, 0),
+        plans,
+        letter,
+      };
+    }));
+    // Stable order: by community name.
+    groups.sort((a, b) => String(a.community.name || '').localeCompare(String(b.community.name || '')));
+
+    res.json({ ok: true, groups });
+  } catch (err) {
+    console.error('[portal.builder.master-plan-approvals]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
 function escapeHtml(s) {
