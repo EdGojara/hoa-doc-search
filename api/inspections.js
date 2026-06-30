@@ -1939,15 +1939,27 @@ router.post('/inspections/:id/route-trace', express.json({ limit: '2mb' }), asyn
 router.get('/inspections/:id/route-trace', async (req, res) => {
   try {
     const inspectionId = req.params.id;
-    const { data: pings, error } = await supabase
-      .from('inspection_route_traces')
-      .select('captured_at, latitude, longitude, heading_deg, accuracy_m')
-      .eq('inspection_id', inspectionId)
-      .order('captured_at', { ascending: true });
-    if (error) return res.status(500).json({ error: error.message });
+    // Page through ALL pings. PostgREST caps a single response at 1000 rows
+    // (CLAUDE.md scar) — a 2-hour drive already exceeds that, so an unpaginated
+    // select silently dropped the most recent leg of the trail. Loop until a
+    // short page; safety cap at 100k.
+    const pings = [];
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from('inspection_route_traces')
+        .select('captured_at, latitude, longitude, heading_deg, accuracy_m')
+        .eq('inspection_id', inspectionId)
+        .order('captured_at', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) return res.status(500).json({ error: error.message });
+      if (!data || data.length === 0) break;
+      pings.push(...data);
+      if (data.length < PAGE || pings.length >= 100000) break;
+    }
     res.json({
-      pings: pings || [],
-      total_pings: (pings || []).length,
+      pings,
+      total_pings: pings.length,
     });
   } catch (err) {
     console.error('[inspections.route-trace.get]', err);

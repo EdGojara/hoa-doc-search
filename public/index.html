@@ -18595,12 +18595,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     //    call it again after backfilling lat/lng)
     await inspMapLoadProperties();
 
-    // 5. Render saved boundary polygon (if any) as a tinted overlay
+    // 5. Render saved boundary polygon (if any) as a tinted overlay + redraw
+    //    the saved GPS trail (so opening the map after a resume shows where
+    //    she's already driven, not a blank line).
     inspState.mapInstance.once('load', () => {
       inspBoundaryLoadAndRender();
+      try { inspMapUpdateRoute(); } catch (_) {}
     });
     // If style was already loaded by now, fire immediately as well
-    if (inspState.mapInstance.isStyleLoaded()) inspBoundaryLoadAndRender();
+    if (inspState.mapInstance.isStyleLoaded()) {
+      inspBoundaryLoadAndRender();
+      try { inspMapUpdateRoute(); } catch (_) {}
+    }
 
     // If GPS already locked, drop the user marker now
     if (inspState.lastGps) inspMapUpdateUserPosition();
@@ -19965,6 +19971,26 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     } catch (_) {
       inspState.routePings.unshift(...batch);
     }
+  }
+
+  // Rehydrate the GPS breadcrumb trail from the server so it survives a
+  // close/reopen (Ed 2026-06-30). routePingsAll lived only in browser memory,
+  // so a resume started with an empty trail and the green "where I drove" line
+  // disappeared even though every ping was saved server-side. Pull the saved
+  // trace and seed routePingsAll, then redraw if the map is up. Only ever GROWS
+  // the trail (never shrinks past what the client already buffered locally).
+  async function inspLoadRouteTraceFromServer(id) {
+    if (!id) return;
+    try {
+      const r = await fetch(`/api/inspections/${encodeURIComponent(id)}/route-trace`);
+      if (!r.ok) return;
+      const j = await r.json();
+      const pings = (j.pings || []).filter((p) => p && p.latitude != null && p.longitude != null);
+      if (pings.length > (inspState.routePingsAll || []).length) {
+        inspState.routePingsAll = pings;
+        if (inspState.mapLoaded) { try { inspMapUpdateRoute(); } catch (_) {} }
+      }
+    } catch (_) { /* offline / transient — the trail still rebuilds from new pings */ }
   }
 
   // Draw the route polyline on the map. Idempotent — adds the source+layer
@@ -26843,6 +26869,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
       inspRenderPhotos();
       if (typeof inspUpdateCaptureUi === 'function') inspUpdateCaptureUi();
+      // Rebuild the GPS trail from the server so the green route line survives a
+      // close/reopen (covered houses already restore from photos above). Seed
+      // BEFORE the location watch starts appending new pings.
+      inspLoadRouteTraceFromServer(insp.id);
       inspStartLocationWatch();
       if (typeof inspStartUploader === 'function') inspStartUploader();
       if (typeof inspUpdateQueueBadge === 'function') inspUpdateQueueBadge();
