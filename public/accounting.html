@@ -145,14 +145,25 @@
     $('bs-go').addEventListener('click', run); run();
   }
   function bsHTML(j) {
-    const sec = (title,rows,total) => `<h3 class="sec" style="font-size:14px; margin:16px 0 6px;">${esc(title)}</h3>
-      <table><tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="width:80px; font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}${r.is_computed?' <em class="muted" style="font-size:11px;">(computed)</em>':''}</td><td><span class="pill">${esc(r.fund_code||'—')}</span></td><td class="num">${fmt(r.balance_cents)}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">— none —</td></tr>'}
-        <tr class="total"><td colspan="3">Total ${esc(title)}</td><td class="num">${fmt(total)}</td></tr></tbody></table>`;
+    const funds = j.funds || [];
+    const ncol = funds.length + 3; // acct, name, [funds], total
+    // amount cells for a row — value lands under its fund's column; the
+    // computed net-income row spreads via by_fund.
+    const rowCells = (r) => funds.map((f)=>{
+      let v = '';
+      if (r.is_computed && r.by_fund) { if (r.by_fund[f.fund_code] != null) v = fmt(r.by_fund[f.fund_code]); }
+      else if (r.fund_code === f.fund_code) v = fmt(r.balance_cents);
+      return `<td class="num">${v}</td>`;
+    }).join('');
+    const head = `<thead><tr><th style="width:64px;">Acct</th><th>Account</th>${funds.map((f)=>`<th class="num" title="${esc(f.fund_name||f.fund_code)}">${esc(f.fund_code)}</th>`).join('')}<th class="num">Total</th></tr></thead>`;
+    const sec = (title,rows,totalKey,grand) => `<h3 class="sec" style="font-size:14px; margin:16px 0 6px;">${esc(title)}</h3>
+      <table>${head}<tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}${r.is_computed?' <em class="muted" style="font-size:11px;">(computed)</em>':''}</td>${rowCells(r)}<td class="num">${fmt(r.balance_cents)}</td></tr>`).join('') : `<tr><td colspan="${ncol}" class="muted">— none —</td></tr>`}
+        <tr class="total"><td colspan="2">Total ${esc(title)}</td>${funds.map((f)=>`<td class="num">${fmt((j.fund_totals[f.fund_code]||{})[totalKey]||0)}</td>`).join('')}<td class="num">${fmt(grand)}</td></tr></tbody></table>`;
     const t = j.totals;
-    return `<div class="muted" style="margin-bottom:8px;">As of ${fmtDate(j.as_of_date)}</div>
-      ${sec('Assets',j.sections.assets,t.assets_cents)}
-      ${sec('Liabilities',j.sections.liabilities,t.liabilities_cents)}
-      ${sec('Equity / Fund Balance',j.sections.equity,t.equity_cents)}
+    return `<div class="muted" style="margin-bottom:8px;">As of ${fmtDate(j.as_of_date)} · fund columns</div>
+      ${sec('Assets',j.sections.assets,'assets_cents',t.assets_cents)}
+      ${sec('Liabilities',j.sections.liabilities,'liabilities_cents',t.liabilities_cents)}
+      ${sec('Equity / Fund Balance',j.sections.equity,'equity_cents',t.equity_cents)}
       <div style="margin-top:16px; padding:10px 12px; border-radius:8px; font-weight:600; background:${t.balanced?'#dcfce7':'#fee2e2'}; color:${t.balanced?'#166534':'#991b1b'};">
         ${t.balanced?'✓ Balance Sheet balances':'⚠ Out of balance by '+fmt(t.difference_cents)} · Assets ${fmt(t.assets_cents)} = Liabilities ${fmt(t.liabilities_cents)} + Equity ${fmt(t.equity_cents)}</div>`;
   }
@@ -173,15 +184,20 @@
     $('is-go').addEventListener('click', run); run();
   }
   function isHTML(j) {
-    const sec = (title,rows,pt,yt) => `<h3 class="sec" style="font-size:14px; margin:16px 0 6px;">${esc(title)}</h3>
-      <table><thead><tr><th>Acct</th><th>Account</th><th>Fund</th><th class="num">Period</th><th class="num">YTD</th></tr></thead>
-      <tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}</td><td><span class="pill">${esc(r.fund_code||'—')}</span></td><td class="num">${fmt(r.period_amount_cents)}</td><td class="num">${fmt(r.ytd_amount_cents)}</td></tr>`).join('') : '<tr><td colspan="5" class="muted">— none —</td></tr>'}
-        <tr class="total"><td colspan="3">Total ${esc(title)}</td><td class="num">${fmt(pt)}</td><td class="num">${fmt(yt)}</td></tr></tbody></table>`;
+    const funds = j.funds || [];
+    const ncol = funds.length + 3;
+    const rowCells = (r) => funds.map((f)=>`<td class="num">${r.fund_code===f.fund_code?fmt(r.ytd_amount_cents):''}</td>`).join('');
+    const head = `<thead><tr><th style="width:64px;">Acct</th><th>Account</th>${funds.map((f)=>`<th class="num" title="${esc(f.fund_name||f.fund_code)}">${esc(f.fund_code)}</th>`).join('')}<th class="num">Total YTD</th></tr></thead>`;
+    const sec = (title,rows,subKey,grand) => `<h3 class="sec" style="font-size:14px; margin:16px 0 6px;">${esc(title)}</h3>
+      <table>${head}<tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}</td>${rowCells(r)}<td class="num">${fmt(r.ytd_amount_cents)}</td></tr>`).join('') : `<tr><td colspan="${ncol}" class="muted">— none —</td></tr>`}
+        <tr class="total"><td colspan="2">Total ${esc(title)}</td>${funds.map((f)=>`<td class="num">${fmt((j.fund_totals[f.fund_code]||{}).ytd?.[subKey]||0)}</td>`).join('')}<td class="num">${fmt(grand)}</td></tr></tbody></table>`;
     const ni = j.totals.period.net_income_cents, col = ni>=0?'#166534':'#991b1b';
-    return `<div class="muted" style="margin-bottom:8px;">${fmtDate(j.period_start)} — ${fmtDate(j.period_end)}</div>
-      ${sec('Revenue',j.sections.revenue,j.totals.period.revenue_cents,j.totals.ytd.revenue_cents)}
-      ${sec('Expenses',j.sections.expenses,j.totals.period.expenses_cents,j.totals.ytd.expenses_cents)}
-      <div style="margin-top:16px; padding:12px; border-radius:8px; background:#f5f8fc; border:2px solid ${col};">
+    const niCells = funds.map((f)=>`<td class="num" style="font-weight:700; color:${col};">${fmt((j.fund_totals[f.fund_code]||{}).ytd?.net_income_cents||0)}</td>`).join('');
+    return `<div class="muted" style="margin-bottom:8px;">${fmtDate(j.period_start)} — ${fmtDate(j.period_end)} · YTD by fund</div>
+      ${sec('Revenue',j.sections.revenue,'revenue_cents',j.totals.ytd.revenue_cents)}
+      ${sec('Expenses',j.sections.expenses,'expenses_cents',j.totals.ytd.expenses_cents)}
+      <table style="margin-top:6px;"><tbody><tr class="total"><td colspan="2" style="font-weight:700;">NET INCOME (YTD)</td>${niCells}<td class="num" style="font-weight:700; color:${col};">${fmt(j.totals.ytd.net_income_cents)}</td></tr></tbody></table>
+      <div style="margin-top:12px; padding:12px; border-radius:8px; background:#f5f8fc; border:2px solid ${col};">
         <div style="display:flex; justify-content:space-between; font-weight:700;"><span>NET INCOME</span><span style="color:${col};">Period ${fmt(ni)} · YTD ${fmt(j.totals.ytd.net_income_cents)}</span></div></div>`;
   }
 
