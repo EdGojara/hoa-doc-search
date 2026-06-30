@@ -1045,18 +1045,43 @@
         <div class="field"><label class="lbl">Next check #</label><input type="text" id="cfg-next" value="${esc(c.next_check_number==null?'':c.next_check_number)}"></div>
         <div class="field"><label class="lbl">Dual-signature threshold ($, blank = none)</label><input type="text" id="cfg-dual" value="${dollars(c.dual_sig_threshold_cents)}"></div>
       </div>
+      <div class="field" style="margin-top:10px; max-width:640px;">
+        <label class="lbl">Authorized signature ${c.has_signature ? '<span class="badge ok" style="font-size:10px; vertical-align:middle;">on file</span>' : ''}</label>
+        <input type="file" id="cfg-sig" accept="image/png,image/jpeg" onchange="chkPreviewSig()" style="font-size:13px;">
+        <div class="muted" style="font-size:11.5px; margin-top:3px;">Upload a PNG/JPG of the signer's signature (white or transparent background, max ~1.5&nbsp;MB). It prints on the signature line.${c.has_signature ? ' A signature is already on file — uploading replaces it.' : ''}</div>
+        <div id="cfg-sig-preview" style="margin-top:6px;"></div>
+      </div>
       <div class="muted" style="font-size:12px; margin:8px 0;">Blank check stock: trustEd prints the full check including the MICR line. Confirm your bank accepts laser-printed MICR before the first live run.</div>
       <button onclick="chkSaveConfig()" style="${CHK_BTN}">Save setup</button>
       <span id="cfg-status" class="muted" style="margin-left:8px; font-size:12.5px;"></span>`;
     document.querySelectorAll('#chkSetup .field').forEach((f)=>{ f.style.display='flex'; f.style.flexDirection='column'; f.style.gap='3px'; });
   }
   window.chkToggleSetup = function(){ const s=$('chkSetup'); s.style.display = s.style.display==='none'?'block':'none'; };
+  function _readFileDataUrl(file){ return new Promise((resolve,reject)=>{ const fr=new FileReader(); fr.onload=()=>resolve(fr.result); fr.onerror=()=>reject(new Error('read failed')); fr.readAsDataURL(file); }); }
+  // Live preview when a signature file is picked.
+  window.chkPreviewSig = async function(){
+    const f = $('cfg-sig') && $('cfg-sig').files && $('cfg-sig').files[0];
+    const box = $('cfg-sig-preview'); if (!box) return;
+    if (!f) { box.innerHTML=''; return; }
+    if (f.size > 1500000) { box.innerHTML='<span style="color:var(--err); font-size:12px;">Too large (max ~1.5 MB) — use a smaller PNG.</span>'; return; }
+    try { const url = await _readFileDataUrl(f); box.innerHTML = '<img src="'+url+'" alt="signature preview" style="max-height:48px; max-width:260px; border:1px solid var(--rule); border-radius:4px; padding:3px; background:#fff;">'; }
+    catch(_){ box.innerHTML='<span style="color:var(--err); font-size:12px;">Couldn’t read that file.</span>'; }
+  };
   window.chkSaveConfig = async function() {
     const body = {};
     const r=$('cfg-routing').value.trim(); if (r) body.routing=r;
     const a=$('cfg-account').value.trim(); if (a) body.account_number=a;
     const n=$('cfg-next').value.trim(); if (n!=='') body.next_check_number=parseInt(n,10);
     const d=$('cfg-dual').value.trim(); body.dual_sig_threshold_cents = d==='' ? null : Math.round(parseFloat(d)*100);
+    // Authorized signature (optional) — read the picked file to a data URL the
+    // renderer <img>'s onto the signature line. Capped to stay under the PUT limit.
+    const sigInput = $('cfg-sig');
+    const file = sigInput && sigInput.files && sigInput.files[0];
+    if (file) {
+      if (file.size > 1500000) { $('cfg-status').innerHTML='<span style="color:var(--err)">Signature image too large (max ~1.5 MB) — use a smaller PNG.</span>'; return; }
+      try { body.signature_image_data_url = await _readFileDataUrl(file); }
+      catch(_){ $('cfg-status').innerHTML='<span style="color:var(--err)">Couldn’t read the signature file.</span>'; return; }
+    }
     $('cfg-status').textContent='Saving…';
     const j = await fetch(`/api/checks/accounts/${window._chkAcct}/config`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then((r)=>r.json());
     if (j.error) { $('cfg-status').innerHTML = '<span style="color:var(--err)">'+esc(j.error)+'</span>'; return; }
