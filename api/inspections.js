@@ -28,6 +28,7 @@ const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { categorizePhoto } = require('../lib/enforcement/ai_vision');
+const { getLegalFlag } = require('../lib/enforcement/legal_flag');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
@@ -2319,29 +2320,10 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
       };
     }));
 
-    // Account-level LEGAL flag for staff DRV review (NEVER on letters). If the
-    // owner's AR account is at legal / with attorney, DRV reviewers must see a
-    // red "ACCOUNT AT LEGAL" banner even when the current violation is a
-    // DIFFERENT issue, so nothing routine gets sent that conflicts with active
-    // legal proceedings (Ed 2026-07-01). Source: latest owner_ar_snapshots.
-    let legal_flag = null;
-    try {
-      const { data: arLegal } = await supabase
-        .from('owner_ar_snapshots')
-        .select('at_legal, in_collections, enforcement_stage, snapshot_date')
-        .eq('property_id', propertyId)
-        .order('snapshot_date', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (arLegal && (arLegal.at_legal === true || arLegal.in_collections === true)) {
-        legal_flag = {
-          at_legal: arLegal.at_legal === true,
-          in_collections: arLegal.in_collections === true,
-          enforcement_stage: arLegal.enforcement_stage || null,
-          as_of: arLegal.snapshot_date || null,
-        };
-      }
-    } catch (e) { console.warn('[inspections.property-detail] legal flag lookup failed:', e.message); }
+    // Account-level LEGAL flag for staff DRV review (NEVER on letters). Durable
+    // source = property_enforcement_states (at legal / bankruptcy / lien /
+    // judgment / collections), AR snapshot fallback (Ed 2026-07-01).
+    const legal_flag = await getLegalFlag(propertyId);
 
     res.json({
       legal_flag,
