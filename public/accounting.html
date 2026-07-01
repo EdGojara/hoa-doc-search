@@ -1048,7 +1048,7 @@
       <div class="field" style="margin-top:10px; max-width:640px;">
         <label class="lbl">Authorized signature ${c.has_signature ? '<span class="badge ok" style="font-size:10px; vertical-align:middle;">on file</span>' : ''}</label>
         <input type="file" id="cfg-sig" accept="image/png,image/jpeg" onchange="chkPreviewSig()" style="font-size:13px;">
-        <div class="muted" style="font-size:11.5px; margin-top:3px;">Upload a PNG/JPG of the signer's signature (white or transparent background, max ~1.5&nbsp;MB). It prints on the signature line.${c.has_signature ? ' A signature is already on file — uploading replaces it.' : ''}</div>
+        <div class="muted" style="font-size:11.5px; margin-top:3px;">Upload a PNG/JPG of the signer's signature — any size works, it's resized automatically. Prints on the signature line.${c.has_signature ? ' A signature is already on file — uploading replaces it.' : ''}</div>
         <div id="cfg-sig-preview" style="margin-top:6px;"></div>
       </div>
       <div class="muted" style="font-size:12px; margin:8px 0;">Blank check stock: trustEd prints the full check including the MICR line. Confirm your bank accepts laser-printed MICR before the first live run.</div>
@@ -1057,15 +1057,39 @@
     document.querySelectorAll('#chkSetup .field').forEach((f)=>{ f.style.display='flex'; f.style.flexDirection='column'; f.style.gap='3px'; });
   }
   window.chkToggleSetup = function(){ const s=$('chkSetup'); s.style.display = s.style.display==='none'?'block':'none'; };
-  function _readFileDataUrl(file){ return new Promise((resolve,reject)=>{ const fr=new FileReader(); fr.onload=()=>resolve(fr.result); fr.onerror=()=>reject(new Error('read failed')); fr.readAsDataURL(file); }); }
+  // Downscale + flatten a signature image to a small PNG data URL. Ed 2026-06-30:
+  // a high-quality scan blew past the old size cap. A check only needs a small
+  // signature (~800px wide), so we resize ANY-size input in the browser and the
+  // stored data URL stays small — no upload limit, and light on the DB/render.
+  function _sigDataUrl(file, maxW){
+    return new Promise((resolve, reject)=>{
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = ()=>{
+        try {
+          const nw = img.naturalWidth || img.width || 1, nh = img.naturalHeight || img.height || 1;
+          const scale = Math.min(1, (maxW||800) / nw);
+          const w = Math.max(1, Math.round(nw*scale)), h = Math.max(1, Math.round(nh*scale));
+          const cv = document.createElement('canvas'); cv.width=w; cv.height=h;
+          const ctx = cv.getContext('2d');
+          ctx.fillStyle = '#fff'; ctx.fillRect(0,0,w,h);   // white background — prints clean on the signature line
+          ctx.drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(url);
+          resolve(cv.toDataURL('image/png'));
+        } catch(e){ URL.revokeObjectURL(url); reject(e); }
+      };
+      img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('image load failed')); };
+      img.src = url;
+    });
+  }
   // Live preview when a signature file is picked.
   window.chkPreviewSig = async function(){
     const f = $('cfg-sig') && $('cfg-sig').files && $('cfg-sig').files[0];
     const box = $('cfg-sig-preview'); if (!box) return;
     if (!f) { box.innerHTML=''; return; }
-    if (f.size > 1500000) { box.innerHTML='<span style="color:var(--err); font-size:12px;">Too large (max ~1.5 MB) — use a smaller PNG.</span>'; return; }
-    try { const url = await _readFileDataUrl(f); box.innerHTML = '<img src="'+url+'" alt="signature preview" style="max-height:48px; max-width:260px; border:1px solid var(--rule); border-radius:4px; padding:3px; background:#fff;">'; }
-    catch(_){ box.innerHTML='<span style="color:var(--err); font-size:12px;">Couldn’t read that file.</span>'; }
+    box.innerHTML='<span class="muted" style="font-size:12px;">Processing…</span>';
+    try { const url = await _sigDataUrl(f, 800); box.innerHTML = '<img src="'+url+'" alt="signature preview" style="max-height:48px; max-width:260px; border:1px solid var(--rule); border-radius:4px; padding:3px; background:#fff;">'; }
+    catch(_){ box.innerHTML='<span style="color:var(--err); font-size:12px;">Couldn’t read that image.</span>'; }
   };
   window.chkSaveConfig = async function() {
     const body = {};
@@ -1073,14 +1097,12 @@
     const a=$('cfg-account').value.trim(); if (a) body.account_number=a;
     const n=$('cfg-next').value.trim(); if (n!=='') body.next_check_number=parseInt(n,10);
     const d=$('cfg-dual').value.trim(); body.dual_sig_threshold_cents = d==='' ? null : Math.round(parseFloat(d)*100);
-    // Authorized signature (optional) — read the picked file to a data URL the
-    // renderer <img>'s onto the signature line. Capped to stay under the PUT limit.
+    // Authorized signature (optional) — auto-resized to a small PNG so any scan works.
     const sigInput = $('cfg-sig');
     const file = sigInput && sigInput.files && sigInput.files[0];
     if (file) {
-      if (file.size > 1500000) { $('cfg-status').innerHTML='<span style="color:var(--err)">Signature image too large (max ~1.5 MB) — use a smaller PNG.</span>'; return; }
-      try { body.signature_image_data_url = await _readFileDataUrl(file); }
-      catch(_){ $('cfg-status').innerHTML='<span style="color:var(--err)">Couldn’t read the signature file.</span>'; return; }
+      try { body.signature_image_data_url = await _sigDataUrl(file, 800); }
+      catch(_){ $('cfg-status').innerHTML='<span style="color:var(--err)">Couldn’t process the signature image.</span>'; return; }
     }
     $('cfg-status').textContent='Saving…';
     const j = await fetch(`/api/checks/accounts/${window._chkAcct}/config`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then((r)=>r.json());
