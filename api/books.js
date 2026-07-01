@@ -318,6 +318,87 @@ router.get('/budget-vs-actual', async (req, res) => {
 });
 
 // ============================================================================
+// RESERVES — accounting view over the existing reserve engine + the GL
+//   current reserve balance  = the reserve-fund cash account balance (GL)
+//   expected reserve expenses = the active study's funding plan for the year
+//   components due this year  = reserve_components scheduled for replacement
+// Reads the canonical reserve tables; no parallel data. Graceful when a
+// community has no study loaded yet (everything study-driven returns null).
+// ============================================================================
+router.get('/reserve-summary', async (req, res) => {
+  try {
+    const { community_id } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const year = Number(req.query.year) || new Date().getUTCFullYear();
+    const today = new Date().toISOString().slice(0, 10);
+    const yearStart = `${year}-01-01`, yearEnd = `${year}-12-31`;
+
+    // 1) Current reserve balance = the reserve-type bank account's GL cash account.
+    const { data: rba } = await supabase.from('bank_accounts')
+      .select('account_nickname, gl_account_number').eq('community_id', community_id).eq('account_type', 'reserve').limit(1);
+    let reserve_account = null, reserve_balance_cents = 0;
+    if (rba && rba[0] && rba[0].gl_account_number) {
+      const { data: acct } = await supabase.from('chart_of_accounts')
+        .select('id, account_number, account_name, normal_balance')
+        .eq('community_id', community_id).eq('account_number', rba[0].gl_account_number).maybeSingle();
+      if (acct) {
+        reserve_account = { account_number: acct.account_number, account_name: acct.account_name, nickname: rba[0].account_nickname };
+        const { data: lines } = await supabase.from('journal_entry_lines')
+          .select('debit_cents, credit_cents, journal_entries!inner(community_id, posting_date)')
+          .eq('account_id', acct.id)
+          .eq('journal_entries.community_id', community_id)
+          .lte('journal_entries.posting_date', today);
+        let d = 0, c = 0;
+        for (const l of lines || []) { d += Number(l.debit_cents || 0); c += Number(l.credit_cents || 0); }
+        reserve_balance_cents = acct.normal_balance === 'credit' ? (c - d) : (d - c);
+      }
+    }
+
+    // 2) Active reserve study + this year's funding-plan row.
+    const { data: study } = await supabase.from('reserve_study_versions')
+      .select('id, study_firm, fiscal_year, beginning_balance_cents, contributions_per_year')
+      .eq('community_id', community_id).eq('is_active', true).maybeSingle();
+    let funding = null;
+    if (study) {
+      const { data: fp } = await supabase.from('reserve_funding_plan')
+        .select('fiscal_year, beginning_balance_cents, recommended_contribution_cents, total_contribution_cents, anticipated_expenditures_cents, ending_balance_cents')
+        .eq('community_id', community_id).eq('reserve_study_version_id', study.id).eq('fiscal_year', year).maybeSingle();
+      funding = fp || null;
+    }
+
+    // 3) Components scheduled for replacement this year.
+    const { data: due } = await supabase.from('reserve_components')
+      .select('component_name, future_cost_estimate_cents, current_cost_estimate_cents')
+      .eq('community_id', community_id).eq('status', 'active').eq('next_scheduled_replacement_year', year)
+      .order('component_name').limit(500);
+    const components_due = (due || []).map((c) => ({ name: c.component_name, cost_cents: Number(c.future_cost_estimate_cents || c.current_cost_estimate_cents || 0) }));
+
+    // 4) Actual reserve spending YTD (operational ledger).
+    const { data: exps } = await supabase.from('reserve_expenditures')
+      .select('amount_cents').eq('community_id', community_id).gte('expenditure_date', yearStart).lte('expenditure_date', yearEnd).limit(2000);
+    const actual_reserve_expenses_ytd_cents = (exps || []).reduce((s, e) => s + Number(e.amount_cents || 0), 0);
+
+    res.json({
+      year,
+      has_study: !!study,
+      study: study ? { firm: study.study_firm, fiscal_year: study.fiscal_year, contributions_per_year: study.contributions_per_year } : null,
+      reserve_account,
+      reserve_balance_cents,
+      expected_reserve_expenses_cents: funding ? Number(funding.anticipated_expenditures_cents || 0) : null,
+      recommended_contribution_cents: funding ? Number(funding.total_contribution_cents || funding.recommended_contribution_cents || 0) : null,
+      projected_ending_balance_cents: funding ? Number(funding.ending_balance_cents || 0) : null,
+      study_beginning_balance_cents: funding ? Number(funding.beginning_balance_cents || 0) : null,
+      components_due,
+      components_due_total_cents: components_due.reduce((s, c) => s + c.cost_cents, 0),
+      actual_reserve_expenses_ytd_cents,
+    });
+  } catch (err) {
+    console.error('[books] reserve-summary failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // BUDGETS
 // ============================================================================
 
@@ -437,6 +518,71 @@ router.post('/budgets', express.json({ limit: '1mb' }), async (req, res) => {
     res.json({ budget, line_items_count: rows.length });
   } catch (err) {
     console.error('[books] save budget failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/books/budgets/plan-seed  (Ed 2026-06-30 — budget PLANNING)
+// Seed next year's budget from what actually happened — the CPA default, not a
+// blank page. Returns every revenue/expense account with a prior-year actual
+// and a suggested next-year amount (prior actual, optionally bumped a %). The
+// planner grid renders these; staff adjust and Save as a draft budget (which
+// then flows straight into Budget-vs-Actual and the board packet).
+//
+//   ?community_id= &fiscal_year=  (required — the year being planned)
+//   ?basis=prior_actual | ytd_annualized   (default prior_actual; auto-falls
+//          back to ytd_annualized when the prior full year has ~no data — the
+//          common case for a community freshly migrated onto trustEd)
+//   ?bump_pct=   (optional inflation bump applied to the suggestion)
+// ----------------------------------------------------------------------------
+router.get('/budgets/plan-seed', async (req, res) => {
+  try {
+    const { community_id, fiscal_year } = req.query;
+    if (!community_id || !fiscal_year) return res.status(400).json({ error: 'community_id_and_fiscal_year_required' });
+    const fy = parseInt(fiscal_year, 10);
+    const bumpPct = Number(req.query.bump_pct || 0) || 0;
+    let basis = req.query.basis === 'ytd_annualized' ? 'ytd_annualized' : 'prior_actual';
+
+    const srcYear = fy - 1;
+    let is = await incomeStatement({ community_id, period_start: `${srcYear}-01-01`, period_end: `${srcYear}-12-31` });
+    let annualize = 1;
+    let sourceLabel = `FY ${srcYear} actual`;
+
+    const priorTotal = Math.abs((is.totals?.ytd?.revenue_cents || 0)) + Math.abs((is.totals?.ytd?.expenses_cents || 0));
+    if (basis === 'ytd_annualized' || priorTotal === 0) {
+      // Annualize the current calendar year's YTD (months elapsed → 12).
+      const today = new Date();
+      const cy = today.getUTCFullYear();
+      const monthsElapsed = today.getUTCMonth() + 1; // 1..12
+      is = await incomeStatement({ community_id, period_start: `${cy}-01-01`, period_end: today.toISOString().slice(0, 10) });
+      annualize = monthsElapsed > 0 ? 12 / monthsElapsed : 1;
+      basis = 'ytd_annualized';
+      sourceLabel = `${cy} YTD annualized (${monthsElapsed} mo → 12)`;
+    }
+
+    const rows = [];
+    const push = (r, type) => {
+      const prior = Math.round((r.ytd_amount_cents || 0) * annualize);
+      const suggested = Math.round(prior * (1 + bumpPct / 100));
+      rows.push({
+        account_id: r.account_id, account_number: r.account_number, account_name: r.account_name,
+        account_type: type, fund_id: r.fund_id || null, fund_code: r.fund_code || null,
+        prior_actual_cents: prior, suggested_annual_cents: suggested,
+      });
+    };
+    (is.sections?.revenue || []).forEach((r) => push(r, 'revenue'));
+    (is.sections?.expenses || []).forEach((r) => push(r, 'expense'));
+    rows.sort((a, b) => String(a.account_number).localeCompare(String(b.account_number)));
+
+    const sv = rows.filter((r) => r.account_type === 'revenue').reduce((s, r) => s + r.suggested_annual_cents, 0);
+    const se = rows.filter((r) => r.account_type === 'expense').reduce((s, r) => s + r.suggested_annual_cents, 0);
+    res.json({
+      community_id, fiscal_year: fy, basis, bump_pct: bumpPct, source_label: sourceLabel,
+      rows, suggested_totals: { revenue_cents: sv, expense_cents: se, net_income_cents: sv - se },
+    });
+  } catch (err) {
+    console.error('[books] plan-seed failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

@@ -328,7 +328,8 @@
   async function renderBudget() {
     $('body').innerHTML = `<div class="card">
       <h2 class="sec" style="margin-bottom:8px;">Budget</h2>
-      <div class="muted" style="margin-bottom:12px; font-size:13px;">Upload an approved annual budget (PDF). trustEd extracts the line items and matches them to your chart of accounts.</div>
+      <div style="margin-bottom:12px;"><button onclick="renderBudgetPlanner()" style="padding:9px 16px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:600; cursor:pointer; font-size:13px;">➕ Plan a budget from actuals →</button></div>
+      <div class="muted" style="margin-bottom:12px; font-size:13px;">Or upload an approved annual budget (PDF) — trustEd extracts the line items and matches them to your chart of accounts.</div>
       <div id="bdg-drop" style="border:2px dashed var(--rule); border-radius:10px; padding:26px; text-align:center; cursor:pointer; background:#fafbfc;">
         <div style="font-size:13px; color:var(--ink-soft);">📄 Drop a budget PDF here or <strong>click to choose</strong></div>
         <input type="file" id="bdg-file" accept=".pdf" style="display:none;">
@@ -385,6 +386,82 @@
       if (j.error) throw new Error(j.error); alert(`Saved budget — ${j.line_items_count} lines, status ${j.budget.status}.`); _pendingBudget=null; renderBudget();
     } catch (e) { alert('Save failed: '+e.message); }
   }
+
+  // ── Budget PLANNING — build next year from actuals (Ed 2026-06-30) ─────────
+  // "Start from what actually happened, not a blank page." Seeds every
+  // revenue/expense account from prior-year actual (or annualized YTD), staff
+  // adjust, save as draft. Flows straight into Budget vs Actual + board packet.
+  let _bdgPlanRows = [];
+  window.renderBudgetPlanner = function(){
+    const nextYear = (new Date().getFullYear()) + 1;
+    $('body').innerHTML = `<div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+        <h2 class="sec" style="margin:0;">Plan a Budget</h2>
+        <button onclick="renderBudget()" style="padding:7px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer; font-size:12.5px;">← Back</button>
+      </div>
+      <div class="muted" style="margin-bottom:12px; font-size:13px;">Start next year's budget from what actually happened. Pick the year, seed from prior-year actuals (or this year annualized), adjust each line, and save. Saved budgets flow into Budget&nbsp;vs&nbsp;Actual and the board packet.</div>
+      <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px;">
+        <div><div class="muted" style="font-size:11px;">Fiscal year</div><input id="bp-fy" type="number" value="${nextYear}" style="width:90px; padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"></div>
+        <div><div class="muted" style="font-size:11px;">Seed from</div><select id="bp-basis" style="padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"><option value="prior_actual">Prior-year actual</option><option value="ytd_annualized">This year annualized (YTD)</option></select></div>
+        <div><div class="muted" style="font-size:11px;">Bump %</div><input id="bp-bump" type="number" value="0" step="0.5" style="width:70px; padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"></div>
+        <button onclick="bdgPlanLoad()" style="padding:8px 16px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:600; cursor:pointer;">Load starting point</button>
+      </div>
+      <div id="bp-grid" class="muted">Set the year and click "Load starting point".</div>
+    </div>`;
+  };
+  window.bdgPlanLoad = async function(){
+    const fy=$('bp-fy').value, basis=$('bp-basis').value, bump=$('bp-bump').value||0;
+    $('bp-grid').innerHTML='Loading actuals…';
+    try {
+      const j = await (await fetch(`/api/books/budgets/plan-seed?community_id=${CID}&fiscal_year=${encodeURIComponent(fy)}&basis=${encodeURIComponent(basis)}&bump_pct=${encodeURIComponent(bump)}`)).json();
+      if (j.error) throw new Error(j.error);
+      _bdgPlanRows = j.rows||[];
+      if (!_bdgPlanRows.length) { $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">No revenue/expense accounts with activity to seed from. Post some GL activity first, or upload an approved budget PDF instead.</div>'; return; }
+      const rowHtml = (r,i)=>`<tr>
+        <td style="font-family:ui-monospace,monospace; font-size:11.5px; color:var(--ink-soft);">${esc(r.account_number)}</td>
+        <td style="font-size:12px;">${esc(r.account_name)}</td>
+        <td><span class="pill">${esc(r.fund_code||'—')}</span></td>
+        <td class="num" style="font-size:11.5px; color:#64748b;">${fmt(r.prior_actual_cents)}</td>
+        <td class="num"><input data-i="${i}" oninput="bdgPlanRecalc()" value="${(r.suggested_annual_cents/100).toFixed(2)}" style="width:110px; text-align:right; padding:5px 7px; border:1px solid var(--rule); border-radius:5px; font-variant-numeric:tabular-nums;"></td></tr>`;
+      const idx = _bdgPlanRows.map((r,i)=>({r,i}));
+      const rev = idx.filter(x=>x.r.account_type==='revenue');
+      const exp = idx.filter(x=>x.r.account_type==='expense');
+      $('bp-grid').innerHTML = `
+        <div class="muted" style="font-size:12px; margin-bottom:8px;">Seeded from ${esc(j.source_label)} · edit any line, then save.</div>
+        <table><thead><tr><th style="width:64px;">Acct</th><th>Account</th><th>Fund</th><th class="num">Prior</th><th class="num">FY ${esc(String(j.fiscal_year))} budget</th></tr></thead>
+        <tbody>
+          <tr class="total"><td colspan="5" style="background:#f0f7ff;">Revenue</td></tr>
+          ${rev.map(x=>rowHtml(x.r,x.i)).join('') || '<tr><td colspan="5" class="muted">— none —</td></tr>'}
+          <tr class="total"><td colspan="5" style="background:#fef7f0;">Expenses</td></tr>
+          ${exp.map(x=>rowHtml(x.r,x.i)).join('') || '<tr><td colspan="5" class="muted">— none —</td></tr>'}
+        </tbody></table>
+        <div id="bp-totals" style="margin-top:12px; padding:12px; background:#f5f8fc; border-radius:8px; display:flex; gap:24px; flex-wrap:wrap; font-weight:600;"></div>
+        <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button onclick="bdgPlanSave('draft')" style="padding:9px 18px; border:1px solid var(--rule); border-radius:8px; background:#fff; cursor:pointer; font-weight:600;">💾 Save draft</button>
+          <button onclick="bdgPlanSave('approved')" style="padding:9px 18px; border:none; border-radius:8px; background:#166534; color:#fff; cursor:pointer; font-weight:600;">✓ Save &amp; approve</button>
+        </div>`;
+      bdgPlanRecalc();
+    } catch(e){ $('bp-grid').innerHTML=`<div style="color:var(--err); padding:12px;">Couldn't load: ${esc(e.message)}</div>`; }
+  };
+  function bdgPlanVal(i){ const el=document.querySelector('#bp-grid input[data-i="'+i+'"]'); return el ? Math.round((parseFloat(el.value)||0)*100) : 0; }
+  window.bdgPlanRecalc = function(){
+    let rev=0, exp=0;
+    _bdgPlanRows.forEach((r,i)=>{ const c=bdgPlanVal(i); if(r.account_type==='revenue') rev+=c; else exp+=c; });
+    const el=$('bp-totals'); if(el) el.innerHTML=`<span>Revenue: <strong>${fmt(rev)}</strong></span><span>Expenses: <strong>${fmt(exp)}</strong></span><span>Net: <strong style="color:${rev-exp>=0?'#166534':'#991b1b'};">${fmt(rev-exp)}</strong></span>`;
+  };
+  window.bdgPlanSave = async function(status){
+    const fy=parseInt($('bp-fy').value,10);
+    if(!fy){ alert('Enter a fiscal year.'); return; }
+    const line_items=_bdgPlanRows.map((r,i)=>({account_id:r.account_id, fund_id:r.fund_id||null, annual_amount_cents:bdgPlanVal(i)})).filter(li=>li.account_id);
+    if(!line_items.length){ alert('Nothing to save — load a starting point first.'); return; }
+    if(!confirm(`Save FY ${fy} budget — ${line_items.length} lines, status ${status}?`)) return;
+    try {
+      const j = await (await fetch('/api/books/budgets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:CID, fiscal_year:fy, status, source_filename:'Planned in trustEd (from actuals)', line_items})})).json();
+      if(j.error) throw new Error(j.error);
+      alert(`Saved FY ${fy} budget — ${j.line_items_count} lines, status ${j.budget.status}.`);
+      renderBudget();
+    } catch(e){ alert('Save failed: '+e.message); }
+  };
 
   async function renderTrial() {
     const j = await (await fetch(`/api/gl/${CID}/trial-balance`)).json();
