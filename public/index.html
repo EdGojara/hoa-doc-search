@@ -9470,6 +9470,38 @@
 
       <!-- LIST VIEW: existing comparisons + create-new -->
       <div id="ins-list-view">
+
+        <!-- POLICY OF RECORD — the association's in-force coverage (single
+             source of truth). Upload/file current or prior policies; generate
+             a renewal RFP from what's on record (premiums withheld by default). -->
+        <div class="panel" id="ins-por-panel" style="margin-bottom:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:10px;">
+            <div>
+              <h3 style="margin:0 0 4px 0;">📋 Policy of Record</h3>
+              <p style="color:#666; font-size:12.5px; margin:0; max-width:760px;">
+                The association's <strong>current in-force coverage</strong> — the single source of truth the system maintains. Upload the current or prior policy PDFs to file them (stored in the community's document library), then generate a renewal <strong>RFP</strong> from what's on record. Expiring premiums are withheld from the RFP by default so brokers price the true market.
+              </p>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:end; margin-bottom:12px;">
+            <div>
+              <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Community</label>
+              <select id="ins-por-community" onchange="insPorLoad()" style="padding:8px; width:100%; font-size:14px;">
+                <option value="">— Select community —</option>
+              </select>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <label class="secondary-btn" style="cursor:pointer; margin:0; white-space:nowrap;">
+                Upload policies…
+                <input type="file" id="ins-por-files" accept="application/pdf" multiple style="display:none;" onchange="insPorUpload()">
+              </label>
+              <button class="action-btn" id="ins-por-rfp-btn" onclick="insPorGenerateRfp()" disabled>Generate RFP</button>
+            </div>
+          </div>
+          <div id="ins-por-status" style="font-size:12.5px; color:#666; margin-bottom:8px;"></div>
+          <div id="ins-por-body" style="font-size:13px; color:#888;">Select a community to view its policy of record.</div>
+        </div>
+
         <div class="panel" style="margin-bottom:20px;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:8px;">
             <div>
@@ -39341,9 +39373,108 @@ ${questionsPage}
           .map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
         if (filterSel) filterSel.innerHTML = '<option value="">All communities</option>' + opts;
         if (newSel) newSel.innerHTML = '<option value="">— Select community —</option>' + opts;
+        const porSel = document.getElementById('ins-por-community');
+        if (porSel) porSel.innerHTML = '<option value="">— Select community —</option>' + opts;
         return insCommunitiesCache;
       } catch (_) { return []; }
     }
+
+    // ---- POLICY OF RECORD (single source of truth) ----
+    function insPorRender(j) {
+      const body = document.getElementById('ins-por-body');
+      if (!body) return;
+      const p = j.program;
+      if (!p) {
+        body.innerHTML = `<div style="padding:22px; text-align:center; color:#888;">
+          <div style="font-size:26px;">📄</div>
+          <div style="font-weight:500; margin:6px 0;">No policy on record yet.</div>
+          <div style="font-size:12.5px;">Upload the current policy PDFs above to file the association's coverage.</div></div>`;
+        return;
+      }
+      const pol = j.policies || [];
+      const docs = j.source_documents || [];
+      const period = (p.policy_period_start || '?') + ' → ' + (p.policy_period_end || '?');
+      const rows = pol.map((c) => {
+        const limits = (c.limits || []).map((l) => `${escapeHtml(l.amount || '')}${l.label ? ' · ' + escapeHtml(l.label) : ''}`).join('<br>');
+        const ded = (c.deductibles || []).map((d) => `${escapeHtml(d.amount || '')}${d.label ? ' · ' + escapeHtml(d.label) : ''}`).join('<br>');
+        return `<tr>
+          <td style="padding:6px 8px; border-top:1px solid #eee; font-weight:600; vertical-align:top;">${escapeHtml(c.coverage_line)}</td>
+          <td style="padding:6px 8px; border-top:1px solid #eee; vertical-align:top;">${escapeHtml(c.carrier || '—')}</td>
+          <td style="padding:6px 8px; border-top:1px solid #eee; font-size:12px; vertical-align:top;">${limits || '—'}</td>
+          <td style="padding:6px 8px; border-top:1px solid #eee; font-size:12px; vertical-align:top;">${ded || '—'}</td>
+        </tr>`;
+      }).join('');
+      body.innerHTML = `
+        <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:10px; font-size:12.5px; color:#555;">
+          <div><strong>Named insured:</strong> ${escapeHtml(p.named_insured || '—')}</div>
+          <div><strong>Term:</strong> ${escapeHtml(period)}</div>
+          <div><strong>Coverage lines:</strong> ${pol.length}</div>
+          ${docs.length ? `<div><strong>Source policies on file:</strong> ${docs.length}</div>` : ''}
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead><tr style="text-align:left; color:#666; font-size:12px;">
+            <th style="padding:4px 8px;">Coverage</th><th style="padding:4px 8px;">Carrier</th>
+            <th style="padding:4px 8px;">Limits</th><th style="padding:4px 8px;">Deductible</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    window.insPorLoad = async function () {
+      const sel = document.getElementById('ins-por-community');
+      const body = document.getElementById('ins-por-body');
+      const rfpBtn = document.getElementById('ins-por-rfp-btn');
+      const cid = sel ? sel.value : '';
+      if (rfpBtn) { rfpBtn.disabled = true; rfpBtn.dataset.programId = ''; }
+      if (!cid) { if (body) body.innerHTML = 'Select a community to view its policy of record.'; return; }
+      if (body) body.innerHTML = 'Loading…';
+      try {
+        const r = await fetch('/api/insurance/program?community_id=' + encodeURIComponent(cid));
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        insPorRender(j);
+        if (j.program && rfpBtn) { rfpBtn.disabled = false; rfpBtn.dataset.programId = j.program.id; }
+      } catch (_) { if (body) body.innerHTML = '<span style="color:#b00;">Could not load policy of record.</span>'; }
+    };
+
+    window.insPorUpload = async function () {
+      const sel = document.getElementById('ins-por-community');
+      const fileInput = document.getElementById('ins-por-files');
+      const status = document.getElementById('ins-por-status');
+      const cid = sel ? sel.value : '';
+      if (!cid) { alert('Select a community first, then upload its policies.'); return; }
+      if (!fileInput || !fileInput.files || !fileInput.files.length) return;
+      const fd = new FormData();
+      fd.append('community_id', cid);
+      for (const f of fileInput.files) fd.append('pdfs', f);
+      if (status) status.innerHTML = `Uploading + reading ${fileInput.files.length} policy file(s)… extraction can take a minute.`;
+      try {
+        const r = await fetch('/api/insurance/program/upload', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (!r.ok) throw new Error((j && (j.error || (j.diagnostic && j.diagnostic.help))) || ('HTTP ' + r.status));
+        if (status) status.innerHTML = `<span style="color:#1f7a3d;">Filed ${j.policies_filed} coverage line(s) into the policy of record.</span>`;
+        fileInput.value = '';
+        insPorLoad();
+      } catch (e) { if (status) status.innerHTML = '<span style="color:#b00;">Upload failed: ' + escapeHtml(e.message) + '</span>'; }
+    };
+
+    window.insPorGenerateRfp = async function () {
+      const rfpBtn = document.getElementById('ins-por-rfp-btn');
+      const status = document.getElementById('ins-por-status');
+      const pid = rfpBtn ? rfpBtn.dataset.programId : '';
+      if (!pid) return;
+      if (status) status.innerHTML = 'Generating RFP…';
+      try {
+        const r = await fetch('/api/insurance/program/' + pid + '/rfp', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+        });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || ('HTTP ' + r.status)); }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'Insurance_RFP.pdf'; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+        if (status) status.innerHTML = '<span style="color:#1f7a3d;">RFP generated and downloaded. Expiring premiums withheld.</span>';
+      } catch (e) { if (status) status.innerHTML = '<span style="color:#b00;">RFP failed: ' + escapeHtml(e.message) + '</span>'; }
+    };
 
     function fmtCents(c) {
       if (c == null) return '<span style="color:#aaa;">—</span>';

@@ -35,6 +35,9 @@ const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const multer = require('multer');
 const { safeErrorMessage } = require('./_safe_error');
+const { renderInsuranceRfpHTML } = require('../lib/insurance_rfp');
+const { extractInsuranceProgram } = require('../lib/insurance_extract');
+const { normalizeInsuranceProgram } = require('../lib/insurance_rfp');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -933,6 +936,221 @@ router.get('/comparisons/:id/benchmark', async (req, res) => {
     res.json({ benchmark });
   } catch (err) {
     console.error('[insurance] benchmark failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ===========================================================================
+// POLICY OF RECORD — the community's in-force insurance program (SSOT).
+// The system maintains all of the association's coverage information here:
+// upload the current/prior policies -> extract -> file into
+// insurance_programs + insurance_policies. The RFP generates FROM this;
+// incoming quotes (above) get compared AGAINST it. (Ed 2026-07-01)
+// ===========================================================================
+
+function centsToStr(c) {
+  if (c == null) return null;
+  const n = Number(c) / 100;
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: c % 100 ? 2 : 0, maximumFractionDigits: 2 });
+}
+
+// Turn stored program + policy rows into the shape lib/insurance_rfp expects.
+function dbToRendererProgram(program, policies) {
+  const entity = program.entity && Object.keys(program.entity).length ? program.entity : {
+    named_insured: program.named_insured, mailing_address: program.mailing_address,
+    property_location: program.property_location, association_type: program.association_type,
+    units_or_lots: program.units_or_lots,
+  };
+  return {
+    entity,
+    coverages: (policies || []).map((p) => ({
+      line: p.coverage_line, carrier: p.carrier, policy_number: p.policy_number,
+      effective_date: p.effective_date, expiration_date: p.expiration_date,
+      limits: p.limits || [], deductibles: p.deductibles || [], key_terms: p.key_terms || [],
+      annual_premium: centsToStr(p.annual_premium_cents),
+    })),
+    statement_of_values: program.statement_of_values || [],
+    notes: program.notes || [],
+  };
+}
+
+async function htmlToPdfBuffer(html) {
+  const puppeteer = require('puppeteer');
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process'],
+  });
+  try {
+    const page = await browser.newPage();
+    try { await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 }); } catch (_) {}
+    return await page.pdf({ format: 'Letter', printBackground: true, margin: { top: 0, right: 0, bottom: 0, left: 0 }, preferCSSPageSize: true });
+  } finally { try { await browser.close(); } catch (_) {} }
+}
+
+// GET /program?community_id=  -> active program + its policies + source docs, plus history list.
+router.get('/program', async (req, res) => {
+  try {
+    const { community_id } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+
+    const { data: programs, error: pErr } = await supabase
+      .from('insurance_programs')
+      .select('*, communities(name, slug)')
+      .eq('community_id', community_id)
+      .order('policy_period_start', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (pErr) throw pErr;
+
+    const active = (programs || []).find((p) => p.status === 'active') || (programs || [])[0] || null;
+    let policies = [];
+    let sourceDocs = [];
+    if (active) {
+      const { data: pol, error: polErr } = await supabase
+        .from('insurance_policies').select('*').eq('program_id', active.id)
+        .order('sort_order', { ascending: true, nullsFirst: false }).limit(100);
+      if (polErr) throw polErr;
+      policies = pol || [];
+      const ids = Array.isArray(active.source_document_ids) ? active.source_document_ids : [];
+      if (ids.length) {
+        const { data: docs } = await supabase.from('library_documents')
+          .select('id, title, original_filename, storage_path').in('id', ids);
+        sourceDocs = docs || [];
+      }
+    }
+    res.json({ program: active, policies, source_documents: sourceDocs, history: programs || [] });
+  } catch (err) {
+    console.error('[insurance] get program failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /program/upload  (multipart: pdfs[] + community_id)
+// Store each policy PDF in library_documents (SSOT), extract across all of
+// them, dedupe, and file into insurance_programs + insurance_policies. Any
+// prior active program for the community is marked superseded.
+router.post('/program/upload', upload.array('pdfs', 12), async (req, res) => {
+  try {
+    const community_id = req.body?.community_id;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (!req.files || !req.files.length) return res.status(400).json({ error: 'pdfs_required' });
+
+    // STEP 1 — file each PDF into library_documents (single source of truth)
+    const files = [];
+    for (const f of req.files) {
+      const sha = crypto.createHash('sha256').update(f.buffer).digest('hex');
+      const safeName = (f.originalname || 'policy.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `insurance/${community_id}/policy/${sha.slice(0, 12)}-${safeName}`;
+      const { error: upErr } = await supabase.storage.from('library')
+        .upload(storagePath, f.buffer, { contentType: 'application/pdf', upsert: false });
+      if (upErr && !/already exists/i.test(upErr.message)) throw upErr;
+      const { data: libDoc, error: libErr } = await supabase.from('library_documents').insert({
+        community_id, title: `Insurance policy — ${f.originalname || 'policy.pdf'}`,
+        original_filename: f.originalname || 'policy.pdf', storage_path: storagePath,
+        category: 'insurance_policy', file_size_bytes: f.size, sha256: sha,
+      }).select('id').single();
+      if (libErr) throw libErr;
+      files.push({ name: f.originalname || 'policy.pdf', buffer: f.buffer, documentId: libDoc.id });
+    }
+
+    // STEP 2 — extract + dedupe
+    const rawProgram = await extractInsuranceProgram(anthropic, files);
+    const program = normalizeInsuranceProgram(rawProgram);
+    if (!program.coverages.length) {
+      return res.status(422).json({ error: 'no_coverage_lines_extracted',
+        diagnostic: { sources: rawProgram._sources, help: 'Could not read coverage lines from the uploaded PDFs. Confirm these are policy declarations, not a cover letter.' } });
+    }
+
+    // Derive program-level fields
+    const effs = program.coverages.map((c) => c.effective_date).filter(Boolean).sort();
+    const exps = program.coverages.map((c) => c.expiration_date).filter(Boolean).sort();
+    const premiums = program.coverages.map((c) => dollarsToCents(c.annual_premium)).filter((v) => v != null);
+    const totalPremium = premiums.length ? premiums.reduce((a, b) => a + b, 0) : null;
+
+    // STEP 3 — supersede any current active program, then insert the new one
+    await supabase.from('insurance_programs').update({ status: 'superseded' })
+      .eq('community_id', community_id).eq('status', 'active');
+
+    const { data: prog, error: progErr } = await supabase.from('insurance_programs').insert({
+      community_id, status: 'active',
+      policy_period_start: effs[0] || null, policy_period_end: exps[exps.length - 1] || null,
+      named_insured: program.entity.named_insured || null,
+      association_type: program.entity.association_type || null,
+      units_or_lots: Number.isFinite(Number(program.entity.units_or_lots)) ? Number(program.entity.units_or_lots) : null,
+      property_location: program.entity.property_location || null,
+      mailing_address: program.entity.mailing_address || null,
+      total_premium_cents: totalPremium,
+      entity: program.entity || {}, statement_of_values: program.statement_of_values || [],
+      notes: program.notes || [], source_document_ids: files.map((f) => f.documentId),
+      source: 'extracted',
+    }).select('*').single();
+    if (progErr) throw progErr;
+
+    const policyRows = program.coverages.map((c, i) => ({
+      program_id: prog.id, community_id, coverage_line: c.line, carrier: c.carrier || null,
+      policy_number: c.policy_number || null, effective_date: c.effective_date || null,
+      expiration_date: c.expiration_date || null, annual_premium_cents: dollarsToCents(c.annual_premium),
+      limits: c.limits || [], deductibles: c.deductibles || [], key_terms: c.key_terms || [],
+      source_document_id: c._documentId || null, sort_order: i,
+    }));
+    const { error: polErr } = await supabase.from('insurance_policies').insert(policyRows);
+    if (polErr) throw polErr;
+
+    res.json({ program: prog, policies_filed: policyRows.length, sources: rawProgram._sources });
+  } catch (err) {
+    console.error('[insurance] program upload failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /program/:id/rfp  -> generate the Bedrock RFP PDF from the stored program.
+// Body opts (all optional): includePremium (default false — withhold),
+// includeCarrier, renewalDate, submissionDeadline, rfpDate, contactName, etc.
+router.post('/program/:id/rfp', express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: prog, error: pErr } = await supabase.from('insurance_programs')
+      .select('*, communities(name)').eq('id', id).maybeSingle();
+    if (pErr) throw pErr;
+    if (!prog) return res.status(404).json({ error: 'program_not_found' });
+    const { data: policies } = await supabase.from('insurance_policies').select('*')
+      .eq('program_id', id).order('sort_order', { ascending: true, nullsFirst: false }).limit(100);
+
+    const rendererProgram = dbToRendererProgram(prog, policies || []);
+    const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Chicago' });
+    const opts = {
+      community: prog.communities?.name || prog.named_insured || '',
+      rfpDate: today, ...(req.body || {}),
+    };
+    const html = renderInsuranceRfpHTML(rendererProgram, opts);
+    const pdf = await htmlToPdfBuffer(html);
+    const fname = `${(opts.community || 'Community').replace(/[^a-zA-Z0-9]+/g, '_')}_Insurance_RFP.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send(pdf);
+  } catch (err) {
+    console.error('[insurance] rfp generate failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// PATCH /policies/:id  -> manual correction of a filed coverage line.
+router.patch('/policies/:id', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const allowed = ['coverage_line', 'carrier', 'policy_number', 'effective_date', 'expiration_date',
+      'annual_premium_cents', 'limits', 'deductibles', 'key_terms', 'sort_order'];
+    const patch = {};
+    for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
+    if ('annual_premium_cents' in patch) patch.annual_premium_cents = centsOrNull(patch.annual_premium_cents);
+    if ('effective_date' in patch) patch.effective_date = isoOrNull(patch.effective_date);
+    if ('expiration_date' in patch) patch.expiration_date = isoOrNull(patch.expiration_date);
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'no_fields_to_update' });
+    const { data, error } = await supabase.from('insurance_policies').update(patch).eq('id', id).select('*').single();
+    if (error) throw error;
+    res.json({ policy: data });
+  } catch (err) {
+    console.error('[insurance] patch policy failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
