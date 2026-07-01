@@ -2886,4 +2886,69 @@ router.delete('/homeowner-notes/:noteId', async (req, res) => {
   }
 });
 
+// ===========================================================================
+// GET /property-lookup — portfolio property/account search for staff.
+// Search by address / owner / resident; returns a unified status row (open
+// violations + worst stage, AR balance, legal/bankruptcy state) from
+// v_property_summary decorated with the durable property_enforcement_states.
+// legal_only=1 (no q needed) returns every account in a legal state — the
+// "Accounts at Legal" list. (Ed 2026-07-01)
+// ===========================================================================
+router.get('/property-lookup', async (req, res) => {
+  try {
+    const { q, community_id, legal_only, limit } = req.query;
+    const lim = Math.min(parseInt(limit, 10) || 100, 300);
+    const LEGAL = ['at_legal', 'in_bankruptcy', 'lien_filed', 'judgment', 'in_collections'];
+
+    let stQ = supabase.from('property_enforcement_states')
+      .select('property_id, state, attorney_name, attorney_firm, bankruptcy_case_number, bankruptcy_chapter, effective_at')
+      .is('ended_at', null);
+    if (community_id) stQ = stQ.eq('community_id', community_id);
+    const { data: states } = await stQ.limit(3000);
+    const stateBy = new Map((states || []).map((s) => [s.property_id, s]));
+    const legalIds = (states || []).filter((s) => LEGAL.includes(s.state)).map((s) => s.property_id);
+
+    let rows = [];
+    if (legal_only === '1' || legal_only === 'true') {
+      if (!legalIds.length) return res.json({ results: [], count: 0 });
+      let sq = supabase.from('v_property_summary').select('*').in('property_id', legalIds).limit(lim);
+      if (community_id) sq = sq.eq('community_id', community_id);
+      rows = (await sq).data || [];
+    } else {
+      const term = (q || '').trim().replace(/[,()*%]/g, ' ').trim();
+      if (!term) return res.json({ results: [], count: 0 });
+      let sq = supabase.from('v_property_summary').select('*')
+        .or(`street_address.ilike.%${term}%,owner_name.ilike.%${term}%,resident_name.ilike.%${term}%`)
+        .limit(lim);
+      if (community_id) sq = sq.eq('community_id', community_id);
+      rows = (await sq).data || [];
+    }
+
+    const results = (rows || []).map((r) => {
+      const st = stateBy.get(r.property_id);
+      const legalState = st ? st.state : (r.ar_at_legal ? 'at_legal' : (r.ar_in_collections ? 'in_collections' : null));
+      return {
+        property_id: r.property_id, community_name: r.community_name,
+        street_address: r.street_address, unit: r.unit,
+        owner_name: r.owner_name, owner_email: r.owner_email, residency_type: r.residency_type,
+        open_violations: r.open_violations || 0, worst_open_stage: r.worst_open_stage || null,
+        violations_last_12mo: r.violations_last_12mo || 0, last_violation_at: r.last_violation_at || null,
+        current_balance: r.current_balance, ar_days_since_snapshot: r.ar_days_since_snapshot,
+        legal_state: (legalState && legalState !== 'current') ? legalState : null,
+        on_payment_plan: r.ar_payment_plan_active === true || (st && st.state === 'on_payment_plan'),
+        attorney_name: st ? (st.attorney_name || st.attorney_firm) : null,
+        bankruptcy_case_number: st ? st.bankruptcy_case_number : null,
+        bankruptcy_chapter: st ? st.bankruptcy_chapter : null,
+      };
+    });
+    const rank = { in_bankruptcy: 5, judgment: 4, lien_filed: 3, at_legal: 2, in_collections: 1 };
+    results.sort((a, b) => (rank[b.legal_state] || 0) - (rank[a.legal_state] || 0)
+      || (Number(b.current_balance || 0) - Number(a.current_balance || 0)));
+    res.json({ results, count: results.length });
+  } catch (err) {
+    console.error('[property-lookup] failed:', err.message);
+    res.status(500).json({ error: 'lookup_failed' });
+  }
+});
+
 module.exports = { router };

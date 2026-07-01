@@ -520,6 +520,10 @@
   <!-- Inbox — Bedrock ↔ homeowner messaging. Master thread list, SLA
        color dots, three-pane reader, close-with-agreement flow. -->
   <div class="tab" onclick="switchTab('inbox')">📬 Inbox</div>
+  <!-- 🔎 Lookup — portfolio property/account search: address or homeowner →
+       open violations, balance, legal / bankruptcy status. Accounts-at-legal
+       list one click away. (Ed 2026-07-01) -->
+  <div class="tab" onclick="switchTab('lookup')">🔎 Lookup</div>
   <!-- =====================================================================
        NAV REORGANIZATION 2026-06-06 — Ed flagged nav crowding (~25 direct
        tabs). Moved tabs into three new groups: Operations / Finance / Admin.
@@ -597,6 +601,59 @@
      relevant module + community. Today is annual-meeting events; future
      iterations: ARC deadlines, vendor renewals, audit/tax/insurance, etc.
      ========================================================================= -->
+<!-- =========================================================================
+     🔎 PROPERTY & ACCOUNT LOOKUP — search any property by address/homeowner;
+     shows open violations, balance, legal/bankruptcy status. Reads
+     /api/property-lookup (v_property_summary + property_enforcement_states).
+     ========================================================================= -->
+<div class="tab-content" id="tab-lookup" style="overflow-y:auto; padding:24px;">
+  <div style="max-width:1200px;">
+    <h2 style="margin:0 0 4px;">🔎 Property &amp; Account Lookup</h2>
+    <p style="color:#666; font-size:13px; margin:0 0 16px; max-width:780px;">Search any property by <strong>address</strong> or <strong>homeowner name</strong> — see open violations, account balance, and legal / bankruptcy status at a glance. Click <strong>Accounts at Legal</strong> for the full at-legal / collections / bankruptcy list.</p>
+    <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px; flex-wrap:wrap;">
+      <input id="lookupInput" type="text" placeholder="Address or homeowner name…" style="flex:1; min-width:280px; padding:10px 12px; font-size:14px; border:1px solid #cbd5e1; border-radius:8px;" onkeydown="if(event.key==='Enter')lookupSearch()">
+      <button class="action-btn" onclick="lookupSearch()">Search</button>
+      <button class="secondary-btn" onclick="lookupShowLegal()">⚖️ Accounts at Legal</button>
+    </div>
+    <div id="lookupStatus" style="font-size:12.5px; color:#666; margin-bottom:8px;"></div>
+    <div id="lookupResults"></div>
+  </div>
+</div>
+<script>
+(function(){
+  var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
+  var money=function(v){ if(v==null||v==='') return '<span style="color:#cbd5e1">—</span>'; return '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var LB={ at_legal:{t:'At legal',bg:'#fee2e2',fg:'#991b1b'}, in_bankruptcy:{t:'Bankruptcy §362',bg:'#ede9fe',fg:'#5b21b6'}, lien_filed:{t:'Lien filed',bg:'#ffedd5',fg:'#9a3412'}, judgment:{t:'Judgment',bg:'#fecaca',fg:'#7f1d1d'}, in_collections:{t:'Collections',bg:'#fef3c7',fg:'#92400e'} };
+  var STAGE={ courtesy_1:'Courtesy 1', courtesy_2:'Courtesy 2', certified_209:'Certified §209', fine_assessed:'Fine' };
+  function render(results,note){
+    var st=document.getElementById('lookupStatus'), box=document.getElementById('lookupResults');
+    st.textContent = note || (results.length+' result'+(results.length===1?'':'s'));
+    if(!results.length){ box.innerHTML='<div style="padding:30px; text-align:center; color:#999;">No matches.</div>'; return; }
+    var rows=results.map(function(r){
+      var lb=r.legal_state&&LB[r.legal_state];
+      var legalCell=lb ? '<span style="background:'+lb.bg+'; color:'+lb.fg+'; padding:2px 9px; border-radius:99px; font-size:11px; font-weight:700;">⚖ '+lb.t+'</span>'+(r.attorney_name?'<div style="font-size:10.5px; color:#888; margin-top:2px;">'+esc(r.attorney_name)+'</div>':'')+(r.bankruptcy_case_number?'<div style="font-size:10.5px; color:#888;">Case '+esc(r.bankruptcy_case_number)+'</div>':'') : (r.on_payment_plan?'<span style="color:#2563eb; font-size:11.5px;">Payment plan</span>':'<span style="color:#16a34a; font-size:11.5px;">Good standing</span>');
+      var viol=r.open_violations>0 ? '<span style="font-weight:600; color:#b45309;">'+r.open_violations+' open</span>'+(r.worst_open_stage?' · '+(STAGE[r.worst_open_stage]||r.worst_open_stage):'') : '<span style="color:#94a3b8;">none</span>';
+      return '<tr>'
+        +'<td style="padding:8px 10px; border-top:1px solid #eef1f6;"><div style="font-weight:600; color:#0B1D34;">'+esc(r.street_address||'')+(r.unit?' #'+esc(r.unit):'')+'</div><div style="font-size:11px; color:#94a3b8;">'+esc(r.community_name||'')+'</div></td>'
+        +'<td style="padding:8px 10px; border-top:1px solid #eef1f6;">'+esc(r.owner_name||'—')+'</td>'
+        +'<td style="padding:8px 10px; border-top:1px solid #eef1f6;">'+viol+'</td>'
+        +'<td style="padding:8px 10px; border-top:1px solid #eef1f6; text-align:right; white-space:nowrap;">'+money(r.current_balance)+'</td>'
+        +'<td style="padding:8px 10px; border-top:1px solid #eef1f6;">'+legalCell+'</td></tr>';
+    }).join('');
+    box.innerHTML='<table style="width:100%; border-collapse:collapse; font-size:13px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; overflow:hidden;"><thead><tr style="background:#f1f5f9; text-align:left; color:#475569; font-size:11.5px;"><th style="padding:8px 10px;">Property</th><th style="padding:8px 10px;">Homeowner</th><th style="padding:8px 10px;">Violations</th><th style="padding:8px 10px; text-align:right;">Balance</th><th style="padding:8px 10px;">Legal / Status</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+  window.lookupSearch=function(){
+    var q=(document.getElementById('lookupInput').value||'').trim();
+    if(!q){ document.getElementById('lookupStatus').textContent='Type an address or homeowner name.'; return; }
+    document.getElementById('lookupStatus').textContent='Searching…';
+    fetch('/api/property-lookup?q='+encodeURIComponent(q)).then(function(r){return r.json();}).then(function(j){ render(j.results||[]); }).catch(function(){ document.getElementById('lookupStatus').textContent='Search failed.'; });
+  };
+  window.lookupShowLegal=function(){
+    document.getElementById('lookupStatus').textContent='Loading accounts at legal…';
+    fetch('/api/property-lookup?legal_only=1').then(function(r){return r.json();}).then(function(j){ render(j.results||[], (j.results||[]).length+' account'+((j.results||[]).length===1?'':'s')+' at legal / collections / bankruptcy'); }).catch(function(){ document.getElementById('lookupStatus').textContent='Failed to load.'; });
+  };
+})();
+</script>
 <div class="tab-content" id="tab-calendar" style="overflow-y:auto; padding:24px;">
   <div style="max-width:1200px; margin:0 auto;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom:14px;">
@@ -17480,12 +17537,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // and top-of-panel so it can't be missed; flags that the account is with
     // the attorney / in collections even if THIS violation is a different issue.
     const lf = d.legal_flag;
-    const legalBanner = (lf && (lf.at_legal || lf.in_collections)) ? `
+    const lfDetail = lf ? [
+      lf.attorney_name ? `Attorney: ${escapeHtml(lf.attorney_name)}` : '',
+      lf.bankruptcy_case_number ? `Case ${escapeHtml(lf.bankruptcy_case_number)}${lf.bankruptcy_chapter ? ` (Ch. ${escapeHtml(lf.bankruptcy_chapter)})` : ''}` : '',
+      lf.as_of ? `since ${new Date(lf.as_of).toLocaleDateString()}` : '',
+    ].filter(Boolean).join(' · ') : '';
+    const legalBanner = lf ? `
       <div style="background:#7f1d1d; color:#fff; border-radius:8px; padding:10px 14px; margin-bottom:14px; display:flex; align-items:center; gap:10px;">
         <span style="font-size:18px;">⚖️</span>
         <div>
-          <div style="font-weight:800; letter-spacing:0.04em; font-size:13.5px;">ACCOUNT AT LEGAL${lf.in_collections && !lf.at_legal ? ' / COLLECTIONS' : ''}</div>
-          <div style="font-size:11.5px; opacity:0.92; margin-top:1px;">Account is with the attorney / collections${lf.as_of ? ` (as of ${new Date(lf.as_of).toLocaleDateString()})` : ''}. Coordinate with counsel before any action — even if this violation is a different issue. Internal only; not shown to the homeowner.</div>
+          <div style="font-weight:800; letter-spacing:0.04em; font-size:13.5px;">${escapeHtml(lf.label || 'ACCOUNT AT LEGAL')}</div>
+          <div style="font-size:11.5px; opacity:0.92; margin-top:1px;">${lfDetail ? escapeHtml(lfDetail) + '. ' : ''}Coordinate with counsel before any action — even if this violation is a different issue. Internal only; never shown to the homeowner.</div>
         </div>
       </div>` : '';
 
