@@ -678,6 +678,33 @@ faults, one incident:
 - Mid-drive surfaces get this scrutiny first: an inspector on cellular WILL hit
   dropped requests and WILL close/reopen the tab. Build for it.
 
+### Category dedup / grouping must be alias-aware (canonical, not raw)
+
+**Scar**: 2026-07-01, 7610 Wolf Creek. A property carried TWO open trash
+violations — native `trash_visible` (courtesy_2) and Vantaca
+`trash_cans_recycling_containers` (courtesy_1) — the same real-world issue
+under a **confirmed category alias**. A courtesy letter fired at courtesy_1
+while the property was effectively further along; on other properties one
+duplicate sat at **certified §209** while its twin was at courtesy_1 (a
+courtesy re-notice on a certified case voids the §209 process). Root cause:
+`findOrContinueViolation` — the single documented chokepoint every
+violation-creation path calls first — keyed its open-case lookup on the
+**raw** `primary_category_id` (`.eq`), so a re-observation under a sibling
+alias label missed the open case and opened a DUPLICATE. `getCanonicalCategory`
+existed but was **never called**; `_reconcileAliasedOpenViolations` only ran
+once at alias-confirm time, so any violation created afterward re-split.
+
+**Rule**: anywhere enforcement **dedups, groups, or picks a stage** by category
+(intake continue-vs-open, the property §209 open-case panel, letter-stage
+determination), expand to the confirmed alias group
+(`expandCategoryToAliases`) and act on the CANONICAL set — never the raw
+`primary_category_id` alone. When choosing which open case a re-observation
+continues, pick the **furthest-advanced** stage (never continue a courtesy
+case when a certified one is open for the same issue). The confirmed alias is
+the source of truth that two labels are one violation; every consumer must
+honor it, not just prior-counting. Fix: `lib/enforcement/find_or_continue_violation.js`
+(commit 3a0f0e2) + re-ran `_reconcileAliasedOpenViolations` on the backlog.
+
 ---
 
 ## Database conventions
