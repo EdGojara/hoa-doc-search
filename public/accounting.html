@@ -133,7 +133,7 @@
     $('body').innerHTML = `<div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
         <h2 class="sec">Balance Sheet</h2>
-        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">As of</span>${dateInput('bs-asof',dToday())}${goBtn('bs-go')}</div>
+        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">As of</span>${dateInput('bs-asof',dToday())}${goBtn('bs-go')}${printStmtBtn('bs')}</div>
       </div><div id="bs-out" class="muted">Loading…</div></div>`;
     const run = async () => {
       const asOf = $('bs-asof').value; if (!asOf) { $('bs-out').innerHTML='Pick a date.'; return; }
@@ -144,6 +144,67 @@
     };
     $('bs-go').addEventListener('click', run); run();
   }
+  // ── Print / Save-as-PDF for financial statements (Ed 2026-06-30) ──────────
+  // Reuses the exact on-screen statement HTML (single source of truth — the PDF
+  // can't drift from the screen) and wraps it in a Bedrock letterhead, then the
+  // browser's print dialog saves it as a board-quality PDF. Client-side only.
+  let _acctCommName = null;
+  async function acctCommunityName(){
+    if (_acctCommName != null) return _acctCommName;
+    try { const j = await (await fetch('/api/communities/'+CID)).json(); _acctCommName = (j.community && j.community.name) || j.name || ''; }
+    catch(_){ _acctCommName = ''; }
+    return _acctCommName;
+  }
+  function printStmtBtn(kind){
+    return `<button onclick="acctPrintStatement('${kind}')" title="Open a clean letterhead version to print or Save as PDF" style="padding:7px 12px; border-radius:8px; border:1px solid var(--rule); background:#fff; color:var(--navy); font-weight:600; cursor:pointer; font-size:12.5px;">🖨 Print / Save PDF</button>`;
+  }
+  async function acctPrintStatement(kind){
+    const map = {
+      bs: { out:'bs-out', title:'Balance Sheet',        sub:()=> 'As of ' + (($('bs-asof') && fmtDate($('bs-asof').value)) || '') },
+      is: { out:'is-out', title:'Income Statement',     sub:()=> (($('is-start') && fmtDate($('is-start').value)) || '') + ' — ' + (($('is-end') && fmtDate($('is-end').value)) || '') },
+      eq: { out:'eq-out', title:'Statement of Equity',  sub:()=> (($('eq-start') && fmtDate($('eq-start').value)) || '') + ' — ' + (($('eq-end') && fmtDate($('eq-end').value)) || '') },
+    };
+    const cfg = map[kind]; if (!cfg) return;
+    const el = $(cfg.out);
+    const body = el ? el.innerHTML : '';
+    if (!body || /Loading|Pick a|Couldn.t load/.test(body)) { alert('Load the statement first (click Go), then Print.'); return; }
+    const comm = await acctCommunityName();
+    const today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+    const w = window.open('', '_blank');
+    if (!w) { alert('Allow pop-ups for this site to print.'); return; }
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(cfg.title)} — ${esc(comm)}</title>
+      <style>
+        @page { size: Letter; margin: 0.7in 0.75in; }
+        * { box-sizing:border-box; }
+        body { font-family:'Inter',-apple-system,'Segoe UI',Roboto,sans-serif; color:#111; margin:0; font-size:12px; }
+        .lh { border-bottom:2px solid #D4AF37; padding-bottom:10px; margin-bottom:16px; }
+        .lh .co { font-size:19px; font-weight:700; color:#0B1D34; }
+        .lh .ttl { font-size:16px; color:#0B1D34; margin-top:2px; }
+        .lh .sub { font-size:12px; color:#555; margin-top:2px; }
+        .lh .mgr { font-size:10.5px; color:#777; margin-top:6px; }
+        table { border-collapse:collapse; width:100%; margin:2px 0 6px; }
+        th,td { padding:3px 6px; font-size:11.5px; border-bottom:1px solid #e5e7eb; text-align:left; vertical-align:top; }
+        th { color:#0B1D34; border-bottom:1.5px solid #0B1D34; }
+        .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .total td { font-weight:700; border-top:1.5px solid #0B1D34; border-bottom:none; color:#0B1D34; }
+        h3, .sec { color:#0B1D34; font-weight:700; }
+        h3 { font-size:13px; margin:14px 0 4px; }
+        .muted { color:#777; }
+        .foot { margin-top:22px; padding-top:8px; border-top:1px solid #ddd; font-size:9.5px; color:#888; font-style:italic; }
+      </style></head><body>
+      <div class="lh">
+        <div class="co">${esc(comm || 'Association')}</div>
+        <div class="ttl">${esc(cfg.title)}</div>
+        <div class="sub">${esc(cfg.sub())}</div>
+        <div class="mgr">Prepared by Bedrock Association Management from the Association's records · ${esc(today)}</div>
+      </div>
+      <div class="stmt">${body}</div>
+      <div class="foot">Reflects the Association's financial records maintained by Bedrock Association Management on behalf of the Board of Directors. Figures are current as of the date(s) shown.</div>
+      <script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script>
+    </body></html>`);
+    w.document.close();
+  }
+
   function bsHTML(j) {
     const funds = j.funds || [];
     const ncol = funds.length + 3; // acct, name, [funds], total
@@ -172,7 +233,7 @@
     $('body').innerHTML = `<div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
         <h2 class="sec">Income Statement</h2>
-        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">From</span>${dateInput('is-start',dMonthStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('is-end',dToday())}${goBtn('is-go')}</div>
+        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">From</span>${dateInput('is-start',dMonthStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('is-end',dToday())}${goBtn('is-go')}${printStmtBtn('is')}</div>
       </div><div id="is-out" class="muted">Loading…</div></div>`;
     const run = async () => {
       const s=$('is-start').value, e=$('is-end').value; if (!s||!e) { $('is-out').innerHTML='Pick a period.'; return; }
@@ -205,7 +266,7 @@
     $('body').innerHTML = `<div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
         <h2 class="sec">Statement of Equity</h2>
-        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">From</span>${dateInput('eq-start',dYearStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('eq-end',dToday())}${goBtn('eq-go')}</div>
+        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">From</span>${dateInput('eq-start',dYearStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('eq-end',dToday())}${goBtn('eq-go')}${printStmtBtn('eq')}</div>
       </div><div id="eq-out" class="muted">Loading…</div></div>`;
     const run = async () => {
       const s=$('eq-start').value, e=$('eq-end').value; if (!s||!e) { $('eq-out').innerHTML='Pick a period.'; return; }
