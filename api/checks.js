@@ -40,7 +40,7 @@ router.get('/accounts/:bankAccountId/config', async (req, res) => {
   catch (err) { handleErr(res, 'config-get', err); }
 });
 
-router.put('/accounts/:bankAccountId/config', express.json({ limit: '2mb' }), async (req, res) => {
+router.put('/accounts/:bankAccountId/config', express.json({ limit: '8mb' }), async (req, res) => {
   try { res.json({ config: await updateBankCheckConfig(req.params.bankAccountId, req.body || {}) }); }
   catch (err) { handleErr(res, 'config-put', err); }
 });

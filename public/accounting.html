@@ -1082,7 +1082,10 @@
           ctx.fillStyle = '#fff'; ctx.fillRect(0,0,w,h);   // white background — prints clean on the signature line
           ctx.drawImage(img, 0, 0, w, h);
           URL.revokeObjectURL(url);
-          resolve(cv.toDataURL('image/png'));
+          // JPEG, not PNG: a scanned signature has a textured (non-white) paper
+          // background that PNG can't compress, so PNGs blew past the upload
+          // limit. JPEG at 0.85 keeps a signature crisp at a fraction of the size.
+          resolve(cv.toDataURL('image/jpeg', 0.85));
         } catch(e){ URL.revokeObjectURL(url); reject(e); }
       };
       img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('image load failed')); };
@@ -1112,9 +1115,21 @@
       catch(_){ $('cfg-status').innerHTML='<span style="color:var(--err)">Couldn’t process the signature image.</span>'; return; }
     }
     $('cfg-status').textContent='Saving…';
-    const j = await fetch(`/api/checks/accounts/${window._chkAcct}/config`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then((r)=>r.json());
-    if (j.error) { $('cfg-status').innerHTML = '<span style="color:var(--err)">'+esc(j.error)+'</span>'; return; }
-    $('cfg-status').textContent='Saved.'; chkLoadConfig();
+    try {
+      const res = await fetch(`/api/checks/accounts/${window._chkAcct}/config`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+      if (!res.ok) {
+        // Surface the failure instead of hanging on "Saving…" — a 413 (payload
+        // too large) or a 500 returns non-JSON, which used to make .json() throw
+        // silently. Now every failure shows a message.
+        const msg = res.status === 413 ? 'Signature image is too large — try a smaller/clearer scan.' : ('Save failed (HTTP ' + res.status + ')');
+        $('cfg-status').innerHTML = '<span style="color:var(--err)">'+esc(msg)+'</span>'; return;
+      }
+      const j = await res.json();
+      if (j.error) { $('cfg-status').innerHTML = '<span style="color:var(--err)">'+esc(j.error)+'</span>'; return; }
+      $('cfg-status').textContent='Saved.'; chkLoadConfig();
+    } catch (e) {
+      $('cfg-status').innerHTML = '<span style="color:var(--err)">'+esc(e.message||'Save failed — check your connection and retry')+'</span>';
+    }
   };
 
   async function chkLoadPayable() {
