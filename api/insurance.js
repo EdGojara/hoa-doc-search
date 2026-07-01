@@ -651,31 +651,12 @@ router.post('/comparisons/:id/quotes', upload.single('pdf'), async (req, res) =>
     if (!comp) return res.status(404).json({ error: 'comparison_not_found' });
 
     // STEP 1 — store the PDF in library_documents (single source of truth)
-    const sha = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
-    const safeName = (req.file.originalname || 'insurance-quote.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storagePath = `insurance/${comp.community_id}/${comparisonId}/${sha.slice(0, 12)}-${safeName}`;
-
-    const { error: upErr } = await supabase.storage
-      .from('library')
-      .upload(storagePath, req.file.buffer, { contentType: 'application/pdf', upsert: false });
-    if (upErr && !/already exists/i.test(upErr.message)) {
-      throw upErr;
-    }
-
-    const { data: libDoc, error: libErr } = await supabase
-      .from('library_documents')
-      .insert({
-        community_id: comp.community_id,
-        title: `Insurance quote — ${comp.title || POLICY_TYPE_LABELS[comp.policy_type]}`,
-        original_filename: req.file.originalname || 'quote.pdf',
-        storage_path: storagePath,
-        category: 'insurance_quote',
-        file_size_bytes: req.file.size,
-        sha256: sha,
-      })
-      .select('id')
-      .single();
-    if (libErr) throw libErr;
+    const libDocId = await fileInsuranceDocument({
+      community_id: comp.community_id, buffer: req.file.buffer,
+      originalname: req.file.originalname || 'quote.pdf', size: req.file.size,
+      category: 'insurance_quote', subdir: comparisonId,
+      title: `Insurance quote — ${comp.title || POLICY_TYPE_LABELS[comp.policy_type]}`,
+    });
 
     // STEP 2 — Claude binary-PDF extract (Swim Houston scar: never pdf-parse here)
     let extracted = {};
@@ -705,7 +686,7 @@ router.post('/comparisons/:id/quotes', upload.single('pdf'), async (req, res) =>
       .insert({
         comparison_id: comparisonId,
         community_id: comp.community_id,
-        library_document_id: libDoc.id,
+        library_document_id: libDocId,
         carrier_name: extracted.carrier_name || null,
         agent_name: extracted.agent_name || null,
         agent_email: extracted.agent_email || null,
@@ -974,6 +955,36 @@ function dbToRendererProgram(program, policies) {
   };
 }
 
+// File a PDF into storage + library_documents with the CANONICAL schema
+// (file_name_original / file_path / file_hash + management_company_id) and
+// idempotent hash reuse. The original insurance upload code used wrong column
+// names (original_filename/storage_path/sha256), a non-existent bucket
+// ('library'), and omitted the mgmt company — so it silently never archived
+// (same class as the AP-invoice retention scar). Shared by both the quote
+// upload and the policy-of-record upload.
+async function fileInsuranceDocument({ community_id, buffer, originalname, size, category, title, subdir }) {
+  const crypto2 = require('crypto');
+  const sha = crypto2.createHash('sha256').update(buffer).digest('hex');
+  const { data: existing } = await supabase.from('library_documents').select('id, category').eq('file_hash', sha).maybeSingle();
+  if (existing) {
+    if (category && existing.category !== category) await supabase.from('library_documents').update({ category }).eq('id', existing.id);
+    return existing.id;
+  }
+  const safe = (originalname || 'file.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const storagePath = `insurance/${community_id}/${subdir || 'policy'}/${sha.slice(0, 12)}-${safe}`;
+  const { error: upErr } = await supabase.storage.from('documents').upload(storagePath, buffer, { contentType: 'application/pdf', upsert: true });
+  if (upErr && !/already exists/i.test(upErr.message)) throw upErr;
+  const { data: comm } = await supabase.from('communities').select('management_company_id').eq('id', community_id).maybeSingle();
+  const { data: doc, error: dErr } = await supabase.from('library_documents').insert({
+    management_company_id: comm ? comm.management_company_id : null,
+    community_id, category: category || 'insurance_policy', title: title || (originalname || 'Insurance document'),
+    file_name_original: originalname || null, file_path: storagePath, file_hash: sha,
+    file_size_bytes: size || buffer.length, created_by_mgmt_company: 'Bedrock',
+  }).select('id').single();
+  if (dErr) throw dErr;
+  return doc.id;
+}
+
 async function htmlToPdfBuffer(html) {
   const puppeteer = require('puppeteer');
   const browser = await puppeteer.launch({
@@ -1038,19 +1049,12 @@ router.post('/program/upload', upload.array('pdfs', 12), async (req, res) => {
     // STEP 1 — file each PDF into library_documents (single source of truth)
     const files = [];
     for (const f of req.files) {
-      const sha = crypto.createHash('sha256').update(f.buffer).digest('hex');
-      const safeName = (f.originalname || 'policy.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
-      const storagePath = `insurance/${community_id}/policy/${sha.slice(0, 12)}-${safeName}`;
-      const { error: upErr } = await supabase.storage.from('library')
-        .upload(storagePath, f.buffer, { contentType: 'application/pdf', upsert: false });
-      if (upErr && !/already exists/i.test(upErr.message)) throw upErr;
-      const { data: libDoc, error: libErr } = await supabase.from('library_documents').insert({
-        community_id, title: `Insurance policy — ${f.originalname || 'policy.pdf'}`,
-        original_filename: f.originalname || 'policy.pdf', storage_path: storagePath,
-        category: 'insurance_policy', file_size_bytes: f.size, sha256: sha,
-      }).select('id').single();
-      if (libErr) throw libErr;
-      files.push({ name: f.originalname || 'policy.pdf', buffer: f.buffer, documentId: libDoc.id });
+      const documentId = await fileInsuranceDocument({
+        community_id, buffer: f.buffer, originalname: f.originalname || 'policy.pdf',
+        size: f.size, category: 'insurance_policy',
+        title: `Insurance policy — ${f.originalname || 'policy.pdf'}`,
+      });
+      files.push({ name: f.originalname || 'policy.pdf', buffer: f.buffer, documentId });
     }
 
     // STEP 2 — extract + dedupe
