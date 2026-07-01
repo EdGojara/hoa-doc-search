@@ -67,7 +67,7 @@
     { id:'homeowners', label:'👤 Homeowners', views:[['owners','Accounts'],['ar','AR Aging']] },
     { id:'bills',      label:'🧾 Bills (AP)', views:[['ap','AP Aging'],['checks','Print Checks']] },
     { id:'bank',       label:'🏦 Bank Rec',   views:[['bankrec','Reconciliation']] },
-    { id:'financials', label:'📊 Financials', views:[['bs','Balance Sheet'],['is','Income Statement'],['eq','Equity'],['trial','Trial Balance'],['tieout','Tie-Out']] },
+    { id:'financials', label:'📊 Financials', views:[['bs','Balance Sheet'],['is','Income Statement'],['eq','Equity'],['undeposited','Undeposited'],['trial','Trial Balance'],['tieout','Tie-Out']] },
     { id:'budget',     label:'📈 Budget',     views:[['bva','Budget vs Actual'],['budget','Budget']] },
     { id:'setup',      label:'⚙️ Setup',      views:[['onlinepay','Online Payments'],['periods','Periods'],['policy','Billing Policy'],['coa','Chart of Accounts'],['je','Journal Entries']] },
   ];
@@ -112,6 +112,7 @@
       if (VIEW==='bs') return renderBalanceSheet();
       if (VIEW==='is') return renderIncomeStatement();
       if (VIEW==='eq') return renderEquity();
+      if (VIEW==='undeposited') return renderUndeposited();
       if (VIEW==='bva') return renderBVA();
       if (VIEW==='budget') return renderBudget();
       if (VIEW==='periods') return renderPeriods();
@@ -285,6 +286,51 @@
       <table><thead><tr><th>Fund</th><th class="num">Beginning</th><th class="num">Net Change</th><th class="num">Ending</th></tr></thead><tbody>${rows}</tbody></table>
       <div style="margin-top:12px; padding:10px 12px; background:#f5f8fc; border-radius:8px;">Period Net Income: <strong>${fmt(j.period_net_income_cents)}</strong></div>`;
   }
+
+  // ── Undeposited Funds — received checks held until they hit the bank ───────
+  async function renderUndeposited() {
+    $('body').innerHTML = '<div class="card muted" style="padding:20px;">Loading…</div>';
+    let j;
+    try { j = await (await fetch(`/api/books/undeposited?community_id=${CID}`)).json(); }
+    catch (e) { $('body').innerHTML = `<div class="card" style="color:var(--err)">Couldn't load: ${esc(e.message)}</div>`; return; }
+    if (j.error) { $('body').innerHTML = `<div class="card" style="color:var(--err)">${esc(j.error)}</div>`; return; }
+    if (!j.undeposited_account) { $('body').innerHTML = `<div class="card muted" style="padding:24px;">No <strong>Undeposited Funds</strong> account on this community's chart yet. Received checks post there and move to cash on deposit.</div>`; return; }
+    const cashOpts = (j.cash_accounts || []).map((c)=>`<option value="${esc(c.id)}">${esc(c.account_number)} · ${esc(c.account_name)}</option>`).join('') || '<option value="">(no cash account)</option>';
+    const receipts = j.receipts || [];
+    const rows = receipts.length ? receipts.map((r)=>`<tr>
+        <td>${esc(fmtDate(r.date))}</td>
+        <td style="font-family:ui-monospace,monospace; font-size:11.5px; color:var(--ink-soft);">${esc(r.reference)}</td>
+        <td style="font-size:12.5px;">${esc(r.description||'')}</td>
+        <td class="num" style="font-weight:600;">${fmt(r.amount_cents)}</td>
+        <td><button onclick="undepDeposit('${esc(r.je_id)}', ${r.amount_cents})" style="padding:5px 12px; border:none; border-radius:6px; background:#166534; color:#fff; font-weight:600; cursor:pointer; font-size:12px; white-space:nowrap;">Mark deposited →</button></td>
+      </tr>`).join('') : `<tr><td colspan="5" class="muted" style="padding:18px; text-align:center;">Nothing undeposited — every received check is in the bank.</td></tr>`;
+    $('body').innerHTML = `<div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:8px;">
+        <h2 class="sec" style="margin:0;">Undeposited Funds</h2>
+        <span class="badge">${fmt(j.balance_cents)} held</span>
+      </div>
+      <div class="muted" style="font-size:12.5px; margin-bottom:12px;">Received checks sit here until they actually hit the bank — not a bank-rec item until then. Marking one deposited posts <strong>Dr Cash / Cr Undeposited Funds</strong>. Deposit into:
+        <select id="undep-cash" style="padding:5px 8px; border:1px solid var(--rule); border-radius:5px; margin-left:6px;">${cashOpts}</select>
+        <span style="margin-left:6px;">on</span>
+        <input id="undep-date" type="date" value="${dToday()}" style="padding:5px 8px; border:1px solid var(--rule); border-radius:5px; margin-left:4px;">
+      </div>
+      <table><thead><tr><th>Received</th><th>Ref</th><th>Description</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+  }
+  window.undepDeposit = async function(jeId, amount){
+    const cashSel = $('undep-cash'), dateEl = $('undep-date');
+    const cashId = cashSel && cashSel.value;
+    const date = (dateEl && dateEl.value) || dToday();
+    if (!cashId) { alert('Pick a cash account to deposit into.'); return; }
+    const acctLabel = cashSel.selectedOptions[0] ? cashSel.selectedOptions[0].textContent : 'cash';
+    if (!confirm(`Deposit ${fmt(amount)} into ${acctLabel} on ${date}?\n\nPosts Dr Cash / Cr Undeposited Funds.`)) return;
+    try {
+      const j = await (await fetch('/api/books/undeposited/deposit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ community_id:CID, receipt_je_id:jeId, cash_account_id:cashId, deposit_date:date }) })).json();
+      if (j.error) { alert('Deposit failed: '+j.error); return; }
+      alert(`Deposited — ${j.deposit_reference}, ${fmt(j.amount_cents)} moved to cash.`);
+      renderUndeposited();
+    } catch (e) { alert('Deposit failed: '+e.message); }
+  };
 
   async function renderBVA() {
     $('body').innerHTML = `<div class="card">

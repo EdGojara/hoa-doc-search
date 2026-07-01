@@ -587,4 +587,104 @@ router.get('/budgets/plan-seed', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// Undeposited Funds workflow (Ed 2026-06-30)
+// A received check posts Dr Undeposited Funds / Cr AR. It's NOT in the bank yet,
+// so it's not a bank-rec item. This lists what's sitting in Undeposited Funds
+// and lets staff "Mark deposited" — which posts Dr Cash / Cr Undeposited Funds
+// once the deposit actually hits the bank. Accounts resolved by role (name),
+// so it works across every community's chart numbering.
+// ----------------------------------------------------------------------------
+async function _undepositedAccount(community_id) {
+  const { data } = await supabase.from('chart_of_accounts')
+    .select('id, account_number, account_name, fund_id')
+    .eq('community_id', community_id).eq('is_active', true).ilike('account_name', '%undeposited%').limit(1).maybeSingle();
+  return data || null;
+}
+
+// GET /api/books/undeposited?community_id=  — receipts held in Undeposited Funds
+router.get('/undeposited', async (req, res) => {
+  try {
+    const { community_id } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const undep = await _undepositedAccount(community_id);
+    if (!undep) return res.json({ ok: true, undeposited_account: null, receipts: [], balance_cents: 0 });
+
+    // All posted lines touching the undeposited account.
+    const { data: lines } = await supabase.from('journal_entry_lines')
+      .select('debit_cents, credit_cents, journal_entries!inner(id, reference, posting_date, description, status, source_module, source_reference)')
+      .eq('account_id', undep.id).eq('journal_entries.status', 'posted').limit(5000);
+    const rows = lines || [];
+    const balance = rows.reduce((s, r) => s + (r.debit_cents || 0) - (r.credit_cents || 0), 0);
+
+    // Receipts = debit entries (money into undeposited). A receipt is "deposited"
+    // once a deposit entry (credit) references its JE reference.
+    const depositedRefs = new Set(
+      rows.filter((r) => (r.credit_cents || 0) > 0 && r.journal_entries.source_reference)
+          .map((r) => r.journal_entries.source_reference)
+    );
+    const receipts = rows
+      .filter((r) => (r.debit_cents || 0) > 0)
+      .map((r) => ({
+        je_id: r.journal_entries.id,
+        reference: r.journal_entries.reference,
+        date: r.journal_entries.posting_date,
+        description: r.journal_entries.description,
+        amount_cents: r.debit_cents,
+        deposited: depositedRefs.has(r.journal_entries.reference),
+      }))
+      .filter((r) => !r.deposited);
+
+    // Cash accounts staff can deposit into (asset accounts that aren't the undeposited holding one).
+    const { data: cashAccts } = await supabase.from('chart_of_accounts')
+      .select('id, account_number, account_name').eq('community_id', community_id).eq('is_active', true)
+      .eq('account_type', 'asset').ilike('account_name', '%cash%').order('account_number');
+
+    res.json({ ok: true, undeposited_account: undep, balance_cents: balance, receipts, cash_accounts: cashAccts || [] });
+  } catch (err) {
+    console.error('[books] undeposited list failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/books/undeposited/deposit  { community_id, receipt_je_id, cash_account_id, deposit_date }
+// Posts Dr Cash / Cr Undeposited Funds for the receipt — the "it hit the bank" step.
+router.post('/undeposited/deposit', express.json(), async (req, res) => {
+  try {
+    const { community_id, receipt_je_id, cash_account_id, deposit_date } = req.body || {};
+    if (!community_id || !receipt_je_id || !cash_account_id) return res.status(400).json({ error: 'community_id_receipt_je_id_cash_account_id_required' });
+    const undep = await _undepositedAccount(community_id);
+    if (!undep) return res.status(400).json({ error: 'no_undeposited_funds_account' });
+
+    // the receipt's undeposited debit amount
+    const { data: recLines } = await supabase.from('journal_entry_lines')
+      .select('debit_cents, journal_entries!inner(reference, community_id)')
+      .eq('journal_entry_id', receipt_je_id).eq('account_id', undep.id);
+    const rec = (recLines || [])[0];
+    if (!rec || (rec.debit_cents || 0) <= 0) return res.status(400).json({ error: 'receipt_not_found_in_undeposited' });
+    if (rec.journal_entries.community_id !== community_id) return res.status(400).json({ error: 'wrong_community' });
+    const amount = rec.debit_cents;
+
+    // guard: already deposited?
+    const { data: existing } = await supabase.from('journal_entries')
+      .select('id').eq('community_id', community_id).eq('source_reference', rec.journal_entries.reference).eq('source_module', 'bank_reconciliation').limit(1).maybeSingle();
+    if (existing) return res.status(400).json({ error: 'already_deposited' });
+
+    const { postJournalEntry } = require('../lib/accounting/posting');
+    const je = await postJournalEntry({
+      community_id, posting_date: deposit_date || new Date().toISOString().slice(0, 10),
+      description: `Deposit of ${rec.journal_entries.reference} — undeposited funds to cash`,
+      source_module: 'bank_reconciliation', source_reference: rec.journal_entries.reference,
+      lines: [
+        { account_id: cash_account_id, debit_cents: amount, credit_cents: 0, memo: 'deposit received in bank' },
+        { account_id: undep.id, debit_cents: 0, credit_cents: amount, memo: `clears ${rec.journal_entries.reference}` },
+      ],
+    });
+    res.json({ ok: true, deposit_reference: je.entry.reference, amount_cents: amount });
+  } catch (err) {
+    console.error('[books] deposit failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = { router };
