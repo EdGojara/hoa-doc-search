@@ -1009,8 +1009,15 @@
   const CHK_GHOST = 'padding:7px 14px; border-radius:8px; border:1px solid var(--rule); background:#fff; color:var(--navy); font-weight:600; cursor:pointer; font-size:12.5px;';
   async function renderChecks() {
     $('body').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
-    const accts = await fetch(`/api/bank-rec/accounts?community_id=${CID}`).then((r)=>r.json()).then((j)=>j.accounts||[]).catch(()=>[]);
-    if (!accts.length) { $('body').innerHTML = '<div class="card muted" style="padding:24px;">No bank accounts set up for this community yet.</div>'; return; }
+    let accts = await fetch(`/api/bank-rec/accounts?community_id=${CID}`).then((r)=>r.json()).then((j)=>j.accounts||[]).catch(()=>[]);
+    // Checks print ONLY from the operating checking account — never the ICS
+    // sweep, savings, or reserve (Ed 2026-06-30: "we can only print checks out
+    // of operating"). Keep operating-type accounts and drop sweep/ICS by name;
+    // fall back to the full list only if that would empty it.
+    const _checkable = accts.filter((a)=> String(a.account_type||'')==='operating' && !/\b(sweep|ics)\b/i.test(a.account_nickname||''));
+    if (_checkable.length) accts = _checkable;
+    if (!accts.length) { $('body').innerHTML = '<div class="card muted" style="padding:24px;">No check-writing (operating) account set up for this community yet.</div>'; return; }
+    // If the previously-selected account was filtered out (e.g. the sweep), snap to the operating account.
     if (!window._chkAcct || !accts.find((a)=>a.id===window._chkAcct)) window._chkAcct = accts[0].id;
     const acctOpts = accts.map((a)=>`<option value="${a.id}" ${a.id===window._chkAcct?'selected':''}>${esc(a.account_nickname||a.bank_name||'Account')}${a.account_last4?(' ····'+a.account_last4):''}</option>`).join('');
     $('body').innerHTML = `
