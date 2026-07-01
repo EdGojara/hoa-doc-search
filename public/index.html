@@ -17850,32 +17850,42 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const courtesyVios = openVios.filter((v) => !['certified_209', 'fine_assessed'].includes(v.current_stage));
     const hasCert = certVios.length > 0;
     const nextStageLabel = { courtesy_1: 'Courtesy 2', courtesy_2: 'Certified §209' };
-    const bannerBg = hasCert ? '#fef2f2' : '#fff7ed';
-    const bannerBorder = hasCert ? '#fca5a5' : '#fdba74';
-    const bannerTitleColor = hasCert ? '#991b1b' : '#9a3412';
-    const bannerTitle = hasCert
-      ? `⚠ §209 certified open (${certVios.length}) — DO NOT RE-NOTICE · cure clock running`
-      : `⚖ Open courtesy enforcement (${courtesyVios.length}) — continue the existing case; next observation advances the ladder`;
+    const renderVioRow = (v, borderColor) => {
+      const st = (v.current_stage || '').replace(/_/g, ' ');
+      const isCert = ['certified_209', 'fine_assessed'].includes(v.current_stage);
+      const nxt = nextStageLabel[v.current_stage];
+      return `<div style="padding:5px 0; border-bottom:1px solid ${borderColor};">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+          <div style="font-size:12.5px; color:#0B1D34; font-weight:600;">${escapeHtml(v.category_label || v.category_code || '—')}</div>
+          <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
+            <span style="font-size:11.5px; color:${isCert ? '#991b1b' : '#9a3412'}; font-weight:600; text-transform:capitalize;">${escapeHtml(st)}</span>
+            ${isCert ? certBadge(v) : (nxt ? `<span style="font-size:10.5px; color:#854d0e; background:#fef9c3; padding:1px 7px; border-radius:99px;">next obs → ${nxt}</span>` : '')}
+          </div>
+        </div>
+        ${noteTrail(v)}
+      </div>`;
+    };
+    // SPLIT the §209 display by stage. "Do not re-notice" is a CERTIFIED-only
+    // rule (statutory cure clock); a certified case in ONE category never
+    // freezes the courtesy ladder in ANOTHER. Rendering both in one red box
+    // made staff think the whole property was frozen and they couldn't send the
+    // courtesy notices (Ed 2026-07-01, 7910 Caribou Valley: weeds+lawn are
+    // courtesy_1 and OK to send; trash is certified_209 and must not be
+    // re-noticed). Now: a red DO-NOT-RE-NOTICE box for certified only, and a
+    // separate amber "OK to send courtesy" box for the courtesy cases.
+    const certBox = certVios.length ? `
+      <div style="background:#fef2f2; border:1.5px solid #fca5a5; border-radius:8px; padding:11px 13px; margin-bottom:${courtesyVios.length ? '10px' : '14px'};">
+        <div style="font-size:12px; font-weight:800; color:#991b1b; letter-spacing:0.03em; text-transform:uppercase; margin-bottom:8px;">⚠ §209 certified open (${certVios.length}) — DO NOT RE-NOTICE · cure clock running</div>
+        ${certVios.map((v) => renderVioRow(v, '#fecaca')).join('')}
+      </div>` : '';
+    const courtesyBox = courtesyVios.length ? `
+      <div style="background:#fff7ed; border:1.5px solid #fdba74; border-radius:8px; padding:11px 13px; margin-bottom:14px;">
+        <div style="font-size:12px; font-weight:800; color:#9a3412; letter-spacing:0.03em; text-transform:uppercase; margin-bottom:8px;">⚖ Open courtesy (${courtesyVios.length}) — OK to send a courtesy notice${certVios.length ? ' (the certified case above is a separate matter)' : ''}; next observation advances the ladder</div>
+        ${courtesyVios.map((v) => renderVioRow(v, '#fed7aa')).join('')}
+      </div>` : '';
     const openEnforcementHtml = openVios.length === 0
       ? `<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12.5px; color:#166534;">✓ No open enforcement carried in — clean as of the last Vantaca report.</div>`
-      : `<div style="background:${bannerBg}; border:1.5px solid ${bannerBorder}; border-radius:8px; padding:11px 13px; margin-bottom:14px;">
-           <div style="font-size:12px; font-weight:800; color:${bannerTitleColor}; letter-spacing:0.03em; text-transform:uppercase; margin-bottom:8px;">${bannerTitle}</div>
-           ${openVios.map((v) => {
-             const st = (v.current_stage || '').replace(/_/g, ' ');
-             const isCert = ['certified_209', 'fine_assessed'].includes(v.current_stage);
-             const nxt = nextStageLabel[v.current_stage];
-             return `<div style="padding:5px 0; border-bottom:1px solid ${hasCert ? '#fecaca' : '#fed7aa'};">
-               <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
-                 <div style="font-size:12.5px; color:#0B1D34; font-weight:600;">${escapeHtml(v.category_label || v.category_code || '—')}</div>
-                 <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
-                   <span style="font-size:11.5px; color:${isCert ? '#991b1b' : '#9a3412'}; font-weight:600; text-transform:capitalize;">${escapeHtml(st)}</span>
-                   ${isCert ? certBadge(v) : (nxt ? `<span style="font-size:10.5px; color:#854d0e; background:#fef9c3; padding:1px 7px; border-radius:99px;">next obs → ${nxt}</span>` : '')}
-                 </div>
-               </div>
-               ${noteTrail(v)}
-             </div>`;
-           }).join('')}
-         </div>`;
+      : (certBox + courtesyBox);
 
     document.getElementById('inspPDBody').innerHTML = `
       ${legalBanner}
