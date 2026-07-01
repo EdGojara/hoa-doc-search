@@ -6125,10 +6125,36 @@ router.get('/property/:propertyId/violation-summary', async (req, res) => {
       };
     });
 
+    // Account-level LEGAL flag for staff review (NEVER on letters): if the
+    // owner's AR account is at legal / with attorney, DRV reviewers must see a
+    // red "ACCOUNT AT LEGAL" banner even when the current violation is a
+    // DIFFERENT issue — so no routine action gets taken that conflicts with
+    // active legal proceedings (Ed 2026-07-01). Source of truth: latest
+    // owner_ar_snapshots for the property (same signal the board portal uses).
+    let legal_flag = null;
+    try {
+      const { data: arRow } = await supabase
+        .from('owner_ar_snapshots')
+        .select('at_legal, in_collections, enforcement_stage, snapshot_date, balance_total')
+        .eq('property_id', propertyId)
+        .order('snapshot_date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (arRow && (arRow.at_legal === true || arRow.in_collections === true)) {
+        legal_flag = {
+          at_legal: arRow.at_legal === true,
+          in_collections: arRow.in_collections === true,
+          enforcement_stage: arRow.enforcement_stage || null,
+          as_of: arRow.snapshot_date || null,
+        };
+      }
+    } catch (e) { console.warn('[violation-summary] legal flag lookup failed:', e.message); }
+
     res.json({
       property_id: propertyId,
       total_violations: result.length,
       open_count: result.filter((v) => v.is_open).length,
+      legal_flag,
       violations: result,
     });
   } catch (err) {

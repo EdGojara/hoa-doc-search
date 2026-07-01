@@ -17476,6 +17476,19 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const label = (p.street_address || '') + (p.unit ? ' #' + p.unit : '');
     inspPDCurrentLabel = label;
 
+    // Account-at-legal banner — staff DRV review ONLY, never on a letter. Red
+    // and top-of-panel so it can't be missed; flags that the account is with
+    // the attorney / in collections even if THIS violation is a different issue.
+    const lf = d.legal_flag;
+    const legalBanner = (lf && (lf.at_legal || lf.in_collections)) ? `
+      <div style="background:#7f1d1d; color:#fff; border-radius:8px; padding:10px 14px; margin-bottom:14px; display:flex; align-items:center; gap:10px;">
+        <span style="font-size:18px;">⚖️</span>
+        <div>
+          <div style="font-weight:800; letter-spacing:0.04em; font-size:13.5px;">ACCOUNT AT LEGAL${lf.in_collections && !lf.at_legal ? ' / COLLECTIONS' : ''}</div>
+          <div style="font-size:11.5px; opacity:0.92; margin-top:1px;">Account is with the attorney / collections${lf.as_of ? ` (as of ${new Date(lf.as_of).toLocaleDateString()})` : ''}. Coordinate with counsel before any action — even if this violation is a different issue. Internal only; not shown to the homeowner.</div>
+        </div>
+      </div>` : '';
+
     document.getElementById('inspPDAddress').textContent = label;
     const metaParts = [];
     if (p.city) metaParts.push(p.city);
@@ -17803,6 +17816,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
          </div>`;
 
     document.getElementById('inspPDBody').innerHTML = `
+      ${legalBanner}
       <!-- Owner + residency block -->
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-bottom:14px;">
         <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px;">
