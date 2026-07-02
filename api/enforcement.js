@@ -1154,6 +1154,35 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
       ai_review_pending: photoWork.length > 0,
     });
 
+    // ---- 5b) Draft the courtesy letter into the Drafts queue (fire-and-forget)
+    // A manual violation must enter the same review -> print -> mail pipeline as
+    // a drive capture; otherwise it's recorded but no notice ever goes out (Ed
+    // 2026-07-02, Waterview 19718 Norfolk Ridge). Renders + uploads the letter
+    // and logs a DRAFT interaction (status='draft') so it shows in Drafts. Runs
+    // after the response so the operator isn't held on the PDF render.
+    (async () => {
+      try {
+        const mailType = ['certified_209', 'fine_assessed'].includes(violation.current_stage) ? 'certified_mail' : 'first_class_mail';
+        const r = await _draftLetterForBumpedViolation(
+          {
+            id: violation.id, property_id: propertyId, primary_category_id: categoryId,
+            opened_at: violation.opened_at,
+            board_priority_at_open: (priorityWeight === 'disabled' || !priorityWeight) ? 'standard' : priorityWeight,
+            opened_from_observation_id: firstObservationId,
+          },
+          { stage: violation.current_stage, mail_type: mailType },
+          communityId,
+          {
+            subject: `Violation letter (${violation.current_stage}) — manual entry (${source.replace(/_/g, ' ')})`,
+            ai_description: (description && description.trim().length >= 10) ? description.trim() : undefined,
+            severity,
+          },
+        );
+        if (r && r.error) console.warn('[enforcement.manual] letter draft failed:', r.error);
+        else console.log('[enforcement.manual] drafted courtesy letter for violation', violation.id);
+      } catch (e) { console.warn('[enforcement.manual] letter draft threw:', e.message); }
+    })();
+
     // ---- 6) Async AI cross-check (fire-and-forget) ----------------------
     // Runs AFTER the response is sent so the operator sees the violation
     // create immediately. For each manual photo: re-run categorizePhoto,
@@ -4371,7 +4400,7 @@ function _newCureDate(decision) {
 // Helper: regenerate the letter PDF + draft interaction for a violation
 // after its stage has been bumped. Reuses the existing generator with the
 // updated context. Returns { letter_path, interaction_id } or { error }.
-async function _draftLetterForBumpedViolation(violation, decision, communityId) {
+async function _draftLetterForBumpedViolation(violation, decision, communityId, opts = {}) {
   try {
     // Pull the joined data the letter generator needs
     const [pRowRes, catRes, commRes, prioRes, observationRes] = await Promise.all([
@@ -4482,11 +4511,21 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
         letter_cure_days_courtesy_2:    commRow && commRow.letter_cure_days_courtesy_2,
         letter_cure_days_certified_209: commRow && commRow.letter_cure_days_certified_209,
       },
-      observation: obsRow ? {
-        ai_description: obsRow.ai_description,
-        severity: obsRow.severity,
-        captured_at: (obsRow.inspection_photos && obsRow.inspection_photos.captured_at) || obsRow.created_at,
-      } : null,
+      observation: (() => {
+        // The letter renderer requires a specific finding (ai_description). A
+        // manual violation has no AI photo analysis, so use the staff-provided
+        // description (opts.ai_description), then the observation's own, then a
+        // category-label fallback so a courtesy notice can always be drafted.
+        const findingText = opts.ai_description
+          || (obsRow && obsRow.ai_description)
+          || (catRow && catRow.label ? `${catRow.label} observed at this property requiring the owner's attention.` : null);
+        if (!findingText) return null;
+        return {
+          ai_description: findingText,
+          severity: obsRow ? obsRow.severity : (opts.severity || null),
+          captured_at: obsRow ? ((obsRow.inspection_photos && obsRow.inspection_photos.captured_at) || obsRow.created_at) : (violation.opened_at || new Date().toISOString()),
+        };
+      })(),
       governing_doc: govDoc,
       prior_violations: pv || [],
       photo_buffer: photoBuffer,
@@ -4520,7 +4559,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
       observation_id: violation.opened_from_observation_id,
       type: stageToType[decision.stage] || 'ai_draft',
       direction: 'outbound',
-      subject: `Violation letter (${decision.stage}) — cure-lapse escalation`,
+      subject: opts.subject || `Violation letter (${decision.stage}) — cure-lapse escalation`,
       content: letterPath,
       delivery_method: (decision.mail_type === 'certified_mail') ? 'certified_mail' : 'first_class_mail',
       status: 'draft',
@@ -9136,4 +9175,4 @@ router.post('/violations/:violationId/cure-days', express.json(), async (req, re
   }
 });
 
-module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations };
+module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations, _draftLetterForBumpedViolation };
