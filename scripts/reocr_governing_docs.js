@@ -46,7 +46,8 @@ const GOV_CATEGORIES = ['declaration_ccrs', 'bylaws', 'rules_and_regulations', '
     process.stdout.write(`  ${d.title.slice(0, 50)} … `);
     try {
       const r = await indexLibraryDoc(sb, openai, d, { forceOcr: true });
-      console.log(r.ok ? `OK — ${r.chunks_inserted} chunks${r.ocrUsed ? ' (OCR)' : ''}` : `FAILED — ${r.reason || r.error}`);
+      const gap = r.knowledge_chunk_failures ? ` ⚠ ${r.knowledge_chunk_failures} letter-store chunks DROPPED` : '';
+      console.log(r.ok ? `OK — ${r.chunks_inserted} chunks${r.ocr_used ? ' (OCR)' : ''}${gap}` : `FAILED — ${r.reason || r.error}`);
     } catch (e) {
       console.log('THREW —', e.message);
     }
