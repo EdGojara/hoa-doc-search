@@ -130,8 +130,12 @@ router.post('/log', upload.single('file'), async (req, res) => {
       file_name_original: req.file.originalname || null,
       file_path: storagePath, file_hash: sha, file_size_bytes: req.file.size,
       extraction_model: MODEL,
-      extraction_notes: [meta.type && `Type: ${meta.type}`, meta.urgency && `Urgency: ${meta.urgency}`,
-        meta.routing_owner && `Route: ${meta.routing_owner}`, meta.summary].filter(Boolean).join(' · ').slice(0, 2000),
+      // Store the full classification JSON so the queue can re-display a filed
+      // scan without re-classifying; falls back to a human summary line.
+      extraction_notes: meta.classification
+        ? JSON.stringify(meta.classification).slice(0, 60000)
+        : [meta.type && `Type: ${meta.type}`, meta.urgency && `Urgency: ${meta.urgency}`,
+          meta.routing_owner && `Route: ${meta.routing_owner}`, meta.summary].filter(Boolean).join(' · ').slice(0, 2000),
       created_by_mgmt_company: 'Bedrock',
       source_origin: 'mail_scan',
     }).select('id').single();
@@ -150,6 +154,43 @@ router.post('/log', upload.single('file'), async (req, res) => {
     res.json({ ok: true, library_document_id: doc.id, work_item_id: workItemId, record_ref: `ML-${Date.now().toString().slice(-6)}` });
   } catch (err) {
     console.error('[mail-scan] log failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// --- GET /recent — real "today's queue": actually-filed scanned mail --------
+router.get('/recent', async (req, res) => {
+  try {
+    const lim = Math.min(parseInt(req.query.limit, 10) || 25, 100);
+    const { data, error } = await supabase.from('library_documents')
+      .select('id, title, file_name_original, page_count, created_at, extraction_notes, communities:community_id(name)')
+      .eq('category', 'scanned_mail').order('created_at', { ascending: false }).limit(lim);
+    if (error) throw error;
+    const items = (data || []).map((d) => {
+      let classification = null;
+      try { if (d.extraction_notes && d.extraction_notes.trim().startsWith('{')) classification = JSON.parse(d.extraction_notes); } catch (_) {}
+      return {
+        id: d.id, title: d.title, filename: d.file_name_original, pages: d.page_count,
+        filed_at: d.created_at, community: d.communities ? d.communities.name : null, classification,
+      };
+    });
+    res.json({ items });
+  } catch (err) {
+    console.error('[mail-scan] recent failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// --- GET /file/:id — signed URL to view the stored scan PDF -----------------
+router.get('/file/:id', async (req, res) => {
+  try {
+    const { data: doc } = await supabase.from('library_documents').select('file_path').eq('id', req.params.id).maybeSingle();
+    if (!doc || !doc.file_path) return res.status(404).json({ error: 'not_found' });
+    const { data: signed, error } = await supabase.storage.from('documents').createSignedUrl(doc.file_path, 3600);
+    if (error) throw error;
+    res.json({ url: signed.signedUrl });
+  } catch (err) {
+    console.error('[mail-scan] file failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

@@ -394,10 +394,14 @@
 <body>
 
 <div class="header">
-  <div class="header-brand">trust<span>Ed</span></div>
+  <a href="/" title="Back to trustEd" style="display:flex; align-items:center; gap:8px; text-decoration:none; color:inherit;">
+    <span style="font-size:18px; color:var(--accent-mid);">←</span>
+    <div class="header-brand">trust<span>Ed</span></div>
+  </a>
   <div class="header-dot"></div>
   <div class="header-brand" style="font-size:15px;font-weight:500;color:rgba(255,255,255,0.6);">Mail Scan</div>
-  <div class="header-module">Bedrock Association Management</div>
+  <a href="/" style="margin-left:auto; text-decoration:none; font-size:12px; color:var(--accent-mid); border:1px solid rgba(255,255,255,0.25); padding:5px 12px; border-radius:6px;">← Back to trustEd</a>
+  <div class="header-module" style="margin-left:16px;">Bedrock Association Management</div>
 </div>
 
 <div class="main">
@@ -418,39 +422,6 @@
     <div class="panel-section" style="flex:1;">
       <div class="panel-label">Today's queue <span id="queueCount" style="color:var(--accent);font-weight:700;"></span></div>
       <div id="queueList">
-        <!-- Demo items -->
-        <div class="queue-item active" onclick="showResult('legal')" id="q-legal">
-          <div class="queue-icon">📄</div>
-          <div class="queue-meta">
-            <div class="queue-name">Demand_Letter_CGCR.pdf</div>
-            <div class="queue-sub">Received 8:14 AM · 3 pages</div>
-          </div>
-          <div class="queue-status"><span class="status-dot done"></span></div>
-        </div>
-        <div class="queue-item" onclick="showResult('invoice')" id="q-invoice">
-          <div class="queue-icon">📄</div>
-          <div class="queue-meta">
-            <div class="queue-name">SwimHouston_Jul26.pdf</div>
-            <div class="queue-sub">Received 8:14 AM · 1 page</div>
-          </div>
-          <div class="queue-status"><span class="status-dot done"></span></div>
-        </div>
-        <div class="queue-item" onclick="showResult('owner')" id="q-owner">
-          <div class="queue-icon">📄</div>
-          <div class="queue-meta">
-            <div class="queue-name">Owner_Letter_WV_4412.pdf</div>
-            <div class="queue-sub">Received 8:14 AM · 2 pages</div>
-          </div>
-          <div class="queue-status"><span class="status-dot done"></span></div>
-        </div>
-        <div class="queue-item" onclick="showResult('gov')" id="q-gov">
-          <div class="queue-icon">📄</div>
-          <div class="queue-meta">
-            <div class="queue-name">HarrisCounty_Notice.pdf</div>
-            <div class="queue-sub">Received 8:14 AM · 2 pages</div>
-          </div>
-          <div class="queue-status"><span class="status-dot review"></span></div>
-        </div>
         <div class="queue-item" id="q-new" style="display:none" onclick="showResult('new')">
           <div class="queue-icon">📄</div>
           <div class="queue-meta">
@@ -459,6 +430,8 @@
           </div>
           <div class="queue-status"><span class="status-dot processing" id="newDot"></span></div>
         </div>
+        <div id="q-recent"></div>
+        <div id="q-empty" style="padding:24px 8px; text-align:center; color:var(--text-3); font-size:12.5px; display:none;">No mail scanned yet.<br>Drop a scanned PDF above to classify and file it.</div>
       </div>
     </div>
 
@@ -736,7 +709,7 @@ function showResult(key) {
         <div class="result-sub">${r.pages} page${r.pages>1?'s':''} · Scanned today · ${new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div>
       </div>
       <div class="result-actions">
-        <button class="btn btn-ghost btn-sm" onclick="alert('Opens PDF viewer')">View PDF</button>
+        <button class="btn btn-ghost btn-sm" onclick="mailViewPdf('${key}')">View PDF</button>
         <button class="btn btn-primary btn-sm" onclick="confirmLog('${key}')">Confirm & Log →</button>
       </div>
     </div>
@@ -830,8 +803,12 @@ function confirmLog(key) {
   // The demo queue items have no file — they just render the confirmation.
   if (key === 'new' && window._mailScanFile) {
     const subjF = (r.fields || []).find((f) => /subject|re:|matter/i.test(f.label || ''));
+    // Clean copy of the classification to persist (so a filed scan re-displays
+    // without re-classifying). Strip the File + internal fields.
+    const cls = Object.assign({}, r); delete cls._file; delete cls._community_id; delete cls._file_hash;
     const meta = { community_id: r._community_id || null, type: r.type, urgency: r.urgency,
-      subject: (subjF && subjF.value) || r.type, summary: r.summary, routing_owner: (r.routing || {}).owner };
+      subject: (subjF && subjF.value) || r.type, summary: r.summary, routing_owner: (r.routing || {}).owner,
+      classification: cls };
     const fd = new FormData();
     fd.append('file', window._mailScanFile);
     fd.append('meta', JSON.stringify(meta));
@@ -840,7 +817,9 @@ function confirmLog(key) {
       .then((x) => x.json())
       .then((j) => {
         if (!j.ok) throw new Error(j.error || 'log_failed');
+        window._mailScanFile = null;
         renderLogged(r, j.record_ref || ('ML-' + Date.now().toString().slice(-6)), key, j.deduped);
+        try { mailLoadQueue(); } catch (_) {}
       })
       .catch((e) => {
         panel.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not file</div><div class="empty-sub">' + (e.message || 'Unknown error') + '</div><button class="btn btn-ghost" style="margin-top:16px;" onclick="showResult(\'' + key + '\')">Back</button></div>';
@@ -992,9 +971,53 @@ async function callAnthropicAPI(file) {
   }
 }
 
-// Init
-showResult('legal');
-document.getElementById('queueCount').textContent = '4';
+// ── Real queue: actually-filed scanned mail (GET /api/mail-scan/recent) ──
+var _mailRecent = [];
+function mailLoadQueue() {
+  fetch('/api/mail-scan/recent?limit=30').then(function (r) { return r.json(); }).then(function (j) {
+    _mailRecent = j.items || [];
+    var host = document.getElementById('q-recent');
+    var empty = document.getElementById('q-empty');
+    document.getElementById('queueCount').textContent = _mailRecent.length || '';
+    if (empty) empty.style.display = _mailRecent.length ? 'none' : 'block';
+    if (!host) return;
+    host.innerHTML = _mailRecent.map(function (it) {
+      var c = it.classification || {};
+      var dot = c.urgency === 'critical' ? 'review' : (c.urgency === 'high' ? 'review' : 'done');
+      var when = it.filed_at ? new Date(it.filed_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      var name = it.filename || it.title || 'Scanned mail';
+      return '<div class="queue-item" onclick="mailShowFiled(\'' + it.id + '\')">'
+        + '<div class="queue-icon">' + (c.typeEmoji || '📄') + '</div>'
+        + '<div class="queue-meta"><div class="queue-name">' + (name.length > 30 ? name.slice(0, 28) + '…' : name) + '</div>'
+        + '<div class="queue-sub">' + when + (c.type ? ' · ' + c.type : '') + '</div></div>'
+        + '<div class="queue-status"><span class="status-dot ' + dot + '"></span></div></div>';
+    }).join('');
+  }).catch(function () { /* leave queue empty on error */ });
+}
+function mailShowFiled(docId) {
+  var it = _mailRecent.find(function (x) { return x.id === docId; });
+  if (!it || !it.classification) return;
+  var r = Object.assign({}, it.classification);
+  r._doc_id = docId;
+  r.filename = it.filename || it.title || 'Scanned mail';
+  RESULTS['f_' + docId] = r;
+  showResult('f_' + docId);
+}
+function mailViewPdf(key) {
+  var r = RESULTS[key];
+  if (r && r._doc_id) {
+    fetch('/api/mail-scan/file/' + r._doc_id).then(function (x) { return x.json(); }).then(function (j) {
+      if (j.url) window.open(j.url, '_blank'); else alert('Could not open the filed PDF.');
+    }).catch(function () { alert('Could not open the filed PDF.'); });
+    return;
+  }
+  if (window._mailScanFile) { window.open(URL.createObjectURL(window._mailScanFile), '_blank'); return; }
+  alert('No PDF available — file this scan first, then View PDF opens the stored copy.');
+}
+
+// Init — start empty; load the real filed-mail queue.
+resetToEmpty();
+mailLoadQueue();
 </script>
 </body>
 </html>
