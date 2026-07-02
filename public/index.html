@@ -24371,7 +24371,19 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       ${(lfc || lcm) ? `
       <div style="margin-top:12px; padding:12px; border:1.5px solid #fbbf24; border-radius:10px; background:#fffbeb;">
         <div style="font-size:12px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">🔒 Locked — printed, awaiting mail confirmation</div>
-        <div style="font-size:11.5px; color:#78350f; margin-bottom:9px;">These were locked + postmarked but not yet confirmed mailed. Re-download as many times as you need — they will NOT disappear until you confirm they're in the mail.</div>
+        <div style="font-size:11.5px; color:#78350f; margin-bottom:9px;">Each row below is ONE print run. Re-download or confirm that specific batch — exactly what you printed together, not everything merged. They stay here until you confirm they're in the mail.</div>
+        ${(summary.locked_batches && summary.locked_batches.length) ? summary.locked_batches.map((b) => {
+          const isCert = b.delivery_method === 'certified_mail';
+          const dLabel = isCert ? '⚠ Certified' : '📨 First-class';
+          const dColor = isCert ? '#7f1d1d' : '#0B1D34';
+          const when = b.printed_at ? new Date(b.printed_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+          const pm = b.postmark_date ? ' · postmark ' + b.postmark_date : '';
+          return `<div style="display:flex; gap:8px; align-items:center; margin-bottom:7px; flex-wrap:wrap; padding:8px 9px; background:#fff; border:1px solid #fde68a; border-radius:7px;">
+            <span style="font-size:12.5px; font-weight:600; color:${dColor}; min-width:160px; line-height:1.35;">${dLabel}: ${b.count} letter${b.count === 1 ? '' : 's'}<br><span style="font-weight:400; color:#92400e; font-size:11px;">printed ${when}${pm}</span></span>
+            <button onclick="inspMailQueueRedownload('${b.delivery_method}','${b.printed_at}')" style="flex:1; min-width:130px; padding:7px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⬇ Re-download this batch</button>
+            <button onclick="inspMailQueueConfirmMailed('${b.delivery_method}','${b.printed_at}')" style="flex:1; min-width:130px; padding:7px; background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✓ Confirm this batch mailed</button>
+          </div>`;
+        }).join('') : `
         ${lfc ? `<div style="display:flex; gap:8px; align-items:center; margin-bottom:7px; flex-wrap:wrap;">
           <span style="font-size:12.5px; font-weight:600; color:#0B1D34; min-width:110px;">📨 First-class: ${lfc}</span>
           <button onclick="inspMailQueueRedownload('first_class_mail')" style="flex:1; min-width:130px; padding:7px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⬇ Re-download PDF</button>
@@ -24381,7 +24393,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <span style="font-size:12.5px; font-weight:600; color:#7f1d1d; min-width:110px;">⚠ Certified: ${lcm}</span>
           <button onclick="inspMailQueueRedownload('certified_mail')" style="flex:1; min-width:130px; padding:7px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⬇ Re-download PDF</button>
           <button onclick="inspMailQueueConfirmMailed('certified_mail')" style="flex:1; min-width:130px; padding:7px; background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✓ Confirm mailed</button>
-        </div>` : ''}
+        </div>` : ''}`}
       </div>` : ''}
       ${byCommHtml ? `<div style="margin-top:12px; padding-top:10px; border-top:1px solid #e2e8f0;"><div style="font-size:11px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:3px;">By community</div>${byCommHtml}</div>` : ''}
       <div style="margin-top:12px; padding:8px 10px; background:#f0f9ff; border:1px solid #93c5fd; border-radius:6px; font-size:11.5px; color:#1e40af;">
@@ -24400,23 +24412,25 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // Re-download a LOCKED batch (printed + postmarked but not yet confirmed
   // mailed). Re-merges the stored PDFs without changing any state, so a
   // missed/failed download can always be recovered.
-  async function inspMailQueueRedownload(deliveryMethod) {
+  async function inspMailQueueRedownload(deliveryMethod, printedAt) {
     const label = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
+    const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
     try {
       const r = await window._authFetch('/api/enforcement/mail-queue/redownload', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ delivery_method: deliveryMethod }),
+        body: JSON.stringify({ delivery_method: deliveryMethod, printed_at: printedAt || undefined, community_id: filterCid || undefined }),
       });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
       const blob = await r.blob();
       const included = r.headers.get('X-Bedrock-Included');
+      const batchStamp = printedAt ? new Date(printedAt).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `bedrock-mail-batch-${label}-redownload-${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.download = `bedrock-mail-batch-${label}-${batchStamp}.pdf`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-      setTimeout(() => alert(`✓ Re-downloaded ${included || ''} letter${included == '1' ? '' : 's'}. Check your Downloads folder. They stay in the queue until you Confirm mailed.`), 200);
+      setTimeout(() => alert(`✓ Re-downloaded ${included || ''} letter${included == '1' ? '' : 's'}${printedAt ? ' from this print run' : ''}. Check your Downloads folder. They stay in the queue until you Confirm mailed.`), 200);
     } catch (e) { alert('Re-download failed: ' + e.message); }
   }
   window.inspMailQueueRedownload = inspMailQueueRedownload;
@@ -24424,13 +24438,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // Confirm a locked batch was physically printed + mailed. Sets mailed_at so
   // it leaves "awaiting confirmation" — nothing is deleted; it stays as sent
   // history.
-  async function inspMailQueueConfirmMailed(deliveryMethod) {
+  async function inspMailQueueConfirmMailed(deliveryMethod, printedAt) {
     const label = deliveryMethod === 'certified_mail' ? 'certified' : 'first-class';
-    if (!confirm(`Confirm the ${label} batch was printed and physically mailed?\n\nThis marks them mailed and clears them from "awaiting confirmation." They stay in the system as sent history and can still be reviewed. Only do this once they're actually in the mail.`)) return;
+    const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const scope = printedAt ? `this ${label} print run` : `the ${label} batch`;
+    if (!confirm(`Confirm ${scope} was printed and physically mailed?\n\nThis marks them mailed and clears them from "awaiting confirmation." They stay in the system as sent history and can still be reviewed. Only do this once they're actually in the mail.`)) return;
     try {
       const r = await window._authFetch('/api/enforcement/mail-queue/confirm-mailed', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ delivery_method: deliveryMethod }),
+        body: JSON.stringify({ delivery_method: deliveryMethod, printed_at: printedAt || undefined, community_id: filterCid || undefined }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);

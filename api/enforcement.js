@@ -2525,19 +2525,39 @@ router.get('/mail-queue/summary', async (req, res) => {
     // LOCKED = postmarked + PDF generated but not yet confirmed mailed. These
     // stay visible (and re-downloadable) so a missed/failed download can't
     // strand a letter. (Falls back gracefully if migration 248 isn't applied.)
+    // locked_batches groups the locked letters by PRINT SESSION (printed_at) so
+    // the operator re-downloads / confirms exactly the batch they printed
+    // together, not everything merged (Ed 2026-07-02: "do it by how we approved
+    // and printed rather than all of the PDF combined").
+    summary.locked_batches = [];
     try {
       let lq = supabase
         .from('interactions')
-        .select('id, delivery_method')
+        .select('id, delivery_method, printed_at, postmark_date')
         .in('type', letterTypes)
         .not('printed_at', 'is', null)
-        .is('mailed_at', null);
+        .is('mailed_at', null)
+        .order('printed_at', { ascending: false });
       if (communityId) lq = lq.eq('community_id', communityId);
       const { data: locked } = await lq;
+      const batchMap = new Map(); // key: printed_at|delivery_method
       (locked || []).forEach((row) => {
         if (row.delivery_method === 'first_class_mail') summary.locked_first_class += 1;
         if (row.delivery_method === 'certified_mail')   summary.locked_certified   += 1;
+        const key = `${row.printed_at}|${row.delivery_method}`;
+        if (!batchMap.has(key)) {
+          batchMap.set(key, {
+            printed_at: row.printed_at,
+            delivery_method: row.delivery_method,
+            postmark_date: row.postmark_date || null,
+            count: 0,
+          });
+        }
+        batchMap.get(key).count += 1;
       });
+      // Newest print session first.
+      summary.locked_batches = Array.from(batchMap.values())
+        .sort((a, b) => new Date(b.printed_at) - new Date(a.printed_at));
     } catch (_) { /* mailed_at column not present yet — locked counts stay 0 */ }
     res.json({ summary, total_pending: (data || []).length });
   } catch (err) {
@@ -2558,6 +2578,7 @@ router.post('/mail-queue/redownload', express.json(), async (req, res) => {
   try {
     const deliveryMethod = (req.body && req.body.delivery_method) || 'first_class_mail';
     const communityId = req.body && req.body.community_id;
+    const printedAt = req.body && req.body.printed_at; // scope to ONE print session
     let q = supabase
       .from('interactions')
       .select('id, content, created_at')
@@ -2567,6 +2588,7 @@ router.post('/mail-queue/redownload', express.json(), async (req, res) => {
       .is('mailed_at', null)
       .order('created_at', { ascending: true });
     if (communityId) q = q.eq('community_id', communityId);
+    if (printedAt) q = q.eq('printed_at', printedAt);
     const { data: letters, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
     if (!letters || !letters.length) {
@@ -2612,6 +2634,7 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
   try {
     const deliveryMethod = (req.body && req.body.delivery_method) || 'first_class_mail';
     const communityId = req.body && req.body.community_id;
+    const printedAt = req.body && req.body.printed_at; // scope to ONE print session
     let q = supabase
       .from('interactions')
       .select('id')
@@ -2620,6 +2643,7 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
       .not('printed_at', 'is', null)
       .is('mailed_at', null);
     if (communityId) q = q.eq('community_id', communityId);
+    if (printedAt) q = q.eq('printed_at', printedAt);
     const { data: letters, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
     if (!letters || !letters.length) return res.json({ confirmed: 0 });
