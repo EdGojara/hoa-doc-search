@@ -400,7 +400,8 @@
   </a>
   <div class="header-dot"></div>
   <div class="header-brand" style="font-size:15px;font-weight:500;color:rgba(255,255,255,0.6);">Mail Scan</div>
-  <a href="/" style="margin-left:auto; text-decoration:none; font-size:12px; color:var(--accent-mid); border:1px solid rgba(255,255,255,0.25); padding:5px 12px; border-radius:6px;">← Back to trustEd</a>
+  <button onclick="mailOpenArchive()" style="margin-left:auto; cursor:pointer; text-decoration:none; font-size:12px; color:#fff; background:var(--accent); border:none; padding:6px 14px; border-radius:6px; font-weight:600;">📁 Filing cabinet</button>
+  <a href="/" style="margin-left:12px; text-decoration:none; font-size:12px; color:var(--accent-mid); border:1px solid rgba(255,255,255,0.25); padding:5px 12px; border-radius:6px;">← Back to trustEd</a>
   <div class="header-module" style="margin-left:16px;">Bedrock Association Management</div>
 </div>
 
@@ -454,7 +455,7 @@
         </div>
         <div style="background:#F0F0F8;border:1px solid var(--border);border-radius:var(--radius);padding:10px;text-align:center;">
           <div style="font-size:22px;font-weight:700;color:var(--text-3);" id="discardCount">0</div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-3);margin-top:2px;">Discard</div>
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-3);margin-top:2px;">Low</div>
         </div>
       </div>
     </div>
@@ -1015,9 +1016,135 @@ function mailViewPdf(key) {
   alert('No PDF available — file this scan first, then View PDF opens the stored copy.');
 }
 
-// Init — start empty; load the real filed-mail queue.
+// ── Filing cabinet: browse/search ALL filed scanned mail ───────────────────
+var _archiveState = { q: '', community_id: '', type: '', urgency: '', days: 0, offset: 0, limit: 50 };
+var _archiveItems = [];
+
+function _urgBadge(u) {
+  var map = { critical: ['#B42318', '#FEE4E2'], high: ['#B54708', '#FEF0C7'], normal: ['#175CD3', '#D1E9FF'], low: ['#475467', '#EAECF0'] };
+  var c = map[u] || map.normal;
+  return '<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:' + c[0] + ';background:' + c[1] + ';padding:2px 7px;border-radius:99px;">' + (u || 'normal') + '</span>';
+}
+function _workBadge(w) {
+  if (!w) return '<span style="font-size:11px;color:var(--text-3);">— not on board</span>';
+  var done = w.status === 'done' || w.status === 'dismissed';
+  var overdue = !done && w.due_at && new Date(w.due_at) < new Date();
+  var color = done ? '#067647' : (overdue ? '#B42318' : '#475467');
+  var label = done ? '✓ ' + w.status : (w.status || 'new');
+  return '<span style="font-size:11px;color:' + color + ';font-weight:600;">' + label + '</span>'
+    + (w.owner ? '<span style="font-size:11px;color:var(--text-3);"> · ' + w.owner + '</span>' : '')
+    + (overdue ? '<span style="font-size:11px;color:#B42318;font-weight:700;"> · OVERDUE</span>' : '');
+}
+
+function mailOpenArchive() {
+  var panel = document.getElementById('rightPanel');
+  panel.innerHTML =
+    '<div style="padding:22px 26px; height:100%; overflow-y:auto;">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">'
+    + '<div style="font-size:19px;font-weight:700;color:var(--text-1);">📁 Filing cabinet</div>'
+    + '<div id="arcCount" style="font-size:12px;color:var(--text-3);"></div>'
+    + '<button onclick="resetToEmpty()" style="margin-left:auto;font-size:12px;background:none;border:1px solid var(--border);border-radius:6px;padding:5px 11px;cursor:pointer;color:var(--text-2);">Close</button>'
+    + '</div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">'
+    + '<input id="arcQ" placeholder="Search mail — sender, subject, address…" oninput="_arcDebounce()" style="flex:1;min-width:200px;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:7px;">'
+    + '<select id="arcCommunity" onchange="_arcApply()" style="font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:7px;"><option value="">All communities</option></select>'
+    + '<select id="arcUrgency" onchange="_arcApply()" style="font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:7px;"><option value="">All urgency</option><option value="critical">Critical</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select>'
+    + '<select id="arcDays" onchange="_arcApply()" style="font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:7px;"><option value="0">All time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select>'
+    + '</div>'
+    + '<div id="arcList"><div style="padding:40px;text-align:center;color:var(--text-3);">Loading…</div></div>'
+    + '</div>';
+  // restore control values
+  document.getElementById('arcQ').value = _archiveState.q;
+  document.getElementById('arcUrgency').value = _archiveState.urgency;
+  document.getElementById('arcDays').value = String(_archiveState.days);
+  _arcFetch();
+}
+var _arcTimer = null;
+function _arcDebounce() { clearTimeout(_arcTimer); _arcTimer = setTimeout(_arcApply, 300); }
+function _arcApply() {
+  _archiveState.q = (document.getElementById('arcQ') || {}).value || '';
+  _archiveState.community_id = (document.getElementById('arcCommunity') || {}).value || '';
+  _archiveState.urgency = (document.getElementById('arcUrgency') || {}).value || '';
+  _archiveState.days = parseInt((document.getElementById('arcDays') || {}).value || '0', 10);
+  _archiveState.offset = 0;
+  _arcFetch();
+}
+function _arcFetch() {
+  var s = _archiveState;
+  var url = '/api/mail-scan/archive?limit=' + s.limit + '&offset=' + s.offset
+    + (s.q ? '&q=' + encodeURIComponent(s.q) : '')
+    + (s.community_id ? '&community_id=' + encodeURIComponent(s.community_id) : '')
+    + (s.urgency ? '&urgency=' + encodeURIComponent(s.urgency) : '')
+    + (s.days ? '&days=' + s.days : '');
+  fetch(url).then(function (r) { return r.json(); }).then(function (j) {
+    _archiveItems = j.items || [];
+    // populate community dropdown once
+    var sel = document.getElementById('arcCommunity');
+    if (sel && sel.options.length <= 1 && j.communities) {
+      j.communities.forEach(function (c) { var o = document.createElement('option'); o.value = c.id; o.textContent = c.name + ' (' + c.count + ')'; sel.appendChild(o); });
+      sel.value = _archiveState.community_id;
+    }
+    var cnt = document.getElementById('arcCount');
+    if (cnt) cnt.textContent = (j.total || 0) + ' item' + (j.total === 1 ? '' : 's')
+      + (j.facets ? ' · ' + j.facets.critical + ' critical · ' + j.facets.high + ' high' : '');
+    _arcRenderList(j);
+  }).catch(function () {
+    var host = document.getElementById('arcList');
+    if (host) host.innerHTML = '<div style="padding:40px;text-align:center;color:var(--red);">Could not load the archive.</div>';
+  });
+}
+function _arcRenderList(j) {
+  var host = document.getElementById('arcList');
+  if (!host) return;
+  if (!_archiveItems.length) { host.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-3);">No filed mail matches these filters.</div>'; return; }
+  host.innerHTML = _archiveItems.map(function (it, i) {
+    var c = it.classification || {};
+    var when = it.filed_at ? new Date(it.filed_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+    return '<div onclick="mailArchiveOpen(' + i + ')" style="display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1px solid var(--border);border-radius:9px;margin-bottom:8px;cursor:pointer;background:#fff;" onmouseover="this.style.borderColor=\'var(--accent)\'" onmouseout="this.style.borderColor=\'var(--border)\'">'
+      + '<div style="font-size:20px;line-height:1.2;">' + (c.typeEmoji || '📄') + '</div>'
+      + '<div style="flex:1;min-width:0;">'
+      + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:3px;flex-wrap:wrap;">' + _urgBadge(it.urgency) + '<span style="font-weight:600;font-size:13.5px;color:var(--text-1);">' + (it.title || it.filename || 'Scanned mail') + '</span></div>'
+      + '<div style="font-size:12px;color:var(--text-2);margin-bottom:4px;line-height:1.5;">' + ((it.summary || '').slice(0, 160)) + ((it.summary || '').length > 160 ? '…' : '') + '</div>'
+      + '<div style="font-size:11.5px;color:var(--text-3);">' + when + (it.community ? ' · ' + it.community : '') + (it.type ? ' · ' + it.type : '') + ' · ' + _workBadge(it.work) + '</div>'
+      + '</div>'
+      + '<div style="font-size:11px;color:var(--accent);white-space:nowrap;">View →</div>'
+      + '</div>';
+  }).join('');
+  // pager
+  var s = _archiveState;
+  if (j.total > s.limit) {
+    var pages = Math.ceil(j.total / s.limit), cur = Math.floor(s.offset / s.limit) + 1;
+    host.innerHTML += '<div style="display:flex;justify-content:center;gap:10px;align-items:center;margin-top:10px;font-size:12px;color:var(--text-2);">'
+      + '<button ' + (s.offset <= 0 ? 'disabled' : '') + ' onclick="_arcPage(-1)" style="padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">← Prev</button>'
+      + 'Page ' + cur + ' of ' + pages
+      + '<button ' + (s.offset + s.limit >= j.total ? 'disabled' : '') + ' onclick="_arcPage(1)" style="padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">Next →</button></div>';
+  }
+}
+function _arcPage(d) { _archiveState.offset = Math.max(0, _archiveState.offset + d * _archiveState.limit); _arcFetch(); }
+function mailArchiveOpen(i) {
+  var it = _archiveItems[i];
+  if (!it) return;
+  var r = Object.assign({}, it.classification || {});
+  r._doc_id = it.id;
+  r.filename = it.filename || it.title || 'Scanned mail';
+  r._fromArchive = true;
+  RESULTS['a_' + it.id] = r;
+  showResult('a_' + it.id);
+}
+
+// ── Real summary tiles (replace demo counts with actual filed-mail facets) ──
+function mailLoadSummary() {
+  fetch('/api/mail-scan/archive?limit=1').then(function (r) { return r.json(); }).then(function (j) {
+    var f = j.facets || { critical: 0, high: 0, normal: 0, low: 0 };
+    var set = function (id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+    set('critCount', f.critical); set('highCount', f.high); set('normCount', f.normal); set('discardCount', f.low || 0);
+  }).catch(function () { /* leave as-is on error */ });
+}
+
+// Init — start empty; load the real filed-mail queue + real summary.
 resetToEmpty();
 mailLoadQueue();
+mailLoadSummary();
 </script>
 </body>
 </html>

@@ -138,6 +138,7 @@ router.post('/log', upload.single('file'), async (req, res) => {
           meta.routing_owner && `Route: ${meta.routing_owner}`, meta.summary].filter(Boolean).join(' · ').slice(0, 2000),
       created_by_mgmt_company: 'Bedrock',
       source_origin: 'mail_scan',
+      uploaded_at: new Date().toISOString(),
     }).select('id').single();
     if (dErr) throw dErr;
 
@@ -163,20 +164,99 @@ router.get('/recent', async (req, res) => {
   try {
     const lim = Math.min(parseInt(req.query.limit, 10) || 25, 100);
     const { data, error } = await supabase.from('library_documents')
-      .select('id, title, file_name_original, page_count, created_at, extraction_notes, communities:community_id(name)')
-      .eq('category', 'scanned_mail').order('created_at', { ascending: false }).limit(lim);
+      .select('id, title, file_name_original, page_count, uploaded_at, extraction_notes, communities:community_id(name)')
+      .eq('category', 'scanned_mail').order('uploaded_at', { ascending: false }).limit(lim);
     if (error) throw error;
     const items = (data || []).map((d) => {
       let classification = null;
       try { if (d.extraction_notes && d.extraction_notes.trim().startsWith('{')) classification = JSON.parse(d.extraction_notes); } catch (_) {}
       return {
         id: d.id, title: d.title, filename: d.file_name_original, pages: d.page_count,
-        filed_at: d.created_at, community: d.communities ? d.communities.name : null, classification,
+        filed_at: d.uploaded_at, community: d.communities ? d.communities.name : null, classification,
       };
     });
     res.json({ items });
   } catch (err) {
     console.error('[mail-scan] recent failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// --- GET /archive — the filing cabinet: ALL filed scanned mail, filterable ---
+// Every logged scan lands in library_documents(category='scanned_mail'); this is
+// the browse/search surface over that. Urgency + type live inside the
+// classification JSON (extraction_notes), not columns, so we fetch the matching
+// set (category + community + date window, hard-capped) and filter/facet/paginate
+// in JS. Mail is intrinsically low-volume; the 3000 cap holds for years. If mail
+// volume ever climbs, promote urgency/type to real columns and filter in SQL.
+router.get('/archive', async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim().toLowerCase();
+    const communityId = req.query.community_id || null;
+    const typeF = (req.query.type || '').trim().toLowerCase();
+    const urgencyF = (req.query.urgency || '').trim().toLowerCase();
+    const days = parseInt(req.query.days, 10) || 0;   // 0 = all time
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+    let query = supabase.from('library_documents')
+      .select('id, title, file_name_original, page_count, uploaded_at, extraction_notes, community_id, communities:community_id(name)')
+      .eq('category', 'scanned_mail').order('uploaded_at', { ascending: false }).limit(3000);
+    if (communityId) query = query.eq('community_id', communityId);
+    if (days > 0) query = query.gte('uploaded_at', new Date(Date.now() - days * 864e5).toISOString());
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // Parse classification + normalize into a flat row.
+    let rows = (data || []).map((d) => {
+      let c = null;
+      try { if (d.extraction_notes && d.extraction_notes.trim().startsWith('{')) c = JSON.parse(d.extraction_notes); } catch (_) {}
+      const urgency = (c && c.urgency) || 'normal';
+      const type = (c && c.type) || 'Unclassified';
+      return {
+        id: d.id, title: d.title, filename: d.file_name_original, pages: d.page_count,
+        filed_at: d.uploaded_at, community: d.communities ? d.communities.name : null,
+        community_id: d.community_id, type, urgency,
+        summary: (c && c.summary) || null, routing_owner: (c && (c.routing_owner || (c.routing && c.routing.owner))) || null,
+        classification: c,
+      };
+    });
+
+    // Communities facet (distinct present) — for the filter dropdown.
+    const commMap = {};
+    rows.forEach((r) => { if (r.community_id) commMap[r.community_id] = { id: r.community_id, name: r.community || '—', count: (commMap[r.community_id] ? commMap[r.community_id].count : 0) + 1 }; });
+
+    // Apply text/type/urgency filters in JS.
+    if (typeF) rows = rows.filter((r) => (r.type || '').toLowerCase().includes(typeF));
+    if (urgencyF) rows = rows.filter((r) => (r.urgency || '').toLowerCase() === urgencyF);
+    if (q) rows = rows.filter((r) => [r.title, r.filename, r.summary, r.type, r.community].filter(Boolean).join(' ').toLowerCase().includes(q));
+
+    // Facets on the filtered set — real counts for the summary tiles.
+    const facets = { critical: 0, high: 0, normal: 0, low: 0 };
+    const typeCounts = {};
+    rows.forEach((r) => { if (facets[r.urgency] != null) facets[r.urgency]++; typeCounts[r.type] = (typeCounts[r.type] || 0) + 1; });
+
+    const total = rows.length;
+    const page = rows.slice(offset, offset + limit);
+
+    // Attach work-item status for the current page (bounded ≤ limit ids).
+    const ids = page.map((r) => r.id);
+    if (ids.length) {
+      const { data: wis } = await supabase.from('work_items')
+        .select('library_document_id, status, assigned_to, sla_due_at')
+        .in('library_document_id', ids);
+      const byDoc = {};
+      (wis || []).forEach((w) => { if (!byDoc[w.library_document_id]) byDoc[w.library_document_id] = w; });
+      page.forEach((r) => { const w = byDoc[r.id]; if (w) r.work = { status: w.status, owner: w.assigned_to, due_at: w.sla_due_at }; });
+    }
+
+    res.json({
+      items: page, total, offset, limit,
+      facets, type_counts: typeCounts,
+      communities: Object.values(commMap).sort((a, b) => b.count - a.count),
+    });
+  } catch (err) {
+    console.error('[mail-scan] archive failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
