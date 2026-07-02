@@ -102,11 +102,16 @@ router.get('/summary', async (req, res) => {
     const open = (data || []).filter((r) => OPEN_STATUSES.includes(r.status));
     const overdue = open.filter((r) => r.sla_due_at && new Date(r.sla_due_at).getTime() < now);
     const byOwner = {};
-    for (const r of open) { const k = r.assigned_to || 'Unassigned'; byOwner[k] = (byOwner[k] || 0) + 1; }
+    for (const r of open) {
+      const k = r.assigned_to || 'Unassigned';
+      if (!byOwner[k]) byOwner[k] = { open: 0, overdue: 0 };
+      byOwner[k].open += 1;
+      if (r.sla_due_at && new Date(r.sla_due_at).getTime() < now) byOwner[k].overdue += 1;
+    }
     res.json({
       open: open.length, overdue: overdue.length,
       critical_open: open.filter((r) => r.urgency === 'critical').length,
-      by_owner: byOwner,
+      by_owner: byOwner,   // { owner: { open, overdue } }
     });
   } catch (err) {
     console.error('[work_items] summary failed:', err.message);

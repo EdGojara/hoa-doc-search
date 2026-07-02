@@ -701,7 +701,7 @@
   function card(n,label,color){ return '<div style="background:#fff; border:1px solid #e2e8f0; border-left:3px solid '+color+'; border-radius:8px; padding:10px 16px; min-width:110px;"><div style="font-size:22px; font-weight:700; color:'+color+'; line-height:1;">'+n+'</div><div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.04em; margin-top:3px;">'+label+'</div></div>'; }
   function renderSummary(s){
     var el=document.getElementById('wiSummary');
-    var owners=Object.entries(s.by_owner||{}).map(function(e){return '<span style="font-size:11.5px; color:#475569; background:#f1f5f9; padding:2px 8px; border-radius:99px;">'+esc(e[0])+': '+e[1]+'</span>';}).join(' ');
+    var owners=Object.entries(s.by_owner||{}).map(function(e){var v=e[1]||{}; var od=(v.overdue||0)>0?' <span style="color:#b91c1c; font-weight:700;">('+v.overdue+' late)</span>':''; return '<span style="font-size:11.5px; color:#475569; background:#f1f5f9; padding:2px 8px; border-radius:99px;">'+esc(e[0])+': '+(v.open||0)+od+'</span>';}).join(' ');
     el.innerHTML = card(s.open||0,'Open','#0B1D34')+card(s.overdue||0,'Overdue','#b91c1c')+card(s.critical_open||0,'Critical','#9a3412')+'<div style="display:flex; align-items:center; flex-wrap:wrap; gap:5px; padding-left:6px;">'+owners+'</div>';
   }
   function render(items){
@@ -1941,6 +1941,17 @@
       <div id="todayBody" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px;">
         <div style="color:rgba(255,255,255,0.65); font-size:13px; padding:24px; text-align:center; grid-column:1/-1;">Click Refresh to load today's view.</div>
       </div>
+    </div>
+
+    <!-- TEAM STATUS — per-person open items + overdue, from /api/work-items.
+         Visible at a glance so "is it being handled?" is answerable without
+         opening the 📋 Status tab. Hidden when the board is empty. -->
+    <div id="teamStatusPanel" style="display:none; background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px 20px; margin-bottom:18px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div style="font-weight:700; color:#0B1D34; font-size:14px;">📋 Team status — open items by owner</div>
+        <a href="#" onclick="switchTab('status'); return false;" style="font-size:12px; color:#1E2761; text-decoration:none; font-weight:600;">Open Status board →</a>
+      </div>
+      <div id="teamStatusBody" style="display:flex; gap:10px; flex-wrap:wrap;"></div>
     </div>
 
     <div id="homeTilesGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:14px;">
@@ -30735,6 +30746,29 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   // Boot the poller as soon as the home tab is rendered.
 
+  // Per-person open-items summary on Home. Reads /api/work-items/summary
+  // (the Status board's backend). Hidden when the board is empty or not live.
+  function homeTeamStatus() {
+    fetch('/api/work-items/summary').then((r) => r.json()).then((s) => {
+      const panel = document.getElementById('teamStatusPanel');
+      const body = document.getElementById('teamStatusBody');
+      if (!panel || !body) return;
+      const owners = Object.entries(s.by_owner || {});
+      if (!(s.open || owners.length)) { panel.style.display = 'none'; return; }
+      panel.style.display = 'block';
+      const card = (label, open, over, color, owner) => `
+        <div onclick="switchTab('status')" title="Open the Status board" style="cursor:pointer; border:1px solid #e2e8f0; border-left:3px solid ${color}; border-radius:8px; padding:9px 14px; min-width:132px;">
+          <div style="font-weight:600; color:#0B1D34; font-size:13px;">${escapeHtml(label)}</div>
+          <div style="font-size:12px; color:#64748b; margin-top:3px;">${open} open${over ? ` · <span style="color:#b91c1c; font-weight:700;">${over} overdue</span>` : ''}</div>
+        </div>`;
+      let html = card('All open', s.open || 0, s.overdue || 0, '#0B1D34');
+      owners.sort((a, b) => (b[1].open || 0) - (a[1].open || 0)).forEach(([owner, v]) => {
+        html += card(owner, v.open || 0, v.overdue || 0, (v.overdue > 0 ? '#b91c1c' : '#1E2761'));
+      });
+      body.innerHTML = html;
+    }).catch(() => { /* board not live yet — leave hidden */ });
+  }
+
   function homeRender() {
     const grid = document.getElementById('homeTilesGrid');
     if (!grid) return;
@@ -30743,6 +30777,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // navigating away and back doesn't re-fetch. Operator clicks
     // Refresh when they want new data (cost-conscious — no polling).
     todayLoad(false);
+    try { homeTeamStatus(); } catch (_) {}
     const tileKeys = homeGetTiles();
     // Personalize the welcome line with the operator's first name when we have it
     const me = window.currentUser || {};
