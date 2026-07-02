@@ -43,6 +43,8 @@ const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
 const { resolveProperty, resolveContact } = require('../lib/entity_resolution');
+const { createWorkItem } = require('./work_items');
+const { defaultRoute } = require('../lib/ops/sla');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -532,6 +534,33 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
     if (supersedesId) {
       await markEmailSupersededInSubstrate(supersedesId, intake.id);
     }
+
+    // Drop this email onto the team Status board so it can't sit unactioned
+    // (BAM Operations Standard: email answered by EOD). Routing follows the
+    // subject (legal/board -> Ed critical; invoice -> Martha; else Community
+    // Manager), but respects the email's own extracted urgency for ordinary
+    // correspondence. Safe helper — no-ops if work_items isn't live yet.
+    try {
+      const route = defaultRoute(subject || '');
+      const emailUrg = { high: 'high', medium: 'normal', low: 'low' }[(extracted && extracted.urgency) || ''] || 'normal';
+      const boardBump = (updated && updated.board_relevant) ? 'high' : 'low';
+      // Most urgent of: the subject's route SLA, the email's own urgency, and a
+      // board-relevance bump — so an invoice keeps its EOD SLA even on a "low"
+      // email, and an urgent homeowner note still escalates.
+      const rank = { critical: 3, high: 2, normal: 1, low: 0 };
+      const urgency = [route.urgency, emailUrg, boardBump].reduce((a, b) => (rank[b] > rank[a] ? b : a));
+      await createWorkItem({
+        community_id: community_id || null,
+        source_type: 'email',
+        item_type: route.item_type === 'other' ? 'owner_correspondence' : route.item_type,
+        urgency,
+        assigned_to: route.owner,
+        title: (subject && subject.trim()) || 'Email (no subject)',
+        summary: (extracted && extracted.summary) || null,
+        source_ref: `email_intake:${intake.id}`,
+        created_by: 'email_intake',
+      });
+    } catch (_) { /* board is best-effort — never block the intake */ }
 
     res.status(201).json({
       intake: updated,
