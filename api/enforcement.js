@@ -4400,6 +4400,31 @@ function _newCureDate(decision) {
 // Helper: regenerate the letter PDF + draft interaction for a violation
 // after its stage has been bumped. Reuses the existing generator with the
 // updated context. Returns { letter_path, interaction_id } or { error }.
+// Turn a free-text finding into a clean, concise "what was observed" line for
+// the letter. Staff sometimes paste a WHOLE drafted letter into the manual-
+// violation Description; the letter template already supplies the greeting,
+// §-citation, ask, cure period and hearing rights, so a pasted letter renders
+// as a letter-inside-a-letter (Ed 2026-07-02, 19718 Norfolk Ridge). Strips
+// carriage returns (they render as "Ð" garbage) + markdown, and when the text
+// looks like a full letter, keeps only the observation sentence(s).
+function _cleanFinding(text, categoryLabel) {
+  if (!text) return null;
+  let t = String(text).replace(/\r/g, '').replace(/\*\*|__|[`>#]/g, '').trim();
+  const looksLikeLetter = /\bdear\b/i.test(t) || /sincerely|should you have questions|request a hearing|no further action/i.test(t);
+  // Drop a leading "Dear <names>," greeting line (it ends in a comma, so the
+  // sentence splitter would otherwise glue it onto the first real sentence).
+  t = t.replace(/^\s*dear\b[^\n]*\n+/i, '').trim();
+  if (looksLikeLetter) {
+    const sentences = t.replace(/\n+/g, ' ').split(/(?<=[.!?])\s+/);
+    const obs = sentences.filter((s) =>
+      /\b(observed|noted|notic\w+|found|there (is|are|was|were)|has been|have been|appears?|appearing|exceeds|growing|leaking|damaged|overgrown)\b/i.test(s)
+      && !/association is responsible|governing document|per\s+(\*\*)?section|declaration of covenants|please resolve|we ask that|you also have the right|no further action|prior to any fines|contact our office/i.test(s));
+    t = obs.length ? obs.slice(0, 2).join(' ') : (categoryLabel ? `${categoryLabel} observed at this property requiring the owner's attention.` : t.slice(0, 300));
+  }
+  t = t.replace(/\n{2,}/g, ' ').replace(/[ \t]+/g, ' ').replace(/\s+\n/g, '\n').trim();
+  return t.slice(0, 600) || null;
+}
+
 async function _draftLetterForBumpedViolation(violation, decision, communityId, opts = {}) {
   try {
     // Pull the joined data the letter generator needs
@@ -4516,8 +4541,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
         // manual violation has no AI photo analysis, so use the staff-provided
         // description (opts.ai_description), then the observation's own, then a
         // category-label fallback so a courtesy notice can always be drafted.
-        const findingText = opts.ai_description
-          || (obsRow && obsRow.ai_description)
+        const findingText = _cleanFinding(opts.ai_description || (obsRow && obsRow.ai_description), catRow && catRow.label)
           || (catRow && catRow.label ? `${catRow.label} observed at this property requiring the owner's attention.` : null);
         if (!findingText) return null;
         return {
