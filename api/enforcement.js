@@ -2177,7 +2177,7 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
             .select('id, primary_category_id, current_stage, cure_period_ends_at, cure_days_override, opened_at, board_priority_at_open, opened_from_observation_id, enforcement_categories(slug, label, description)')
             .in('id', violationIds.length ? violationIds : ['00000000-0000-0000-0000-000000000000']),
           supabase.from('property_observations')
-            .select('id, ai_description, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
+            .select('id, ai_description, reviewer_notes, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
             .in('id', observationIds.length ? observationIds : ['00000000-0000-0000-0000-000000000000']),
           supabase.from('v_current_property_owners')
             .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
@@ -2300,10 +2300,17 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
             } catch (_) {}
           }
 
+          // Manual entries have no AI-generated ai_description — fall back to the
+          // cleaned reviewer_notes (staff's typed finding), same as lock-and-batch
+          // and the draft path. Without this, a bundle containing a manual
+          // violation fails the letter validator. Ed 2026-07-02.
+          const bundleFinding = (o && o.ai_description && o.ai_description.trim().length >= 10)
+            ? o.ai_description
+            : _cleanFinding((o && o.reviewer_notes) || '', v.enforcement_categories && v.enforcement_categories.label);
           violationsCtx.push({
             violation_id: v.id,
             category_label: v.enforcement_categories && v.enforcement_categories.label,
-            ai_description: o && o.ai_description,
+            ai_description: bundleFinding,
             observation_captured_at: (photo && photo.captured_at) || (o && o.created_at),
             governing_doc: govDoc,
             prior_notices: (priors || []).map((pv) => ({ date: pv.opened_at, stage: pv.current_stage })),
@@ -3038,11 +3045,21 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         if (vio.opened_from_observation_id) {
           const { data: obs } = await supabase
             .from('property_observations')
-            .select('ai_description, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
+            .select('ai_description, reviewer_notes, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
             .eq('id', vio.opened_from_observation_id)
             .maybeSingle();
           if (obs) {
-            observation = { ai_description: obs.ai_description, severity: obs.severity, captured_at: (obs.inspection_photos && obs.inspection_photos.captured_at) || obs.created_at };
+            // Manual entries (staff-typed, description-only) never get an
+            // AI-generated ai_description — the finding lives in reviewer_notes,
+            // often pasted as a whole drafted letter. The letter validator
+            // requires a finding (min 10 chars), so fall back to the cleaned
+            // reviewer_notes when ai_description is empty. Without this, every
+            // manual violation letter fails to regenerate at Lock+Print time
+            // ("Could not regenerate any letter PDFs"). Ed 2026-07-02.
+            const finding = (obs.ai_description && obs.ai_description.trim().length >= 10)
+              ? obs.ai_description
+              : _cleanFinding(obs.reviewer_notes || '', catRow && catRow.label);
+            observation = { ai_description: finding, severity: obs.severity, captured_at: (obs.inspection_photos && obs.inspection_photos.captured_at) || obs.created_at };
             // Close-up photo
             if (obs.inspection_photos && obs.inspection_photos.storage_path) {
               try {
