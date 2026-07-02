@@ -922,6 +922,9 @@ app.use('/api/email-intelligence', emailIntakeRouter);
 const { router: mailScanRouter } = require('./api/mail_scan');
 app.use('/api/mail-scan', mailScanRouter);
 
+const { router: workItemsRouter } = require('./api/work_items');
+app.use('/api/work-items', workItemsRouter);
+
 // Email campaigns — community blasts (single-community or all-communities,
 // each recipient rendered with their community's letterhead). Migration 185.
 const emailCampaignsRouter = require('./api/email_campaigns');

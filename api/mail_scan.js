@@ -26,6 +26,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const { safeErrorMessage } = require('./_safe_error');
+const { createWorkItem } = require('./work_items');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -136,7 +137,17 @@ router.post('/log', upload.single('file'), async (req, res) => {
     }).select('id').single();
     if (dErr) throw dErr;
 
-    res.json({ ok: true, library_document_id: doc.id, record_ref: `ML-${Date.now().toString().slice(-6)}` });
+    // Drop it onto the Status board so it can't sit on a desk. Safe helper —
+    // returns null (won't fail the filing) if work_items isn't live yet.
+    const workItemId = await createWorkItem({
+      community_id: meta.community_id || null, source_type: 'mail_scan',
+      item_type: (meta.type || '').toLowerCase().includes('invoice') ? 'invoice' : undefined,
+      urgency: meta.urgency, title: meta.subject || `Scanned mail — ${meta.type || 'unclassified'}`,
+      summary: meta.summary || null, assigned_to: meta.routing_owner || null,
+      library_document_id: doc.id, created_by: 'mail_scan',
+    });
+
+    res.json({ ok: true, library_document_id: doc.id, work_item_id: workItemId, record_ref: `ML-${Date.now().toString().slice(-6)}` });
   } catch (err) {
     console.error('[mail-scan] log failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
