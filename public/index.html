@@ -38384,8 +38384,9 @@ ${questionsPage}
                 <td style="padding:6px 8px;">${p.meeting_date || '—'}</td>
                 <td style="padding:6px 8px; text-align:center;"><span style="background:#f0f0f0; padding:2px 8px; border-radius:10px; font-size:10px;">${escapeHtml(p.status)}</span></td>
                 <td style="padding:6px 8px; text-align:center; color:${statusColor}; font-weight:500;">${ready}/${total} (${pctOk}%)</td>
-                <td style="padding:6px 8px; text-align:right;">
+                <td style="padding:6px 8px; text-align:right; white-space:nowrap;">
                   <button class="secondary-btn" style="font-size:11px; padding:4px 10px;" onclick="packetsLoadDetail('${p.id}')">Open →</button>
+                  <button style="font-size:11px; padding:4px 10px; margin-left:6px; background:#fff; color:#b91c1c; border:1px solid #fca5a5; border-radius:6px; cursor:pointer;" onclick="packetsDelete('${p.id}', '${escapeHtml((p.community_name || '').replace(/'/g, ''))} — ${escapeHtml((p.period_label || '').replace(/'/g, ''))}')">Delete</button>
                 </td>
               </tr>`;
             }).join('')}
@@ -38395,6 +38396,23 @@ ${questionsPage}
       wrap.innerHTML = `<div style="color:#a00;">Failed: ${escapeHtml(e.message)}</div>`;
     }
   }
+
+  async function packetsDelete(packetId, label) {
+    if (!confirm(`Delete this board packet?\n\n${label || ''}\n\nThis permanently removes the packet and every section in it. It cannot be undone. (Distributed PDFs already sent to a board are not affected.)`)) return;
+    try {
+      const r = await fetch(`/api/board-packets/${packetId}`, { method: 'DELETE' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // If we were viewing this packet's detail, clear it.
+      if (packetsCurrentPacketId === packetId) {
+        packetsCurrentPacketId = null;
+        const d = document.getElementById('packets-detail-container');
+        if (d) d.innerHTML = '';
+      }
+      packetsLoadList();
+    } catch (e) { alert('Could not delete the packet: ' + e.message); }
+  }
+  window.packetsDelete = packetsDelete;
 
   async function packetsLoadDetail(packetId) {
     packetsCurrentPacketId = packetId;
