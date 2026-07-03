@@ -3167,6 +3167,12 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
           continue;
         }
 
+        // Load the finalized letter PDF once — its page count is recorded on the
+        // interaction (for Bedrock billing: pages printed) AND reused for the
+        // merged batch PDF below, so we parse it a single time.
+        const src = await PDFDocument.load(pdfBuffer);
+        const letterPageCount = src.getPageIndices().length;
+
         // Update violation's cure_period_ends_at + the interaction's
         // content path + postmark_date + sent_at
         const nowIso = new Date().toISOString();
@@ -3179,6 +3185,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             postmark_date: postmarkIso,
             sent_at: nowIso,
             status: 'sent',
+            page_count: letterPageCount,
             letter_fee_cents:
               vio.current_stage === 'courtesy_1' ? Number(community.letter_fee_courtesy_1_cents || 0)
               : vio.current_stage === 'courtesy_2' ? Number(community.letter_fee_courtesy_2_cents || 2500)
@@ -3231,7 +3238,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         }
 
         // Append to merged batch PDF
-        const src = await PDFDocument.load(pdfBuffer);
+        // src + letterPageCount computed above (single parse per letter).
         const copied = await out.copyPages(src, src.getPageIndices());
         copied.forEach((page) => out.addPage(page));
         included.push(L.id);

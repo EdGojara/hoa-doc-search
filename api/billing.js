@@ -1447,4 +1447,127 @@ router.post('/contracts/:id/management-agreement', async (req, res) => {
   }
 });
 
+// ============================================================================
+// GET /api/billing/activity-report
+//   ?period_start=YYYY-MM-DD&period_end=YYYY-MM-DD&community_id=(optional)
+// Billable production activity per community for a period (Ed 2026-07-02):
+//   - notices_sent   : violation letters mailed (postmark_date in range)
+//   - pages_printed  : physical pages of those letters (deduped by PDF path so
+//                      a bundled letter's pages are counted once)
+//   - arc_*          : ARC/ACC decisions rendered in range (builder_applications
+//                      decided_at), split approved / denied / conditions / other
+// Dates are inclusive on the day boundary in the period. Read-only.
+// ============================================================================
+router.get('/activity-report', async (req, res) => {
+  try {
+    const start = (req.query.period_start || '').slice(0, 10);
+    const end = (req.query.period_end || '').slice(0, 10);
+    const communityId = req.query.community_id || null;
+    if (!start || !end) return res.status(400).json({ error: 'period_start_and_period_end_required' });
+    // Inclusive end: compare against < end+1day.
+    const endExclusive = new Date(end + 'T00:00:00Z');
+    endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+    const endEx = endExclusive.toISOString().slice(0, 10);
+
+    const LETTER_TYPES = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
+
+    // Page through — a busy community-month can exceed the 1000-row cap.
+    async function fetchAll(build) {
+      const out = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await build().range(from, from + 999);
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+      return out;
+    }
+
+    // 1) Violation letters mailed in the period (postmark_date = the send date).
+    // page_count arrives with migration 257 — degrade gracefully before it's
+    // applied (pages show as unknown rather than 500ing the report).
+    const letterCols = (cols) => fetchAll(() => {
+      let q = supabase.from('interactions')
+        .select(cols)
+        .in('type', LETTER_TYPES)
+        .not('printed_at', 'is', null)
+        .gte('postmark_date', start)
+        .lt('postmark_date', endEx);
+      if (communityId) q = q.eq('community_id', communityId);
+      return q;
+    });
+    let letters;
+    let hasPageCount = true;
+    try {
+      letters = await letterCols('id, community_id, content, page_count, type, postmark_date');
+    } catch (e) {
+      if (/page_count/.test(e.message || '')) {
+        hasPageCount = false;
+        letters = await letterCols('id, community_id, content, type, postmark_date');
+      } else { throw e; }
+    }
+
+    // 2) ARC/ACC decisions rendered in the period.
+    let decisions = await fetchAll(() => {
+      let q = supabase.from('builder_applications')
+        .select('id, community_id, status, decided_at')
+        .not('decided_at', 'is', null)
+        .gte('decided_at', start + 'T00:00:00Z')
+        .lt('decided_at', endEx + 'T00:00:00Z');
+      if (communityId) q = q.eq('community_id', communityId);
+      return q;
+    });
+
+    // Community name lookup.
+    const { data: comms } = await supabase.from('communities').select('id, name');
+    const nameById = Object.fromEntries((comms || []).map((c) => [c.id, c.name]));
+
+    // Aggregate per community.
+    const byComm = {};
+    const row = (cid) => (byComm[cid] || (byComm[cid] = {
+      community_id: cid, name: nameById[cid] || 'Unknown',
+      notices_sent: 0, pages_printed: 0,
+      arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0,
+      _seenPaths: new Set(),
+    }));
+
+    letters.forEach((l) => {
+      const r = row(l.community_id);
+      r.notices_sent += 1;
+      // Pages: count each physical PDF once (bundled letters share a path).
+      const key = l.content || l.id;
+      if (!r._seenPaths.has(key)) {
+        r._seenPaths.add(key);
+        r.pages_printed += Number(l.page_count || 0);
+      }
+    });
+    decisions.forEach((d) => {
+      const r = row(d.community_id);
+      const s = (d.status || '').toLowerCase();
+      if (s === 'approved') r.arc_approved += 1;
+      else if (s === 'denied' || s === 'rejected') r.arc_denied += 1;
+      else if (s.includes('condition')) r.arc_conditions += 1;
+      else r.arc_other += 1;
+    });
+
+    const communities = Object.values(byComm)
+      .map(({ _seenPaths, ...r }) => ({ ...r, pages_unknown: r.notices_sent > 0 && r.pages_printed === 0 }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const totals = communities.reduce((t, r) => ({
+      notices_sent: t.notices_sent + r.notices_sent,
+      pages_printed: t.pages_printed + r.pages_printed,
+      arc_approved: t.arc_approved + r.arc_approved,
+      arc_denied: t.arc_denied + r.arc_denied,
+      arc_conditions: t.arc_conditions + r.arc_conditions,
+      arc_other: t.arc_other + r.arc_other,
+    }), { notices_sent: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0 });
+
+    res.json({ period: { start, end }, communities, totals, page_tracking: hasPageCount });
+  } catch (err) {
+    console.error('[billing] activity-report failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };
