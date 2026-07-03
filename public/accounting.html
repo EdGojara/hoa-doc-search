@@ -1384,7 +1384,10 @@
   // ── Online Payments (Stripe Connect) ───────────────────────────────────────
   async function renderOnlinePay() {
     $('body').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
-    const j = await fetch(`/api/payments/connect/status?community_id=${CID}`).then((r)=>r.json()).catch((e)=>({error:e.message}));
+    const [j, pf] = await Promise.all([
+      fetch(`/api/payments/connect/status?community_id=${CID}`).then((r)=>r.json()).catch((e)=>({error:e.message})),
+      fetch(`/api/payments/connect/portfolio-status`).then((r)=>r.json()).catch(()=>({})),
+    ]);
     if (j.error) { $('body').innerHTML = `<div class="card" style="color:var(--err)">${esc(j.error)}</div>`; return; }
     const badge = !j.has_account ? '<span class="badge err">Not set up</span>'
       : j.onboarded ? '<span class="badge ok">Ready — accepting payments</span>'
@@ -1392,7 +1395,32 @@
     const BTN = 'padding:9px 18px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-weight:700; cursor:pointer; font-size:13.5px;';
     const GHOST = 'padding:8px 14px; border-radius:8px; border:1px solid var(--rule); background:#fff; color:var(--navy); font-weight:600; cursor:pointer; font-size:12.5px;';
     const kv = (k,v)=>`<div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--rule);"><span class="muted">${k}</span><span>${v}</span></div>`;
-    $('body').innerHTML = `
+    // Stripe MODE banner — sandbox vs live is the #1 thing to not get wrong.
+    const modeBanner = (pf && pf.mode) ? (
+      pf.mode === 'live'
+        ? `<div class="card" style="margin-bottom:14px; background:#f0fdf4; border:1px solid #86efac;"><b style="color:#166534;">● LIVE mode</b> <span class="muted">— real payments settle to each association's bank.</span></div>`
+        : pf.mode === 'test'
+        ? `<div class="card" style="margin-bottom:14px; background:#fffbeb; border:1px solid #fbbf24;"><b style="color:#92400e;">⚠ SANDBOX (test) mode</b> <span class="muted">— no real money moves. To go live: activate the Stripe account, put the <code>sk_live_</code> + <code>whsec_</code> keys on Render, then re-onboard each community (test accounts don't carry to live).</span></div>`
+        : `<div class="card" style="margin-bottom:14px; background:#fef2f2; border:1px solid #fecaca;"><b style="color:#991b1b;">Stripe not configured</b> <span class="muted">— set STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET on Render.</span></div>`
+    ) : '';
+    // Portfolio onboarding — every community's status on one screen.
+    const pfRows = (pf && pf.communities || []).map((c) => {
+      const b = c.onboarded ? '<span class="badge ok">Ready</span>'
+        : c.has_account ? '<span class="badge" style="background:#fef3c7; color:#92400e;">Incomplete</span>'
+        : '<span class="badge err">Not started</span>';
+      const act = c.onboarded ? 'Manage' : (c.has_account ? 'Finish' : 'Set up');
+      const here = c.id === CID ? ' style="font-weight:700;"' : '';
+      return `<tr${here}><td style="padding:6px 8px;">${esc(c.name)}${c.id===CID?' <span class="muted">(current)</span>':''}</td>
+        <td style="padding:6px 8px;">${b}</td>
+        <td style="padding:6px 8px; text-align:right;"><button style="${GHOST}" onclick="opConnectFor('${c.id}','${esc((c.name||'').replace(/'/g,''))}')">${act} →</button></td></tr>`;
+    }).join('');
+    const pfCard = (pf && pf.communities && pf.communities.length) ? `
+      <div class="card" style="margin-bottom:14px;">
+        <h2 class="sec" style="margin-bottom:4px;">All communities <span class="muted" style="font-size:13px;">· ${pf.summary.enabled}/${pf.summary.total} ready</span></h2>
+        <div class="sub muted" style="margin-bottom:8px;">Onboard any community from here — each connects its own bank. The board treasurer can complete the Stripe form from the link that opens.</div>
+        <table style="width:100%; border-collapse:collapse; font-size:13px;"><tbody>${pfRows}</tbody></table>
+      </div>` : '';
+    $('body').innerHTML = modeBanner + pfCard + `
       <div class="card" style="margin-bottom:14px;">
         <h2 class="sec">Online payments <span class="muted" style="font-size:13px;">· Stripe</span></h2>
         <div class="sub muted" style="margin-bottom:12px;">Each community has its own Stripe connected account, so assessment payments settle to that association's own bank — never pooled.</div>
@@ -1421,6 +1449,15 @@
     if (j.error) { st.innerHTML = '<span style="color:var(--err)">'+esc(j.error)+'</span>'; return; }
     st.textContent = 'Opening Stripe onboarding in a new tab…';
     window.open(j.onboarding_url, '_blank');
+  };
+  // Onboard ANY community from the portfolio table (not just the selected one).
+  window.opConnectFor = async function(communityId, name) {
+    if (!communityId) return;
+    const j = await fetch('/api/payments/connect/onboard', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({community_id:communityId, return_url:location.href})}).then((r)=>r.json()).catch((e)=>({error:e.message}));
+    if (j.error) { alert('Could not start onboarding for '+(name||'this community')+': '+j.error); return; }
+    window.open(j.onboarding_url, '_blank');
+    // Give Stripe a moment, then refresh the portfolio so the status updates.
+    setTimeout(renderOnlinePay, 1200);
   };
   window.opTestOnboard = async function() {
     const st = $('opStatus'); st.textContent = 'Completing test onboarding via the API (no form)…';

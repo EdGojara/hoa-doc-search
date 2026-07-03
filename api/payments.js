@@ -403,6 +403,41 @@ router.get('/connect/status', async (req, res) => {
 });
 
 // ============================================================================
+// GET /api/payments/connect/portfolio-status   (staff)
+// One row per community so onboarding the whole book is a single screen. Uses
+// STORED status (no per-community Stripe call) so it loads instantly; the
+// per-community detail view refreshes live on open. Also reports the Stripe
+// MODE (test vs live) so "we're still in sandbox" is impossible to miss.
+// ============================================================================
+router.get('/connect/portfolio-status', async (req, res) => {
+  try {
+    const key = process.env.STRIPE_SECRET_KEY || '';
+    const mode = /^sk_live_/.test(key) ? 'live' : (/^sk_test_/.test(key) ? 'test' : 'unconfigured');
+    const { data, error } = await supabase.from('communities')
+      .select('id, name, stripe_connected_account_id, stripe_onboarding_status')
+      .order('name');
+    if (error) return res.status(500).json({ error: error.message });
+    const communities = (data || []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      has_account: !!c.stripe_connected_account_id,
+      onboarded: c.stripe_onboarding_status === 'enabled',
+      status: c.stripe_onboarding_status || (c.stripe_connected_account_id ? 'in_progress' : 'not_started'),
+    }));
+    const summary = {
+      total: communities.length,
+      enabled: communities.filter((c) => c.onboarded).length,
+      in_progress: communities.filter((c) => c.has_account && !c.onboarded).length,
+      not_started: communities.filter((c) => !c.has_account).length,
+    };
+    res.json({ ok: true, mode, summary, communities });
+  } catch (err) {
+    console.error('[payments] portfolio status failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // POST /api/payments/connect/test-onboard   { community_id }   (SANDBOX ONLY)
 // Prefills the connected account with Stripe's documented test KYC via the API
 // (which accepts test values the hosted form's validation rejects, e.g. SSN
