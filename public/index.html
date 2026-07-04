@@ -43371,14 +43371,20 @@ ${questionsPage}
     meetings: {
       label: '🗳️ Meetings',
       children: [
+        // Annual membership meeting — full checklist for that workflow.
         { id: 'amschedule',     label: '📅 Schedule',                section: 'Annual Members' },
         { id: 'nominations',    label: '📋 Call for Nominations',    section: 'Annual Members' },
         { id: 'ameetingnotice', label: '🗳️ Annual Meeting Notice',   section: 'Annual Members' },
         { id: 'mailing',        label: '📬 Mail Cover Sheets',       section: 'Annual Members' },
-        { id: 'packets',        label: '📋 Board Packets',           section: 'Board Meetings' },
-        { id: 'minutes',        label: '📝 Minutes',                 section: 'Board Meetings' },
-        { id: 'agenda',         label: '📋 Agenda Generator',        section: 'Board Meetings' },
-        { id: 'recaps',         label: '📰 Recaps',                  section: 'Board Meetings' },
+        { id: 'packets',        label: '📦 Annual Meeting Packet',   section: 'Annual Members' },
+        { id: 'agenda',         label: '📋 Agenda Generator',        section: 'Annual Members' },
+        { id: 'minutes',        label: '📝 Minutes',                 section: 'Annual Members' },
+        // Monthly board meeting — same shared tools, its own checklist.
+        // (Packet / Agenda / Minutes are ONE tool each, surfaced in both.)
+        { id: 'packets',        label: '📦 Board Packet',            section: 'Monthly Board' },
+        { id: 'agenda',         label: '📋 Agenda Generator',        section: 'Monthly Board' },
+        { id: 'minutes',        label: '📝 Minutes',                 section: 'Monthly Board' },
+        { id: 'recaps',         label: '📰 Recaps',                  section: 'Monthly Board' },
       ],
     },
   };
