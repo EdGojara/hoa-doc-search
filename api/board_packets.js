@@ -1737,9 +1737,15 @@ function renderGenericSectionStandaloneHtml({ packet, section, embed = false }) 
 // Day 3 will replace section placeholders with real rendered content per
 // section type. Day 4 will add Puppeteer/Chromium server-side PDF export.
 // ----------------------------------------------------------------------------
-function renderPacketPreviewHtml({ packet, sections, volume }) {
+function renderPacketPreviewHtml({ packet, sections, volume, audience = 'board' }) {
   const community = packet.community || {};
   const assets = resolveCommunityAssets(community);
+  // Cover differs by audience: the homeowner copy is a meeting packet FOR the
+  // membership, not the Board's working packet.
+  const isAttendee = audience === 'attendees';
+  const coverEyebrow = isAttendee
+    ? (packet.meeting_type === 'annual' ? 'Annual Meeting Packet' : 'Homeowner Meeting Packet')
+    : 'Board Meeting Packet';
 
   // If packet.meeting_location isn't set, fall back to detecting a location
   // from the agenda's full_text — that's where meeting locations naturally
@@ -2053,7 +2059,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     </div>
     <div class="cover-period">${esc(packet.period_label || '')}</div>
     <div class="cover-title">
-      <div class="cover-eyebrow">Board Meeting Packet</div>
+      <div class="cover-eyebrow">${esc(coverEyebrow)}</div>
       <div class="cover-community">${esc(community.name || '')}${assets.legal_suffix ? `<br>${esc(assets.legal_suffix)}` : ''}</div>
       <div class="cover-month">For the meeting of ${esc(fmtDate(packet.meeting_date))}</div>
     </div>
