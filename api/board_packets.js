@@ -3067,13 +3067,54 @@ router.post('/:id/sections/:section_key/upload', upload.single('pdf'), async (re
 // ----------------------------------------------------------------------------
 router.post('/:id/sections/:section_key/auto-fill', async (req, res) => {
   try {
-    // Day 1 stub: return a friendly "not yet" message rather than failing.
+    // Prior Minutes — pull the correct finalized minutes from the Minutes
+    // module. The rule is deterministic: the "prior minutes" for a meeting are
+    // the most recent FINALIZED minutes for that community dated BEFORE this
+    // packet's meeting date (the set the board approves at this meeting). No
+    // guessing — matched on community + meeting date.
+    if (req.params.section_key === 'prior_minutes') {
+      const { data: packet } = await supabase
+        .from('board_packets')
+        .select('id, community_id, meeting_date')
+        .eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+      if (!packet) return res.status(404).json({ error: 'packet_not_found' });
+
+      let q = supabase.from('meeting_minutes')
+        .select('id, meeting_date, meeting_type, body_markdown, rendered_document_id')
+        .eq('community_id', packet.community_id).eq('status', 'final')
+        .order('meeting_date', { ascending: false, nullsFirst: false }).limit(1);
+      // Strictly BEFORE this meeting when we know the date.
+      if (packet.meeting_date) q = q.lt('meeting_date', packet.meeting_date);
+      let { data: rows, error: mErr } = await q;
+      if (mErr && /meeting_minutes/.test(mErr.message || '')) {
+        return res.status(503).json({ error: 'minutes_module_not_ready', message: 'Apply migration 258 (Minutes module) first.' });
+      }
+      const minutes = rows && rows[0];
+      if (!minutes) {
+        return res.status(404).json({ error: 'no_prior_minutes', message: 'No finalized minutes found for this community before this meeting date. Finalize the previous meeting’s minutes in the Minutes module, then auto-fill.' });
+      }
+
+      const input_data = {
+        prior_meeting_date: minutes.meeting_date,
+        full_text: minutes.body_markdown || '',
+        source_minutes_id: minutes.id,
+        source: 'minutes_module',
+      };
+      const { error: uErr } = await supabase.from('board_packet_sections')
+        .update({ input_data, status: 'ready' })
+        .eq('packet_id', req.params.id).eq('section_key', 'prior_minutes');
+      if (uErr) throw uErr;
+      return res.json({ ok: true, section_key: 'prior_minutes', pulled: { minutes_id: minutes.id, meeting_date: minutes.meeting_date, meeting_type: minutes.meeting_type } });
+    }
+
+    // Other sections: still stubbed until their module integrations ship.
     res.status(501).json({
       error: 'auto_fill_not_yet_available',
       message: 'Auto-fill from trustEd modules ships after the universal askEd build (next push). For now, use Manual or Upload mode.',
       section_key: req.params.section_key
     });
   } catch (err) {
+    console.error('[board_packets] auto-fill failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

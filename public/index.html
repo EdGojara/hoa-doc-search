@@ -38995,7 +38995,7 @@ ${questionsPage}
         alert(data.message || 'Auto-fill not yet available — use Manual or Upload for now.');
         return;
       }
-      if (!r.ok) throw new Error(data.error || 'failed');
+      if (!r.ok) { alert(data.message || data.error || 'Auto-fill failed.'); return; }
       await packetsLoadDetail(packetsCurrentPacketId);
     } catch (e) {
       alert('Auto-fill failed: ' + e.message);
