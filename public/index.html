@@ -2164,6 +2164,7 @@
       <button class="secondary-btn" id="copyAgendaBtn" onclick="copyText('agendaOutput')" style="display:none">📋 Copy to Clipboard</button>
       <button class="secondary-btn" id="printAgendaBtn" onclick="printAgenda()" style="display:none">🖨️ Print / Save as PDF</button>
       <button class="action-btn" id="saveAgendaBtn" onclick="agendaSaveToCommunity()" style="display:none; background:#0B1D34; color:#fff;" title="Save this agenda to the community. It can then be emailed with the meeting notice and auto-pulled into the board packet.">💾 Save to community</button>
+      <button class="action-btn" id="agendaBlastBtn" onclick="agendaEmailBlast()" style="display:none; background:#0e7490; color:#fff;" title="Email this meeting notice + agenda to every owner in the community with an email on file.">📣 Email notice + agenda to community</button>
       <span id="saveAgendaStatus" style="display:block; font-size:12px; color:#475569; margin-top:6px;"></span>
     </div>
   </div>
@@ -32351,10 +32352,39 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const r = await fetch('/api/agendas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || j.hint || 'save failed');
-      if (st) st.innerHTML = '✓ Saved to <strong>' + community_name + '</strong>' + (body.meeting_date ? ' for ' + body.meeting_date : '') + '. It will auto-pull into that meeting’s board packet (⚡ Auto on the Agenda section) and can be emailed with the notice.';
+      window._savedAgendaId = j.agenda && j.agenda.id;
+      const bb = document.getElementById('agendaBlastBtn'); if (bb) bb.style.display = 'block';
+      if (st) st.innerHTML = '✓ Saved to <strong>' + community_name + '</strong>' + (body.meeting_date ? ' for ' + body.meeting_date : '') + '. It will auto-pull into that meeting’s board packet (⚡ Auto on the Agenda section), or email it to the community below.';
     } catch (e) { if (st) st.textContent = 'Save failed: ' + e.message; }
   }
   window.agendaSaveToCommunity = agendaSaveToCommunity;
+
+  // Email the saved agenda + meeting notice to all owners with email on file.
+  // Preview (real count + the actual email) → explicit confirm → send with a
+  // server-side count guard (refuses if the list changed since preview).
+  async function agendaEmailBlast() {
+    const id = window._savedAgendaId;
+    const st = document.getElementById('saveAgendaStatus');
+    if (!id) { if (st) st.textContent = 'Save the agenda first.'; return; }
+    if (st) st.textContent = 'Checking recipients…';
+    try {
+      const pr = await fetch(`/api/agendas/${id}/notice-blast/preview`, { method: 'POST' });
+      const p = await pr.json();
+      if (!pr.ok) throw new Error(p.error || 'preview failed');
+      if (!p.email_configured) { if (st) st.textContent = 'Email is not configured on the server (RESEND keys).'; return; }
+      if (!p.recipient_count) { if (st) st.textContent = 'No owners with an email on file for this community.'; return; }
+      const w = window.open('', '_blank'); if (w) { w.document.write(p.email_html); w.document.close(); }
+      const sampleTxt = (p.sample || []).map((s) => '• ' + (s.name || '') + ' <' + s.email + '>').join('\n');
+      const ok = confirm(`Send this meeting notice + agenda to ${p.recipient_count} owner(s) in ${p.community_name}?\n\n${p.property_count} properties on file. Sends to every owner with an email address, from bedrocktx.com. I opened the exact email in a new tab to review.\n\nFirst few:\n${sampleTxt}\n\nThis sends real emails. Proceed?`);
+      if (!ok) { if (st) st.textContent = 'Send cancelled.'; return; }
+      if (st) st.textContent = `Sending to ${p.recipient_count}…`;
+      const sr = await fetch(`/api/agendas/${id}/notice-blast/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expected_count: p.recipient_count }) });
+      const s = await sr.json();
+      if (!sr.ok) throw new Error(s.message || s.error || 'send failed');
+      if (st) st.innerHTML = `✓ Sent to ${s.sent} owner(s)${s.failed ? ' (' + s.failed + ' failed)' : ''}.`;
+    } catch (e) { if (st) st.textContent = 'Blast failed: ' + e.message; }
+  }
+  window.agendaEmailBlast = agendaEmailBlast;
 
   function printAgenda() {
     const content = document.getElementById('agendaOutput').textContent;

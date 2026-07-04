@@ -53,6 +53,36 @@ const BEDROCK_EMAIL = 'info@bedrocktx.com';
 // communities), keep ONE row and prefer their most-recent residency
 // community for branding.
 // ----------------------------------------------------------------------------
+// Page through ALL rows — Supabase/PostgREST silently caps any query at 1000
+// rows. Without this a community over 1000 properties/owners drops recipients
+// from every blast with no error (the Waterview 1171→1000 scar). Loops .range()
+// until a short page; safety cap 100k.
+async function _pageAll(buildQuery) {
+  const out = [];
+  for (let from = 0; from < 100000; from += 1000) {
+    // eslint-disable-next-line no-await-in-loop
+    const { data, error } = await buildQuery().range(from, from + 999);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+// Same, but chunk a large id list for the .in() filter (URL length + result cap).
+async function _pageAllIn(table, selectStr, col, ids, applyExtra) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    const chunk = ids.slice(i, i + 300);
+    // eslint-disable-next-line no-await-in-loop
+    const rows = await _pageAll(() => {
+      const q = supabase.from(table).select(selectStr).in(col, chunk);
+      return applyExtra ? applyExtra(q) : q;
+    });
+    out.push(...rows);
+  }
+  return out;
+}
+
 async function resolveRecipients({ scope, target_community_id, audience }) {
   // Step 1 — which communities are in scope?
   let communityIds = [];
@@ -93,11 +123,9 @@ async function resolveRecipients({ scope, target_community_id, audience }) {
     };
   });
 
-  // Step 3 — fetch properties in scope
-  const { data: properties } = await supabase
-    .from('properties')
-    .select('id, community_id')
-    .in('community_id', communityIds);
+  // Step 3 — fetch properties in scope (paged — never cap at 1000)
+  const properties = await _pageAll(() =>
+    supabase.from('properties').select('id, community_id').in('community_id', communityIds));
   const propertyById = {};
   (properties || []).forEach(p => { propertyById[p.id] = p; });
   const propertyIds = Object.keys(propertyById);
@@ -107,24 +135,20 @@ async function resolveRecipients({ scope, target_community_id, audience }) {
   const includeOwners = audience === 'owners_and_residents' || audience === 'owners_only';
   let ownershipRows = [];
   if (includeOwners) {
-    const { data } = await supabase
-      .from('property_ownerships')
-      .select('property_id, contact_id, contacts:contact_id(id, full_name, preferred_name, primary_email)')
-      .in('property_id', propertyIds)
-      .is('end_date', null);
-    ownershipRows = data || [];
+    ownershipRows = await _pageAllIn(
+      'property_ownerships',
+      'property_id, contact_id, contacts:contact_id(id, full_name, preferred_name, primary_email)',
+      'property_id', propertyIds, (q) => q.is('end_date', null));
   }
 
   // Step 4b — current residents (if included by audience)
   const includeResidents = audience === 'owners_and_residents' || audience === 'residents_only';
   let residencyRows = [];
   if (includeResidents) {
-    const { data } = await supabase
-      .from('property_residencies')
-      .select('property_id, contact_id, residency_type, start_date, contacts:contact_id(id, full_name, preferred_name, primary_email)')
-      .in('property_id', propertyIds)
-      .is('end_date', null);
-    residencyRows = data || [];
+    residencyRows = await _pageAllIn(
+      'property_residencies',
+      'property_id, contact_id, residency_type, start_date, contacts:contact_id(id, full_name, preferred_name, primary_email)',
+      'property_id', propertyIds, (q) => q.is('end_date', null));
   }
 
   // Step 5 — merge + dedupe by email, prefer residency community when both paths
@@ -723,4 +747,7 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// Expose the recipient resolver for reuse (e.g. agenda/meeting-notice blasts)
+// without duplicating the properties→owners/residents→deduped-emails logic.
+router.resolveRecipients = resolveRecipients;
 module.exports = router;
