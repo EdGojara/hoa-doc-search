@@ -30527,6 +30527,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (tab === 'home') { try { homeRender(); } catch (_) {} }
   }
 
+  // Deep-link: open a specific tab via #tab=KEY. Lets board-packet section
+  // "view →" links open a module in a NEW browser tab without disturbing the
+  // in-progress packet form in the original tab. Re-applied after a short delay
+  // so it wins over any default-tab set during page init.
+  (function () {
+    function _openTabFromHash() {
+      const m = (location.hash || '').match(/^#tab=([a-z0-9-]+)$/i);
+      if (m && typeof switchTab === 'function') { try { switchTab(m[1]); } catch (_) {} }
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { _openTabFromHash(); setTimeout(_openTabFromHash, 400); });
+    else { _openTabFromHash(); setTimeout(_openTabFromHash, 400); }
+    window.addEventListener('hashchange', _openTabFromHash);
+  })();
+
   // ===================================================================
   // HOME DASHBOARD — Phase 1 (static tile shortcuts)
   // ===================================================================
@@ -38297,15 +38311,47 @@ ${questionsPage}
     } catch (_) { /* swallow */ }
   }
 
+  // Each packet section that pulls from a live trustEd module gets a "view ↗"
+  // link so the operator can eyeball the actual source data (financials,
+  // violations, ARC decisions, etc.) before including it in the packet.
+  // Financial sections open the Accounting page deep-linked to the community +
+  // statement; module sections open that tab — both in a NEW browser tab so the
+  // in-progress packet form is never disturbed.
+  const PACKET_SECTION_LINKS = {
+    balance_sheet:    { kind: 'accounting', view: 'bs' },
+    income_statement: { kind: 'accounting', view: 'is' },
+    financials:       { kind: 'accounting', view: 'bs' },
+    ar_aging:         { kind: 'accounting', view: 'ar' },
+    drv:              { kind: 'tab', tab: 'inspect' },
+    arc_decisions:    { kind: 'tab', tab: 'acc' },
+    vendor_activity:  { kind: 'tab', tab: 'vendor' },
+    agenda:           { kind: 'tab', tab: 'agenda' },
+    prior_minutes:    { kind: 'tab', tab: 'recaps' },
+  };
+  function packetsOpenSectionSource(key) {
+    const link = PACKET_SECTION_LINKS[key];
+    if (!link) return;
+    const comm = (document.getElementById('packets-new-community') || {}).value || '';
+    if (link.kind === 'accounting') {
+      window.open(`/accounting.html?view=${link.view}${comm ? '&community_id=' + encodeURIComponent(comm) : ''}`, '_blank');
+    } else {
+      window.open(`/#tab=${link.tab}`, '_blank');
+    }
+  }
+  window.packetsOpenSectionSource = packetsOpenSectionSource;
+
   function packetsRenderCreateSectionCheckboxes() {
     const wrap = document.getElementById('packets-create-sections');
     if (!wrap || packetsTemplatesCache.length === 0) return;
-    wrap.innerHTML = packetsTemplatesCache.map(t => `
+    wrap.innerHTML = packetsTemplatesCache.map(t => {
+      const hasLink = !!PACKET_SECTION_LINKS[t.section_key];
+      return `
       <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; padding:5px 9px; border:1px solid #d0d7de; border-radius:4px; cursor:pointer; background:white; user-select:none;">
         <input type="checkbox" class="packets-section-check" value="${escapeHtml(t.section_key)}" ${t.required_default ? 'checked' : ''}>
         ${escapeHtml(t.display_name)}
-      </label>
-    `).join('');
+        ${hasLink ? `<span onclick="event.preventDefault(); event.stopPropagation(); packetsOpenSectionSource('${t.section_key}')" title="Open the live source for this section in a new tab" style="margin-left:2px; color:#2563eb; font-size:10.5px; cursor:pointer; text-decoration:underline; white-space:nowrap;">view&nbsp;↗</span>` : ''}
+      </label>`;
+    }).join('');
   }
 
   async function packetsCreate() {

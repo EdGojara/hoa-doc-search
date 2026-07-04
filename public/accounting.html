@@ -92,8 +92,20 @@
     const comms = j.communities || [];
     $('commSel').innerHTML = comms.map((c)=>`<option value="${c.id}">${esc(c.name)}</option>`).join('') || '<option>No GL set up</option>';
     CID = comms[0] && comms[0].id;
+    // Deep-link: ?community_id + ?view (board-packet section "view" links land here).
+    try {
+      const q = new URLSearchParams(location.search);
+      const wantComm = q.get('community_id');
+      if (wantComm && comms.some((c)=>c.id===wantComm)) CID = wantComm;
+      const wantView = q.get('view');
+      if (wantView) {
+        const g = GROUPS.find((x)=>x.views.some((v)=>v[0]===wantView));
+        if (g) { GROUP = g.id; VIEW = wantView; }
+      }
+    } catch (_) {}
+    if (CID) $('commSel').value = CID;
     $('commSel').addEventListener('change', (e)=>{ CID = e.target.value; load(); });
-    if (CID) load(); else $('body').innerHTML = '<div class="card muted">No community has a GL set up yet.</div>';
+    if (CID) { renderNav(); load(); } else $('body').innerHTML = '<div class="card muted">No community has a GL set up yet.</div>';
   }
 
   async function load() {
