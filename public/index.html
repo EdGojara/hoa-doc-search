@@ -2163,6 +2163,8 @@
       <div class="output-box placeholder" id="agendaOutput">Fill in the meeting details and click Generate Agenda.</div>
       <button class="secondary-btn" id="copyAgendaBtn" onclick="copyText('agendaOutput')" style="display:none">📋 Copy to Clipboard</button>
       <button class="secondary-btn" id="printAgendaBtn" onclick="printAgenda()" style="display:none">🖨️ Print / Save as PDF</button>
+      <button class="action-btn" id="saveAgendaBtn" onclick="agendaSaveToCommunity()" style="display:none; background:#0B1D34; color:#fff;" title="Save this agenda to the community. It can then be emailed with the meeting notice and auto-pulled into the board packet.">💾 Save to community</button>
+      <span id="saveAgendaStatus" style="display:block; font-size:12px; color:#475569; margin-top:6px;"></span>
     </div>
   </div>
 </div>
@@ -32318,12 +32320,41 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       output.textContent = data.agenda;
       copyBtn.style.display = 'block';
       printBtn.style.display = 'block';
+      const saveBtn = document.getElementById('saveAgendaBtn');
+      if (saveBtn) saveBtn.style.display = 'block';
+      const saveStatus = document.getElementById('saveAgendaStatus');
+      if (saveStatus) saveStatus.textContent = '';
     } catch (err) {
       output.textContent = 'Something went wrong. Please try again.';
     }
     btn.disabled = false;
     btn.textContent = '📋 Generate Agenda';
   }
+
+  async function agendaSaveToCommunity() {
+    const st = document.getElementById('saveAgendaStatus');
+    const community_name = communitySelect.value;
+    if (!community_name) { if (st) st.textContent = 'Select a community at the top first.'; return; }
+    const full_text = document.getElementById('agendaOutput').textContent || '';
+    if (!full_text.trim()) { if (st) st.textContent = 'Generate the agenda first.'; return; }
+    const typeMap = { 'Regular Board Meeting': 'regular', 'Annual Meeting': 'annual', 'Budget Meeting': 'budget', 'Special Meeting': 'special', 'Emergency Meeting': 'emergency' };
+    const body = {
+      community_name,
+      meeting_type: typeMap[document.getElementById('meetingType').value] || 'regular',
+      meeting_date: document.getElementById('meetingDate').value || null,
+      meeting_time: document.getElementById('meetingTime').value || null,
+      location: document.getElementById('meetingLocation').value || null,
+      full_text,
+    };
+    if (st) st.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/agendas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || j.hint || 'save failed');
+      if (st) st.innerHTML = '✓ Saved to <strong>' + community_name + '</strong>' + (body.meeting_date ? ' for ' + body.meeting_date : '') + '. It will auto-pull into that meeting’s board packet (⚡ Auto on the Agenda section) and can be emailed with the notice.';
+    } catch (e) { if (st) st.textContent = 'Save failed: ' + e.message; }
+  }
+  window.agendaSaveToCommunity = agendaSaveToCommunity;
 
   function printAgenda() {
     const content = document.getElementById('agendaOutput').textContent;

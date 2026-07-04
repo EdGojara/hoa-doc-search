@@ -3113,6 +3113,49 @@ router.post('/:id/sections/:section_key/auto-fill', async (req, res) => {
       return res.json({ ok: true, section_key: 'prior_minutes', pulled: { minutes_id: minutes.id, meeting_date: minutes.meeting_date, meeting_type: minutes.meeting_type } });
     }
 
+    // Agenda — pull the saved agenda for THIS meeting (community + meeting date).
+    // Agendas are produced early (with the meeting notice) and saved; the packet
+    // pulls the one matching its own meeting date, else the latest for the
+    // community.
+    if (req.params.section_key === 'agenda') {
+      const { data: packet } = await supabase
+        .from('board_packets').select('id, community_id, meeting_date')
+        .eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+      if (!packet) return res.status(404).json({ error: 'packet_not_found' });
+
+      // Prefer an exact meeting-date match; fall back to the most recent agenda.
+      let agenda = null;
+      if (packet.meeting_date) {
+        const { data: exact, error: aErr } = await supabase.from('meeting_agendas')
+          .select('id, meeting_date, full_text, items')
+          .eq('community_id', packet.community_id).eq('meeting_date', packet.meeting_date)
+          .order('updated_at', { ascending: false }).limit(1);
+        if (aErr && /meeting_agendas/.test(aErr.message || '')) {
+          return res.status(503).json({ error: 'agenda_module_not_ready', message: 'Apply migration 260 (agenda saving) first.' });
+        }
+        agenda = exact && exact[0];
+      }
+      if (!agenda) {
+        const { data: latest, error: aErr2 } = await supabase.from('meeting_agendas')
+          .select('id, meeting_date, full_text, items')
+          .eq('community_id', packet.community_id)
+          .order('meeting_date', { ascending: false, nullsFirst: false }).limit(1);
+        if (aErr2 && /meeting_agendas/.test(aErr2.message || '')) {
+          return res.status(503).json({ error: 'agenda_module_not_ready', message: 'Apply migration 260 (agenda saving) first.' });
+        }
+        agenda = latest && latest[0];
+      }
+      if (!agenda) {
+        return res.status(404).json({ error: 'no_saved_agenda', message: 'No saved agenda for this community yet. Create + save one in the Agenda Generator, then auto-fill.' });
+      }
+
+      const input_data = { full_text: agenda.full_text || '', items: Array.isArray(agenda.items) ? agenda.items : [], source_agenda_id: agenda.id, source: 'agenda_module' };
+      const { error: uErr } = await supabase.from('board_packet_sections')
+        .update({ input_data, status: 'ready' }).eq('packet_id', req.params.id).eq('section_key', 'agenda');
+      if (uErr) throw uErr;
+      return res.json({ ok: true, section_key: 'agenda', pulled: { agenda_id: agenda.id, meeting_date: agenda.meeting_date, exact_date_match: !!(packet.meeting_date && agenda.meeting_date === packet.meeting_date) } });
+    }
+
     // Other sections: still stubbed until their module integrations ship.
     res.status(501).json({
       error: 'auto_fill_not_yet_available',
