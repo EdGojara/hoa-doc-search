@@ -2132,6 +2132,11 @@
     <div class="panel">
       <h3>📋 Agenda Generator</h3>
       <p style="font-size:13px; color:#666;">Fill in the meeting details and generate a professionally formatted agenda.</p>
+      <div class="section-label" style="margin-top:8px;">Community</div>
+      <select class="draft-type-select" id="agendaCommunity" onchange="agendaPrefillFromPrior()">
+        <option value="">— Select community —</option>
+      </select>
+      <div id="agendaPriorHint" style="font-size:11.5px; color:#0e7490; margin:2px 0 4px; display:none;"></div>
       <div class="section-label" style="margin-top:8px;">Meeting Type</div>
       <select class="draft-type-select" id="meetingType">
         <option value="Regular Board Meeting">Regular Board Meeting</option>
@@ -30566,6 +30571,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // gives the operator a fresh count if widgets get added in Phase 2.
     if (tab === 'home') { try { homeRender(); } catch (_) {} }
     if (tab === 'minutes') { try { if (typeof minInit === 'function') minInit(); } catch (_) {} }
+    if (tab === 'agenda') { try { if (typeof agendaLoadCommunities === 'function') agendaLoadCommunities(); } catch (_) {} }
   }
 
   // Deep-link: open a specific tab via #tab=KEY. Lets board-packet section
@@ -32287,8 +32293,52 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     });
   }
 
+  // Populate the agenda community dropdown (value = id, text = name).
+  let _agendaCommsLoaded = false;
+  async function agendaLoadCommunities() {
+    const sel = document.getElementById('agendaCommunity');
+    if (!sel || _agendaCommsLoaded) return;
+    try {
+      const j = await (await fetch('/api/communities')).json();
+      sel.innerHTML = '<option value="">— Select community —</option>' + (j.communities || []).map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+      // Default to the community selected at the top of the app, if any.
+      const navName = (communitySelect && communitySelect.value) || '';
+      if (navName) { const opt = Array.from(sel.options).find((o) => o.textContent === navName); if (opt) { sel.value = opt.value; agendaPrefillFromPrior(); } }
+      _agendaCommsLoaded = true;
+    } catch (_) {}
+  }
+  window.agendaLoadCommunities = agendaLoadCommunities;
+
+  // When a community is picked, pull its most recent saved agenda and pre-fill
+  // the location + time (usually the same each meeting) and stash the prior
+  // agenda text so the generator can mirror its recurring structure.
+  window._priorAgendaText = '';
+  async function agendaPrefillFromPrior() {
+    const sel = document.getElementById('agendaCommunity');
+    const hint = document.getElementById('agendaPriorHint');
+    window._priorAgendaText = '';
+    if (hint) { hint.style.display = 'none'; hint.textContent = ''; }
+    const cid = sel && sel.value;
+    if (!cid) return;
+    try {
+      const list = await (await fetch('/api/agendas?community_id=' + encodeURIComponent(cid))).json();
+      const prior = (list.agendas || [])[0];
+      if (!prior) { if (hint) { hint.style.display = 'block'; hint.textContent = 'No prior agenda on file — this will be the first.'; } return; }
+      const loc = document.getElementById('meetingLocation');
+      const tm = document.getElementById('meetingTime');
+      if (loc && !loc.value && prior.location) loc.value = prior.location;
+      if (tm && !tm.value && prior.meeting_time) tm.value = prior.meeting_time;
+      // Fetch full text for generator context.
+      const full = await (await fetch('/api/agendas/' + prior.id)).json();
+      window._priorAgendaText = (full.agenda && full.agenda.full_text) || '';
+      if (hint) { hint.style.display = 'block'; hint.textContent = '↳ Prefilled from the ' + (prior.meeting_date || 'last') + ' agenda; the generator will follow its recurring structure.'; }
+    } catch (_) {}
+  }
+  window.agendaPrefillFromPrior = agendaPrefillFromPrior;
+
   async function generateAgenda() {
-    const community = communitySelect.value;
+    const agendaSel = document.getElementById('agendaCommunity');
+    const community = (agendaSel && agendaSel.value && agendaSel.options[agendaSel.selectedIndex].textContent) || communitySelect.value;
     if (!community) { alert('Please select a community first.'); return; }
     const meetingType = document.getElementById('meetingType').value;
     const date = document.getElementById('meetingDate').value;
@@ -32314,7 +32364,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const res = await fetch('/generate-agenda', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ community, meetingType, date, time, location, newBusiness, businessInProgress, committees, ratifications, nextMeeting })
+        body: JSON.stringify({ community, meetingType, date, time, location, newBusiness, businessInProgress, committees, ratifications, nextMeeting, priorAgenda: window._priorAgendaText || '' })
       });
       const data = await res.json();
       output.className = 'output-box';
@@ -32334,12 +32384,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   async function agendaSaveToCommunity() {
     const st = document.getElementById('saveAgendaStatus');
-    const community_name = communitySelect.value;
-    if (!community_name) { if (st) st.textContent = 'Select a community at the top first.'; return; }
+    const agendaSel = document.getElementById('agendaCommunity');
+    const community_id = (agendaSel && agendaSel.value) || null;
+    const community_name = (community_id && agendaSel.options[agendaSel.selectedIndex].textContent) || communitySelect.value;
+    if (!community_id && !community_name) { if (st) st.textContent = 'Select a community first.'; return; }
     const full_text = document.getElementById('agendaOutput').textContent || '';
     if (!full_text.trim()) { if (st) st.textContent = 'Generate the agenda first.'; return; }
     const typeMap = { 'Regular Board Meeting': 'regular', 'Annual Meeting': 'annual', 'Budget Meeting': 'budget', 'Special Meeting': 'special', 'Emergency Meeting': 'emergency' };
     const body = {
+      community_id: community_id || undefined,
       community_name,
       meeting_type: typeMap[document.getElementById('meetingType').value] || 'regular',
       meeting_date: document.getElementById('meetingDate').value || null,

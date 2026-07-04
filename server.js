@@ -3712,7 +3712,7 @@ Format your response as:
 
 app.post('/generate-agenda', async (req, res) => {
   try {
-    const { community, meetingType, date, time, location, newBusiness, businessInProgress, committees, ratifications, nextMeeting } = req.body;
+    const { community, meetingType, date, time, location, newBusiness, businessInProgress, committees, ratifications, nextMeeting, priorAgenda } = req.body;
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
@@ -3776,7 +3776,12 @@ New Business Items: ${newBusiness || 'None'}
 Business in Progress: ${businessInProgress || 'None'}
 Committee Reports Expected: ${committees || 'None'}
 Next Meeting Date: ${nextMeeting || 'To be determined'}
-
+${priorAgenda ? `
+This community's PRIOR agenda is below. Mirror its recurring structure, standing items, committee list, and wording conventions so agendas stay consistent meeting to meeting. Update only what the new details above change; do not invent new items.
+--- PRIOR AGENDA ---
+${String(priorAgenda).slice(0, 4000)}
+--- END PRIOR AGENDA ---
+` : ''}
 Use the community name exactly as provided. Plain text only. No markdown formatting.`
       }]
     });
