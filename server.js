@@ -1300,6 +1300,9 @@ app.use('/api/messaging', messagingRouter);
 const { router: boardPacketsRouter } = require('./api/board_packets');
 app.use('/api/board-packets', boardPacketsRouter);
 
+const { router: minutesRouter } = require('./api/minutes');
+app.use('/api/minutes', minutesRouter);
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });

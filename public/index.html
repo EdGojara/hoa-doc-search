@@ -14063,6 +14063,43 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 </script>
 
 <!-- ============================================================
+     📝 Minutes tab — AI-drafted board/annual meeting minutes
+     ============================================================ -->
+<div class="tab-content" id="tab-minutes" style="overflow-y: auto; padding: 24px;">
+  <div style="margin-bottom:16px;">
+    <h2 style="margin:0 0 4px 0;">📝 Meeting Minutes</h2>
+    <p style="color:#888; font-size:14px; margin:0; max-width:760px;">
+      Create a meeting, and the system drafts the minutes from what it already knows — the board roster, the decisions log, and (for annual meetings) check-in attendance. Edit, then finalize into a Bedrock-branded record that files in the document library and feeds the board packet's Prior Minutes section.
+    </p>
+  </div>
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px; padding:12px; border:1px solid #e2e8f0; border-radius:8px; background:#fafafa;">
+    <div>
+      <div class="section-label">Community</div>
+      <select id="min-community" style="padding:7px 9px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; min-width:200px;"><option value="">Loading…</option></select>
+    </div>
+    <div>
+      <div class="section-label">Meeting date</div>
+      <input type="date" id="min-date" style="padding:7px 9px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+    </div>
+    <div>
+      <div class="section-label">Type</div>
+      <select id="min-type" style="padding:7px 9px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+        <option value="regular">Regular</option>
+        <option value="annual">Annual</option>
+        <option value="special">Special</option>
+        <option value="executive">Executive session</option>
+        <option value="organizational">Organizational</option>
+      </select>
+    </div>
+    <button class="action-btn" onclick="minCreate()" style="font-size:13px; padding:8px 16px; background:#0B1D34; color:#fff;">+ New minutes</button>
+    <span id="min-create-status" style="font-size:12px; color:#475569;"></span>
+  </div>
+  <div id="min-editor" style="margin-bottom:16px;"></div>
+  <h3 style="margin:6px 0 8px; font-size:14px; color:#1E2761;">Minutes on file</h3>
+  <div id="min-list" style="font-size:13px; color:#6B7280;">Loading…</div>
+</div>
+
+<!-- ============================================================
      📰 Recaps tab — generate board/internal/community summaries
      ============================================================ -->
 <div class="tab-content" id="tab-recaps" style="overflow-y: auto; padding: 24px;">
@@ -30525,6 +30562,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // Home tab: re-render the tile grid on every open. Cheap (pure DOM),
     // gives the operator a fresh count if widgets get added in Phase 2.
     if (tab === 'home') { try { homeRender(); } catch (_) {} }
+    if (tab === 'minutes') { try { if (typeof minInit === 'function') minInit(); } catch (_) {} }
   }
 
   // Deep-link: open a specific tab via #tab=KEY. Lets board-packet section
@@ -38311,6 +38349,143 @@ ${questionsPage}
     } catch (_) { /* swallow */ }
   }
 
+  // ── Minutes module ───────────────────────────────────────────────────────
+  let minCommunitiesLoaded = false;
+  let minCurrentId = null;
+  const _minBadge = (s) => s === 'final'
+    ? '<span style="background:#dcfce7;color:#166534;font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;">FINAL</span>'
+    : s === 'in_review'
+    ? '<span style="background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;">IN REVIEW</span>'
+    : '<span style="background:#f1f5f9;color:#64748b;font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;">DRAFT</span>';
+
+  async function minLoadCommunities() {
+    try {
+      const r = await fetch('/api/communities');
+      const j = await r.json();
+      const sel = document.getElementById('min-community');
+      if (sel) sel.innerHTML = '<option value="">— all communities —</option>' + (j.communities || []).map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+      minCommunitiesLoaded = true;
+    } catch (_) {}
+  }
+  async function minLoad() {
+    const host = document.getElementById('min-list');
+    if (!host) return;
+    const cid = (document.getElementById('min-community') || {}).value || '';
+    try {
+      const r = await fetch('/api/minutes' + (cid ? ('?community_id=' + encodeURIComponent(cid)) : ''));
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const rows = j.minutes || [];
+      if (!rows.length) { host.innerHTML = '<div style="color:#94A3B8; padding:10px 2px;">No minutes yet. Pick a community + date above and click “New minutes”.</div>'; return; }
+      host.innerHTML = rows.map((m) => `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:9px 12px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:#fff;">
+          <div style="flex:1; cursor:pointer; min-width:0;" onclick="minOpen('${m.id}')">
+            <div style="font-weight:600; color:#1E2761;">${escapeHtml(m.title || 'Minutes')} &nbsp;${_minBadge(m.status)}</div>
+            <div style="font-size:11.5px; color:#6B7280;">${escapeHtml(m.community_name || '')} · ${escapeHtml(m.meeting_type)} · ${m.meeting_date || 'no date'}${m.ai_drafted ? ' · AI-drafted' : ''}</div>
+          </div>
+          <button class="secondary-btn" style="font-size:11px; padding:5px 11px;" onclick="minOpen('${m.id}')">Open</button>
+          ${m.rendered_document_id ? `<a class="secondary-btn" style="font-size:11px; padding:5px 11px; text-decoration:none;" target="_blank" href="/api/minutes/${m.id}/pdf?inline=1">PDF</a>` : ''}
+          <button style="font-size:11px; padding:5px 10px; background:#fff; color:#b91c1c; border:1px solid #fca5a5; border-radius:6px; cursor:pointer;" onclick="minDelete('${m.id}')">Delete</button>
+        </div>`).join('');
+    } catch (e) { host.innerHTML = `<div style="color:#b91c1c;">${escapeHtml(e.message)}</div>`; }
+  }
+  window.minLoad = minLoad;
+  async function minCreate() {
+    const cid = document.getElementById('min-community').value;
+    const st = document.getElementById('min-create-status');
+    if (!cid) { st.textContent = 'Pick a community first.'; return; }
+    st.textContent = 'Creating…';
+    try {
+      const body = { community_id: cid, meeting_date: document.getElementById('min-date').value || null, meeting_type: document.getElementById('min-type').value };
+      const r = await fetch('/api/minutes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'create failed');
+      st.textContent = '';
+      await minLoad();
+      minOpen(j.minutes.id);
+    } catch (e) { st.textContent = 'Error: ' + e.message; }
+  }
+  window.minCreate = minCreate;
+  async function minOpen(id) {
+    minCurrentId = id;
+    const host = document.getElementById('min-editor');
+    host.innerHTML = '<div style="color:#888; padding:10px;">Loading…</div>';
+    try {
+      const r = await fetch('/api/minutes/' + id);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'load failed');
+      const m = j.minutes;
+      host.innerHTML = `<div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+          <input id="min-ed-title" value="${escapeHtml(m.title || '')}" style="flex:1; min-width:240px; padding:7px 9px; border:1px solid #d0d7de; border-radius:6px; font-size:14px; font-weight:600;">
+          <span style="font-size:12px; color:#6B7280;">${escapeHtml(m.community_name || '')} · ${escapeHtml(m.meeting_type)} · ${m.meeting_date || 'no date'} &nbsp;${_minBadge(m.status)}</span>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; align-items:center;">
+          <button onclick="minAiDraft('${id}')" style="background:#4f46e5; color:#fff; border:none; border-radius:6px; font-size:12px; padding:7px 13px; cursor:pointer; font-weight:600;">✨ AI draft from meeting data</button>
+          <button class="secondary-btn" onclick="minSave('${id}')" style="font-size:12px; padding:7px 13px;">💾 Save</button>
+          <a class="secondary-btn" href="/api/minutes/${id}/pdf?inline=1" target="_blank" style="font-size:12px; padding:7px 13px; text-decoration:none;">👁 Preview PDF</a>
+          <button onclick="minFinalize('${id}')" style="background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; padding:7px 13px; cursor:pointer; font-weight:600;">✓ Finalize &amp; file</button>
+          <span id="min-ed-status" style="font-size:12px; color:#475569;"></span>
+        </div>
+        <textarea id="min-ed-body" placeholder="Click “AI draft” to generate a first version, or write the minutes here in Markdown…" style="width:100%; min-height:340px; padding:10px; border:1px solid #d0d7de; border-radius:6px; font-family:Consolas,monospace; font-size:12.5px; line-height:1.5; box-sizing:border-box;">${escapeHtml(m.body_markdown || '')}</textarea>
+        <div style="font-size:11px; color:#94a3b8; margin-top:4px;">Markdown. <span style="color:#b45309;">[Bracketed]</span> items are placeholders to fill in. Finalize renders a Bedrock-branded PDF and files it as an association record that feeds the board packet.</div>
+      </div>`;
+    } catch (e) { host.innerHTML = `<div style="color:#b91c1c; padding:10px;">${escapeHtml(e.message)}</div>`; }
+  }
+  window.minOpen = minOpen;
+  async function minAiDraft(id) {
+    const st = document.getElementById('min-ed-status'); if (st) st.textContent = 'Drafting from roster + decisions…';
+    try {
+      const r = await fetch('/api/minutes/' + id + '/ai-draft', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'draft failed');
+      const ta = document.getElementById('min-ed-body'); if (ta) ta.value = j.minutes.body_markdown || '';
+      if (st) st.textContent = `Drafted (roster ${j.sources.roster}, decisions ${j.sources.decisions}${j.sources.attendance ? ', attendance ' + j.sources.attendance : ''}). Review + edit, then Finalize.`;
+      minLoad();
+    } catch (e) { if (st) st.textContent = 'Error: ' + e.message; }
+  }
+  window.minAiDraft = minAiDraft;
+  async function minSave(id) {
+    const st = document.getElementById('min-ed-status'); if (st) st.textContent = 'Saving…';
+    try {
+      const body = { title: document.getElementById('min-ed-title').value, body_markdown: document.getElementById('min-ed-body').value };
+      const r = await fetch('/api/minutes/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'save failed');
+      if (st) st.textContent = 'Saved.';
+      minLoad();
+    } catch (e) { if (st) st.textContent = 'Error: ' + e.message; }
+  }
+  window.minSave = minSave;
+  async function minFinalize(id) {
+    await minSave(id);
+    const st = document.getElementById('min-ed-status'); if (st) st.textContent = 'Rendering + filing…';
+    try {
+      const r = await fetch('/api/minutes/' + id + '/finalize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'finalize failed');
+      if (st) st.innerHTML = `✓ Finalized + filed to the document library. <a href="/api/minutes/${id}/pdf?inline=1" target="_blank">Open PDF</a>`;
+      minLoad();
+    } catch (e) { if (st) st.textContent = 'Error: ' + e.message; }
+  }
+  window.minFinalize = minFinalize;
+  async function minDelete(id) {
+    if (!confirm('Delete this minutes record?\n\nThis cannot be undone. (A finalized PDF already filed in the document library is not removed.)')) return;
+    try {
+      const r = await fetch('/api/minutes/' + id, { method: 'DELETE' });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'delete failed'); }
+      if (minCurrentId === id) { minCurrentId = null; const ed = document.getElementById('min-editor'); if (ed) ed.innerHTML = ''; }
+      minLoad();
+    } catch (e) { alert('Could not delete: ' + e.message); }
+  }
+  window.minDelete = minDelete;
+  function minInit() {
+    const sel = document.getElementById('min-community');
+    if (sel && !sel.__minHooked) { sel.__minHooked = true; sel.addEventListener('change', minLoad); }
+    if (!minCommunitiesLoaded) minLoadCommunities().then(minLoad); else minLoad();
+  }
+  window.minInit = minInit;
+
   // Each packet section that pulls from a live trustEd module gets a "view ↗"
   // link so the operator can eyeball the actual source data (financials,
   // violations, ARC decisions, etc.) before including it in the packet.
@@ -38326,7 +38501,7 @@ ${questionsPage}
     arc_decisions:    { kind: 'tab', tab: 'acc' },
     vendor_activity:  { kind: 'tab', tab: 'vendor' },
     agenda:           { kind: 'tab', tab: 'agenda' },
-    prior_minutes:    { kind: 'tab', tab: 'docs' },  // minutes live as library docs today; repoint to a Minutes module once built
+    prior_minutes:    { kind: 'tab', tab: 'minutes' },
   };
   function packetsOpenSectionSource(key) {
     const link = PACKET_SECTION_LINKS[key];
@@ -43201,8 +43376,9 @@ ${questionsPage}
         { id: 'ameetingnotice', label: '🗳️ Annual Meeting Notice',   section: 'Annual Members' },
         { id: 'mailing',        label: '📬 Mail Cover Sheets',       section: 'Annual Members' },
         { id: 'packets',        label: '📋 Board Packets',           section: 'Board Meetings' },
-        { id: 'recaps',         label: '📰 Recaps',                  section: 'Board Meetings' },
+        { id: 'minutes',        label: '📝 Minutes',                 section: 'Board Meetings' },
         { id: 'agenda',         label: '📋 Agenda Generator',        section: 'Board Meetings' },
+        { id: 'recaps',         label: '📰 Recaps',                  section: 'Board Meetings' },
       ],
     },
   };
