@@ -2706,10 +2706,17 @@ async function seedSectionsForPacket(packetId, includedSectionKeys = null) {
       input_mode: t.supports_ai_generated ? 'ai_generated' :
                   t.supports_manual ? 'manual' :
                   t.supports_upload ? 'upload' : 'manual',
+      audience: t.default_audience || 'both',   // owner-PII sections default to board-only (mig 259)
       status
     };
   });
-  await supabase.from('board_packet_sections').insert(rows);
+  const { error: insErr } = await supabase.from('board_packet_sections').insert(rows);
+  // Degrade gracefully if migration 259 (audience column) isn't applied yet.
+  if (insErr && /audience/.test(insErr.message || '')) {
+    await supabase.from('board_packet_sections').insert(rows.map(({ audience, ...r }) => r));
+  } else if (insErr) {
+    throw insErr;
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -2894,7 +2901,7 @@ router.delete('/:id', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.patch('/:id/sections/:section_key', async (req, res) => {
   try {
-    const allowed = ['input_data', 'input_mode', 'status', 'notes', 'rendered_html'];
+    const allowed = ['input_data', 'input_mode', 'status', 'notes', 'rendered_html', 'audience'];
     const update = {};
     for (const k of allowed) if (k in (req.body || {})) update[k] = req.body[k];
     if (Object.keys(update).length === 0) return res.status(400).json({ error: 'no updatable fields' });
@@ -3289,10 +3296,19 @@ router.get('/:id/preview', async (req, res) => {
       .eq('packet_id', req.params.id)
       .order('section_order');
 
+    // Audience filter — Board version = everything (both + board-only);
+    // Attendees/homeowner version = only sections cleared for sharing
+    // (both + attendees). A board-only section is structurally excluded from
+    // the attendee copy so owner-PII can't leak. Missing audience (pre-mig-259)
+    // is treated as 'both'.
+    const audience = req.query.audience === 'attendees' ? 'attendees' : 'board';
+    const allowedAudiences = audience === 'attendees' ? ['both', 'attendees'] : ['both', 'board'];
+    const visibleSections = (sections || []).filter((s) => allowedAudiences.includes(s.audience || 'both'));
+
     // Volume number was removed — it didn't read like meaningful context
     // alongside the meeting date. Period label alone is cleaner.
     let volume = null;
-    const html = renderPacketPreviewHtml({ packet, sections: sections || [], volume });
+    const html = renderPacketPreviewHtml({ packet, sections: visibleSections, volume, audience });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch (err) {
@@ -3329,7 +3345,8 @@ router.get('/:id/pdf', async (req, res) => {
     const proto = isLocal
       ? ((req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim())
       : 'https';
-    const previewUrl = `${proto}://${host}/api/board-packets/${req.params.id}/preview`;
+    const audience = req.query.audience === 'attendees' ? 'attendees' : 'board';
+    const previewUrl = `${proto}://${host}/api/board-packets/${req.params.id}/preview?audience=${audience}`;
 
     browser = await puppeteer.launch({
       headless: 'new',
@@ -3455,7 +3472,8 @@ router.get('/:id/pdf', async (req, res) => {
     //       names down the road.
     const community = packet.community && packet.community.name ? packet.community.name : 'Community';
     const period = packet.period_label || 'Period';
-    const utf8Filename = `${community} - ${period} - Board Packet.pdf`;
+    const audienceLabel = audience === 'attendees' ? 'Attendees Packet' : 'Board Packet';
+    const utf8Filename = `${community} - ${period} - ${audienceLabel}.pdf`;
     const asciiFilename = utf8Filename
       .normalize('NFKD')
       .replace(/[^\x20-\x7E]/g, '')                  // anything outside printable ASCII

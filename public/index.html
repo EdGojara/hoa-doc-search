@@ -38658,10 +38658,13 @@ ${questionsPage}
                 <button class="secondary-btn" style="font-size:10px; padding:1px 8px; margin-left:6px;" onclick="packetsEditMeta('${packetId}')">✎ Edit</button>
               </div>
             </div>
-            <div style="display:flex; gap:8px;">
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
               <a class="action-btn" style="font-size:12px; padding:6px 12px; text-decoration:none;"
-                 href="/api/board-packets/${packetId}/preview" target="_blank">👁️ Preview</a>
-              <button class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="packetsDownloadPdf('${packetId}', this)">⬇ Download PDF</button>
+                 href="/api/board-packets/${packetId}/preview?audience=board" target="_blank" title="Full packet — everything, including board-only sections">👁️ Board preview</a>
+              <button class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="packetsDownloadPdf('${packetId}', 'board', this)">⬇ Board PDF</button>
+              <a class="action-btn" style="font-size:12px; padding:6px 12px; text-decoration:none; background:#0e7490;"
+                 href="/api/board-packets/${packetId}/preview?audience=attendees" target="_blank" title="Homeowner handout — board-only sections (delinquencies, violations, legal) are excluded">👁️ Attendees preview</a>
+              <button class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="packetsDownloadPdf('${packetId}', 'attendees', this)">⬇ Attendees PDF</button>
               <button class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="packetsClose()">Close</button>
             </div>
           </div>
@@ -38684,14 +38687,14 @@ ${questionsPage}
   // Trigger server-side PDF render + browser download. Puppeteer needs a
   // few seconds to load the preview, wait for iframes to settle, and
   // print — so we disable the button + show a spinner while it works.
-  async function packetsDownloadPdf(packetId, btn) {
+  async function packetsDownloadPdf(packetId, audience, btn) {
     const originalLabel = btn ? btn.innerHTML : '';
     if (btn) {
       btn.disabled = true;
       btn.innerHTML = '<span style="display:inline-block; width:10px; height:10px; border:2px solid currentColor; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; vertical-align:middle; margin-right:6px;"></span>Rendering PDF…';
     }
     try {
-      const r = await fetch(`/api/board-packets/${packetId}/pdf`);
+      const r = await fetch(`/api/board-packets/${packetId}/pdf${audience === 'attendees' ? '?audience=attendees' : ''}`);
       if (!r.ok) {
         let msg = `${r.status} ${r.statusText}`;
         try { const j = await r.json(); if (j.error) msg = j.error; } catch (_) {}
@@ -38799,6 +38802,16 @@ ${questionsPage}
       const skipLabel = isSkipped ? '↩ Include' : '✕ Skip';
       const skipColor = isSkipped ? '#2e7d32' : '#888';
       inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px; color:${skipColor};" onclick="packetsToggleSkip('${s.section_key}')">${skipLabel}</button>`);
+
+      // Audience toggle — who this section goes to. Board PDF gets everything;
+      // Attendees PDF excludes 'Board only' sections (delinquencies, violations,
+      // legal). Cycles: Board + Homeowners → Board only → Homeowners only.
+      if (!isSkipped) {
+        const aud = s.audience || 'both';
+        const audMap = { both: { l: '👥 Board + Homeowners', c: '#0e7490' }, board: { l: '🔒 Board only', c: '#b45309' }, attendees: { l: '🏠 Homeowners only', c: '#166534' } };
+        const a = audMap[aud] || audMap.both;
+        inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px; color:${a.c};" title="Who gets this section. Click to cycle. Board-only sections never appear in the homeowner packet." onclick="packetsCycleAudience('${s.section_key}')">${a.l}</button>`);
+      }
 
       const hasData = s.input_data && Object.keys(s.input_data).length > 0;
       // Agenda + exec_summary store text content directly — show the text
@@ -39185,6 +39198,28 @@ ${questionsPage}
       alert('Skip toggle failed: ' + e.message);
     }
   }
+
+  // Cycle a section's audience: both → board-only → homeowners-only → both.
+  async function packetsCycleAudience(sectionKey) {
+    const sec = packetsCurrentSections.find(s => s.section_key === sectionKey);
+    if (!sec) return;
+    const next = { both: 'board', board: 'attendees', attendees: 'both' };
+    const newAud = next[sec.audience || 'both'];
+    try {
+      const r = await fetch(`/api/board-packets/${packetsCurrentPacketId}/sections/${sectionKey}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audience: newAud })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      sec.audience = newAud;
+      packetsRenderSections();
+    } catch (e) {
+      alert('Audience change failed: ' + e.message);
+    }
+  }
+  window.packetsCycleAudience = packetsCycleAudience;
 
   // Hide/show the AI-voiced analysis narrative on a section. Affects
   // both the section preview (👁) and the in-packet rendering.
