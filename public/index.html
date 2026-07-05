@@ -41857,21 +41857,187 @@ ${questionsPage}
 
     // -------- BUDGET (entry / import) --------
     async function bkLoadBudgetView() {
-      // List existing budgets for this community
+      // List existing budgets for this community — each opens the monthly editor.
       const r = await fetch('/api/books/budgets?community_id=' + encodeURIComponent(bkCommunityId));
       const j = await r.json();
       const existing = (j.budgets || []);
       const lines = existing.map((b) =>
-        `<div style="padding:6px 10px; background:#f5f8fc; border-radius:6px; display:flex; justify-content:space-between; margin-bottom:6px; font-size:12.5px;">
-          <span>FY ${b.fiscal_year} — ${bkEsc(b.status)}${b.source_filename ? ' · ' + bkEsc(b.source_filename) : ''}</span>
-          <span style="color:#5a7390;">${b.approved_at ? 'Approved ' + bkFmtDate(b.approved_at.slice(0, 10)) : 'Draft'}</span>
+        `<div onclick="bkOpenBudgetEditor('${b.id}')" style="padding:8px 12px; background:#f5f8fc; border-radius:6px; display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:12.5px; cursor:pointer; border:1px solid transparent;" onmouseover="this.style.borderColor='#315A87'" onmouseout="this.style.borderColor='transparent'">
+          <span><strong>FY ${b.fiscal_year}</strong> — ${bkEsc(b.status)}${b.source_filename ? ' · ' + bkEsc(b.source_filename) : ''}</span>
+          <span style="color:#5a7390;">${b.approved_at ? 'Approved ' + bkFmtDate(b.approved_at.slice(0, 10)) : 'Draft'} · adjust by month ›</span>
         </div>`
       ).join('');
       const preview = document.getElementById('bk-bdg-preview');
       preview.innerHTML = existing.length > 0
-        ? `<div style="margin-top:14px;"><div style="font-weight:600; color:#0B1D34; margin-bottom:6px;">Existing budgets</div>${lines}</div>`
+        ? `<div style="margin-top:14px;"><div style="font-weight:600; color:#0B1D34; margin-bottom:6px;">Existing budgets</div><div style="font-size:11.5px; color:#5a7390; margin-bottom:8px;">Click a budget to adjust the month-by-month distribution (seasonal). The yearly total stays fixed.</div>${lines}</div>`
         : '';
     }
+
+    // ---- Monthly (seasonal) budget editor -----------------------------------
+    // Ed 2026-07-05: "make budgets adjustable by month based on seasonal and
+    // historical amounts so the total always equals the yearly budget."
+    // Annual is the fixed anchor; months are the distribution. Every row is
+    // force-balanced to its annual on Save, so the DB never holds an untied row.
+    const BK_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    let bkBudgetEdit = null;
+
+    window.bkOpenBudgetEditor = async function (budgetId) {
+      const preview = document.getElementById('bk-bdg-preview');
+      preview.innerHTML = '<div style="padding:16px; color:#315A87;">⏳ Loading budget…</div>';
+      try {
+        const r = await fetch('/api/books/budgets/' + encodeURIComponent(budgetId));
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'load failed');
+        const lines = (j.lines || []).map((l) => {
+          const ca = l.chart_of_accounts || {};
+          let monthly = Array.isArray(l.monthly_amounts_cents) ? l.monthly_amounts_cents.map((n) => Number(n) || 0) : [];
+          const annual = Number(l.annual_amount_cents) || 0;
+          if (monthly.length !== 12) { const e = Math.trunc(annual / 12); monthly = Array(12).fill(e); monthly[11] += annual - e * 12; }
+          return { account_id: l.account_id, account_number: ca.account_number || '', account_name: ca.account_name || '', account_type: ca.account_type || '', fund_id: l.fund_id || null, annual_cents: annual, monthly };
+        });
+        bkBudgetEdit = { budgetId, fiscal_year: j.budget.fiscal_year, status: j.budget.status, lines };
+        bkRenderBudgetEditor();
+      } catch (e) {
+        preview.innerHTML = `<div style="color:#dc2626; padding:14px;">Load failed: ${bkEsc(e.message)}</div>`;
+      }
+    };
+
+    function bkRowSum(l) { return l.monthly.reduce((s, x) => s + x, 0); }
+
+    function bkRenderBudgetEditor() {
+      const b = bkBudgetEdit;
+      const dollars = (c) => (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const rows = b.lines.map((l, idx) => {
+        const sum = bkRowSum(l);
+        const tied = sum === l.annual_cents;
+        const monthCells = l.monthly.map((mc, mo) =>
+          `<td style="padding:2px;"><input type="text" value="${dollars(mc)}" data-idx="${idx}" data-mo="${mo}" oninput="bkBudgetMonthInput(${idx},${mo},this.value)" style="width:74px; text-align:right; font-size:11px; font-family:ui-monospace,monospace; border:1px solid #e2e8f0; border-radius:3px; padding:3px 4px;"></td>`
+        ).join('');
+        return `<tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:4px 8px; font-family:ui-monospace,monospace; font-size:11px; white-space:nowrap;">${bkEsc(l.account_number)}</td>
+          <td style="padding:4px 8px; font-size:11px; white-space:nowrap; max-width:200px; overflow:hidden; text-overflow:ellipsis;" title="${bkEsc(l.account_name)}">${bkEsc(l.account_name)}</td>
+          <td style="padding:2px;"><input type="text" value="${dollars(l.annual_cents)}" data-idx="${idx}" data-annual oninput="bkBudgetAnnualInput(${idx},this.value)" style="width:88px; text-align:right; font-size:11px; font-weight:600; font-family:ui-monospace,monospace; border:1px solid #cbd5e1; border-radius:3px; padding:3px 4px;"></td>
+          ${monthCells}
+          <td id="bk-rowsum-${idx}" style="padding:4px 8px; text-align:right; font-family:ui-monospace,monospace; font-size:11px; color:${tied ? '#16a34a' : '#dc2626'}; white-space:nowrap;">${dollars(sum)}${tied ? '' : ' ⚠'}</td>
+        </tr>`;
+      }).join('');
+      const monthHdr = BK_MONTHS.map((m) => `<th style="padding:6px 4px; font-size:10.5px; color:#5a7390;">${m}</th>`).join('');
+      const rev = b.lines.filter((l) => l.account_type === 'revenue').reduce((s, l) => s + l.annual_cents, 0);
+      const exp = b.lines.filter((l) => l.account_type === 'expense').reduce((s, l) => s + l.annual_cents, 0);
+      const preview = document.getElementById('bk-bdg-preview');
+      preview.innerHTML = `
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:14px; margin-top:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+            <div>
+              <div style="font-weight:600; color:#0B1D34;">FY ${b.fiscal_year} — monthly distribution</div>
+              <div style="font-size:11.5px; color:#5a7390;">Revenue ${dollars(rev)} · Expense ${dollars(exp)} · Net ${dollars(rev - exp)} · ${b.lines.length} lines</div>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <label style="font-size:11.5px; color:#5a7390;">History:</label>
+              <select id="bk-seas-years" style="font-size:11.5px; padding:3px 6px;"><option value="2">2 yrs</option><option value="1">1 yr</option><option value="3">3 yrs</option></select>
+              <button class="secondary-btn" onclick="bkSeasonalize()" style="font-size:11.5px;" title="Distribute each line across the year following its historical monthly pattern">🍂 Seasonalize from history</button>
+              <button class="secondary-btn" onclick="bkBudgetEvenAll()" style="font-size:11.5px;" title="Reset every line to an even 1/12 split">↔ Even split</button>
+              <button class="action-btn" onclick="bkSaveBudgetGrid()" style="font-size:11.5px;">💾 Save distribution</button>
+              <button class="secondary-btn" onclick="bkLoadBudgetView()" style="font-size:11.5px;">✕ Close</button>
+            </div>
+          </div>
+          <div style="font-size:11px; color:#5a7390; margin-bottom:8px;">The yearly total per line is the anchor. Edit any month freely — on Save each line is balanced so its 12 months sum exactly to its annual (residual lands in the largest month). Change an <strong>Annual</strong> to rescale that line's months proportionally.</div>
+          <div style="overflow-x:auto;">
+            <table style="border-collapse:collapse; font-size:11px;">
+              <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+                <th style="padding:6px 8px; text-align:left;">#</th>
+                <th style="padding:6px 8px; text-align:left;">Account</th>
+                <th style="padding:6px 8px; text-align:right;">Annual</th>
+                ${monthHdr}
+                <th style="padding:6px 8px; text-align:right;">Σ months</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    function bkParseDollars(v) { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return Math.round((isNaN(n) ? 0 : n) * 100); }
+
+    window.bkBudgetMonthInput = function (idx, mo, val) {
+      bkBudgetEdit.lines[idx].monthly[mo] = bkParseDollars(val);
+      bkUpdateRowSum(idx);
+    };
+    window.bkBudgetAnnualInput = function (idx, val) {
+      const l = bkBudgetEdit.lines[idx];
+      const newAnnual = bkParseDollars(val);
+      // Rescale months proportionally to the new annual (keep the seasonal shape),
+      // then force the tie. Even split if the line currently has no shape.
+      const oldSum = bkRowSum(l);
+      if (oldSum > 0) { l.monthly = l.monthly.map((m) => Math.round(m * (newAnnual / oldSum))); }
+      else { const e = Math.trunc(newAnnual / 12); l.monthly = Array(12).fill(e); }
+      l.annual_cents = newAnnual;
+      bkBalanceRow(l);
+      bkRenderBudgetEditor(); // annual change ripples to every month cell
+    };
+
+    function bkBalanceRow(l) {
+      // Park the residual (annual - sum) in the largest-magnitude month.
+      const drift = l.annual_cents - bkRowSum(l);
+      if (drift === 0) return;
+      let li = 0, best = -Infinity;
+      l.monthly.forEach((m, i) => { if (Math.abs(m) > best) { best = Math.abs(m); li = i; } });
+      l.monthly[li] += drift;
+    }
+
+    function bkUpdateRowSum(idx) {
+      const l = bkBudgetEdit.lines[idx];
+      const sum = bkRowSum(l);
+      const cell = document.getElementById('bk-rowsum-' + idx);
+      if (!cell) return;
+      const tied = sum === l.annual_cents;
+      cell.textContent = (sum / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (tied ? '' : ' ⚠');
+      cell.style.color = tied ? '#16a34a' : '#dc2626';
+    }
+
+    window.bkBudgetEvenAll = function () {
+      bkBudgetEdit.lines.forEach((l) => { const e = Math.trunc(l.annual_cents / 12); l.monthly = Array(12).fill(e); l.monthly[11] += l.annual_cents - e * 12; });
+      bkRenderBudgetEditor();
+    };
+
+    window.bkSeasonalize = async function () {
+      const years = document.getElementById('bk-seas-years').value || '2';
+      const btn = event.target; const orig = btn.textContent; btn.textContent = '⏳ Learning curve…'; btn.disabled = true;
+      try {
+        const r = await fetch(`/api/books/budgets/${encodeURIComponent(bkBudgetEdit.budgetId)}/seasonalize?years=${years}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'seasonalize failed');
+        const byAcct = {}; (j.lines || []).forEach((x) => { byAcct[x.account_id] = x; });
+        let hist = 0, even = 0;
+        bkBudgetEdit.lines.forEach((l) => {
+          const s = byAcct[l.account_id];
+          if (s && Array.isArray(s.monthly_amounts_cents) && s.monthly_amounts_cents.length === 12) {
+            l.monthly = s.monthly_amounts_cents.map((n) => Number(n) || 0);
+            if (s.basis === 'history') hist++; else even++;
+          }
+        });
+        bkRenderBudgetEditor();
+        alert(`Seasonalized from ${j.from_years} GL history:\n• ${hist} lines shaped from historical monthly pattern\n• ${even} lines had no history → even 1/12 split\nEvery line still sums to its annual. Review, then Save.`);
+      } catch (e) { alert('Seasonalize failed: ' + e.message); }
+      finally { btn.textContent = orig; btn.disabled = false; }
+    };
+
+    window.bkSaveBudgetGrid = async function () {
+      const b = bkBudgetEdit;
+      // Force every line to tie before writing — the DB never holds an untied row.
+      b.lines.forEach((l) => bkBalanceRow(l));
+      const line_items = b.lines.map((l) => ({ account_id: l.account_id, fund_id: l.fund_id, annual_amount_cents: l.annual_cents, monthly_amounts_cents: l.monthly }));
+      try {
+        const r = await fetch('/api/books/budgets', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ community_id: bkCommunityId, fiscal_year: b.fiscal_year, status: b.status || 'draft', line_items }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'save failed');
+        alert(`Saved — ${j.line_items_count} lines, every month distribution ties to its annual.`);
+        bkLoadBudgetView();
+      } catch (e) { alert('Save failed: ' + e.message); }
+    };
 
     let bkPendingBudgetExtraction = null;
     window.bkUploadBudget = async function (file) {

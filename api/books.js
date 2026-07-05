@@ -436,6 +436,129 @@ router.get('/budgets/:id', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// GET /api/books/budgets/:id/seasonalize   (Ed 2026-07-05)
+// Distribute each budget line's ANNUAL amount across 12 months using the
+// account's HISTORICAL monthly spend/revenue curve from posted GL activity —
+// so a landscaping account front-loads spring/summer and a pool account spikes
+// in season, instead of a flat 1/12. Every line's 12 months sum EXACTLY to its
+// annual (Ed's rule: "the total always equals the yearly budget"). Accounts
+// with no usable history fall back to an even split, flagged so.
+//
+//   ?years=2   how many prior calendar years of GL to learn the curve from
+// Returns { lines: [{ account_id, monthly_amounts_cents, basis, months_of_data }] }
+// Nothing is written — the editor applies + saves via POST /budgets.
+// ----------------------------------------------------------------------------
+function _distributeToWeights(annual, weights) {
+  // weights: 12 non-negative numbers. Distribute `annual` (signed int cents) by
+  // weight, then force the sum to equal `annual` exactly by parking the residual
+  // in the largest-weight month. Zero/degenerate weights => even split.
+  const total = weights.reduce((s, w) => s + (w > 0 ? w : 0), 0);
+  let monthly;
+  if (!(total > 0)) {
+    const each = Math.trunc(annual / 12);
+    monthly = Array(12).fill(each);
+  } else {
+    monthly = weights.map((w) => Math.round(annual * ((w > 0 ? w : 0) / total)));
+  }
+  const drift = annual - monthly.reduce((s, x) => s + x, 0);
+  if (drift !== 0) {
+    // Park residual in the month with the largest weight (or largest magnitude
+    // on the even-split path) so the line still ties to the penny.
+    let li = 0, best = -Infinity;
+    const basisArr = total > 0 ? weights : monthly.map((v) => Math.abs(v));
+    basisArr.forEach((w, idx) => { if ((w > 0 ? w : 0) > best) { best = (w > 0 ? w : 0); li = idx; } });
+    monthly[li] += drift;
+  }
+  return monthly;
+}
+
+router.get('/budgets/:id/seasonalize', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const years = Math.min(5, Math.max(1, parseInt(req.query.years, 10) || 2));
+    const { data: budget } = await supabase.from('community_budgets').select('id, community_id, fiscal_year').eq('id', id).maybeSingle();
+    if (!budget) return res.status(404).json({ error: 'not_found' });
+    const { data: lines } = await supabase.from('budget_line_items')
+      .select('account_id, annual_amount_cents, chart_of_accounts(normal_balance)')
+      .eq('budget_id', id);
+    if (!lines || !lines.length) return res.json({ lines: [] });
+
+    const acctIds = [...new Set(lines.map((l) => l.account_id))];
+    const normalBal = {};
+    lines.forEach((l) => { normalBal[l.account_id] = (l.chart_of_accounts && l.chart_of_accounts.normal_balance) || 'debit'; });
+
+    // Learn the curve from the calendar years PRIOR to the budget's fiscal year.
+    const endYear = (budget.fiscal_year || new Date().getUTCFullYear()) - 1;
+    const startYear = endYear - years + 1;
+    const start = `${startYear}-01-01`, end = `${endYear}-12-31`;
+
+    // month sums per account: accId -> [12] signed in the account's normal direction
+    const curve = {};
+    acctIds.forEach((a) => { curve[a] = Array(12).fill(0); });
+    for (let batch = 0; batch < acctIds.length; batch += 100) {
+      const ids = acctIds.slice(batch, batch + 100);
+      for (let f = 0; ; f += 1000) {
+        const { data: jl, error } = await supabase.from('journal_entry_lines')
+          .select('account_id, debit_cents, credit_cents, journal_entries!inner(posting_date, status)')
+          .in('account_id', ids)
+          .eq('journal_entries.status', 'posted')
+          .gte('journal_entries.posting_date', start)
+          .lte('journal_entries.posting_date', end)
+          .order('id', { ascending: true })
+          .range(f, f + 999);
+        if (error) throw error;
+        (jl || []).forEach((row) => {
+          const d = row.journal_entries && row.journal_entries.posting_date;
+          if (!d) return;
+          const mo = parseInt(String(d).slice(5, 7), 10) - 1; // 0..11
+          if (mo < 0 || mo > 11) return;
+          const signed = (normalBal[row.account_id] === 'credit')
+            ? (row.credit_cents || 0) - (row.debit_cents || 0)
+            : (row.debit_cents || 0) - (row.credit_cents || 0);
+          curve[row.account_id][mo] += signed;
+        });
+        if (!jl || jl.length < 1000) break;
+      }
+    }
+
+    // A real seasonal curve needs the year broadly represented. A freshly
+    // migrated community whose GL only holds a month or two of backfill would
+    // otherwise dump a whole annual into that month — an artifact, not a season.
+    // Require activity in >= MIN_MONTHS distinct months before trusting the shape;
+    // below that, even-split and say so honestly.
+    const MIN_MONTHS = 5;
+    let shaped = 0, evenCount = 0;
+    const out = lines.map((l) => {
+      const raw = curve[l.account_id] || Array(12).fill(0);
+      // Only positive monthly activity informs the seasonal weight (a lone
+      // negative adjustment month shouldn't pull weight negative).
+      const weights = raw.map((v) => (v > 0 ? v : 0));
+      const monthsWithData = weights.filter((w) => w > 0).length;
+      const trust = monthsWithData >= MIN_MONTHS;
+      const useWeights = trust ? weights : Array(12).fill(0); // fall back to even
+      const monthly = _distributeToWeights(Number(l.annual_amount_cents) || 0, useWeights);
+      if (trust) shaped++; else evenCount++;
+      return {
+        account_id: l.account_id,
+        monthly_amounts_cents: monthly,
+        basis: trust ? 'history' : 'even',
+        months_of_data: monthsWithData,
+      };
+    });
+    res.json({
+      from_years: `${startYear}-${endYear}`,
+      min_months: MIN_MONTHS,
+      shaped_from_history: shaped,
+      even_split: evenCount,
+      lines: out,
+    });
+  } catch (err) {
+    console.error('[books] seasonalize failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // Upload a budget PDF — Claude binary extract, return preview (not yet saved)
 router.post('/budgets/preview-pdf', upload.single('file'), async (req, res) => {
   try {
