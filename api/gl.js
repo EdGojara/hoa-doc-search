@@ -169,6 +169,84 @@ async function _fetchAll(table, cols, filters) {
   return out;
 }
 
+// Categorize a Vantaca transaction description into an AR category + label +
+// Texas Property Code §209.0063 payment-application priority (lower = applied
+// first): assessments → assessment-related attorney/collection fees → fines →
+// everything else (interest, late fees, certified fees, admin, NSF).
+function _categorizeVantacaCharge(desc) {
+  const d = String(desc || '');
+  if (/assessment/i.test(d) && !/late/i.test(d))            return { category: 'assessment', label: 'Assessment', priority: 1 };
+  if (/(prior balance|balance forward)/i.test(d) && !/(interest|fine|legal|admin|fee)/i.test(d)) return { category: 'assessment', label: 'Prior Balance', priority: 1 };
+  if (/(legal|attorney|collection)/i.test(d))               return { category: 'attorney_fee', label: 'Legal / Collections', priority: 3 };
+  if (/fine/i.test(d))                                       return { category: 'fine', label: 'Fine', priority: 5 };
+  if (/certified/i.test(d))                                  return { category: 'certified', label: 'Certified Fee', priority: 6 };
+  if (/interest/i.test(d))                                   return { category: 'interest', label: 'Interest', priority: 6 };
+  if (/late fee/i.test(d))                                   return { category: 'late_fee', label: 'Late Fee', priority: 6 };
+  if (/(nsf|bank return|stop payment)/i.test(d))             return { category: 'nsf_fee', label: 'NSF / Returned', priority: 6 };
+  if (/payment plan/i.test(d))                              return { category: 'other', label: 'Payment Plan Fee', priority: 6 };
+  if (/admin/i.test(d))                                      return { category: 'other', label: 'Administrative Fee', priority: 6 };
+  return { category: 'other', label: (d.split(/[-:]/)[0] || 'Other').trim().slice(0, 30) || 'Other', priority: 9 };
+}
+
+// Compute open AR charges from the migrated Vantaca subledger
+// (homeowner_transactions) for communities that don't use the native ar_charges
+// table. Applies each owner's payments/credits in §209.0063 order (priority,
+// then oldest first) and returns the still-open charges shaped like ar_charges
+// rows so the aging endpoint's aggregation is identical for both sources.
+// Scope: current owners only (property_id present) — the aging screen is the
+// live roster; sold/inactive stale balances are a separate write-off track.
+async function _openChargesFromTransactions(cid) {
+  // Only COMMITTED batches — the balance view (v_homeowner_current_balance)
+  // sums committed batches only, so we must match it or a reverted/draft batch
+  // (e.g. Waterview's double-counted batch that was reverted) inflates the total
+  // and it won't reconcile.
+  const committed = await _fetchAll('transaction_upload_batches', 'id', { community_id: cid, status: 'committed' });
+  const committedIds = new Set((committed || []).map((b) => b.id));
+  if (!committedIds.size) return [];
+  // Page in a STABLE order (by id) — .range() without an ORDER BY drifts across
+  // pages on large tables (Waterview's 13k txns were non-deterministic between
+  // runs). Financial reads must be deterministic.
+  const txns = [];
+  for (let from = 0; ; from += 1000) {
+    // eslint-disable-next-line no-await-in-loop
+    const { data, error } = await supabase.from('homeowner_transactions')
+      .select('property_id, vantaca_account_id, transaction_date, description, txn_type, amount_cents, source_batch_id')
+      .eq('community_id', cid).order('id', { ascending: true }).range(from, from + 999);
+    if (error) throw error;
+    txns.push(...(data || []).filter((t) => committedIds.has(t.source_batch_id)));
+    if (!data || data.length < 1000) break;
+  }
+  const byOwner = new Map();
+  for (const t of txns) {
+    if (!t.property_id) continue; // current-owner roster only
+    if (!byOwner.has(t.property_id)) byOwner.set(t.property_id, { charges: [], credit: 0 });
+    const o = byOwner.get(t.property_id);
+    const amt = Number(t.amount_cents) || 0;
+    if (amt > 0 && t.txn_type !== 'payment') {
+      const c = _categorizeVantacaCharge(t.description);
+      o.charges.push({ ...c, date: (t.transaction_date || '').slice(0, 10), amount: amt });
+    } else {
+      o.credit += Math.abs(amt); // payments + negative credits reduce the balance
+    }
+  }
+  const open = [];
+  for (const [propertyId, o] of byOwner) {
+    o.charges.sort((a, b) => (a.priority - b.priority) || String(a.date).localeCompare(String(b.date)));
+    let left = o.credit;
+    for (const ch of o.charges) { const applied = Math.min(ch.amount, Math.max(0, left)); ch.remaining = ch.amount - applied; left -= applied; }
+    for (const ch of o.charges) {
+      if (ch.remaining <= 0) continue;
+      open.push({
+        property_id: propertyId,
+        balance_remaining_cents: ch.remaining,
+        due_date: ch.date,
+        ar_charge_types: { category: ch.category, display_name: ch.label },
+      });
+    }
+  }
+  return open;
+}
+
 // ----------------------------------------------------------------------------
 // AR aging — per homeowner, broken out by charge CATEGORY (assessment, late
 // fee, interest, certified/attorney fees, etc.) and aged by due date.
@@ -180,7 +258,16 @@ router.get('/:communityId/ar-aging', async (req, res) => {
     const charges = await _fetchAll('ar_charges',
       'property_id, charge_type_id, balance_remaining_cents, due_date, status, ar_charge_types:charge_type_id(category, display_name)',
       { community_id: cid, status: 'open' });
-    const open = charges.filter((c) => Number(c.balance_remaining_cents) > 0);
+    let open = charges.filter((c) => Number(c.balance_remaining_cents) > 0);
+    // Migrated communities keep their AR in the Vantaca subledger
+    // (homeowner_transactions) + the GL, not the native ar_charges table. When
+    // ar_charges is empty, compute the aging from that migrated subledger so the
+    // AR that's already reconciled to the GL actually shows.
+    let ar_source = 'ar_charges';
+    if (open.length === 0) {
+      const fromTxns = await _openChargesFromTransactions(cid);
+      if (fromTxns.length) { open = fromTxns; ar_source = 'homeowner_transactions'; }
+    }
 
     const categories = new Set();
     const byCategory = {};       // category -> { label, total, buckets }
@@ -239,6 +326,7 @@ router.get('/:communityId/ar-aging', async (req, res) => {
 
     res.json({
       as_of: asOf,
+      ar_source,
       categories: [...categories],
       summary: { total_cents: grandTotal, by_bucket: totalBuckets, by_category: Object.values(byCategory).sort((a, b) => b.total - a.total) },
       collection_summary: collectionSummary,
