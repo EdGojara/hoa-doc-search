@@ -37,7 +37,11 @@
   .cand:hover { border-color:var(--navy); }
   .cand .why { color:var(--muted); font-size:10.5px; }
   .act { border:none; border-radius:6px; padding:5px 11px; font-size:12px; cursor:pointer; }
-  .act.dismiss { background:#f1f5f9; color:#64748b; } .act.spam { background:#fef2f2; color:#b91c1c; }
+  .act.dismiss { background:#f1f5f9; color:#64748b; } .act.spam { background:#fef2f2; color:#b91c1c; } .act.draft { background:#eef2ff; color:#3730a3; }
+  .draftbox { margin-top:9px; border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfcfe; }
+  .draftbox textarea { width:100%; min-height:110px; border:1px solid var(--line); border-radius:6px; padding:8px; font:13px/1.5 inherit; box-sizing:border-box; }
+  .draftbox .note { font-size:11px; color:var(--muted); margin-bottom:6px; }
+  .draftbox .refuse { font-size:12.5px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:8px 10px; }
   .conf { font-size:10.5px; padding:1px 7px; border-radius:20px; margin-left:6px; }
   .c-high{background:#dcfce7;color:#166534;} .c-medium{background:#fef9c3;color:#854d0e;} .c-low{background:#fee2e2;color:#991b1b;} .c-none{background:#f1f5f9;color:#94a3b8;}
   .empty { text-align:center; color:var(--muted); padding:40px; }
@@ -105,12 +109,14 @@ async function loadList(){
           <div class="from">${esc(m.sender_email||'')} &middot; ${m.received_at?new Date(m.received_at).toLocaleString():''}</div>
         </div>
         <div style="display:flex; gap:6px;">
+          ${['spam','internal'].includes(cls)?'':`<button class="act draft" onclick="doDraft('${m.id}')">✉️ Draft reply</button>`}
           <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
           ${cls==='spam'?'':`<button class="act spam" onclick="dismiss('${m.id}','spam')">Spam</button>`}
         </div>
       </div>
       <div class="summary">${esc(m.ai_summary||'')}</div>
       <div class="link-row">${linkCell(m)}</div>
+      <div id="draft-${m.id}"></div>
     </div>`;
   }).join('');
 }
@@ -126,6 +132,21 @@ async function doLink(id, cand){
 async function dismiss(id, as){
   const r = await fetch(`${API}/${id}/dismiss`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({as})});
   if(r.ok){ loadStats(); loadList(); }
+}
+async function doDraft(id){
+  const box = document.getElementById('draft-'+id);
+  box.innerHTML = '<div class="draftbox"><div class="note">Drafting…</div></div>';
+  const r = await fetch(`${API}/${id}/draft-reply`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const j = await r.json();
+  if(!r.ok){ box.innerHTML = `<div class="draftbox"><div class="refuse">Couldn't draft: ${esc(j.error||'')}</div></div>`; return; }
+  if(j.draftable===false){ box.innerHTML = `<div class="draftbox"><div class="refuse">⛔ No auto-draft — ${esc(j.reason)}. This one needs a person.</div></div>`; return; }
+  box.innerHTML = `<div class="draftbox">
+    <div class="note">Suggested reply (${esc(j.subject||'')}) — review, edit, then send from your mail client. Nothing is sent from here.</div>
+    <textarea id="dt-${id}">${esc(j.body||'')}</textarea>
+    <div style="margin-top:6px; display:flex; gap:6px;">
+      <button class="act draft" onclick="navigator.clipboard.writeText(document.getElementById('dt-${id}').value); this.textContent='Copied ✓';">Copy</button>
+      <button class="act dismiss" onclick="document.getElementById('draft-${id}').innerHTML='';">Close</button>
+    </div></div>`;
 }
 loadStats(); loadList();
 </script>

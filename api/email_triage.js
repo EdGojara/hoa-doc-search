@@ -17,6 +17,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
+const { draftReply } = require('../lib/email/draft_reply');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -117,6 +118,29 @@ router.post('/:id/link', express.json(), async (req, res) => {
     res.json({ message: data, learned });
   } catch (err) {
     console.error('[email_triage] link failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /:id/draft-reply — AI suggests a reply (NOT sent). Guardrails in the lib
+// force a human for legal/enforcement/ACC/financial. Returns the draft for
+// review; the row's triage_status is left as-is until a human acts.
+router.post('/:id/draft-reply', express.json(), async (req, res) => {
+  try {
+    const { data: m, error } = await supabase.from('email_messages')
+      .select('subject, body_preview, body_full, classification, community_id, resolved_contact_id, resolved_contact:resolved_contact_id(full_name), community:community_id(name)')
+      .eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!m) return res.status(404).json({ error: 'not_found' });
+    const draft = await draftReply({
+      email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full },
+      classification: m.classification,
+      contactName: m.resolved_contact ? m.resolved_contact.full_name : null,
+      communityName: m.community ? m.community.name : null,
+    });
+    res.json(draft);
+  } catch (err) {
+    console.error('[email_triage] draft-reply failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
