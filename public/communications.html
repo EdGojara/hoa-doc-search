@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Communications — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width:1180px; margin:0 auto; padding:20px 18px 60px; }
+  .head { display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; border-bottom:3px solid var(--gold); padding-bottom:12px; margin-bottom:16px; }
+  h1 { margin:0; color:var(--navy); font-size:22px; }
+  .sub { color:var(--muted); font-size:12.5px; margin-top:4px; }
+  .stats { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+  .stat { background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px 14px; min-width:96px; }
+  .stat b { display:block; font-size:20px; color:var(--navy); }
+  .stat span { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+  .chip { border:1px solid var(--line); background:#fff; border-radius:20px; padding:6px 14px; font-size:12.5px; cursor:pointer; color:var(--muted); }
+  .chip.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+  .msg { background:#fff; border:1px solid var(--line); border-radius:9px; padding:12px 14px; margin-bottom:9px; }
+  .msg-top { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+  .subj { font-weight:600; color:var(--navy); font-size:14px; }
+  .from { color:var(--muted); font-size:12px; margin-top:2px; }
+  .summary { font-size:13px; margin:7px 0; color:#33414f; }
+  .badge { display:inline-block; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding:2px 8px; border-radius:20px; white-space:nowrap; }
+  .b-homeowner_request{background:#e0f2fe;color:#075985;} .b-violation_report{background:#fef3c7;color:#92400e;}
+  .b-acc_request{background:#ede9fe;color:#5b21b6;} .b-vendor_financial{background:#dcfce7;color:#166534;}
+  .b-vendor_general{background:#f1f5f9;color:#334155;} .b-legal_privileged{background:#fee2e2;color:#991b1b;}
+  .b-internal{background:#f1f5f9;color:#64748b;} .b-spam{background:#f3f4f6;color:#9ca3af;} .b-other{background:#f1f5f9;color:#475569;}
+  .link-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; padding-top:8px; border-top:1px dashed var(--line); }
+  .linked { font-size:12.5px; color:#166534; font-weight:600; }
+  .lbl { font-size:11.5px; color:var(--muted); }
+  .cand { border:1px solid var(--line); background:#f8fafc; border-radius:6px; padding:4px 10px; font-size:12px; cursor:pointer; }
+  .cand:hover { border-color:var(--navy); }
+  .cand .why { color:var(--muted); font-size:10.5px; }
+  .act { border:none; border-radius:6px; padding:5px 11px; font-size:12px; cursor:pointer; }
+  .act.dismiss { background:#f1f5f9; color:#64748b; } .act.spam { background:#fef2f2; color:#b91c1c; }
+  .conf { font-size:10.5px; padding:1px 7px; border-radius:20px; margin-left:6px; }
+  .c-high{background:#dcfce7;color:#166534;} .c-medium{background:#fef9c3;color:#854d0e;} .c-low{background:#fee2e2;color:#991b1b;} .c-none{background:#f1f5f9;color:#94a3b8;}
+  .empty { text-align:center; color:var(--muted); padding:40px; }
+  .banner { background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:8px; padding:10px 14px; font-size:12.5px; margin-bottom:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>Communications</h1>
+      <div class="sub">info@bedrocktx.com &middot; read-only triage &middot; the system understands and links every email &mdash; <strong>nothing is sent</strong></div>
+    </div>
+  </div>
+  <div id="banner"></div>
+  <div class="stats" id="stats"></div>
+  <div class="chips" id="chips"></div>
+  <div id="list"><div class="empty">Loading&hellip;</div></div>
+</div>
+<script>
+const API = '/api/email-triage';
+let filter = 'needs_review';
+const CLASS_LABEL = { homeowner_request:'Homeowner', violation_report:'Violation', acc_request:'ACC', vendor_financial:'Vendor $', vendor_general:'Vendor', legal_privileged:'Legal', internal:'Internal', spam:'Spam', other:'Other' };
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+async function loadStats(){
+  const r = await fetch(API+'/stats'); const j = await r.json();
+  const s = j.by_status||{};
+  document.getElementById('stats').innerHTML =
+    `<div class="stat"><b>${j.total||0}</b><span>total</span></div>
+     <div class="stat"><b>${(s.needs_review||0)+(s.new||0)}</b><span>need review</span></div>
+     <div class="stat"><b>${s.linked||0}</b><span>linked</span></div>
+     <div class="stat"><b>${s.spam||0}</b><span>spam/noise</span></div>`;
+  const chips=[['needs_review','Needs review'],['new','New'],['linked','Linked'],['spam','Spam'],['','All']];
+  document.getElementById('chips').innerHTML = chips.map(([v,l])=>
+    `<div class="chip ${v===filter?'active':''}" onclick="setFilter('${v}')">${l}</div>`).join('');
+}
+function setFilter(v){ filter=v; loadStats(); loadList(); }
+
+function linkCell(m){
+  const name = (m.resolved_contact&&m.resolved_contact.full_name) || (m.resolved_vendor&&m.resolved_vendor.name) || (m.resolved_property&&m.resolved_property.street_address);
+  const comm = m.community && m.community.name ? ` &middot; ${esc(m.community.name)}` : '';
+  if (m.triage_status==='linked' || (name && m.resolution_confidence==='high')){
+    return `<span class="linked">✓ Linked to ${esc(name||'record')}</span><span class="lbl">${comm}</span>`;
+  }
+  const cands = (m.resolution_candidates||[]).slice(0,4).map(c=>
+    `<div class="cand" onclick='doLink("${m.id}", ${JSON.stringify(c).replace(/'/g,"&#39;")})'>${esc(c.label)} <span class="why">${esc(c.why||c.type)}</span></div>`).join('');
+  const hint = cands ? `<span class="lbl">Suggested${comm}:</span>` : `<span class="lbl">No match found${comm} — needs manual link</span>`;
+  return hint + cands;
+}
+
+async function loadList(){
+  const url = API + (filter?`?status=${filter}`:'?status=needs_review,new,linked,spam,dismissed,handled') + '&limit=200';
+  const r = await fetch(url); const j = await r.json();
+  const msgs = j.messages||[];
+  if(!msgs.length){ document.getElementById('list').innerHTML='<div class="empty">Nothing here yet. Once info@ is ingested, triaged messages appear here.</div>'; return; }
+  document.getElementById('list').innerHTML = msgs.map(m=>{
+    const cls = m.classification||'other';
+    return `<div class="msg">
+      <div class="msg-top">
+        <div>
+          <span class="badge b-${cls}">${CLASS_LABEL[cls]||cls}</span>
+          <span class="conf c-${m.classification_confidence||'none'}">${m.classification_confidence||''}</span>
+          <div class="subj" style="margin-top:5px;">${esc(m.subject||'(no subject)')}</div>
+          <div class="from">${esc(m.sender_email||'')} &middot; ${m.received_at?new Date(m.received_at).toLocaleString():''}</div>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
+          ${cls==='spam'?'':`<button class="act spam" onclick="dismiss('${m.id}','spam')">Spam</button>`}
+        </div>
+      </div>
+      <div class="summary">${esc(m.ai_summary||'')}</div>
+      <div class="link-row">${linkCell(m)}</div>
+    </div>`;
+  }).join('');
+}
+
+async function doLink(id, cand){
+  const body = { write_back_email:true };
+  if(cand.type==='contact'){ body.contact_id=cand.id; if(cand.property_id) body.property_id=cand.property_id; if(cand.community_id) body.community_id=cand.community_id; }
+  else if(cand.type==='property'){ body.property_id=cand.id; if(cand.community_id) body.community_id=cand.community_id; }
+  else if(cand.type==='vendor'){ body.vendor_id=cand.id; }
+  const r = await fetch(`${API}/${id}/link`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.ok){ loadStats(); loadList(); } else { alert('Link failed'); }
+}
+async function dismiss(id, as){
+  const r = await fetch(`${API}/${id}/dismiss`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({as})});
+  if(r.ok){ loadStats(); loadList(); }
+}
+loadStats(); loadList();
+</script>
+</body>
+</html>

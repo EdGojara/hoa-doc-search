@@ -946,6 +946,9 @@ app.use('/api/gl', glRouter);
 app.get('/admin/accounting', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'accounting.html'));
 });
+app.get('/admin/communications', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'communications.html'));
+});
 app.get('/admin/home-sales', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'home_sales.html'));
 });
@@ -1305,6 +1308,9 @@ app.use('/api/minutes', minutesRouter);
 
 const { router: agendasRouter } = require('./api/agendas');
 app.use('/api/agendas', agendasRouter);
+
+const { router: emailTriageRouter } = require('./api/email_triage');
+app.use('/api/email-triage', emailTriageRouter);
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
