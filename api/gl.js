@@ -195,7 +195,7 @@ function _categorizeVantacaCharge(desc) {
 // rows so the aging endpoint's aggregation is identical for both sources.
 // Scope: current owners only (property_id present) — the aging screen is the
 // live roster; sold/inactive stale balances are a separate write-off track.
-async function _openChargesFromTransactions(cid) {
+async function _openChargesFromTransactions(cid, propertyId = null) {
   // Only COMMITTED batches — the balance view (v_homeowner_current_balance)
   // sums committed batches only, so we must match it or a reverted/draft batch
   // (e.g. Waterview's double-counted batch that was reverted) inflates the total
@@ -205,13 +205,16 @@ async function _openChargesFromTransactions(cid) {
   if (!committedIds.size) return [];
   // Page in a STABLE order (by id) — .range() without an ORDER BY drifts across
   // pages on large tables (Waterview's 13k txns were non-deterministic between
-  // runs). Financial reads must be deterministic.
+  // runs). Financial reads must be deterministic. propertyId narrows to one
+  // owner (fast path for the account-detail screen).
   const txns = [];
   for (let from = 0; ; from += 1000) {
-    // eslint-disable-next-line no-await-in-loop
-    const { data, error } = await supabase.from('homeowner_transactions')
+    let q = supabase.from('homeowner_transactions')
       .select('property_id, vantaca_account_id, transaction_date, description, txn_type, amount_cents, source_batch_id')
-      .eq('community_id', cid).order('id', { ascending: true }).range(from, from + 999);
+      .eq('community_id', cid);
+    if (propertyId) q = q.eq('property_id', propertyId);
+    // eslint-disable-next-line no-await-in-loop
+    const { data, error } = await q.order('id', { ascending: true }).range(from, from + 999);
     if (error) throw error;
     txns.push(...(data || []).filter((t) => committedIds.has(t.source_batch_id)));
     if (!data || data.length < 1000) break;
@@ -482,7 +485,14 @@ router.get('/:communityId/owners/search', async (req, res) => {
       'property_id, street_address, owner_name, owner_email, owner_phone, vantaca_account_id', { community_id: cid });
     const charges = await _fetchAll('ar_charges', 'property_id, balance_remaining_cents', { community_id: cid, status: 'open' });
     const balByProp = {};
-    for (const c of charges) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
+    if (charges.length) {
+      for (const c of charges) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
+    } else {
+      // Migrated community — balances live in the subledger, not ar_charges.
+      // Use the SAME computation as AR Aging so every AR screen agrees.
+      const openTx = await _openChargesFromTransactions(cid);
+      for (const c of openTx) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
+    }
     const coll = await _fetchAll('ar_account_collections', 'property_id, collection_status', { community_id: cid });
     const collByProp = Object.fromEntries(coll.map((c) => [c.property_id, c.collection_status]));
     const matched = (q
@@ -502,9 +512,18 @@ router.get('/:communityId/owners/:propertyId/account', async (req, res) => {
   try {
     const cid = req.params.communityId, pid = req.params.propertyId, asOf = _today();
     const owner = (await _fetchAll('v_current_property_owners', '*', { community_id: cid, property_id: pid }))[0] || null;
-    const charges = (await _fetchAll('ar_charges',
+    let charges = (await _fetchAll('ar_charges',
       'charge_date, due_date, description, original_amount_cents, balance_remaining_cents, ar_charge_types:charge_type_id(category, display_name)',
       { community_id: cid, property_id: pid, status: 'open' })).filter((c) => Number(c.balance_remaining_cents) > 0);
+    if (!charges.length) {
+      // Migrated community — derive this owner's open charges from the subledger.
+      charges = (await _openChargesFromTransactions(cid, pid)).map((c) => ({
+        charge_date: c.due_date, due_date: c.due_date,
+        description: (c.ar_charge_types && c.ar_charge_types.display_name) || 'Charge',
+        original_amount_cents: c.balance_remaining_cents, balance_remaining_cents: c.balance_remaining_cents,
+        ar_charge_types: c.ar_charge_types,
+      }));
+    }
     const byCategory = {}; const buckets = _emptyBuckets(); let total = 0;
     const rows = charges.map((c) => {
       const cat = (c.ar_charge_types && c.ar_charge_types.display_name) || 'other';
@@ -532,6 +551,24 @@ router.get('/:communityId/owners/:propertyId/account', async (req, res) => {
         { community_id: cid, property_id: pid });
       ledger.sort((a, b) => (a.entry_date || '').localeCompare(b.entry_date || '') || (a.sort_seq - b.sort_seq));
     } catch (e) { /* table not present yet */ }
+    if (!ledger.length) {
+      // Migrated community — the ledger IS the Vantaca transaction history.
+      const committed = await _fetchAll('transaction_upload_batches', 'id', { community_id: cid, status: 'committed' });
+      const committedIds = new Set((committed || []).map((b) => b.id));
+      const txns = (await _fetchAll('homeowner_transactions',
+        'transaction_date, description, txn_type, amount_cents, running_balance_cents, source_batch_id',
+        { community_id: cid, property_id: pid })).filter((t) => committedIds.has(t.source_batch_id));
+      txns.sort((a, b) => (a.transaction_date || '').localeCompare(b.transaction_date || ''));
+      ledger = txns.map((t) => {
+        const amt = Number(t.amount_cents) || 0;
+        const isPayment = t.txn_type === 'payment' || amt < 0;
+        return {
+          entry_date: t.transaction_date, description: t.description,
+          charge_cents: isPayment ? 0 : amt, payment_cents: isPayment ? Math.abs(amt) : 0,
+          running_balance_cents: t.running_balance_cents, entry_type: t.txn_type,
+        };
+      });
+    }
     res.json({
       owner, as_of: asOf, total_cents: total,
       by_category: Object.entries(byCategory).map(([category, cents]) => ({ category, cents })).sort((a, b) => b.cents - a.cents),
@@ -553,9 +590,15 @@ router.get('/:communityId/owners/:propertyId/statement', async (req, res) => {
 
     const { data: comm } = await supabase.from('communities').select('name, legal_name').eq('id', cid).maybeSingle();
     const owner = (await _fetchAll('v_current_property_owners', '*', { community_id: cid, property_id: pid }))[0] || {};
-    const charges = (await _fetchAll('ar_charges',
+    let charges = (await _fetchAll('ar_charges',
       'due_date, charge_date, balance_remaining_cents, ar_charge_types:charge_type_id(display_name)',
       { community_id: cid, property_id: pid, status: 'open' })).filter((c) => Number(c.balance_remaining_cents) > 0);
+    if (!charges.length) {
+      charges = (await _openChargesFromTransactions(cid, pid)).map((c) => ({
+        due_date: c.due_date, charge_date: c.due_date, balance_remaining_cents: c.balance_remaining_cents,
+        ar_charge_types: { display_name: (c.ar_charge_types && c.ar_charge_types.display_name) || 'Charge' },
+      }));
+    }
     const byCategory = {}; const buckets = _emptyBuckets(); let total = 0;
     for (const c of charges) {
       const cat = (c.ar_charge_types && c.ar_charge_types.display_name) || 'Other';
@@ -567,6 +610,13 @@ router.get('/:communityId/owners/:propertyId/statement', async (req, res) => {
       ledger = await _fetchAll('homeowner_ledger_entries', 'entry_date, description, charge_cents, payment_cents, running_balance_cents, sort_seq', { community_id: cid, property_id: pid });
       ledger.sort((a, b) => (a.entry_date || '').localeCompare(b.entry_date || '') || (a.sort_seq - b.sort_seq));
     } catch (e) { /* ledger not loaded */ }
+    if (!ledger.length) {
+      const committed = await _fetchAll('transaction_upload_batches', 'id', { community_id: cid, status: 'committed' });
+      const committedIds = new Set((committed || []).map((b) => b.id));
+      const txns = (await _fetchAll('homeowner_transactions', 'transaction_date, description, txn_type, amount_cents, running_balance_cents, source_batch_id', { community_id: cid, property_id: pid })).filter((t) => committedIds.has(t.source_batch_id));
+      txns.sort((a, b) => (a.transaction_date || '').localeCompare(b.transaction_date || ''));
+      ledger = txns.map((t) => { const amt = Number(t.amount_cents) || 0; const isPayment = t.txn_type === 'payment' || amt < 0; return { entry_date: t.transaction_date, description: t.description, charge_cents: isPayment ? 0 : amt, payment_cents: isPayment ? Math.abs(amt) : 0, running_balance_cents: t.running_balance_cents }; });
+    }
 
     const html = renderStatementHTML({
       owner, communityName: comm ? (comm.legal_name || comm.name) : '', statementDate: asOf, total_cents: total,
@@ -741,7 +791,14 @@ router.get('/:communityId/collections', async (req, res) => {
     const active = coll.filter((c) => c.collection_status && c.collection_status !== 'none');
     const charges = await _fetchAll('ar_charges', 'property_id, balance_remaining_cents', { community_id: cid, status: 'open' });
     const balByProp = {};
-    for (const c of charges) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
+    if (charges.length) {
+      for (const c of charges) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
+    } else {
+      // Migrated community — balances live in the subledger, not ar_charges.
+      // Use the SAME computation as AR Aging so every AR screen agrees.
+      const openTx = await _openChargesFromTransactions(cid);
+      for (const c of openTx) balByProp[c.property_id] = (balByProp[c.property_id] || 0) + Number(c.balance_remaining_cents);
+    }
     const owners = await _fetchAll('v_current_property_owners', 'property_id, street_address, owner_name', { community_id: cid });
     const ownerByProp = Object.fromEntries(owners.map((o) => [o.property_id, o]));
     const rows = active.map((c) => ({
