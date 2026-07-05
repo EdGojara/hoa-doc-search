@@ -59,13 +59,18 @@ function parseXls() {
   if (hdrRow < 0) throw new Error('could not find header row (Annual + Jan)');
   const hdr = aoa[hdrRow].map((c) => String(c || '').trim());
   const annualCol = hdr.indexOf('Annual');
+  // The account "NNNN - Name" cell isn't always in column 0 — some Vantaca
+  // exports put it in column 1 with section headers in column 0. Find it by
+  // scanning the row for the first cell matching the account pattern.
+  const acctRe = /^(\d{3,5})\s*-\s*(.+)/;
+  const findAcct = (r) => { for (let ci = 0; ci < r.length; ci++) { const m = String(r[ci] == null ? '' : r[ci]).trim().match(acctRe); if (m) return m; } return null; };
   // Merged-cell headers don't align with data columns — detect the 12 month
   // value-columns from the first account row with exactly 12 non-empty cells
   // after the Annual column.
   let monthCols = null;
   for (let i = hdrRow + 1; i < aoa.length && !monthCols; i++) {
     const r = aoa[i] || [];
-    if (!/^\d{3,5}\s*-/.test(String(r[0] || ''))) continue;
+    if (!findAcct(r)) continue;
     const cols = [];
     for (let ci = annualCol + 1; ci < r.length; ci++) if (r[ci] != null && String(r[ci]).trim() !== '') cols.push(ci);
     if (cols.length === 12) monthCols = cols;
@@ -76,7 +81,7 @@ function parseXls() {
   const lines = [];
   for (let i = hdrRow + 1; i < aoa.length; i++) {
     const r = aoa[i] || [];
-    const m = String(r[0] || '').trim().match(/^(\d{3,5})\s*-\s*(.+)/);
+    const m = findAcct(r);
     if (!m) continue;
     const annual = cents(r[annualCol]);
     const monthly = monthCols.map((c) => cents(r[c]));
@@ -135,22 +140,38 @@ function normalizeMonths(monthly, annual) {
   coa.forEach((a) => { if (a.fund_id) fundCounts[a.fund_id] = (fundCounts[a.fund_id] || 0) + 1; });
   const operatingFundId = Object.keys(fundCounts).sort((x, y) => fundCounts[y] - fundCounts[x])[0] || null;
 
+  // Aggregate by account first — the same account can appear on more than one
+  // export row (sub-sections, repeated lines), and budget_line_items is UNIQUE
+  // on (budget_id, account_id). Sum the annual + element-wise months per account
+  // so we write exactly one line per account. Normalize AFTER aggregation.
+  const agg = new Map();
+  let mergedDupes = 0;
+  for (const pl of parsed.lines) {
+    let e = agg.get(pl.account_number);
+    if (!e) { e = { account_number: pl.account_number, name: pl.name, account_type_hint: pl.account_type_hint, annual_amount_cents: 0, monthly: Array(12).fill(0), hasMonthly: false }; agg.set(pl.account_number, e); }
+    else mergedDupes++;
+    e.annual_amount_cents += pl.annual_amount_cents;
+    if (Array.isArray(pl.monthly_raw) && pl.monthly_raw.length === 12) { pl.monthly_raw.forEach((v, i) => { e.monthly[i] += v; }); e.hasMonthly = true; }
+    if (!e.account_type_hint && pl.account_type_hint) e.account_type_hint = pl.account_type_hint;
+  }
+  if (mergedDupes) console.log(`  merged ${mergedDupes} duplicate account line(s) into their account totals`);
+
   const lines = [], toCreate = [];
   const createIdx = {};
   let maxDrift = 0;
-  for (const pl of parsed.lines) {
-    const norm = normalizeMonths(pl.monthly_raw, pl.annual_amount_cents);
+  for (const e of agg.values()) {
+    const norm = normalizeMonths(e.hasMonthly ? e.monthly : [], e.annual_amount_cents);
     if (Math.abs(norm.drift) > maxDrift) maxDrift = Math.abs(norm.drift);
-    let a = byNum[pl.account_number];
+    let a = byNum[e.account_number];
     if (!a) {
-      if (!createIdx[pl.account_number]) {
-        const t = typeFrom(pl.account_type_hint, pl.account_number);
-        const spec = { account_number: pl.account_number, account_name: pl.name, account_type: t.account_type, normal_balance: t.normal_balance };
-        createIdx[pl.account_number] = spec; toCreate.push(spec);
+      if (!createIdx[e.account_number]) {
+        const t = typeFrom(e.account_type_hint, e.account_number);
+        const spec = { account_number: e.account_number, account_name: e.name, account_type: t.account_type, normal_balance: t.normal_balance };
+        createIdx[e.account_number] = spec; toCreate.push(spec);
       }
-      a = { __pending: createIdx[pl.account_number] };
+      a = { __pending: createIdx[e.account_number] };
     }
-    lines.push({ account: a, account_number: pl.account_number, name: pl.name, annual_amount_cents: pl.annual_amount_cents, monthly_amounts_cents: norm.monthly });
+    lines.push({ account: a, account_number: e.account_number, name: e.name, annual_amount_cents: e.annual_amount_cents, monthly_amounts_cents: norm.monthly });
   }
 
   const unmatched = toCreate.filter((s) => !s.account_type);
@@ -159,11 +180,12 @@ function normalizeMonths(monthly, annual) {
   if (toCreate.length) { console.log('  ACCOUNTS TO CREATE in Operating fund:'); toCreate.forEach((s) => console.log(`    ${s.account_number} - ${s.account_name}  [${s.account_type || 'UNKNOWN — needs manual placement'}]`)); }
   const totAnnual = lines.reduce((s, l) => s + l.annual_amount_cents, 0);
   const totMonths = lines.reduce((s, l) => s + l.monthly_amounts_cents.reduce((a, b) => a + b, 0), 0);
-  const revT = lines.filter((l) => typeFrom((l.account.account_type || (l.account.__pending && l.account.__pending.account_type)), l.account_number).account_type === 'revenue').reduce((s, l) => s + l.annual_amount_cents, 0);
   console.log(`  total annual across all lines: $${(totAnnual / 100).toLocaleString()}`);
   console.log(`  total of all monthly values:   $${(totMonths / 100).toLocaleString()}  ${totMonths === totAnnual ? '✓ ties' : '✗ DOES NOT TIE'}`);
 
   if (!APPLY) { console.log('\nDRY RUN — pass --apply to write the budget (creates missing accounts first).'); return; }
+  if (!lines.length) { console.error('Refusing to write: 0 parsed lines (would wipe an existing budget for nothing).'); process.exit(1); }
+  if (totMonths !== totAnnual) { console.error('Refusing to write: aggregate months do not tie to aggregate annual.'); process.exit(1); }
   if (unmatched.length) { console.error('Refusing to write: accounts with un-inferable type. Add them to the chart manually first.'); process.exit(1); }
   if (!operatingFundId) { console.error('Refusing to write: could not determine the Operating fund_id (empty chart).'); process.exit(1); }
 
@@ -192,5 +214,7 @@ function normalizeMonths(monthly, annual) {
   }
   const rows = lines.map((l) => ({ budget_id: budgetId, account_id: l.account_id, fund_id: l.fund_id, annual_amount_cents: l.annual_amount_cents, monthly_amounts_cents: l.monthly_amounts_cents }));
   for (let i = 0; i < rows.length; i += 200) { const { error } = await sb.from('budget_line_items').insert(rows.slice(i, i + 200)); if (error) { console.error('line insert failed:', error.message); process.exit(1); } }
-  console.log(`\nAPPLIED: budget ${budgetId} — ${rows.length} lines, FY${fiscalYear}.`);
+  const { count } = await sb.from('budget_line_items').select('id', { count: 'exact', head: true }).eq('budget_id', budgetId);
+  if (count !== rows.length) { console.error(`POST-CHECK FAILED: wrote ${count} lines, expected ${rows.length}.`); process.exit(1); }
+  console.log(`\nAPPLIED: budget ${budgetId} — ${rows.length} lines written & verified, FY${fiscalYear}.`);
 })().catch((e) => { console.error('ERR', e.message); process.exit(1); });
