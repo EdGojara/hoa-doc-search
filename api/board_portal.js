@@ -132,6 +132,38 @@ router.get('/community/:id/summary', async (req, res) => {
         owners_with_payment_plan: planActive,
         total_outstanding_cents: Math.round(totalOutstanding * 100), // dollars→cents
       };
+
+      // Migrated communities have NO owner_ar_snapshots — their AR lives in the
+      // subledger + GL. Derive the same rollup from v_homeowner_current_balance
+      // (balances) + ar_account_collections (enforcement flags), so the board
+      // portal matches the accounting AR screens instead of showing zeros.
+      if (!latest.length) {
+        const bals = [];
+        for (let f = 0; ; f += 1000) {
+          // eslint-disable-next-line no-await-in-loop
+          const { data, error } = await supabase.from('v_homeowner_current_balance')
+            .select('property_id, balance_cents').eq('community_id', communityId)
+            .order('property_id', { ascending: true, nullsFirst: false }).range(f, f + 999);
+          if (error) break;
+          bals.push(...(data || []));
+          if (!data || data.length < 1000) break;
+        }
+        const current = bals.filter((b) => b.property_id);            // roster only
+        const owing = current.filter((b) => Number(b.balance_cents) > 0);
+        // Enforcement flags from the SSOT (property_enforcement_states), OPEN
+        // states only (ended_at null). ar_account_collections is empty for these.
+        const { data: esRows } = await supabase.from('property_enforcement_states')
+          .select('property_id, state').eq('community_id', communityId).is('ended_at', null).limit(5000);
+        const es = esRows || [];
+        arAging = {
+          owners_current: current.filter((b) => Number(b.balance_cents) <= 0).length,
+          owners_past_due: owing.length,
+          owners_at_legal: es.filter((c) => ['at_legal', 'lien_filed', 'judgment'].includes(c.state)).length,
+          owners_in_collections: es.filter((c) => c.state === 'in_collections').length,
+          owners_with_payment_plan: es.filter((c) => c.state === 'on_payment_plan').length,
+          total_outstanding_cents: owing.reduce((s, b) => s + Number(b.balance_cents || 0), 0), // already cents
+        };
+      }
     } catch (e) {
       console.warn('[board_portal] AR aging skipped:', e.message);
     }
