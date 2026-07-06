@@ -17,7 +17,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
-const { draftReply, DRAFTABLE } = require('../lib/email/draft_reply');
+const { draftReply, NO_DRAFT } = require('../lib/email/draft_reply');
 const graphSend = require('../lib/email/graph_send');
 const graphIngest = require('../lib/email/graph_ingest');
 
@@ -159,13 +159,14 @@ router.post('/ingest', express.json(), async (req, res) => {
 router.post('/:id/draft-reply', express.json(), async (req, res) => {
   try {
     const { data: m, error } = await supabase.from('email_messages')
-      .select('subject, body_preview, body_full, classification, community_id, resolved_contact_id, resolved_contact:resolved_contact_id(full_name), community:community_id(name)')
+      .select('subject, body_preview, body_full, classification, community_id, resolved_contact_id, resolved_property_id, resolved_contact:resolved_contact_id(full_name), community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
     const draft = await draftReply({
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full },
       classification: m.classification,
+      contactId: m.resolved_contact_id, propertyId: m.resolved_property_id, communityId: m.community_id,
       contactName: m.resolved_contact ? m.resolved_contact.full_name : null,
       communityName: m.community ? m.community.name : null,
     });
@@ -188,7 +189,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
-    if (!DRAFTABLE.has(m.classification)) return res.status(403).json({ error: 'not_sendable', detail: 'This class of email must be handled by a person, not sent as Claire.' });
+    if (NO_DRAFT.has(m.classification)) return res.status(403).json({ error: 'not_sendable', detail: 'Spam / internal notifications are not replied to.' });
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'claire@bedrocktx.com send is not wired yet — create the mailbox + Azure app (Mail.Send) and set GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET.' });
 
     const recipient = to || m.sender_email;

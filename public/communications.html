@@ -109,14 +109,14 @@ async function loadList(){
           <div class="from">${esc(m.sender_email||'')} &middot; ${m.received_at?new Date(m.received_at).toLocaleString():''}</div>
         </div>
         <div style="display:flex; gap:6px;">
-          ${['spam','internal'].includes(cls)?'':`<button class="act draft" onclick="doDraft('${m.id}')">✉️ Draft reply</button>`}
+          ${['spam','internal'].includes(cls)?'':`<button class="act draft" onclick="doDraft('${m.id}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>`}
           <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
           ${cls==='spam'?'':`<button class="act spam" onclick="dismiss('${m.id}','spam')">Spam</button>`}
         </div>
       </div>
       <div class="summary">${esc(m.ai_summary||'')}</div>
       <div class="link-row">${linkCell(m)}</div>
-      <div id="draft-${m.id}"></div>
+      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful):''}</div>
     </div>`;
   }).join('');
 }
@@ -133,24 +133,29 @@ async function dismiss(id, as){
   const r = await fetch(`${API}/${id}/dismiss`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({as})});
   if(r.ok){ loadStats(); loadList(); }
 }
-async function doDraft(id){
-  const box = document.getElementById('draft-'+id);
-  box.innerHTML = '<div class="draftbox"><div class="note">Drafting…</div></div>';
-  const r = await fetch(`${API}/${id}/draft-reply`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-  const j = await r.json();
-  if(!r.ok){ box.innerHTML = `<div class="draftbox"><div class="refuse">Couldn't draft: ${esc(j.error||'')}</div></div>`; return; }
-  if(j.draftable===false){ box.innerHTML = `<div class="draftbox"><div class="refuse">⛔ No auto-draft — ${esc(j.reason)}. This one needs a person.</div></div>`; return; }
-  box.innerHTML = `<div class="draftbox">
-    <div class="note">Suggested reply (${esc(j.subject||'')}) — review, edit, then send from your mail client. Nothing is sent from here.</div>
-    <textarea id="dt-${id}">${esc(j.body||'')}</textarea>
+function draftBoxHtml(id, subject, body, careful){
+  return `<div class="draftbox">
+    ${careful?`<div class="refuse">⚠ Compliance-sensitive (legal / violation / ACC / money). Claire drafted her best answer from the account + §209 / governing docs — <strong>read carefully</strong> before sending.</div>`:''}
+    <div class="note">Claire's draft${subject?' ('+esc(subject)+')':''} — review / edit, then approve. Nothing sends until you click.</div>
+    <textarea id="dt-${id}">${esc(body||'')}</textarea>
     <div class="note" style="margin-top:5px;">Sends from <strong>claire@bedrocktx.com</strong> with Claire's AI signature appended.</div>
     <div style="margin-top:6px; display:flex; gap:6px;">
-      <button class="act send" onclick="doSend('${id}', this)">✅ Approve &amp; send as Claire</button>
+      <button class="act send" onclick="doSend('${id}', this, ${careful?'true':'false'})">✅ Approve &amp; send as Claire</button>
       <button class="act draft" onclick="navigator.clipboard.writeText(document.getElementById('dt-${id}').value); this.textContent='Copied ✓';">Copy</button>
       <button class="act dismiss" onclick="document.getElementById('draft-${id}').innerHTML='';">Close</button>
     </div></div>`;
 }
-async function doSend(id, btn){
+async function doDraft(id){
+  const box = document.getElementById('draft-'+id);
+  box.innerHTML = '<div class="draftbox"><div class="note">Claire is drafting…</div></div>';
+  const r = await fetch(`${API}/${id}/draft-reply`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const j = await r.json();
+  if(!r.ok){ box.innerHTML = `<div class="draftbox"><div class="refuse">Couldn't draft: ${esc(j.error||'')}</div></div>`; return; }
+  if(j.draftable===false){ box.innerHTML = `<div class="draftbox"><div class="refuse">No draft — ${esc(j.reason)}.</div></div>`; return; }
+  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful);
+}
+async function doSend(id, btn, careful){
+  if(careful && !confirm('This is a compliance-sensitive reply (legal / violation / ACC / money). Send it as Claire now?')) return;
   const body = document.getElementById('dt-'+id).value;
   btn.disabled = true; btn.textContent = 'Sending…';
   const r = await fetch(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body})});
