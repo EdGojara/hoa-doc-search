@@ -49,12 +49,61 @@ Analyze this scanned mail document and extract the information. Respond ONLY wit
   "fields": [ { "label": "string", "value": "string", "conf": 0-100, "unknown": boolean } ],
   "routing": { "owner": "Ed | Martha | Celina | Alicia | Lori | Community Manager", "sla": "string", "system": "which trustEd module/file to log in" },
   "summary": "2-4 sentence plain-English summary",
+  "homeownerName": "the specific homeowner this mail is addressed to or about, if any (else empty)",
+  "propertyAddress": "the property street address this mail concerns, if any (else empty)",
   "actions": [ { "text": "action, wrap the key phrase in <strong></strong>" } ]
 }
 
 Urgency: critical = legal demand/attorney/subpoena/lawsuit; high = government/tax/collections/NSF/financial with a deadline; normal = invoices, owner correspondence, insurance certs, board; discard = junk/marketing.
 Routing: legal/critical -> Ed immediate; government/financial-with-deadline -> Ed same day; invoices -> Martha (AP) EOD; owner correspondence -> Community Manager EOD; insurance -> Martha EOD; board -> Community Manager EOD.
-Always include a "Community" field (value "Unknown — review required" + unknown:true if you cannot tell). Extract 6-8 fields. conf: 90+ clearly readable, 70-89 inferred, 50-69 uncertain, <50 set unknown:true. Include 4-6 action items.`;
+Always include a "Community" field (value "Unknown — review required" + unknown:true if you cannot tell). Extract 6-8 fields. conf: 90+ clearly readable, 70-89 inferred, 50-69 uncertain, <50 set unknown:true. Include 4-6 action items.
+When the mail concerns a SPECIFIC homeowner or property (owner correspondence, a collections/legal notice about an owner, a violation, an ARC matter, an estoppel, a check from an owner), set homeownerName + propertyAddress so the scan can be filed onto that homeowner's record. Leave both empty for vendor invoices, government/regulatory, insurance, and general mail not tied to one owner.`;
+
+// Resolve a scan's addressee (homeowner name + property address from the
+// classification) to a contact/property so the scan can be filed onto the
+// homeowner's record. Address-first (the property is the anchor), then the
+// owner. Returns nulls when it can't place it — the caller just skips linking.
+async function resolveScanAddressee({ homeownerName, propertyAddress, communityId }, sb) {
+  let property_id = null, contact_id = null, community_id = communityId || null;
+  if (propertyAddress) {
+    const num = (String(propertyAddress).match(/^\s*(\d{2,6})/) || [])[1];
+    const street = String(propertyAddress).replace(/^\s*\d+\s*/, '').replace(/,.*$/, '').trim().split(/\s+/).slice(0, 2).join(' ');
+    if (street) {
+      let pick = null;
+      // Anchor on the house number so we don't pull an arbitrary slice of a
+      // long street (29 "Cape Clover" homes) and miss the exact one.
+      if (num) {
+        let q = sb.from('properties').select('id, street_address, community_id').ilike('street_address', `${num} ${street}%`);
+        if (community_id) q = q.eq('community_id', community_id);
+        const { data } = await q.limit(3);
+        pick = (data || []).find((p) => p.street_address.trim().startsWith(num)) || (data && data.length === 1 ? data[0] : null);
+      }
+      if (!pick) { // fallback: unique street match with no reliable number
+        let q = sb.from('properties').select('id, street_address, community_id').ilike('street_address', `%${street}%`);
+        if (community_id) q = q.eq('community_id', community_id);
+        const { data } = await q.limit(50);
+        const hits = (data || []).filter((p) => (num ? p.street_address.trim().startsWith(num) : true));
+        if (hits.length === 1) pick = hits[0];
+      }
+      if (pick) { property_id = pick.id; community_id = community_id || pick.community_id; }
+    }
+  }
+  if (property_id) {
+    const { data: owns } = await sb.from('property_ownerships').select('contact_id, contacts(full_name)').eq('property_id', property_id).is('end_date', null);
+    if (homeownerName && owns && owns.length) {
+      const last = String(homeownerName).trim().split(/\s+/).pop().toLowerCase();
+      const m = owns.find((o) => o.contacts && String(o.contacts.full_name || '').toLowerCase().includes(last));
+      contact_id = m ? m.contact_id : owns[0].contact_id;
+    } else if (owns && owns.length) contact_id = owns[0].contact_id;
+  } else if (homeownerName) {
+    const last = String(homeownerName).trim().split(/\s+/).pop();
+    if (last && last.length >= 3) {
+      const { data: cs } = await sb.from('contacts').select('id').ilike('full_name', `%${last}%`).limit(5);
+      if (cs && cs.length === 1) contact_id = cs[0].id;
+    }
+  }
+  return { property_id, contact_id, community_id };
+}
 
 // --- POST /classify -------------------------------------------------------
 router.post('/classify', upload.single('file'), async (req, res) => {
@@ -152,7 +201,33 @@ router.post('/log', upload.single('file'), async (req, res) => {
       library_document_id: doc.id, created_by: 'mail_scan',
     });
 
-    res.json({ ok: true, library_document_id: doc.id, work_item_id: workItemId, record_ref: `ML-${Date.now().toString().slice(-6)}` });
+    // Link to the homeowner it's about: resolve the addressee and log a row in
+    // the canonical interactions ledger (inbound received mail) so the scan
+    // shows on that homeowner's 360, with a pointer back to the stored PDF.
+    // Best-effort — never fails the filing.
+    let linked = null;
+    try {
+      const cls = meta.classification || {};
+      const homeownerName = cls.homeownerName || meta.homeownerName || '';
+      const propertyAddress = cls.propertyAddress || meta.propertyAddress || '';
+      if (homeownerName || propertyAddress) {
+        const r = await resolveScanAddressee({ homeownerName, propertyAddress, communityId: meta.community_id }, supabase);
+        if (r.contact_id || r.property_id) {
+          const { data: ix } = await supabase.from('interactions').insert({
+            type: 'letter_other', direction: 'inbound',
+            contact_id: r.contact_id || null, property_id: r.property_id || null, community_id: r.community_id || meta.community_id || null,
+            subject: meta.subject || `Scanned mail — ${meta.type || 'mail'}`,
+            content: meta.summary || null,
+            source: 'manual', notes: 'Physical mail scan',
+            attachments: [{ type: 'scanned_mail', library_document_id: doc.id }],
+            received_at: new Date().toISOString(),
+          }).select('id').single();
+          linked = { interaction_id: ix ? ix.id : null, contact_id: r.contact_id, property_id: r.property_id };
+        }
+      }
+    } catch (e) { console.warn('[mail-scan] addressee link skipped:', e.message); }
+
+    res.json({ ok: true, library_document_id: doc.id, work_item_id: workItemId, linked, record_ref: `ML-${Date.now().toString().slice(-6)}` });
   } catch (err) {
     console.error('[mail-scan] log failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
