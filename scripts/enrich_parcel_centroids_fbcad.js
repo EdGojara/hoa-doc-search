@@ -202,12 +202,31 @@ async function main() {
       });
     }
   }
+  // Per-community coordinate cluster (median of existing good coords). Used to
+  // REJECT a matched parcel that sits nowhere near the community — the
+  // recurrence guard. Fort Bend County has multiple streets with the same name;
+  // a blind number|street match once wrote 4 Canyon Gate houses to a different
+  // "Canyon Chase Drive" 10 miles south (2026-07-05, blocked a field crew). A
+  // parcel centroid > MAX_CLUSTER_M from the community's cluster is a
+  // wrong-parcel match — skip it, never overwrite with it. Median is robust to
+  // the handful of already-bad coords. Communities with < 5 existing coords
+  // (first-ever enrichment) have no cluster yet, so the guard no-ops for them.
+  const MAX_CLUSTER_M = 5000;
+  const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+  const commCluster = {};
+  for (const c of targetComms) {
+    const lats = c.properties.map((p) => Number(p.latitude)).filter(Number.isFinite);
+    const lngs = c.properties.map((p) => Number(p.longitude)).filter(Number.isFinite);
+    commCluster[c.name] = lats.length >= 5 ? { lat: med(lats), lng: med(lngs) } : null;
+  }
+
   console.log(`\nLoaded ${targetByKey.size} target properties across ${targetComms.length} FB community(ies).`);
   console.log(`Mode: ${dryRun ? 'DRY RUN' : 'LIVE'}`);
   console.log(`Streaming FBCAD shapefile…\n`);
 
   // Stream the shapefile, match each feature against the target hashmap.
   const matched = [];
+  const rejected = []; // wrong-parcel matches caught by the cluster guard
   let featuresRead = 0;
   let lastReport = Date.now();
   const src = await shapefile.open(SHP_PATH, DBF_PATH);
@@ -221,16 +240,36 @@ async function main() {
     }
     const props = r.value.properties;
     const num = props.Situs_Stre;
-    const street = props.Situs_St_1;
-    if (num == null || !street) continue;
-    const key = `${num}|${normStreet(street)}`;
-    const target = targetByKey.get(key);
+    const street1 = props.Situs_St_1;
+    const street2 = props.Situs_St_2;
+    if (num == null || !street1) continue;
+    // FBCAD splits compound street names: "Persimmon Pass" → Situs_St_1="Persimmon",
+    // Situs_St_2="PASS". Standard streets put suffix-only in St_2 ("Lane", "Drive",
+    // etc.). We try matching against BOTH "<St_1>" and "<St_1> <St_2>" so the
+    // compound-name case works without false-positive matching on the suffix.
+    // Ed 2026-06-11: this was the gap that left 169 Waterview properties
+    // unenriched on the first FBCAD pass.
+    const street1Only = normStreet(street1);
+    const street1And2 = street2 ? normStreet(`${street1} ${street2}`) : street1Only;
+    const target = targetByKey.get(`${num}|${street1And2}`) || targetByKey.get(`${num}|${street1Only}`);
     if (!target) continue;
     const centroid = polygonCentroid(r.value.geometry);
     if (!centroid) continue;
+    // Cluster-sanity guard: a centroid far from the community's own cluster is a
+    // same-name-different-street mismatch (see MAX_CLUSTER_M note). Reject it.
+    const cluster = commCluster[target.commName];
+    if (cluster) {
+      const d = distMeters(cluster.lat, cluster.lng, centroid.lat, centroid.lng);
+      if (d > MAX_CLUSTER_M) { rejected.push({ ...target, newLat: centroid.lat, newLng: centroid.lng, km: d / 1000 }); continue; }
+    }
     matched.push({ ...target, newLat: centroid.lat, newLng: centroid.lng });
   }
   console.log(`\nShapefile scan complete: ${featuresRead.toLocaleString()} parcels read · ${matched.length} matched.`);
+  if (rejected.length) {
+    console.log(`\n⚠ REJECTED ${rejected.length} wrong-parcel match(es) — centroid > ${MAX_CLUSTER_M / 1000}km from the community cluster (same-name-different-street). NOT written:`);
+    rejected.slice(0, 25).forEach((m) => console.log(`   ${m.addr} (${m.commName}) — matched parcel ${m.km.toFixed(1)}km away`));
+    if (rejected.length > 25) console.log(`   …and ${rejected.length - 25} more`);
+  }
 
   // Update properties in batches
   const distances = [];
