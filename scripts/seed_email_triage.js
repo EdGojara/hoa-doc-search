@@ -37,6 +37,13 @@ const pad = (s, n) => String(s == null ? '' : s).slice(0, n).padEnd(n);
 
     const status = ex.is_spam ? 'spam'
       : (res.confidence === 'high' ? 'linked' : (res.candidates.length ? 'needs_review' : 'new'));
+
+    // --linked-only: for archive backfill, keep only mail that ties to a
+    // homeowner (contact or property) so vendor/internal/personal noise is
+    // dropped rather than dumped into email_messages.
+    const isLinked = !!(res.contact_id || res.property_id);
+    if (process.argv.includes('--linked-only') && !isLinked) continue;
+
     if (status === 'spam') spam++; else if (status === 'linked') linked++; else review++;
 
     const linkLabel = res.contact_id ? 'contact✓' : res.vendor_id ? 'vendor✓' : res.property_id ? 'property✓' : (res.candidates[0] ? `? ${res.candidates[0].label}` : '—');
@@ -44,7 +51,7 @@ const pad = (s, n) => String(s == null ? '' : s).slice(0, n).padEnd(n);
 
     rows.push({
       mailbox: em.mailbox, graph_id: em.graph_id || null, internet_message_id: em.internet_message_id || null,
-      conversation_id: em.conversation_id || null, direction: 'inbound',
+      conversation_id: em.conversation_id || null, direction: /@bedrocktx\.com$/i.test(em.sender_email || '') ? 'outbound' : 'inbound',
       sender_email: em.sender_email || null, sender_name: em.sender_name || null,
       recipients: em.recipients || [], subject: em.subject || null,
       body_preview: (em.body_preview || '').slice(0, 2000), body_full: em.body_full || null,
