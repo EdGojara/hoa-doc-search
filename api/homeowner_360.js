@@ -124,7 +124,12 @@ async function assemble(contactId) {
     .select('direction, sender_email, subject, ai_summary, classification, received_at')
     .eq('resolved_contact_id', contactId).order('received_at', { ascending: false }).limit(40));
 
-  return { contact, properties, ar: { balance_cents, transactions: txns }, flags, violations, arc, interactions, emails };
+  // Phone calls Claire / the team handled (voice log), linked by caller.
+  const calls = await safe(() => supabase.from('homeowner_calls')
+    .select('started_at, ended_at, duration_seconds, status, brief, caller_phone')
+    .eq('caller_homeowner_id', contactId).order('started_at', { ascending: false }).limit(30));
+
+  return { contact, properties, ar: { balance_cents, transactions: txns }, flags, violations, arc, interactions, emails, calls };
 }
 
 // GET /profile/:contactId — the assembled 360 (fast, no AI)
@@ -156,6 +161,7 @@ Open violations (${openV.length}): ${openV.map((v) => `${v.category} @ ${v.curre
 Violation history (${d.violations.length} total): ${d.violations.slice(0, 12).map((v) => `${v.category} [${v.open ? 'open ' + v.current_stage : 'resolved'}]`).join('; ')}
 Recent payments/charges: ${d.ar.transactions.slice(0, 8).map((t) => `${(t.transaction_date || '').slice(0, 10)} ${t.txn_type || ''} ${money(Number(t.amount_cents) || 0)}`).join('; ') || 'none'}
 ARC submissions: ${d.arc.length}
+Phone calls (${d.calls.length}): ${d.calls.slice(0, 6).map((c) => `${(c.started_at || '').slice(0, 10)} ${c.status || ''}${c.brief ? ' — ' + String(c.brief).slice(0, 80) : ''}`).join('; ') || 'none'}
 Recent correspondence: ${[...d.interactions.slice(0, 10).map((i) => `${(i.created_at || '').slice(0, 10)} ${i.type} ${i.direction}${i.subject ? ' — ' + i.subject : ''}`), ...d.emails.slice(0, 8).map((e) => `${(e.received_at || '').slice(0, 10)} email ${e.direction} — ${e.ai_summary || e.subject || ''}`)].join(' | ') || 'none'}`;
 
     const sys = `You are briefing a Bedrock Association Management team member who is about to talk to this homeowner (they just called or emailed). Write a SHORT internal briefing — direct, factual, no fluff. Ground EVERYTHING strictly in the facts provided; never invent history, amounts, or temperament that isn't in the data. If something isn't in the data, don't mention it.
@@ -177,6 +183,34 @@ If the record is thin, say so plainly ("Not much history on file"). No greeting,
     res.json({ recap: (resp.content[0] && resp.content[0].text || '').trim() });
   } catch (err) {
     console.error('[homeowner360] recap failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /:contactId/note — add a staff note. Writes to the canonical interactions
+// ledger (type internal_note) so it shows on the 360 AND anywhere else that
+// reads the ledger — one source of truth, no Vantaca-style silo. Linked to the
+// homeowner's primary property + community for consistent scoping.
+router.post('/:contactId/note', express.json(), async (req, res) => {
+  try {
+    const body = (req.body && req.body.content ? String(req.body.content) : '').trim();
+    if (!body) return res.status(400).json({ error: 'content_required' });
+    const props = await ownedProperties(req.params.contactId);
+    const primary = props.find((p) => p.is_primary) || props[0] || null;
+    const { data, error } = await supabase.from('interactions').insert({
+      type: 'internal_note', direction: 'internal',
+      contact_id: req.params.contactId,
+      property_id: primary ? primary.property_id : null,
+      community_id: primary ? primary.community_id : null,
+      subject: (req.body && req.body.subject) ? String(req.body.subject).slice(0, 200) : 'Note',
+      content: body,
+      source: 'manual',
+      notes: 'via Homeowner 360',
+    }).select('id, created_at').single();
+    if (error) throw error;
+    res.json({ ok: true, note: data });
+  } catch (err) {
+    console.error('[homeowner360] note failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
