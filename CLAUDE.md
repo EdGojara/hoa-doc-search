@@ -705,6 +705,28 @@ the source of truth that two labels are one violation; every consumer must
 honor it, not just prior-counting. Fix: `lib/enforcement/find_or_continue_violation.js`
 (commit 3a0f0e2) + re-ran `_reconcileAliasedOpenViolations` on the backlog.
 
+### Geocoding must validate against the community cluster
+
+**Scar**: 2026-07-05, a Canyon Gate field crew hit "some houses have no pins."
+Not a data-presence bug — all 721 properties had coordinates. Four even-side
+"Canyon Chase Drive" houses had been geocoded ~10 miles south, onto a
+different "Canyon Chase Drive" in the Fresno/Sienna area. Root cause: the FBCAD
+parcel enricher (`scripts/enrich_parcel_centroids_fbcad.js`) matched houses to
+parcels by `number|street` only, and Fort Bend County has multiple identically-
+named streets. The 6/11 compound-street broadening (`street1Only` fallback)
+made the mismatch possible, and nothing validated that the matched parcel sat
+anywhere near the rest of the community. The pins existed but rendered 10mi off
+the subdivision — invisible on the inspection map.
+
+**Rule**: any geocode write (parcel enrichment, address geocoder, manual fix)
+MUST validate the new coordinate against the community's existing cluster —
+reject/flag any point more than a few km from the community's median lat/lng
+(the enricher uses `MAX_CLUSTER_M = 5000`). A house can't be 10 miles from the
+rest of its HOA; the system must know that, not the operator in the field.
+Rejected matches are logged, never silently written. Generalize the encode-Ed
+lens: any surface that plots or drives off coordinates should surface "N houses
+couldn't be placed / are off-cluster" rather than silently omit them.
+
 ---
 
 ## Database conventions
