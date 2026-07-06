@@ -117,7 +117,7 @@ async function assemble(contactId) {
 
   // Correspondence: interactions (letters/calls/notes) + emails from the hub
   const interactions = await safe(() => supabase.from('interactions')
-    .select('type, direction, subject, content, delivery_method, sent_at, created_at, violation_id')
+    .select('id, type, direction, subject, content, delivery_method, sent_at, created_at, violation_id')
     .or(`contact_id.eq.${contactId}${propIds.length ? ',property_id.in.(' + propIds.join(',') + ')' : ''}`)
     .order('created_at', { ascending: false }).limit(60));
   const emails = await safe(() => supabase.from('email_messages')
@@ -211,6 +211,23 @@ router.post('/:contactId/note', express.json(), async (req, res) => {
     res.json({ ok: true, note: data });
   } catch (err) {
     console.error('[homeowner360] note failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// DELETE /note/:id — remove a staff note (mistake / no longer needed). Guarded:
+// only deletes interactions of type internal_note, so letters/emails/calls and
+// other record entries can never be deleted from here.
+router.delete('/note/:id', async (req, res) => {
+  try {
+    const { data: row } = await supabase.from('interactions').select('id, type').eq('id', req.params.id).maybeSingle();
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    if (row.type !== 'internal_note') return res.status(403).json({ error: 'only_notes_deletable', detail: 'Only staff notes can be deleted here; correspondence records cannot.' });
+    const { error } = await supabase.from('interactions').delete().eq('id', req.params.id).eq('type', 'internal_note');
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[homeowner360] note delete failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

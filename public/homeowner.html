@@ -95,7 +95,7 @@ async function openProfile(cid){
   // merged correspondence timeline — every channel in one consistent view:
   // letters/notes (interactions) + emails (hub) + phone calls (voice log).
   const tl=[
-    ...(d.interactions||[]).map(i=>({t:i.created_at||i.sent_at, dir:i.direction, kind:(i.type||'').replace(/_/g,' '), label:i.subject||i.content||i.type})),
+    ...(d.interactions||[]).map(i=>({t:i.created_at||i.sent_at, dir:i.direction, kind:(i.type||'').replace(/_/g,' '), label:i.type==='internal_note'?(i.content||i.subject):(i.subject||i.content||i.type), id:i.id, note:i.type==='internal_note'})),
     ...(d.emails||[]).map(e=>({t:e.received_at, dir:e.direction, kind:'email', label:e.ai_summary||e.subject||'email'})),
     ...(d.calls||[]).map(c=>({t:c.started_at, dir:'inbound', kind:'call', label:(c.brief||('phone call'+(c.status?' · '+c.status:'')))+(c.duration_seconds?' ('+Math.round(c.duration_seconds/60)+'m)':'')})),
   ].filter(x=>x.t).sort((a,b)=>String(b.t).localeCompare(String(a.t))).slice(0,30);
@@ -129,10 +129,15 @@ async function openProfile(cid){
       <div class="card">
         <div class="sec-title">✉️ Correspondence &amp; notes (${tl.length})</div>
         <div class="notebox"><input id="noteInput" placeholder="Add a note to this account…" onkeydown="if(event.key==='Enter')addNote('${cid}')"><button onclick="addNote('${cid}')">Add note</button></div>
-        <div class="timeline">${tl.map(x=>`<div class="li ${x.dir==='inbound'?'tl-in':(x.kind==='internal note'?'tl-note':'tl-out')}"><span class="t">${d10(x.t)} · ${esc(x.kind)} ${x.dir==='inbound'?'↓':x.dir==='internal'?'•':'↑'}</span><br>${esc(String(x.label).slice(0,90))}</div>`).join('')||'<div class="empty">No correspondence on file yet.</div>'}</div>
+        <div class="timeline">${tl.map(x=>`<div class="li ${x.dir==='inbound'?'tl-in':(x.note?'tl-note':'tl-out')}"><span class="t">${d10(x.t)} · ${esc(x.kind)} ${x.dir==='inbound'?'↓':x.dir==='internal'?'•':'↑'}</span>${x.note?`<span onclick="deleteNote('${x.id}','${cid}')" title="Delete note" style="float:right;cursor:pointer;color:#b91c1c;font-weight:700;">✕</span>`:''}<br>${esc(String(x.label).slice(0,110))}</div>`).join('')||'<div class="empty">No correspondence on file yet.</div>'}</div>
       </div>
     </div>`;
 
+  window.deleteNote=async function(id,cid){
+    if(!confirm('Delete this note? This can’t be undone.'))return;
+    const r=await fetch(API+'/note/'+id,{method:'DELETE'});
+    if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(j.detail||'Could not delete'); }
+  };
   window.addNote=async function(id){
     const inp=document.getElementById('noteInput'); const content=inp.value.trim(); if(!content)return;
     inp.disabled=true;

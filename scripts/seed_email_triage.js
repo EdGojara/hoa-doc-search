@@ -62,7 +62,11 @@ const pad = (s, n) => String(s == null ? '' : s).slice(0, n).padEnd(n);
 
   if (!APPLY) { console.log('\nDRY RUN — pass --apply to write into email_messages (needs migration 261).'); return; }
   for (const r of rows) {
-    const { error } = await sb.from('email_messages').upsert(r, { onConflict: 'graph_id', ignoreDuplicates: false });
+    // Idempotent without relying on ON CONFLICT (261's graph_id index is partial,
+    // which PostgREST upsert can't target): clear any prior row for this message,
+    // then insert.
+    if (r.graph_id) await sb.from('email_messages').delete().eq('graph_id', r.graph_id);
+    const { error } = await sb.from('email_messages').insert(r);
     if (error) { console.error('insert failed:', error.message, '(migration 261 applied?)'); process.exit(1); }
     inserted++;
   }
