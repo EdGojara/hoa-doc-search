@@ -19,6 +19,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { draftReply, DRAFTABLE } = require('../lib/email/draft_reply');
 const graphSend = require('../lib/email/graph_send');
+const graphIngest = require('../lib/email/graph_ingest');
 
 // Claire's honest-AI signature — every AI-sent email identifies as AI and
 // offers a human (same rule as the voice persona).
@@ -125,6 +126,29 @@ router.post('/:id/link', express.json(), async (req, res) => {
     res.json({ message: data, learned });
   } catch (err) {
     console.error('[email_triage] link failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /ingest — pull Outlook mail into the 360 from a mailbox (default the
+// archive journal). Backfill: since_days=365, light=true, only_linked=true so
+// only homeowner-linked mail is kept out of the 65k-message firehose.
+// Incremental/current: pass light=false + a short since_days. Needs the Azure
+// app (Mail.Read) + GRAPH_* env; returns a clean message until then.
+router.post('/ingest', express.json(), async (req, res) => {
+  try {
+    if (!graphIngest.isConfigured()) return res.status(400).json({ error: 'graph_not_connected', detail: 'Outlook ingest needs the Azure app (Mail.Read, scoped to include the mailbox) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET.' });
+    const b = req.body || {};
+    const mailbox = b.mailbox || 'archive1emails@bedrocktx.com';
+    const sinceDays = Math.min(2000, parseInt(b.since_days, 10) || 365);
+    const sinceISO = new Date(Date.now() - sinceDays * 864e5).toISOString();
+    const light = b.light !== false;               // default light (cheap backfill)
+    const onlyLinked = b.only_linked !== false;     // default keep only homeowner-linked
+    const max = Math.min(20000, parseInt(b.max, 10) || 5000);
+    const stats = await graphIngest.ingestMailbox(mailbox, { sinceISO, light, onlyLinked, max });
+    res.json({ ok: true, mailbox, since: sinceISO, ...stats });
+  } catch (err) {
+    console.error('[email_triage] ingest failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
