@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homeowner 360 — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width:1100px; margin:0 auto; padding:20px 18px 60px; }
+  h1 { margin:0; color:var(--navy); font-size:22px; }
+  .sub { color:var(--muted); font-size:12.5px; margin:4px 0 16px; }
+  .searchbar { display:flex; gap:8px; margin-bottom:14px; }
+  .searchbar input { flex:1; padding:11px 14px; font-size:15px; border:1px solid var(--line); border-radius:9px; }
+  .searchbar button { padding:0 20px; background:var(--navy); color:#fff; border:none; border-radius:9px; font-size:14px; cursor:pointer; }
+  .results { background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; margin-bottom:16px; }
+  .rrow { padding:10px 14px; border-bottom:1px solid var(--line); cursor:pointer; display:flex; justify-content:space-between; gap:10px; }
+  .rrow:last-child { border-bottom:none; } .rrow:hover { background:#f5f8fc; }
+  .rrow .nm { font-weight:600; color:var(--navy); }
+  .rrow .meta { font-size:12px; color:var(--muted); }
+  .card { background:#fff; border:1px solid var(--line); border-radius:11px; padding:16px; margin-bottom:14px; }
+  .hdr { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; }
+  .hdr .nm { font-size:20px; font-weight:700; color:var(--navy); }
+  .hdr .ct { font-size:13px; color:var(--muted); margin-top:3px; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .chip { font-size:11px; font-weight:700; padding:3px 10px; border-radius:20px; text-transform:uppercase; letter-spacing:.03em; }
+  .chip.flag { background:#fee2e2; color:#991b1b; } .chip.ok { background:#dcfce7; color:#166534; } .chip.bal { background:#fef3c7; color:#92400e; }
+  .recap { background:linear-gradient(180deg,#f8faff,#eef4fc); border:1px solid #d7e3f4; border-radius:11px; padding:15px; margin-bottom:14px; }
+  .recap .lbl { font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:#3b5a86; margin-bottom:6px; display:flex; align-items:center; gap:6px; }
+  .recap .body { font-size:14px; line-height:1.55; color:#1f2d3d; white-space:pre-wrap; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:760px){ .grid { grid-template-columns:1fr; } }
+  .sec-title { font-size:12px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:var(--navy); margin:0 0 10px; }
+  .li { padding:7px 0; border-bottom:1px solid #f1f5f9; font-size:13px; }
+  .li:last-child { border-bottom:none; }
+  .li .t { color:var(--muted); font-size:11.5px; }
+  .badge { display:inline-block; font-size:10px; font-weight:700; padding:1px 7px; border-radius:10px; }
+  .b-open { background:#fef3c7; color:#92400e; } .b-res { background:#dcfce7; color:#166534; }
+  .money { font-family:ui-monospace,monospace; }
+  .tl-in { border-left:3px solid #3b82f6; } .tl-out { border-left:3px solid #94a3b8; }
+  .timeline .li { padding-left:10px; }
+  .empty { color:var(--muted); font-size:13px; padding:6px 0; }
+  .spin { color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Homeowner 360</h1>
+  <div class="sub">Search a name, address, email, or phone. Everything about the homeowner in one place — for when they call or email.</div>
+  <div class="searchbar">
+    <input id="q" placeholder="e.g. Chen Gong · 19910 Cape Clover · gongc93@… · 281-…" autofocus onkeydown="if(event.key==='Enter')doSearch()">
+    <button onclick="doSearch()">Search</button>
+  </div>
+  <div id="results"></div>
+  <div id="profile"></div>
+</div>
+<script>
+const API='/api/homeowner';
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const money=c=>{c=Number(c)||0;return (c<0?'-':'')+'$'+(Math.abs(c)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
+const d10=s=>s?String(s).slice(0,10):'';
+
+async function doSearch(){
+  const q=document.getElementById('q').value.trim();
+  if(q.length<2)return;
+  document.getElementById('results').innerHTML='<div class="spin">Searching…</div>';
+  document.getElementById('profile').innerHTML='';
+  const r=await fetch(API+'/search?q='+encodeURIComponent(q)); const j=await r.json();
+  const rs=j.results||[];
+  if(!rs.length){ document.getElementById('results').innerHTML='<div class="empty">No homeowner found.</div>'; return; }
+  document.getElementById('results').innerHTML='<div class="results">'+rs.map(x=>
+    `<div class="rrow" onclick="openProfile('${x.contact_id}')">
+      <div><div class="nm">${esc(x.name)}</div><div class="meta">${esc((x.properties||[]).join(' · ')||'—')}</div></div>
+      <div class="meta" style="text-align:right;">${esc(x.email||'')}<br>${esc(x.phone||'')}</div>
+    </div>`).join('')+'</div>';
+}
+
+async function openProfile(cid){
+  document.getElementById('results').innerHTML='';
+  document.getElementById('profile').innerHTML='<div class="spin">Loading homeowner…</div>';
+  const r=await fetch(API+'/profile/'+cid); const d=await r.json();
+  if(!r.ok){ document.getElementById('profile').innerHTML='<div class="empty">Could not load.</div>'; return; }
+  const c=d.contact, ps=d.properties||[];
+  const openV=(d.violations||[]).filter(v=>v.open);
+  const flagChips=(d.flags||[]).map(f=>`<span class="chip flag">${esc(String(f.state).replace(/_/g,' '))}</span>`).join('');
+  const balChip = d.ar.balance_cents>0?`<span class="chip bal">Owes ${money(d.ar.balance_cents)}</span>`:(d.ar.balance_cents<0?`<span class="chip ok">Credit ${money(-d.ar.balance_cents)}</span>`:`<span class="chip ok">Current</span>`);
+  const openChip = openV.length?`<span class="chip flag">${openV.length} open violation${openV.length===1?'':'s'}</span>`:`<span class="chip ok">No open violations</span>`;
+
+  // merged correspondence timeline (interactions + emails)
+  const tl=[
+    ...(d.interactions||[]).map(i=>({t:i.created_at||i.sent_at, dir:i.direction, kind:i.type, label:i.subject||i.type})),
+    ...(d.emails||[]).map(e=>({t:e.received_at, dir:e.direction, kind:'email', label:e.ai_summary||e.subject||'email'})),
+  ].filter(x=>x.t).sort((a,b)=>String(b.t).localeCompare(String(a.t))).slice(0,25);
+
+  document.getElementById('profile').innerHTML=`
+    <div class="card"><div class="hdr">
+      <div>
+        <div class="nm">${esc(c.full_name)}</div>
+        <div class="ct">${esc(c.primary_email||c.secondary_email||'no email')} · ${esc(c.primary_phone||'no phone')}</div>
+        <div class="ct">${ps.map(p=>esc(p.address)+(p.community?' · '+esc(p.community):'')).join('<br>')||'no property on file'}</div>
+        <div class="chips">${balChip}${openChip}${flagChips}</div>
+      </div>
+    </div></div>
+
+    <div class="recap" id="recap"><div class="lbl">🧠 AI recap — what to know before you talk to them</div><div class="body spin">Reading the file…</div></div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="sec-title">💵 Balance & recent activity</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:8px;" class="money">${money(d.ar.balance_cents)}</div>
+        ${(d.ar.transactions||[]).slice(0,8).map(t=>`<div class="li"><span class="t">${d10(t.transaction_date)}</span> · ${esc(t.txn_type||t.charge_category||'txn')} <span class="money" style="float:right;">${money(t.amount_cents)}</span></div>`).join('')||'<div class="empty">No transactions.</div>'}
+      </div>
+      <div class="card">
+        <div class="sec-title">⚠️ Violations (${(d.violations||[]).length})</div>
+        ${(d.violations||[]).slice(0,10).map(v=>`<div class="li">${esc(v.category)} <span class="badge ${v.open?'b-open':'b-res'}">${v.open?esc(String(v.current_stage).replace(/_/g,' ')):'resolved'}</span><div class="t">opened ${d10(v.opened_at)}${v.resolved_at?' · resolved '+d10(v.resolved_at):''}</div></div>`).join('')||'<div class="empty">No violations.</div>'}
+      </div>
+      <div class="card">
+        <div class="sec-title">🏠 ARC / architectural (${(d.arc||[]).length})</div>
+        ${(d.arc||[]).length?(d.arc||[]).slice(0,8).map(a=>`<div class="li">${esc(a.request_type||a.type||a.description||'ARC request')} <span class="t">${d10(a.created_at||a.submitted_at)}</span></div>`).join(''):'<div class="empty">No ARC submissions.</div>'}
+      </div>
+      <div class="card">
+        <div class="sec-title">✉️ Correspondence (${tl.length})</div>
+        <div class="timeline">${tl.map(x=>`<div class="li ${x.dir==='inbound'?'tl-in':'tl-out'}"><span class="t">${d10(x.t)} · ${esc(x.kind)} ${x.dir==='inbound'?'↓':'↑'}</span><br>${esc(String(x.label).slice(0,80))}</div>`).join('')||'<div class="empty">No correspondence on file yet.</div>'}</div>
+      </div>
+    </div>`;
+
+  // AI recap loads async so the profile is instant
+  fetch(API+'/recap/'+cid).then(r=>r.json()).then(j=>{
+    const el=document.querySelector('#recap .body');
+    if(el) el.textContent = j.recap || 'No recap available.';
+    if(el) el.classList.remove('spin');
+  }).catch(()=>{ const el=document.querySelector('#recap .body'); if(el){el.textContent='Recap unavailable.';el.classList.remove('spin');} });
+}
+</script>
+</body>
+</html>

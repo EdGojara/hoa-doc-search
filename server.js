@@ -949,6 +949,9 @@ app.get('/admin/accounting', (req, res) => {
 app.get('/admin/communications', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'communications.html'));
 });
+app.get('/admin/homeowner', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'homeowner.html'));
+});
 app.get('/admin/home-sales', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'home_sales.html'));
 });
@@ -1311,6 +1314,9 @@ app.use('/api/agendas', agendasRouter);
 
 const { router: emailTriageRouter } = require('./api/email_triage');
 app.use('/api/email-triage', emailTriageRouter);
+
+const { router: homeowner360Router } = require('./api/homeowner_360');
+app.use('/api/homeowner', homeowner360Router);
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
