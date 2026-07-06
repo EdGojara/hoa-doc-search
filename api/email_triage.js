@@ -17,7 +17,14 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
-const { draftReply } = require('../lib/email/draft_reply');
+const { draftReply, DRAFTABLE } = require('../lib/email/draft_reply');
+const graphSend = require('../lib/email/graph_send');
+
+// Claire's honest-AI signature — every AI-sent email identifies as AI and
+// offers a human (same rule as the voice persona).
+function claireSignature(communityName) {
+  return `\n\n— Claire, AI assistant${communityName ? ` for ${communityName}` : ''} · Bedrock Association Management\nWant a person instead? Just reply and I'll pass you to the team.`;
+}
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -141,6 +148,46 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     res.json(draft);
   } catch (err) {
     console.error('[email_triage] draft-reply failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /:id/send — approve-to-send: a human reviewed the draft; send it from
+// claire@ (honest-AI signature), log it, mark the inbound handled. Defense in
+// depth: refuse to send for non-draftable (compliance) classes even if asked.
+router.post('/:id/send', express.json(), async (req, res) => {
+  try {
+    const { body, to, subject, reviewed_by } = req.body || {};
+    if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
+    const { data: m, error } = await supabase.from('email_messages')
+      .select('sender_email, subject, classification, community_id, resolved_contact_id, resolved_property_id, community:community_id(name)')
+      .eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!m) return res.status(404).json({ error: 'not_found' });
+    if (!DRAFTABLE.has(m.classification)) return res.status(403).json({ error: 'not_sendable', detail: 'This class of email must be handled by a person, not sent as Claire.' });
+    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'claire@bedrocktx.com send is not wired yet — create the mailbox + Azure app (Mail.Send) and set GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET.' });
+
+    const recipient = to || m.sender_email;
+    if (!recipient) return res.status(400).json({ error: 'no_recipient' });
+    const commName = m.community ? m.community.name : '';
+    const subj = subject || (/^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || 'your message'}`);
+    const text = String(body).trim() + claireSignature(commName);
+
+    await graphSend.sendAs({ to: recipient, subject: subj, text });
+
+    // Mark the inbound handled + log the outbound reply on the record (both
+    // sides of the thread now show on the homeowner's communications feed).
+    await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', req.params.id);
+    await supabase.from('email_messages').insert({
+      mailbox: graphSend.CLAIRE_MAILBOX, direction: 'outbound', sender_email: graphSend.CLAIRE_MAILBOX,
+      sender_name: 'Claire (Bedrock AI)', recipients: [recipient], subject: subj, body_preview: text.slice(0, 2000),
+      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `Claire replied to ${recipient}`,
+      community_id: m.community_id, resolved_contact_id: m.resolved_contact_id, resolved_property_id: m.resolved_property_id,
+      resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'association_record', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString(),
+    });
+    res.json({ sent: true, to: recipient, from: graphSend.CLAIRE_MAILBOX });
+  } catch (err) {
+    console.error('[email_triage] send failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

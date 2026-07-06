@@ -37,7 +37,7 @@
   .cand:hover { border-color:var(--navy); }
   .cand .why { color:var(--muted); font-size:10.5px; }
   .act { border:none; border-radius:6px; padding:5px 11px; font-size:12px; cursor:pointer; }
-  .act.dismiss { background:#f1f5f9; color:#64748b; } .act.spam { background:#fef2f2; color:#b91c1c; } .act.draft { background:#eef2ff; color:#3730a3; }
+  .act.dismiss { background:#f1f5f9; color:#64748b; } .act.spam { background:#fef2f2; color:#b91c1c; } .act.draft { background:#eef2ff; color:#3730a3; } .act.send { background:#166534; color:#fff; }
   .draftbox { margin-top:9px; border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfcfe; }
   .draftbox textarea { width:100%; min-height:110px; border:1px solid var(--line); border-radius:6px; padding:8px; font:13px/1.5 inherit; box-sizing:border-box; }
   .draftbox .note { font-size:11px; color:var(--muted); margin-bottom:6px; }
@@ -143,10 +143,20 @@ async function doDraft(id){
   box.innerHTML = `<div class="draftbox">
     <div class="note">Suggested reply (${esc(j.subject||'')}) — review, edit, then send from your mail client. Nothing is sent from here.</div>
     <textarea id="dt-${id}">${esc(j.body||'')}</textarea>
+    <div class="note" style="margin-top:5px;">Sends from <strong>claire@bedrocktx.com</strong> with Claire's AI signature appended.</div>
     <div style="margin-top:6px; display:flex; gap:6px;">
+      <button class="act send" onclick="doSend('${id}', this)">✅ Approve &amp; send as Claire</button>
       <button class="act draft" onclick="navigator.clipboard.writeText(document.getElementById('dt-${id}').value); this.textContent='Copied ✓';">Copy</button>
       <button class="act dismiss" onclick="document.getElementById('draft-${id}').innerHTML='';">Close</button>
     </div></div>`;
+}
+async function doSend(id, btn){
+  const body = document.getElementById('dt-'+id).value;
+  btn.disabled = true; btn.textContent = 'Sending…';
+  const r = await fetch(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body})});
+  const j = await r.json();
+  if(r.ok){ document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as Claire to ${esc(j.to)}.</div></div>`; loadStats(); setTimeout(loadList, 800); }
+  else { btn.disabled=false; btn.textContent='✅ Approve & send as Claire'; alert(j.detail || j.error || 'Send failed'); }
 }
 loadStats(); loadList();
 </script>
