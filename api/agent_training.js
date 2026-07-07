@@ -33,6 +33,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
 const { getRelevantPlaybook, formatPlaybookContext } = require('../playbook');
+const { requireAdmin } = require('./_require_admin');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -118,6 +119,9 @@ Respond in markdown. Use bullets when listing multiple items. Cite sources inlin
 // ----------------------------------------------------------------------------
 router.post('/turn', express.json({ limit: '64kb' }), async (req, res) => {
   try {
+    // Admin-only console (owner trains the agents). Enforced server-side.
+    const admin = await requireAdmin(req, res);
+    if (!admin) return; // 403 already sent
     const body = req.body || {};
     const agent = String(body.agent || 'claire').toLowerCase();
     if (!VALID_AGENTS.has(agent)) {
@@ -242,6 +246,11 @@ router.post('/turn', express.json({ limit: '64kb' }), async (req, res) => {
 // ----------------------------------------------------------------------------
 router.post('/playbook-entry', express.json({ limit: '32kb' }), async (req, res) => {
   try {
+    // Single-teacher learning: only the account owner's corrections encode into
+    // the playbook. The system encodes ED's judgment, not the average of staff
+    // edits. Enforced server-side, not just hidden in the admin-only UI.
+    const admin = await requireAdmin(req, res);
+    if (!admin) return; // 403 already sent
     const b = req.body || {};
     const situation = String(b.situation || '').trim();
     const response = String(b.response || '').trim();
