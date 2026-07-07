@@ -31,6 +31,19 @@ function claireSignature(communityName) {
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
+// BETA GATE (Ed 2026-07-07): Communications is owner-only for now. Every
+// endpoint on this router requires the admin (Ed) JWT — staff get 403, so the
+// inbox data never loads for them even if they reach the page directly. The
+// page itself shows a "coming soon" screen for non-admins. Ed forwards to a
+// staffer via Claire when someone needs to get involved. Flip this to a role
+// allowlist when Communications graduates from beta.
+router.use(async (req, res, next) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return; // 403 already sent
+  req.admin = admin;
+  next();
+});
+
 const SELECT = 'id, mailbox, direction, sender_email, sender_name, subject, body_preview, received_at, has_attachments, classification, classification_confidence, ai_summary, extracted, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, resolution_confidence, resolution_candidates, triage_status, priority, reviewed_by, reviewed_at, created_at, resolved_contact:resolved_contact_id(full_name), resolved_property:resolved_property_id(street_address), resolved_vendor:resolved_vendor_id(name), community:community_id(name)';
 
 // GET / — triage list
