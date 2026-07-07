@@ -77,6 +77,7 @@ const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
 // session in boot(). Until then it's plain fetch (only used after boot, and
 // only for the admin path, so non-admins never call it).
 let af = (u, o) => fetch(u, o);
+let _supa = null;
 
 async function loadStats(){
   const r = await af(API+'/stats'); const j = await r.json();
@@ -105,7 +106,11 @@ function linkCell(m){
 }
 
 async function loadList(){
-  const url = API + (filter?`?status=${filter}`:'?status=needs_review,new,linked,spam,dismissed,handled') + '&limit=200';
+  // "Needs review" covers BOTH needs_review and new (unhandled) — matches the
+  // "need review" stat count, and surfaces internal / staff-to-Claire replies
+  // that land as 'new'.
+  const statusParam = filter === 'needs_review' ? 'needs_review,new' : filter;
+  const url = API + (statusParam?`?status=${statusParam}`:'?status=needs_review,new,linked,spam,dismissed,handled') + '&limit=200';
   const r = await af(url); const j = await r.json();
   const msgs = j.messages||[];
   if(!msgs.length){ document.getElementById('list').innerHTML='<div class="empty">Nothing here yet. Once info@ is ingested, triaged messages appear here.</div>'; return; }
@@ -158,10 +163,17 @@ function draftBoxHtml(id, subject, body, careful){
 }
 async function doDraft(id){
   const box = document.getElementById('draft-'+id);
+  const prevHtml = box.innerHTML;
+  // Preserve the current text: if a draft is already open (possibly edited),
+  // regenerating would replace it — confirm first. Cancel keeps your text.
+  const existing = document.getElementById('dt-'+id);
+  if (existing && existing.value.trim() && !confirm('Regenerate a fresh draft? This replaces the text you have now. Cancel to keep editing what’s here.')) return;
   box.innerHTML = '<div class="draftbox"><div class="note">Claire is drafting…</div></div>';
-  const r = await af(`${API}/${id}/draft-reply`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-  const j = await r.json();
-  if(!r.ok){ box.innerHTML = `<div class="draftbox"><div class="refuse">Couldn't draft: ${esc(j.error||'')}</div></div>`; return; }
+  let r, j;
+  try { r = await af(`${API}/${id}/draft-reply`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); j = await r.json(); }
+  catch(e){ box.innerHTML = prevHtml; alert('Draft failed: '+(e.message||'network')); return; }
+  // On any failure, restore the previous draft instead of wiping it.
+  if(!r.ok){ box.innerHTML = prevHtml || `<div class="draftbox"><div class="refuse">Couldn't draft: ${esc(j.error||'')}</div></div>`; if(prevHtml) alert('Couldn’t regenerate: '+(j.error||'error')+'. Your current draft is unchanged.'); return; }
   if(j.draftable===false){ box.innerHTML = `<div class="draftbox"><div class="refuse">No draft — ${esc(j.reason)}.</div></div>`; return; }
   box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful);
 }
@@ -248,12 +260,17 @@ window.ncSend = async function(){
   try {
     const cfg = await (await fetch('/api/auth/config')).json();
     if (!cfg || !cfg.enabled || !window.supabase) return showComingSoon();
-    const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
-    const { data: { session } } = await supa.auth.getSession();
+    _supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+    const { data: { session } } = await _supa.auth.getSession();
     if (!session || !session.access_token) return showComingSoon();
-    const token = session.access_token;
-    af = (u, o) => { o = o || {}; const h = Object.assign({}, o.headers || {}); h.Authorization = 'Bearer ' + token; return fetch(u, Object.assign({}, o, { headers: h })); };
-    const meRes = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + token } });
+    // Fresh token per call — supabase-js auto-refreshes, so a page left open
+    // past the ~1h token expiry keeps working instead of erroring admin_only.
+    af = async (u, o) => {
+      o = o || {}; const h = Object.assign({}, o.headers || {});
+      try { const s = (await _supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; } catch (_) {}
+      return fetch(u, Object.assign({}, o, { headers: h }));
+    };
+    const meRes = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + session.access_token } });
     const me = meRes.ok ? (await meRes.json()).user : null;
     if (!me || me.role !== 'admin') return showComingSoon();
     loadStats(); loadList();
