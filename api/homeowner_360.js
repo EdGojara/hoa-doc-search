@@ -161,6 +161,17 @@ async function assemble(contactId) {
     .select('form_type, fob_tag_number, season_year, extended_hours_detail, authorized_persons, status, form_signed_date')
     .in('property_id', propIds).order('status', { ascending: true }).limit(50)) : [];
 
+  // Map each violation to the letter PDF that was actually sent for it (from the
+  // interactions ledger), so the 360 can link the real letter right on the
+  // violation row — next to the photo.
+  const letterByViolation = {};
+  for (const it of (interactions || [])) {
+    if (it.violation_id && it.content && /\.pdf$/i.test(it.content) && /letter/i.test(it.type || '')) {
+      if (!letterByViolation[it.violation_id]) letterByViolation[it.violation_id] = it.content;
+    }
+  }
+  violations = violations.map((v) => ({ ...v, letter_path: letterByViolation[v.id] || null }));
+
   return { contact, properties, ar: { balance_cents, transactions: txns }, flags, violations, arc, interactions, emails, calls, poolAccess };
 }
 
