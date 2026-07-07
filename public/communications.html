@@ -120,9 +120,24 @@ async function loadList(){
   const r = await af(url); const j = await r.json();
   const msgs = j.messages||[];
   if(!msgs.length){ document.getElementById('list').innerHTML='<div class="empty">Nothing here yet. Once info@ is ingested, triaged messages appear here.</div>'; return; }
-  document.getElementById('list').innerHTML = msgs.map(m=>{
-    const cls = m.classification||'other';
-    return `<div class="msg">
+  // Split by mailbox so it stops being confusing: Claire’s mailbox (claire@,
+  // replies to Claire + staff interaction) on top, the info@ intake box below.
+  const isClaire = m => /claire@/i.test(m.mailbox||'');
+  const claireMsgs = msgs.filter(isClaire);
+  const infoMsgs = msgs.filter(m => !isClaire(m));
+  const section = (icon,title,addr,arr) => arr.length ? (
+    `<div style="margin:14px 0 8px;padding:9px 13px;background:var(--navy);color:#fff;border-radius:9px;display:flex;justify-content:space-between;align-items:center;">
+       <span style="font-weight:700;font-size:14px;">${icon} ${title}</span>
+       <span style="font-size:11.5px;opacity:.75;">${addr} &middot; ${arr.length}</span>
+     </div>` + arr.map(msgHtml).join('')
+  ) : '';
+  document.getElementById('list').innerHTML =
+    section('📨','Claire','claire@bedrocktx.com',claireMsgs) +
+    section('📥','Info inbox','info@bedrocktx.com',infoMsgs);
+}
+function msgHtml(m){
+  const cls = m.classification||'other';
+  return `<div class="msg">
       <div class="msg-top">
         <div>
           <span class="badge b-${cls}">${CLASS_LABEL[cls]||cls}</span>
@@ -140,7 +155,6 @@ async function loadList(){
       <div class="link-row">${linkCell(m)}</div>
       <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful):''}</div>
     </div>`;
-  }).join('');
 }
 
 async function doLink(id, cand){
