@@ -225,23 +225,29 @@ router.post('/:id/send', express.json(), async (req, res) => {
 // straight from trustEd (not a reply to an inbound). Branded HTML + logo +
 // honest-AI signature, sent from claire@, logged as association-record
 // correspondence (and linked to the homeowner when the address matches).
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+function parseAddrs(v) {
+  return String(v || '').split(/[,;]/).map((s) => s.trim()).filter((s) => EMAIL_RE.test(s));
+}
+
 router.post('/compose', express.json(), async (req, res) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return; // 403 already sent
-    const { to, subject, body, community_name } = req.body || {};
-    if (!to || !String(to).trim()) return res.status(400).json({ error: 'to_required' });
+    const { to, cc, subject, body, community_name } = req.body || {};
+    const toList = parseAddrs(to);
+    const ccList = parseAddrs(cc);
+    if (toList.length === 0) return res.status(400).json({ error: 'to_required', detail: 'Enter at least one valid recipient email.' });
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(to).trim())) return res.status(400).json({ error: 'bad_recipient', detail: 'Enter a valid email address.' });
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'claire@bedrocktx.com send is not wired yet — the Azure app (Mail.Send) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET must be set.' });
 
-    const recipient = String(to).trim();
     const subj = (subject && String(subject).trim()) ? String(subject).trim() : '(no subject)';
 
-    // Try to place this on the right homeowner for the record (best-effort).
+    // Place this on the right homeowner for the record (best-effort, keyed on
+    // the FIRST recipient — the primary addressee).
     let resolved_contact_id = null, resolved_property_id = null, community_id = null, commName = community_name || '';
     try {
-      const { data: c } = await supabase.from('contacts').select('id').or(`primary_email.ilike.${recipient},secondary_email.ilike.${recipient}`).limit(1);
+      const { data: c } = await supabase.from('contacts').select('id').or(`primary_email.ilike.${toList[0]},secondary_email.ilike.${toList[0]}`).limit(1);
       if (c && c[0]) {
         resolved_contact_id = c[0].id;
         const { data: o } = await supabase.from('property_ownerships').select('property_id, properties(community_id, communities:community_id(name))').eq('contact_id', resolved_contact_id).is('end_date', null).limit(1);
@@ -251,19 +257,56 @@ router.post('/compose', express.json(), async (req, res) => {
 
     const { buildClaireEmail } = require('../lib/email/claire_signature');
     const { html, attachments } = buildClaireEmail(String(body).trim(), commName);
-    await graphSend.sendAs({ to: recipient, subject: subj, html, attachments });
+    await graphSend.sendAs({ to: toList, cc: ccList, subject: subj, html, attachments });
 
+    const allRecipients = [...toList, ...ccList];
     await supabase.from('email_messages').insert({
       mailbox: graphSend.CLAIRE_MAILBOX, direction: 'outbound', sender_email: graphSend.CLAIRE_MAILBOX,
-      sender_name: 'Claire (Bedrock AI)', recipients: [recipient], subject: subj, body_preview: String(body).trim().slice(0, 2000),
-      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `Claire emailed ${recipient} (composed by ${admin.full_name || admin.email})`,
+      sender_name: 'Claire (Bedrock AI)', recipients: allRecipients, subject: subj, body_preview: String(body).trim().slice(0, 2000),
+      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `Claire emailed ${allRecipients.join(', ')} (composed by ${admin.full_name || admin.email})`,
       community_id, resolved_contact_id, resolved_property_id, resolution_confidence: resolved_contact_id ? 'high' : 'low',
       triage_status: 'handled', record_ownership: 'association_record', reviewed_by: admin.full_name || admin.email || 'admin', reviewed_at: new Date().toISOString(),
     });
 
-    res.json({ sent: true, to: recipient, from: graphSend.CLAIRE_MAILBOX, linked_to_homeowner: !!resolved_contact_id });
+    res.json({ sent: true, to: toList, cc: ccList, from: graphSend.CLAIRE_MAILBOX, linked_to_homeowner: !!resolved_contact_id });
   } catch (err) {
     console.error('[email_triage] compose failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /compose-draft — ADMIN ONLY. "Claire, write this for me." Turns a short
+// intent into a subject + body in Claire's voice; the operator edits before
+// sending via /compose. Nothing is sent here.
+router.post('/compose-draft', express.json(), async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return; // 403 already sent
+    const { intent, to, community_name } = req.body || {};
+    if (!intent || !String(intent).trim()) return res.status(400).json({ error: 'intent_required', detail: 'Tell Claire what you want the email to say.' });
+
+    // Light recipient context so the draft can greet by name / fit the community.
+    const firstTo = parseAddrs(to)[0] || null;
+    let recipientName = null, commName = community_name || '';
+    if (firstTo) {
+      try {
+        const { data: c } = await supabase.from('contacts').select('full_name, id').or(`primary_email.ilike.${firstTo},secondary_email.ilike.${firstTo}`).limit(1);
+        if (c && c[0]) {
+          recipientName = c[0].full_name || null;
+          if (!commName) {
+            const { data: o } = await supabase.from('property_ownerships').select('properties(communities:community_id(name))').eq('contact_id', c[0].id).is('end_date', null).limit(1);
+            if (o && o[0] && o[0].properties && o[0].properties.communities) commName = o[0].properties.communities.name;
+          }
+        }
+      } catch (_) { /* best-effort */ }
+    }
+
+    const { draftEmailFromIntent } = require('../lib/email/compose_draft');
+    const draft = await draftEmailFromIntent(intent, { to: firstTo, recipientName, community: commName });
+    if (draft.degraded) return res.status(503).json({ error: 'draft_unavailable', detail: 'Claire could not draft this right now. Write it yourself, or try again.' });
+    res.json({ ok: true, subject: draft.subject, body: draft.body });
+  } catch (err) {
+    console.error('[email_triage] compose-draft failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

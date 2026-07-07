@@ -49177,8 +49177,16 @@ ${questionsPage}
     </div>
     <div style="padding:18px;">
       <div style="font-size:12px; color:#5a7390; margin-bottom:12px;">Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + honest-AI signature. Logged on the homeowner's record when the email matches one on file.</div>
-      <label style="display:block; font-size:12px; font-weight:600; color:#5a7390; margin-bottom:3px;">To</label>
-      <input id="ccTo" type="email" placeholder="homeowner@example.com" style="width:100%; padding:9px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; margin-bottom:11px;">
+      <div style="display:flex; gap:11px; margin-bottom:11px;">
+        <div style="flex:1;">
+          <label style="display:block; font-size:12px; font-weight:600; color:#5a7390; margin-bottom:3px;">To <span style="font-weight:400;">(separate multiple with commas)</span></label>
+          <input id="ccTo" type="text" placeholder="board@…, owner@…" style="width:100%; padding:9px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px;">
+        </div>
+        <div style="flex:1;">
+          <label style="display:block; font-size:12px; font-weight:600; color:#5a7390; margin-bottom:3px;">Cc <span style="font-weight:400;">(optional)</span></label>
+          <input id="ccCc" type="text" placeholder="cc@…" style="width:100%; padding:9px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px;">
+        </div>
+      </div>
       <div style="display:flex; gap:11px; margin-bottom:11px;">
         <div style="flex:2;">
           <label style="display:block; font-size:12px; font-weight:600; color:#5a7390; margin-bottom:3px;">Subject</label>
@@ -49189,8 +49197,15 @@ ${questionsPage}
           <input id="ccCommunity" placeholder="e.g. Eaglewood" style="width:100%; padding:9px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px;">
         </div>
       </div>
+      <div style="background:#f8fafc; border:1px solid #e6edf5; border-radius:9px; padding:10px 11px; margin-bottom:11px;">
+        <label style="display:block; font-size:12px; font-weight:600; color:#0B1D34; margin-bottom:3px;">✍️ Have Claire write it <span style="font-weight:400; color:#5a7390;">— tell her the gist, she drafts it, you edit below</span></label>
+        <div style="display:flex; gap:8px;">
+          <input id="ccIntent" type="text" placeholder="e.g. tell the Waterview board the pool reopens Monday and thank them for their patience" style="flex:1; padding:9px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px;" onkeydown="if(event.key==='Enter'){event.preventDefault();ccDraft();}">
+          <button id="ccDraftBtn" onclick="ccDraft()" style="background:#0B1D34; color:#fff; border:none; padding:9px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap;">Draft it</button>
+        </div>
+      </div>
       <label style="display:block; font-size:12px; font-weight:600; color:#5a7390; margin-bottom:3px;">Message</label>
-      <textarea id="ccBody" rows="9" placeholder="Write the message. The signature and logo are added automatically — don't type them here." style="width:100%; padding:10px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; font-family:inherit; resize:vertical;"></textarea>
+      <textarea id="ccBody" rows="9" placeholder="Write the message, or use “Have Claire write it” above. The signature and logo are added automatically — don't type them here." style="width:100%; padding:10px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; font-family:inherit; resize:vertical;"></textarea>
       <div id="ccStatus" style="font-size:12.5px; margin-top:8px; min-height:16px;"></div>
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:12px;">
         <button onclick="closeClaireCompose()" style="background:#fff; color:#0B1D34; border:1px solid #e2e8f0; padding:9px 16px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer;">Cancel</button>
@@ -49203,35 +49218,61 @@ ${questionsPage}
   window.openClaireCompose = function () {
     if (!window.currentUser || window.currentUser.role !== 'admin') { alert('This is limited to the account owner.'); return; }
     document.getElementById('ccStatus').textContent = '';
-    ['ccTo','ccSubject','ccCommunity','ccBody'].forEach(function (id) { document.getElementById(id).value = ''; });
+    ['ccTo','ccCc','ccSubject','ccCommunity','ccIntent','ccBody'].forEach(function (id) { document.getElementById(id).value = ''; });
     document.getElementById('claireComposeModal').style.display = 'flex';
     setTimeout(function () { document.getElementById('ccTo').focus(); }, 30);
   };
   window.closeClaireCompose = function () { document.getElementById('claireComposeModal').style.display = 'none'; };
+  // "Have Claire write it": send the gist, she drafts subject + body, you edit.
+  window.ccDraft = async function () {
+    var intent = document.getElementById('ccIntent').value.trim();
+    var to = document.getElementById('ccTo').value.trim();
+    var community_name = document.getElementById('ccCommunity').value.trim();
+    var status = document.getElementById('ccStatus');
+    var btn = document.getElementById('ccDraftBtn');
+    if (!intent) { status.style.color = '#b91c1c'; status.textContent = 'Tell Claire what you want the email to say.'; return; }
+    btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Writing…';
+    status.style.color = '#5a7390'; status.textContent = 'Claire is drafting…';
+    try {
+      var r = await window._authFetch('/api/email-triage/compose-draft', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intent: intent, to: to, community_name: community_name }),
+      });
+      var j = await r.json();
+      if (!r.ok || !j.ok) { status.style.color = '#b91c1c'; status.textContent = j.detail || j.error || 'Could not draft.'; return; }
+      if (j.subject && !document.getElementById('ccSubject').value.trim()) document.getElementById('ccSubject').value = j.subject;
+      document.getElementById('ccBody').value = j.body || '';
+      status.style.color = '#166534'; status.textContent = '✓ Claire drafted it. Edit anything below, then send.';
+    } catch (e) {
+      status.style.color = '#b91c1c'; status.textContent = 'Draft failed: ' + (e.message || 'network error');
+    } finally { btn.disabled = false; btn.textContent = orig; }
+  };
   window.sendClaireCompose = async function () {
     var to = document.getElementById('ccTo').value.trim();
+    var cc = document.getElementById('ccCc').value.trim();
     var subject = document.getElementById('ccSubject').value.trim();
     var community_name = document.getElementById('ccCommunity').value.trim();
     var body = document.getElementById('ccBody').value.trim();
     var status = document.getElementById('ccStatus');
     var btn = document.getElementById('ccSendBtn');
-    if (!to) { status.style.color = '#b91c1c'; status.textContent = 'Enter a recipient email.'; return; }
-    if (!body) { status.style.color = '#b91c1c'; status.textContent = 'Write a message.'; return; }
+    if (!to) { status.style.color = '#b91c1c'; status.textContent = 'Enter at least one recipient email.'; return; }
+    if (!body) { status.style.color = '#b91c1c'; status.textContent = 'Write a message, or have Claire draft one.'; return; }
     btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Sending…';
     status.style.color = '#5a7390'; status.textContent = 'Sending as Claire…';
     try {
       var r = await window._authFetch('/api/email-triage/compose', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: to, subject: subject, community_name: community_name, body: body }),
+        body: JSON.stringify({ to: to, cc: cc, subject: subject, community_name: community_name, body: body }),
       });
       var j = await r.json();
       if (!r.ok || !j.sent) {
         status.style.color = '#b91c1c';
         status.textContent = j.detail || j.error || ('Send failed (HTTP ' + r.status + ').');
       } else {
+        var sentTo = Array.isArray(j.to) ? j.to.join(', ') : j.to;
         status.style.color = '#166534';
-        status.textContent = '✓ Sent to ' + j.to + (j.linked_to_homeowner ? ' — filed on their record.' : ' — sent (no homeowner match on file).');
-        setTimeout(closeClaireCompose, 1600);
+        status.textContent = '✓ Sent to ' + sentTo + (j.linked_to_homeowner ? ' — filed on their record.' : '.');
+        setTimeout(closeClaireCompose, 1800);
       }
     } catch (e) {
       status.style.color = '#b91c1c'; status.textContent = 'Send failed: ' + (e.message || 'network error');
