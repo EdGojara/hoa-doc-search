@@ -131,7 +131,12 @@ async function assemble(contactId) {
     .select('started_at, ended_at, duration_seconds, status, brief, caller_phone')
     .eq('caller_homeowner_id', contactId).order('started_at', { ascending: false }).limit(30));
 
-  return { contact, properties, ar: { balance_cents, transactions: txns }, flags, violations, arc, interactions, emails, calls };
+  // Pool access — fob (key-tag) registrations + extended-hours approvals
+  const poolAccess = propIds.length ? await safe(() => supabase.from('pool_access')
+    .select('form_type, fob_tag_number, season_year, extended_hours_detail, authorized_persons, status, form_signed_date')
+    .in('property_id', propIds).order('status', { ascending: true }).limit(50)) : [];
+
+  return { contact, properties, ar: { balance_cents, transactions: txns }, flags, violations, arc, interactions, emails, calls, poolAccess };
 }
 
 // GET /profile/:contactId — the assembled 360 (fast, no AI)

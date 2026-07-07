@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pool Access — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width:1180px; margin:0 auto; padding:20px 18px 60px; }
+  a.back { display:inline-flex; align-items:center; gap:6px; color:#5a7390; text-decoration:none; font-size:13px; font-weight:600; margin-bottom:12px; }
+  h1 { margin:0; color:var(--navy); font-size:22px; }
+  .sub { color:var(--muted); font-size:12.5px; margin:4px 0 16px; }
+  .toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+  select, .btn { padding:9px 13px; font-size:14px; border:1px solid var(--line); border-radius:9px; background:#fff; }
+  .btn { background:var(--navy); color:#fff; border:none; cursor:pointer; font-weight:600; }
+  .btn.gold { background:var(--gold); color:var(--navy); }
+  .btn.ghost { background:#fff; color:var(--navy); border:1px solid var(--line); }
+  .btn.sm { padding:4px 9px; font-size:12px; }
+  .counts { display:flex; gap:8px; flex-wrap:wrap; margin-left:auto; }
+  .cnt { background:#fff; border:1px solid var(--line); border-radius:8px; padding:6px 12px; font-size:12px; color:var(--muted); }
+  .cnt b { color:var(--navy); font-size:15px; }
+  .dropzone { border:1.5px dashed #cbd5e1; border-radius:10px; padding:16px; text-align:center; font-size:13px; color:var(--muted); cursor:pointer; margin-bottom:16px; background:#fbfcfe; }
+  .dropzone.over { border-color:var(--gold); background:#fffdf5; color:var(--navy); }
+  table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th, td { text-align:left; padding:9px 11px; font-size:13px; border-bottom:1px solid #eef2f7; vertical-align:top; }
+  th { background:#f8fafc; color:var(--navy); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  tr:last-child td { border-bottom:none; }
+  .tag { font-family:ui-monospace,monospace; font-weight:700; color:var(--navy); }
+  .pill { display:inline-block; font-size:10px; font-weight:700; padding:2px 8px; border-radius:11px; text-transform:uppercase; letter-spacing:.03em; }
+  .p-fob { background:#e0f2fe; color:#075985; } .p-ext { background:#fef3c7; color:#92400e; }
+  .p-active { background:#dcfce7; color:#166534; } .p-revoked { background:#fee2e2; color:#991b1b; } .p-expired { background:#f1f5f9; color:#64748b; }
+  .people { color:var(--ink); } .rel { color:var(--muted); font-size:11px; }
+  .empty { color:var(--muted); font-size:13px; padding:20px; text-align:center; }
+  .spin { color:var(--muted); font-size:13px; padding:14px; }
+  /* modal */
+  .overlay { position:fixed; inset:0; background:rgba(11,29,52,.45); display:flex; align-items:flex-start; justify-content:center; padding:34px 14px; z-index:50; overflow:auto; }
+  .modal { background:#fff; border-radius:13px; width:100%; max-width:960px; padding:20px; }
+  .modal h2 { margin:0 0 4px; color:var(--navy); font-size:18px; }
+  .warn { background:#fef3c7; border:1px solid #fcd34d; color:#92400e; border-radius:8px; padding:8px 11px; font-size:12.5px; margin:10px 0; }
+  .flag { background:#fee2e2; color:#991b1b; font-size:11px; font-weight:700; padding:1px 7px; border-radius:9px; }
+  .unmatched td { background:#fff7ed; }
+  .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:14px; }
+  label.fld { display:block; font-size:12px; color:var(--muted); margin:8px 0 3px; font-weight:600; }
+  .modal input, .modal select { width:100%; padding:8px 10px; font-size:13px; border:1px solid var(--line); border-radius:7px; }
+  .g2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/" onclick="if(document.referrer&&history.length>1){history.back();return false;}">&larr; Back to trustEd</a>
+  <h1>🏊 Pool Access</h1>
+  <div class="sub">Fob (key-tag) registrations and extended-hours swim approvals, filed onto each homeowner. Drop a batch of forms — the system reads them, matches the homeowner, and lists who has access and their tag numbers.</div>
+
+  <div class="toolbar">
+    <select id="community" onchange="loadRoster()"><option value="">Select a community…</option></select>
+    <select id="statusFilter" onchange="loadRoster()">
+      <option value="active">Active only</option>
+      <option value="all">All (incl. revoked)</option>
+      <option value="revoked">Revoked</option>
+    </select>
+    <button class="btn ghost" onclick="openGrant()">+ Add grant manually</button>
+    <div class="counts" id="counts"></div>
+  </div>
+
+  <div class="dropzone" id="dz"
+       ondragover="event.preventDefault();this.classList.add('over');"
+       ondragleave="this.classList.remove('over');"
+       ondrop="dropFiles(event)"
+       onclick="document.getElementById('file').click()">
+    📎 Drop a batch of pool-access forms (PDF) here — fob registrations and extended-hours forms. The system reads each one and files it to the right homeowner. You review before anything is saved.
+  </div>
+  <input type="file" id="file" accept="application/pdf" multiple style="display:none" onchange="if(this.files.length)uploadFiles(this.files)">
+
+  <div id="roster"></div>
+  <div id="modal"></div>
+</div>
+
+<script>
+const API='/api/pool-access';
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const d10=s=>s?String(s).slice(0,10):'';
+const $=id=>document.getElementById(id);
+function cid(){ return $('community').value; }
+
+async function loadCommunities(){
+  try{
+    const r=await fetch('/api/communities'); const j=await r.json();
+    const list=(j.communities||j||[]).slice().sort((a,b)=>String(a.name).localeCompare(b.name));
+    $('community').innerHTML='<option value="">Select a community…</option>'+list.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  }catch(e){ $('community').innerHTML='<option>Could not load communities</option>'; }
+}
+
+function typePill(t){ return t==='fob_registration'?'<span class="pill p-fob">Fob</span>':t==='extended_hours'?'<span class="pill p-ext">Ext. hours</span>':'<span class="pill">'+esc(t)+'</span>'; }
+function statusPill(s){ return `<span class="pill p-${esc(s)}">${esc(s)}</span>`; }
+function peopleHtml(arr){ if(!arr||!arr.length)return '<span class="rel">—</span>'; return arr.map(p=>`<div class="people">${esc(p.name)}${p.relationship?' <span class="rel">('+esc(p.relationship)+')</span>':''}</div>`).join(''); }
+
+async function loadRoster(){
+  const c=cid();
+  $('counts').innerHTML='';
+  if(!c){ $('roster').innerHTML='<div class="empty">Pick a community to see its pool roster.</div>'; return; }
+  $('roster').innerHTML='<div class="spin">Loading roster…</div>';
+  try{
+    const r=await fetch(`${API}/roster?community_id=${encodeURIComponent(c)}&status=${$('statusFilter').value}`);
+    const j=await r.json();
+    if(!j.ok){ $('roster').innerHTML='<div class="empty">'+esc(j.error||'Could not load')+'</div>'; return; }
+    const rows=j.rows||[];
+    $('counts').innerHTML=`<div class="cnt"><b>${j.counts.total}</b> access records</div><div class="cnt"><b>${j.counts.fobs}</b> fobs</div><div class="cnt"><b>${j.counts.extended_hours}</b> ext-hours</div>`;
+    if(!rows.length){ $('roster').innerHTML='<div class="empty">No pool access on file yet for this community. Drop a batch of forms above.</div>'; return; }
+    $('roster').innerHTML=`<table><thead><tr>
+      <th>Property</th><th>Homeowner</th><th>Type</th><th>Tag #</th><th>Authorized people</th><th>Season</th><th>Signed</th><th>Status</th><th>Form</th><th></th>
+    </tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`;
+  }catch(e){ $('roster').innerHTML='<div class="empty">Error loading roster.</div>'; }
+}
+
+function rowHtml(r){
+  const form=r.source_filename?`<span title="${esc(r.source_filename)}">📄</span>`:'<span class="rel">—</span>';
+  const revoke=r.status==='active'?`<button class="btn ghost sm" onclick="revoke('${r.id}')">Revoke</button>`:'';
+  return `<tr>
+    <td>${esc(r.address||'—')}</td>
+    <td>${esc(r.homeowner||'—')}</td>
+    <td>${typePill(r.form_type)}</td>
+    <td class="tag">${r.fob_tag_number?esc(r.fob_tag_number):'<span class="rel">—</span>'}</td>
+    <td>${peopleHtml(r.authorized_persons)}${r.extended_hours_detail?'<div class="rel">'+esc(r.extended_hours_detail)+'</div>':''}</td>
+    <td>${r.season_year||'<span class="rel">—</span>'}</td>
+    <td>${d10(r.form_signed_date)||'<span class="rel">—</span>'}</td>
+    <td>${statusPill(r.status)}</td>
+    <td>${form}</td>
+    <td>${revoke}</td>
+  </tr>`;
+}
+
+async function revoke(id){
+  if(!confirm('Revoke this pool access record?'))return;
+  await fetch(`${API}/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'revoked'})});
+  loadRoster();
+}
+
+/* ---------- batch upload -> preview -> approve ---------- */
+function dropFiles(e){ e.preventDefault(); $('dz').classList.remove('over'); if(e.dataTransfer.files.length)uploadFiles(e.dataTransfer.files); }
+
+async function uploadFiles(files){
+  const c=cid();
+  if(!c){ alert('Pick a community first — pool forms are filed within one community.'); return; }
+  $('dz').innerHTML=`Reading ${files.length} file${files.length>1?'s':''}… (AI is extracting each form)`;
+  const fd=new FormData(); fd.append('community_id',c);
+  for(const f of files) fd.append('forms',f);
+  try{
+    const r=await fetch(`${API}/ingest`,{method:'POST',body:fd}); const j=await r.json();
+    resetDz();
+    if(!j.ok){ alert(j.error||'Upload failed'); return; }
+    showPreview(j);
+  }catch(e){ resetDz(); alert('Upload failed.'); }
+}
+function resetDz(){ $('dz').innerHTML='📎 Drop a batch of pool-access forms (PDF) here — fob registrations and extended-hours forms. The system reads each one and files it to the right homeowner. You review before anything is saved.'; $('file').value=''; }
+
+function showPreview(j){
+  const rows=j.rows||[];
+  const dups=rows.filter(r=>r.dup_active).length;
+  const rowsHtml=rows.map(r=>{
+    const matched=r.property_id && (r.form_type==='fob_registration'||r.form_type==='extended_hours');
+    const addr=r.matched_address||r.property_address||'<span class="flag">no address</span>';
+    return `<tr class="${matched?'':'unmatched'}">
+      <td>${esc(addr)}${matched?'':' <span class="flag">unmatched — will skip</span>'}</td>
+      <td>${esc(r.contact_name||r.primary_homeowner_name||'—')}</td>
+      <td>${typePill(r.form_type)}</td>
+      <td class="tag">${r.fob_tag_number?esc(r.fob_tag_number):'<span class="rel">—</span>'}${r.dup_active?` <span class="flag" title="Tag already active on ${esc(r.dup_on)}">reissue → supersedes ${esc(r.dup_on)}</span>`:''}</td>
+      <td>${(r.authorized_persons||[]).length} listed</td>
+      <td>${r.season_year||'—'}</td>
+      <td>${esc(r.source_filename||'')}</td>
+    </tr>`;
+  }).join('');
+  const html=`<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <h2>Review before filing</h2>
+    <div class="sub">${j.forms_matched} of ${j.total_forms} ready to file onto a homeowner. ${j.forms_unmatched?`<b>${j.forms_unmatched}</b> couldn't be matched and will be skipped.`:''}${j.degraded?' <span class="flag">some forms need manual entry</span>':''}</div>
+    ${dups?`<div class="warn">⚠ ${dups} fob tag${dups>1?'s are':' is'} already registered active elsewhere. Approving will treat these as reissues and revoke the prior registration for that tag.</div>`:''}
+    <div style="overflow:auto;max-height:52vh;margin-top:10px;"><table><thead><tr>
+      <th>Property</th><th>Homeowner</th><th>Type</th><th>Tag #</th><th>People</th><th>Season</th><th>Source</th>
+    </tr></thead><tbody>${rowsHtml}</tbody></table></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="discardBatch('${j.batch_id}')">Discard</button>
+      <button class="btn gold" onclick="approveBatch('${j.batch_id}')">File ${j.forms_matched} record${j.forms_matched===1?'':'s'}</button>
+    </div>
+  </div></div>`;
+  $('modal').innerHTML=html;
+}
+function closeModal(){ $('modal').innerHTML=''; }
+async function discardBatch(id){ await fetch(`${API}/ingest/${id}/discard`,{method:'POST'}); closeModal(); }
+async function approveBatch(id){
+  const r=await fetch(`${API}/ingest/${id}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const j=await r.json(); closeModal();
+  if(!j.ok){ alert(j.error||'Approve failed'); return; }
+  let msg=`Filed ${j.filed} record${j.filed===1?'':'s'}.`;
+  if(j.superseded)msg+=` ${j.superseded} prior fob registration${j.superseded===1?'':'s'} superseded.`;
+  if(j.skipped)msg+=` ${j.skipped} skipped (unmatched / not a fileable form).`;
+  alert(msg);
+  loadRoster();
+}
+
+/* ---------- manual grant ---------- */
+function openGrant(){
+  if(!cid()){ alert('Pick a community first.'); return; }
+  $('modal').innerHTML=`<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:520px;">
+    <h2>Add pool access</h2>
+    <div class="sub">Enter a fob or extended-hours record by hand (no form to upload).</div>
+    <label class="fld">Property address</label><input id="g_addr" placeholder="e.g. 16319 Split Willow">
+    <div class="g2">
+      <div><label class="fld">Type</label><select id="g_type" onchange="gToggle()"><option value="fob_registration">Fob registration</option><option value="extended_hours">Extended hours</option></select></div>
+      <div id="g_tagwrap"><label class="fld">Tag #</label><input id="g_tag" placeholder="fob / tag number"></div>
+    </div>
+    <div class="g2" id="g_seasonwrap" style="display:none;">
+      <div><label class="fld">Season year</label><input id="g_season" placeholder="2026"></div>
+      <div><label class="fld">Approved hours</label><input id="g_hours" placeholder="e.g. 5–8am lap swim"></div>
+    </div>
+    <label class="fld">Authorized people (comma-separated)</label><input id="g_people" placeholder="Jane Doe, John Doe">
+    <label class="fld">Signed date</label><input id="g_signed" type="date">
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn gold" onclick="submitGrant()">Add</button>
+    </div>
+  </div></div>`;
+}
+function gToggle(){ const ext=$('g_type').value==='extended_hours'; $('g_tagwrap').style.display=ext?'none':''; $('g_seasonwrap').style.display=ext?'grid':'none'; }
+async function submitGrant(){
+  const people=$('g_people').value.split(',').map(s=>s.trim()).filter(Boolean).map(n=>({name:n,relationship:null}));
+  const body={ community_id:cid(), address:$('g_addr').value.trim(), form_type:$('g_type').value,
+    fob_tag_number:$('g_tag')?$('g_tag').value.trim():null,
+    season_year:$('g_season')&&$('g_season').value?parseInt($('g_season').value,10):null,
+    extended_hours_detail:$('g_hours')?$('g_hours').value.trim():null,
+    authorized_persons:people, form_signed_date:$('g_signed').value||null };
+  const r=await fetch(`${API}/grant`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json();
+  if(!j.ok){ alert(j.error||'Could not add'); return; }
+  closeModal(); loadRoster();
+}
+
+loadCommunities();
+loadRoster();
+</script>
+</body>
+</html>
