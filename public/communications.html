@@ -94,6 +94,12 @@ async function loadStats(){
 function setFilter(v){ filter=v; loadStats(); loadList(); }
 
 function linkCell(m){
+  // Internal / staff-to-Claire mail isn't about a homeowner — it's staff
+  // correspondence (kept for the staff-interaction/training loop). Don't nag to
+  // "link to a homeowner"; label it a staff email.
+  if (m.classification === 'internal') {
+    return `<span class="lbl" style="color:#5b21b6;font-weight:600;">👥 Staff email &middot; internal correspondence</span>`;
+  }
   const name = (m.resolved_contact&&m.resolved_contact.full_name) || (m.resolved_vendor&&m.resolved_vendor.name) || (m.resolved_property&&m.resolved_property.street_address);
   const comm = m.community && m.community.name ? ` &middot; ${esc(m.community.name)}` : '';
   if (m.triage_status==='linked' || (name && m.resolution_confidence==='high')){
@@ -125,7 +131,7 @@ async function loadList(){
           <div class="from">${esc(m.sender_email||'')} &middot; ${m.received_at?new Date(m.received_at).toLocaleString():''}</div>
         </div>
         <div style="display:flex; gap:6px;">
-          ${['spam','internal'].includes(cls)?'':`<button class="act draft" onclick="doDraft('${m.id}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>`}
+          <button class="act draft" onclick="doDraft('${m.id}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>
           <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
           ${cls==='spam'?'':`<button class="act spam" onclick="dismiss('${m.id}','spam')">Spam</button>`}
         </div>

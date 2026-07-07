@@ -173,7 +173,7 @@ router.post('/ingest', express.json(), async (req, res) => {
 router.post('/:id/draft-reply', express.json(), async (req, res) => {
   try {
     const { data: m, error } = await supabase.from('email_messages')
-      .select('subject, body_preview, body_full, conversation_id, sender_email, classification, community_id, resolved_contact_id, resolved_property_id, resolved_contact:resolved_contact_id(full_name), community:community_id(name)')
+      .select('subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, resolved_contact:resolved_contact_id(full_name), community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
@@ -181,8 +181,11 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, conversation_id: m.conversation_id, sender_email: m.sender_email },
       classification: m.classification,
       contactId: m.resolved_contact_id, propertyId: m.resolved_property_id, communityId: m.community_id,
-      contactName: m.resolved_contact ? m.resolved_contact.full_name : null,
+      // Reply-to name: the homeowner when resolved, else the sender (so staff/
+      // internal replies can greet the teammate by name).
+      contactName: (m.resolved_contact ? m.resolved_contact.full_name : null) || m.sender_name || null,
       communityName: m.community ? m.community.name : null,
+      force: true, // Ed clicked "Draft reply" explicitly — always produce a reply, even internal/spam
     });
     res.json(draft);
   } catch (err) {
