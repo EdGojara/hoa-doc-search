@@ -271,7 +271,10 @@ router.post('/:id/send', express.json(), async (req, res) => {
 router.post('/pull', express.json(), async (req, res) => {
   try {
     if (!graphIngest.isConfigured()) return res.status(400).json({ error: 'graph_not_connected', detail: 'Outlook ingest needs the Azure app (Mail.Read) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET.' });
-    const mailboxes = (process.env.EMAIL_INGEST_MAILBOX || 'info@bedrocktx.com,claire@bedrocktx.com').split(',').map((m) => m.trim()).filter(Boolean);
+    // ALWAYS pull both info@ and claire@ (union with any env override), so a
+    // single-value EMAIL_INGEST_MAILBOX on Render can't silently drop claire@.
+    const extra = (process.env.EMAIL_INGEST_MAILBOX || '').split(',').map((m) => m.trim()).filter(Boolean);
+    const mailboxes = [...new Set(['info@bedrocktx.com', 'claire@bedrocktx.com', ...extra])];
     const days = Math.min(60, parseInt((req.body || {}).days, 10) || 14);
     const sinceISO = new Date(Date.now() - days * 864e5).toISOString();
     const results = {}; let kept = 0, drafted = 0;
