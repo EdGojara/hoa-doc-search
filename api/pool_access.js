@@ -257,6 +257,29 @@ router.post('/ingest/:batch_id/discard', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /communities — only communities that have a pool (communities.profile
+// .has_pool). Keeps the Pool Access dropdown scoped to pool communities
+// instead of the whole portfolio. Flag lives in the profile JSONB (single
+// canonical place); set via the seed, not hardcoded here.
+// ----------------------------------------------------------------------------
+router.get('/communities', async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('communities')
+      .select('id, name, profile, active')
+      .order('name', { ascending: true });
+    if (error) throw error;
+    const communities = (data || [])
+      .filter((c) => c.active !== false && c.profile && c.profile.has_pool)
+      .map((c) => ({ id: c.id, name: c.name }));
+    res.json({ ok: true, communities });
+  } catch (err) {
+    console.error('[pool_access] communities failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /roster?community_id=&status=active — the tab's main list.
 // ----------------------------------------------------------------------------
 router.get('/roster', async (req, res) => {

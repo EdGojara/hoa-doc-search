@@ -87,8 +87,9 @@ function cid(){ return $('community').value; }
 
 async function loadCommunities(){
   try{
-    const r=await fetch('/api/communities'); const j=await r.json();
-    const list=(j.communities||j||[]).slice().sort((a,b)=>String(a.name).localeCompare(b.name));
+    // Pool communities only (communities.profile.has_pool) — scoped endpoint.
+    const r=await fetch(API+'/communities'); const j=await r.json();
+    const list=(j.communities||[]).slice().sort((a,b)=>String(a.name).localeCompare(b.name));
     $('community').innerHTML='<option value="">Select a community…</option>'+list.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
   }catch(e){ $('community').innerHTML='<option>Could not load communities</option>'; }
 }
