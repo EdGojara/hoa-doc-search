@@ -60,6 +60,9 @@
     <input id="q" placeholder="e.g. Chen Gong · 19910 Cape Clover · gongc93@… · 281-…" autofocus onkeydown="if(event.key==='Enter')doSearch()">
     <button onclick="doSearch()">Search</button>
   </div>
+  <div class="dropzone" id="gdz" ondragover="event.preventDefault();this.classList.add('over');" ondragleave="this.classList.remove('over');" ondrop="importReviewDrop(event)" onclick="document.getElementById('gfile').click()">📎 Drop an email (.msg/.eml) here to file it to the right homeowner(s) — the system finds who it's from and about, you confirm.</div>
+  <input type="file" id="gfile" accept=".msg,.eml" style="display:none" onchange="if(this.files[0])importReview(this.files[0])">
+  <div id="reviewModal"></div>
   <div id="results"></div>
   <div id="profile"></div>
 </div>
@@ -131,8 +134,6 @@ async function openProfile(cid){
       </div>
       <div class="card">
         <div class="sec-title">✉️ Correspondence &amp; notes (${tl.length})</div>
-        <div class="dropzone" id="dz-${cid}" ondragover="event.preventDefault();this.classList.add('over');" ondragleave="this.classList.remove('over');" ondrop="importDrop(event,'${cid}')" onclick="document.getElementById('efile-${cid}').click()">⬇ Drag an email here (or click) to add it to this homeowner's history</div>
-        <input type="file" id="efile-${cid}" accept=".msg,.eml" style="display:none" onchange="if(this.files[0])importEmail('${cid}',this.files[0])">
         <div class="notebox"><input id="noteInput" placeholder="Add a note to this account…" onkeydown="if(event.key==='Enter')addNote('${cid}')"><button onclick="addNote('${cid}')">Add note</button></div>
         <div class="timeline">${tl.map(x=>`<div class="li ${x.dir==='inbound'?'tl-in':(x.note?'tl-note':'tl-out')}"><span class="t">${d10(x.t)} · ${esc(x.kind)} ${x.dir==='inbound'?'↓':x.dir==='internal'?'•':'↑'}</span>${x.note?`<span onclick="deleteNote('${x.id}','${cid}')" title="Delete note" style="float:right;cursor:pointer;color:#b91c1c;font-weight:700;">✕</span>`:''}<br>${esc(String(x.label).slice(0,110))}</div>`).join('')||'<div class="empty">No correspondence on file yet.</div>'}</div>
       </div>
@@ -143,12 +144,62 @@ async function openProfile(cid){
     const r=await fetch(API+'/note/'+id,{method:'DELETE'});
     if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(j.detail||'Could not delete'); }
   };
-  window.importDrop=function(e,cid){ e.preventDefault(); const dz=document.getElementById('dz-'+cid); if(dz)dz.classList.remove('over'); const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]; if(f)importEmail(cid,f); else alert('Couldn’t read that drag — try dragging the email to your desktop first (creates a .msg), then drag that file in, or click to pick it.'); };
-  window.importEmail=async function(cid,file){
-    const dz=document.getElementById('dz-'+cid); if(dz)dz.textContent='Importing '+file.name+'…';
+  let _reviewEmail=null;
+  const GDZ_TEXT='📎 Drop an email (.msg/.eml) here to file it to the right homeowner(s) — the system finds who it\'s from and about, you confirm.';
+  window.importReviewDrop=function(e){ e.preventDefault(); document.getElementById('gdz').classList.remove('over'); const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]; if(f)importReview(f); else alert('Couldn’t read that drag — drag the email to your desktop first (creates a .msg), then drop that in, or click to pick.'); };
+  window.importReview=async function(file){
+    const dz=document.getElementById('gdz'); dz.textContent='Reading '+file.name+'…';
     const fd=new FormData(); fd.append('file',file);
-    const r=await fetch(API+'/'+cid+'/import-email',{method:'POST',body:fd});
-    if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(j.error||'Import failed'); if(dz)dz.textContent='⬇ Drag an email here (or click) to add it to this homeowner’s history'; }
+    let r; try{ r=await fetch(API+'/import-review',{method:'POST',body:fd}); }catch(e){ dz.textContent=GDZ_TEXT; alert('Upload failed'); return; }
+    dz.textContent=GDZ_TEXT;
+    if(!r.ok){ const j=await r.json().catch(()=>({})); alert(j.error||'Could not read that email'); return; }
+    _reviewEmail=await r.json(); renderReview(_reviewEmail);
+  };
+  let _slotResults={};
+  function slotHtml(label,role,slot){
+    const picked=slot&&(slot.contact_id||slot.property_id);
+    const nameHtml=picked?esc((slot.name||'(owner unknown)')+(slot.address?' · '+slot.address:'')):'<span style="color:#94a3b8">not identified</span>';
+    return `<div class="slot" data-role="${role}">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" ${picked?'checked':''} class="slot-cb" data-contact="${slot&&slot.contact_id||''}" data-property="${slot&&slot.property_id||''}"> <strong>${esc(label)}:</strong> <span class="slot-name">${nameHtml}</span></label>
+      <div style="margin-left:24px;margin-top:3px;"><input class="slot-search" placeholder="🔍 ${picked?'change':'search'} homeowner…" oninput="slotSearch(this,'${role}')" style="font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:5px;width:240px;"><div class="slot-results" style="margin-top:2px;"></div></div>
+    </div>`;
+  }
+  window.slotSearch=async function(inp,role){
+    const q=inp.value.trim(); const box=inp.parentElement.querySelector('.slot-results'); if(q.length<2){box.innerHTML='';return;}
+    const r=await fetch(API+'/search?q='+encodeURIComponent(q)); const j=await r.json(); _slotResults[role]=j.results||[];
+    box.innerHTML=_slotResults[role].slice(0,6).map((x,i)=>`<div style="padding:4px 7px;cursor:pointer;font-size:12px;border:1px solid var(--line);border-radius:4px;margin-bottom:2px;background:#fff;" onclick="pickSlot('${role}',${i})">${esc(x.name)} <span style="color:#94a3b8">${esc((x.properties||[]).join(', '))}</span></div>`).join('')||'<div style="font-size:11px;color:#94a3b8;">no match</div>';
+  };
+  window.pickSlot=function(role,i){
+    const x=(_slotResults[role]||[])[i]; if(!x)return;
+    const slot=[...document.querySelectorAll('#reviewModal .slot')].find(s=>s.dataset.role===role); if(!slot)return;
+    const cb=slot.querySelector('.slot-cb'); cb.checked=true; cb.dataset.contact=x.contact_id; cb.dataset.property='';
+    slot.querySelector('.slot-name').textContent=x.name+((x.properties||[]).length?' · '+x.properties[0]:'');
+    slot.querySelector('.slot-results').innerHTML=''; slot.querySelector('.slot-search').value='';
+  };
+  function renderReview(j){
+    document.getElementById('reviewModal').innerHTML=`<div class="card" style="margin-top:14px;border:2px solid var(--gold);">
+      <div style="font-weight:800;color:var(--navy);font-size:12px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px;">📎 File this email</div>
+      <div style="font-size:13px;"><strong>${esc(j.email.subject)}</strong><div style="color:#5a7390;font-size:12px;">${esc(j.email.sender_name||j.email.sender_email||'')} · ${j.email.received_at?new Date(j.email.received_at).toLocaleDateString():''} · [${esc(j.classification)}]</div></div>
+      <div style="font-size:12.5px;color:#33414f;margin:8px 0;">${esc((j.email.body_preview||'').slice(0,300))}${(j.email.body_preview||'').length>300?'…':''}</div>
+      <div style="border-top:1px dashed var(--line);padding-top:8px;display:flex;flex-direction:column;gap:8px;">
+        <div style="font-size:11px;color:#5a7390;">Confirm who this belongs to — it files to each checked homeowner's history:</div>
+        ${slotHtml('From (reporter)','from',j.from)}
+        ${slotHtml('About (subject)','about',j.about)}
+      </div>
+      <div style="margin-top:10px;display:flex;gap:6px;">
+        <button style="background:var(--navy);color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:700;cursor:pointer;" onclick="fileReview()">✅ File it</button>
+        <button style="background:#f1f5f9;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;cursor:pointer;" onclick="document.getElementById('reviewModal').innerHTML='';">Cancel</button>
+      </div>
+    </div>`;
+  }
+  window.fileReview=async function(){
+    const boxes=[...document.querySelectorAll('#reviewModal .slot-cb:checked')];
+    const links=boxes.map(b=>{ const slot=b.closest('.slot'); return {role:slot?slot.dataset.role:'from',contact_id:b.dataset.contact||null,property_id:b.dataset.property||null}; });
+    if(!links.length){ alert('Check at least one homeowner to file to.'); return; }
+    const r=await fetch(API+'/import-file',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_reviewEmail.email,classification:_reviewEmail.classification,links})});
+    const j=await r.json();
+    if(r.ok){ document.getElementById('reviewModal').innerHTML=`<div class="card" style="margin-top:14px;"><div style="font-size:13px;color:#166534;">✅ Filed to ${j.filed} homeowner${j.filed===1?'':'s'}’ history.</div></div>`; }
+    else alert(j.error||'File failed');
   };
   window.addNote=async function(id){
     const inp=document.getElementById('noteInput'); const content=inp.value.trim(); if(!content)return;

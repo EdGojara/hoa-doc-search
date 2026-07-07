@@ -234,58 +234,105 @@ router.delete('/note/:id', async (req, res) => {
   }
 });
 
-// POST /:contactId/import-email — drag an email in from Outlook (.msg) or a
-// saved .eml onto a homeowner to add it to their history. Curated, not bulk:
-// the email is filed to THIS homeowner explicitly (no resolution guessing), so
-// it shows on their 360 timeline. Parses .msg via @kenjiuno/msgreader, .eml via
-// mailparser. Direction inferred (a bedrocktx.com / Exchange sender = outbound).
-router.post('/:contactId/import-email', upload.single('file'), async (req, res) => {
+// Parse an uploaded email file (.msg via @kenjiuno/msgreader, .eml via
+// mailparser) into a flat shape. Internal Exchange senders come as an X.500
+// legacyDN, not SMTP — keep the name, drop the unusable address.
+async function parseEmailFile(file) {
+  const name = (file.originalname || '').toLowerCase();
+  let subject = '', body = '', senderEmail = null, senderName = null, dateISO = null;
+  if (name.endsWith('.eml') || /message\/rfc822/.test(file.mimetype || '')) {
+    const { simpleParser } = require('mailparser');
+    const p = await simpleParser(file.buffer);
+    subject = p.subject || ''; body = p.text || (p.html ? String(p.html).replace(/<[^>]+>/g, ' ') : '');
+    dateISO = p.date ? new Date(p.date).toISOString() : null;
+    const f = p.from && p.from.value && p.from.value[0]; if (f) { senderEmail = f.address || null; senderName = f.name || null; }
+  } else {
+    const MsgReader = require('@kenjiuno/msgreader').default || require('@kenjiuno/msgreader');
+    const d = new MsgReader(file.buffer).getFileData();
+    subject = d.subject || ''; body = d.body || ''; senderName = d.senderName || null;
+    senderEmail = (d.senderEmail && !/^\/o=/i.test(d.senderEmail)) ? d.senderEmail : null;
+    const dt = d.messageDeliveryTime || d.clientSubmitTime || d.creationTime;
+    dateISO = dt ? new Date(dt).toISOString() : null;
+  }
+  return { subject, body, senderEmail, senderName, dateISO };
+}
+
+// Resolve who an email is FROM (sender → contact) and who it's ABOUT (a property
+// address in the body → its owner). Two distinct homeowners in the neighbor-
+// complaint case. Returns { from, about } — each { contact_id, name, property_id, address } or null.
+async function resolveFromAbout(parsed, addresses) {
+  const out = { from: null, about: null };
+  if (parsed.senderEmail && !/@bedrocktx\.com$/i.test(parsed.senderEmail)) {
+    const { data } = await supabase.from('contacts').select('id, full_name')
+      .or(`primary_email.ilike.${parsed.senderEmail},secondary_email.ilike.${parsed.senderEmail}`).limit(1);
+    if (data && data[0]) { const owns = await ownedProperties(data[0].id); const pr = owns[0] || null; out.from = { contact_id: data[0].id, name: data[0].full_name, property_id: pr ? pr.property_id : null, address: pr ? pr.address : null }; }
+  }
+  for (const addr of (addresses || [])) {
+    const num = (String(addr).match(/^\s*(\d{2,6})/) || [])[1];
+    const street = String(addr).replace(/^\s*\d+\s*/, '').replace(/,.*$/, '').trim().split(/\s+/).slice(0, 2).join(' ');
+    if (!num || !street) continue;
+    const { data: props } = await supabase.from('properties').select('id, street_address, community_id').ilike('street_address', `${num} ${street}%`).limit(3);
+    const p = (props || []).find((x) => x.street_address.trim().startsWith(num));
+    if (p) {
+      if (out.from && out.from.property_id === p.id) break; // same as sender's own property → not a separate "about"
+      const { data: owns } = await supabase.from('property_ownerships').select('contact_id, contacts(full_name)').eq('property_id', p.id).is('end_date', null).limit(1);
+      out.about = { property_id: p.id, address: p.street_address, contact_id: owns && owns[0] ? owns[0].contact_id : null, name: owns && owns[0] && owns[0].contacts ? owns[0].contacts.full_name : null };
+      break;
+    }
+  }
+  return out;
+}
+
+// POST /import-review — upload an email, don't file it yet: parse + classify +
+// figure out who it's FROM and who it's ABOUT, and return the proposal for the
+// operator to confirm (a neighbor complaint can file to both).
+router.post('/import-review', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'file_required' });
-    const name = (req.file.originalname || '').toLowerCase();
-    let subject = '', body = '', senderEmail = null, senderName = null, dateISO = null;
-
-    if (name.endsWith('.eml') || /message\/rfc822/.test(req.file.mimetype || '')) {
-      const { simpleParser } = require('mailparser');
-      const p = await simpleParser(req.file.buffer);
-      subject = p.subject || ''; body = p.text || (p.html ? String(p.html).replace(/<[^>]+>/g, ' ') : '');
-      dateISO = p.date ? new Date(p.date).toISOString() : null;
-      const f = p.from && p.from.value && p.from.value[0]; if (f) { senderEmail = f.address || null; senderName = f.name || null; }
-    } else {
-      const MsgReader = require('@kenjiuno/msgreader').default || require('@kenjiuno/msgreader');
-      const d = new MsgReader(req.file.buffer).getFileData();
-      subject = d.subject || ''; body = d.body || '';
-      senderName = d.senderName || null;
-      // Internal Exchange senders come as an X.500 legacyDN, not SMTP — keep the
-      // name, drop the unusable address.
-      senderEmail = (d.senderEmail && !/^\/o=|^\/O=/.test(d.senderEmail)) ? d.senderEmail : null;
-      const dt = d.messageDeliveryTime || d.clientSubmitTime || d.creationTime;
-      dateISO = dt ? new Date(dt).toISOString() : null;
-    }
-
-    const { data: c } = await supabase.from('contacts').select('id').eq('id', req.params.contactId).maybeSingle();
-    if (!c) return res.status(404).json({ error: 'contact_not_found' });
-    const props = await ownedProperties(req.params.contactId);
-    const primary = props.find((p) => p.is_primary) || props[0] || null;
-
-    const isOut = (senderEmail && /@bedrocktx\.com$/i.test(senderEmail)) || (!senderEmail && /bedrock|violations|acc|admin|info|accounting/i.test(senderName || ''));
-    const { error } = await supabase.from('email_messages').insert({
-      mailbox: 'imported', direction: isOut ? 'outbound' : 'inbound',
-      sender_email: senderEmail, sender_name: senderName, recipients: [],
-      subject: subject || '(no subject)', body_preview: String(body).replace(/\s+/g, ' ').trim().slice(0, 2000),
-      received_at: dateISO, has_attachments: false,
-      classification: 'imported', classification_confidence: 'high',
-      ai_summary: `Imported email: ${(subject || '').slice(0, 120)}`,
-      extracted: { imported: true, source_file: req.file.originalname },
-      community_id: primary ? primary.community_id : null,
-      resolved_contact_id: req.params.contactId, resolved_property_id: primary ? primary.property_id : null,
-      resolution_confidence: 'high', triage_status: 'linked',
-      record_ownership: 'association_record',
+    const parsed = await parseEmailFile(req.file);
+    const { classifyAndExtract } = require('../lib/email/triage');
+    let ex = { classification: 'other', addresses: [] };
+    try { ex = await classifyAndExtract({ subject: parsed.subject, body_full: parsed.body, sender_email: parsed.senderEmail }); } catch (_) {}
+    const fa = await resolveFromAbout(parsed, ex.addresses);
+    const isOut = (parsed.senderEmail && /@bedrocktx\.com$/i.test(parsed.senderEmail)) || (!parsed.senderEmail && /bedrock|violations|acc|admin|info|accounting/i.test(parsed.senderName || ''));
+    res.json({
+      email: { subject: parsed.subject || '(no subject)', body_preview: String(parsed.body).replace(/\s+/g, ' ').trim().slice(0, 2000), sender_email: parsed.senderEmail, sender_name: parsed.senderName, received_at: parsed.dateISO, direction: isOut ? 'outbound' : 'inbound' },
+      classification: ex.classification, summary: ex.summary || parsed.subject,
+      from: fa.from, about: fa.about,
     });
-    if (error) throw error;
-    res.json({ ok: true, subject, from: senderName || senderEmail, date: dateISO });
   } catch (err) {
-    console.error('[homeowner360] import-email failed:', err.message);
+    console.error('[homeowner360] import-review failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /import-file — file the reviewed email onto the confirmed homeowner(s).
+// One row per link (role 'from'/'about') so it shows on each homeowner's 360.
+router.post('/import-file', express.json({ limit: '2mb' }), async (req, res) => {
+  try {
+    const { email, classification, links } = req.body || {};
+    if (!email || !Array.isArray(links) || !links.length) return res.status(400).json({ error: 'email_and_links_required' });
+    let filed = 0;
+    for (const l of links) {
+      if (!l.contact_id && !l.property_id) continue;
+      let community_id = l.community_id || null;
+      if (!community_id && l.property_id) { const { data } = await supabase.from('properties').select('community_id').eq('id', l.property_id).maybeSingle(); community_id = data ? data.community_id : null; }
+      const { error } = await supabase.from('email_messages').insert({
+        mailbox: 'imported', direction: email.direction || 'inbound',
+        sender_email: email.sender_email || null, sender_name: email.sender_name || null, recipients: [],
+        subject: email.subject || '(no subject)', body_preview: (email.body_preview || '').slice(0, 2000),
+        received_at: email.received_at || null, has_attachments: false,
+        classification: classification || 'imported', classification_confidence: 'high',
+        ai_summary: `Imported: ${(email.subject || '').slice(0, 120)}`,
+        extracted: { imported: true, role: l.role || 'from' },
+        community_id, resolved_contact_id: l.contact_id || null, resolved_property_id: l.property_id || null,
+        resolution_confidence: 'high', triage_status: 'linked', record_ownership: 'association_record',
+      });
+      if (!error) filed += 1;
+    }
+    res.json({ ok: true, filed });
+  } catch (err) {
+    console.error('[homeowner360] import-file failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
