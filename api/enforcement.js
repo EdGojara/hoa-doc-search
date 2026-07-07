@@ -6242,11 +6242,28 @@ router.get('/property/:propertyId/violation-summary', async (req, res) => {
     // lien / judgment / collections), AR snapshot as fallback. (Ed 2026-07-01)
     const legal_flag = await getLegalFlag(propertyId);
 
+    // Self-help letter availability: only communities with the Declaration
+    // self-help config (doc #, county, authorizing section) can issue the
+    // 10-day certified self-help letter. Drives whether the UI offers the
+    // "Draft self-help cleanup letter" button — so it never shows where it
+    // would only error. (Eaglewood is configured today.)
+    let self_help_configured = false;
+    const communityId = (violations && violations[0] && violations[0].community_id)
+      || (await supabase.from('properties').select('community_id').eq('id', propertyId).maybeSingle()).data?.community_id;
+    if (communityId) {
+      const { data: comm } = await supabase
+        .from('communities')
+        .select('declaration_doc_number, declaration_county, force_mow_section_full')
+        .eq('id', communityId).maybeSingle();
+      self_help_configured = !!(comm && comm.declaration_doc_number && comm.declaration_county && comm.force_mow_section_full);
+    }
+
     res.json({
       property_id: propertyId,
       total_violations: result.length,
       open_count: result.filter((v) => v.is_open).length,
       legal_flag,
+      self_help_configured,
       violations: result,
     });
   } catch (err) {
@@ -6538,6 +6555,9 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
   try {
     const violationId = req.params.violationId;
     if (!violationId) return res.status(400).json({ error: 'violation_id_required' });
+    // Self-help remedy mode: 'lawn' (force-mow, default) or 'cleanup' (trash/
+    // debris abatement). Same Declaration authority + §209 wording either way.
+    const remedyMode = (req.body && req.body.remedy_mode === 'cleanup') ? 'cleanup' : 'lawn';
 
     // Pull violation + property + community + owner
     const { data: violation, error: vErr } = await supabase
@@ -6633,9 +6653,13 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
       declaration_county: community.declaration_county,
       declaration_section_full: community.force_mow_section_full,
       observation_date: (violation.opened_at || '').slice(0, 10),
-      observed_condition: (req.body && req.body.observed_condition) || violation.summary || 'Lawn requires mowing, edging, and weed control.',
+      observed_condition: (req.body && req.body.observed_condition) || violation.summary
+        || (remedyMode === 'cleanup'
+          ? 'Accumulation of trash, debris, and unsightly materials on the Lot.'
+          : 'Lawn requires mowing, edging, and weed control.'),
       admin_fee_amount: adminFeeAmount,
       include_hearing_rights: includeHearingRights,
+      remedy_mode: remedyMode,
     };
 
     // Render

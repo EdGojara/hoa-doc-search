@@ -90,6 +90,11 @@
     "include_hearing_rights": {
       "type": "boolean",
       "description": "Whether to include the §209.006-007 hearing rights paragraph. Per Texas law, only required when no notice for the same violation has been sent in the prior six months. Computed by the renderer from violation history."
+    },
+    "remedy_mode": {
+      "type": ["string", "null"],
+      "enum": ["lawn", "cleanup", null],
+      "description": "Which self-help remedy the letter describes. 'lawn' (default) = force-mow / yard maintenance wording. 'cleanup' = general lot cleanup / abatement of trash, debris, and unsightly materials. Only the remedy-description lines change; all §209 statutory paragraphs and the self-help authority citation are identical. Omit/null = 'lawn' for backward compatibility."
     }
   },
   "additionalProperties": false

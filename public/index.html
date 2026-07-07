@@ -48538,6 +48538,7 @@ ${questionsPage}
       const r = await fetch(`/api/enforcement/property/${encodeURIComponent(propertyId)}/violation-summary`);
       const j = await r.json();
       const violations = j.violations || [];
+      const selfHelpConfigured = !!j.self_help_configured;
       if (violations.length === 0) return;
 
       // Find the Open Violations section in the side panel (rendered above
@@ -48602,9 +48603,20 @@ ${questionsPage}
         // Special-category renderer: lawn 10-day certified force-mow path
         // gets its own draft-letter button using the gold-standard template.
         const forceMowBtn = v.is_open && v.category_slug === 'lawn_force_mow_10day'
-          ? `<button onclick="cmapDraftForceMowLetter('${v.id}', '${escapeHtml(v.category_label || 'lawn violation')}')" type="button"
+          ? `<button onclick="cmapDraftForceMowLetter('${v.id}', '${escapeHtml(v.category_label || 'lawn violation')}', 'lawn')" type="button"
                      style="background:#6B4C9A; color:#fff; border:none; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;">
               📄 Draft 10-day force-mow letter
+            </button>`
+          : '';
+        // General self-help (cleanup / abatement) 10-day certified letter —
+        // same Declaration authority + §209 wording as force-mow, cleanup
+        // wording. Offered on any OTHER open violation, but only where the
+        // community has the Declaration self-help config (else it would error).
+        const cleanupBtn = v.is_open && selfHelpConfigured && v.category_slug !== 'lawn_force_mow_10day'
+          ? `<button onclick="cmapDraftForceMowLetter('${v.id}', '${escapeHtml(v.category_label || 'violation')}', 'cleanup')" type="button"
+                     style="background:#0B5563; color:#fff; border:none; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;"
+                     title="10-day certified self-help letter: cure the cleanup or the Association cleans up and charges it back as an assessment (Declaration self-help authority + §209 notice).">
+              📄 Draft 10-day self-help cleanup letter
             </button>`
           : '';
 
@@ -48635,6 +48647,7 @@ ${questionsPage}
               <div style="margin-top:8px; display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px;">
                 ${addLetterBtn}
                 ${forceMowBtn}
+                ${cleanupBtn}
                 ${continuationBtn}
               </div>` : ''}
           </div>
@@ -48754,12 +48767,16 @@ ${questionsPage}
   // Draft a 10-day certified force-mow letter for a violation using the
   // gold-standard template. Opens the rendered PDF in a new tab for the
   // operator to review, print, and certified-mail.
-  async function cmapDraftForceMowLetter(violationId, categoryLabel) {
+  async function cmapDraftForceMowLetter(violationId, categoryLabel, remedyMode) {
+    remedyMode = (remedyMode === 'cleanup') ? 'cleanup' : 'lawn';
+    const isCleanup = remedyMode === 'cleanup';
     const observedCondition = prompt(
       `Observed condition for ${categoryLabel}:\n\n` +
       '(This text appears in the letter as "Observed condition: ..." — be specific. ' +
-      'Examples: "Lawn in excess of 8 inches throughout front yard", "Grass into expansion joints of driveway and sidewalk", "Front yard not mowed; weeds visible from street")',
-      'Lawn in need of mowing, edging, and weed control'
+      (isCleanup
+        ? 'Examples: "Trash and debris accumulated in front yard visible from street", "Inoperable vehicle and discarded furniture on the Lot", "Construction debris stored on side yard")'
+        : 'Examples: "Lawn in excess of 8 inches throughout front yard", "Grass into expansion joints of driveway and sidewalk", "Front yard not mowed; weeds visible from street")'),
+      isCleanup ? 'Accumulation of trash, debris, and unsightly materials on the Lot' : 'Lawn in need of mowing, edging, and weed control'
     );
     if (!observedCondition || observedCondition.trim().length === 0) return;
 
@@ -48775,6 +48792,7 @@ ${questionsPage}
         body: JSON.stringify({
           observed_condition: observedCondition.trim(),
           certified_mail_number: certifiedMailNumber ? certifiedMailNumber.trim() : null,
+          remedy_mode: remedyMode,
         }),
       });
       if (!r.ok) {

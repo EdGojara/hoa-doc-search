@@ -10,6 +10,19 @@ language (§209.006, §209.007, §209.006(b)(1), Servicemembers Civil
 Relief Act) injects from GLOBAL_RULES at render time — never edited
 in this file.
 
+REMEDY MODES (renderer `remedy_mode`, default 'lawn'):
+  This same letter serves two self-help remedies under the SAME
+  Declaration self-help authority and the SAME §209 scaffolding. Only
+  the remedy-DESCRIPTION lines change (Re: line, intent-to-enter action,
+  Violation description, SERVICES line, reserve sentence) — see
+  REMEDY_COPY in lib/lawn_force_mow_renderer.js. Every statutory
+  paragraph is identical.
+    - 'lawn'    — force-mow / yard maintenance (the body shown below).
+    - 'cleanup' — general lot cleanup / abatement of trash, debris, and
+      unsightly materials. Cleanup-mode descriptive wording is NEW and
+      should get the same attorney glance the lawn wording received; the
+      §209 scaffolding is unchanged and already reviewed.
+
 Per CLAUDE.md catastrophic-output discipline:
   - Schema:   templates/lawn-force-mow-letter.schema.json
   - Renderer: lib/lawn_force_mow_renderer.js
