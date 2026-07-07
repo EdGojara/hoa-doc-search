@@ -107,12 +107,37 @@ async function assemble(contactId) {
 
   // Violations (+ category label), newest first
   let violations = propIds.length ? await safe(() => supabase.from('violations')
-    .select('id, current_stage, opened_at, resolved_at, resolved_via, primary_category_id, property_id')
+    .select('id, current_stage, opened_at, resolved_at, resolved_via, primary_category_id, property_id, opened_from_observation_id')
     .in('property_id', propIds).order('opened_at', { ascending: false }).limit(50)) : [];
   const catIds = [...new Set(violations.map((v) => v.primary_category_id).filter(Boolean))];
   const cats = catIds.length ? await safe(() => supabase.from('enforcement_categories').select('id, label').in('id', catIds)) : [];
   const catLabel = Object.fromEntries(cats.map((c) => [c.id, c.label]));
-  violations = violations.map((v) => ({ ...v, category: catLabel[v.primary_category_id] || 'Violation', open: !v.resolved_at }));
+
+  // Pull the observation behind each violation → the specific detail (what was
+  // actually seen) + the inspection photo. This is what staff need on a call:
+  // not "Lawn maintenance" but "brown/dead patches in the front & side lawn"
+  // plus the photo the inspector took.
+  const obsIds = [...new Set(violations.map((v) => v.opened_from_observation_id).filter(Boolean))];
+  const obs = obsIds.length ? await safe(() => supabase.from('property_observations')
+    .select('id, ai_description, inspection_photo_id').in('id', obsIds)) : [];
+  const obsById = Object.fromEntries(obs.map((o) => [o.id, o]));
+  const photoIds = [...new Set(obs.map((o) => o.inspection_photo_id).filter(Boolean))];
+  const photos = photoIds.length ? await safe(() => supabase.from('inspection_photos')
+    .select('id, storage_path, captured_at').in('id', photoIds)) : [];
+  const photoById = Object.fromEntries(photos.map((p) => [p.id, p]));
+
+  violations = violations.map((v) => {
+    const o = obsById[v.opened_from_observation_id];
+    const ph = o && o.inspection_photo_id ? photoById[o.inspection_photo_id] : null;
+    return {
+      ...v,
+      category: catLabel[v.primary_category_id] || 'Violation',
+      open: !v.resolved_at,
+      detail: o ? o.ai_description : null,
+      photo_path: ph ? ph.storage_path : null,
+      photo_captured_at: ph ? ph.captured_at : null,
+    };
+  });
 
   // ARC (defensive — table may be empty / shape unknown)
   const arc = propIds.length ? await safe(() => supabase.from('arc_applications').select('*').in('property_id', propIds).limit(25)) : [];
@@ -147,6 +172,27 @@ router.get('/profile/:contactId', async (req, res) => {
     res.json(data);
   } catch (err) {
     console.error('[homeowner360] profile failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /file?kind=letter|photo&path=<storage_path>
+// Serves the actual artifact behind a 360 row: the violation-letter PDF that
+// was sent (interactions.content, bucket 'violation-letters') or the inspection
+// photo (inspection_photos.storage_path, bucket 'documents'). Redirects to a
+// short-lived signed URL so staff can open/print/discuss it. Staff-gated by the
+// global staff cookie (the 360 is a staff surface). kind→bucket is allowlisted.
+const FILE_BUCKETS = { letter: 'violation-letters', photo: 'documents' };
+router.get('/file', async (req, res) => {
+  try {
+    const bucket = FILE_BUCKETS[req.query.kind];
+    const path = req.query.path;
+    if (!bucket || !path) return res.status(400).json({ error: 'kind (letter|photo) and path required' });
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(String(path), 60 * 60);
+    if (error || !data || !data.signedUrl) return res.status(404).json({ error: 'file_not_found' });
+    res.redirect(data.signedUrl);
+  } catch (err) {
+    console.error('[homeowner360] file failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
