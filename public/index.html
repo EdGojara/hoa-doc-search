@@ -531,6 +531,10 @@
   <!-- 📬 Communications — email triage board: Claire's drafted replies waiting
        for review + approve-to-send. Standalone page. -->
   <div class="tab" onclick="window.location.href='/admin/communications'">📬 Communications</div>
+  <!-- ✉️ Email as Claire — ADMIN ONLY (Ed). Compose + send a fresh branded
+       email as Claire straight from trustEd. Hidden for staff via
+       data-admin-only; the endpoint also enforces admin server-side. -->
+  <div class="tab" data-admin-only onclick="openClaireCompose()">✉️ Email as Claire</div>
   <!-- 🏊 Pool Access — fob (key-tag) registrations + extended-hours swim
        approvals filed onto the homeowner. Batch-upload forms, roster of who
        has access + their tag numbers. Standalone page. -->
@@ -49157,6 +49161,82 @@ ${questionsPage}
       setTimeout(_cmapWireSwitchTabHook, 0);
     }
   }
+</script>
+
+<!-- ============================================================
+     ✉️ Email as Claire — ADMIN-ONLY compose modal (Ed).
+     Sends a fresh branded email as Claire from claire@ via the
+     /api/email-triage/compose endpoint (which re-enforces admin
+     server-side). Not a reply — a brand-new outbound.
+     ============================================================ -->
+<div id="claireComposeModal" style="display:none; position:fixed; inset:0; background:rgba(11,29,52,0.5); z-index:2000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow:auto;">
+  <div style="background:#fff; border-radius:14px; max-width:640px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,0.25);">
+    <div style="background:#0B1D34; color:#fff; padding:14px 18px; border-radius:14px 14px 0 0; display:flex; justify-content:space-between; align-items:center;">
+      <div style="font-weight:700; font-size:16px;">✉️ New email from Claire</div>
+      <button onclick="closeClaireCompose()" style="background:rgba(255,255,255,0.15); color:#fff; border:none; padding:5px 11px; border-radius:6px; cursor:pointer; font-size:14px;">✕</button>
+    </div>
+    <div style="padding:18px;">
+      <div style="font-size:12px; color:#5a7390; margin-bottom:12px;">Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + honest-AI signature. Logged on the homeowner's record when the email matches one on file.</div>
+      <label style="display:block; font-size:12px; font-weight:600; color:#5a7390; margin-bottom:3px;">To</label>
+      <input id="ccTo" type="email" placeholder="homeowner@example.com" style="width:100%; padding:9px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; margin-bottom:11px;">
+      <div style="display:flex; gap:11px; margin-bottom:11px;">
+        <div style="flex:2;">
+          <label style="display:block; font-size:12px; font-weight:600; color:#5a7390; margin-bottom:3px;">Subject</label>
+          <input id="ccSubject" placeholder="Subject" style="width:100%; padding:9px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px;">
+        </div>
+        <div style="flex:1;">
+          <label style="display:block; font-size:12px; font-weight:600; color:#5a7390; margin-bottom:3px;">Community <span style="font-weight:400;">(optional)</span></label>
+          <input id="ccCommunity" placeholder="e.g. Eaglewood" style="width:100%; padding:9px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px;">
+        </div>
+      </div>
+      <label style="display:block; font-size:12px; font-weight:600; color:#5a7390; margin-bottom:3px;">Message</label>
+      <textarea id="ccBody" rows="9" placeholder="Write the message. The signature and logo are added automatically — don't type them here." style="width:100%; padding:10px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; font-family:inherit; resize:vertical;"></textarea>
+      <div id="ccStatus" style="font-size:12.5px; margin-top:8px; min-height:16px;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:12px;">
+        <button onclick="closeClaireCompose()" style="background:#fff; color:#0B1D34; border:1px solid #e2e8f0; padding:9px 16px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer;">Cancel</button>
+        <button id="ccSendBtn" onclick="sendClaireCompose()" style="background:#D4AF37; color:#0B1D34; border:none; padding:9px 20px; border-radius:8px; font-size:14px; font-weight:700; cursor:pointer;">Send as Claire</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  window.openClaireCompose = function () {
+    if (!window.currentUser || window.currentUser.role !== 'admin') { alert('This is limited to the account owner.'); return; }
+    document.getElementById('ccStatus').textContent = '';
+    ['ccTo','ccSubject','ccCommunity','ccBody'].forEach(function (id) { document.getElementById(id).value = ''; });
+    document.getElementById('claireComposeModal').style.display = 'flex';
+    setTimeout(function () { document.getElementById('ccTo').focus(); }, 30);
+  };
+  window.closeClaireCompose = function () { document.getElementById('claireComposeModal').style.display = 'none'; };
+  window.sendClaireCompose = async function () {
+    var to = document.getElementById('ccTo').value.trim();
+    var subject = document.getElementById('ccSubject').value.trim();
+    var community_name = document.getElementById('ccCommunity').value.trim();
+    var body = document.getElementById('ccBody').value.trim();
+    var status = document.getElementById('ccStatus');
+    var btn = document.getElementById('ccSendBtn');
+    if (!to) { status.style.color = '#b91c1c'; status.textContent = 'Enter a recipient email.'; return; }
+    if (!body) { status.style.color = '#b91c1c'; status.textContent = 'Write a message.'; return; }
+    btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Sending…';
+    status.style.color = '#5a7390'; status.textContent = 'Sending as Claire…';
+    try {
+      var r = await window._authFetch('/api/email-triage/compose', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: to, subject: subject, community_name: community_name, body: body }),
+      });
+      var j = await r.json();
+      if (!r.ok || !j.sent) {
+        status.style.color = '#b91c1c';
+        status.textContent = j.detail || j.error || ('Send failed (HTTP ' + r.status + ').');
+      } else {
+        status.style.color = '#166534';
+        status.textContent = '✓ Sent to ' + j.to + (j.linked_to_homeowner ? ' — filed on their record.' : ' — sent (no homeowner match on file).');
+        setTimeout(closeClaireCompose, 1600);
+      }
+    } catch (e) {
+      status.style.color = '#b91c1c'; status.textContent = 'Send failed: ' + (e.message || 'network error');
+    } finally { btn.disabled = false; btn.textContent = orig; }
+  };
 </script>
 </body>
 </html>

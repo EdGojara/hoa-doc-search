@@ -20,6 +20,7 @@ const { safeErrorMessage } = require('./_safe_error');
 const { draftReply, NO_DRAFT } = require('../lib/email/draft_reply');
 const graphSend = require('../lib/email/graph_send');
 const graphIngest = require('../lib/email/graph_ingest');
+const { requireAdmin } = require('./_require_admin');
 
 // Claire's honest-AI signature — every AI-sent email identifies as AI and
 // offers a human (same rule as the voice persona).
@@ -216,6 +217,53 @@ router.post('/:id/send', express.json(), async (req, res) => {
     res.json({ sent: true, to: recipient, from: graphSend.CLAIRE_MAILBOX });
   } catch (err) {
     console.error('[email_triage] send failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /compose — ADMIN ONLY (Ed). Compose and send a fresh email as Claire
+// straight from trustEd (not a reply to an inbound). Branded HTML + logo +
+// honest-AI signature, sent from claire@, logged as association-record
+// correspondence (and linked to the homeowner when the address matches).
+router.post('/compose', express.json(), async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return; // 403 already sent
+    const { to, subject, body, community_name } = req.body || {};
+    if (!to || !String(to).trim()) return res.status(400).json({ error: 'to_required' });
+    if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(to).trim())) return res.status(400).json({ error: 'bad_recipient', detail: 'Enter a valid email address.' });
+    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'claire@bedrocktx.com send is not wired yet — the Azure app (Mail.Send) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET must be set.' });
+
+    const recipient = String(to).trim();
+    const subj = (subject && String(subject).trim()) ? String(subject).trim() : '(no subject)';
+
+    // Try to place this on the right homeowner for the record (best-effort).
+    let resolved_contact_id = null, resolved_property_id = null, community_id = null, commName = community_name || '';
+    try {
+      const { data: c } = await supabase.from('contacts').select('id').or(`primary_email.ilike.${recipient},secondary_email.ilike.${recipient}`).limit(1);
+      if (c && c[0]) {
+        resolved_contact_id = c[0].id;
+        const { data: o } = await supabase.from('property_ownerships').select('property_id, properties(community_id, communities:community_id(name))').eq('contact_id', resolved_contact_id).is('end_date', null).limit(1);
+        if (o && o[0]) { resolved_property_id = o[0].property_id; if (o[0].properties) { community_id = o[0].properties.community_id; if (!commName && o[0].properties.communities) commName = o[0].properties.communities.name; } }
+      }
+    } catch (_) { /* non-fatal — send anyway, just less linkage */ }
+
+    const { buildClaireEmail } = require('../lib/email/claire_signature');
+    const { html, attachments } = buildClaireEmail(String(body).trim(), commName);
+    await graphSend.sendAs({ to: recipient, subject: subj, html, attachments });
+
+    await supabase.from('email_messages').insert({
+      mailbox: graphSend.CLAIRE_MAILBOX, direction: 'outbound', sender_email: graphSend.CLAIRE_MAILBOX,
+      sender_name: 'Claire (Bedrock AI)', recipients: [recipient], subject: subj, body_preview: String(body).trim().slice(0, 2000),
+      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `Claire emailed ${recipient} (composed by ${admin.full_name || admin.email})`,
+      community_id, resolved_contact_id, resolved_property_id, resolution_confidence: resolved_contact_id ? 'high' : 'low',
+      triage_status: 'handled', record_ownership: 'association_record', reviewed_by: admin.full_name || admin.email || 'admin', reviewed_at: new Date().toISOString(),
+    });
+
+    res.json({ sent: true, to: recipient, from: graphSend.CLAIRE_MAILBOX, linked_to_homeowner: !!resolved_contact_id });
+  } catch (err) {
+    console.error('[email_triage] compose failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
