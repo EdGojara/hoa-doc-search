@@ -44,6 +44,8 @@
   .notebox { display:flex; gap:6px; margin-bottom:10px; }
   .notebox input { flex:1; padding:7px 10px; font-size:12.5px; border:1px solid var(--line); border-radius:6px; }
   .notebox button { padding:0 12px; background:var(--gold); color:var(--navy); border:none; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer; }
+  .dropzone { border:1.5px dashed #cbd5e1; border-radius:8px; padding:10px; text-align:center; font-size:12px; color:var(--muted); cursor:pointer; margin-bottom:10px; background:#fbfcfe; }
+  .dropzone.over { border-color:var(--gold); background:#fffdf5; color:var(--navy); }
   .timeline .li { padding-left:10px; }
   .empty { color:var(--muted); font-size:13px; padding:6px 0; }
   .spin { color:var(--muted); font-size:13px; }
@@ -129,6 +131,8 @@ async function openProfile(cid){
       </div>
       <div class="card">
         <div class="sec-title">✉️ Correspondence &amp; notes (${tl.length})</div>
+        <div class="dropzone" id="dz-${cid}" ondragover="event.preventDefault();this.classList.add('over');" ondragleave="this.classList.remove('over');" ondrop="importDrop(event,'${cid}')" onclick="document.getElementById('efile-${cid}').click()">⬇ Drag an email here (or click) to add it to this homeowner's history</div>
+        <input type="file" id="efile-${cid}" accept=".msg,.eml" style="display:none" onchange="if(this.files[0])importEmail('${cid}',this.files[0])">
         <div class="notebox"><input id="noteInput" placeholder="Add a note to this account…" onkeydown="if(event.key==='Enter')addNote('${cid}')"><button onclick="addNote('${cid}')">Add note</button></div>
         <div class="timeline">${tl.map(x=>`<div class="li ${x.dir==='inbound'?'tl-in':(x.note?'tl-note':'tl-out')}"><span class="t">${d10(x.t)} · ${esc(x.kind)} ${x.dir==='inbound'?'↓':x.dir==='internal'?'•':'↑'}</span>${x.note?`<span onclick="deleteNote('${x.id}','${cid}')" title="Delete note" style="float:right;cursor:pointer;color:#b91c1c;font-weight:700;">✕</span>`:''}<br>${esc(String(x.label).slice(0,110))}</div>`).join('')||'<div class="empty">No correspondence on file yet.</div>'}</div>
       </div>
@@ -138,6 +142,13 @@ async function openProfile(cid){
     if(!confirm('Delete this note? This can’t be undone.'))return;
     const r=await fetch(API+'/note/'+id,{method:'DELETE'});
     if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(j.detail||'Could not delete'); }
+  };
+  window.importDrop=function(e,cid){ e.preventDefault(); const dz=document.getElementById('dz-'+cid); if(dz)dz.classList.remove('over'); const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]; if(f)importEmail(cid,f); else alert('Couldn’t read that drag — try dragging the email to your desktop first (creates a .msg), then drag that file in, or click to pick it.'); };
+  window.importEmail=async function(cid,file){
+    const dz=document.getElementById('dz-'+cid); if(dz)dz.textContent='Importing '+file.name+'…';
+    const fd=new FormData(); fd.append('file',file);
+    const r=await fetch(API+'/'+cid+'/import-email',{method:'POST',body:fd});
+    if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(j.error||'Import failed'); if(dz)dz.textContent='⬇ Drag an email here (or click) to add it to this homeowner’s history'; }
   };
   window.addNote=async function(id){
     const inp=document.getElementById('noteInput'); const content=inp.value.trim(); if(!content)return;

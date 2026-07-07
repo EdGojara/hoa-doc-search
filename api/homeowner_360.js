@@ -18,6 +18,7 @@
 //   GET /recap/:contactId     AI briefing over the assembled 360
 // ============================================================================
 const express = require('express');
+const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -25,6 +26,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
 
 // Run a query, return [] on any error (missing table/column) so the profile
 // degrades gracefully instead of 500-ing on one weak source.
@@ -228,6 +230,62 @@ router.delete('/note/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[homeowner360] note delete failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /:contactId/import-email — drag an email in from Outlook (.msg) or a
+// saved .eml onto a homeowner to add it to their history. Curated, not bulk:
+// the email is filed to THIS homeowner explicitly (no resolution guessing), so
+// it shows on their 360 timeline. Parses .msg via @kenjiuno/msgreader, .eml via
+// mailparser. Direction inferred (a bedrocktx.com / Exchange sender = outbound).
+router.post('/:contactId/import-email', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    const name = (req.file.originalname || '').toLowerCase();
+    let subject = '', body = '', senderEmail = null, senderName = null, dateISO = null;
+
+    if (name.endsWith('.eml') || /message\/rfc822/.test(req.file.mimetype || '')) {
+      const { simpleParser } = require('mailparser');
+      const p = await simpleParser(req.file.buffer);
+      subject = p.subject || ''; body = p.text || (p.html ? String(p.html).replace(/<[^>]+>/g, ' ') : '');
+      dateISO = p.date ? new Date(p.date).toISOString() : null;
+      const f = p.from && p.from.value && p.from.value[0]; if (f) { senderEmail = f.address || null; senderName = f.name || null; }
+    } else {
+      const MsgReader = require('@kenjiuno/msgreader').default || require('@kenjiuno/msgreader');
+      const d = new MsgReader(req.file.buffer).getFileData();
+      subject = d.subject || ''; body = d.body || '';
+      senderName = d.senderName || null;
+      // Internal Exchange senders come as an X.500 legacyDN, not SMTP — keep the
+      // name, drop the unusable address.
+      senderEmail = (d.senderEmail && !/^\/o=|^\/O=/.test(d.senderEmail)) ? d.senderEmail : null;
+      const dt = d.messageDeliveryTime || d.clientSubmitTime || d.creationTime;
+      dateISO = dt ? new Date(dt).toISOString() : null;
+    }
+
+    const { data: c } = await supabase.from('contacts').select('id').eq('id', req.params.contactId).maybeSingle();
+    if (!c) return res.status(404).json({ error: 'contact_not_found' });
+    const props = await ownedProperties(req.params.contactId);
+    const primary = props.find((p) => p.is_primary) || props[0] || null;
+
+    const isOut = (senderEmail && /@bedrocktx\.com$/i.test(senderEmail)) || (!senderEmail && /bedrock|violations|acc|admin|info|accounting/i.test(senderName || ''));
+    const { error } = await supabase.from('email_messages').insert({
+      mailbox: 'imported', direction: isOut ? 'outbound' : 'inbound',
+      sender_email: senderEmail, sender_name: senderName, recipients: [],
+      subject: subject || '(no subject)', body_preview: String(body).replace(/\s+/g, ' ').trim().slice(0, 2000),
+      received_at: dateISO, has_attachments: false,
+      classification: 'imported', classification_confidence: 'high',
+      ai_summary: `Imported email: ${(subject || '').slice(0, 120)}`,
+      extracted: { imported: true, source_file: req.file.originalname },
+      community_id: primary ? primary.community_id : null,
+      resolved_contact_id: req.params.contactId, resolved_property_id: primary ? primary.property_id : null,
+      resolution_confidence: 'high', triage_status: 'linked',
+      record_ownership: 'association_record',
+    });
+    if (error) throw error;
+    res.json({ ok: true, subject, from: senderName || senderEmail, date: dateISO });
+  } catch (err) {
+    console.error('[homeowner360] import-email failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
