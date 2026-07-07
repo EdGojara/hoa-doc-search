@@ -234,6 +234,37 @@ router.post('/:id/send', express.json(), async (req, res) => {
   }
 });
 
+// POST /pull — ADMIN ONLY. On-demand "pull now": ingest current mail from both
+// info@ and claire@ (replies to Claire), draft every reply for review. Manual
+// by design — Ed reviews everything, so a button he presses beats a silent
+// auto-feed he might miss. Idempotent (delete-then-insert by message id), so
+// pressing it repeatedly is safe.
+router.post('/pull', express.json(), async (req, res) => {
+  try {
+    if (!graphIngest.isConfigured()) return res.status(400).json({ error: 'graph_not_connected', detail: 'Outlook ingest needs the Azure app (Mail.Read) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET.' });
+    const mailboxes = (process.env.EMAIL_INGEST_MAILBOX || 'info@bedrocktx.com,claire@bedrocktx.com').split(',').map((m) => m.trim()).filter(Boolean);
+    const days = Math.min(60, parseInt((req.body || {}).days, 10) || 14);
+    const sinceISO = new Date(Date.now() - days * 864e5).toISOString();
+    const results = {}; let kept = 0, drafted = 0;
+    for (const mbx of mailboxes) {
+      try {
+        const s = await graphIngest.ingestMailbox(mbx, { sinceISO, light: false, onlyLinked: false, max: 500 });
+        results[mbx] = s; kept += s.kept || 0;
+      } catch (e) { results[mbx] = { error: e.message }; }
+    }
+    // Count fresh drafts awaiting review (non-spam/internal inbound with a draft)
+    try {
+      const { count } = await supabase.from('email_messages').select('id', { count: 'exact', head: true })
+        .eq('direction', 'inbound').eq('triage_status', 'needs_review').not('extracted->draft', 'is', null);
+      drafted = count || 0;
+    } catch (_) {}
+    res.json({ ok: true, since: sinceISO, mailboxes, kept, drafts_waiting: drafted, results });
+  } catch (err) {
+    console.error('[email_triage] pull failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /compose — ADMIN ONLY (Ed). Compose and send a fresh email as Claire
 // straight from trustEd (not a reply to an inbound). Branded HTML + logo +
 // honest-AI signature, sent from claire@, logged as association-record
