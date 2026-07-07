@@ -196,16 +196,19 @@ router.post('/:id/send', express.json(), async (req, res) => {
     if (!recipient) return res.status(400).json({ error: 'no_recipient' });
     const commName = m.community ? m.community.name : '';
     const subj = subject || (/^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || 'your message'}`);
-    const text = String(body).trim() + claireSignature(commName);
+    // Branded HTML: the approved body + Bedrock logo + Claire's honest-AI
+    // signature, sent as a real formatted email from claire@.
+    const { buildClaireEmail } = require('../lib/email/claire_signature');
+    const { html, attachments } = buildClaireEmail(String(body).trim(), commName);
 
-    await graphSend.sendAs({ to: recipient, subject: subj, text });
+    await graphSend.sendAs({ to: recipient, subject: subj, html, attachments });
 
     // Mark the inbound handled + log the outbound reply on the record (both
     // sides of the thread now show on the homeowner's communications feed).
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', req.params.id);
     await supabase.from('email_messages').insert({
       mailbox: graphSend.CLAIRE_MAILBOX, direction: 'outbound', sender_email: graphSend.CLAIRE_MAILBOX,
-      sender_name: 'Claire (Bedrock AI)', recipients: [recipient], subject: subj, body_preview: text.slice(0, 2000),
+      sender_name: 'Claire (Bedrock AI)', recipients: [recipient], subject: subj, body_preview: String(body).trim().slice(0, 2000),
       classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `Claire replied to ${recipient}`,
       community_id: m.community_id, resolved_contact_id: m.resolved_contact_id, resolved_property_id: m.resolved_property_id,
       resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'association_record', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString(),
