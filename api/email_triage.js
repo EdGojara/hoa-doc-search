@@ -17,7 +17,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
-const { draftReply, NO_DRAFT } = require('../lib/email/draft_reply');
+const { draftReply } = require('../lib/email/draft_reply');
 const graphSend = require('../lib/email/graph_send');
 const graphIngest = require('../lib/email/graph_ingest');
 const { requireAdmin } = require('./_require_admin');
@@ -206,7 +206,10 @@ router.post('/:id/send', express.json(), async (req, res) => {
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
-    if (NO_DRAFT.has(m.classification)) return res.status(403).json({ error: 'not_sendable', detail: 'Spam / internal notifications are not replied to.' });
+    // No classification block on send: Ed reviews and approves every outgoing
+    // reply himself (admin-only), and explicitly wants to reply to any email,
+    // including internal/staff mail (the staff-interaction loop). The human gate
+    // is the control, not the classifier.
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'claire@bedrocktx.com send is not wired yet — create the mailbox + Azure app (Mail.Send) and set GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET.' });
 
     const recipient = to || m.sender_email;
