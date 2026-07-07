@@ -950,6 +950,34 @@ encoding as a discipline change, not just a one-time fix.
 
 ---
 
+## Platform self-knowledge — ship a feature, teach the platform (Ed 2026-07-07)
+
+**Scar**: Laurie asked askEd where the Homeowner 360 tab was. askEd has no
+knowledge of the platform's own screens — its retrieval is governing docs,
+§209, legal updates, community profiles, and the playbook — so it
+hallucinated generic software steps and told her to "submit a support ticket
+to trustEd directly," treating our own in-house platform as a third-party
+vendor. The code existed; the *knowledge of it* was never written anywhere
+askEd could retrieve. And features ship faster than any manual doc keeps up,
+so the gap widens with every build.
+
+**Rule**: the platform must carry a living map of itself. Product knowledge —
+what each feature does, where it lives, how to use it — lives as
+`category='platform_feature'` entries in the `playbook` (embedded, retrieved
+by askEd + Claire, `applies_to:['asked']`). The single source of truth is
+`scripts/seed_platform_knowledge.js` (idempotent: delete-then-insert).
+
+**A feature is not "done" until the platform can explain it.** When you ship a
+new screen/tab/capability, or move one, add or update its entry in that seed
+file and re-run it. Same definition-of-done discipline as the extraction
+fixture corpus. If a staffer (or a future franchise operator) asks "where is
+X / how do I do Y," they must get the real answer, never a hallucinated tab or
+a nonexistent vendor.
+
+There is also a hard guardrail in the askEd system prompt (server.js): trustEd
+is Bedrock's own platform — never refer staff to "trustEd support"/a vendor/a
+ticket; if unsure of a screen's location, say "ask Ed" rather than fabricate.
+
 ## Catastrophic-output surfaces (require the schema + gold-standard pattern)
 
 These features produce outputs where bugs end up in court or in front of a
