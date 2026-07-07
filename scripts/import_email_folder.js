@@ -66,10 +66,16 @@ async function resolveVendor(parsed, ex) {
 (async () => {
   if (!FOLDER) { console.error('usage: "<folder>" [--apply]'); process.exit(1); }
   ({ data: COMMS } = await sb.from('communities').select('id, name'));
+  // Idempotency: skip any file already filed (keyed on extracted.source_file).
+  // Lets the source folder stay put as a permanent drop point — re-runs only
+  // pick up NEW files, never re-file the same email twice.
+  const { data: already } = await sb.from('email_messages').select('extracted').eq('mailbox', 'imported');
+  const SEEN = new Set((already || []).map((r) => r.extracted && r.extracted.source_file).filter(Boolean));
   const files = fs.readdirSync(FOLDER).filter((f) => /\.(msg|eml)$/i.test(f));
-  console.log(`${files.length} email files in ${FOLDER}\n`);
+  const fresh = files.filter((f) => !SEEN.has(f));
+  console.log(`${files.length} email files in ${FOLDER} — ${SEEN.size ? `${files.length - fresh.length} already filed, ` : ''}${fresh.length} to process\n`);
   const rows = [];
-  for (const f of files) {
+  for (const f of fresh) {
     let parsed, ex;
     try { parsed = await parseFile(path.join(FOLDER, f)); } catch (e) { console.log(`  SKIP ${f}: parse failed (${e.message})`); continue; }
     try { ex = await classifyAndExtract({ subject: parsed.subject, body_full: parsed.body, sender_email: parsed.senderEmail }); } catch (_) { ex = { classification: 'other', addresses: [] }; }
