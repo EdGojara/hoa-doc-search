@@ -151,10 +151,32 @@ function msgHtml(m){
           ${cls==='spam'?'':`<button class="act spam" onclick="dismiss('${m.id}','spam')">Spam</button>`}
         </div>
       </div>
-      <div class="summary">${esc(m.ai_summary||'')}</div>
+      <div class="summary">${esc(m.ai_summary||'')} <a href="#" onclick="event.preventDefault();showThread('${m.id}',this)" style="font-size:11.5px;color:#0B1D34;font-weight:600;white-space:nowrap;">🧵 Show full email + thread</a></div>
+      <div id="thread-${m.id}"></div>
       <div class="link-row">${linkCell(m)}</div>
       <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful):''}</div>
     </div>`;
+}
+// Expand/collapse the full message body + its email chain for reference.
+async function showThread(id, link){
+  const box = document.getElementById('thread-'+id);
+  if (box.innerHTML) { box.innerHTML=''; link.textContent='🧵 Show full email + thread'; return; }
+  box.innerHTML = '<div class="draftbox"><div class="note">Loading…</div></div>';
+  try{
+    const r = await af(`${API}/${id}/thread`); const j = await r.json();
+    if(!j.ok){ box.innerHTML='<div class="draftbox"><div class="refuse">Couldn\'t load the thread.</div></div>'; return; }
+    const chain = (j.thread||[]).map(t=>`
+      <div style="border-top:1px dashed var(--line);padding:7px 0;">
+        <div style="font-size:11px;color:var(--muted);font-weight:600;">${t.direction==='outbound'?'Claire':esc(t.sender_name||t.sender_email||'Them')} &middot; ${t.received_at?new Date(t.received_at).toLocaleString():''}</div>
+        <div style="font-size:12.5px;white-space:pre-wrap;color:#33414f;">${esc((t.body_preview||'').slice(0,1500))}</div>
+      </div>`).join('');
+    box.innerHTML = `<div class="draftbox">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">This message</div>
+      <div style="font-size:13px;white-space:pre-wrap;color:#1a2230;">${esc((j.full_body||'').slice(0,6000))||'<span class="note">No body captured.</span>'}</div>
+      ${chain?`<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 2px;">Email chain (${j.thread.length})</div>${chain}`:'<div class="note" style="margin-top:8px;">No earlier messages in this thread.</div>'}
+    </div>`;
+    link.textContent='🧵 Hide thread';
+  }catch(e){ box.innerHTML='<div class="draftbox"><div class="refuse">Error loading thread.</div></div>'; }
 }
 
 async function doLink(id, cand){

@@ -111,6 +111,29 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// GET /:id/thread — the full body of this message + the rest of its email
+// chain (same Graph conversation), oldest first, so staff can read the
+// back-and-forth for reference.
+router.get('/:id/thread', async (req, res) => {
+  try {
+    const { data: m, error } = await supabase.from('email_messages')
+      .select('conversation_id, body_full, body_preview, subject').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!m) return res.status(404).json({ error: 'not_found' });
+    let thread = [];
+    if (m.conversation_id) {
+      const { data } = await supabase.from('email_messages')
+        .select('id, direction, sender_name, sender_email, subject, body_preview, received_at')
+        .eq('conversation_id', m.conversation_id).order('received_at', { ascending: true }).limit(30);
+      thread = data || [];
+    }
+    res.json({ ok: true, full_body: m.body_full || m.body_preview || '', thread });
+  } catch (err) {
+    console.error('[email_triage] thread failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /:id/link — human confirms (or redirects) the linkage.
 router.post('/:id/link', express.json(), async (req, res) => {
   try {
