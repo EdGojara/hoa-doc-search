@@ -22,6 +22,18 @@ const graphSend = require('../lib/email/graph_send');
 const graphIngest = require('../lib/email/graph_ingest');
 const { requireAdmin } = require('./_require_admin');
 
+// Which team member owns this email? Emma (AP) when it arrived at emma@, resolves
+// to a vendor, or is a vendor/financial message; Claire (front office) otherwise.
+// One brain, two faces — Emma grounds in the AP ledger, Claire in the 360.
+function personaFor(m) {
+  if (!m) return 'claire';
+  const mailbox = String(m.mailbox || '').toLowerCase();
+  if (mailbox === String(graphSend.EMMA_MAILBOX || '').toLowerCase()) return 'emma';
+  if (m.resolved_vendor_id) return 'emma';
+  if (['vendor_financial', 'vendor_general'].includes(m.classification)) return 'emma';
+  return 'claire';
+}
+
 // Claire's honest-AI signature — every AI-sent email identifies as AI and
 // offers a human (same rule as the voice persona).
 function claireSignature(communityName) {
@@ -196,10 +208,23 @@ router.post('/ingest', express.json(), async (req, res) => {
 router.post('/:id/draft-reply', express.json(), async (req, res) => {
   try {
     const { data: m, error } = await supabase.from('email_messages')
-      .select('subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, graph_id, mailbox, has_attachments, resolved_contact:resolved_contact_id(full_name), community:community_id(name)')
+      .select('subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, graph_id, mailbox, has_attachments, resolved_contact:resolved_contact_id(full_name), resolved_vendor:resolved_vendor_id(name), community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
+
+    // Persona routing: a vendor / AP conversation (came to emma@, or resolves to
+    // a vendor, or is vendor-financial) is Emma's — she grounds the reply in the
+    // AP subledger. Everything else is Claire's (homeowner/front-office).
+    if (personaFor(m) === 'emma') {
+      const { draftEmmaReply } = require('../lib/email/emma_reply');
+      const draft = await draftEmmaReply({
+        email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full },
+        vendorId: m.resolved_vendor_id, vendorName: m.resolved_vendor ? m.resolved_vendor.name : (m.sender_name || null),
+      });
+      return res.json(draft);
+    }
+
     const draft = await draftReply({
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, conversation_id: m.conversation_id, sender_email: m.sender_email, graph_id: m.graph_id, mailbox: m.mailbox, has_attachments: m.has_attachments },
       classification: m.classification,
@@ -225,10 +250,11 @@ router.post('/:id/send', express.json(), async (req, res) => {
     const { body, to, subject, reviewed_by } = req.body || {};
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
     const { data: m, error } = await supabase.from('email_messages')
-      .select('sender_email, subject, classification, community_id, resolved_contact_id, resolved_property_id, community:community_id(name)')
+      .select('sender_email, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
+    const persona = personaFor(m);
     // No classification block on send: Ed reviews and approves every outgoing
     // reply himself (admin-only), and explicitly wants to reply to any email,
     // including internal/staff mail (the staff-interaction loop). The human gate
@@ -239,24 +265,32 @@ router.post('/:id/send', express.json(), async (req, res) => {
     if (!recipient) return res.status(400).json({ error: 'no_recipient' });
     const commName = m.community ? m.community.name : '';
     const subj = subject || (/^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || 'your message'}`);
-    // Branded HTML: the approved body + Bedrock logo + Claire's honest-AI
-    // signature, sent as a real formatted email from claire@.
-    const { buildClaireEmail } = require('../lib/email/claire_signature');
-    const { html, attachments } = buildClaireEmail(String(body).trim(), commName);
 
-    await graphSend.sendAs({ to: recipient, subject: subj, html, attachments });
+    // Send in the right voice: Emma from emma@ for vendor/AP, Claire from claire@
+    // otherwise. Both carry the branded logo + their own honest-AI signature.
+    let html, attachments, fromMailbox, senderLabel;
+    if (persona === 'emma') {
+      const { buildEmmaEmail } = require('../lib/email/emma_signature');
+      ({ html, attachments } = buildEmmaEmail(String(body).trim()));
+      fromMailbox = graphSend.EMMA_MAILBOX; senderLabel = 'Emma Brooks (Bedrock AI)';
+    } else {
+      const { buildClaireEmail } = require('../lib/email/claire_signature');
+      ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.CLAIRE_MAILBOX; senderLabel = 'Claire (Bedrock AI)';
+    }
 
-    // Mark the inbound handled + log the outbound reply on the record (both
-    // sides of the thread now show on the homeowner's communications feed).
+    await graphSend.sendAs({ from: fromMailbox, to: recipient, subject: subj, html, attachments });
+
+    // Mark the inbound handled + log the outbound reply on the record.
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', req.params.id);
     await supabase.from('email_messages').insert({
-      mailbox: graphSend.CLAIRE_MAILBOX, direction: 'outbound', sender_email: graphSend.CLAIRE_MAILBOX,
-      sender_name: 'Claire (Bedrock AI)', recipients: [recipient], subject: subj, body_preview: String(body).trim().slice(0, 2000),
-      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `Claire replied to ${recipient}`,
-      community_id: m.community_id, resolved_contact_id: m.resolved_contact_id, resolved_property_id: m.resolved_property_id,
+      mailbox: fromMailbox, direction: 'outbound', sender_email: fromMailbox,
+      sender_name: senderLabel, recipients: [recipient], subject: subj, body_preview: String(body).trim().slice(0, 2000),
+      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `${persona === 'emma' ? 'Emma' : 'Claire'} replied to ${recipient}`,
+      community_id: m.community_id, resolved_contact_id: m.resolved_contact_id, resolved_property_id: m.resolved_property_id, resolved_vendor_id: m.resolved_vendor_id,
       resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'association_record', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString(),
     });
-    res.json({ sent: true, to: recipient, from: graphSend.CLAIRE_MAILBOX });
+    res.json({ sent: true, to: recipient, from: fromMailbox, persona });
   } catch (err) {
     console.error('[email_triage] send failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -274,7 +308,7 @@ router.post('/pull', express.json(), async (req, res) => {
     // ALWAYS pull both info@ and claire@ (union with any env override), so a
     // single-value EMAIL_INGEST_MAILBOX on Render can't silently drop claire@.
     const extra = (process.env.EMAIL_INGEST_MAILBOX || '').split(',').map((m) => m.trim()).filter(Boolean);
-    const mailboxes = [...new Set(['info@bedrocktx.com', 'claire@bedrocktx.com', ...extra])];
+    const mailboxes = [...new Set(['info@bedrocktx.com', 'claire@bedrocktx.com', graphSend.EMMA_MAILBOX, ...extra])];
     const days = Math.min(60, parseInt((req.body || {}).days, 10) || 14);
     const sinceISO = new Date(Date.now() - days * 864e5).toISOString();
     const results = {}; let kept = 0, drafted = 0;
