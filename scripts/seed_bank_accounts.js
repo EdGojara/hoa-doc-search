@@ -41,6 +41,18 @@ const INVENTORY = {
   'still-creek-ranch': [
     { gl: '1000', nickname: 'Still Creek Operating Checking', type: 'operating', last4: '1777' },
   ],
+  // Eaglewood — brought over 2026-07-08 (Ed) even though its GL migration is still
+  // blocked (Vantaca TB out $152,472.83, pool-invoice double-post). Bank accounts
+  // only, so check printing/AP can proceed; the GL catches up when the TB is fixed.
+  // These were seeded WITH bank_id -> NewFirst (this script sets bank_name only;
+  // the link was done directly). Account numbers pending — entered via Bank Setup > Edit.
+  'eaglewood': [
+    { gl: '1000', nickname: 'Eaglewood Operating Checking', type: 'operating' },
+    { gl: '1005', nickname: 'Eaglewood ICS Operating (sweep)', type: 'operating' },
+    { gl: '1100', nickname: 'Eaglewood Savings', type: 'other' },
+    { gl: '1200', nickname: 'Eaglewood Reserve Cash', type: 'reserve' },
+    { gl: '1205', nickname: 'Eaglewood ICS Reserve (sweep)', type: 'reserve' },
+  ],
 };
 
 (async () => {
