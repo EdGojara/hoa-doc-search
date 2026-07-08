@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collections Report Ingest — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width:1180px; margin:0 auto; padding:20px 18px 70px; }
+  .head { border-bottom:3px solid var(--gold); padding-bottom:12px; margin-bottom:16px; }
+  h1 { margin:0; color:var(--navy); font-size:22px; }
+  .sub { color:var(--muted); font-size:12.5px; margin-top:4px; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  select, .drop { border:1px solid var(--line); border-radius:8px; background:#fff; }
+  select { padding:9px 12px; font-size:14px; min-width:220px; }
+  .drop { flex:1; min-width:260px; padding:18px; text-align:center; color:var(--muted); font-size:13px; border-style:dashed; cursor:pointer; }
+  .drop.over { border-color:var(--navy); background:#eef4fb; color:var(--navy); }
+  .btn { border:none; border-radius:8px; padding:10px 18px; font-size:13.5px; font-weight:600; cursor:pointer; background:var(--navy); color:#fff; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .btn.ghost { background:#f1f5f9; color:#334155; }
+  .btn.go { background:#166534; color:#fff; }
+  .stats { display:flex; gap:10px; flex-wrap:wrap; margin:14px 0; }
+  .stat { background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px 14px; min-width:92px; }
+  .stat b { display:block; font-size:19px; color:var(--navy); } .stat span { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; background:#fff; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  th { text-align:left; color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; padding:8px 9px; border-bottom:2px solid var(--line); background:#fbfcfe; }
+  td { padding:8px 9px; border-bottom:1px solid var(--line); vertical-align:top; }
+  td.addr { font-weight:600; color:var(--navy); }
+  td.bal { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .badge { display:inline-block; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; padding:2px 7px; border-radius:20px; }
+  .d-new{background:#dcfce7;color:#166534;} .d-changed{background:#fef3c7;color:#92400e;} .d-same{background:#f1f5f9;color:#64748b;} .d-unmatched{background:#fee2e2;color:#991b1b;}
+  .note { color:var(--muted); font-size:11px; margin-top:3px; max-width:420px; }
+  .fromto { font-size:11px; color:#92400e; }
+  select.st { padding:4px 6px; font-size:12px; min-width:130px; }
+  .warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:8px; padding:10px 14px; font-size:12.5px; margin:12px 0; }
+  .empty { text-align:center; color:var(--muted); padding:40px; }
+  .actions { position:sticky; bottom:0; background:linear-gradient(transparent,var(--bg) 40%); padding:16px 0 4px; display:flex; gap:10px; justify-content:flex-end; }
+  .soon { text-align:center; padding:70px 20px; color:var(--muted); } .soon b { display:block; color:var(--navy); font-size:18px; margin-bottom:6px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="wrap">
+  <a href="/" onclick="if(document.referrer&&history.length>1){history.back();return false;}" style="display:inline-flex;gap:6px;color:#5a7390;text-decoration:none;font-size:13px;font-weight:600;margin-bottom:12px;">&larr; Back to trustEd</a>
+  <div class="head">
+    <h1>Collections Report Ingest</h1>
+    <div class="sub">Drop the Winstead PC monthly "Matter Detail" report &mdash; it reads every matter, proposes a collection status, shows what changed since last month, and (on approve) files it onto each property. Feeds the Board Portal, board packet, and Homeowner 360.</div>
+  </div>
+  <div id="body"><div class="empty">Loading&hellip;</div></div>
+</div>
+
+<script>
+let _supa=null, af=null, _batch=null;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function money(n){ n=Number(n||0); return '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function showComingSoon(){ document.getElementById('body').innerHTML='<div class="soon"><b>Coming soon</b>This tool is in owner-only beta.</div>'; }
+
+function renderPicker(communities){
+  const opts = communities.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  document.getElementById('body').innerHTML = `
+    <div class="row">
+      <select id="comm"><option value="">Select association&hellip;</option>${opts}</select>
+      <label class="drop" id="drop"><span id="dropText">Drop the Winstead PDF here, or click to choose</span><input id="file" type="file" accept="application/pdf" style="display:none"></label>
+      <button class="btn" id="analyze" disabled>Analyze</button>
+    </div>
+    <div id="result"></div>`;
+  const fileInput=document.getElementById('file'), drop=document.getElementById('drop'), analyze=document.getElementById('analyze'), dropText=document.getElementById('dropText');
+  let chosen=null;
+  const setFile=f=>{ chosen=f; dropText.textContent=f?('📄 '+f.name):'Drop the Winstead PDF here, or click to choose'; analyze.disabled=!f; };
+  drop.addEventListener('click',()=>fileInput.click());
+  fileInput.addEventListener('change',e=>setFile(e.target.files[0]));
+  drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over');});
+  drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+  drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');setFile(e.dataTransfer.files[0]);});
+  analyze.addEventListener('click',()=>{ const cid=document.getElementById('comm').value; if(!cid)return alert('Pick an association first.'); if(!chosen)return; doAnalyze(cid,chosen,analyze); });
+}
+
+async function doAnalyze(cid,file,btn){
+  btn.disabled=true; btn.textContent='Analyzing…';
+  const res=document.getElementById('result'); res.innerHTML='<div class="empty">Reading the report&hellip; (up to ~60s for a full report)</div>';
+  try{
+    const fd=new FormData(); fd.append('pdf',file); fd.append('community_id',cid);
+    const r=await af('/api/collections-ingest/ingest',{method:'POST',body:fd});
+    const j=await r.json().catch(()=>({}));
+    if(r.status>=500){ res.innerHTML='<div class="warn">🛑 System error — this was reported to Ed automatically and nothing was saved. Try again shortly.</div>'; return; }
+    if(!j.ok){ res.innerHTML='<div class="warn">Could not read: '+esc(j.error||'unknown')+'</div>'; return; }
+    _batch=j; renderPreview(j);
+  }catch(e){ res.innerHTML='<div class="warn">Could not read the report.</div>'; }
+  finally{ btn.disabled=false; btn.textContent='Analyze'; }
+}
+
+const STAT_LABEL={none:'None',late_notice:'Late notice',delinquent_reminder:'Delinquent reminder',certified_demand:'Certified demand',board_review:'Board review',payment_plan:'Payment plan',with_attorney:'With attorney',bankruptcy:'Bankruptcy',lien_filed:'Lien filed',foreclosure:'Foreclosure',written_off:'Written off'};
+
+function renderPreview(j){
+  const changed=j.rows.filter(r=>r.delta==='changed').length, neu=j.rows.filter(r=>r.delta==='new').length, unm=j.matters_unmatched;
+  let h=`<div class="stats">
+      <div class="stat"><b>${j.total_matters}</b><span>Matters</span></div>
+      <div class="stat"><b>${neu}</b><span>New</span></div>
+      <div class="stat"><b>${changed}</b><span>Changed</span></div>
+      <div class="stat"><b>${unm}</b><span>Unmatched</span></div>
+    </div>
+    <div class="sub" style="margin-bottom:8px;">Report as of <strong>${esc(j.report_as_of||'?')}</strong>${j.association_name?' · '+esc(j.association_name):''}. Review the proposed status (override any row), then approve.</div>`;
+  if(unm) h+=`<div class="warn">${unm} matter(s) did not match a property (address typo or not on file). Those rows are skipped on approve — fix the address in the report or add the property, then re-run.</div>`;
+  if(j.resolved_candidate_count) h+=`<div class="warn">${j.resolved_candidate_count} account(s) previously in collections are NOT in this report — likely cured or closed. They are left as-is (not auto-cleared); review them on the Board Portal.</div>`;
+  const opts=s=>j.allowed_statuses.map(o=>`<option value="${o}"${o===s?' selected':''}>${STAT_LABEL[o]||o}</option>`).join('');
+  h+=`<table><thead><tr><th>Property</th><th>Debtors</th><th style="text-align:right">Balance</th><th>Proposed status</th><th>Change</th></tr></thead><tbody>`;
+  for(const r of j.rows){
+    const disabled = r.delta==='unmatched';
+    const dbadge = `<span class="badge d-${r.delta}">${r.delta}</span>` + (r.delta==='changed'?`<div class="fromto">${STAT_LABEL[r.current_status]||r.current_status} → ${STAT_LABEL[r.mapped_status]||r.mapped_status}</div>`:'');
+    h+=`<tr data-pid="${esc(r.property_id||'')}">
+      <td class="addr">${esc(r.matched_address||r.property_address||'?')}${disabled?'<div class="note" style="color:#991b1b">no property match</div>':''}
+        <div class="note">${esc(r.latest_note||r.latest_action||'')}</div></td>
+      <td>${esc(r.debtors||'')}<div class="note">#${esc(r.firm_file||'')}</div></td>
+      <td class="bal">${money(r.balance_total)}</td>
+      <td>${disabled?'—':`<select class="st" data-pid="${esc(r.property_id)}">${opts(r.mapped_status)}</select>`}</td>
+      <td>${dbadge}</td></tr>`;
+  }
+  h+=`</tbody></table>
+    <div class="actions">
+      <button class="btn ghost" onclick="discardBatch()">Discard</button>
+      <button class="btn go" id="approveBtn" onclick="approveBatch()">Approve &amp; file ${j.matters_matched} onto properties</button>
+    </div>`;
+  document.getElementById('result').innerHTML=h;
+}
+
+async function approveBatch(){
+  const btn=document.getElementById('approveBtn'); btn.disabled=true; btn.textContent='Filing…';
+  const overrides={}; document.querySelectorAll('select.st').forEach(s=>{ if(s.dataset.pid) overrides[s.dataset.pid]=s.value; });
+  try{
+    const r=await af('/api/collections-ingest/ingest/'+_batch.batch_id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({overrides})});
+    const j=await r.json().catch(()=>({}));
+    if(r.status>=500){ document.getElementById('result').innerHTML='<div class="warn">🛑 System error — reported automatically, nothing saved. Try again.</div>'; return; }
+    if(!j.ok){ btn.disabled=false; btn.textContent='Approve'; return alert('Could not file: '+(j.error||'unknown')); }
+    document.getElementById('result').innerHTML=`<div class="soon"><b>✅ Filed ${j.records_written} matters</b>Collection status is now on each property (as of ${esc(j.report_as_of||'')}). Open the Board Portal to see it.${j.rows_skipped_unmatched?'<div class="sub" style="margin-top:8px">'+j.rows_skipped_unmatched+' unmatched row(s) were skipped.</div>':''}</div>`;
+  }catch(e){ btn.disabled=false; btn.textContent='Approve'; alert('Could not file.'); }
+}
+async function discardBatch(){
+  if(!_batch)return; try{ await af('/api/collections-ingest/ingest/'+_batch.batch_id+'/discard',{method:'POST'}); }catch(_){}
+  location.reload();
+}
+
+(async function boot(){
+  try{
+    const cfg=await (await fetch('/api/auth/config')).json();
+    if(!cfg||!cfg.enabled||!window.supabase) return showComingSoon();
+    _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    const {data:{session}}=await _supa.auth.getSession();
+    if(!session||!session.access_token) return showComingSoon();
+    af=async(u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
+    const meRes=await fetch('/api/me',{headers:{Authorization:'Bearer '+session.access_token}});
+    const me=meRes.ok?(await meRes.json()).user:null;
+    if(!me||me.role!=='admin') return showComingSoon();
+    const cr=await af('/api/communities'); const cj=cr.ok?await cr.json():{};
+    renderPicker(cj.communities||cj||[]);
+  }catch(e){ showComingSoon(); }
+})();
+</script>
+</body>
+</html>
