@@ -98,6 +98,15 @@ async function openProfile(cid){
   const balChip = d.ar.balance_cents>0?`<span class="chip bal">Owes ${money(d.ar.balance_cents)}</span>`:(d.ar.balance_cents<0?`<span class="chip ok">Credit ${money(-d.ar.balance_cents)}</span>`:`<span class="chip ok">Current</span>`);
   const openChip = openV.length?`<span class="chip flag">${openV.length} open violation${openV.length===1?'':'s'}</span>`:`<span class="chip ok">No open violations</span>`;
 
+  // Collection / legal status (STAFF-ONLY). Glanceable header chip + a card below.
+  const COLL_LABEL={with_attorney:'With attorney',lien_filed:'Lien filed',foreclosure:'Foreclosure',bankruptcy:'Bankruptcy',payment_plan:'Payment plan',board_review:'Board review',certified_demand:'Certified demand',delinquent_reminder:'Delinquent reminder',late_notice:'Late notice',written_off:'Written off',none:'None'};
+  const LEGAL_STAGES=['with_attorney','lien_filed','foreclosure','board_review','certified_demand'];
+  const colls=d.collections||[];
+  const hasBk=colls.some(x=>x.collection_status==='bankruptcy');
+  const atLegal=colls.some(x=>LEGAL_STAGES.includes(x.collection_status));
+  const legalChip = hasBk?`<span class="chip" style="background:#fee2e2;color:#991b1b;font-weight:700;">⚖️ Bankruptcy — hands off</span>`
+    : atLegal?`<span class="chip" style="background:#fef3c7;color:#92400e;font-weight:700;">⚖️ At legal</span>`:'';
+
   // merged correspondence timeline — every channel in one consistent view:
   // letters/notes (interactions) + emails (hub) + phone calls (voice log).
   const tl=[
@@ -112,7 +121,7 @@ async function openProfile(cid){
         <div class="nm">${esc(c.full_name)}</div>
         <div class="ct">${esc(c.primary_email||c.secondary_email||'no email')} · ${esc(c.primary_phone||'no phone')}</div>
         <div class="ct">${ps.map(p=>esc(p.address)+(p.community?' · '+esc(p.community):'')).join('<br>')||'no property on file'}</div>
-        <div class="chips">${balChip}${openChip}${flagChips}</div>
+        <div class="chips">${balChip}${openChip}${legalChip}${flagChips}</div>
       </div>
     </div></div>
 
@@ -124,6 +133,14 @@ async function openProfile(cid){
         <div style="font-size:18px;font-weight:700;margin-bottom:8px;" class="money">${money(d.ar.balance_cents)}</div>
         ${(d.ar.transactions||[]).slice(0,8).map(t=>`<div class="li"><span class="t">${d10(t.transaction_date)}</span> · ${esc(t.txn_type||t.charge_category||'txn')} <span class="money" style="float:right;">${money(t.amount_cents)}</span></div>`).join('')||'<div class="empty">No transactions.</div>'}
       </div>
+      ${colls.length?`<div class="card" style="border-left:4px solid #b45309; background:#fffdf7;">
+        <div class="sec-title">⚖️ Legal &amp; collections <span style="font-size:10.5px;color:#b45309;font-weight:700;letter-spacing:.02em;">· STAFF ONLY — never shown to the homeowner</span></div>
+        ${colls.map(x=>`<div class="li">
+          <span class="badge" style="${x.collection_status==='bankruptcy'?'background:#fee2e2;color:#991b1b':'background:#fef3c7;color:#92400e'};">${COLL_LABEL[x.collection_status]||esc(x.collection_status)}</span>${x.status_since?`<span class="t"> since ${d10(x.status_since)}</span>`:''}
+          ${x.bankruptcy_petition_date||x.bankruptcy_case_number?`<div class="t">Bankruptcy${x.bankruptcy_petition_date?' · petition '+d10(x.bankruptcy_petition_date):''}${x.bankruptcy_chapter?' · Ch. '+esc(x.bankruptcy_chapter):''}${x.bankruptcy_case_number?' · #'+esc(x.bankruptcy_case_number):''}</div>`:''}
+          ${x.notes?`<div style="font-size:12px;color:#33414f;margin-top:3px;line-height:1.5;">${esc(x.notes)}</div>`:''}
+        </div>`).join('')}
+      </div>`:''}
       <div class="card">
         <div class="sec-title">⚠️ Violations (${(d.violations||[]).length})</div>
         ${(d.violations||[]).slice(0,10).map(v=>`<div class="li">${esc(v.category)} <span class="badge ${v.open?'b-open':'b-res'}">${v.open?esc(String(v.current_stage).replace(/_/g,' ')):'resolved'}</span>${v.detail?`<div style="font-size:12.5px;color:#33414f;margin-top:3px;">${esc(v.detail)}</div>`:''}<div class="t">opened ${d10(v.opened_at)}${v.resolved_at?' · resolved '+d10(v.resolved_at):''}${v.photo_path?` · <a href="/api/homeowner/file?kind=photo&path=${encodeURIComponent(v.photo_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📷 Photo</a>`:''}${v.letter_path?` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(v.letter_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter</a>`:''}</div></div>`).join('')||'<div class="empty">No violations.</div>'}

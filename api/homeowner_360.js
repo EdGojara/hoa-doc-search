@@ -105,6 +105,16 @@ async function assemble(contactId) {
   const flags = propIds.length ? await safe(() => supabase.from('property_enforcement_states')
     .select('state, started_at, ended_at, property_id').in('property_id', propIds).is('ended_at', null)) : [];
 
+  // Collection / legal status (ar_account_collections SSOT). STAFF-ONLY — this
+  // is never returned by the homeowner portal (portal.js does not read this
+  // table), and must not be. Surfaces where an account sits in the escalation
+  // ladder (with_attorney / lien_filed / foreclosure / bankruptcy), the date
+  // that status began, bankruptcy petition data, and the Winstead notes (which
+  // carry the latest action + the date it was mailed).
+  const collections = propIds.length ? await safe(() => supabase.from('ar_account_collections')
+    .select('property_id, collection_status, status_since, bankruptcy_petition_date, bankruptcy_chapter, bankruptcy_case_number, bankruptcy_dismissed_date, bankruptcy_discharge_date, notes, updated_at')
+    .in('property_id', propIds).neq('collection_status', 'none')) : [];
+
   // Violations (+ category label), newest first
   let violations = propIds.length ? await safe(() => supabase.from('violations')
     .select('id, current_stage, opened_at, resolved_at, resolved_via, primary_category_id, property_id, opened_from_observation_id')
@@ -172,7 +182,7 @@ async function assemble(contactId) {
   }
   violations = violations.map((v) => ({ ...v, letter_path: letterByViolation[v.id] || null }));
 
-  return { contact, properties, ar: { balance_cents, transactions: txns }, flags, violations, arc, interactions, emails, calls, poolAccess };
+  return { contact, properties, ar: { balance_cents, transactions: txns }, flags, collections, violations, arc, interactions, emails, calls, poolAccess };
 }
 
 // GET /profile/:contactId — the assembled 360 (fast, no AI)
@@ -221,6 +231,7 @@ HOMEOWNER: ${d.contact.full_name}
 Properties: ${d.properties.map((p) => p.address + (p.community ? ` (${p.community})` : '')).join('; ') || 'none on file'}
 Current balance: ${money(d.ar.balance_cents)} ${d.ar.balance_cents > 0 ? '(owes)' : d.ar.balance_cents < 0 ? '(credit)' : ''}
 Enforcement flags: ${d.flags.map((f) => f.state).join(', ') || 'none'}
+Legal / collection status (STAFF-ONLY, at attorney): ${(d.collections || []).map((c) => `${c.collection_status}${c.status_since ? ' since ' + String(c.status_since).slice(0, 10) : ''}${c.collection_status === 'bankruptcy' ? ' — AUTOMATIC STAY, do not attempt to collect or send notices' : ''}${c.notes ? ' — ' + String(c.notes).slice(0, 160) : ''}`).join(' | ') || 'none'}
 Open violations (${openV.length}): ${openV.map((v) => `${v.category} @ ${v.current_stage}, opened ${(v.opened_at || '').slice(0, 10)}`).join('; ') || 'none'}
 Violation history (${d.violations.length} total): ${d.violations.slice(0, 12).map((v) => `${v.category} [${v.open ? 'open ' + v.current_stage : 'resolved'}]`).join('; ')}
 Recent payments/charges: ${d.ar.transactions.slice(0, 8).map((t) => `${(t.transaction_date || '').slice(0, 10)} ${t.txn_type || ''} ${money(Number(t.amount_cents) || 0)}`).join('; ') || 'none'}
