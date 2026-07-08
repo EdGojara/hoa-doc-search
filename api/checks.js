@@ -64,10 +64,15 @@ router.get('/accounts', async (req, res) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   try {
     const { data, error } = await supabase.from('bank_accounts')
-      .select('id, account_nickname, account_last4, next_check_number, check_stock_format, check_stock_micr_pre_encoded, community:community_id(name), bank:bank_id(name, aba_check)')
+      .select('id, account_nickname, account_last4, account_number_encrypted, account_type, next_check_number, check_stock_format, check_stock_micr_pre_encoded, community:community_id(name), bank:bank_id(name, aba_check)')
       .order('created_at', { ascending: false });
     if (error) throw error;
-    res.json({ accounts: (data || []).map((a) => ({ ...a, ready: !!(a.bank && a.bank.aba_check && a.account_last4) })) });
+    // "ready to print" needs BOTH a routing number (via bank) AND the FULL
+    // account number (encrypted) — last-4 alone can't build a MICR line.
+    res.json({ accounts: (data || []).map(({ account_number_encrypted, ...a }) => ({
+      ...a, has_full_number: !!account_number_encrypted,
+      ready: !!(a.bank && a.bank.aba_check && account_number_encrypted),
+    })) });
   } catch (err) { handleErr(res, 'accounts-list', err); }
 });
 
@@ -97,6 +102,62 @@ router.post('/accounts', express.json(), async (req, res) => {
     if (error) throw error;
     res.json({ ok: true, bank_account_id: data.id, account_last4: row.account_last4 });
   } catch (err) { handleErr(res, 'accounts-create', err); }
+});
+
+// PATCH /accounts/:id — complete/fix an EXISTING account (most communities
+// already have their account rows from the fund-accounting setup; they just
+// need the bank + the full account number filled in). Only sets what's provided.
+router.patch('/accounts/:id', express.json(), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const b = req.body || {};
+    const patch = {};
+    if (b.bank_id) patch.bank_id = b.bank_id;
+    if (b.next_check_number != null) patch.next_check_number = parseInt(b.next_check_number, 10) || 1000;
+    if (b.account_nickname != null) patch.account_nickname = b.account_nickname || null;
+    if (b.check_stock_format) {
+      const STOCK = ['std_top', 'std_middle', 'std_bottom', 'voucher_top', 'three_per_page'];
+      if (STOCK.includes(b.check_stock_format)) patch.check_stock_format = b.check_stock_format;
+    }
+    if (b.pre_encoded != null) patch.check_stock_micr_pre_encoded = b.pre_encoded !== false;
+    if (b.dual_sig_threshold_cents != null) patch.dual_sig_threshold_cents = b.dual_sig_threshold_cents ? parseInt(b.dual_sig_threshold_cents, 10) : null;
+    if (b.account_number) {
+      const acct = String(b.account_number).replace(/[^0-9]/g, '');
+      if (acct) { patch.account_number_encrypted = encryptField(acct); patch.account_last4 = last4(acct); }
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'nothing to update' });
+    const { error } = await supabase.from('bank_accounts').update(patch).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, 'accounts-patch', err); }
+});
+
+// GET /accounts/:id/test-print — a SAFE alignment print. Renders one sample
+// check using the account's real bank config (routing + MICR) but FORCES the
+// NON-NEGOTIABLE DRAFT watermark and consumes NO check number and posts NOTHING.
+// For loading your check stock and checking that everything lands in the right
+// spot before a live run.
+router.get('/accounts/:id/test-print', async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const cfg = await getBankCheckConfig(req.params.id, { forRender: true });
+    if (!cfg.routing || !cfg.account_number) {
+      return res.status(400).json({ error: 'This account is not ready to print — it needs a routing number (bank) and the full account number.' });
+    }
+    cfg.ready_for_print = false; // ALWAYS watermark a test print, even if the account is live-ready
+    const sample = [{
+      check_number: cfg.next_check_number || 1001,
+      issue_date: new Date().toISOString().slice(0, 10),
+      payee_name: 'VOID — ALIGNMENT TEST — NOT A VALID CHECK',
+      amount_cents: 123456,
+      memo: 'Alignment test print',
+      invoices: [{ invoice_number: 'TEST', invoice_date: new Date().toISOString().slice(0, 10), description: 'Alignment test — not a real payment', amount_cents: 123456 }],
+    }];
+    const pdf = await renderChecksPDF(sample, cfg);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="check-alignment-test.pdf"');
+    res.send(pdf);
+  } catch (err) { handleErr(res, 'test-print', err); }
 });
 
 router.post('/run', express.json(), async (req, res) => {

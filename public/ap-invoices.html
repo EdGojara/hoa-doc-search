@@ -53,6 +53,11 @@
 let _supa=null, af=null, _staged=null;
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+window.openInvoice = async function(id){
+  const r=await af('/api/ap-intake/'+id+'/invoice-file');
+  if(!r.ok){ alert('Could not open the invoice ('+r.status+').'); return; }
+  const b=await r.blob(); window.open(URL.createObjectURL(b),'_blank');
+};
 function money(c){ return '$'+(Number(c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function d10(s){ return s?String(s).slice(0,10):'—'; }
 function showComingSoon(){ document.getElementById('body').innerHTML='<div class="soon"><b>Coming soon</b>This tool is in owner-only beta.</div>'; }
@@ -169,13 +174,13 @@ async function loadQueue(){
       h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Amount</th><th>Why held</th><th></th></tr></thead><tbody>';
       for(const r0 of j.suspected){
         h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')}</td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td class="m">${money(r0.total_cents)}</td><td style="font-size:11.5px;color:#78350f;">${esc((r0.notes||'').replace('Emma: ',''))}</td>
-          <td style="white-space:nowrap;">${r0.source_storage_path?`<a class="view" href="/api/ap-intake/${r0.id}/invoice-file" target="_blank">📄</a> `:''}<button class="btn ghost" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','unique')">Not a dup</button> <button class="btn warn" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','duplicate')">It's a dup</button></td></tr>`;
+          <td style="white-space:nowrap;">${r0.source_storage_path?`<a class="view" href="javascript:void(0)" onclick="openInvoice('${r0.id}')">📄</a> `:''}<button class="btn ghost" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','unique')">Not a dup</button> <button class="btn warn" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','duplicate')">It's a dup</button></td></tr>`;
       }
       h+='</tbody></table><div style="height:14px"></div>';
     }
     h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Due</th><th>Amount</th><th>Invoice</th><th>Source</th></tr></thead><tbody>';
     for(const r0 of (j.queue||[])){
-      const link = r0.source_storage_path?`<a class="view" href="/api/ap-intake/${r0.id}/invoice-file" target="_blank">📄 View</a>`:'—';
+      const link = r0.source_storage_path?`<a class="view" href="javascript:void(0)" onclick="openInvoice('${r0.id}')">📄 View</a>`:'—';
       h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')}</td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td>${d10(r0.due_date)}</td><td class="m">${money(r0.total_cents)}</td><td>${link}</td><td><span class="badge b-ok">${esc(r0.intake_method||'—')}</span></td></tr>`;
     }
     h+='</tbody></table>';
