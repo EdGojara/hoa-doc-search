@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bank Setup — Check Printing — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width:900px; margin:0 auto; padding:20px 18px 70px; }
+  .head { border-bottom:3px solid var(--gold); padding-bottom:12px; margin-bottom:16px; }
+  h1 { margin:0; color:var(--navy); font-size:22px; } .sub { color:var(--muted); font-size:12.5px; margin-top:4px; }
+  h2 { color:var(--navy); font-size:15px; margin:22px 0 10px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:12px; }
+  label { display:block; font-size:12px; font-weight:600; color:var(--muted); margin:10px 0 3px; }
+  input, select { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .btn { border:none; border-radius:8px; padding:10px 18px; font-size:13.5px; font-weight:600; cursor:pointer; background:#166534; color:#fff; margin-top:14px; }
+  .btn:disabled { opacity:.5; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; background:#fff; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  th { text-align:left; color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase; padding:8px 9px; border-bottom:2px solid var(--line); background:#fbfcfe; }
+  td { padding:8px 9px; border-bottom:1px solid var(--line); }
+  .badge { display:inline-block; font-size:10px; font-weight:700; padding:2px 8px; border-radius:20px; }
+  .b-ready{background:#dcfce7;color:#166534;} .b-not{background:#fef3c7;color:#92400e;}
+  .empty { text-align:center; color:var(--muted); padding:20px; }
+  .note { font-size:11.5px; color:var(--muted); margin-top:4px; }
+  .warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:8px; padding:10px 13px; font-size:12.5px; margin-bottom:14px; }
+  .soon { text-align:center; padding:70px 20px; color:var(--muted); } .soon b { display:block; color:var(--navy); font-size:18px; margin-bottom:6px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="wrap">
+  <a href="/" onclick="if(document.referrer&&history.length>1){history.back();return false;}" style="display:inline-flex;gap:6px;color:#5a7390;text-decoration:none;font-size:13px;font-weight:600;margin-bottom:12px;">&larr; Back to trustEd</a>
+  <div class="head">
+    <h1>Bank Setup &middot; Check Printing</h1>
+    <div class="sub">Each community has its own bank account. Set the account here (the number is stored <strong>encrypted</strong> — only the last 4 are ever shown) so checks can print for that community.</div>
+  </div>
+  <div id="body"><div class="empty">Loading&hellip;</div></div>
+</div>
+<script>
+let _supa=null, af=null;
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function showComingSoon(){ document.getElementById('body').innerHTML='<div class="soon"><b>Coming soon</b>Owner-only.</div>'; }
+
+async function shell(){
+  const [cr, br, ar] = await Promise.all([af('/api/ap-intake/communities'), af('/api/checks/banks'), af('/api/checks/accounts')]);
+  const comms=(await cr.json()).communities||[], banks=(await br.json()).banks||[], accounts=(await ar.json()).accounts||[];
+  const commOpts = comms.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  const bankOpts = banks.map(b=>`<option value="${esc(b.id)}"${/newfirst/i.test(b.name)?' selected':''}>${esc(b.name)} (${esc(b.aba_check||'no routing')})</option>`).join('');
+  let rows = accounts.length ? accounts.map(a=>`<tr><td><b>${esc(a.community?a.community.name:'—')}</b></td><td>${esc(a.bank?a.bank.name:'—')}</td><td>••••${esc(a.account_last4||'????')}</td><td>#${esc(a.next_check_number)}</td><td>${esc(a.check_stock_format||'')}</td><td><span class="badge ${a.ready?'b-ready':'b-not'}">${a.ready?'ready':'incomplete'}</span></td></tr>`).join('') : '<tr><td colspan="6" class="empty">No bank accounts yet.</td></tr>';
+  document.getElementById('body').innerHTML = `
+    <h2>Accounts on file</h2>
+    <table><thead><tr><th>Community</th><th>Bank</th><th>Account</th><th>Next check</th><th>Stock</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <h2>Add a bank account</h2>
+    <div class="card">
+      <div class="warn">The account number is entered here over a secure connection and stored encrypted. Don't email it or paste it in chat.</div>
+      <div class="grid2">
+        <div><label>Community</label><select id="comm"><option value="">Select&hellip;</option>${commOpts}</select></div>
+        <div><label>Bank</label><select id="bank">${bankOpts}</select></div>
+      </div>
+      <div class="grid2">
+        <div><label>Account number</label><input id="acct" type="text" inputmode="numeric" autocomplete="off" placeholder="account #"></div>
+        <div><label>Next (unused) check number</label><input id="nextchk" type="number" placeholder="e.g. 1001"></div>
+      </div>
+      <div class="grid2">
+        <div><label>Account nickname (optional)</label><input id="nick" type="text" placeholder="e.g. Operating"></div>
+        <div><label>Check stock</label><select id="stock">
+          <option value="std_top">Check on top (most common)</option>
+          <option value="std_middle">Check in middle</option>
+          <option value="std_bottom">Check on bottom (Vantaca default)</option>
+          <option value="voucher_top">Check on top + 2 vouchers</option>
+          <option value="three_per_page">3 per page</option>
+        </select></div>
+      </div>
+      <div class="grid2">
+        <div><label>MICR line</label><select id="preenc">
+          <option value="true">Pre-encoded stock (bank MICR already printed) — recommended</option>
+          <option value="false">Blank stock (trustEd prints the MICR)</option>
+        </select><div class="note">Blank stock needs the E-13B font + your bank to confirm it accepts laser MICR.</div></div>
+        <div><label>Require two signatures over (optional, $)</label><input id="dualsig" type="number" placeholder="e.g. 5000"></div>
+      </div>
+      <button class="btn" id="save" onclick="save()">Save bank account</button>
+      <div id="msg" class="note" style="margin-top:8px;"></div>
+    </div>`;
+}
+async function save(){
+  const btn=document.getElementById('save'), msg=document.getElementById('msg');
+  const community_id=document.getElementById('comm').value, bank_id=document.getElementById('bank').value;
+  const account_number=document.getElementById('acct').value.trim(), next_check_number=document.getElementById('nextchk').value;
+  if(!community_id||!bank_id||!account_number||!next_check_number){ msg.style.color='#b91c1c'; msg.textContent='Community, bank, account number and next check number are required.'; return; }
+  btn.disabled=true; msg.style.color='#5a7390'; msg.textContent='Saving…';
+  try{
+    const body={ community_id, bank_id, account_number, next_check_number,
+      account_nickname:document.getElementById('nick').value.trim()||null,
+      check_stock_format:document.getElementById('stock').value,
+      pre_encoded:document.getElementById('preenc').value==='true',
+      dual_sig_threshold_cents:document.getElementById('dualsig').value?Math.round(parseFloat(document.getElementById('dualsig').value)*100):null };
+    const r=await af('/api/checks/accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(r.status>=500){ msg.style.color='#b91c1c'; msg.textContent='System error — reported, nothing saved.'; btn.disabled=false; return; }
+    if(!j.ok){ msg.style.color='#b91c1c'; msg.textContent='Could not save: '+(j.error||'unknown'); btn.disabled=false; return; }
+    msg.style.color='#166534'; msg.textContent='✓ Saved (account ••••'+j.account_last4+'). Reloading…';
+    setTimeout(()=>location.reload(), 900);
+  }catch(e){ msg.style.color='#b91c1c'; msg.textContent='Could not save.'; btn.disabled=false; }
+}
+(async function boot(){
+  try{
+    const cfg=await (await fetch('/api/auth/config')).json();
+    if(!cfg||!cfg.enabled||!window.supabase) return showComingSoon();
+    _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    const {data:{session}}=await _supa.auth.getSession();
+    if(!session||!session.access_token) return showComingSoon();
+    af=async(u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
+    const meRes=await fetch('/api/me',{headers:{Authorization:'Bearer '+session.access_token}});
+    const me=meRes.ok?(await meRes.json()).user:null;
+    if(!me||me.role!=='admin') return showComingSoon();
+    shell();
+  }catch(e){ showComingSoon(); }
+})();
+</script>
+</body>
+</html>

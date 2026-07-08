@@ -16,8 +16,11 @@ const {
   getBankCheckConfig, updateBankCheckConfig,
 } = require('../lib/accounting/check_run');
 const { renderChecksPDF } = require('../lib/accounting/check_renderer');
+const { requireAdmin } = require('./_require_admin');
+const { encryptField, last4 } = require('../lib/crypto_field');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const router = express.Router();
 
 function handleErr(res, feature, err) {
@@ -43,6 +46,57 @@ router.get('/accounts/:bankAccountId/config', async (req, res) => {
 router.put('/accounts/:bankAccountId/config', express.json({ limit: '8mb' }), async (req, res) => {
   try { res.json({ config: await updateBankCheckConfig(req.params.bankAccountId, req.body || {}) }); }
   catch (err) { handleErr(res, 'config-put', err); }
+});
+
+// GET /banks — bank master list (for the account-setup picker).
+router.get('/banks', async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const { data, error } = await supabase.from('banks').select('id, name, aba_check').order('name');
+    if (error) throw error;
+    res.json({ banks: data || [] });
+  } catch (err) { handleErr(res, 'banks', err); }
+});
+
+// GET /accounts — which communities have a bank account set up, and are they
+// ready to print (routing + account number both present).
+router.get('/accounts', async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const { data, error } = await supabase.from('bank_accounts')
+      .select('id, account_nickname, account_last4, next_check_number, check_stock_format, check_stock_micr_pre_encoded, community:community_id(name), bank:bank_id(name, aba_check)')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ accounts: (data || []).map((a) => ({ ...a, ready: !!(a.bank && a.bank.aba_check && a.account_last4) })) });
+  } catch (err) { handleErr(res, 'accounts-list', err); }
+});
+
+// POST /accounts — create a community's bank account. The account number is
+// encrypted at rest (lib/crypto_field); only the last 4 are kept in the clear.
+// ADMIN ONLY — this is bank credentials.
+router.post('/accounts', express.json(), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const b = req.body || {};
+    const acct = String(b.account_number || '').replace(/[^0-9]/g, '');
+    if (!b.community_id || !b.bank_id || !acct || !b.next_check_number) {
+      return res.status(400).json({ error: 'community_id, bank_id, account_number and next_check_number are required.' });
+    }
+    const STOCK = ['std_top', 'std_middle', 'std_bottom', 'voucher_top', 'three_per_page'];
+    const stock = STOCK.includes(b.check_stock_format) ? b.check_stock_format : 'std_top';
+    const row = {
+      community_id: b.community_id, management_company_id: BEDROCK_MGMT_CO_ID, bank_id: b.bank_id,
+      account_nickname: b.account_nickname || null,
+      account_number_encrypted: encryptField(acct), account_last4: last4(acct),
+      next_check_number: parseInt(b.next_check_number, 10) || 1000,
+      check_stock_format: stock,
+      check_stock_micr_pre_encoded: b.pre_encoded !== false,
+      dual_sig_threshold_cents: b.dual_sig_threshold_cents ? parseInt(b.dual_sig_threshold_cents, 10) : null,
+    };
+    const { data, error } = await supabase.from('bank_accounts').insert(row).select('id').single();
+    if (error) throw error;
+    res.json({ ok: true, bank_account_id: data.id, account_last4: row.account_last4 });
+  } catch (err) { handleErr(res, 'accounts-create', err); }
 });
 
 router.post('/run', express.json(), async (req, res) => {
