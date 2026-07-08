@@ -103,6 +103,20 @@ router.get('/queue', async (req, res) => {
   }
 });
 
+// GET /:id/invoice-file — open the stored invoice PDF for a payable. Redirects
+// to a short-lived signed URL from the 'documents' bucket. This is how you get
+// from a vendor payable back to the actual bill.
+router.get('/:id/invoice-file', async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const { data: inv } = await supabase.from('ap_invoices').select('source_storage_path').eq('id', req.params.id).maybeSingle();
+    if (!inv || !inv.source_storage_path) return res.status(404).json({ error: 'no_invoice_file' });
+    const { data, error } = await supabase.storage.from('documents').createSignedUrl(inv.source_storage_path, 60 * 60);
+    if (error || !data || !data.signedUrl) return res.status(404).json({ error: 'file_not_found' });
+    res.redirect(data.signedUrl);
+  } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // POST /:id/confirm-unique — it's NOT a duplicate; release the hold.
 router.post('/:id/confirm-unique', express.json(), async (req, res) => {
   const admin = await requireAdmin(req, res); if (!admin) return;

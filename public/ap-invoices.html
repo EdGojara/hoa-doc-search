@@ -169,13 +169,14 @@ async function loadQueue(){
       h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Amount</th><th>Why held</th><th></th></tr></thead><tbody>';
       for(const r0 of j.suspected){
         h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')}</td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td class="m">${money(r0.total_cents)}</td><td style="font-size:11.5px;color:#78350f;">${esc((r0.notes||'').replace('Emma: ',''))}</td>
-          <td style="white-space:nowrap;"><button class="btn ghost" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','unique')">Not a dup</button> <button class="btn warn" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','duplicate')">It's a dup</button></td></tr>`;
+          <td style="white-space:nowrap;">${r0.source_storage_path?`<a class="view" href="/api/ap-intake/${r0.id}/invoice-file" target="_blank">📄</a> `:''}<button class="btn ghost" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','unique')">Not a dup</button> <button class="btn warn" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','duplicate')">It's a dup</button></td></tr>`;
       }
       h+='</tbody></table><div style="height:14px"></div>';
     }
-    h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Due</th><th>Amount</th><th>Source</th></tr></thead><tbody>';
+    h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Due</th><th>Amount</th><th>Invoice</th><th>Source</th></tr></thead><tbody>';
     for(const r0 of (j.queue||[])){
-      h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')}</td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td>${d10(r0.due_date)}</td><td class="m">${money(r0.total_cents)}</td><td><span class="badge b-ok">${esc(r0.intake_method||'—')}</span></td></tr>`;
+      const link = r0.source_storage_path?`<a class="view" href="/api/ap-intake/${r0.id}/invoice-file" target="_blank">📄 View</a>`:'—';
+      h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')}</td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td>${d10(r0.due_date)}</td><td class="m">${money(r0.total_cents)}</td><td>${link}</td><td><span class="badge b-ok">${esc(r0.intake_method||'—')}</span></td></tr>`;
     }
     h+='</tbody></table>';
     if(!(j.queue||[]).length && !(j.suspected||[]).length) h='<div class="empty">No invoices awaiting approval.</div>';
