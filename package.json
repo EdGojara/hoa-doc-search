@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node tests/test_vantaca_extraction.js",
+    "test": "node scripts/check_constraint_values.js && node tests/test_vantaca_extraction.js",
+    "test:constraints": "node scripts/check_constraint_values.js",
     "test:vantaca": "node tests/test_vantaca_extraction.js",
     "postinstall": "puppeteer browsers install chrome || true"
   },

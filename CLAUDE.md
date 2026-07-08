@@ -316,6 +316,33 @@ read the constraint and confirm your value is in the allowed list. If
 you need a new value, either expand the constraint OR pick the closest
 existing one. Don't invent values.
 
+**This rule is now ENFORCED, not just documented** (2026-07-08). This scar
+kept recurring — `mail_scan`, `minutes_module` (source_origin), `operator_added`
+(violations.source), `email_sent`/`sms_sent` (interactions.type), and more —
+every one a *silent* save failure that wasted staff hours, because "read the
+constraint" was prose nobody re-read while shipping. `scripts/check_constraint_values.js`
+now statically cross-references every `.from('t').insert({col:'lit'})` against
+every migration `CHECK (col IN (...))` and **fails `npm test`** on a mismatch.
+Run `npm run test:constraints`. A prose rule a human must remember is the
+weakest possible control; a check that fails the build is the strongest.
+
+### Recurring scars must become checks, not more prose
+
+**Meta-scar** (2026-07-08): Ed's line — *"I keep hearing you say this is a scar
+we documented and yet it keeps happening again and again."* He was right.
+Writing a scar into this file is the engineering equivalent of an Operations
+Standard that lives as a signed PDF instead of an enforced system: it relies on
+recall at the exact right moment while shipping fast, and it fails the same way.
+
+**Rule**: the FIRST time a scar recurs, stop documenting it and convert it into
+enforcement — a test, a lint, a shared helper that can't do the wrong thing, a
+migration guard — something that **fails loudly on its own** without anyone
+remembering to check. Prose in CLAUDE.md is a starting note, not a control. If a
+mistake has shipped twice, the fix is a check, not a paragraph. And silent
+failures are the enemy: a save that fails must surface a clear error to the
+user, never disappear — silent data loss teaches staff not to trust the
+platform, which is fatal to the whole thesis.
+
 ### Mailing address ≠ property address
 
 **Scar**: The Vantaca import was writing the *mailing address* (where the

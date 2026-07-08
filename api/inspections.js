@@ -4014,7 +4014,7 @@ router.post('/inspections/photos/:photoId/add-violation', express.json(), async 
         inspection_photo_id:   photoId,
         inspection_id:         photo.inspection_id,
         observed_at:           photo.captured_at || now,
-        ai_confidence:         'manual',
+        ai_confidence:         'high',
         ai_description:        notes || 'Operator-added violation (AI did not flag).',
       })
       .select('id')
@@ -4063,9 +4063,9 @@ router.post('/inspections/photos/:photoId/add-violation', express.json(), async 
           primary_category_id: category_id,
           current_stage: decision.stage,
           severity,
-          source: 'operator_added',
+          source: 'manual_entry',
           confidence_weight: 1.0,
-          quality_status: 'confirmed',
+          quality_status: 'verified',
           opened_at: now,
           opened_by_observation_id: observationId,
           opened_by_email: reviewer_email || null,
