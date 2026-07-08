@@ -227,7 +227,21 @@ router.post('/log', upload.single('file'), async (req, res) => {
       }
     } catch (e) { console.warn('[mail-scan] addressee link skipped:', e.message); }
 
-    res.json({ ok: true, library_document_id: doc.id, work_item_id: workItemId, linked, record_ref: `ML-${Date.now().toString().slice(-6)}` });
+    // If this scan is a vendor invoice, run it through Emma's AP intake — the
+    // SAME door email invoices use — so a bill mailed in on paper is deduped
+    // against one a vendor also emailed. Best-effort; never fails the scan.
+    let apIntake = null;
+    try {
+      if ((meta.type || '').toLowerCase().includes('invoice')) {
+        const { autoIntake } = require('../lib/ap/intake');
+        apIntake = await autoIntake({
+          buffer: req.file.buffer, filename: req.file.originalname || 'scanned_invoice.pdf',
+          intakeMethod: 'mail_scan', sourceRef: `library:${doc.id}`, communityId: meta.community_id || null,
+        });
+      }
+    } catch (e) { console.warn('[mail-scan] AP intake skipped:', e.message); }
+
+    res.json({ ok: true, library_document_id: doc.id, work_item_id: workItemId, linked, ap_intake: apIntake, record_ref: `ML-${Date.now().toString().slice(-6)}` });
   } catch (err) {
     console.error('[mail-scan] log failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accounts Payable — Emma — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; --red:#b91c1c; --amber:#b45309; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width:1080px; margin:0 auto; padding:20px 18px 70px; }
+  .head { border-bottom:3px solid var(--gold); padding-bottom:12px; margin-bottom:16px; }
+  h1 { margin:0; color:var(--navy); font-size:22px; }
+  .sub { color:var(--muted); font-size:12.5px; margin-top:4px; }
+  h2 { color:var(--navy); font-size:15px; margin:24px 0 10px; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  select, input { border:1px solid var(--line); border-radius:8px; background:#fff; padding:8px 11px; font-size:14px; }
+  .drop { flex:1; min-width:260px; padding:18px; text-align:center; color:var(--muted); font-size:13px; border:1px dashed var(--line); border-radius:8px; background:#fff; cursor:pointer; }
+  .drop.over { border-color:var(--navy); background:#eef4fb; color:var(--navy); }
+  .btn { border:none; border-radius:8px; padding:9px 16px; font-size:13.5px; font-weight:600; cursor:pointer; background:var(--navy); color:#fff; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .btn.go { background:#166534; } .btn.ghost { background:#f1f5f9; color:#334155; } .btn.warn { background:#fef2f2; color:var(--red); }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:10px; }
+  .kv { display:grid; grid-template-columns:130px 1fr; gap:4px 10px; font-size:13px; margin:8px 0; }
+  .kv div:nth-child(odd){ color:var(--muted); }
+  .dupe { border-left:4px solid var(--red); background:#fef2f2; }
+  .dupe.suspect { border-left-color:var(--amber); background:#fffbeb; }
+  .dupe .t { font-weight:700; color:var(--red); } .dupe.suspect .t { color:var(--amber); }
+  .m { font-variant-numeric:tabular-nums; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; background:#fff; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  th { text-align:left; color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase; padding:8px 9px; border-bottom:2px solid var(--line); background:#fbfcfe; }
+  td { padding:8px 9px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .badge { display:inline-block; font-size:10px; font-weight:700; text-transform:uppercase; padding:2px 7px; border-radius:20px; }
+  .b-hold{background:#fef3c7;color:#92400e;} .b-ok{background:#dcfce7;color:#166534;}
+  .empty { text-align:center; color:var(--muted); padding:24px; }
+  .soon { text-align:center; padding:70px 20px; color:var(--muted); } .soon b { display:block; color:var(--navy); font-size:18px; margin-bottom:6px; }
+  a.view { color:var(--navy); font-weight:700; text-decoration:none; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="wrap">
+  <a href="/" onclick="if(document.referrer&&history.length>1){history.back();return false;}" style="display:inline-flex;gap:6px;color:#5a7390;text-decoration:none;font-size:13px;font-weight:600;margin-bottom:12px;">&larr; Back to trustEd</a>
+  <div class="head">
+    <h1>Accounts Payable &middot; Emma</h1>
+    <div class="sub">Drop a vendor invoice (or it arrives at emma@bedrocktx.com) &rarr; Emma reads it, checks it isn't already in the system, and loads it to payables for approval. <strong>Every channel is deduped</strong> &mdash; email, upload, and physical scan all check against each other.</div>
+  </div>
+  <div id="body"><div class="empty">Loading&hellip;</div></div>
+</div>
+
+<script>
+let _supa=null, af=null, _staged=null;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function money(c){ return '$'+(Number(c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function d10(s){ return s?String(s).slice(0,10):'—'; }
+function showComingSoon(){ document.getElementById('body').innerHTML='<div class="soon"><b>Coming soon</b>This tool is in owner-only beta.</div>'; }
+
+function shell(){
+  document.getElementById('body').innerHTML = `
+    <div class="row" style="margin-bottom:14px;">
+      <select id="comm"><option value="">Association (optional — Emma will guess)</option></select>
+      <label class="drop" id="drop"><span id="dropText">Drop an invoice PDF, or click to choose</span><input id="file" type="file" accept="application/pdf" style="display:none"></label>
+      <button class="btn" id="analyze" disabled>Read invoice</button>
+    </div>
+    <div id="preview"></div>
+    <h2>Review queue</h2>
+    <div id="queue"><div class="empty">Loading&hellip;</div></div>`;
+  af('/api/ap-intake/communities').then(r=>r.json()).then(j=>{ const sel=document.getElementById('comm'); (j.communities||[]).forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;sel.appendChild(o);}); });
+  const fileInput=document.getElementById('file'), drop=document.getElementById('drop'), analyze=document.getElementById('analyze'), dropText=document.getElementById('dropText');
+  let chosen=null;
+  const setFile=f=>{ chosen=f; dropText.textContent=f?('📄 '+f.name):'Drop an invoice PDF, or click to choose'; analyze.disabled=!f; };
+  drop.addEventListener('click',()=>fileInput.click());
+  fileInput.addEventListener('change',e=>setFile(e.target.files[0]));
+  drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over');});
+  drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+  drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');setFile(e.dataTransfer.files[0]);});
+  analyze.addEventListener('click',()=>doIngest(chosen,document.getElementById('comm').value,analyze));
+  loadQueue();
+}
+
+async function doIngest(file,communityId,btn){
+  if(!file)return; btn.disabled=true; btn.textContent='Reading…';
+  const pv=document.getElementById('preview'); pv.innerHTML='<div class="empty">Emma is reading the invoice&hellip;</div>';
+  try{
+    const fd=new FormData(); fd.append('pdf',file); if(communityId) fd.append('community_id',communityId);
+    const r=await af('/api/ap-intake/ingest',{method:'POST',body:fd});
+    const j=await r.json().catch(()=>({}));
+    if(r.status>=500){ pv.innerHTML='<div class="card dupe"><span class="t">System error</span> — reported automatically, nothing saved.</div>'; return; }
+    if(!j.ok){ pv.innerHTML='<div class="card">Could not read: '+esc(j.error||'unknown')+'</div>'; return; }
+    _staged=j; renderPreview(j);
+  }catch(e){ pv.innerHTML='<div class="card">Could not read the invoice.</div>'; }
+  finally{ btn.disabled=false; btn.textContent='Read invoice'; }
+}
+
+function dupBanner(dedup){
+  if(!dedup||!dedup.matches||!dedup.matches.length) return '';
+  const certain = dedup.verdict==='certain';
+  const m=dedup.matches[0];
+  return `<div class="card dupe${certain?'':' suspect'}">
+    <span class="t">${certain?'⛔ DUPLICATE — already in the system':'⚠️ Possible duplicate'}</span>
+    <div style="font-size:12.5px;margin-top:5px;">${esc(m.reason)} — existing invoice ${esc(m.invoice.vendor_invoice_number||'(no #)')} dated ${d10(m.invoice.invoice_date)} for ${money(m.invoice.total_cents)} (${esc(m.invoice.status)}).</div>
+    ${certain?'<div style="font-size:12px;margin-top:5px;color:#7f1d1d;">Emma will not create a second payable. Loading is blocked.</div>':'<div style="font-size:12px;margin-top:5px;color:#78350f;">It will load <strong>on hold</strong> for you to confirm before it can be paid.</div>'}
+  </div>`;
+}
+
+function renderPreview(j){
+  const e=j.extracted;
+  const vendorSel = j.vendor
+    ? `<b>${esc(j.vendor.name)}</b> <span style="color:#166534;font-size:11px;">matched</span>`
+    : `<select id="vpick"><option value="">— pick vendor —</option>${(j.vendor_candidates||[]).map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select> <input id="vsearch" placeholder="search…" style="width:130px" oninput="vendorSearch(this.value)">`;
+  const commSel = j.community
+    ? `<b>${esc(j.community.name)}</b> <span style="color:#166534;font-size:11px;">matched</span>`
+    : `<select id="cpick"><option value="">— pick association —</option>${(j.community_candidates||[]).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`;
+  const certain = j.dedup && j.dedup.verdict==='certain';
+  document.getElementById('preview').innerHTML = `
+    ${dupBanner(j.dedup)}
+    <div class="card">
+      ${!e.looks_like_invoice?'<div style="color:#b45309;font-size:12.5px;margin-bottom:6px;">⚠️ This may not be an invoice — check before loading.</div>':''}
+      <div class="kv">
+        <div>Vendor</div><div>${vendorSel}</div>
+        <div>Association</div><div>${commSel}</div>
+        <div>Invoice #</div><div>${esc(e.invoice_number||'—')}</div>
+        <div>Invoice date</div><div>${d10(e.invoice_date)}</div>
+        <div>Due date</div><div>${d10(e.due_date)} ${e.terms?'· '+esc(e.terms):''}</div>
+        <div>Total</div><div class="m"><b>${money(e.total_cents)}</b></div>
+      </div>
+      <button class="btn go" id="commit" ${certain?'disabled':''} onclick="doCommit()">${certain?'Blocked — duplicate':'Load to payables'}</button>
+    </div>`;
+}
+
+window.vendorSearch = async function(q){
+  if(!q||q.length<2) return;
+  const r=await af('/api/ap-intake/vendors?q='+encodeURIComponent(q)); const j=await r.json();
+  const sel=document.getElementById('vpick'); if(!sel) return;
+  sel.innerHTML='<option value="">— pick vendor —</option>'+(j.vendors||[]).map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('');
+};
+
+async function doCommit(){
+  const btn=document.getElementById('commit'); btn.disabled=true; btn.textContent='Loading…';
+  const vendorId = _staged.vendor ? _staged.vendor.id : (document.getElementById('vpick')||{}).value;
+  const communityId = _staged.community ? _staged.community.id : (document.getElementById('cpick')||{}).value;
+  if(!vendorId||!communityId){ btn.disabled=false; btn.textContent='Load to payables'; return alert('Pick a vendor and an association first.'); }
+  try{
+    const r=await af('/api/ap-intake/commit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      extracted:_staged.extracted, vendor_id:vendorId, community_id:communityId, sha256:_staged.sha256, storage_path:_staged.storage_path, intake_method:'manual_upload'
+    })});
+    const j=await r.json().catch(()=>({}));
+    if(r.status>=500){ document.getElementById('preview').innerHTML='<div class="card dupe"><span class="t">System error</span> — reported, nothing saved.</div>'; return; }
+    if(!j.ok){ btn.disabled=false; btn.textContent='Load to payables'; return alert('Could not load: '+(j.error||'unknown')); }
+    const msg = j.outcome==='blocked_duplicate' ? '⛔ Blocked — this is a duplicate of an existing payable. Nothing was created.'
+      : j.outcome==='held_suspected_duplicate' ? '⚠️ Loaded ON HOLD as a possible duplicate — confirm it in the queue below.'
+      : j.outcome==='needs_review' ? 'Needs review: '+esc(j.reason||'')
+      : '✅ Loaded to payables (awaiting approval).';
+    document.getElementById('preview').innerHTML='<div class="card"><div style="font-size:14px;">'+msg+'</div></div>';
+    _staged=null; loadQueue();
+  }catch(e){ btn.disabled=false; btn.textContent='Load to payables'; alert('Could not load.'); }
+}
+
+async function loadQueue(){
+  const el=document.getElementById('queue'); if(!el) return;
+  try{
+    const r=await af('/api/ap-intake/queue'); const j=await r.json().catch(()=>({}));
+    if(!j.ok){ el.innerHTML='<div class="empty">Could not load queue.</div>'; return; }
+    let h='';
+    if(j.suspected&&j.suspected.length){
+      h+='<div style="font-size:12.5px;color:#92400e;font-weight:700;margin-bottom:6px;">⚠️ '+j.suspected.length+' possible duplicate(s) on hold — decide before they can be paid:</div>';
+      h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Amount</th><th>Why held</th><th></th></tr></thead><tbody>';
+      for(const r0 of j.suspected){
+        h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')}</td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td class="m">${money(r0.total_cents)}</td><td style="font-size:11.5px;color:#78350f;">${esc((r0.notes||'').replace('Emma: ',''))}</td>
+          <td style="white-space:nowrap;"><button class="btn ghost" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','unique')">Not a dup</button> <button class="btn warn" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','duplicate')">It's a dup</button></td></tr>`;
+      }
+      h+='</tbody></table><div style="height:14px"></div>';
+    }
+    h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Due</th><th>Amount</th><th>Source</th></tr></thead><tbody>';
+    for(const r0 of (j.queue||[])){
+      h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')}</td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td>${d10(r0.due_date)}</td><td class="m">${money(r0.total_cents)}</td><td><span class="badge b-ok">${esc(r0.intake_method||'—')}</span></td></tr>`;
+    }
+    h+='</tbody></table>';
+    if(!(j.queue||[]).length && !(j.suspected||[]).length) h='<div class="empty">No invoices awaiting approval.</div>';
+    el.innerHTML=h;
+  }catch(e){ el.innerHTML='<div class="empty">Could not load queue.</div>'; }
+}
+
+window.resolveDup = async function(id,which){
+  const url = which==='unique' ? '/api/ap-intake/'+id+'/confirm-unique' : '/api/ap-intake/'+id+'/confirm-duplicate';
+  if(which==='duplicate' && !confirm('Void this invoice as a confirmed duplicate?')) return;
+  await af(url,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  loadQueue();
+};
+
+(async function boot(){
+  try{
+    const cfg=await (await fetch('/api/auth/config')).json();
+    if(!cfg||!cfg.enabled||!window.supabase) return showComingSoon();
+    _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    const {data:{session}}=await _supa.auth.getSession();
+    if(!session||!session.access_token) return showComingSoon();
+    af=async(u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
+    const meRes=await fetch('/api/me',{headers:{Authorization:'Bearer '+session.access_token}});
+    const me=meRes.ok?(await meRes.json()).user:null;
+    if(!me||me.role!=='admin') return showComingSoon();
+    shell();
+  }catch(e){ showComingSoon(); }
+})();
+</script>
+</body>
+</html>

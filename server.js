@@ -977,6 +977,9 @@ app.get('/admin/errors', (req, res) => {
 app.get('/admin/collections', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'collections-ingest.html'));
 });
+app.get('/admin/ap', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'ap-invoices.html'));
+});
 app.get('/admin/pool-access', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'pool-access.html'));
 });
@@ -1351,6 +1354,9 @@ app.use('/api/system-errors', systemErrorsRouter);
 
 const { router: collectionsIngestRouter } = require('./api/collections_ingest');
 app.use('/api/collections-ingest', collectionsIngestRouter);
+
+const { router: apIntakeRouter } = require('./api/ap_intake');
+app.use('/api/ap-intake', apIntakeRouter);
 
 const { router: homeowner360Router } = require('./api/homeowner_360');
 app.use('/api/homeowner', homeowner360Router);
