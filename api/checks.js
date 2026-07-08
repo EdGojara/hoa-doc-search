@@ -15,7 +15,7 @@ const {
   listPayableInvoices, createCheckRun, getRunForRender, voidCheck,
   getBankCheckConfig, updateBankCheckConfig,
 } = require('../lib/accounting/check_run');
-const { renderChecksPDF } = require('../lib/accounting/check_renderer');
+const { renderChecksPDF, micrFontInstalled } = require('../lib/accounting/check_renderer');
 const { requireAdmin } = require('./_require_admin');
 const { encryptField, last4 } = require('../lib/crypto_field');
 
@@ -69,10 +69,13 @@ router.get('/accounts', async (req, res) => {
     if (error) throw error;
     // "ready to print" needs BOTH a routing number (via bank) AND the FULL
     // account number (encrypted) — last-4 alone can't build a MICR line.
-    res.json({ accounts: (data || []).map(({ account_number_encrypted, ...a }) => ({
-      ...a, has_full_number: !!account_number_encrypted,
-      ready: !!(a.bank && a.bank.aba_check && account_number_encrypted),
-    })) });
+    res.json({
+      micr_font_installed: micrFontInstalled(), // blank-stock checks need a real E-13B font bundled
+      accounts: (data || []).map(({ account_number_encrypted, ...a }) => ({
+        ...a, has_full_number: !!account_number_encrypted,
+        ready: !!(a.bank && a.bank.aba_check && account_number_encrypted),
+      })),
+    });
   } catch (err) { handleErr(res, 'accounts-list', err); }
 });
 
