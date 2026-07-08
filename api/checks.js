@@ -64,7 +64,7 @@ router.get('/accounts', async (req, res) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   try {
     const { data, error } = await supabase.from('bank_accounts')
-      .select('id, account_nickname, account_last4, account_number_encrypted, account_type, next_check_number, check_stock_format, check_stock_micr_pre_encoded, community:community_id(name), bank:bank_id(name, aba_check)')
+      .select('id, community_id, account_nickname, account_last4, account_number_encrypted, account_type, next_check_number, check_stock_format, check_stock_micr_pre_encoded, is_check_disbursement, community:community_id(name), bank:bank_id(name, aba_check)')
       .order('created_at', { ascending: false });
     if (error) throw error;
     // "ready to print" needs BOTH a routing number (via bank) AND the FULL
@@ -73,6 +73,7 @@ router.get('/accounts', async (req, res) => {
       micr_font_installed: micrFontInstalled(), // blank-stock checks need a real E-13B font bundled
       accounts: (data || []).map(({ account_number_encrypted, ...a }) => ({
         ...a, has_full_number: !!account_number_encrypted,
+        is_check_account: !!a.is_check_disbursement,
         ready: !!(a.bank && a.bank.aba_check && account_number_encrypted),
       })),
     });
@@ -133,6 +134,22 @@ router.patch('/accounts/:id', express.json(), async (req, res) => {
     if (error) throw error;
     res.json({ ok: true });
   } catch (err) { handleErr(res, 'accounts-patch', err); }
+});
+
+// POST /accounts/:id/designate-check — make THIS the community's sole check-
+// disbursement account (checks can only ever be cut from it). Clears any other
+// in the same community first (the DB also enforces one-per-community).
+router.post('/accounts/:id/designate-check', express.json(), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const { data: acct } = await supabase.from('bank_accounts').select('id, community_id, bank_id').eq('id', req.params.id).maybeSingle();
+    if (!acct) return res.status(404).json({ error: 'account_not_found' });
+    if (!acct.bank_id) return res.status(400).json({ error: 'Link this account to a bank first — a check account needs a routing number.' });
+    await supabase.from('bank_accounts').update({ is_check_disbursement: false }).eq('community_id', acct.community_id).eq('is_check_disbursement', true);
+    const { error } = await supabase.from('bank_accounts').update({ is_check_disbursement: true }).eq('id', acct.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, 'designate-check', err); }
 });
 
 // GET /accounts/:id/test-print — a SAFE alignment print. Renders one sample

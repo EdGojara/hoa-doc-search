@@ -83,6 +83,12 @@ async function openAuthed(url){
   const b=await r.blob(); window.open(URL.createObjectURL(b),'_blank');
 }
 function testPrint(id){ openAuthed('/api/checks/accounts/'+id+'/test-print'); }
+window.designateCheck = async function(id){
+  if(!confirm('Make this the ONLY account checks can be cut from for this community? Any current check account here is replaced.')) return;
+  const r=await af('/api/checks/accounts/'+id+'/designate-check',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const j=await r.json().catch(()=>({}));
+  if(j.ok){ location.reload(); } else { alert('Could not set: '+(j.error||'error')); }
+};
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function showComingSoon(){ document.getElementById('body').innerHTML='<div class="soon"><b>Coming soon</b>Owner-only.</div>'; }
 
@@ -95,8 +101,12 @@ async function shell(){
   let rows = accounts.length ? accounts.map(a=>{
     const acctCell = a.has_full_number ? '••••'+esc(a.account_last4||'????') : (a.account_last4?'last4 '+esc(a.account_last4)+' <span style="color:#b45309">(no full #)</span>':'<span style="color:#b45309">not set</span>');
     const actions = `<button class="btn" style="background:#f1f5f9;color:#334155;padding:4px 10px;font-size:11.5px;margin:0;" onclick="editRow('${a.id}')">Edit</button>`+
-      (a.ready?` <button class="btn" style="padding:4px 10px;font-size:11.5px;margin:0;" onclick="testPrint('${a.id}')">🖨 Test print</button>`:'');
-    return `<tr><td><b>${esc(a.community?a.community.name:'—')}</b><div class="note">${esc(a.account_nickname||'')}</div></td><td>${esc(a.bank?a.bank.name:'—')}</td><td>${acctCell}</td><td>#${esc(a.next_check_number)}</td><td>${esc(a.check_stock_format||'')}</td><td><span class="badge ${a.ready?'b-ready':'b-not'}">${a.ready?'ready':'incomplete'}</span></td><td style="white-space:nowrap;">${actions}</td></tr>`;
+      (a.ready?` <button class="btn" style="padding:4px 10px;font-size:11.5px;margin:0;" onclick="testPrint('${a.id}')">🖨 Test print</button>`:'')+
+      ((a.bank && !a.is_check_account)?` <button class="btn" style="background:#eef2ff;color:#3730a3;padding:4px 10px;font-size:11.5px;margin:0;" onclick="designateCheck('${a.id}')">Set as check account</button>`:'');
+    const status = a.is_check_account
+      ? `<span class="badge" style="background:#dbeafe;color:#1e3a8a;">🖊 CHECK ACCOUNT</span>`
+      : `<span class="badge ${a.ready?'b-ready':'b-not'}">${a.ready?'ready':'incomplete'}</span>`;
+    return `<tr><td><b>${esc(a.community?a.community.name:'—')}</b><div class="note">${esc(a.account_nickname||'')}</div></td><td>${esc(a.bank?a.bank.name:'—')}</td><td>${acctCell}</td><td>#${esc(a.next_check_number)}</td><td>${esc(a.check_stock_format||'')}</td><td>${status}</td><td style="white-space:nowrap;">${actions}</td></tr>`;
   }).join('') : '<tr><td colspan="7" class="empty">No bank accounts yet.</td></tr>';
   document.getElementById('body').innerHTML = `
     <h2>Accounts on file</h2>
