@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System Errors — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; --red:#b91c1c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width:1080px; margin:0 auto; padding:20px 18px 60px; }
+  .head { display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; border-bottom:3px solid var(--gold); padding-bottom:12px; margin-bottom:16px; }
+  h1 { margin:0; color:var(--navy); font-size:22px; }
+  .sub { color:var(--muted); font-size:12.5px; margin-top:4px; }
+  h2 { color:var(--navy); font-size:15px; margin:22px 0 10px; }
+  .btn { border:none; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer; background:var(--navy); color:#fff; }
+  .ok { text-align:center; color:#166534; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:26px; font-size:15px; }
+  .ok b { display:block; font-size:19px; margin-bottom:4px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:9px; padding:12px 14px; margin-bottom:9px; border-left:4px solid var(--red); }
+  .ep { font-weight:700; color:var(--navy); font-size:14px; font-family:ui-monospace,Menlo,Consolas,monospace; }
+  .cnt { display:inline-block; background:#fee2e2; color:var(--red); font-weight:700; font-size:12px; padding:2px 9px; border-radius:20px; margin-left:8px; }
+  .msg { font-size:12.5px; color:#33414f; margin-top:6px; font-family:ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; word-break:break-word; background:#fafbfc; border:1px solid var(--line); border-radius:6px; padding:7px 9px; }
+  .when { color:var(--muted); font-size:11.5px; margin-top:5px; }
+  .empty { text-align:center; color:var(--muted); padding:40px; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.04em; padding:6px 8px; border-bottom:2px solid var(--line); }
+  td { padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  td.p { font-family:ui-monospace,Menlo,Consolas,monospace; color:var(--navy); }
+  .soon { text-align:center; padding:70px 20px; color:var(--muted); }
+  .soon b { display:block; color:var(--navy); font-size:18px; margin-bottom:6px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="wrap">
+  <a href="/" onclick="if(document.referrer&&history.length>1){history.back();return false;}" style="display:inline-flex;align-items:center;gap:6px;color:#5a7390;text-decoration:none;font-size:13px;font-weight:600;margin-bottom:12px;">&larr; Back to trustEd</a>
+  <div class="head">
+    <div>
+      <h1>System Errors</h1>
+      <div class="sub">Every server error (5xx) in the last 7 days &mdash; so a broken feature shows up here in minutes, not after staff waste hours.</div>
+    </div>
+    <button class="btn" onclick="load()">Refresh</button>
+  </div>
+  <div id="body"><div class="empty">Loading&hellip;</div></div>
+</div>
+
+<script>
+let _supa = null, af = null;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function ago(iso){
+  try {
+    const d = new Date(iso), s = Math.floor((Date.now()-d.getTime())/1000);
+    if (s<60) return s+'s ago'; if (s<3600) return Math.floor(s/60)+'m ago';
+    if (s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago';
+  } catch(_) { return ''; }
+}
+
+function showComingSoon(){
+  document.getElementById('body').innerHTML =
+    '<div class="soon"><b>Coming soon</b>This tool is in owner-only beta.</div>';
+}
+
+async function load(){
+  const el = document.getElementById('body');
+  el.innerHTML = '<div class="empty">Loading&hellip;</div>';
+  try {
+    const r = await af('/api/system-errors');
+    if (!r.ok) { el.innerHTML = '<div class="empty">Could not load ('+r.status+').</div>'; return; }
+    const d = await r.json();
+    if (!d.total) {
+      el.innerHTML = '<div class="ok"><b>All clear</b>No server errors in the last 7 days.</div>';
+      return;
+    }
+    let h = '';
+    h += '<h2>By endpoint &mdash; most broken first</h2>';
+    for (const s of (d.summary||[])) {
+      h += '<div class="card"><span class="ep">'+esc(s.endpoint)+'</span><span class="cnt">'+s.count+'&times;</span>'
+         + '<div class="msg">'+esc(s.sample||'(no message)')+'</div>'
+         + '<div class="when">latest '+ago(s.last)+' &middot; status '+esc(s.status)+'</div></div>';
+    }
+    h += '<h2>Recent (latest 100)</h2><table><thead><tr><th>When</th><th>Status</th><th>Endpoint</th><th>Message</th></tr></thead><tbody>';
+    for (const e of (d.recent||[])) {
+      h += '<tr><td>'+ago(e.created_at)+'</td><td>'+esc(e.status_code)+'</td><td class="p">'+esc((e.method||'')+' '+(e.path||''))+'</td><td>'+esc((e.error_message||'').slice(0,240))+'</td></tr>';
+    }
+    h += '</tbody></table>';
+    el.innerHTML = h;
+  } catch (e) { el.innerHTML = '<div class="empty">Could not load.</div>'; }
+}
+
+(async function boot(){
+  try {
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if (!cfg || !cfg.enabled || !window.supabase) return showComingSoon();
+    _supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+    const { data: { session } } = await _supa.auth.getSession();
+    if (!session || !session.access_token) return showComingSoon();
+    af = async (u, o) => {
+      o = o || {}; const h = Object.assign({}, o.headers || {});
+      try { const s = (await _supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; } catch (_) {}
+      return fetch(u, Object.assign({}, o, { headers: h }));
+    };
+    const meRes = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + session.access_token } });
+    const me = meRes.ok ? (await meRes.json()).user : null;
+    if (!me || me.role !== 'admin') return showComingSoon();
+    load();
+  } catch (e) { showComingSoon(); }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+[
+  {
+    "id": "a0000000-0000-4000-8000-000000000002",
+    "name": "Lakes of Pine Forest",
+    "prior_gl_cutover_date": null
+  },
+  {
+    "id": "a0000000-0000-4000-8000-000000000001",
+    "name": "Waterview Estates",
+    "prior_gl_cutover_date": null
+  },
+  {
+    "id": "a0000000-0000-4000-8000-000000000003",
+    "name": "Canyon Gate at Cinco Ranch",
+    "prior_gl_cutover_date": null
+  },
+  {
+    "id": "a0000000-0000-4000-8000-000000000006",
+    "name": "Still Creek Ranch",
+    "prior_gl_cutover_date": null
+  }
+]

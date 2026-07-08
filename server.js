@@ -571,6 +571,28 @@ app.use((req, res, next) => {
   return res.status(401).json({ error: 'authentication required' });
 });
 
+// Capture every server error (5xx) so a broken feature surfaces to Ed on an
+// admin screen in minutes, instead of vanishing into a cryptic client message
+// and wasting staff hours (the Mail Scan lesson). Patches res.json once, here,
+// so it covers every endpoint without touching each. Fire-and-forget.
+const { captureServerError } = require('./lib/capture_error');
+app.use((req, res, next) => {
+  const origJson = res.json.bind(res);
+  res.json = (body) => {
+    try {
+      if (res.statusCode >= 500 && String(req.path || '').startsWith('/api/')) {
+        captureServerError({
+          method: req.method, path: req.path, statusCode: res.statusCode,
+          message: (body && body.error) ? body.error : (body ? JSON.stringify(body).slice(0, 500) : ''),
+          userAgent: req.headers['user-agent'],
+        });
+      }
+    } catch (_) { /* never break the response */ }
+    return origJson(body);
+  };
+  next();
+});
+
 // Tell crawlers to stay away from the admin app. Public homeowner pages
 // (/nominate/*, /apply.html, etc.) still work — they're behind paths
 // homeowners reach via QR / email link, not search.
@@ -949,6 +971,9 @@ app.get('/admin/accounting', (req, res) => {
 app.get('/admin/communications', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'communications.html'));
 });
+app.get('/admin/errors', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'errors.html'));
+});
 app.get('/admin/pool-access', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'pool-access.html'));
 });
@@ -1317,6 +1342,9 @@ app.use('/api/agendas', agendasRouter);
 
 const { router: emailTriageRouter } = require('./api/email_triage');
 app.use('/api/email-triage', emailTriageRouter);
+
+const { router: systemErrorsRouter } = require('./api/system_errors');
+app.use('/api/system-errors', systemErrorsRouter);
 
 const { router: homeowner360Router } = require('./api/homeowner_360');
 app.use('/api/homeowner', homeowner360Router);

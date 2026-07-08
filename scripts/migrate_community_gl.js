@@ -88,6 +88,18 @@ const CONFIG = {
     fundBalanceAccount: { OPR: '3050' },
     currentYearSurplusAccount: '3000',
   },
+  // Eaglewood: 2026-only cutover (TB 1/1/2026-6/30/2026, real beginning
+  // balances => OPENING mode). 2 funds: Operating + Reserve. Reserve holds only
+  // Reserve Cash (1200, on BS) + Interest-Reserve (4120, P&L — override). Static
+  // interfund due-to/from ($90,005, no movement). Vantaca lumps both funds' FB in
+  // 3050; the migration splits Reserve FB into its own 3020. interfundOK on to
+  // absorb the documented BS-vs-GL year-start discrepancy into Operating FB.
+  eaglewood: {
+    fundOverrides: { '4120': 'RES' },
+    fundBalanceAccount: { OPR: '3050', RES: '3020' },
+    currentYearSurplusAccount: '3000',
+    interfundOK: true,
+  },
 };
 
 const arg = (k, d) => { const a = process.argv.find((x) => x.startsWith(`--${k}=`)); return a ? a.split('=').slice(1).join('=') : d; };

@@ -1,0 +1,146 @@
+{
+  "builder": "LENNAR",
+  "community": "NEW FAIRWAY SERIES",
+  "plans": [
+    {
+      "plan_number": "4501",
+      "plan_name": "CABOT II",
+      "elevation": "A",
+      "square_footage": 2948,
+      "stories": 1
+    },
+    {
+      "plan_number": "4501",
+      "plan_name": "CABOT II",
+      "elevation": "B",
+      "square_footage": 2948,
+      "stories": 1
+    },
+    {
+      "plan_number": "4501",
+      "plan_name": "CABOT II",
+      "elevation": "C",
+      "square_footage": null,
+      "stories": 1
+    },
+    {
+      "plan_number": "4502",
+      "plan_name": "GLENBROOK II",
+      "elevation": "A",
+      "square_footage": 3047,
+      "stories": 1
+    },
+    {
+      "plan_number": "4502",
+      "plan_name": "GLENBROOK II",
+      "elevation": "B",
+      "square_footage": 3047,
+      "stories": 1
+    },
+    {
+      "plan_number": "4502",
+      "plan_name": "GLENBROOK II",
+      "elevation": "C",
+      "square_footage": null,
+      "stories": 1
+    },
+    {
+      "plan_number": "4503",
+      "plan_name": "CANTARRA II",
+      "elevation": "A",
+      "square_footage": 2948,
+      "stories": 1
+    },
+    {
+      "plan_number": "4503",
+      "plan_name": "CANTARRA II",
+      "elevation": "B",
+      "square_footage": 2948,
+      "stories": 1
+    },
+    {
+      "plan_number": "4503",
+      "plan_name": "Cantaron II",
+      "elevation": "C",
+      "square_footage": null,
+      "stories": 2
+    },
+    {
+      "plan_number": "4504",
+      "plan_name": "Melrose II",
+      "elevation": "A",
+      "square_footage": null,
+      "stories": 2
+    },
+    {
+      "plan_number": "4504",
+      "plan_name": "Melrose II",
+      "elevation": "B",
+      "square_footage": null,
+      "stories": 2
+    },
+    {
+      "plan_number": "4505",
+      "plan_name": "Somerset",
+      "elevation": "A",
+      "square_footage": 2938,
+      "stories": 2
+    },
+    {
+      "plan_number": "4505",
+      "plan_name": "Somerset",
+      "elevation": "B",
+      "square_footage": null,
+      "stories": 2
+    },
+    {
+      "plan_number": "4505",
+      "plan_name": "Somerset",
+      "elevation": "C",
+      "square_footage": null,
+      "stories": 2
+    },
+    {
+      "plan_number": "4506",
+      "plan_name": "Wakefield II",
+      "elevation": "A",
+      "square_footage": null,
+      "stories": 2
+    },
+    {
+      "plan_number": "4506",
+      "plan_name": "Wakefield II",
+      "elevation": "B",
+      "square_footage": null,
+      "stories": 2
+    },
+    {
+      "plan_number": "4506",
+      "plan_name": "Wakefield II",
+      "elevation": "C",
+      "square_footage": null,
+      "stories": 2
+    },
+    {
+      "plan_number": "450N",
+      "plan_name": "Oak Hill IV",
+      "elevation": "A",
+      "square_footage": 3308,
+      "stories": 2
+    },
+    {
+      "plan_number": "450N",
+      "plan_name": "Oak Hill IV",
+      "elevation": "B",
+      "square_footage": null,
+      "stories": 2
+    },
+    {
+      "plan_number": "450N",
+      "plan_name": "Oak Hill IV",
+      "elevation": "C",
+      "square_footage": null,
+      "stories": 2
+    }
+  ]
+}

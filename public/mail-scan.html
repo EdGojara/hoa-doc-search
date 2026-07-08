@@ -814,16 +814,27 @@ function confirmLog(key) {
     fd.append('file', window._mailScanFile);
     fd.append('meta', JSON.stringify(meta));
     panel.innerHTML = '<div class="processing-state"><div class="spinner"></div><div style="font-size:15px;font-weight:600;color:var(--navy);">Filing to trustEd…</div></div>';
+    let _status = 0;
     fetch('/api/mail-scan/log', { method: 'POST', body: fd })
-      .then((x) => x.json())
+      .then((x) => { _status = x.status; return x.json().catch(() => ({})); })
       .then((j) => {
+        if (_status >= 500) { const err = new Error(j.error || 'server_error'); err.system = true; throw err; }
         if (!j.ok) throw new Error(j.error || 'log_failed');
         window._mailScanFile = null;
         renderLogged(r, j.record_ref || ('ML-' + Date.now().toString().slice(-6)), key, j.deduped);
         try { mailLoadQueue(); } catch (_) {}
       })
       .catch((e) => {
-        panel.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not file</div><div class="empty-sub">' + (e.message || 'Unknown error') + '</div><button class="btn btn-ghost" style="margin-top:16px;" onclick="showResult(\'' + key + '\')">Back</button></div>';
+        // A 5xx is a bug on OUR side — the file did NOT save and retrying won't
+        // help. Say so plainly so staff report it in two minutes instead of
+        // burning hours re-uploading against a broken endpoint. The error is
+        // already captured server-side and shows on /admin/errors.
+        const sys = e && e.system;
+        const title = sys ? 'System error &mdash; not your fault' : 'Could not file';
+        const sub = sys
+          ? 'This did <strong>not</strong> save, and re-uploading will not help. It has been reported to Ed automatically. Please send Ed a quick note with what you were filing.'
+          : ('<span style="font-family:ui-monospace,Menlo,Consolas,monospace;">' + (e.message || 'Unknown error') + '</span>');
+        panel.innerHTML = '<div class="empty-state"><div class="empty-icon">' + (sys ? '🛑' : '⚠️') + '</div><div class="empty-title">' + title + '</div><div class="empty-sub">' + sub + '</div><button class="btn btn-ghost" style="margin-top:16px;" onclick="showResult(\'' + key + '\')">Back</button></div>';
       });
     return;
   }

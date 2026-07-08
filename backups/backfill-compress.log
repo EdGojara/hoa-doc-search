@@ -1,0 +1,17 @@
+locked letters to backfill: 118
+  re-rendered 10
+  re-rendered 20
+  re-rendered 30
+  re-rendered 40
+  re-rendered 50
+  ERR bbe0a7f8: violation_letter input failed validation:
+  - violations[0].prior_notices is empty but stage='courtesy_2' expects documented prior contact (§209 framework)
+  ERR fca6b6f6: violation_letter input failed validation:
+  - violations[0].prior_notices is empty but stage='courtesy_2' expects documented prior contact (§209 framework)
+  re-rendered 60
+  re-rendered 70
+  re-rendered 80
+  re-rendered 90
+  re-rendered 100
+  re-rendered 110
+BACKFILL DONE: re-rendered 113 | skipped(no photo) 3 | errors 2

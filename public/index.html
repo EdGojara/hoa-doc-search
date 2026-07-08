@@ -535,6 +535,10 @@
        email as Claire straight from trustEd. Hidden for staff via
        data-admin-only; the endpoint also enforces admin server-side. -->
   <div class="tab" data-admin-only onclick="openClaireCompose()">✉️ Email as Claire</div>
+  <!-- 🛑 System Errors — ADMIN ONLY (Ed). Every server 5xx in the last 7 days,
+       so a broken feature surfaces here in minutes instead of after staff waste
+       hours. Fails closed to coming-soon for non-admins. Standalone page. -->
+  <div class="tab" data-admin-only onclick="window.location.href='/admin/errors'">🛑 System Errors</div>
   <!-- 🏊 Pool Access — fob (key-tag) registrations + extended-hours swim
        approvals filed onto the homeowner. Batch-upload forms, roster of who
        has access + their tag numbers. Standalone page. -->
