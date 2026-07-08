@@ -135,13 +135,13 @@ router.post('/classify', upload.single('file'), async (req, res) => {
 
     // duplicate check — same file already filed?
     const sha = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
-    const { data: dup } = await supabase.from('library_documents').select('id, title, created_at').eq('file_hash', sha).maybeSingle();
+    const { data: dup } = await supabase.from('library_documents').select('id, title, uploaded_at').eq('file_hash', sha).maybeSingle();
 
     res.json({
       classification: parsed,
       community,
       file_hash: sha,
-      already_on_file: dup ? { id: dup.id, title: dup.title, at: dup.created_at } : null,
+      already_on_file: dup ? { id: dup.id, title: dup.title, at: dup.uploaded_at } : null,
       raw_extracted: raw.slice(0, 600),
     });
   } catch (err) {
