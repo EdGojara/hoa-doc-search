@@ -4016,7 +4016,7 @@
       const cell = (v) => `<td style="padding:7px 10px; border-bottom:1px solid #eee; text-align:right; font-size:13px;">${v}</td>`;
       const body = rows.filter(c => c.notices_sent || c.pages_printed || c.arc_approved || c.arc_denied || c.arc_conditions || c.arc_other).map(c => `
         <tr>
-          <td style="padding:7px 10px; border-bottom:1px solid #eee; font-size:13px; font-weight:600;">${escapeHtml(c.name)}</td>
+          <td style="padding:7px 10px; border-bottom:1px solid #eee; font-size:13px; font-weight:600;"><a href="/api/billing/activity-detail?community_id=${encodeURIComponent(c.community_id)}&period_start=${start}&period_end=${end}" target="_blank" rel="noopener" title="Open the board detail report — every letter + ARC decision with PDF links" style="color:#0B1D34; text-decoration:none; border-bottom:1px solid #94a3b8;">${escapeHtml(c.name)} <span style="font-size:10px; opacity:0.6;">↗ detail</span></a></td>
           ${cell(c.notices_sent)}
           ${cell(c.first_class_sent || 0)}
           ${cell(c.certified_sent ? `<strong style="color:#92400e;">${c.certified_sent}</strong>` : 0)}

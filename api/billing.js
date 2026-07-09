@@ -34,6 +34,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const multer = require('multer');
 const puppeteer = require('puppeteer');
 const { renderInvoiceHTML } = require('./invoice_template');
+const BRAND = require('../lib/brand');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -1572,6 +1573,195 @@ router.get('/activity-report', async (req, res) => {
     res.json({ period: { start, end }, communities, totals, page_tracking: hasPageCount });
   } catch (err) {
     console.error('[billing] activity-report failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// GET /api/billing/activity-detail
+//   ?community_id= &period_start=YYYY-MM-DD &period_end=YYYY-MM-DD &format=html|json
+// ----------------------------------------------------------------------------
+// The board-facing DETAIL behind the activity-report counts: every violation
+// letter (property, date, stage, mail class, clickable PDF) and every ARC/ACC
+// decision (property, applicant, outcome) for one community in the period.
+// Bedrock-branded + printable so it can be sent to the board. Letter PDFs are
+// exposed as 7-day signed URLs so a board member (no staff login) can open the
+// supporting document straight from the report.
+// ============================================================================
+router.get('/activity-detail', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    const start = (req.query.period_start || '').slice(0, 10);
+    const end = (req.query.period_end || '').slice(0, 10);
+    const format = (req.query.format || 'html').toLowerCase();
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+      return res.status(400).json({ error: 'period_start and period_end required as YYYY-MM-DD' });
+    }
+    const endEx = (() => { const d = new Date(end + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); })();
+
+    const LETTER_TYPES = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
+    const STAGE_LABEL = {
+      letter_courtesy_1: 'Courtesy 1', letter_courtesy_2: 'Courtesy 2',
+      letter_209: 'Certified §209', letter_postcard_reminder: 'Postcard reminder',
+    };
+
+    async function fetchAll(build) {
+      const out = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await build().range(from, from + 999);
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+      return out;
+    }
+
+    const [{ data: community }, letters, decisions] = await Promise.all([
+      supabase.from('communities').select('id, name, legal_name').eq('id', communityId).maybeSingle(),
+      fetchAll(() => supabase.from('interactions')
+        .select('id, property_id, type, delivery_method, postmark_date, content')
+        .eq('community_id', communityId).in('type', LETTER_TYPES)
+        .not('printed_at', 'is', null).gte('postmark_date', start).lt('postmark_date', endEx)),
+      fetchAll(() => supabase.from('builder_applications')
+        .select('id, reference_number, street_address, submitter_name, status, decided_at')
+        .eq('community_id', communityId)
+        .not('decided_at', 'is', null)
+        .gte('decided_at', start + 'T00:00:00Z').lt('decided_at', endEx + 'T00:00:00Z')),
+    ]);
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+    // Property addresses for the letters.
+    const propIds = [...new Set(letters.map((l) => l.property_id).filter(Boolean))];
+    const addrById = {};
+    for (let i = 0; i < propIds.length; i += 500) {
+      const { data: props } = await supabase.from('properties')
+        .select('id, street_address, unit').in('id', propIds.slice(i, i + 500));
+      (props || []).forEach((p) => { addrById[p.id] = p.street_address + (p.unit ? ' #' + p.unit : ''); });
+    }
+
+    // 7-day signed URLs for the letter PDFs (board opens without a login).
+    const paths = [...new Set(letters.map((l) => l.content).filter((c) => c && /\.pdf$/i.test(c)))];
+    const signedByPath = {};
+    for (let i = 0; i < paths.length; i += 100) {
+      const { data: signed } = await supabase.storage.from('violation-letters')
+        .createSignedUrls(paths.slice(i, i + 100), 60 * 60 * 24 * 7);
+      (signed || []).forEach((s) => { if (s && s.signedUrl && !s.error) signedByPath[s.path] = s.signedUrl; });
+    }
+
+    const letterRows = letters.map((l) => ({
+      property: addrById[l.property_id] || '(unknown address)',
+      date: l.postmark_date,
+      stage: STAGE_LABEL[l.type] || l.type,
+      mail_class: l.delivery_method === 'certified_mail' ? 'Certified' : 'First-class',
+      pdf_url: l.content ? (signedByPath[l.content] || null) : null,
+    })).sort((a, b) => (a.property).localeCompare(b.property) || String(a.date).localeCompare(String(b.date)));
+
+    const arcRows = decisions.map((d) => {
+      const s = (d.status || '').toLowerCase();
+      const outcome = s === 'approved' ? 'Approved'
+        : (s === 'denied' || s === 'rejected') ? 'Denied'
+        : s.includes('condition') ? 'Approved w/ conditions' : (d.status || '—');
+      return {
+        property: d.street_address || '(no address)',
+        applicant: d.submitter_name || '—',
+        reference: d.reference_number || null,
+        outcome,
+        date: (d.decided_at || '').slice(0, 10),
+      };
+    }).sort((a, b) => a.property.localeCompare(b.property));
+
+    const certCount = letterRows.filter((r) => r.mail_class === 'Certified').length;
+    const summary = {
+      letters_total: letterRows.length,
+      certified: certCount,
+      first_class: letterRows.length - certCount,
+      arc_decisions: arcRows.length,
+    };
+
+    if (format === 'json') {
+      return res.json({ community: { id: community.id, name: community.name }, period: { start, end }, summary, letters: letterRows, arc_decisions: arcRows });
+    }
+
+    // ---- Branded, printable HTML ----
+    const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const fmtUS = (s) => { if (!s) return ''; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? s + 'T12:00:00' : s); return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Chicago' }); };
+    const fmtLong = (s) => { const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? s + 'T12:00:00' : s); return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/Chicago' }); };
+    const NAVY = '#0B1D34';
+    const letterTable = letterRows.length ? `
+      <table class="t">
+        <thead><tr><th>Property</th><th>Date</th><th>Stage</th><th>Mail class</th><th>Letter</th></tr></thead>
+        <tbody>${letterRows.map((r) => `<tr>
+          <td><strong>${esc(r.property)}</strong></td><td>${esc(fmtUS(r.date))}</td>
+          <td>${esc(r.stage)}</td>
+          <td>${r.mail_class === 'Certified' ? '<span class="cert">Certified</span>' : 'First-class'}</td>
+          <td>${r.pdf_url ? `<a href="${esc(r.pdf_url)}" target="_blank" rel="noopener">View PDF ↗</a>` : '<span class="muted">—</span>'}</td>
+        </tr>`).join('')}</tbody>
+      </table>` : '<p class="muted">No violation letters mailed in this period.</p>';
+    const arcTable = arcRows.length ? `
+      <table class="t">
+        <thead><tr><th>Property</th><th>Applicant</th><th>Reference</th><th>Decision</th><th>Date</th></tr></thead>
+        <tbody>${arcRows.map((r) => `<tr>
+          <td><strong>${esc(r.property)}</strong></td><td>${esc(r.applicant)}</td>
+          <td>${esc(r.reference || '—')}</td>
+          <td>${r.outcome === 'Denied' ? `<span class="denied">${esc(r.outcome)}</span>` : esc(r.outcome)}</td>
+          <td>${esc(fmtUS(r.date))}</td>
+        </tr>`).join('')}</tbody>
+      </table>` : '<p class="muted">No ARC/ACC decisions rendered in this period.</p>';
+
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    return res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(community.name)} — Activity Detail ${esc(fmtUS(start))}–${esc(fmtUS(end))}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; color: #1a1a1a; margin: 0; background: #f4f4f5; font-size: 13px; line-height: 1.5; }
+  .page { max-width: 8.5in; margin: 22px auto; background: #fff; padding: 0.6in 0.55in; box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
+  .head { border-bottom: 2px solid ${NAVY}; padding-bottom: 14px; margin-bottom: 20px; }
+  .brand { font-weight: 700; color: ${NAVY}; letter-spacing: 0.02em; }
+  .tag { float: right; font-size: 10.5px; letter-spacing: 0.12em; color: #64748b; }
+  h1 { font-size: 21px; color: ${NAVY}; margin: 10px 0 4px; }
+  .sub { color: #475569; font-size: 12.5px; }
+  .meta { color: #64748b; font-size: 11px; margin-top: 6px; }
+  .stats { display: flex; gap: 14px; flex-wrap: wrap; margin: 16px 0 24px; padding: 12px 14px; background: #EAF0F7; border-radius: 6px; }
+  .stat { text-align: center; min-width: 76px; }
+  .stat-n { font-size: 20px; font-weight: 700; color: ${NAVY}; }
+  .stat-l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #475569; margin-top: 2px; }
+  h2 { font-size: 15px; color: ${NAVY}; margin: 24px 0 8px; padding-bottom: 5px; border-bottom: 1px solid #d4d4d8; }
+  table.t { width: 100%; border-collapse: collapse; }
+  table.t th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; border-bottom: 1.5px solid ${NAVY}; padding: 5px 8px; }
+  table.t td { padding: 6px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+  a { color: #1F3A5F; font-weight: 600; }
+  .cert { color: #92400e; font-weight: 700; }
+  .denied { color: #b91c1c; font-weight: 700; }
+  .muted { color: #94a3b8; }
+  .foot { margin-top: 26px; padding-top: 12px; border-top: 1px solid #e5e5e5; font-size: 10.5px; color: #94a3b8; display: flex; justify-content: space-between; }
+  .noprint { background: #fef9c3; border-bottom: 1px solid #fde047; padding: 8px 12px; font-size: 12px; text-align: center; }
+  @media print { .noprint { display: none; } body { background: #fff; } .page { box-shadow: none; margin: 0; max-width: none; } }
+</style></head>
+<body>
+  <div class="noprint">Tip: hit <strong>Ctrl/Cmd-P</strong> → "Save as PDF" to send this to the board. Letter links stay live for 7 days.</div>
+  <div class="page">
+    <div class="head">
+      <div><span class="brand">${esc(BRAND.service.name)}</span><span class="tag">${esc(BRAND.service.taglineUpper)}</span></div>
+      <h1>${esc(community.name)} — Compliance & ARC Activity</h1>
+      <div class="sub">Detail for <strong>${esc(fmtLong(start))}</strong> through <strong>${esc(fmtLong(end))}</strong></div>
+      <div class="meta">${esc(BRAND.service.legal)} on behalf of the ${esc(community.name)} Board of Directors</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="stat-n">${summary.letters_total}</div><div class="stat-l">Letters sent</div></div>
+      <div class="stat"><div class="stat-n">${summary.first_class}</div><div class="stat-l">First-class</div></div>
+      <div class="stat"><div class="stat-n">${summary.certified}</div><div class="stat-l">Certified</div></div>
+      <div class="stat"><div class="stat-n">${summary.arc_decisions}</div><div class="stat-l">ARC decisions</div></div>
+    </div>
+    <h2>Violation letters</h2>
+    ${letterTable}
+    <h2>ARC / ACC decisions</h2>
+    ${arcTable}
+    <div class="foot"><span>${esc(BRAND.service.name)}</span><span>${esc(community.name)} · ${esc(fmtUS(start))}–${esc(fmtUS(end))}</span></div>
+  </div>
+</body></html>`);
+  } catch (err) {
+    console.error('[billing] activity-detail failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
