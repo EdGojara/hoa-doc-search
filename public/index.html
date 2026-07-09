@@ -11160,16 +11160,17 @@
              per-community, the force-mow dispatch returns a config error
              rather than risk citing the wrong Article. -->
         <div style="background:#f3e8ff; border:1px solid #d8b4fe; border-radius:8px; padding:12px 14px; margin-bottom:14px;">
-          <div style="font-size:12px; font-weight:700; color:#581c87; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">🟪 Force-mow letter — Declaration citation</div>
+          <div style="font-size:12px; font-weight:700; color:#581c87; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">Self-help letters — Declaration citations</div>
           <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px 18px; margin-bottom:8px;">
             <label class="prof-fld"><span>Declaration document number</span><input id="lc-decl-doc-number" placeholder="e.g., 1999106014" /></label>
             <label class="prof-fld"><span>County (where recorded)</span><input id="lc-decl-county" placeholder="e.g., Fort Bend" /></label>
             <label class="prof-fld"><span>Subdivision name as cited in Declaration</span><input id="lc-decl-short-name" placeholder="e.g., Eaglewood (falls back to community name)" /></label>
-            <label class="prof-fld"><span>Force-mow admin fee (dollars)</span><input id="lc-fm-fee" type="number" step="1" min="0" placeholder="25" /></label>
-            <label class="prof-fld" style="grid-column: 1 / -1;"><span>Article / section authorizing force-mow + self-help</span><input id="lc-fm-section" placeholder='e.g., "Article 6.16 of the Declaration"' /></label>
+            <label class="prof-fld"><span>Self-help admin fee (dollars)</span><input id="lc-fm-fee" type="number" step="1" min="0" placeholder="25" /></label>
+            <label class="prof-fld" style="grid-column: 1 / -1;"><span>🟪 Article authorizing <b>lawn force-mow</b> self-help</span><input id="lc-fm-section" placeholder='e.g., "Article 6.16 of the Declaration"' /></label>
+            <label class="prof-fld" style="grid-column: 1 / -1;"><span>♻️ Article authorizing <b>trash / debris cleanup</b> self-help</span><input id="lc-cleanup-section" placeholder='e.g., "Article 6.18 of the Declaration" — leave blank if this community has no cleanup self-help provision' /></label>
           </div>
           <div style="font-size:11px; color:#581c87; line-height:1.5;">
-            These four fields cite the legal authority for the 10-day certified force-mow notice (TX §202.018 + Declaration self-help). Letter dispatch refuses to render without doc number + county + Article — too risky to use placeholders on a certified §202.018 notice that ends up in court. Pull from your Declaration's first page (recording stamp) and the table of contents.
+            These cite the legal authority for the 10-day certified self-help notices (TX §202.018 / §209 + Declaration self-help). Each letter cites its OWN article — the force-mow letter uses the lawn article, the cleanup letter uses the cleanup article, with <b>no fallback between them</b>. A letter refuses to render (and its button doesn't appear) unless the doc number, county, and that remedy's article are all set — too risky to cite the wrong authority on a certified notice that ends up in court. Leave an article blank if this community's documents don't grant that self-help right. Pull the doc number + county from the Declaration's recording stamp and the articles from its table of contents.
           </div>
         </div>
 
@@ -29489,6 +29490,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     set('lc-decl-county',      c.declaration_county);
     set('lc-decl-short-name',  c.declaration_short_name);
     set('lc-fm-section',       c.force_mow_section_full);
+    set('lc-cleanup-section',  c.cleanup_section_full);
     set('lc-fm-fee',           c.force_mow_admin_fee_cents != null ? (c.force_mow_admin_fee_cents / 100) : '');
 
     // Builder ARC standards (migration 135 — single JSONB column)
@@ -29540,6 +29542,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       declaration_county:                val('lc-decl-county') || null,
       declaration_short_name:            val('lc-decl-short-name') || null,
       force_mow_section_full:            val('lc-fm-section') || null,
+      cleanup_section_full:              val('lc-cleanup-section') || null,
       force_mow_admin_fee_cents:         dollarsToCents('lc-fm-fee'),
       // Builder ARC standards — assembled into a single JSONB object before
       // POST. Empty strings become undefined (omitted from the JSON);
@@ -48575,7 +48578,11 @@ ${questionsPage}
       const r = await fetch(`/api/enforcement/property/${encodeURIComponent(propertyId)}/violation-summary`);
       const j = await r.json();
       const violations = j.violations || [];
-      const selfHelpConfigured = !!j.self_help_configured;
+      // Split self-help capability: lawn (force-mow) and trash (cleanup) are
+      // separate Declaration authorities — a community may have one, both, or
+      // neither. Each letter is gated on its own flag so we never offer a
+      // letter that would cite authority the docs don't grant.
+      const selfHelpCleanupConfigured = !!j.self_help_cleanup_configured;
       if (violations.length === 0) return;
 
       // Find the Open Violations section in the side panel (rendered above
@@ -48646,22 +48653,25 @@ ${questionsPage}
             </button>`
           : '';
         // Dedicated trash-cleanup 10-day certified button — the trash parallel
-        // to force-mow. Always shown on this category (like force-mow); the
-        // endpoint 409s with a helpful config alert if the community's
-        // Declaration self-help fields aren't set yet.
-        const trashCleanupBtn = v.is_open && v.category_slug === 'trash_cleanup_10day'
-          ? `<button onclick="cmapDraftForceMowLetter('${v.id}', '${escapeHtml(v.category_label || 'trash violation')}', 'cleanup')" type="button"
+        // to force-mow. Only shown where THIS community's docs grant trash
+        // self-help (cleanup_section_full set); otherwise a muted note explains
+        // why and where to fix it, so we never offer a letter that would cite
+        // authority the Declaration doesn't grant.
+        const trashCleanupBtn = (v.is_open && v.category_slug === 'trash_cleanup_10day')
+          ? (selfHelpCleanupConfigured
+            ? `<button onclick="cmapDraftForceMowLetter('${v.id}', '${escapeHtml(v.category_label || 'trash violation')}', 'cleanup')" type="button"
                      style="background:#0B5563; color:#fff; border:none; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;"
                      title="10-day certified cleanup letter: cure the cleanup or the Association cleans up and charges it back as an assessment (Declaration self-help authority + §209 notice).">
               📄 Draft 10-day cleanup letter
             </button>`
+            : `<span style="font-size:10.5px; color:#92400e; background:#fef3c7; border:1px solid #fde047; padding:3px 8px; border-radius:5px; margin-left:6px;" title="Set the trash/debris self-help article in Community Profile → Self-help letters before this letter can be drafted.">⚠️ No trash self-help provision on file — set it in Community Profile</span>`)
           : '';
         // General self-help (cleanup / abatement) 10-day certified letter —
-        // same Declaration authority + §209 wording as force-mow, cleanup
-        // wording. Offered on any OTHER open violation (not the two dedicated
-        // special tracks above), but only where the community has the
-        // Declaration self-help config (else it would error).
-        const cleanupBtn = v.is_open && selfHelpConfigured
+        // cleanup wording, cited to this community's cleanup self-help article.
+        // Offered on any OTHER open violation (not the two dedicated special
+        // tracks above), but only where the community has trash self-help
+        // configured (else it would error / cite the wrong authority).
+        const cleanupBtn = v.is_open && selfHelpCleanupConfigured
           && v.category_slug !== 'lawn_force_mow_10day'
           && v.category_slug !== 'trash_cleanup_10day'
           ? `<button onclick="cmapDraftForceMowLetter('${v.id}', '${escapeHtml(v.category_label || 'violation')}', 'cleanup')" type="button"

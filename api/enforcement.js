@@ -6247,15 +6247,23 @@ router.get('/property/:propertyId/violation-summary', async (req, res) => {
     // 10-day certified self-help letter. Drives whether the UI offers the
     // "Draft self-help cleanup letter" button — so it never shows where it
     // would only error. (Eaglewood is configured today.)
-    let self_help_configured = false;
+    // Lawn (force-mow) and trash (cleanup) self-help are SEPARATE authorities:
+    // each is granted by its own Declaration article and not every community
+    // has both (or either). Gate each letter on its own section so the UI never
+    // offers a letter that would cite authority the docs don't grant. Both also
+    // need the shared Declaration doc # + county. (Ed 2026-07-09.)
+    let self_help_lawn_configured = false;
+    let self_help_cleanup_configured = false;
     const communityId = (violations && violations[0] && violations[0].community_id)
       || (await supabase.from('properties').select('community_id').eq('id', propertyId).maybeSingle()).data?.community_id;
     if (communityId) {
       const { data: comm } = await supabase
         .from('communities')
-        .select('declaration_doc_number, declaration_county, force_mow_section_full')
+        .select('declaration_doc_number, declaration_county, force_mow_section_full, cleanup_section_full')
         .eq('id', communityId).maybeSingle();
-      self_help_configured = !!(comm && comm.declaration_doc_number && comm.declaration_county && comm.force_mow_section_full);
+      const declBase = !!(comm && comm.declaration_doc_number && comm.declaration_county);
+      self_help_lawn_configured = declBase && !!comm.force_mow_section_full;
+      self_help_cleanup_configured = declBase && !!comm.cleanup_section_full;
     }
 
     res.json({
@@ -6263,7 +6271,12 @@ router.get('/property/:propertyId/violation-summary', async (req, res) => {
       total_violations: result.length,
       open_count: result.filter((v) => v.is_open).length,
       legal_flag,
-      self_help_configured,
+      // Back-compat: self_help_configured historically meant the force-mow
+      // (lawn) letter. Keep it aliased to the lawn flag; new UI reads the
+      // split flags below.
+      self_help_configured: self_help_lawn_configured,
+      self_help_lawn_configured,
+      self_help_cleanup_configured,
       violations: result,
     });
   } catch (err) {
@@ -6579,7 +6592,7 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
         .maybeSingle(),
       supabase
         .from('communities')
-        .select('id, name, legal_name, declaration_doc_number, declaration_county, declaration_short_name, force_mow_section_full, force_mow_admin_fee_cents')
+        .select('id, name, legal_name, declaration_doc_number, declaration_county, declaration_short_name, force_mow_section_full, cleanup_section_full, force_mow_admin_fee_cents')
         .eq('id', violation.community_id)
         .maybeSingle(),
       // Current owner via the spine view
@@ -6596,11 +6609,21 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
     if (!property) return res.status(404).json({ error: 'property_not_found' });
     if (!community) return res.status(404).json({ error: 'community_not_found' });
 
-    // Community config — must be set per migration 126
-    if (!community.force_mow_section_full || !community.declaration_doc_number || !community.declaration_county) {
+    // Community config — the authorizing section is remedy-specific (migration
+    // 126 force_mow_section_full for lawn; migration 269 cleanup_section_full
+    // for trash/debris). No fallback between them: citing the wrong article on
+    // a certified self-help notice is a §209 / trespass exposure. Blank section
+    // => this community's docs don't grant that self-help authority, so the
+    // letter is not available here.
+    const authorizingSection = remedyMode === 'cleanup'
+      ? community.cleanup_section_full
+      : community.force_mow_section_full;
+    if (!authorizingSection || !community.declaration_doc_number || !community.declaration_county) {
+      const sectionField = remedyMode === 'cleanup' ? 'cleanup_section_full' : 'force_mow_section_full';
+      const remedyLabel = remedyMode === 'cleanup' ? 'trash/debris cleanup' : 'lawn force-mow';
       return res.status(409).json({
-        error: 'community_force_mow_config_missing',
-        message: `Community "${community.name}" needs force-mow config set: declaration_doc_number, declaration_county, force_mow_section_full. Update the communities row via the Community Profile admin or directly via SQL.`,
+        error: 'community_self_help_config_missing',
+        message: `Community "${community.name}" has no recorded ${remedyLabel} self-help authority. Set declaration_doc_number, declaration_county, and the ${sectionField} article in Community Profile → Self-help letters before drafting this letter.`,
       });
     }
 
@@ -6651,7 +6674,7 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
       alt_mailing_address_block: altMailingBlock,
       declaration_doc_number: community.declaration_doc_number,
       declaration_county: community.declaration_county,
-      declaration_section_full: community.force_mow_section_full,
+      declaration_section_full: authorizingSection,
       observation_date: (violation.opened_at || '').slice(0, 10),
       observed_condition: (req.body && req.body.observed_condition) || violation.summary
         || (remedyMode === 'cleanup'
