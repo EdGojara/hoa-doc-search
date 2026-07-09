@@ -17072,6 +17072,23 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </div>
         </div>
 
+        <!-- Enforcement start — default courtesy_1 (starts the ladder); option
+             to open directly at the 30-day certified §209 notice, skipping the
+             courtesy steps. A deliberate escalation (repeat offender / serious
+             issue). Sends override_stage=certified_209 to the backend, which
+             already routes it to certified mail. -->
+        <div style="margin-bottom: 14px;">
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Enforcement start</label>
+          <select id="manualVioStartStage" onchange="manualVioStartStageChanged()"
+                  style="width:100%; padding:10px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; background:#fff;">
+            <option value="">Courtesy notice — standard start</option>
+            <option value="certified_209">30-day Certified §209 — skip courtesy notices</option>
+          </select>
+          <div id="manualVioCertWarn" style="display:none; margin-top:8px; padding:8px 12px; background:#fef3c7; border:1px solid #fde047; border-radius:8px; font-size:12px; color:#92400e; line-height:1.5;">
+            ⚠️ <strong>Certified §209, no courtesy first.</strong> Opens the violation directly at the certified 30-day notice — a deliberate escalation for repeat offenders or serious violations. The letter goes certified mail.
+          </div>
+        </div>
+
         <!-- Description -->
         <div style="margin-bottom: 14px;">
           <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Description / notes</label>
@@ -19676,6 +19693,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     document.getElementById('manualVioPropertySearch').value = '';
     document.getElementById('manualVioError').style.display = 'none';
     document.getElementById('manualVioForceMowWarn').style.display = 'none';
+    const startStageEl = document.getElementById('manualVioStartStage');
+    if (startStageEl) startStageEl.value = '';
+    const certWarnEl = document.getElementById('manualVioCertWarn');
+    if (certWarnEl) certWarnEl.style.display = 'none';
     const dupeEl = document.getElementById('manualVioDupeWarning');
     if (dupeEl) dupeEl.style.display = 'none';
 
@@ -19802,6 +19823,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (filtered.length > 200) {
       propSel.innerHTML += `<option value="" disabled>(${filtered.length - 200} more — refine search)</option>`;
     }
+  }
+
+  function manualVioStartStageChanged() {
+    const v = (document.getElementById('manualVioStartStage') || {}).value || '';
+    const warn = document.getElementById('manualVioCertWarn');
+    if (warn) warn.style.display = (v === 'certified_209') ? 'block' : 'none';
   }
 
   function manualVioCategoryChanged() {
@@ -19951,6 +19978,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const severity = document.getElementById('manualVioSeverity').value;
     const source = document.getElementById('manualVioSource').value;
     const description = document.getElementById('manualVioDescription').value;
+    const startStage = (document.getElementById('manualVioStartStage') || {}).value || '';
 
     if (!communityId) return showErr('Pick a community.');
     if (!propertyId)  return showErr('Pick a property.');
@@ -19967,6 +19995,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     fd.append('severity', severity);
     fd.append('source', source);
     fd.append('description', description);
+    // Optional deliberate escalation: open directly at 30-day certified §209,
+    // skipping courtesy. Blank = standard courtesy_1 start (backend default).
+    if (startStage) fd.append('override_stage', startStage);
     // Tell the server-side guard whether the operator confirmed an
     // intentional duplicate via the warning panel's "File anyway" button.
     if (_mvAllowDuplicate) fd.append('allow_duplicate', 'true');
