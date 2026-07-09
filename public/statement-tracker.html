@@ -18,6 +18,21 @@
   .lede{color:var(--muted);font-size:13px;max-width:64ch;}
   .how{background:var(--navy);color:#dfe7f2;border-radius:10px;padding:12px 16px;margin:14px 0;font-size:12.5px;}
   .how b{color:#fff;} .how .step{color:var(--gold);font-weight:700;}
+  .drop{display:block;border:2px dashed #c3cfdd;border-radius:12px;background:var(--card);padding:20px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;margin-bottom:6px;}
+  .drop:hover,.drop.over{border-color:var(--have);background:#f4fbf6;}
+  .drop-icon{font-size:26px;color:var(--have);line-height:1;}
+  .drop-inner b{color:var(--navy);} .drop-sub{font-size:12px;color:var(--muted);margin-top:3px;}
+  #results{margin:8px 0 2px;}
+  .resrow{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 13px;margin-bottom:7px;font-size:13px;}
+  .resrow .fn{font-weight:600;color:var(--ink);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 0 auto;}
+  .resrow .st{color:var(--muted);flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .resrow.ok{border-left:3px solid var(--have);} .resrow.ok .st{color:var(--have);}
+  .resrow.ask{border-left:3px solid var(--gold);}
+  .resrow.err{border-left:3px solid #b91c1c;} .resrow.err .st{color:#b91c1c;}
+  .resrow select{border:1px solid var(--line);border-radius:7px;padding:5px 8px;font-size:12.5px;max-width:230px;}
+  .resrow .go{border:none;background:var(--navy);color:#fff;border-radius:7px;padding:5px 11px;font-size:12px;font-weight:600;cursor:pointer;}
+  .spin{width:14px;height:14px;border:2px solid #dbe3ec;border-top-color:var(--have);border-radius:50%;animation:sp .7s linear infinite;flex:0 0 auto;}
+  @keyframes sp{to{transform:rotate(360deg);}}
   .bar{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;margin:14px 0 8px;}
   .prog{flex:1;min-width:240px;}
   .prog-track{height:9px;border-radius:6px;background:#dde3ec;overflow:hidden;}
@@ -71,8 +86,18 @@
     <p class="lede">Live status of every account&rsquo;s monthly bank statements. <b style="color:var(--have)">Green</b> updates automatically the moment a statement is imported. This is the shared view &mdash; everyone sees the same thing.</p>
   </header>
   <div class="how">
-    <b>Upload right here:</b> click any <span class="step">open cell</span> and choose that account&rsquo;s statement PDF. It reads the statement, files it into the correct month, and turns green &mdash; no other screen needed.
+    <b>Easiest way:</b> drop bank statements in the panel below &mdash; the AI reads each one, figures out the community, account, and month, and files it. It only asks if it truly can&rsquo;t tell. <span class="step">(Or click any open cell to upload that exact one.)</span>
   </div>
+
+  <label class="drop" id="drop">
+    <div class="drop-inner">
+      <div class="drop-icon">&#8681;</div>
+      <div><b>Drop bank statements here</b>, or click to choose &mdash; several at once is fine.</div>
+      <div class="drop-sub">The AI sorts each into the right account &amp; month automatically.</div>
+    </div>
+    <input type="file" id="dropfile" accept="application/pdf" multiple style="display:none">
+  </label>
+  <div id="results"></div>
   <div class="bar">
     <div class="prog"><div class="prog-track"><div class="prog-fill" id="fill"></div></div><div class="prog-nums" id="nums">Loading&hellip;</div></div>
     <div class="legend">
@@ -153,6 +178,39 @@ function render(d){
     <div class="note"><b>Canyon Gate is mid-switch</b>Columbia (closing) + NewFirst (go-forward). Collect Columbia through closing, NewFirst from its open date.</div>
     <div class="note"><b>Sweeps &amp; brokerage</b>ICS sweep balances usually appear on the parent statement (shown N/A). Edward Jones brokerage has its own.</div>`;
 }
+// --- smart drop panel: AI files each statement; asks only when unsure ---------
+const drop=document.getElementById('drop'), dropfile=document.getElementById('dropfile'), results=document.getElementById('results');
+dropfile.addEventListener('change',e=>{ handleFiles([...e.target.files]); dropfile.value=''; });
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over');});
+drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');handleFiles([...e.dataTransfer.files].filter(f=>/pdf/i.test(f.type)||/\.pdf$/i.test(f.name)));});
+
+async function handleFiles(files){ if(!files.length) return; let any=false; for(const f of files){ const ch=await smartOne(f,{}); any=any||ch; } if(any) load(); }
+function addRow(name){ const d=document.createElement('div'); d.className='resrow'; d.innerHTML=`<span class="fn">${esc(name)}</span><span class="st"></span>`; results.prepend(d); return d; }
+function setRow(row,cls,html){ row.className='resrow '+cls; row.querySelector('.st').innerHTML=html; }
+async function smartOne(f,extra){
+  const row = extra._row || addRow(f.name);
+  setRow(row,'','<span class="spin"></span> Reading statement…');
+  const fd=new FormData(); fd.append('file',f);
+  if(extra.community_id) fd.append('community_id',extra.community_id);
+  if(extra.bank_account_id) fd.append('bank_account_id',extra.bank_account_id);
+  let j; try{ const r=await fetch('/api/checks/statement-tracker/smart-upload',{method:'POST',body:fd}); j=await r.json().catch(()=>({})); if(r.status>=500&&!j.error) j.error='system error'; }catch(e){ j={error:'upload failed'}; }
+  if(j.ok){ setRow(row,'ok',`✓ ${esc(j.community||'')} &middot; ${esc(j.account||'')} &middot; ${esc(j.month||'')}${j.already?' (already had it)':''}`); return true; }
+  if(j.needs==='community'){ askCommunity(row,f,j); return false; }
+  if(j.needs==='account'){ askAccount(row,f,j); return false; }
+  setRow(row,'err',esc(j.error||'Could not file this one — try the cell instead.')); return false;
+}
+function askCommunity(row,f,j){
+  const opts=(j.communities||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  setRow(row,'ask',`Which community is this?${j.holder?` <span style="color:var(--muted)">(&ldquo;${esc(j.holder)}&rdquo;)</span>`:''} <select class="pick">${opts}</select> <button class="go">File it</button>`);
+  row.querySelector('.go').onclick=()=>{ const cid=row.querySelector('.pick').value; smartOne(f,{community_id:cid,_row:row}).then(ch=>{ if(ch) load(); }); };
+}
+function askAccount(row,f,j){
+  const opts=(j.accounts||[]).map(a=>`<option value="${esc(a.id)}">${esc(a.nickname)}${a.bank?' — '+esc(a.bank):''}</option>`).join('');
+  setRow(row,'ask',`${esc(j.community_name||'')} — which account? <select class="pick">${opts}</select> <button class="go">File it</button>`);
+  row.querySelector('.go').onclick=()=>{ const aid=row.querySelector('.pick').value; smartOne(f,{community_id:j.community_id,bank_account_id:aid,_row:row}).then(ch=>{ if(ch) load(); }); };
+}
+
 document.getElementById('refresh').addEventListener('click', load);
 load();
 </script>

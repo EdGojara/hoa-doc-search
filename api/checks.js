@@ -160,6 +160,120 @@ router.post('/statement-tracker/upload', stmtUpload.single('file'), async (req, 
   } catch (err) { handleErr(res, 'statement-tracker-upload', err); }
 });
 
+// --- matching helpers for the smart drop panel ---------------------------------
+const _strip = (s) => String(s || '').toLowerCase()
+  .replace(/\b(homeowners?|associations?|assoc|inc|incorporated|hoa|community|llc|ltd|co|the|of|at|and|cinco)\b/g, ' ')
+  .replace(/[^a-z0-9]+/g, ' ').trim();
+function matchCommunity(holder, communities) {
+  const h = _strip(holder);
+  if (!h) return null;
+  let best = null, bestScore = 0;
+  for (const c of communities) {
+    const toks = _strip(c.legal_name || c.name).split(' ').filter(Boolean);
+    if (!toks.length) continue;
+    const hit = toks.filter((t) => h.includes(t)).length / toks.length;
+    if (hit > bestScore) { bestScore = hit; best = c; }
+  }
+  return bestScore >= 0.75 ? best : null; // confident only
+}
+function matchAccount(ex, accts) {
+  const l4 = String(ex.account_last4 || '').replace(/\D/g, '');
+  if (l4) { const m = accts.filter((a) => (a.account_last4 || '') === l4); if (m.length === 1) return m[0]; }
+  const hint = `${ex.account_name_hint || ''}`.toLowerCase();
+  const bankN = String(ex.bank_name || '').toLowerCase().replace(/[^a-z]/g, '');
+  const want = /money market|reserve/.test(hint) ? 'reserve' : /operating|checking/.test(hint) ? 'operating'
+    : /savings/.test(hint) ? 'savings' : /adopt/.test(hint) ? 'adopt' : /ics|sweep/.test(hint) ? 'sweep' : null;
+  let cands = accts.slice();
+  if (want) cands = accts.filter((a) => {
+    const n = (a.account_nickname || '').toLowerCase();
+    if (want === 'sweep') return /sweep|ics/.test(n);
+    if (want === 'operating') return /operating|checking/.test(n) && !/sweep|ics/.test(n);
+    if (want === 'reserve') return /reserve|money market/.test(n) && !/sweep|ics/.test(n);
+    if (want === 'savings') return /savings/.test(n);
+    if (want === 'adopt') return /adopt/.test(n);
+    return true;
+  });
+  if (cands.length > 1 && bankN) {
+    const bc = cands.filter((a) => a.bank && bankN.includes(String(a.bank.name || '').toLowerCase().replace(/[^a-z]/g, '').slice(0, 7)));
+    if (bc.length) cands = bc;
+  }
+  return cands.length === 1 ? cands[0] : null;
+}
+
+// POST /statement-tracker/smart-upload — drop a statement, the AI figures out the
+// community + account + month and files it. Only asks when it genuinely can't
+// tell. Body: multipart 'file' + optional community_id / bank_account_id overrides.
+router.post('/statement-tracker/smart-upload', stmtUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Pick a PDF.' });
+    let ex;
+    try { ex = await extractBankStatement(req.file.buffer, req.file.mimetype, req.file.originalname); }
+    catch (e) { return res.status(500).json({ error: `Could not read that statement: ${e.message}` }); }
+
+    // Resolve community
+    let communityId = req.body && req.body.community_id;
+    const { data: comms } = await supabase.from('communities').select('id, name, legal_name');
+    if (!communityId) {
+      const c = matchCommunity(ex.account_holder_name, comms || []);
+      if (!c) return res.json({ ok: false, needs: 'community', holder: ex.account_holder_name || null,
+        bank: ex.bank_name || null, period_end: ex.period_end || null, communities: (comms || []).map((x) => ({ id: x.id, name: x.name })) });
+      communityId = c.id;
+    }
+    const commName = (comms || []).find((x) => x.id === communityId);
+
+    // Resolve account within the community
+    const { data: accts } = await supabase.from('bank_accounts')
+      .select('id, community_id, account_nickname, account_last4, bank:bank_id(name)').eq('community_id', communityId);
+    let ba = null;
+    if (req.body && req.body.bank_account_id) ba = (accts || []).find((a) => a.id === req.body.bank_account_id);
+    else ba = matchAccount(ex, accts || []);
+    if (!ba) return res.json({ ok: false, needs: 'account', community_id: communityId,
+      community_name: commName ? commName.name : null, holder: ex.account_holder_name || null,
+      bank: ex.bank_name || null, name_hint: ex.account_name_hint || null, period_end: ex.period_end || null,
+      accounts: (accts || []).map((a) => ({ id: a.id, nickname: a.account_nickname, bank: a.bank ? a.bank.name : null })) });
+
+    const out = await finalizeStatementImport(ba, ex, req.file);
+    res.json({ ok: true, ...out, community: commName ? commName.name : null, account: ba.account_nickname });
+  } catch (err) { handleErr(res, 'statement-tracker-smart-upload', err); }
+});
+
+// Shared import: dedup by month, store the PDF, insert the completed row + txns.
+async function finalizeStatementImport(ba, ex, file, monthHint) {
+  let periodEnd = ex.period_end || null, periodStart = ex.period_start || null;
+  if (!periodEnd && monthHint && /^\d{4}-\d{2}$/.test(monthHint)) {
+    const [y, m] = monthHint.split('-').map(Number);
+    periodEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); periodStart = `${monthHint}-01`;
+  }
+  const monthKey = periodEnd ? String(periodEnd).slice(0, 7) : null;
+  if (monthKey) {
+    const { data: exist } = await supabase.from('bank_statement_imports').select('id')
+      .eq('bank_account_id', ba.id).eq('status', 'completed')
+      .gte('statement_period_end', `${monthKey}-01`).lte('statement_period_end', periodEnd).limit(1);
+    if (exist && exist.length) return { month: monthKey, already: true };
+  }
+  const sha = crypto.createHash('sha256').update(file.buffer).digest('hex');
+  const safe = (file.originalname || 'bank-statement.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `bank-statements/${ba.community_id}/${sha.slice(0, 12)}-${safe}`;
+  try { await supabase.storage.from('documents').upload(path, file.buffer, { contentType: file.mimetype, upsert: true }); } catch (_) {}
+  const { data: bsi, error } = await supabase.from('bank_statement_imports').insert({
+    management_company_id: BEDROCK_MGMT_CO_ID, community_id: ba.community_id, bank_account_id: ba.id,
+    statement_period_start: periodStart, statement_period_end: periodEnd,
+    beginning_balance_cents: ex.beginning_balance_cents ?? null, ending_balance_cents: ex.ending_balance_cents ?? null,
+    total_deposits_cents: ex.total_deposits_cents ?? null, total_withdrawals_cents: ex.total_withdrawals_cents ?? null,
+    total_fees_cents: ex.total_fees_cents ?? null, total_interest_cents: ex.total_interest_cents ?? null,
+    source_filename: file.originalname || null, source_storage_path: path, source_sha256: sha,
+    source_file_size_bytes: file.size, source_file_mime: file.mimetype,
+    extraction_raw: ex, extraction_warnings: ex.warnings || [], status: 'completed',
+  }).select('id').single();
+  if (error) throw error;
+  const tx = (ex.transactions || []).filter((t) => t.posting_date && t.amount_cents != null).map((t) => ({
+    bank_statement_import_id: bsi.id, posting_date: t.posting_date, amount_cents: t.amount_cents,
+    description: t.description || null, check_number: t.check_number || null, transaction_type: t.transaction_type || 'other',
+  }));
+  if (tx.length) { try { await supabase.from('bank_statement_transactions').insert(tx); } catch (_) {} }
+  return { month: monthKey };
+}
+
 router.get('/accounts/:bankAccountId/config', async (req, res) => {
   try { res.json({ config: await getBankCheckConfig(req.params.bankAccountId) }); }
   catch (err) { handleErr(res, 'config-get', err); }
