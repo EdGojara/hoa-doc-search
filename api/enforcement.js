@@ -6723,6 +6723,44 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
       throw err;
     }
 
+    // Persist so the letter enters the Drafts → print → mail pipeline, shows in
+    // the property's letter history, and is counted for postage billing once
+    // mailed. Without this the dedicated button just streamed a one-off PDF that
+    // left no record (Ed 2026-07-09: "a letter was created, why isn't it showing
+    // up"). Best-effort: a persistence failure still returns the PDF but logs
+    // loudly. One draft per violation — sweep any prior draft first.
+    try {
+      await _ensureLettersBucket();
+      const { data: priorDrafts } = await supabase.from('interactions')
+        .select('id, content').eq('violation_id', violationId).eq('status', 'draft').like('type', 'letter_%');
+      for (const d of (priorDrafts || [])) {
+        if (d.content && /\.pdf$/i.test(d.content)) { try { await supabase.storage.from(LETTERS_BUCKET).remove([d.content]); } catch (_) {} }
+        try { await supabase.from('interactions').delete().eq('id', d.id); } catch (_) {}
+      }
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const storagePath = `${violationId}/self-help-${remedyMode}-${stamp}.pdf`;
+      const { error: upErr } = await supabase.storage.from(LETTERS_BUCKET)
+        .upload(storagePath, pdfBuffer, { contentType: 'application/pdf', upsert: false });
+      if (upErr) throw upErr;
+      let pageCount = null;
+      try { pageCount = (await require('pdf-parse')(pdfBuffer)).numpages || null; } catch (_) { /* page_count is optional */ }
+      const { error: iErr } = await supabase.from('interactions').insert({
+        community_id: violation.community_id,
+        property_id: violation.property_id,
+        violation_id: violationId,
+        type: 'letter_209',   // certified self-help notice — valid interactions.type
+        direction: 'outbound',
+        subject: `10-day certified ${remedyMode === 'cleanup' ? 'cleanup' : 'force-mow'} letter`,
+        content: storagePath,
+        delivery_method: 'certified_mail',   // self-help notices always go certified
+        status: 'draft',
+        page_count: pageCount,
+      });
+      if (iErr) throw iErr;
+    } catch (persistErr) {
+      console.error('[draft-force-mow-letter] letter persistence FAILED (PDF still returned):', persistErr.message);
+    }
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="force-mow-letter-${propertyAddressShort.replace(/[^a-zA-Z0-9]+/g, '-')}-${renderData.letter_date}.pdf"`);
     res.send(pdfBuffer);
