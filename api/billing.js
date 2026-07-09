@@ -1499,11 +1499,11 @@ router.get('/activity-report', async (req, res) => {
     let letters;
     let hasPageCount = true;
     try {
-      letters = await letterCols('id, community_id, content, page_count, type, postmark_date');
+      letters = await letterCols('id, community_id, content, page_count, type, delivery_method, postmark_date');
     } catch (e) {
       if (/page_count/.test(e.message || '')) {
         hasPageCount = false;
-        letters = await letterCols('id, community_id, content, type, postmark_date');
+        letters = await letterCols('id, community_id, content, type, delivery_method, postmark_date');
       } else { throw e; }
     }
 
@@ -1526,7 +1526,7 @@ router.get('/activity-report', async (req, res) => {
     const byComm = {};
     const row = (cid) => (byComm[cid] || (byComm[cid] = {
       community_id: cid, name: nameById[cid] || 'Unknown',
-      notices_sent: 0, pages_printed: 0,
+      notices_sent: 0, certified_sent: 0, first_class_sent: 0, pages_printed: 0,
       arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0,
       _seenPaths: new Set(),
     }));
@@ -1534,6 +1534,10 @@ router.get('/activity-report', async (req, res) => {
     letters.forEach((l) => {
       const r = row(l.community_id);
       r.notices_sent += 1;
+      // Split by mail class — certified costs materially more postage than
+      // first-class, and the board detail bills them at different rates.
+      if (l.delivery_method === 'certified_mail') r.certified_sent += 1;
+      else r.first_class_sent += 1;
       // Pages: count each physical PDF once (bundled letters share a path).
       const key = l.content || l.id;
       if (!r._seenPaths.has(key)) {
@@ -1556,12 +1560,14 @@ router.get('/activity-report', async (req, res) => {
 
     const totals = communities.reduce((t, r) => ({
       notices_sent: t.notices_sent + r.notices_sent,
+      certified_sent: t.certified_sent + r.certified_sent,
+      first_class_sent: t.first_class_sent + r.first_class_sent,
       pages_printed: t.pages_printed + r.pages_printed,
       arc_approved: t.arc_approved + r.arc_approved,
       arc_denied: t.arc_denied + r.arc_denied,
       arc_conditions: t.arc_conditions + r.arc_conditions,
       arc_other: t.arc_other + r.arc_other,
-    }), { notices_sent: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0 });
+    }), { notices_sent: 0, certified_sent: 0, first_class_sent: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0 });
 
     res.json({ period: { start, end }, communities, totals, page_tracking: hasPageCount });
   } catch (err) {

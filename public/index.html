@@ -4018,26 +4018,28 @@
         <tr>
           <td style="padding:7px 10px; border-bottom:1px solid #eee; font-size:13px; font-weight:600;">${escapeHtml(c.name)}</td>
           ${cell(c.notices_sent)}
+          ${cell(c.first_class_sent || 0)}
+          ${cell(c.certified_sent ? `<strong style="color:#92400e;">${c.certified_sent}</strong>` : 0)}
           ${cell(c.pages_printed || (c.pages_unknown ? '<span style=\"color:#b45309;\" title=\"Apply migration 257 + run the page-count backfill\">—</span>' : 0))}
           ${cell(c.arc_approved)}
           ${cell(c.arc_denied)}
           ${cell(c.arc_conditions + c.arc_other)}
-        </tr>`).join('') || '<tr><td colspan="6" style="padding:16px; text-align:center; color:#888; font-size:13px;">No billable activity in this period.</td></tr>';
+        </tr>`).join('') || '<tr><td colspan="8" style="padding:16px; text-align:center; color:#888; font-size:13px;">No billable activity in this period.</td></tr>';
       const th = (label) => `<th style="padding:7px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#64748b; border-bottom:2px solid #e2e8f0;">${label}</th>`;
       host.innerHTML = `
         ${!j.page_tracking ? '<div style="background:#fffbeb; border:1px solid #fbbf24; border-radius:6px; padding:8px 10px; font-size:12px; color:#92400e; margin-bottom:10px;">⚠ Pages-printed is not live yet — apply migration 257 and run the page-count backfill, then re-run. Notice + ARC counts are accurate now.</div>' : ''}
         <table style="width:100%; border-collapse:collapse;">
           <thead><tr>
             <th style="padding:7px 10px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#64748b; border-bottom:2px solid #e2e8f0;">Community</th>
-            ${th('Notices sent')}${th('Pages printed')}${th('ARC approved')}${th('ARC denied')}${th('ARC other')}
+            ${th('Notices sent')}${th('First-class')}${th('Certified')}${th('Pages printed')}${th('ARC approved')}${th('ARC denied')}${th('ARC other')}
           </tr></thead>
           <tbody>${body}</tbody>
           <tfoot><tr style="font-weight:700; background:#f8fafc;">
             <td style="padding:8px 10px;">Portfolio total</td>
-            ${cell(t.notices_sent || 0)}${cell(t.pages_printed || 0)}${cell(t.arc_approved || 0)}${cell(t.arc_denied || 0)}${cell((t.arc_conditions || 0) + (t.arc_other || 0))}
+            ${cell(t.notices_sent || 0)}${cell(t.first_class_sent || 0)}${cell(t.certified_sent || 0)}${cell(t.pages_printed || 0)}${cell(t.arc_approved || 0)}${cell(t.arc_denied || 0)}${cell((t.arc_conditions || 0) + (t.arc_other || 0))}
           </tr></tfoot>
         </table>
-        <div style="font-size:11px; color:#94a3b8; margin-top:8px;">Notices = violation letters postmarked in the period. ARC/ACC = decisions rendered in the period. "ARC other" = conditions/pending.</div>`;
+        <div style="font-size:11px; color:#94a3b8; margin-top:8px;">Notices = violation letters postmarked in the period, split by mail class (certified costs more postage). ARC/ACC = decisions rendered in the period. "ARC other" = conditions/pending.</div>`;
     } catch (e) {
       host.innerHTML = `<div style="color:#b91c1c; font-size:13px; padding:12px;">Could not run report: ${escapeHtml(e.message)}</div>`;
     }
