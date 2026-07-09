@@ -18,9 +18,13 @@ const {
 const { renderChecksPDF, micrFontInstalled } = require('../lib/accounting/check_renderer');
 const { requireAdmin } = require('./_require_admin');
 const { encryptField, last4 } = require('../lib/crypto_field');
+const multer = require('multer');
+const crypto = require('crypto');
+const { extract: extractBankStatement } = require('../lib/banking/extractors/bank_statement');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const stmtUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const router = express.Router();
 
 function handleErr(res, feature, err) {
@@ -92,6 +96,68 @@ router.get('/statement-tracker', async (req, res) => {
 
     res.json({ months, communities });
   } catch (err) { handleErr(res, 'statement-tracker', err); }
+});
+
+// POST /statement-tracker/upload — one-click statement upload straight from the
+// tracker grid. Staff pick the account's cell and drop a PDF; the statement's own
+// dates place it in the right month. No back-and-forth to the rec screen.
+// Body: multipart 'file' + bank_account_id (+ optional month YYYY-MM hint).
+router.post('/statement-tracker/upload', stmtUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Pick a PDF to upload.' });
+    const bankAccountId = req.body && req.body.bank_account_id;
+    if (!bankAccountId) return res.status(400).json({ error: 'bank_account_id required.' });
+    const { data: ba } = await supabase.from('bank_accounts').select('id, community_id, account_nickname').eq('id', bankAccountId).maybeSingle();
+    if (!ba) return res.status(404).json({ error: 'account_not_found' });
+
+    // Read the statement (period + balances + transactions).
+    let ex;
+    try { ex = await extractBankStatement(req.file.buffer, req.file.mimetype, req.file.originalname); }
+    catch (e) { return res.status(500).json({ error: `Could not read that statement: ${e.message}` }); }
+
+    // Place it: the statement's own period_end wins; fall back to the clicked
+    // month if the reader couldn't find dates.
+    let periodEnd = ex.period_end || null, periodStart = ex.period_start || null;
+    if (!periodEnd && req.body.month && /^\d{4}-\d{2}$/.test(req.body.month)) {
+      const [y, m] = req.body.month.split('-').map(Number);
+      periodEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);   // last day of month
+      periodStart = `${req.body.month}-01`;
+    }
+    const monthKey = periodEnd ? String(periodEnd).slice(0, 7) : null;
+
+    // Don't create a duplicate for a month already imported on this account.
+    if (monthKey) {
+      const { data: existing } = await supabase.from('bank_statement_imports')
+        .select('id').eq('bank_account_id', bankAccountId).eq('status', 'completed')
+        .gte('statement_period_end', `${monthKey}-01`).lte('statement_period_end', periodEnd).limit(1);
+      if (existing && existing.length) return res.json({ ok: true, already: true, month: monthKey, account: ba.account_nickname });
+    }
+
+    const sha = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    const safeName = (req.file.originalname || 'bank-statement.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `bank-statements/${ba.community_id}/${sha.slice(0, 12)}-${safeName}`;
+    try { await supabase.storage.from('documents').upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true }); } catch (_) {}
+
+    const { data: bsi, error: bsiErr } = await supabase.from('bank_statement_imports').insert({
+      management_company_id: BEDROCK_MGMT_CO_ID, community_id: ba.community_id, bank_account_id: bankAccountId,
+      statement_period_start: periodStart, statement_period_end: periodEnd,
+      beginning_balance_cents: ex.beginning_balance_cents ?? null, ending_balance_cents: ex.ending_balance_cents ?? null,
+      total_deposits_cents: ex.total_deposits_cents ?? null, total_withdrawals_cents: ex.total_withdrawals_cents ?? null,
+      total_fees_cents: ex.total_fees_cents ?? null, total_interest_cents: ex.total_interest_cents ?? null,
+      source_filename: req.file.originalname || null, source_storage_path: storagePath, source_sha256: sha,
+      source_file_size_bytes: req.file.size, source_file_mime: req.file.mimetype,
+      extraction_raw: ex, extraction_warnings: ex.warnings || [], status: 'completed',
+    }).select('id').single();
+    if (bsiErr) throw bsiErr;
+
+    const txRows = (ex.transactions || []).filter((t) => t.posting_date && t.amount_cents != null).map((t) => ({
+      bank_statement_import_id: bsi.id, posting_date: t.posting_date, amount_cents: t.amount_cents,
+      description: t.description || null, check_number: t.check_number || null, transaction_type: t.transaction_type || 'other',
+    }));
+    if (txRows.length) { try { await supabase.from('bank_statement_transactions').insert(txRows); } catch (_) {} }
+
+    res.json({ ok: true, month: monthKey, account: ba.account_nickname, warnings: ex.warnings || [] });
+  } catch (err) { handleErr(res, 'statement-tracker-upload', err); }
 });
 
 router.get('/accounts/:bankAccountId/config', async (req, res) => {

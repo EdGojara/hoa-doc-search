@@ -46,9 +46,16 @@
   tr.grouprow .gnote{font-weight:500;font-size:11.5px;color:#9a5a1e;text-transform:none;letter-spacing:0;margin-left:8px;}
   tbody td.cell{text-align:center;padding:5px;border-bottom:1px solid #eef1f6;}
   .chip{width:30px;height:26px;margin:0 auto;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;}
-  .chip.need{border:1.5px solid var(--need-line);}
+  .chip.need{border:1.5px solid var(--need-line);color:#c3ccd9;cursor:pointer;transition:background .12s,border-color .12s,color .12s;}
+  .chip.need:hover{background:#eef4ff;border-color:var(--have);color:var(--have);}
+  .chip.busy{border-color:var(--gold);color:var(--gold);cursor:wait;}
   .chip.have{background:var(--have-bg);color:var(--have);}
   .chip.na{background:var(--na-bg);color:var(--na);font-weight:600;}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);opacity:0;pointer-events:none;
+    background:var(--navy);color:#fff;padding:11px 18px;border-radius:10px;font-size:13px;font-weight:600;
+    box-shadow:0 8px 24px rgba(11,29,52,.28);transition:opacity .2s,transform .2s;max-width:80vw;z-index:50;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  #toast.err{background:#7f1d1d;}
   .foot{margin-top:20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;}
   .note{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;padding:11px 14px;font-size:12.5px;color:var(--muted);}
   .note b{color:var(--navy);display:block;margin-bottom:3px;font-size:12px;}
@@ -64,27 +71,47 @@
     <p class="lede">Live status of every account&rsquo;s monthly bank statements. <b style="color:var(--have)">Green</b> updates automatically the moment a statement is imported. This is the shared view &mdash; everyone sees the same thing.</p>
   </header>
   <div class="how">
-    <b>To upload:</b> <span class="step">Accounting &rarr; Bank statement import</span> &rarr; pick the community + account &rarr; drop the PDF. It turns green here on the next refresh.
+    <b>Upload right here:</b> click any <span class="step">open cell</span> and choose that account&rsquo;s statement PDF. It reads the statement, files it into the correct month, and turns green &mdash; no other screen needed.
   </div>
   <div class="bar">
     <div class="prog"><div class="prog-track"><div class="prog-fill" id="fill"></div></div><div class="prog-nums" id="nums">Loading&hellip;</div></div>
     <div class="legend">
       <span class="key"><span class="sw have"></span> In trustEd</span>
-      <span class="key"><span class="sw need"></span> Needed</span>
-      <span class="key"><span class="sw na"></span> N/A (sweep)</span>
+      <span class="key"><span class="sw need"></span> Needed — click to upload</span>
       <button class="refresh" id="refresh">↻ Refresh</button>
     </div>
   </div>
   <div class="tablecard"><div class="scroll"><table id="grid"><tbody><tr><td class="empty">Loading&hellip;</td></tr></tbody></table></div></div>
   <div class="foot" id="notes"></div>
 </div>
+<input type="file" id="file" accept="application/pdf" style="display:none">
+<div id="toast"></div>
 
 <script>
 const NOTES = {
   "Eaglewood": "GL blocked — gather, don't load yet",
 };
 function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-const isSweep = a => /sweep/i.test(a.nickname||'');
+let toastT=null;
+function toast(msg,err){ const t=document.getElementById('toast'); t.textContent=msg; t.className='show'+(err?' err':''); clearTimeout(toastT); toastT=setTimeout(()=>t.className='',3800); }
+
+let pending=null;
+const fileInput=document.getElementById('file');
+function pick(chip){ pending={aid:chip.dataset.aid,m:chip.dataset.m,acct:chip.dataset.acct,lbl:chip.dataset.lbl,el:chip}; fileInput.value=''; fileInput.click(); }
+fileInput.addEventListener('change',async e=>{
+  const f=e.target.files[0]; if(!f||!pending) return;
+  const p=pending; pending=null;
+  p.el.classList.add('busy'); p.el.textContent='…';
+  toast(`Reading ${p.acct} statement…`);
+  try{
+    const fd=new FormData(); fd.append('file',f); fd.append('bank_account_id',p.aid); fd.append('month',p.m);
+    const r=await fetch('/api/checks/statement-tracker/upload',{method:'POST',body:fd});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok){ p.el.classList.remove('busy'); p.el.textContent='+'; toast('Could not upload: '+(j.error||'error'),true); return; }
+    toast(j.already?`Already had ${p.acct} for ${j.month}.`:`✓ Imported ${p.acct} — ${j.month} statement.`);
+    load();
+  }catch(err){ p.el.classList.remove('busy'); p.el.textContent='+'; toast('Upload failed.',true); }
+});
 
 async function load(){
   let d;
@@ -97,20 +124,18 @@ function render(d){
   let h = "<thead><tr><th class='acct'>Account</th>";
   for(const m of months) h += `<th>${esc(m.label)}<span class="mth-yr">${esc(m.yr)}</span></th>`;
   h += "</tr></thead><tbody>";
-  let need=0, have=0, na=0;
+  let need=0, have=0;
   for(const g of comms){
     const note = NOTES[g.name] ? `<span class="gnote">${esc(NOTES[g.name])}</span>` : "";
     h += `<tr class="grouprow"><td colspan="${months.length+1}"><span class="gname">${esc(g.name)}</span>${note}</td></tr>`;
     for(const a of g.accounts){
-      const sweep = isSweep(a);
       const legacy = /columbia/i.test(a.bank||'');
       const tag = a.is_check ? `<span class="tag check">Check acct</span>` : legacy ? `<span class="tag legacy">Closing</span>` : "";
       h += `<tr><td class="acct"><span class="nm">${esc(a.nickname)}</span>${tag}<div class="bk">${esc(a.bank||'—')}</div></td>`;
       const up = new Set(a.uploaded||[]);
       for(const m of months){
         if(up.has(m.key)){ have++; h += `<td class="cell"><div class="chip have" title="Imported">✓</div></td>`; }
-        else if(sweep){ na++; h += `<td class="cell"><div class="chip na" title="Sweep — usually on the parent statement">–</div></td>`; }
-        else { need++; h += `<td class="cell"><div class="chip need" title="${esc(a.nickname)} · ${esc(m.label)} ${esc(m.yr)} — needed"></div></td>`; }
+        else { need++; h += `<td class="cell"><div class="chip need" data-aid="${esc(a.id)}" data-m="${esc(m.key)}" data-acct="${esc(a.nickname)}" data-lbl="${esc(m.label+' '+m.yr)}" title="Click to upload — ${esc(a.nickname)}, ${esc(m.label)} ${esc(m.yr)}">+</div></td>`; }
       }
       h += "</tr>";
     }
@@ -118,9 +143,10 @@ function render(d){
   h += "</tbody>";
   if(!comms.length) h = "<tbody><tr><td class='empty'>No accounts found.</td></tr></tbody>";
   document.getElementById('grid').innerHTML = h;
+  document.querySelectorAll('.chip.need[data-aid]').forEach(c=>c.addEventListener('click',()=>pick(c)));
   const owed = need+have, pct = owed?Math.round(have/owed*100):0;
   document.getElementById('fill').style.width = pct+'%';
-  document.getElementById('nums').innerHTML = `<b>${have}</b> of <b>${owed}</b> statements imported (${pct}%) &middot; <b>${need}</b> still needed &middot; ${na} N/A (sweeps)`;
+  document.getElementById('nums').innerHTML = `<b>${have}</b> of <b>${owed}</b> statements imported (${pct}%) &middot; <b>${need}</b> still needed &middot; click any open cell to upload`;
   document.getElementById('notes').innerHTML = `
     <div class="note"><b>Quail Ridge is live</b>Reconciled through May 2026 — watch for its latest month. Its reserve account still needs everything.</div>
     <div class="note"><b>Eaglewood is on hold</b>Its books can't be reconciled until the Vantaca trial balance is fixed. Gather statements, but they aren't loaded yet.</div>
