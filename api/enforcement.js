@@ -9028,23 +9028,27 @@ router.get('/violations/report', async (req, res) => {
     const communityId = req.query.community_id;
     const asOfRaw = req.query.as_of;
     const format = (req.query.format || 'html').toLowerCase();
+    // scope: 'active' (default) = current-month drive + all certified/legal;
+    // 'all' = every never-closed violation (the old, over-counting behavior).
+    const scope = (req.query.scope || 'active').toLowerCase() === 'all' ? 'all' : 'active';
     if (!communityId) return res.status(400).json({ error: 'community_id required' });
     if (!asOfRaw || !/^\d{4}-\d{2}-\d{2}$/.test(String(asOfRaw))) {
       return res.status(400).json({ error: 'as_of required as YYYY-MM-DD' });
     }
 
     if (format === 'json') {
-      const data = await buildViolationsReportData({ supabase, communityId, asOfDate: asOfRaw });
+      const data = await buildViolationsReportData({ supabase, communityId, asOfDate: asOfRaw, scope });
       return res.json({
         community: data.community,
         as_of: data.asOfDate,
+        scope: data.scope,
         generated_at: data.generatedAt,
         totals: data.totals,
         rows: data.rows,
       });
     }
 
-    const report = await buildViolationsReport({ supabase, communityId, asOfDate: asOfRaw });
+    const report = await buildViolationsReport({ supabase, communityId, asOfDate: asOfRaw, scope });
     res.set('Content-Type', 'text/html; charset=utf-8');
     res.send(report.html);
   } catch (err) {
