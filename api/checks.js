@@ -115,48 +115,8 @@ router.post('/statement-tracker/upload', stmtUpload.single('file'), async (req, 
     try { ex = await extractBankStatement(req.file.buffer, req.file.mimetype, req.file.originalname); }
     catch (e) { return res.status(500).json({ error: `Could not read that statement: ${e.message}` }); }
 
-    // Place it: the statement's own period_end wins; fall back to the clicked
-    // month if the reader couldn't find dates.
-    let periodEnd = ex.period_end || null, periodStart = ex.period_start || null;
-    if (!periodEnd && req.body.month && /^\d{4}-\d{2}$/.test(req.body.month)) {
-      const [y, m] = req.body.month.split('-').map(Number);
-      periodEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);   // last day of month
-      periodStart = `${req.body.month}-01`;
-    }
-    const monthKey = periodEnd ? String(periodEnd).slice(0, 7) : null;
-
-    // Don't create a duplicate for a month already imported on this account.
-    if (monthKey) {
-      const { data: existing } = await supabase.from('bank_statement_imports')
-        .select('id').eq('bank_account_id', bankAccountId).eq('status', 'completed')
-        .gte('statement_period_end', `${monthKey}-01`).lte('statement_period_end', periodEnd).limit(1);
-      if (existing && existing.length) return res.json({ ok: true, already: true, month: monthKey, account: ba.account_nickname });
-    }
-
-    const sha = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
-    const safeName = (req.file.originalname || 'bank-statement.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storagePath = `bank-statements/${ba.community_id}/${sha.slice(0, 12)}-${safeName}`;
-    try { await supabase.storage.from('documents').upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true }); } catch (_) {}
-
-    const { data: bsi, error: bsiErr } = await supabase.from('bank_statement_imports').insert({
-      management_company_id: BEDROCK_MGMT_CO_ID, community_id: ba.community_id, bank_account_id: bankAccountId,
-      statement_period_start: periodStart, statement_period_end: periodEnd,
-      beginning_balance_cents: ex.beginning_balance_cents ?? null, ending_balance_cents: ex.ending_balance_cents ?? null,
-      total_deposits_cents: ex.total_deposits_cents ?? null, total_withdrawals_cents: ex.total_withdrawals_cents ?? null,
-      total_fees_cents: ex.total_fees_cents ?? null, total_interest_cents: ex.total_interest_cents ?? null,
-      source_filename: req.file.originalname || null, source_storage_path: storagePath, source_sha256: sha,
-      source_file_size_bytes: req.file.size, source_file_mime: req.file.mimetype,
-      extraction_raw: ex, extraction_warnings: ex.warnings || [], status: 'completed',
-    }).select('id').single();
-    if (bsiErr) throw bsiErr;
-
-    const txRows = (ex.transactions || []).filter((t) => t.posting_date && t.amount_cents != null).map((t) => ({
-      bank_statement_import_id: bsi.id, posting_date: t.posting_date, amount_cents: t.amount_cents,
-      description: t.description || null, check_number: t.check_number || null, transaction_type: t.transaction_type || 'other',
-    }));
-    if (txRows.length) { try { await supabase.from('bank_statement_transactions').insert(txRows); } catch (_) {} }
-
-    res.json({ ok: true, month: monthKey, account: ba.account_nickname, warnings: ex.warnings || [] });
+    const out = await finalizeStatementImport(ba, ex, req.file, req.body && req.body.month);
+    res.json({ ok: true, ...out, account: ba.account_nickname, warnings: ex.warnings || [] });
   } catch (err) { handleErr(res, 'statement-tracker-upload', err); }
 });
 
@@ -271,7 +231,42 @@ async function finalizeStatementImport(ba, ex, file, monthHint) {
     description: t.description || null, check_number: t.check_number || null, transaction_type: t.transaction_type || 'other',
   }));
   if (tx.length) { try { await supabase.from('bank_statement_transactions').insert(tx); } catch (_) {} }
-  return { month: monthKey };
+
+  // --- Downstream: keep the account + reconciliation in sync with the statement ---
+  const extra = { last4_captured: false, rec: null };
+
+  // 1) Capture the account's last-4 from the statement if we don't have it yet
+  //    (helps future auto-matching + Bank Setup display). Never overwrites the
+  //    full encrypted account number — that stays a deliberate entry for the MICR.
+  try {
+    const l4 = String(ex.account_last4 || '').replace(/\D/g, '');
+    if (l4) {
+      const { data: acct } = await supabase.from('bank_accounts').select('account_last4').eq('id', ba.id).maybeSingle();
+      if (acct && !acct.account_last4) { await supabase.from('bank_accounts').update({ account_last4: l4 }).eq('id', ba.id); extra.last4_captured = l4; }
+    }
+  } catch (_) {}
+
+  // 2) Wire the statement into the bank rec: upsert this account+period's
+  //    reconciliation with the BANK side filled in (ending balance + the import).
+  //    The GL side + matching follow when a GL export is attached — meaningful
+  //    once the community's books are on trustEd.
+  try {
+    if (periodEnd) {
+      const { data: recEx } = await supabase.from('bank_reconciliations')
+        .select('id').eq('bank_account_id', ba.id).eq('period_end', periodEnd).maybeSingle();
+      const recPatch = { bank_statement_import_id: bsi.id, bank_ending_balance_cents: ex.ending_balance_cents ?? null };
+      if (recEx) { await supabase.from('bank_reconciliations').update(recPatch).eq('id', recEx.id); extra.rec = 'updated'; }
+      else {
+        await supabase.from('bank_reconciliations').insert({
+          management_company_id: BEDROCK_MGMT_CO_ID, community_id: ba.community_id, bank_account_id: ba.id,
+          period_start: periodStart, period_end: periodEnd, status: 'in_progress', ...recPatch,
+        });
+        extra.rec = 'created';
+      }
+    }
+  } catch (e) { console.warn('[stmt-tracker] rec upsert skipped:', e.message); }
+
+  return { month: monthKey, ...extra };
 }
 
 router.get('/accounts/:bankAccountId/config', async (req, res) => {

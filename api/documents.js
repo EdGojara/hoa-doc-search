@@ -820,6 +820,45 @@ router.get('/legacy/list', async (req, res) => {
   }
 });
 
+// GET /open-by-name?filename=&community=  — resolve a document by its filename
+// (+ community when a name repeats across communities) and open it inline. Lets
+// askEd's "based on these documents" citations link straight to the actual PDF.
+// MUST be defined before the /:id catch-all.
+router.get('/open-by-name', async (req, res) => {
+  try {
+    const filename = String(req.query.filename || '').trim();
+    if (!filename) return res.status(400).json({ error: 'filename required' });
+    // askEd cites the NORMALIZED name (often with a "Community - " prefix), so
+    // try normalized/original/title, exact then contains. Sequential (not .or)
+    // because filenames can contain commas that would break PostgREST's .or().
+    const base = () => supabase.from('library_documents')
+      .select('id, community:community_id(name)')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID).neq('status', 'missing');
+    let data = null;
+    const attempts = [
+      () => base().eq('file_name_normalized', filename),
+      () => base().eq('file_name_original', filename),
+      () => base().ilike('file_name_normalized', `%${filename}%`),
+      () => base().ilike('file_name_original', `%${filename}%`),
+      () => base().ilike('title', `%${filename}%`),
+    ];
+    for (const attempt of attempts) {
+      const r = await attempt().limit(10);
+      if (r.data && r.data.length) { data = r.data; break; }
+    }
+    if (!data) return res.status(404).json({ error: 'Document not found in the library.' });
+    let match = data[0];
+    if (data.length > 1 && req.query.community) {
+      const c = data.find((d) => d.community && d.community.name === req.query.community);
+      if (c) match = c;
+    }
+    return res.redirect(`/api/documents/${match.id}/preview`);
+  } catch (err) {
+    console.error('[documents] open-by-name failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ----------------------------------------------------------------------------
 // ----------------------------------------------------------------------------
 // /general-orphans — every library doc whose chunks are tagged 'General'.

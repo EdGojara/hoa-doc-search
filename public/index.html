@@ -32004,7 +32004,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             : '';
           const fname = String(s.filename || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           const cname = String(s.community || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          return `<li style="margin-bottom:4px;"><strong style="color:#0B1D34;">${fname}</strong> <span style="opacity:0.7;">— ${cname} · ${s.chunk_count} chunk${s.chunk_count === 1 ? '' : 's'}</span>${matchTag}${ocrTag}</li>`;
+          // Link the citation straight to the actual PDF (opens inline in a new
+          // tab) so staff don't have to go hunt for it in the Documents tab.
+          const openUrl = `/api/documents/open-by-name?filename=${encodeURIComponent(s.filename || '')}${s.community ? `&community=${encodeURIComponent(s.community)}` : ''}`;
+          return `<li style="margin-bottom:4px;"><a href="${openUrl}" target="_blank" rel="noopener" title="Open this document" style="color:#0B1D34; font-weight:700; text-decoration:none; border-bottom:1px solid #94a3b8;">${fname}</a> <span style="opacity:0.7;">— ${cname} · ${s.chunk_count} chunk${s.chunk_count === 1 ? '' : 's'}</span>${matchTag}${ocrTag} <span style="font-size:10.5px; color:#0B1D34; opacity:0.55;">&#8599; open</span></li>`;
         }).join('');
         srcBlock.innerHTML = `
           <div style="font-weight:700; color:#0B1D34; margin-bottom:8px; font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase;">Based on these documents</div>
