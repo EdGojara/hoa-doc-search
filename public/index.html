@@ -16997,10 +16997,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
 
       <div id="manualVioBody" style="padding:18px; overflow-y:auto;">
-        <!-- Force-mow warning banner — surfaces only when force-mow category picked -->
-        <div id="manualVioForceMowWarn" style="display:none; padding:10px 12px; background:#fef3c7; border:1px solid #fde047; border-radius:8px; margin-bottom:12px; font-size:12.5px; color:#92400e; line-height:1.5;">
-          ⚠️ <strong>Force-mow 10-day certified track</strong> — confirm CC&R and §202.018 authority before submitting. This creates the violation only; the certified letter is generated separately via the Drafts queue.
-        </div>
+        <!-- Special-track banner — surfaces only when a 10-day certified
+             self-help category (force-mow or trash cleanup) is picked. Text
+             set in manualVioCategoryChanged(). -->
+        <div id="manualVioForceMowWarn" style="display:none; padding:10px 12px; background:#fef3c7; border:1px solid #fde047; border-radius:8px; margin-bottom:12px; font-size:12.5px; color:#92400e; line-height:1.5;"></div>
 
         <!-- Community -->
         <div style="margin-bottom: 14px;">
@@ -19075,6 +19075,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // language has to be distinct from the warm-color severity progression.
     const SPECIAL_TRACK_COLORS = {
       lawn_force_mow_10day: '#6B4C9A',  // purple — 10-day certified force-mow lawn notice
+      trash_cleanup_10day:  '#0B5563',  // teal — 10-day certified trash/debris self-help cleanup
     };
 
     // Build the "covered this session" set. A property counts as covered
@@ -19111,7 +19112,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
 
     // Add markers
-    let stageCounts = { no_violation: 0, courtesy_1: 0, courtesy_2: 0, certified_209: 0, fine_assessed: 0, lawn_force_mow_10day: 0 };
+    let stageCounts = { no_violation: 0, courtesy_1: 0, courtesy_2: 0, certified_209: 0, fine_assessed: 0, lawn_force_mow_10day: 0, trash_cleanup_10day: 0 };
     let coveredCount = 0;
     for (const p of propsResp.properties) {
       const el = document.createElement('div');
@@ -19187,6 +19188,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (sc.certified_209) legend.push(`<span style="display:inline-block; width:10px; height:10px; background:#C9514B; border-radius:50%; vertical-align:middle; margin-right:3px;"></span>${sc.certified_209} §209`);
     if (sc.fine_assessed) legend.push(`<span style="display:inline-block; width:10px; height:10px; background:#8B1A1A; border-radius:50%; vertical-align:middle; margin-right:3px;"></span>${sc.fine_assessed} fine`);
     if (sc.lawn_force_mow_10day) legend.push(`<span style="display:inline-block; width:10px; height:10px; background:#6B4C9A; border-radius:50%; vertical-align:middle; margin-right:3px;"></span>${sc.lawn_force_mow_10day} force-mow`);
+    if (sc.trash_cleanup_10day) legend.push(`<span style="display:inline-block; width:10px; height:10px; background:#0B5563; border-radius:50%; vertical-align:middle; margin-right:3px;"></span>${sc.trash_cleanup_10day} cleanup`);
     // Covered-this-session segment — separate from the open-violation legend
     // so it reads as route progress, not enforcement state.
     const coveredSegment = coveredCount > 0
@@ -19708,8 +19710,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             const opt = document.createElement('option');
             opt.value = c.id;
             opt.dataset.slug = c.slug || '';
-            const isSpecial = c.slug === 'lawn_force_mow_10day';
-            opt.textContent = (isSpecial ? '🟪 ' : '') + (c.label || c.slug);
+            const swatch = c.slug === 'lawn_force_mow_10day' ? '🟪 '
+              : c.slug === 'trash_cleanup_10day' ? '♻️ '
+              : '';
+            opt.textContent = swatch + (c.label || c.slug);
             catSel.appendChild(opt);
           }
         }
@@ -19803,8 +19807,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const sel = document.getElementById('manualVioCategory');
     const selectedOpt = sel.options[sel.selectedIndex];
     const slug = selectedOpt ? selectedOpt.dataset.slug : '';
-    document.getElementById('manualVioForceMowWarn').style.display =
-      (slug === 'lawn_force_mow_10day') ? 'block' : 'none';
+    const warn = document.getElementById('manualVioForceMowWarn');
+    if (slug === 'lawn_force_mow_10day') {
+      warn.innerHTML = '🟪 <strong>Force-mow 10-day certified track</strong> — confirm CC&R and §202.018 authority before submitting. This creates the violation only; draft the certified letter from the property panel afterward.';
+      warn.style.display = 'block';
+    } else if (slug === 'trash_cleanup_10day') {
+      warn.innerHTML = '♻️ <strong>Trash 10-day certified cleanup track</strong> — confirm CC&R self-help authority before submitting. This creates the violation only; draft the 10-day certified cleanup letter from the property panel afterward.';
+      warn.style.display = 'block';
+    } else {
+      warn.style.display = 'none';
+    }
     // Trigger duplicate check whenever category changes (property may
     // already be set from a prior selection).
     manualVioDuplicateCheck();
@@ -48633,11 +48645,25 @@ ${questionsPage}
               📄 Draft 10-day force-mow letter
             </button>`
           : '';
+        // Dedicated trash-cleanup 10-day certified button — the trash parallel
+        // to force-mow. Always shown on this category (like force-mow); the
+        // endpoint 409s with a helpful config alert if the community's
+        // Declaration self-help fields aren't set yet.
+        const trashCleanupBtn = v.is_open && v.category_slug === 'trash_cleanup_10day'
+          ? `<button onclick="cmapDraftForceMowLetter('${v.id}', '${escapeHtml(v.category_label || 'trash violation')}', 'cleanup')" type="button"
+                     style="background:#0B5563; color:#fff; border:none; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;"
+                     title="10-day certified cleanup letter: cure the cleanup or the Association cleans up and charges it back as an assessment (Declaration self-help authority + §209 notice).">
+              📄 Draft 10-day cleanup letter
+            </button>`
+          : '';
         // General self-help (cleanup / abatement) 10-day certified letter —
         // same Declaration authority + §209 wording as force-mow, cleanup
-        // wording. Offered on any OTHER open violation, but only where the
-        // community has the Declaration self-help config (else it would error).
-        const cleanupBtn = v.is_open && selfHelpConfigured && v.category_slug !== 'lawn_force_mow_10day'
+        // wording. Offered on any OTHER open violation (not the two dedicated
+        // special tracks above), but only where the community has the
+        // Declaration self-help config (else it would error).
+        const cleanupBtn = v.is_open && selfHelpConfigured
+          && v.category_slug !== 'lawn_force_mow_10day'
+          && v.category_slug !== 'trash_cleanup_10day'
           ? `<button onclick="cmapDraftForceMowLetter('${v.id}', '${escapeHtml(v.category_label || 'violation')}', 'cleanup')" type="button"
                      style="background:#0B5563; color:#fff; border:none; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;"
                      title="10-day certified self-help letter: cure the cleanup or the Association cleans up and charges it back as an assessment (Declaration self-help authority + §209 notice).">
@@ -48672,6 +48698,7 @@ ${questionsPage}
               <div style="margin-top:8px; display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px;">
                 ${addLetterBtn}
                 ${forceMowBtn}
+                ${trashCleanupBtn}
                 ${cleanupBtn}
                 ${continuationBtn}
               </div>` : ''}

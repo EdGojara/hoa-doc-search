@@ -1781,10 +1781,11 @@ router.get('/inspections/properties', async (req, res) => {
         legal_referral: 6, lien_filed: 7,
       };
       // Special-track categories that override the stage-based coloring.
-      // 'lawn_force_mow_10day' = Lawn 10-Day Certified Force Mow Notice path;
-      // displays purple on the inspect map because it's a parallel enforcement
-      // track (governed by CC&R + §202.018) not the standard §209 ramp.
-      const SPECIAL_TRACK_SLUGS = new Set(['lawn_force_mow_10day']);
+      // 'lawn_force_mow_10day' = Lawn 10-Day Certified Force Mow Notice path
+      // (purple); 'trash_cleanup_10day' = Trash 10-Day Certified Cleanup path
+      // (teal). Both are parallel self-help enforcement tracks (CC&R self-help
+      // authority + §209 notice) not the standard §209 courtesy ramp.
+      const SPECIAL_TRACK_SLUGS = new Set(['lawn_force_mow_10day', 'trash_cleanup_10day']);
 
       const worstStageMap = new Map();
       const specialTrackMap = new Map();   // property_id → slug
