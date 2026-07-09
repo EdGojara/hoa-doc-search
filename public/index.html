@@ -48860,8 +48860,10 @@ ${questionsPage}
       if (!r.ok) {
         const errText = await r.text();
         let errJson; try { errJson = JSON.parse(errText); } catch (_) { errJson = { error: errText }; }
-        if (errJson.error === 'community_force_mow_config_missing') {
-          alert(`Community force-mow config is not set up yet. ${errJson.message}\n\nIn Supabase SQL editor, run:\n\nUPDATE communities SET\n  declaration_doc_number = '<recording doc #>',\n  declaration_county = '<county>',\n  declaration_short_name = '<short name>',\n  force_mow_section_full = 'Article X.Y of the Declaration'\nWHERE id = '<community_id>';`);
+        // Config-missing (either the current self-help code or the legacy
+        // force-mow one) → point staff at Community Profile, not raw SQL.
+        if (errJson.error === 'community_self_help_config_missing' || errJson.error === 'community_force_mow_config_missing') {
+          alert(`This letter can't be drafted yet: ${errJson.message || 'the community\'s self-help authority isn\'t set.'}\n\nFix it in Community Profile → Self-help letters (set the Declaration doc #, county, and the article for this remedy), then try again.`);
           return;
         }
         if (errJson.error === 'schema_validation_failed') {
@@ -48870,11 +48872,22 @@ ${questionsPage}
         }
         throw new Error(errJson.error || `HTTP ${r.status}`);
       }
-      // The response is a PDF blob — open in a new tab
+      // The response is a PDF blob. Open in a new tab — but window.open() after
+      // an await is outside the click gesture and gets popup-blocked in many
+      // browsers (the "I clicked and nothing happened" report). If it's blocked,
+      // fall back to a direct download, which is never popup-gated.
       const blob = await r.blob();
       const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-      // Don't revoke URL immediately — give the new tab time to load
+      const win = window.open(url, '_blank');
+      if (!win || win.closed || typeof win.closed === 'undefined') {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `10-day-${isCleanup ? 'cleanup' : 'force-mow'}-letter.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+      // Don't revoke URL immediately — give the new tab / download time to load
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (e) {
       alert('Draft failed: ' + e.message);
