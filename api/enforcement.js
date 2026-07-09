@@ -6668,20 +6668,16 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
     ].filter(Boolean).join(', ');
     const propertyAddressShort = `${property.street_address}${property.unit ? ' #' + property.unit : ''}`;
 
-    // Homeowner names block — name + mailing address (mailing OR property)
-    const mailingAddress = owner && owner.owner_mailing_address ? owner.owner_mailing_address : propertyAddressFull;
+    // Homeowner names block — name on line 1, street on line 2, city/state/zip
+    // on line 3 (standard envelope format, Ed 2026-07-09). Alt-mailing block
+    // removed from the letter per Ed.
+    const cityStateZip = `${property.city || ''}, ${property.state || 'TX'} ${property.zip || ''}`
+      .replace(/^,\s*/, '').replace(/\s+/g, ' ').trim();
     const homeownerNamesBlock = [
       (owner && owner.owner_name) || '[Owner Name]',
-      mailingAddress,
-    ].join('\n');
-
-    // Alt mailing only when mailing differs from property
-    let altMailingBlock = null;
-    if (owner && owner.owner_mailing_address &&
-        owner.owner_mailing_address.toLowerCase().replace(/\s+/g, ' ').trim() !==
-        propertyAddressFull.toLowerCase().replace(/\s+/g, ' ').trim()) {
-      altMailingBlock = owner.owner_mailing_address;
-    }
+      propertyAddressShort,
+      cityStateZip,
+    ].filter(Boolean).join('\n');
 
     const adminFeeCents = community.force_mow_admin_fee_cents || 2500;
     const adminFeeAmount = `$${(adminFeeCents / 100).toFixed(2)}`;
@@ -6694,7 +6690,6 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
       homeowner_names_block: homeownerNamesBlock,
       property_address_full: propertyAddressFull,
       property_address_short: propertyAddressShort,
-      alt_mailing_address_block: altMailingBlock,
       declaration_doc_number: community.declaration_doc_number,
       declaration_county: community.declaration_county,
       declaration_section_full: authorizingSection,
