@@ -1343,6 +1343,15 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       .maybeSingle();
     if (vErr || !violation) return res.status(404).json({ error: 'violation not found' });
 
+    // Self-help 10-day tracks (lawn force-mow, trash cleanup) use the dedicated
+    // renderer, not the standard §209 courtesy pipeline. Detected up front so
+    // the stage cache below can be bypassed — a self-help letter is NOT a
+    // stage letter, so a prior cached courtesy/§209 PDF must never be served
+    // for it (the Abigail bug: the property held a stale courtesy_1 draft).
+    const categorySlug = violation.enforcement_categories && violation.enforcement_categories.slug;
+    const isSelfHelp10Day = categorySlug === 'lawn_force_mow_10day' || categorySlug === 'trash_cleanup_10day';
+    const selfHelpRemedy = categorySlug === 'trash_cleanup_10day' ? 'cleanup' : 'lawn';
+
     // Map stage to interaction type
     const stageToType = {
       courtesy_1:    'letter_courtesy_1',
@@ -1365,8 +1374,9 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       .limit(1)
       .maybeSingle();
 
-    if (priorLetter && priorLetter.content && !forceRegenerate) {
-      // Cached path: return the existing signed URL.
+    if (priorLetter && priorLetter.content && !forceRegenerate && !isSelfHelp10Day) {
+      // Cached path: return the existing signed URL. Skipped for self-help
+      // letters — they're not stage-cached, so always render fresh.
       const { data: sd } = await supabase.storage.from(LETTERS_BUCKET).createSignedUrl(priorLetter.content, 60 * 60);
       if (sd && sd.signedUrl) {
         return res.json({ ok: true, regenerated: false, letter_url: sd.signedUrl, interaction_id: priorLetter.id });
@@ -1480,6 +1490,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       declaration_county:      null,
       declaration_short_name:  null,
       force_mow_section_full:  null,
+      cleanup_section_full:    null,
       force_mow_admin_fee_cents: null,
     };
     let senderName = body.sender_name || null;
@@ -1487,7 +1498,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     try {
       const { data: comm } = await supabase
         .from('communities')
-        .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, declaration_doc_number, declaration_county, declaration_short_name, force_mow_section_full, force_mow_admin_fee_cents')
+        .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, declaration_doc_number, declaration_county, declaration_short_name, force_mow_section_full, cleanup_section_full, force_mow_admin_fee_cents')
         .eq('id', violation.community_id)
         .maybeSingle();
       if (comm) {
@@ -1506,6 +1517,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         commForceMow.declaration_county       = comm.declaration_county || null;
         commForceMow.declaration_short_name   = comm.declaration_short_name || comm.name || null;
         commForceMow.force_mow_section_full   = comm.force_mow_section_full || null;
+        commForceMow.cleanup_section_full     = comm.cleanup_section_full || null;
         commForceMow.force_mow_admin_fee_cents = (comm.force_mow_admin_fee_cents != null) ? comm.force_mow_admin_fee_cents : 2500;
       }
     } catch (_) {}
@@ -1585,23 +1597,28 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     // self-help, not the standard §209 escalation pipeline. Different
     // statutory wording, different required community-config fields, locked
     // gold-standard template per CLAUDE.md catastrophic-output discipline.
-    // We branch here so this category gets the dedicated renderer; all
-    // other categories fall through to the standard violation_letter path.
-    const categorySlug = violation.enforcement_categories && violation.enforcement_categories.slug;
+    // We branch here so the self-help categories (detected above) get the
+    // dedicated renderer; all other categories fall through to the standard
+    // violation_letter path. Each remedy cites its OWN Declaration article —
+    // no fallback between force-mow and cleanup.
     let pdfBuffer = null;
-    if (categorySlug === 'lawn_force_mow_10day') {
-      // Validate community has the force-mow declaration fields populated.
-      // Without them we can't cite the right Article or doc number — too
-      // risky to draft with placeholders on a certified §202.018 notice.
+    if (isSelfHelp10Day) {
+      // Validate community has the declaration fields populated for THIS
+      // remedy. Without them we can't cite the right Article or doc number —
+      // too risky to draft with placeholders on a certified self-help notice.
+      const authorizingSection = selfHelpRemedy === 'cleanup'
+        ? commForceMow.cleanup_section_full
+        : commForceMow.force_mow_section_full;
+      const sectionField = selfHelpRemedy === 'cleanup' ? 'cleanup_section_full' : 'force_mow_section_full';
       const missing = [];
       if (!commForceMow.declaration_doc_number)  missing.push('declaration_doc_number');
       if (!commForceMow.declaration_county)      missing.push('declaration_county');
-      if (!commForceMow.force_mow_section_full)  missing.push('force_mow_section_full');
+      if (!authorizingSection)                   missing.push(sectionField);
       if (missing.length > 0) {
         return res.status(400).json({
-          error: 'force-mow letter requires community config that is not yet set: '
+          error: `${selfHelpRemedy === 'cleanup' ? 'cleanup' : 'force-mow'} letter requires community self-help config that is not yet set: `
                  + missing.join(', ')
-                 + `. Set these columns on the communities row for ${(violation.communities && violation.communities.name) || 'this community'} via migration 126 pattern, then retry.`,
+                 + `. Set these in Community Profile → Self-help letters for ${(violation.communities && violation.communities.name) || 'this community'}, then retry.`,
           missing_fields: missing,
         });
       }
@@ -1668,19 +1685,22 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         property_address_short:  propAddr,
         declaration_doc_number:  commForceMow.declaration_doc_number,
         declaration_county:      commForceMow.declaration_county,
-        declaration_section_full: commForceMow.force_mow_section_full,
+        declaration_section_full: authorizingSection,
         observation_date:        obsIso,
-        observed_condition:      (observation && observation.ai_description) || 'Lawn in need of mowing, edging, and weed control consistent with the standard maintained by the community.',
+        observed_condition:      (observation && observation.ai_description) || (selfHelpRemedy === 'cleanup'
+          ? 'Accumulation of trash, debris, and unsightly materials on the Lot.'
+          : 'Lawn in need of mowing, edging, and weed control consistent with the standard maintained by the community.'),
         admin_fee_amount:        feeFormatted,
         include_hearing_rights:  includeHearingRights,
+        remedy_mode:             selfHelpRemedy,
       };
 
       try {
-        pdfBuffer = renderForceMowLetterPdf(forceMowInput);
+        pdfBuffer = await renderForceMowLetterPdf(forceMowInput);
       } catch (renderErr) {
-        console.error('[enforcement.generate-letter] force-mow render failed:', renderErr.message);
+        console.error('[enforcement.generate-letter] self-help render failed:', renderErr.message);
         return res.status(500).json({
-          error: 'force-mow letter render failed',
+          error: 'self-help letter render failed',
           detail: renderErr.message,
           code: renderErr.code || null,
         });
@@ -1759,9 +1779,12 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         observation_id:  violation.opened_from_observation_id,
         type:            letterType,
         direction:       'outbound',
-        subject:         `Violation letter (${violation.current_stage})`,
+        subject:         isSelfHelp10Day
+          ? `10-day certified ${selfHelpRemedy === 'cleanup' ? 'cleanup' : 'force-mow'} letter`
+          : `Violation letter (${violation.current_stage})`,
         content:         storagePath,         // canonical storage location; signed URLs derived on demand
-        delivery_method: isCertified ? 'certified_mail' : 'first_class_mail',
+        // Self-help 10-day notices always go certified, regardless of stage.
+        delivery_method: (isCertified || isSelfHelp10Day) ? 'certified_mail' : 'first_class_mail',
         status:          'draft',             // explicit — regenerated letters always go to the Drafts queue
         // sent_at stays NULL — only stamped at lock-and-batch (postmark time)
       })
