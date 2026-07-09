@@ -6577,7 +6577,7 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
       .from('violations')
       .select(`
         id, property_id, community_id, primary_category_id, opened_at,
-        summary, current_stage
+        current_stage
       `)
       .eq('id', violationId)
       .maybeSingle();
@@ -6676,7 +6676,7 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
       declaration_county: community.declaration_county,
       declaration_section_full: authorizingSection,
       observation_date: (violation.opened_at || '').slice(0, 10),
-      observed_condition: (req.body && req.body.observed_condition) || violation.summary
+      observed_condition: (req.body && req.body.observed_condition)
         || (remedyMode === 'cleanup'
           ? 'Accumulation of trash, debris, and unsightly materials on the Lot.'
           : 'Lawn requires mowing, edging, and weed control.'),
