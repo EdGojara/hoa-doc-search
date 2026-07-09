@@ -983,6 +983,9 @@ app.get('/admin/ap', (req, res) => {
 app.get('/admin/bank-setup', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'bank-setup.html'));
 });
+app.get('/admin/statement-tracker', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'statement-tracker.html'));
+});
 app.get('/admin/pool-access', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'pool-access.html'));
 });

@@ -38,6 +38,62 @@ router.get('/payable', async (req, res) => {
   } catch (err) { handleErr(res, 'payable', err); }
 });
 
+// GET /statement-tracker — live "which monthly bank statements are still needed"
+// across every account, straight from bank_statement_imports. Staff-accessible
+// (behind the global staff cookie, like the rest of /api/checks). Updates itself
+// as statements are imported. Month range = earliest statement (or Sep 2025)
+// through the last fully-closed month.
+router.get('/statement-tracker', async (req, res) => {
+  try {
+    const { data: accts, error: aErr } = await supabase.from('bank_accounts')
+      .select('id, account_nickname, account_type, is_check_disbursement, community_id, community:community_id(name), bank:bank_id(name)')
+      .order('community_id');
+    if (aErr) throw aErr;
+    const { data: imps, error: iErr } = await supabase.from('bank_statement_imports')
+      .select('bank_account_id, statement_period_end, status').neq('status', 'voided');
+    if (iErr) throw iErr;
+
+    const ym = (d) => (d ? String(d).slice(0, 7) : null); // 'YYYY-MM'
+    const uploadedBy = {};
+    let minMonth = '2025-09';
+    for (const im of imps || []) {
+      if (!im.bank_account_id || im.status !== 'completed') continue;
+      const m = ym(im.statement_period_end);
+      if (!m) continue;
+      (uploadedBy[im.bank_account_id] = uploadedBy[im.bank_account_id] || new Set()).add(m);
+      if (m < minMonth) minMonth = m;
+    }
+
+    // Month list: minMonth .. the last fully-closed month (previous calendar
+    // month). getUTCMonth() is 0-based, which conveniently equals the 1-based
+    // number of the *previous* month (July=6 -> June=6); wrap January to Dec.
+    const now = new Date();
+    let ey = now.getUTCFullYear();
+    let em = now.getUTCMonth();
+    if (em === 0) { em = 12; ey -= 1; }
+    const MN = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const months = [];
+    let [sy, sm] = minMonth.split('-').map(Number);
+    while (sy < ey || (sy === ey && sm <= em)) {
+      months.push({ key: `${sy}-${String(sm).padStart(2, '0')}`, label: MN[sm], yr: `'${String(sy).slice(2)}` });
+      sm += 1; if (sm > 12) { sm = 1; sy += 1; }
+    }
+
+    const commMap = {};
+    for (const a of accts || []) {
+      const cn = a.community ? a.community.name : '—';
+      (commMap[cn] = commMap[cn] || []).push({
+        id: a.id, nickname: a.account_nickname, bank: a.bank ? a.bank.name : null,
+        type: a.account_type, is_check: !!a.is_check_disbursement,
+        uploaded: [...(uploadedBy[a.id] || [])],
+      });
+    }
+    const communities = Object.entries(commMap).map(([name, accounts]) => ({ name, accounts }));
+
+    res.json({ months, communities });
+  } catch (err) { handleErr(res, 'statement-tracker', err); }
+});
+
 router.get('/accounts/:bankAccountId/config', async (req, res) => {
   try { res.json({ config: await getBankCheckConfig(req.params.bankAccountId) }); }
   catch (err) { handleErr(res, 'config-get', err); }

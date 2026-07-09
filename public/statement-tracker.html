@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bank Statement Tracker — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root{ --navy:#0B1D34; --gold:#D4AF37; --ink:#1b2431; --muted:#5a6b80; --line:#e4e9f0; --bg:#eef1f6; --card:#fff;
+    --have:#15803d; --have-bg:#dcfce7; --na:#8a97a8; --na-bg:#eef1f5; --need-line:#cdd6e2; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:14px;}
+  .wrap{max-width:1180px;margin:0 auto;padding:24px 20px 70px;}
+  a.back{display:inline-flex;gap:6px;color:var(--muted);text-decoration:none;font-size:13px;font-weight:600;margin-bottom:12px;}
+  header{border-bottom:3px solid var(--gold);padding-bottom:14px;margin-bottom:16px;}
+  .eyebrow{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);}
+  h1{margin:5px 0 4px;font-size:24px;font-weight:750;color:var(--navy);}
+  .lede{color:var(--muted);font-size:13px;max-width:64ch;}
+  .how{background:var(--navy);color:#dfe7f2;border-radius:10px;padding:12px 16px;margin:14px 0;font-size:12.5px;}
+  .how b{color:#fff;} .how .step{color:var(--gold);font-weight:700;}
+  .bar{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;margin:14px 0 8px;}
+  .prog{flex:1;min-width:240px;}
+  .prog-track{height:9px;border-radius:6px;background:#dde3ec;overflow:hidden;}
+  .prog-fill{height:100%;background:linear-gradient(90deg,var(--have),#22a35a);border-radius:6px;transition:width .3s;}
+  .prog-nums{margin-top:6px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;}
+  .prog-nums b{color:var(--navy);}
+  .legend{display:flex;flex-wrap:wrap;gap:7px;align-items:center;}
+  .key{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);background:var(--card);border:1px solid var(--line);border-radius:20px;padding:4px 10px;}
+  .sw{width:13px;height:13px;border-radius:4px;display:inline-block;}
+  .sw.have{background:var(--have-bg);border:1px solid var(--have);} .sw.need{background:#fff;border:1.5px solid var(--need-line);} .sw.na{background:var(--na-bg);border:1px solid #cdd6e2;}
+  .refresh{border:1px solid var(--line);background:var(--card);color:var(--navy);border-radius:8px;padding:6px 13px;font-size:12px;font-weight:600;cursor:pointer;}
+  .refresh:hover{border-color:#c3ccd9;}
+  .tablecard{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+  .scroll{overflow-x:auto;}
+  table{border-collapse:separate;border-spacing:0;width:100%;font-variant-numeric:tabular-nums;}
+  th,td{white-space:nowrap;}
+  thead th{position:sticky;top:0;z-index:3;background:var(--navy);color:#fff;font-size:11px;font-weight:600;padding:11px 8px;text-align:center;}
+  thead th.acct{z-index:5;left:0;text-align:left;padding-left:18px;min-width:290px;}
+  .mth-yr{display:block;font-size:9px;font-weight:500;opacity:.6;}
+  td.acct{position:sticky;left:0;z-index:2;background:var(--card);text-align:left;padding:9px 14px 9px 18px;min-width:290px;border-right:1px solid var(--line);}
+  td.acct .nm{font-weight:600;color:var(--ink);font-size:13px;} td.acct .bk{font-size:11px;color:var(--muted);margin-top:1px;}
+  .tag{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:1px 6px;border-radius:20px;margin-left:6px;vertical-align:middle;}
+  .tag.check{background:#e7edff;color:#28408f;} .tag.legacy{background:#fbeee0;color:#9a5a1e;}
+  tr.grouprow td{background:#f4f7fb;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px 18px;position:sticky;left:0;}
+  tr.grouprow .gname{font-weight:750;color:var(--navy);font-size:12.5px;text-transform:uppercase;letter-spacing:.02em;}
+  tr.grouprow .gnote{font-weight:500;font-size:11.5px;color:#9a5a1e;text-transform:none;letter-spacing:0;margin-left:8px;}
+  tbody td.cell{text-align:center;padding:5px;border-bottom:1px solid #eef1f6;}
+  .chip{width:30px;height:26px;margin:0 auto;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;}
+  .chip.need{border:1.5px solid var(--need-line);}
+  .chip.have{background:var(--have-bg);color:var(--have);}
+  .chip.na{background:var(--na-bg);color:var(--na);font-weight:600;}
+  .foot{margin-top:20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;}
+  .note{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;padding:11px 14px;font-size:12.5px;color:var(--muted);}
+  .note b{color:var(--navy);display:block;margin-bottom:3px;font-size:12px;}
+  .empty{padding:40px;text-align:center;color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/" onclick="if(document.referrer&&history.length>1){history.back();return false;}">&larr; Back to trustEd</a>
+  <header>
+    <div class="eyebrow">Bedrock &middot; Accounting Operations</div>
+    <h1>Bank Statement Tracker</h1>
+    <p class="lede">Live status of every account&rsquo;s monthly bank statements. <b style="color:var(--have)">Green</b> updates automatically the moment a statement is imported. This is the shared view &mdash; everyone sees the same thing.</p>
+  </header>
+  <div class="how">
+    <b>To upload:</b> <span class="step">Accounting &rarr; Bank statement import</span> &rarr; pick the community + account &rarr; drop the PDF. It turns green here on the next refresh.
+  </div>
+  <div class="bar">
+    <div class="prog"><div class="prog-track"><div class="prog-fill" id="fill"></div></div><div class="prog-nums" id="nums">Loading&hellip;</div></div>
+    <div class="legend">
+      <span class="key"><span class="sw have"></span> In trustEd</span>
+      <span class="key"><span class="sw need"></span> Needed</span>
+      <span class="key"><span class="sw na"></span> N/A (sweep)</span>
+      <button class="refresh" id="refresh">↻ Refresh</button>
+    </div>
+  </div>
+  <div class="tablecard"><div class="scroll"><table id="grid"><tbody><tr><td class="empty">Loading&hellip;</td></tr></tbody></table></div></div>
+  <div class="foot" id="notes"></div>
+</div>
+
+<script>
+const NOTES = {
+  "Eaglewood": "GL blocked — gather, don't load yet",
+};
+function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+const isSweep = a => /sweep/i.test(a.nickname||'');
+
+async function load(){
+  let d;
+  try { const r = await fetch('/api/checks/statement-tracker'); if(!r.ok) throw new Error(r.status); d = await r.json(); }
+  catch(e){ document.querySelector('#grid tbody').innerHTML='<tr><td class="empty">Could not load. Make sure you are signed in.</td></tr>'; return; }
+  render(d);
+}
+function render(d){
+  const months = d.months||[], comms = d.communities||[];
+  let h = "<thead><tr><th class='acct'>Account</th>";
+  for(const m of months) h += `<th>${esc(m.label)}<span class="mth-yr">${esc(m.yr)}</span></th>`;
+  h += "</tr></thead><tbody>";
+  let need=0, have=0, na=0;
+  for(const g of comms){
+    const note = NOTES[g.name] ? `<span class="gnote">${esc(NOTES[g.name])}</span>` : "";
+    h += `<tr class="grouprow"><td colspan="${months.length+1}"><span class="gname">${esc(g.name)}</span>${note}</td></tr>`;
+    for(const a of g.accounts){
+      const sweep = isSweep(a);
+      const legacy = /columbia/i.test(a.bank||'');
+      const tag = a.is_check ? `<span class="tag check">Check acct</span>` : legacy ? `<span class="tag legacy">Closing</span>` : "";
+      h += `<tr><td class="acct"><span class="nm">${esc(a.nickname)}</span>${tag}<div class="bk">${esc(a.bank||'—')}</div></td>`;
+      const up = new Set(a.uploaded||[]);
+      for(const m of months){
+        if(up.has(m.key)){ have++; h += `<td class="cell"><div class="chip have" title="Imported">✓</div></td>`; }
+        else if(sweep){ na++; h += `<td class="cell"><div class="chip na" title="Sweep — usually on the parent statement">–</div></td>`; }
+        else { need++; h += `<td class="cell"><div class="chip need" title="${esc(a.nickname)} · ${esc(m.label)} ${esc(m.yr)} — needed"></div></td>`; }
+      }
+      h += "</tr>";
+    }
+  }
+  h += "</tbody>";
+  if(!comms.length) h = "<tbody><tr><td class='empty'>No accounts found.</td></tr></tbody>";
+  document.getElementById('grid').innerHTML = h;
+  const owed = need+have, pct = owed?Math.round(have/owed*100):0;
+  document.getElementById('fill').style.width = pct+'%';
+  document.getElementById('nums').innerHTML = `<b>${have}</b> of <b>${owed}</b> statements imported (${pct}%) &middot; <b>${need}</b> still needed &middot; ${na} N/A (sweeps)`;
+  document.getElementById('notes').innerHTML = `
+    <div class="note"><b>Quail Ridge is live</b>Reconciled through May 2026 — watch for its latest month. Its reserve account still needs everything.</div>
+    <div class="note"><b>Eaglewood is on hold</b>Its books can't be reconciled until the Vantaca trial balance is fixed. Gather statements, but they aren't loaded yet.</div>
+    <div class="note"><b>Canyon Gate is mid-switch</b>Columbia (closing) + NewFirst (go-forward). Collect Columbia through closing, NewFirst from its open date.</div>
+    <div class="note"><b>Sweeps &amp; brokerage</b>ICS sweep balances usually appear on the parent statement (shown N/A). Edward Jones brokerage has its own.</div>`;
+}
+document.getElementById('refresh').addEventListener('click', load);
+load();
+</script>
+</body>
+</html>
