@@ -44,8 +44,21 @@
 let _supa=null, af=null, _banks=[], _accounts=[], _editId=null;
 function editRow(id){
   const a=_accounts.find(x=>x.id===id); if(!a) return; _editId=id;
+  // Only true operating checking accounts print checks — hide the check-config
+  // fields for savings / reserve / ICS / sweep so staff aren't asked for a
+  // check number/stock on an account that never disburses.
+  const isSweep = /\bsweep\b/i.test(a.account_nickname || '');
+  const canDisburse = a.account_type === 'operating' && !isSweep;
   const bankOpts=_banks.map(b=>`<option value="${esc(b.id)}"${(a.bank&&a.bank.name===b.name)?' selected':((!a.bank&&/newfirst/i.test(b.name))?' selected':'')}>${esc(b.name)} (${esc(b.aba_check||'—')})</option>`).join('');
   const stockOpts=['std_top','std_middle','std_bottom','voucher_top','three_per_page'].map(v=>`<option value="${v}"${a.check_stock_format===v?' selected':''}>${v}</option>`).join('');
+  const checkFields = canDisburse ? `
+    <div class="grid2">
+      <div><label>Next check number</label><input id="e_next" type="number" value="${esc(a.next_check_number||'')}"></div>
+      <div><label>Check stock</label><select id="e_stock">${stockOpts}</select></div>
+    </div>
+    <div class="grid2">
+      <div><label>MICR line</label><select id="e_pre"><option value="true"${a.check_stock_micr_pre_encoded!==false?' selected':''}>Pre-encoded stock (bank MICR printed)</option><option value="false"${a.check_stock_micr_pre_encoded===false?' selected':''}>Blank (trustEd prints MICR)</option></select></div><div></div>
+    </div>` : `<div class="note" style="margin:6px 0 10px; color:#64748b;">This is a ${esc(isSweep ? 'ICS / sweep' : ({reserve:'reserve',other:'savings / ICS'}[a.account_type]||'non-operating'))} account — it doesn't disburse checks, so there's no check number or stock to set. Just link the bank and account number for statements and reconciliation.</div>`;
   document.getElementById('editArea').innerHTML=`<div class="card" style="border:2px solid var(--gold);">
     <h2 style="margin-top:0;">Edit — ${esc(a.community?a.community.name:'')} · ${esc(a.account_nickname||'')}</h2>
     <div class="warn">Enter the FULL account number to make this account print-ready (only the last 4 are shown after saving). Stored encrypted.</div>
@@ -53,13 +66,7 @@ function editRow(id){
       <div><label>Bank</label><select id="e_bank">${bankOpts}</select></div>
       <div><label>Full account number ${a.has_full_number?'(leave blank to keep current)':''}</label><input id="e_acct" type="text" inputmode="numeric" autocomplete="off" placeholder="${a.has_full_number?'••••'+esc(a.account_last4||''):'account #'}"></div>
     </div>
-    <div class="grid2">
-      <div><label>Next check number</label><input id="e_next" type="number" value="${esc(a.next_check_number||'')}"></div>
-      <div><label>Check stock</label><select id="e_stock">${stockOpts}</select></div>
-    </div>
-    <div class="grid2">
-      <div><label>MICR line</label><select id="e_pre"><option value="true"${a.check_stock_micr_pre_encoded!==false?' selected':''}>Pre-encoded stock (bank MICR printed)</option><option value="false"${a.check_stock_micr_pre_encoded===false?' selected':''}>Blank (trustEd prints MICR)</option></select></div><div></div>
-    </div>
+    ${checkFields}
     <button class="btn" onclick="saveEdit()">Save</button> <button class="btn" style="background:#f1f5f9;color:#334155;" onclick="document.getElementById('editArea').innerHTML='';">Cancel</button>
     <div id="e_msg" class="note" style="margin-top:8px;"></div>
   </div>`;
@@ -67,8 +74,11 @@ function editRow(id){
 }
 async function saveEdit(){
   const msg=document.getElementById('e_msg'); msg.style.color='#5a7390'; msg.textContent='Saving…';
-  const body={ bank_id:document.getElementById('e_bank').value, next_check_number:document.getElementById('e_next').value,
-    check_stock_format:document.getElementById('e_stock').value, pre_encoded:document.getElementById('e_pre').value==='true' };
+  const body={ bank_id:document.getElementById('e_bank').value };
+  const nextEl=document.getElementById('e_next'), stockEl=document.getElementById('e_stock'), preEl=document.getElementById('e_pre');
+  if(nextEl) body.next_check_number=nextEl.value;
+  if(stockEl) body.check_stock_format=stockEl.value;
+  if(preEl) body.pre_encoded=preEl.value==='true';
   const acct=document.getElementById('e_acct').value.trim(); if(acct) body.account_number=acct;
   try{
     const r=await af('/api/checks/accounts/'+_editId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -99,14 +109,28 @@ async function shell(){
   const commOpts = comms.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
   const bankOpts = banks.map(b=>`<option value="${esc(b.id)}"${/newfirst/i.test(b.name)?' selected':''}>${esc(b.name)} (${esc(b.aba_check||'no routing')})</option>`).join('');
   let rows = accounts.length ? accounts.map(a=>{
+    const isCheckAcct = !!a.is_check_account;
+    // Only true OPERATING checking accounts disburse checks. Savings / reserve /
+    // ICS / sweep never print checks — no config, no test print, can't be
+    // designated. ICS-sweep accounts are typed 'operating' but are functionally
+    // ICS, so exclude anything whose nickname says "sweep".
+    const isSweep = /\bsweep\b/i.test(a.account_nickname || '');
+    const canDisburse = a.account_type === 'operating' && !isSweep;
     const acctCell = a.has_full_number ? '••••'+esc(a.account_last4||'????') : (a.account_last4?'last4 '+esc(a.account_last4)+' <span style="color:#b45309">(no full #)</span>':'<span style="color:#b45309">not set</span>');
     const actions = `<button class="btn" style="background:#f1f5f9;color:#334155;padding:4px 10px;font-size:11.5px;margin:0;" onclick="editRow('${a.id}')">Edit</button>`+
-      (a.ready?` <button class="btn" style="padding:4px 10px;font-size:11.5px;margin:0;" onclick="testPrint('${a.id}')">🖨 Test print</button>`:'')+
-      ((a.bank && !a.is_check_account)?` <button class="btn" style="background:#eef2ff;color:#3730a3;padding:4px 10px;font-size:11.5px;margin:0;" onclick="designateCheck('${a.id}')">Set as check account</button>`:'');
-    const status = a.is_check_account
+      ((isCheckAcct && a.ready)?` <button class="btn" style="padding:4px 10px;font-size:11.5px;margin:0;" onclick="testPrint('${a.id}')">🖨 Test print</button>`:'')+
+      ((canDisburse && a.bank && !isCheckAcct)?` <button class="btn" style="background:#eef2ff;color:#3730a3;padding:4px 10px;font-size:11.5px;margin:0;" onclick="designateCheck('${a.id}')">Set as check account</button>`:'');
+    const typeLabel = isSweep ? 'ICS / sweep' : ({ operating:'Operating', reserve:'Reserve', other:'Savings / other' }[a.account_type] || '—');
+    const status = isCheckAcct
       ? `<span class="badge" style="background:#dbeafe;color:#1e3a8a;">🖊 CHECK ACCOUNT</span>`
-      : `<span class="badge ${a.ready?'b-ready':'b-not'}">${a.ready?'ready':'incomplete'}</span>`;
-    return `<tr><td><b>${esc(a.community?a.community.name:'—')}</b><div class="note">${esc(a.account_nickname||'')}</div></td><td>${esc(a.bank?a.bank.name:'—')}</td><td>${acctCell}</td><td>#${esc(a.next_check_number)}</td><td>${esc(a.check_stock_format||'')}</td><td>${status}</td><td style="white-space:nowrap;">${actions}</td></tr>`;
+      : (canDisburse
+          ? `<span class="badge ${a.ready?'b-ready':'b-not'}">${a.ready?'operating · eligible':'incomplete'}</span>`
+          : `<span class="badge" style="background:#f1f5f9;color:#64748b;" title="Savings, reserve and ICS accounts don't disburse checks">${esc(typeLabel)} · no checks</span>`);
+    // Check-printing columns apply only to the check (disbursement) account.
+    const dash = '<span style="color:#cbd5e1;">—</span>';
+    const nextChkCell = isCheckAcct ? '#'+esc(a.next_check_number) : dash;
+    const stockCell = isCheckAcct ? esc(a.check_stock_format||'') : dash;
+    return `<tr><td><b>${esc(a.community?a.community.name:'—')}</b><div class="note">${esc(a.account_nickname||'')}</div></td><td>${esc(a.bank?a.bank.name:'—')}</td><td>${acctCell}</td><td>${nextChkCell}</td><td>${stockCell}</td><td>${status}</td><td style="white-space:nowrap;">${actions}</td></tr>`;
   }).join('') : '<tr><td colspan="7" class="empty">No bank accounts yet.</td></tr>';
   document.getElementById('body').innerHTML = `
     <h2>Accounts on file</h2>
