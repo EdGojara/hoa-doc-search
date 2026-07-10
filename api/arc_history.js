@@ -272,6 +272,24 @@ router.post('/', upload.single('file'), async (req, res) => {
 
     const sourceFilename = req.body.source_filename || req.file?.originalname || null;
 
+    // Store the decision LETTER itself (the PDF/image that went to the homeowner)
+    // so the exact approval is retrievable + linkable from the record and the
+    // board report. Non-fatal on storage failure.
+    let sourceDocumentPath = null;
+    if (req.file && req.file.buffer) {
+      try {
+        const hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
+        const safe = (req.file.originalname || 'arc_decision').replace(/[^a-zA-Z0-9._\-]/g, '_');
+        sourceDocumentPath = `arc_decisions/${communityId}/${hash}_${safe}`;
+        await supabase.storage.from('documents').upload(sourceDocumentPath, req.file.buffer, {
+          contentType: req.file.mimetype || 'application/octet-stream', upsert: true,
+        });
+      } catch (e) {
+        console.warn('[arc-history] letter storage upload failed (non-fatal):', e.message);
+        sourceDocumentPath = null;
+      }
+    }
+
     // Build text for embedding (project + reasoning + summary)
     const embedSource = [
       extracted.project_type,
@@ -331,6 +349,7 @@ router.post('/', upload.single('file'), async (req, res) => {
       management_company_id: BEDROCK_MGMT_CO_ID,
       community_id: communityId,
       source_filename: sourceFilename,
+      source_document_path: sourceDocumentPath,
       source_excerpt: req.body.source_excerpt || null,
       property_address: extracted.property_address || null,
       homeowner_name: extracted.homeowner_name || null,
@@ -436,6 +455,25 @@ router.get('/:id', async (req, res) => {
     res.json({ decision: data });
   } catch (err) {
     console.error('[arc-history] get failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/arc-history/:id/document — open the stored decision letter (the PDF
+// that went to the homeowner). Redirects to a short-lived signed URL.
+// ----------------------------------------------------------------------------
+router.get('/:id/document', async (req, res) => {
+  try {
+    const { data: row } = await supabase.from('arc_historical_decisions')
+      .select('source_document_path').eq('id', req.params.id).maybeSingle();
+    if (!row || !row.source_document_path) return res.status(404).json({ error: 'no_document_on_file' });
+    const { data, error } = await supabase.storage.from('documents')
+      .createSignedUrl(String(row.source_document_path), 60 * 60);
+    if (error || !data || !data.signedUrl) return res.status(404).json({ error: 'file_not_found' });
+    res.redirect(data.signedUrl);
+  } catch (err) {
+    console.error('[arc-history] document fetch failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

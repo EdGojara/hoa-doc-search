@@ -1816,7 +1816,7 @@ router.get('/activity-detail', async (req, res) => {
       // which captures both online-portal decisions and staff-logged committee
       // decisions. decided_at is a DATE.
       fetchAll(() => supabase.from('arc_historical_decisions')
-        .select('property_address, homeowner_name, project_type, project_description, decision_type, conditions, decided_at')
+        .select('id, property_address, homeowner_name, project_type, project_description, decision_type, conditions, decided_at, source_document_path')
         .eq('community_id', communityId)
         .not('decided_at', 'is', null)
         .gte('decided_at', start).lt('decided_at', endEx)),
@@ -1884,6 +1884,16 @@ router.get('/activity-detail', async (req, res) => {
       mail_class: g.delivery_method === 'certified_mail' ? 'Certified' : 'First-class',
     })).sort((a, b) => (a.property).localeCompare(b.property) || String(a.date).localeCompare(String(b.date)));
 
+    // 7-day signed URLs for the ACC decision letters (the PDF sent to the
+    // homeowner) so the board can open them straight from the report, no login.
+    const accPaths = [...new Set(accDecisions.map((d) => d.source_document_path).filter(Boolean))];
+    const accSignedByPath = {};
+    for (let i = 0; i < accPaths.length; i += 100) {
+      const { data: signed } = await supabase.storage.from('documents')
+        .createSignedUrls(accPaths.slice(i, i + 100), 60 * 60 * 24 * 7);
+      (signed || []).forEach((s) => { if (s && s.signedUrl && !s.error) accSignedByPath[s.path] = s.signedUrl; });
+    }
+
     const outcomeOf = (statusRaw) => {
       const s = (statusRaw || '').toLowerCase();
       return s === 'approved' ? 'Approved'
@@ -1898,11 +1908,13 @@ router.get('/activity-detail', async (req, res) => {
         project: d.reference_number || null, conditions: null, kind: 'Builder ARC',
         outcome: outcomeOf(d.status), date: (d.decided_at || '').slice(0, 10),
       })),
-      // Resident ACC — capture WHAT was approved: the project + any conditions.
+      // Resident ACC — capture WHAT was approved: the project + any conditions +
+      // a link to the actual approval letter sent to the homeowner.
       ...accDecisions.map((d) => ({
         property: d.property_address || '(no address)', applicant: d.homeowner_name || '—',
         project: d.project_type || null, conditions: d.conditions || null, kind: 'Resident ACC',
         outcome: outcomeOf(d.decision_type), date: (d.decided_at || '').slice(0, 10),
+        letter_url: d.source_document_path ? (accSignedByPath[d.source_document_path] || null) : null,
       })),
     ].sort((a, b) => a.property.localeCompare(b.property));
 
@@ -1949,7 +1961,7 @@ router.get('/activity-detail', async (req, res) => {
           <td><strong>${esc(r.property)}</strong></td><td>${esc(r.applicant)}</td>
           <td>${esc(r.kind || '—')}</td>
           <td>${esc(r.project || '—')}${r.conditions ? `<div class="muted" style="font-size:11px; margin-top:2px;">Conditions: ${esc(String(r.conditions).slice(0, 160))}</div>` : ''}</td>
-          <td>${r.outcome === 'Denied' ? `<span class="denied">${esc(r.outcome)}</span>` : esc(r.outcome)}</td>
+          <td>${r.outcome === 'Denied' ? `<span class="denied">${esc(r.outcome)}</span>` : esc(r.outcome)}${r.letter_url ? `<div style="font-size:11px; margin-top:2px;"><a href="${esc(r.letter_url)}" target="_blank" rel="noopener">Approval letter ↗</a></div>` : ''}</td>
           <td>${esc(fmtUS(r.date))}</td>
         </tr>`).join('')}</tbody>
       </table>` : '<p class="muted">No ARC/ACC decisions rendered in this period.</p>';

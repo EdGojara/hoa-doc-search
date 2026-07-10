@@ -13489,6 +13489,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
               ${d.extraction_confidence ? `<span style="font-size:11px; color:${d.extraction_confidence === 'high' ? '#16a34a' : d.extraction_confidence === 'medium' ? '#d97706' : '#dc2626'}; margin-left:8px; font-weight:600;">● ${ahEsc(d.extraction_confidence)} confidence</span>` : ''}
               ${d.manually_edited ? '<span style="font-size:11px; color:#1e3a8a; margin-left:8px;">✓ verified by staff</span>' : ''}
             </div>
+            ${d.source_document_path ? `<div style="margin-top:10px;"><a href="/api/arc-history/${d.id}/document" target="_blank" rel="noopener" style="font-size:13px; color:#315A87; font-weight:600; text-decoration:none; border:1px solid #cbd5e1; border-radius:6px; padding:5px 11px; display:inline-block;">📄 View approval letter (sent to homeowner)</a></div>` : ''}
           </div>
           <button onclick="ahDelete('${d.id}', true)" style="background:none; border:1px solid #fcc; color:#c0392b; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer;">Delete</button>
         </div>
