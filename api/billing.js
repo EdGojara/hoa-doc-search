@@ -788,6 +788,152 @@ router.post('/invoices/:invoiceId/mark-sent', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// Emma emails the bill. Two steps on purpose (Ed 2026-07-10: "draft, staff
+// clicks Send") — nothing leaves the building without a human approving it,
+// because outbound financial email is a catastrophic-output surface.
+//   1. GET  /invoices/:id/email-preview  → resolves recipient + drafts the
+//      cover note in Emma's voice. Sends NOTHING.
+//   2. POST /invoices/:id/email-send     → renders the PDF, sends as Emma with
+//      the Bedrock invoice attached, logs it, marks the invoice sent.
+// ----------------------------------------------------------------------------
+const EMAIL_ONE_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const fmtUsd = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function periodMonthLabel(startYmd) {
+  const m = String(startYmd || '').match(/^(\d{4})-(\d{2})/);
+  if (!m) return '';
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  return `${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
+}
+
+// Best-effort billing recipient for an HOA (non-builder) invoice: an active
+// board member with an email, treasurer first, then president, then anyone.
+async function resolveBoardBillingEmail(communityId) {
+  const { data } = await supabase.from('board_members')
+    .select('name, position, email')
+    .eq('community_id', communityId).eq('is_active', true)
+    .not('email', 'is', null).limit(50);
+  const rows = data || [];
+  const pick = (re) => rows.find((r) => re.test(String(r.position || '').toLowerCase()));
+  const chosen = pick(/treasurer/) || pick(/president/) || rows[0] || null;
+  return chosen ? { email: chosen.email, name: chosen.name, position: chosen.position } : null;
+}
+
+function draftBillingCoverNote({ invoice, community }) {
+  const period = periodMonthLabel(invoice.service_period_start);
+  const total = fmtUsd(invoice.total);
+  const commName = (community && community.name) || 'your community';
+  if (invoice.invoice_type === 'builder_arc') {
+    return `Hi there,\n\nAttached is Bedrock's architectural review invoice for ${commName}, covering ${period}. It reflects the new-home submissions received that month, for ${total} total.\n\nJust reply here with any questions and I'll take care of it.`;
+  }
+  if (invoice.invoice_type === 'activity') {
+    return `Hi,\n\nAttached is ${commName}'s activity invoice for ${period}, totaling ${total}. It covers the violation notices mailed and ARC decisions processed that month.\n\nHappy to walk through any line if that's helpful, just reply here.`;
+  }
+  return `Hi,\n\nAttached is ${commName}'s management invoice for ${period}, totaling ${total}.\n\nLet me know if you have any questions, just reply here.`;
+}
+
+router.get('/invoices/:invoiceId/email-preview', async (req, res) => {
+  try {
+    const { data: invoice, error } = await supabase
+      .from('invoices')
+      .select('id, invoice_number, invoice_type, status, total, service_period_start, service_period_end, recipient_name, recipient_email, community_id, community:communities(name, legal_name)')
+      .eq('id', req.params.invoiceId).single();
+    if (error || !invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    let to = invoice.recipient_email || '';
+    let recipient_source = invoice.recipient_email ? 'invoice recipient' : null;
+    if (!to && invoice.invoice_type !== 'builder_arc') {
+      const board = await resolveBoardBillingEmail(invoice.community_id);
+      if (board) { to = board.email; recipient_source = `board ${board.position || 'member'} (${board.name || ''})`.trim(); }
+    }
+    const commName = (invoice.community && invoice.community.name) || '';
+    const subject = invoice.invoice_type === 'builder_arc'
+      ? `${commName} — architectural review invoice ${invoice.invoice_number}`
+      : `${commName} — invoice ${invoice.invoice_number} (${periodMonthLabel(invoice.service_period_start)})`;
+
+    res.json({
+      to, cc: '', subject,
+      body: draftBillingCoverNote({ invoice, community: invoice.community || {} }),
+      recipient_source,
+      has_recipient: !!to,
+      recipient_name: invoice.recipient_name || null,
+      invoice_number: invoice.invoice_number,
+      invoice_type: invoice.invoice_type,
+      total: invoice.total,
+      graph_connected: require('../lib/email/graph_send').isConfigured(),
+    });
+  } catch (err) {
+    console.error('[billing] email-preview failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/invoices/:invoiceId/email-send', async (req, res) => {
+  const { invoiceId } = req.params;
+  try {
+    const graphSend = require('../lib/email/graph_send');
+    const { buildEmmaEmail } = require('../lib/email/emma_signature');
+    if (!graphSend.isConfigured()) {
+      return res.status(400).json({ error: 'Emma is not connected to email yet (Microsoft Graph credentials missing).' });
+    }
+    const to = String((req.body && req.body.to) || '').split(/[,;]/).map((s) => s.trim()).filter((s) => EMAIL_ONE_RE.test(s));
+    const cc = String((req.body && req.body.cc) || '').split(/[,;]/).map((s) => s.trim()).filter((s) => EMAIL_ONE_RE.test(s));
+    const subject = String((req.body && req.body.subject) || '').trim() || '(no subject)';
+    const body = String((req.body && req.body.body) || '').trim();
+    if (to.length === 0) return res.status(400).json({ error: 'Add at least one valid recipient email.' });
+    if (!body) return res.status(400).json({ error: 'The email body is empty.' });
+
+    // Load invoice for logging + status + community scope.
+    const { data: invoice, error: iErr } = await supabase
+      .from('invoices')
+      .select('id, invoice_number, invoice_type, status, community_id, total')
+      .eq('id', invoiceId).single();
+    if (iErr || !invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    // Kill-switch: a billing halt stops outbound bills.
+    const halt = await getActiveKillSwitch({ managementCompanyId: BEDROCK_MGMT_CO_ID, communityId: invoice.community_id, module: 'billing' });
+    if (halt) return res.status(423).json({ error: `Billing is paused for this community (${halt.reason || 'kill switch active'}). Resume it before emailing invoices.` });
+
+    // Render the Bedrock PDF and attach it (byte-identical to the download).
+    const { buffer } = await renderInvoicePdfBuffer(invoiceId);
+    const { html, attachments } = buildEmmaEmail(body);
+    attachments.push({
+      '@odata.type': '#microsoft.graph.fileAttachment',
+      name: `invoice_${invoice.invoice_number || invoiceId}.pdf`,
+      contentType: 'application/pdf',
+      contentBytes: buffer.toString('base64'),
+    });
+
+    await graphSend.sendAs({ from: graphSend.EMMA_MAILBOX, to, cc, subject, html, attachments });
+
+    // Log the outbound correspondence (association record).
+    const allRecipients = [...to, ...cc];
+    await supabase.from('email_messages').insert({
+      mailbox: graphSend.EMMA_MAILBOX, direction: 'outbound', sender_email: graphSend.EMMA_MAILBOX,
+      sender_name: 'Emma Brooks (Bedrock AI)', recipients: allRecipients, subject,
+      body_preview: body.slice(0, 2000), classification: 'outbound_reply', classification_confidence: 'high',
+      ai_summary: `Emma emailed invoice ${invoice.invoice_number} to ${allRecipients.join(', ')}`,
+      community_id: invoice.community_id, triage_status: 'handled', record_ownership: 'association_record',
+      reviewed_at: new Date().toISOString(),
+    });
+
+    // Mark the invoice sent (keep it) unless it already is.
+    const wasSent = invoice.status === 'sent';
+    if (['draft', 'review', 'approved'].includes(invoice.status)) {
+      await supabase.from('invoices').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', invoiceId);
+    }
+    await supabase.from('invoice_events').insert({
+      invoice_id: invoiceId, kind: wasSent ? 'resent' : 'sent',
+      payload: { emailed: true, via: 'emma', to: allRecipients, subject },
+    });
+
+    res.json({ sent: true, to, cc, invoice_number: invoice.invoice_number, from: graphSend.EMMA_MAILBOX });
+  } catch (err) {
+    console.error('[billing] email-send failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // DELETE /api/billing/invoices/:invoiceId
 // Hard-deletes a DRAFT/REVIEW invoice (and its line items + events cascade).
 // Sent/approved/paid/void invoices are kept — those are voided, never deleted,
@@ -1292,62 +1438,69 @@ router.get('/invoices/:invoiceId', async (req, res) => {
 // brand-the-output rule. Logo is base64-embedded into the HTML so the PDF
 // renders without network access.
 // ----------------------------------------------------------------------------
-router.get('/invoices/:invoiceId/pdf', async (req, res) => {
-  const { invoiceId } = req.params;
+// Render an invoice to a PDF Buffer (shared by the /pdf download route and the
+// "Email as Emma" send path, so the attachment is byte-identical to the
+// download). Returns { buffer, invoice }.
+async function renderInvoicePdfBuffer(invoiceId) {
+  const { data: invoice, error: iErr } = await supabase
+    .from('invoices')
+    .select('*, community:communities(*)')
+    .eq('id', invoiceId)
+    .single();
+  if (iErr || !invoice) { const e = new Error('Invoice not found'); e.statusCode = 404; throw e; }
+
+  const { data: lineItems } = await supabase
+    .from('invoice_line_items')
+    .select('*')
+    .eq('invoice_id', invoiceId)
+    .order('sort_order');
+
+  const { data: managementCo } = await supabase
+    .from('management_companies')
+    .select('*')
+    .eq('id', invoice.management_company_id)
+    .single();
+
+  const html = renderInvoiceHTML({
+    invoice,
+    lineItems: lineItems || [],
+    community: invoice.community || {},
+    managementCo: managementCo || {}
+  });
+
   let browser;
   try {
-    const { data: invoice, error: iErr } = await supabase
-      .from('invoices')
-      .select('*, community:communities(*)')
-      .eq('id', invoiceId)
-      .single();
-    if (iErr || !invoice) return res.status(404).json({ error: 'Invoice not found' });
-
-    const { data: lineItems } = await supabase
-      .from('invoice_line_items')
-      .select('*')
-      .eq('invoice_id', invoiceId)
-      .order('sort_order');
-
-    const { data: managementCo } = await supabase
-      .from('management_companies')
-      .select('*')
-      .eq('id', invoice.management_company_id)
-      .single();
-
-    const html = renderInvoiceHTML({
-      invoice,
-      lineItems: lineItems || [],
-      community: invoice.community || {},
-      managementCo: managementCo || {}
-    });
-
     browser = await puppeteer.launch({
       headless: 'new',
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
-    const pdfBuffer = await page.pdf({
+    const buffer = await page.pdf({
       format: 'Letter',
       printBackground: true,
       margin: { top: 0, right: 0, bottom: 0, left: 0 },
       preferCSSPageSize: true
     });
+    return { buffer, invoice };
+  } finally {
+    if (browser) { try { await browser.close(); } catch (_) { /* swallow */ } }
+  }
+}
 
+router.get('/invoices/:invoiceId/pdf', async (req, res) => {
+  const { invoiceId } = req.params;
+  try {
+    const { buffer, invoice } = await renderInvoicePdfBuffer(invoiceId);
     const filename = `invoice_${invoice.invoice_number || invoiceId}.pdf`;
     const dispo = req.query.inline === '1' ? 'inline' : 'attachment';
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `${dispo}; filename="${filename}"`);
     res.setHeader('Cache-Control', 'no-store');
-    res.send(pdfBuffer);
+    res.send(buffer);
   } catch (err) {
     console.error('[billing] PDF gen failed:', err.message);
-    res.status(500).json({ error: err.message });
-  } finally {
-    if (browser) {
-      try { await browser.close(); } catch (_) { /* swallow */ }
-    }
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
