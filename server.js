@@ -977,6 +977,9 @@ app.get('/admin/errors', (req, res) => {
 app.get('/admin/collections', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'collections-ingest.html'));
 });
+app.get('/admin/payment-plans', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'payment-plans.html'));
+});
 app.get('/admin/ap', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'ap-invoices.html'));
 });
@@ -1360,6 +1363,8 @@ app.use('/api/system-errors', systemErrorsRouter);
 
 const { router: collectionsIngestRouter } = require('./api/collections_ingest');
 app.use('/api/collections-ingest', collectionsIngestRouter);
+const { router: paymentPlansRouter } = require('./api/payment_plans');
+app.use('/api/payment-plans', paymentPlansRouter);
 
 const { router: apIntakeRouter } = require('./api/ap_intake');
 app.use('/api/ap-intake', apIntakeRouter);

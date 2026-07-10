@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payment Plans — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width:1180px; margin:0 auto; padding:20px 18px 70px; }
+  .head { border-bottom:3px solid var(--gold); padding-bottom:12px; margin-bottom:16px; }
+  h1 { margin:0; color:var(--navy); font-size:22px; }
+  h2 { color:var(--navy); font-size:16px; margin:26px 0 10px; }
+  .sub { color:var(--muted); font-size:12.5px; margin-top:4px; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  select, .drop { border:1px solid var(--line); border-radius:8px; background:#fff; }
+  select { padding:9px 12px; font-size:14px; min-width:220px; }
+  .drop { flex:1; min-width:260px; padding:18px; text-align:center; color:var(--muted); font-size:13px; border-style:dashed; cursor:pointer; }
+  .drop.over { border-color:var(--navy); background:#eef4fb; color:var(--navy); }
+  .btn { border:none; border-radius:8px; padding:10px 18px; font-size:13.5px; font-weight:600; cursor:pointer; background:var(--navy); color:#fff; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .btn.ghost { background:#f1f5f9; color:#334155; }
+  .btn.go { background:#166534; color:#fff; }
+  .stats { display:flex; gap:10px; flex-wrap:wrap; margin:14px 0; }
+  .stat { background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px 14px; min-width:92px; }
+  .stat b { display:block; font-size:19px; color:var(--navy); } .stat span { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; background:#fff; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  th { text-align:left; color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; padding:8px 9px; border-bottom:2px solid var(--line); background:#fbfcfe; }
+  td { padding:8px 9px; border-bottom:1px solid var(--line); vertical-align:top; }
+  td.addr { font-weight:600; color:var(--navy); }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .badge { display:inline-block; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; padding:2px 7px; border-radius:20px; }
+  .d-matched{background:#dcfce7;color:#166534;} .d-unmatched{background:#fee2e2;color:#991b1b;}
+  .s-active{background:#dbeafe;color:#1e40af;} .s-completed{background:#dcfce7;color:#166534;} .s-defaulted{background:#fee2e2;color:#991b1b;} .s-cancelled{background:#f1f5f9;color:#64748b;}
+  .note { color:var(--muted); font-size:11px; margin-top:3px; max-width:420px; }
+  select.st { padding:4px 6px; font-size:12px; min-width:120px; }
+  .warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:8px; padding:10px 14px; font-size:12.5px; margin:12px 0; }
+  .empty { text-align:center; color:var(--muted); padding:40px; }
+  .actions { position:sticky; bottom:0; background:linear-gradient(transparent,var(--bg) 40%); padding:16px 0 4px; display:flex; gap:10px; justify-content:flex-end; }
+  .soon { text-align:center; padding:70px 20px; color:var(--muted); } .soon b { display:block; color:var(--navy); font-size:18px; margin-bottom:6px; }
+  a.plan-link { color:var(--navy); font-weight:600; text-decoration:none; border-bottom:1px solid #cbd5e1; }
+  a.doc { color:var(--navy); font-weight:700; text-decoration:none; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="wrap">
+  <a href="/" onclick="if(document.referrer&&history.length>1){history.back();return false;}" style="display:inline-flex;gap:6px;color:#5a7390;text-decoration:none;font-size:13px;font-weight:600;margin-bottom:12px;">&larr; Back to trustEd</a>
+  <div class="head">
+    <h1>Payment Plans</h1>
+    <div class="sub">Drop a signed payment-plan agreement (or a firm report listing several) &mdash; it reads the terms, matches each to a property and its owner, and (on approve) files the plan. Every plan shows up on that homeowner's 360, and the roster below lists everyone currently on a plan.</div>
+  </div>
+  <div id="body"><div class="empty">Loading&hellip;</div></div>
+</div>
+
+<script>
+let _supa=null, af=null, _preview=null;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function money(cents){ if(cents==null||cents==='')return '—'; const n=Number(cents)/100; return '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function moneyD(n){ if(n==null||n==='')return '—'; return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function d10(s){ return s?String(s).slice(0,10):'—'; }
+function showComingSoon(){ document.getElementById('body').innerHTML='<div class="soon"><b>Coming soon</b>This tool is in owner-only beta.</div>'; }
+
+let _communities=[];
+function renderShell(communities){
+  _communities=communities;
+  const opts = communities.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  document.getElementById('body').innerHTML = `
+    <div class="row">
+      <select id="comm"><option value="">Select association&hellip;</option>${opts}</select>
+      <label class="drop" id="drop"><span id="dropText">Drop the payment-plan agreement (PDF) here, or click to choose</span><input id="file" type="file" accept="application/pdf" style="display:none"></label>
+      <button class="btn" id="analyze" disabled>Analyze</button>
+    </div>
+    <div id="result"></div>
+
+    <h2>On a payment plan</h2>
+    <div class="row" style="margin-bottom:8px;">
+      <select id="rosterComm" onchange="loadRoster()"><option value="">All associations</option>${opts}</select>
+      <select id="rosterStatus" onchange="loadRoster()">
+        <option value="active">Active</option>
+        <option value="completed">Completed</option>
+        <option value="defaulted">Defaulted</option>
+        <option value="cancelled">Cancelled</option>
+      </select>
+    </div>
+    <div id="roster"><div class="empty">Loading roster&hellip;</div></div>`;
+
+  const fileInput=document.getElementById('file'), drop=document.getElementById('drop'), analyze=document.getElementById('analyze'), dropText=document.getElementById('dropText');
+  let chosen=null;
+  const setFile=f=>{ chosen=f; dropText.textContent=f?('📄 '+f.name):'Drop the payment-plan agreement (PDF) here, or click to choose'; analyze.disabled=!f; };
+  drop.addEventListener('click',()=>fileInput.click());
+  fileInput.addEventListener('change',e=>setFile(e.target.files[0]));
+  drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over');});
+  drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+  drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');setFile(e.dataTransfer.files[0]);});
+  analyze.addEventListener('click',()=>{ const cid=document.getElementById('comm').value; if(!cid)return alert('Pick an association first.'); if(!chosen)return; doAnalyze(cid,chosen,analyze); });
+  loadRoster();
+}
+
+async function doAnalyze(cid,file,btn){
+  btn.disabled=true; btn.textContent='Analyzing…';
+  const res=document.getElementById('result'); res.innerHTML='<div class="empty">Reading the agreement&hellip; (up to ~60s)</div>';
+  try{
+    const fd=new FormData(); fd.append('pdf',file); fd.append('community_id',cid);
+    const r=await af('/api/payment-plans/ingest',{method:'POST',body:fd});
+    const j=await r.json().catch(()=>({}));
+    if(r.status>=500){ res.innerHTML='<div class="warn">🛑 System error — nothing was saved. Try again shortly.</div>'; return; }
+    if(!j.ok){ res.innerHTML='<div class="warn">Could not read: '+esc(j.error||'unknown')+'</div>'; return; }
+    _preview={community_id:cid, source_filename:j.source_filename, source_storage_path:j.source_storage_path, rows:j.rows, allowed_statuses:j.allowed_statuses};
+    renderPreview(j);
+  }catch(e){ res.innerHTML='<div class="warn">Could not read the agreement.</div>'; }
+  finally{ btn.disabled=false; btn.textContent='Analyze'; }
+}
+
+const STAT_LABEL={active:'Active',completed:'Completed',defaulted:'Defaulted',cancelled:'Cancelled'};
+
+function renderPreview(j){
+  let h=`<div class="stats">
+      <div class="stat"><b>${j.total_plans}</b><span>Plans</span></div>
+      <div class="stat"><b>${j.plans_matched}</b><span>Matched</span></div>
+      <div class="stat"><b>${j.plans_unmatched}</b><span>Unmatched</span></div>
+    </div>
+    <div class="sub" style="margin-bottom:8px;">${j.document_date?'Document dated <strong>'+esc(j.document_date)+'</strong>. ':''}Review each plan (override status if needed), then approve. Unmatched rows are skipped on approve.</div>`;
+  if(j.plans_unmatched) h+=`<div class="warn">${j.plans_unmatched} plan(s) did not match a property (address typo or not on file). Fix the address in the document or add the property, then re-run.</div>`;
+  const opts=s=>(j.allowed_statuses||['active']).map(o=>`<option value="${o}"${o===s?' selected':''}>${STAT_LABEL[o]||o}</option>`).join('');
+  h+=`<table><thead><tr><th>Property / owner</th><th>Total</th><th>Installment</th><th># / freq</th><th>Start</th><th>Next due</th><th>Status</th><th>Match</th></tr></thead><tbody>`;
+  j.rows.forEach((r,i)=>{
+    const disabled = !r.property_id;
+    h+=`<tr data-i="${i}">
+      <td class="addr">${esc(r.matched_address||r.property_address||'?')}${disabled?'<div class="note" style="color:#991b1b">no property match</div>':''}
+        <div class="note">${esc(r.contact_name||r.debtor_name||'')}</div>
+        ${r.terms_summary?`<div class="note">${esc(r.terms_summary)}</div>`:''}</td>
+      <td class="num">${moneyD(r.total_amount)}</td>
+      <td class="num">${moneyD(r.installment_amount)}</td>
+      <td class="num">${r.num_installments!=null?r.num_installments:'—'} / ${esc(r.frequency||'monthly')}</td>
+      <td class="num">${d10(r.start_date)}</td>
+      <td class="num">${d10(r.next_due_date)}</td>
+      <td>${disabled?'—':`<select class="st" data-i="${i}">${opts(r.status)}</select>`}</td>
+      <td><span class="badge d-${r.delta}">${r.delta}</span></td></tr>`;
+  });
+  h+=`</tbody></table>
+    <div class="actions">
+      <button class="btn ghost" onclick="discardPreview()">Discard</button>
+      <button class="btn go" id="approveBtn" onclick="approvePreview()">Approve &amp; file ${j.plans_matched} plan${j.plans_matched===1?'':'s'}</button>
+    </div>`;
+  document.getElementById('result').innerHTML=h;
+}
+
+function discardPreview(){ _preview=null; document.getElementById('result').innerHTML=''; }
+
+async function approvePreview(){
+  if(!_preview)return;
+  const btn=document.getElementById('approveBtn'); btn.disabled=true; btn.textContent='Filing…';
+  // Apply any status overrides back onto the rows.
+  document.querySelectorAll('select.st').forEach(s=>{ const i=Number(s.dataset.i); if(_preview.rows[i]) _preview.rows[i].status=s.value; });
+  try{
+    const r=await af('/api/payment-plans/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      community_id:_preview.community_id, source_filename:_preview.source_filename, source_storage_path:_preview.source_storage_path, rows:_preview.rows,
+    })});
+    const j=await r.json().catch(()=>({}));
+    if(r.status>=500){ document.getElementById('result').innerHTML='<div class="warn">🛑 System error — nothing saved. Try again.</div>'; return; }
+    if(!j.ok){ btn.disabled=false; btn.textContent='Approve'; return alert('Could not file: '+(j.error||'unknown')); }
+    const n=(j.plans_filed||0)+(j.plans_updated||0);
+    document.getElementById('result').innerHTML=`<div class="soon"><b>✅ Filed ${n} plan${n===1?'':'s'}</b>${j.plans_updated?j.plans_updated+' updated an existing active plan. ':''}${j.rows_skipped_unmatched?j.rows_skipped_unmatched+' unmatched row(s) skipped. ':''}They now show on each homeowner's 360.</div>`;
+    _preview=null; loadRoster();
+  }catch(e){ btn.disabled=false; btn.textContent='Approve'; alert('Could not file.'); }
+}
+
+async function loadRoster(){
+  const host=document.getElementById('roster'); if(!host)return;
+  host.innerHTML='<div class="empty">Loading roster…</div>';
+  const cid=(document.getElementById('rosterComm')||{}).value||'';
+  const st=(document.getElementById('rosterStatus')||{}).value||'active';
+  try{
+    const qs='?status='+encodeURIComponent(st)+(cid?'&community_id='+encodeURIComponent(cid):'');
+    const r=await af('/api/payment-plans/list'+qs); const j=await r.json().catch(()=>({}));
+    const plans=(j.plans)||[];
+    if(!plans.length){ host.innerHTML='<div class="empty">No '+esc(st)+' payment plans'+(cid?' for this association':'')+'.</div>'; return; }
+    let h=`<div class="sub" style="margin-bottom:8px;">${plans.length} ${esc(st)} plan${plans.length===1?'':'s'}.</div>`;
+    h+=`<table><thead><tr><th>Owner / property</th><th>Association</th><th>Total</th><th>Installment</th><th># / freq</th><th>Next due</th><th>Status</th><th></th></tr></thead><tbody>`;
+    for(const p of plans){
+      const link = p.contact_id ? '/admin/homeowner?contact='+encodeURIComponent(p.contact_id)
+                 : (p.address ? '/admin/homeowner?q='+encodeURIComponent(p.address) : null);
+      const who = esc(p.contact_name||p.debtor_name||'—')+(p.address?'<div class="note">'+esc(p.address)+'</div>':'');
+      h+=`<tr>
+        <td class="addr">${link?`<a class="plan-link" href="${link}">${who}</a>`:who}</td>
+        <td>${esc(p.community||'—')}</td>
+        <td class="num">${money(p.total_amount_cents)}</td>
+        <td class="num">${money(p.installment_amount_cents)}</td>
+        <td class="num">${p.num_installments!=null?p.num_installments:'—'} / ${esc(p.frequency||'monthly')}</td>
+        <td class="num">${d10(p.next_due_date)}</td>
+        <td><span class="badge s-${p.status}">${STAT_LABEL[p.status]||esc(p.status)}</span></td>
+        <td>${p.source_document_path?`<a class="doc" href="/api/homeowner/file?kind=document&path=${encodeURIComponent(p.source_document_path)}" target="_blank" title="Open the signed agreement">📄</a>`:''}</td>
+      </tr>`;
+    }
+    h+=`</tbody></table>`;
+    host.innerHTML=h;
+  }catch(e){ host.innerHTML='<div class="warn">Could not load the roster.</div>'; }
+}
+
+(async function boot(){
+  try{
+    const cfg=await (await fetch('/api/auth/config')).json();
+    if(!cfg||!cfg.enabled||!window.supabase) return showComingSoon();
+    _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    const {data:{session}}=await _supa.auth.getSession();
+    if(!session||!session.access_token) return showComingSoon();
+    af=async(u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
+    const meRes=await fetch('/api/me',{headers:{Authorization:'Bearer '+session.access_token}});
+    const me=meRes.ok?(await meRes.json()).user:null;
+    if(!me||me.role!=='admin') return showComingSoon();
+    const cr=await af('/api/communities'); const cj=cr.ok?await cr.json():{};
+    renderShell(cj.communities||cj||[]);
+  }catch(e){ showComingSoon(); }
+})();
+</script>
+</body>
+</html>

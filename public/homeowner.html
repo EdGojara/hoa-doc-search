@@ -141,6 +141,17 @@ async function openProfile(cid){
           ${x.notes?`<div style="font-size:12px;color:#33414f;margin-top:3px;line-height:1.5;">${esc(x.notes)}</div>`:''}
         </div>`).join('')}
       </div>`:''}
+      ${(d.paymentPlans||[]).length?`<div class="card" style="border-left:4px solid #1e40af; background:#f8faff;">
+        <div class="sec-title">💳 Payment plans</div>
+        ${(d.paymentPlans||[]).map(p=>`<div class="li">
+          <span class="badge" style="${p.status==='active'?'background:#dbeafe;color:#1e40af':(p.status==='defaulted'?'background:#fee2e2;color:#991b1b':'background:#f1f5f9;color:#64748b')};">${esc(String(p.status))}</span>
+          ${p.installment_amount_cents!=null?`<span class="money" style="margin-left:6px;font-weight:700;">${money(p.installment_amount_cents)}</span> / ${esc(p.frequency||'monthly')}`:''}${p.num_installments!=null?` <span class="t">x${p.num_installments}</span>`:''}
+          ${p.total_amount_cents!=null?`<div class="t">Total ${money(p.total_amount_cents)}${p.balance_remaining_cents!=null?' · remaining '+money(p.balance_remaining_cents):''}</div>`:''}
+          <div class="t">${p.start_date?'starts '+d10(p.start_date):''}${p.next_due_date?' · next due '+d10(p.next_due_date):''}${p.end_date?' · ends '+d10(p.end_date):''}</div>
+          ${p.terms_summary?`<div style="font-size:12px;color:#33414f;margin-top:3px;line-height:1.5;">${esc(p.terms_summary)}</div>`:''}
+          ${p.source_document_path?`<div class="t" style="margin-top:3px;"><a href="/api/homeowner/file?kind=document&path=${encodeURIComponent(p.source_document_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Agreement</a></div>`:''}
+        </div>`).join('')}
+      </div>`:''}
       <div class="card">
         <div class="sec-title">⚠️ Violations (${(d.violations||[]).length})</div>
         ${(d.violations||[]).slice(0,10).map(v=>`<div class="li">${esc(v.category)} <span class="badge ${v.open?'b-open':'b-res'}">${v.open?esc(String(v.current_stage).replace(/_/g,' ')):'resolved'}</span>${v.detail?`<div style="font-size:12.5px;color:#33414f;margin-top:3px;">${esc(v.detail)}</div>`:''}<div class="t">opened ${d10(v.opened_at)}${v.resolved_at?' · resolved '+d10(v.resolved_at):''}${v.photo_path?` · <a href="/api/homeowner/file?kind=photo&path=${encodeURIComponent(v.photo_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📷 Photo</a>`:''}${v.letter_path?` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(v.letter_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter</a>`:''}</div></div>`).join('')||'<div class="empty">No violations.</div>'}
@@ -242,6 +253,18 @@ async function openProfile(cid){
     if(el) el.classList.remove('spin');
   }).catch(()=>{ const el=document.querySelector('#recap .body'); if(el){el.textContent='Recap unavailable.';el.classList.remove('spin');} });
 }
+
+// Deep link: /admin/homeowner?contact=<id> opens a profile directly (roster
+// links from Payment Plans / other tools), ?q=<text> runs a search.
+(function bootDeepLink(){
+  try{
+    const p=new URLSearchParams(location.search);
+    const contact=p.get('contact');
+    const q=p.get('q');
+    if(contact){ openProfile(contact); }
+    else if(q){ const el=document.getElementById('q'); if(el){ el.value=q; } doSearch(); }
+  }catch(_){}
+})();
 </script>
 </body>
 </html>

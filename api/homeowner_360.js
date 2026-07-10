@@ -171,6 +171,12 @@ async function assemble(contactId) {
     .select('form_type, fob_tag_number, season_year, extended_hours_detail, authorized_persons, status, form_signed_date')
     .in('property_id', propIds).order('status', { ascending: true }).limit(50)) : [];
 
+  // Payment plans (payment_plans, mig 273) — the arrangement to pay a balance
+  // down in installments. Active first so the current plan is on top.
+  const paymentPlans = propIds.length ? await safe(() => supabase.from('payment_plans')
+    .select('id, status, total_amount_cents, down_payment_cents, installment_amount_cents, num_installments, frequency, start_date, next_due_date, end_date, balance_remaining_cents, terms_summary, source_document_path, updated_at')
+    .in('property_id', propIds).order('status', { ascending: true }).order('updated_at', { ascending: false }).limit(20)) : [];
+
   // Map each violation to the letter PDF that was actually sent for it (from the
   // interactions ledger), so the 360 can link the real letter right on the
   // violation row — next to the photo.
@@ -182,7 +188,7 @@ async function assemble(contactId) {
   }
   violations = violations.map((v) => ({ ...v, letter_path: letterByViolation[v.id] || null }));
 
-  return { contact, properties, ar: { balance_cents, transactions: txns }, flags, collections, violations, arc, interactions, emails, calls, poolAccess };
+  return { contact, properties, ar: { balance_cents, transactions: txns }, flags, collections, violations, arc, interactions, emails, calls, poolAccess, paymentPlans };
 }
 
 // GET /profile/:contactId — the assembled 360 (fast, no AI)
@@ -203,7 +209,7 @@ router.get('/profile/:contactId', async (req, res) => {
 // photo (inspection_photos.storage_path, bucket 'documents'). Redirects to a
 // short-lived signed URL so staff can open/print/discuss it. Staff-gated by the
 // global staff cookie (the 360 is a staff surface). kind→bucket is allowlisted.
-const FILE_BUCKETS = { letter: 'violation-letters', photo: 'documents' };
+const FILE_BUCKETS = { letter: 'violation-letters', photo: 'documents', document: 'documents' };
 router.get('/file', async (req, res) => {
   try {
     const bucket = FILE_BUCKETS[req.query.kind];
@@ -232,6 +238,7 @@ Properties: ${d.properties.map((p) => p.address + (p.community ? ` (${p.communit
 Current balance: ${money(d.ar.balance_cents)} ${d.ar.balance_cents > 0 ? '(owes)' : d.ar.balance_cents < 0 ? '(credit)' : ''}
 Enforcement flags: ${d.flags.map((f) => f.state).join(', ') || 'none'}
 Legal / collection status (STAFF-ONLY, at attorney): ${(d.collections || []).map((c) => `${c.collection_status}${c.status_since ? ' since ' + String(c.status_since).slice(0, 10) : ''}${c.collection_status === 'bankruptcy' ? ' — AUTOMATIC STAY, do not attempt to collect or send notices' : ''}${c.notes ? ' — ' + String(c.notes).slice(0, 160) : ''}`).join(' | ') || 'none'}
+Payment plan: ${(d.paymentPlans || []).filter((p) => p.status === 'active').map((p) => `ACTIVE — ${p.installment_amount_cents ? money(p.installment_amount_cents) + '/' + (p.frequency || 'monthly') : 'installments'}${p.num_installments ? ' x' + p.num_installments : ''}${p.next_due_date ? ', next due ' + String(p.next_due_date).slice(0, 10) : ''}${p.terms_summary ? ' — ' + String(p.terms_summary).slice(0, 140) : ''}`).join(' | ') || 'none on file'}
 Open violations (${openV.length}): ${openV.map((v) => `${v.category} @ ${v.current_stage}, opened ${(v.opened_at || '').slice(0, 10)}`).join('; ') || 'none'}
 Violation history (${d.violations.length} total): ${d.violations.slice(0, 12).map((v) => `${v.category} [${v.open ? 'open ' + v.current_stage : 'resolved'}]`).join('; ')}
 Recent payments/charges: ${d.ar.transactions.slice(0, 8).map((t) => `${(t.transaction_date || '').slice(0, 10)} ${t.txn_type || ''} ${money(Number(t.amount_cents) || 0)}`).join('; ') || 'none'}
