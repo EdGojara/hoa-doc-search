@@ -1594,6 +1594,10 @@ router.get('/activity-detail', async (req, res) => {
     const start = (req.query.period_start || '').slice(0, 10);
     const end = (req.query.period_end || '').slice(0, 10);
     const format = (req.query.format || 'html').toLowerCase();
+    // Optional focus from the activity-report column links: arc=approved|denied
+    // filters the ARC section; the #letters / #arc URL anchor scrolls to it.
+    const arcFilter = ['approved', 'denied'].includes((req.query.arc || '').toLowerCase())
+      ? (req.query.arc || '').toLowerCase() : 'all';
     if (!communityId) return res.status(400).json({ error: 'community_id required' });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
       return res.status(400).json({ error: 'period_start and period_end required as YYYY-MM-DD' });
@@ -1671,6 +1675,12 @@ router.get('/activity-detail', async (req, res) => {
       };
     }).sort((a, b) => a.property.localeCompare(b.property));
 
+    // Apply the ARC filter (from the ARC Approved / ARC Denied column links).
+    const arcRowsShown = arcFilter === 'all' ? arcRows
+      : arcRows.filter((r) => arcFilter === 'approved'
+        ? /^approved/i.test(r.outcome)
+        : r.outcome === 'Denied');
+
     const certCount = letterRows.filter((r) => r.mail_class === 'Certified').length;
     const summary = {
       letters_total: letterRows.length,
@@ -1680,7 +1690,7 @@ router.get('/activity-detail', async (req, res) => {
     };
 
     if (format === 'json') {
-      return res.json({ community: { id: community.id, name: community.name }, period: { start, end }, summary, letters: letterRows, arc_decisions: arcRows });
+      return res.json({ community: { id: community.id, name: community.name }, period: { start, end }, arc_filter: arcFilter, summary, letters: letterRows, arc_decisions: arcRowsShown });
     }
 
     // ---- Branded, printable HTML ----
@@ -1698,10 +1708,10 @@ router.get('/activity-detail', async (req, res) => {
           <td>${r.pdf_url ? `<a href="${esc(r.pdf_url)}" target="_blank" rel="noopener">View PDF ↗</a>` : '<span class="muted">—</span>'}</td>
         </tr>`).join('')}</tbody>
       </table>` : '<p class="muted">No violation letters mailed in this period.</p>';
-    const arcTable = arcRows.length ? `
+    const arcTable = arcRowsShown.length ? `
       <table class="t">
         <thead><tr><th>Property</th><th>Applicant</th><th>Reference</th><th>Decision</th><th>Date</th></tr></thead>
-        <tbody>${arcRows.map((r) => `<tr>
+        <tbody>${arcRowsShown.map((r) => `<tr>
           <td><strong>${esc(r.property)}</strong></td><td>${esc(r.applicant)}</td>
           <td>${esc(r.reference || '—')}</td>
           <td>${r.outcome === 'Denied' ? `<span class="denied">${esc(r.outcome)}</span>` : esc(r.outcome)}</td>
@@ -1753,9 +1763,9 @@ router.get('/activity-detail', async (req, res) => {
       <div class="stat"><div class="stat-n">${summary.certified}</div><div class="stat-l">Certified</div></div>
       <div class="stat"><div class="stat-n">${summary.arc_decisions}</div><div class="stat-l">ARC decisions</div></div>
     </div>
-    <h2>Violation letters</h2>
+    <h2 id="letters">Violation letters</h2>
     ${letterTable}
-    <h2>ARC / ACC decisions</h2>
+    <h2 id="arc">ARC / ACC decisions${arcFilter === 'all' ? '' : ` — ${arcFilter === 'approved' ? 'Approved' : 'Denied'} only`}</h2>
     ${arcTable}
     <div class="foot"><span>${esc(BRAND.service.name)}</span><span>${esc(community.name)} · ${esc(fmtUS(start))}–${esc(fmtUS(end))}</span></div>
   </div>
