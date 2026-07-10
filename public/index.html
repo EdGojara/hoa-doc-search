@@ -3658,6 +3658,16 @@
     <h3 id="contracts-detail-name" style="margin:0 0 4px 0;"></h3>
     <div id="contracts-detail-meta" style="color:#888; font-size:13px; margin-bottom:16px;"></div>
 
+    <!-- Billing code — the community identifier used in invoice numbers. -->
+    <div class="panel" style="margin-bottom:16px; display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+      <div>
+        <div class="section-label">Billing code <span style="color:#94A3B8; font-weight:400;">(used in invoice numbers — YYMM + code)</span></div>
+        <input id="contracts-billing-code" maxlength="8" placeholder="e.g. WV" style="padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; text-transform:uppercase; width:130px;">
+      </div>
+      <button class="action-btn" onclick="contractsSaveBillingCode()" style="font-size:12px; padding:6px 12px;">💾 Save code</button>
+      <div id="contracts-billing-code-status" style="font-size:12px; color:#475569;"></div>
+    </div>
+
     <!-- Contract Intake / Management (moved from Billing) -->
     <div class="panel" style="margin-bottom:16px;" id="billing-contract-mgmt-panel">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -4175,6 +4185,33 @@
   }
   window.billingOpenContractTab = billingOpenContractTab;
 
+  // Save the per-community billing code (invoice-number identifier).
+  async function contractsSaveBillingCode() {
+    const id = billingCurrentCommunityId;
+    const input = document.getElementById('contracts-billing-code');
+    const status = document.getElementById('contracts-billing-code-status');
+    if (!id || !input) return;
+    const code = (input.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    if (!code) { if (status) { status.textContent = 'Enter a code (letters/numbers).'; status.style.color = '#b91c1c'; } return; }
+    if (status) { status.textContent = 'Saving…'; status.style.color = '#64748b'; }
+    try {
+      const r = await window._authFetch(`/api/billing/communities/${encodeURIComponent(id)}/billing-code`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ billing_code: code }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      input.value = j.billing_code;
+      // Update cache so the invoice-number preview reflects it immediately.
+      const c = (billingCommunitiesCache || []).find(x => x.id === id);
+      if (c) c.billing_code = j.billing_code;
+      if (typeof billingUpdateInvoiceNumberPreview === 'function') billingUpdateInvoiceNumberPreview();
+      if (status) { status.textContent = `Saved — invoices will number as YYMM${j.billing_code}.`; status.style.color = '#15803d'; }
+    } catch (e) {
+      if (status) { status.textContent = 'Save failed: ' + e.message; status.style.color = '#b91c1c'; }
+    }
+  }
+  window.contractsSaveBillingCode = contractsSaveBillingCode;
+
   async function billingShowCommunity(communityId) {
     billingCurrentCommunityId = communityId;
     document.getElementById('billing-communities-view').style.display = 'none';
@@ -4196,6 +4233,10 @@
     if (_cName) _cName.textContent = community ? community.name : '';
     const _cMeta = document.getElementById('contracts-detail-meta');
     if (_cMeta) _cMeta.textContent = community ? (community.legal_name || '') : '';
+    const _bc = document.getElementById('contracts-billing-code');
+    if (_bc) _bc.value = community ? (community.billing_code || '') : '';
+    const _bcs = document.getElementById('contracts-billing-code-status');
+    if (_bcs) _bcs.textContent = '';
     // Surface this community's activity report (bottom of the page) for the
     // current month.
     setTimeout(() => { try { if (typeof actRptQuick === 'function') actRptQuick('month'); } catch (_) {} }, 0);
@@ -4322,10 +4363,11 @@
     if (!el) return;
     const community = (billingCommunitiesCache || []).find(c => c.id === billingCurrentCommunityId);
     if (!community) { el.textContent = '—'; el.style.color = '#888'; return; }
-    if (!community.vantaca_code) {
-      el.textContent = '(needs vantaca code)';
+    const code = community.billing_code || community.vantaca_code || '';
+    if (!code) {
+      el.textContent = '(needs billing code)';
       el.style.color = '#a60';
-      el.title = 'Add the Vantaca code on the community record to enable invoice numbering.';
+      el.title = 'Set this community\'s billing code in Proposals & Contracts to enable invoice numbering.';
       return;
     }
     const type = document.getElementById('billing-draft-type').value;
@@ -4334,7 +4376,7 @@
     const [yyyy, mm] = period.split('-');
     const yy = yyyy.slice(2);
     const suffix = type === 'activity' ? '2' : '';
-    el.textContent = `${yy}${mm}${community.vantaca_code}${suffix}`;
+    el.textContent = `${yy}${mm}${code}${suffix}`;
     el.style.color = '#1a1a1a';
     el.title = '';
   }

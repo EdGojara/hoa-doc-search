@@ -52,11 +52,14 @@ const router = express.Router();
  * Bedrock already uses (e.g. 2510WV for Oct 2025 Waterview fixed,
  * 2601WV2 for Jan 2026 Waterview activity).
  */
-function buildInvoiceNumber({ vantacaCode, period, type }) {
+function buildInvoiceNumber({ billingCode, vantacaCode, period, type }) {
   const [yyyy, mm] = period.split('-');
   const yy = yyyy.slice(2);
   const suffix = type === 'activity' ? '2' : '';
-  return `${yy}${mm}${vantacaCode}${suffix}`;
+  // billing_code is the community identifier now; fall back to the legacy
+  // vantaca_code during the transition.
+  const code = billingCode || vantacaCode || '';
+  return `${yy}${mm}${code}${suffix}`;
 }
 
 /**
@@ -108,7 +111,7 @@ router.get('/communities', async (req, res) => {
     const { data: communities, error } = await supabase
       .from('communities')
       .select(`
-        id, name, legal_name, slug, vantaca_code, total_lots, active,
+        id, name, legal_name, slug, vantaca_code, billing_code, total_lots, active,
         contracts:contracts(id, version, effective_date, escalator_kind, escalator_pct, status)
       `)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
@@ -126,6 +129,7 @@ router.get('/communities', async (req, res) => {
         legal_name: c.legal_name,
         slug: c.slug,
         vantaca_code: c.vantaca_code,
+        billing_code: c.billing_code,
         total_lots: c.total_lots,
         active_contract: active
           ? {
@@ -236,7 +240,7 @@ router.post('/communities/:communityId/draft-invoice', async (req, res) => {
     // Resolve community + active contract.
     const { data: comm, error: commErr } = await supabase
       .from('communities')
-      .select('id, name, vantaca_code, management_company_id')
+      .select('id, name, vantaca_code, billing_code, management_company_id')
       .eq('id', communityId)
       .single();
     if (commErr || !comm) return res.status(404).json({ error: 'Community not found' });
@@ -322,6 +326,7 @@ router.post('/communities/:communityId/draft-invoice', async (req, res) => {
     const { start: serviceStart, end: serviceEnd } = periodBoundaries(period);
     const invoiceDate = invoiceDateOverride || new Date().toISOString().slice(0, 10);
     const invoiceNumber = buildInvoiceNumber({
+      billingCode: comm.billing_code,
       vantacaCode: comm.vantaca_code,
       period,
       type
@@ -1772,6 +1777,28 @@ router.get('/activity-detail', async (req, res) => {
 </body></html>`);
   } catch (err) {
     console.error('[billing] activity-detail failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PUT /api/billing/communities/:communityId/billing-code   { billing_code }
+// Sets the short per-community code used in invoice numbers. Uppercased,
+// alphanumerics only, max 8 chars.
+// ---------------------------------------------------------------------------
+router.put('/communities/:communityId/billing-code', express.json(), async (req, res) => {
+  try {
+    const code = String((req.body && req.body.billing_code) || '')
+      .toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    if (!code) return res.status(400).json({ error: 'billing_code required (letters/numbers)' });
+    const { error } = await supabase.from('communities')
+      .update({ billing_code: code })
+      .eq('id', req.params.communityId)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    if (error) throw error;
+    res.json({ ok: true, billing_code: code });
+  } catch (err) {
+    console.error('[billing] set billing-code failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
