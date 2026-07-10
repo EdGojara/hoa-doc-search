@@ -1592,8 +1592,10 @@ router.post('/contracts/:id/management-agreement', async (req, res) => {
 //                      first_class_sent / certified_sent split the same envelopes
 //                      (postage bills per envelope, not per violation).
 //   - pages_printed  : physical pages of those letters (per envelope)
-//   - arc_*          : ARC/ACC decisions rendered in range (builder_applications
-//                      decided_at), split approved / denied / conditions / other
+//   - arc_*          : ARC/ACC decisions rendered in range — BOTH builder ARC
+//                      (builder_applications.decided_at) AND resident ACC
+//                      (community_applications.final_decided_at). Split
+//                      approved / denied / conditions / other.
 // Dates are inclusive on the day boundary in the period. Read-only.
 // ============================================================================
 router.get('/activity-report', async (req, res) => {
@@ -1645,13 +1647,25 @@ router.get('/activity-report', async (req, res) => {
       } else { throw e; }
     }
 
-    // 2) ARC/ACC decisions rendered in the period.
+    // 2) ARC/ACC decisions rendered in the period. TWO sources — both matter and
+    // are billed the same: builder ARC (builder_applications) AND resident ACC
+    // (community_applications, final_decided_at/final_status). Counting only one
+    // was the "ARC shows 0" bug (Ed 2026-07-10).
     let decisions = await fetchAll(() => {
       let q = supabase.from('builder_applications')
-        .select('id, community_id, status, decided_at')
+        .select('community_id, status, decided_at')
         .not('decided_at', 'is', null)
         .gte('decided_at', start + 'T00:00:00Z')
         .lt('decided_at', endEx + 'T00:00:00Z');
+      if (communityId) q = q.eq('community_id', communityId);
+      return q;
+    });
+    let accDecisions = await fetchAll(() => {
+      let q = supabase.from('community_applications')
+        .select('community_id, final_status, final_decided_at')
+        .not('final_decided_at', 'is', null)
+        .gte('final_decided_at', start + 'T00:00:00Z')
+        .lt('final_decided_at', endEx + 'T00:00:00Z');
       if (communityId) q = q.eq('community_id', communityId);
       return q;
     });
@@ -1684,14 +1698,16 @@ router.get('/activity-report', async (req, res) => {
         r._letters.set(key, { delivery_method: l.delivery_method, page_count: Number(l.page_count || 0) });
       }
     });
-    decisions.forEach((d) => {
-      const r = row(d.community_id);
-      const s = (d.status || '').toLowerCase();
+    const tallyArc = (cid, statusRaw) => {
+      const r = row(cid);
+      const s = (statusRaw || '').toLowerCase();
       if (s === 'approved') r.arc_approved += 1;
       else if (s === 'denied' || s === 'rejected') r.arc_denied += 1;
       else if (s.includes('condition')) r.arc_conditions += 1;
-      else r.arc_other += 1;
-    });
+      else r.arc_other += 1; // withdrawn / closed / other
+    };
+    decisions.forEach((d) => tallyArc(d.community_id, d.status));
+    accDecisions.forEach((d) => tallyArc(d.community_id, d.final_status));
 
     const communities = Object.values(byComm)
       .map(({ _letters, ...r }) => {
@@ -1773,10 +1789,10 @@ router.get('/activity-detail', async (req, res) => {
       return out;
     }
 
-    const [{ data: community }, letters, decisions] = await Promise.all([
+    const [{ data: community }, letters, decisions, accDecisions] = await Promise.all([
       supabase.from('communities').select('id, name, legal_name').eq('id', communityId).maybeSingle(),
       fetchAll(() => supabase.from('interactions')
-        .select('id, property_id, type, delivery_method, postmark_date, content, bundle_id, page_count')
+        .select('id, property_id, type, delivery_method, postmark_date, content, bundle_id, page_count, violation_id')
         .eq('community_id', communityId).in('type', LETTER_TYPES)
         .not('printed_at', 'is', null).gte('postmark_date', start).lt('postmark_date', endEx)),
       fetchAll(() => supabase.from('builder_applications')
@@ -1784,8 +1800,35 @@ router.get('/activity-detail', async (req, res) => {
         .eq('community_id', communityId)
         .not('decided_at', 'is', null)
         .gte('decided_at', start + 'T00:00:00Z').lt('decided_at', endEx + 'T00:00:00Z')),
+      // Resident ACC decisions (community_applications) — the other ARC rail.
+      fetchAll(() => supabase.from('community_applications')
+        .select('reference_number, property_address, submitter_name, final_status, final_decided_at')
+        .eq('community_id', communityId)
+        .not('final_decided_at', 'is', null)
+        .gte('final_decided_at', start + 'T00:00:00Z').lt('final_decided_at', endEx + 'T00:00:00Z')),
     ]);
     if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+    // Violation type (category) for each letter — this is what the board wants to
+    // see, not a PDF link (Ed 2026-07-10). letter interaction -> violation ->
+    // primary_category_id -> enforcement_categories.label.
+    const violationIds = [...new Set(letters.map((l) => l.violation_id).filter(Boolean))];
+    const catByViolation = {};
+    if (violationIds.length) {
+      const vios = [];
+      for (let i = 0; i < violationIds.length; i += 500) {
+        const { data: v } = await supabase.from('violations')
+          .select('id, primary_category_id').in('id', violationIds.slice(i, i + 500));
+        vios.push(...(v || []));
+      }
+      const catIds = [...new Set(vios.map((v) => v.primary_category_id).filter(Boolean))];
+      const catLabel = {};
+      if (catIds.length) {
+        const { data: cats } = await supabase.from('enforcement_categories').select('id, label').in('id', catIds);
+        (cats || []).forEach((c) => { catLabel[c.id] = c.label; });
+      }
+      vios.forEach((v) => { catByViolation[v.id] = catLabel[v.primary_category_id] || null; });
+    }
 
     // Property addresses for the letters.
     const propIds = [...new Set(letters.map((l) => l.property_id).filter(Boolean))];
@@ -1794,15 +1837,6 @@ router.get('/activity-detail', async (req, res) => {
       const { data: props } = await supabase.from('properties')
         .select('id, street_address, unit').in('id', propIds.slice(i, i + 500));
       (props || []).forEach((p) => { addrById[p.id] = p.street_address + (p.unit ? ' #' + p.unit : ''); });
-    }
-
-    // 7-day signed URLs for the letter PDFs (board opens without a login).
-    const paths = [...new Set(letters.map((l) => l.content).filter((c) => c && /\.pdf$/i.test(c)))];
-    const signedByPath = {};
-    for (let i = 0; i < paths.length; i += 100) {
-      const { data: signed } = await supabase.storage.from('violation-letters')
-        .createSignedUrls(paths.slice(i, i + 100), 60 * 60 * 24 * 7);
-      (signed || []).forEach((s) => { if (s && s.signedUrl && !s.error) signedByPath[s.path] = s.signedUrl; });
     }
 
     // Group by ENVELOPE (bundle_id) so the detail reconciles with the report:
@@ -1815,12 +1849,14 @@ router.get('/activity-detail', async (req, res) => {
       let g = groups.get(key);
       if (!g) {
         g = { property: addrById[l.property_id] || '(unknown address)', dates: [], stages: new Set(),
-              violations: 0, delivery_method: l.delivery_method, page_count: 0, content: l.content || null };
+              types: new Set(), violations: 0, delivery_method: l.delivery_method, page_count: 0, content: l.content || null };
         groups.set(key, g);
       }
       g.violations += 1;
       if (l.postmark_date) g.dates.push(l.postmark_date);
       g.stages.add(STAGE_LABEL[l.type] || l.type);
+      const cat = l.violation_id ? catByViolation[l.violation_id] : null;
+      if (cat) g.types.add(cat);
       g.page_count = Math.max(g.page_count, Number(l.page_count || 0)); // members share one PDF
       if (!g.content && l.content) g.content = l.content;
     }
@@ -1828,25 +1864,33 @@ router.get('/activity-detail', async (req, res) => {
       property: g.property,
       date: g.dates.sort()[0] || null,
       stage: [...g.stages].join(', '),
+      violation_type: [...g.types].join(', ') || '—',
       violations: g.violations,
       pages: g.page_count,
       mail_class: g.delivery_method === 'certified_mail' ? 'Certified' : 'First-class',
-      pdf_url: g.content ? (signedByPath[g.content] || null) : null,
     })).sort((a, b) => (a.property).localeCompare(b.property) || String(a.date).localeCompare(String(b.date)));
 
-    const arcRows = decisions.map((d) => {
-      const s = (d.status || '').toLowerCase();
-      const outcome = s === 'approved' ? 'Approved'
+    const outcomeOf = (statusRaw) => {
+      const s = (statusRaw || '').toLowerCase();
+      return s === 'approved' ? 'Approved'
         : (s === 'denied' || s === 'rejected') ? 'Denied'
-        : s.includes('condition') ? 'Approved w/ conditions' : (d.status || '—');
-      return {
-        property: d.street_address || '(no address)',
-        applicant: d.submitter_name || '—',
-        reference: d.reference_number || null,
-        outcome,
-        date: (d.decided_at || '').slice(0, 10),
-      };
-    }).sort((a, b) => a.property.localeCompare(b.property));
+        : s.includes('condition') ? 'Approved w/ conditions'
+        : (statusRaw ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1) : '—');
+    };
+    const arcRows = [
+      // Builder ARC
+      ...decisions.map((d) => ({
+        property: d.street_address || '(no address)', applicant: d.submitter_name || '—',
+        reference: d.reference_number || null, kind: 'Builder ARC',
+        outcome: outcomeOf(d.status), date: (d.decided_at || '').slice(0, 10),
+      })),
+      // Resident ACC
+      ...accDecisions.map((d) => ({
+        property: d.property_address || '(no address)', applicant: d.submitter_name || '—',
+        reference: d.reference_number || null, kind: 'Resident ACC',
+        outcome: outcomeOf(d.final_status), date: (d.final_decided_at || '').slice(0, 10),
+      })),
+    ].sort((a, b) => a.property.localeCompare(b.property));
 
     // Apply the ARC filter (from the ARC Approved / ARC Denied column links).
     const arcRowsShown = arcFilter === 'all' ? arcRows
@@ -1875,20 +1919,21 @@ router.get('/activity-detail', async (req, res) => {
     const letterTable = letterRows.length ? `
       <p class="muted" style="margin:0 0 10px;"><strong>${summary.violations}</strong> violation${summary.violations === 1 ? '' : 's'} mailed across <strong>${summary.letters_total}</strong> letter${summary.letters_total === 1 ? '' : 's'} (${summary.certified} certified, ${summary.first_class} first-class). One row per letter; a bundle to one owner counts once.</p>
       <table class="t">
-        <thead><tr><th>Property</th><th>Date</th><th>Stage(s)</th><th>Mail class</th><th style="text-align:center;">Violations</th><th>Letter</th></tr></thead>
+        <thead><tr><th>Property</th><th>Date</th><th>Violation type</th><th>Stage(s)</th><th>Mail class</th><th style="text-align:center;">Violations</th></tr></thead>
         <tbody>${letterRows.map((r) => `<tr>
           <td><strong>${esc(r.property)}</strong></td><td>${esc(fmtUS(r.date))}</td>
+          <td>${esc(r.violation_type)}</td>
           <td>${esc(r.stage)}</td>
           <td>${r.mail_class === 'Certified' ? '<span class="cert">Certified</span>' : 'First-class'}</td>
           <td style="text-align:center;">${r.violations}${r.violations > 1 ? ' <span class="muted">(bundle)</span>' : ''}</td>
-          <td>${r.pdf_url ? `<a href="${esc(r.pdf_url)}" target="_blank" rel="noopener">View PDF ↗</a>` : '<span class="muted">—</span>'}</td>
         </tr>`).join('')}</tbody>
       </table>` : '<p class="muted">No violation letters mailed in this period.</p>';
     const arcTable = arcRowsShown.length ? `
       <table class="t">
-        <thead><tr><th>Property</th><th>Applicant</th><th>Reference</th><th>Decision</th><th>Date</th></tr></thead>
+        <thead><tr><th>Property</th><th>Applicant</th><th>Type</th><th>Reference</th><th>Decision</th><th>Date</th></tr></thead>
         <tbody>${arcRowsShown.map((r) => `<tr>
           <td><strong>${esc(r.property)}</strong></td><td>${esc(r.applicant)}</td>
+          <td>${esc(r.kind || '—')}</td>
           <td>${esc(r.reference || '—')}</td>
           <td>${r.outcome === 'Denied' ? `<span class="denied">${esc(r.outcome)}</span>` : esc(r.outcome)}</td>
           <td>${esc(fmtUS(r.date))}</td>
@@ -1925,7 +1970,7 @@ router.get('/activity-detail', async (req, res) => {
   @media print { .noprint { display: none; } body { background: #fff; } .page { box-shadow: none; margin: 0; max-width: none; } }
 </style></head>
 <body>
-  <div class="noprint">Tip: hit <strong>Ctrl/Cmd-P</strong> → "Save as PDF" to send this to the board. Letter links stay live for 7 days.</div>
+  <div class="noprint">Tip: hit <strong>Ctrl/Cmd-P</strong> → "Save as PDF" to send this to the board.</div>
   <div class="page">
     <div class="head">
       <div><span class="brand">${esc(BRAND.service.name)}</span><span class="tag">${esc(BRAND.service.taglineUpper)}</span></div>
