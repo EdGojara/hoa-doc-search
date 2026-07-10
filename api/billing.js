@@ -278,48 +278,87 @@ router.post('/communities/:communityId/draft-invoice', async (req, res) => {
         sort_order: f.sort_order
       }));
     } else {
-      // activity
-      const { data: reimb, error: rErr } = await supabase
-        .from('contract_reimbursables')
-        .select('*')
-        .eq('contract_id', contract.id)
-        .order('sort_order');
-      if (rErr) throw rErr;
+      // activity — template from the prior month when there is one, else the
+      // slim default set (Ed 2026-07-09). Everything else on the rate card stays
+      // addable via Add Line Item.
+      const periodStart = period + '-01';
+      const { data: priorInv } = await supabase
+        .from('invoices')
+        .select('id')
+        .eq('community_id', communityId)
+        .eq('invoice_type', 'activity')
+        .neq('status', 'voided')
+        .lt('service_period_start', periodStart)
+        .order('service_period_start', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      const { data: owner, error: oErr } = await supabase
-        .from('contract_owner_charges')
-        .select('*')
-        .eq('contract_id', contract.id)
-        .order('sort_order');
-      if (oErr) throw oErr;
+      let priorLines = [];
+      if (priorInv) {
+        // "What was billed last month" = the lines that actually had a quantity.
+        const { data: pl } = await supabase
+          .from('invoice_line_items')
+          .select('source, source_ref_id, category, description, unit_price, sort_order')
+          .eq('invoice_id', priorInv.id)
+          .gt('qty', 0)
+          .order('sort_order');
+        priorLines = pl || [];
+      }
 
-      // Reimbursables. qty=0 until staff/import sets it.
-      lineItems = (reimb || []).map(r => ({
-        source: 'reimbursable',
-        source_ref_id: r.id,
-        category: r.category,
-        description: r.description,
-        qty: 0,
-        unit_price: r.unit_price !== null ? Number(r.unit_price) : 0,
-        amount: 0,
-        vantaca_source_ref: r.vantaca_source,
-        sort_order: r.sort_order
-      }));
-
-      // Then owner charges, sorted after reimbursables.
-      const ownerOffset = 1000;
-      (owner || []).forEach(o => {
-        lineItems.push({
-          source: 'owner_charge',
-          source_ref_id: o.id,
-          category: o.category,
-          description: o.description,
+      if (priorLines.length > 0) {
+        // Template: same lines as last month, quantities reset for the new period.
+        lineItems = priorLines.map(p => ({
+          source: p.source,
+          source_ref_id: p.source_ref_id,
+          category: p.category,
+          description: p.description,
           qty: 0,
-          unit_price: Number(o.fee_amount),
+          unit_price: Number(p.unit_price || 0),
           amount: 0,
-          sort_order: ownerOffset + o.sort_order
+          sort_order: p.sort_order
+        }));
+      } else {
+        // Fresh: only the default_on_invoice rate rows (migration 271).
+        const { data: reimb, error: rErr } = await supabase
+          .from('contract_reimbursables')
+          .select('*')
+          .eq('contract_id', contract.id)
+          .eq('default_on_invoice', true)
+          .order('sort_order');
+        if (rErr) throw rErr;
+        const { data: owner, error: oErr } = await supabase
+          .from('contract_owner_charges')
+          .select('*')
+          .eq('contract_id', contract.id)
+          .eq('default_on_invoice', true)
+          .order('sort_order');
+        if (oErr) throw oErr;
+
+        lineItems = (reimb || []).map(r => ({
+          source: 'reimbursable',
+          source_ref_id: r.id,
+          category: r.category,
+          description: r.description,
+          qty: 0,
+          unit_price: r.unit_price !== null ? Number(r.unit_price) : 0,
+          amount: 0,
+          vantaca_source_ref: r.vantaca_source,
+          sort_order: r.sort_order
+        }));
+        const ownerOffset = 1000;
+        (owner || []).forEach(o => {
+          lineItems.push({
+            source: 'owner_charge',
+            source_ref_id: o.id,
+            category: o.category,
+            description: o.description,
+            qty: 0,
+            unit_price: Number(o.fee_amount),
+            amount: 0,
+            sort_order: ownerOffset + o.sort_order
+          });
         });
-      });
+      }
     }
 
     const subtotal = money(lineItems.reduce((s, li) => s + Number(li.amount || 0), 0));
