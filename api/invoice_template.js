@@ -13,8 +13,9 @@ const fs = require('fs');
 const path = require('path');
 const BRAND = require('../lib/brand');
 
-// Load logo once at module init.
-const logoPath = path.join(__dirname, '..', 'public', 'logos', 'bedrock_logo.png');
+// Load logo once at module init. Current brand lockup (same mark the email
+// signatures use) — a wide horizontal "Bedrock Association Management" lockup.
+const logoPath = path.join(__dirname, '..', 'public', 'brand-assets', 'bedrock-mark-email-2x.png');
 let logoSrc = '';
 try {
   const b64 = fs.readFileSync(logoPath).toString('base64');
@@ -188,7 +189,7 @@ function renderInvoiceHTML({ invoice, lineItems, community, managementCo }) {
       width: 8.5in;
       min-height: 11in;
       margin: 0 auto;
-      padding: 0.6in 0.7in;
+      padding: 0.45in 0.7in 0.6in;
       background: var(--paper);
       display: flex;
       flex-direction: column;
@@ -198,10 +199,10 @@ function renderInvoiceHTML({ invoice, lineItems, community, managementCo }) {
       grid-template-columns: auto 1fr;
       align-items: center;
       gap: 32px;
-      padding-bottom: 28px;
+      padding-bottom: 16px;
       border-bottom: 2px solid var(--bedrock-navy);
     }
-    .brand img { height: 160px; width: auto; display: block; }
+    .brand img { width: 260px; height: auto; display: block; }
     .doc-title { text-align: right; line-height: 1.1; }
     .doc-kind {
       font-weight: 700;
