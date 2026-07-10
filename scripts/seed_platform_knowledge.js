@@ -32,8 +32,8 @@ const FEATURES = [
     response: 'Communications is a top-nav tab (envelope icon) at /admin/communications. During beta it is owner-only (only Ed sees it; other staff see a "coming soon" screen). It shows every email to info@ and claire@, auto-classified and linked to the homeowner, with a Claire-drafted reply for each to review, edit, and Approve & send (or dismiss). "Pull inbox" pulls new mail on demand; "New email" composes a fresh email as Claire. Nothing sends without approval.',
   },
   {
-    situation: 'How do I send an email as Claire, or have Claire write an email for me to review before it goes out?',
-    response: 'Use the "Email as Claire" top-nav tab, or the "New email" button inside Communications (admin-only). Enter recipients (commas for multiple, plus Cc), and either type the message or use "Have Claire write it" — give her the gist, she drafts it, you edit, then Send as Claire. It sends from claire@bedrocktx.com with the Bedrock logo + signature and logs on the homeowner’s record.',
+    situation: 'How do I send an email as Claire or Emma, or have one of them write an email for me to review before it goes out?',
+    response: 'Use the "AI Team Email" top-nav tab (envelope icon, admin-only). At the top pick who it sends as: Claire (front office, for homeowners and boards, from claire@bedrocktx.com) or Emma (accounts payable, for vendors, from emma@bedrocktx.com). Enter recipients (commas for multiple, plus Cc), then either type the message or use "Have Claire/Emma write it" — give the gist, the AI drafts it, you edit, then Send. It goes out with the Bedrock logo + that person’s honest-AI signature; Claire’s mail logs on the homeowner’s record when the address matches. (Inside Communications, replies auto-send in the right voice — Emma for vendor/AP threads, Claire otherwise.)',
   },
   {
     situation: 'Where do I register pool fobs or key tags and extended-hours swim forms, and how do I see who has pool access and their tag numbers?',

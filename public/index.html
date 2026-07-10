@@ -531,16 +531,18 @@
   <!-- 📬 Communications — email triage board: Claire's drafted replies waiting
        for review + approve-to-send. Standalone page. -->
   <div class="tab" onclick="window.location.href='/admin/communications'">📬 Communications</div>
-  <!-- ✉️ Email as Claire — ADMIN ONLY (Ed). Compose + send a fresh branded
-       email as Claire straight from trustEd. Hidden for staff via
+  <!-- ✉️ AI Team Email — ADMIN ONLY (Ed). One compose surface for the AI team
+       members: send as Claire (front office / homeowners + boards) or Emma
+       (accounts payable / vendors), chosen in the modal. Hidden for staff via
        data-admin-only; the endpoint also enforces admin server-side. -->
-  <div class="tab" data-admin-only onclick="openClaireCompose()">✉️ Email as Claire</div>
+  <div class="tab" data-admin-only onclick="openAiTeamCompose()">✉️ AI Team Email</div>
   <!-- 🛑 System Errors — ADMIN ONLY (Ed). Every server 5xx in the last 7 days,
        so a broken feature surfaces here in minutes instead of after staff waste
        hours. Fails closed to coming-soon for non-admins. Standalone page. -->
   <div class="tab" data-admin-only onclick="window.location.href='/admin/errors'">🛑 System Errors</div>
-  <!-- ⚖️ Collections — ADMIN ONLY (Ed). Drop the Winstead monthly collections
-       report; it reads every matter, proposes a status + shows deltas, and on
+  <!-- ⚖️ Collections — ADMIN ONLY (Ed). Drop the law firm's monthly collections
+       report (any collections firm Bedrock uses); it reads every matter,
+       proposes a status + shows deltas, and on
        approve files collection status onto each property (ar_account_collections
        SSOT → Board Portal / packet / 360). Standalone page. -->
   <div class="tab" data-admin-only onclick="window.location.href='/admin/collections'">⚖️ Collections</div>
@@ -49459,19 +49461,27 @@ ${questionsPage}
 </script>
 
 <!-- ============================================================
-     ✉️ Email as Claire — ADMIN-ONLY compose modal (Ed).
-     Sends a fresh branded email as Claire from claire@ via the
+     ✉️ AI Team Email — ADMIN-ONLY compose modal (Ed).
+     Sends a fresh branded email as Claire (claire@) or Emma (emma@),
+     chosen via the persona picker, through the
      /api/email-triage/compose endpoint (which re-enforces admin
      server-side). Not a reply — a brand-new outbound.
      ============================================================ -->
 <div id="claireComposeModal" style="display:none; position:fixed; inset:0; background:rgba(11,29,52,0.5); z-index:2000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow:auto;">
   <div style="background:#fff; border-radius:14px; max-width:640px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,0.25);">
     <div style="background:#0B1D34; color:#fff; padding:14px 18px; border-radius:14px 14px 0 0; display:flex; justify-content:space-between; align-items:center;">
-      <div style="font-weight:700; font-size:16px;">✉️ New email from Claire</div>
+      <div style="font-weight:700; font-size:16px;">✉️ New AI team email</div>
       <button onclick="closeClaireCompose()" style="background:rgba(255,255,255,0.15); color:#fff; border:none; padding:5px 11px; border-radius:6px; cursor:pointer; font-size:14px;">✕</button>
     </div>
     <div style="padding:18px;">
-      <div style="font-size:12px; color:#5a7390; margin-bottom:12px;">Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + honest-AI signature. Logged on the homeowner's record when the email matches one on file.</div>
+      <div style="margin-bottom:11px;">
+        <label style="display:block; font-size:12px; font-weight:600; color:#5a7390; margin-bottom:3px;">Send as</label>
+        <select id="ccPersona" onchange="ccPersonaChanged()" style="width:100%; padding:9px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px;">
+          <option value="claire">Claire — front office (homeowners &amp; boards)</option>
+          <option value="emma">Emma — accounts payable (vendors)</option>
+        </select>
+      </div>
+      <div id="ccFromNote" style="font-size:12px; color:#5a7390; margin-bottom:12px;">Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + honest-AI signature. Logged on the homeowner's record when the email matches one on file.</div>
       <div style="display:flex; gap:11px; margin-bottom:11px;">
         <div style="flex:1;">
           <label style="display:block; font-size:12px; font-weight:600; color:#5a7390; margin-bottom:3px;">To <span style="font-weight:400;">(separate multiple with commas)</span></label>
@@ -49493,7 +49503,7 @@ ${questionsPage}
         </div>
       </div>
       <div style="background:#f8fafc; border:1px solid #e6edf5; border-radius:9px; padding:10px 11px; margin-bottom:11px;">
-        <label style="display:block; font-size:12px; font-weight:600; color:#0B1D34; margin-bottom:3px;">✍️ Have Claire write it <span style="font-weight:400; color:#5a7390;">— tell her the gist, she drafts it, you edit below</span></label>
+        <label style="display:block; font-size:12px; font-weight:600; color:#0B1D34; margin-bottom:3px;"><span id="ccDraftLabel">✍️ Have Claire write it</span> <span style="font-weight:400; color:#5a7390;">— tell the AI the gist, it drafts, you edit below</span></label>
         <div style="display:flex; gap:8px;">
           <input id="ccIntent" type="text" placeholder="e.g. tell the Waterview board the pool reopens Monday and thank them for their patience" style="flex:1; padding:9px 11px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px;" onkeydown="if(event.key==='Enter'){event.preventDefault();ccDraft();}">
           <button id="ccDraftBtn" onclick="ccDraft()" style="background:#0B1D34; color:#fff; border:none; padding:9px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap;">Draft it</button>
@@ -49510,14 +49520,30 @@ ${questionsPage}
   </div>
 </div>
 <script>
-  window.openClaireCompose = function () {
+  window.openAiTeamCompose = function () {
     if (!window.currentUser || window.currentUser.role !== 'admin') { alert('This is limited to the account owner.'); return; }
     document.getElementById('ccStatus').textContent = '';
     ['ccTo','ccCc','ccSubject','ccCommunity','ccIntent','ccBody'].forEach(function (id) { document.getElementById(id).value = ''; });
+    document.getElementById('ccPersona').value = 'claire';
+    ccPersonaChanged();
     document.getElementById('claireComposeModal').style.display = 'flex';
     setTimeout(function () { document.getElementById('ccTo').focus(); }, 30);
   };
+  window.openClaireCompose = window.openAiTeamCompose; // back-compat alias
   window.closeClaireCompose = function () { document.getElementById('claireComposeModal').style.display = 'none'; };
+  // Swap the voice: Claire (front office) vs Emma (accounts payable / vendors).
+  function ccPersona() { return ((document.getElementById('ccPersona') || {}).value) || 'claire'; }
+  window.ccPersonaChanged = function () {
+    var isEmma = ccPersona() === 'emma';
+    var name = isEmma ? 'Emma' : 'Claire';
+    var note = document.getElementById('ccFromNote');
+    if (note) note.innerHTML = isEmma
+      ? 'Sends from <strong>emma@bedrocktx.com</strong> with the Bedrock logo + Emma\'s honest-AI signature. Use for vendor / accounts-payable email.'
+      : 'Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + honest-AI signature. Logged on the homeowner\'s record when the email matches one on file.';
+    var dl = document.getElementById('ccDraftLabel'); if (dl) dl.textContent = '✍️ Have ' + name + ' write it';
+    var db = document.getElementById('ccDraftBtn'); if (db && !db.disabled) db.textContent = 'Draft it';
+    var sb = document.getElementById('ccSendBtn'); if (sb && !sb.disabled) sb.textContent = 'Send as ' + name;
+  };
   // "Have Claire write it": send the gist, she drafts subject + body, you edit.
   window.ccDraft = async function () {
     var intent = document.getElementById('ccIntent').value.trim();
@@ -49526,18 +49552,19 @@ ${questionsPage}
     var status = document.getElementById('ccStatus');
     var btn = document.getElementById('ccDraftBtn');
     if (!intent) { status.style.color = '#b91c1c'; status.textContent = 'Tell Claire what you want the email to say.'; return; }
+    var pname = ccPersona() === 'emma' ? 'Emma' : 'Claire';
     btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Writing…';
-    status.style.color = '#5a7390'; status.textContent = 'Claire is drafting…';
+    status.style.color = '#5a7390'; status.textContent = pname + ' is drafting…';
     try {
       var r = await window._authFetch('/api/email-triage/compose-draft', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ intent: intent, to: to, community_name: community_name }),
+        body: JSON.stringify({ intent: intent, to: to, community_name: community_name, persona: ccPersona() }),
       });
       var j = await r.json();
       if (!r.ok || !j.ok) { status.style.color = '#b91c1c'; status.textContent = j.detail || j.error || 'Could not draft.'; return; }
       if (j.subject && !document.getElementById('ccSubject').value.trim()) document.getElementById('ccSubject').value = j.subject;
       document.getElementById('ccBody').value = j.body || '';
-      status.style.color = '#166534'; status.textContent = '✓ Claire drafted it. Edit anything below, then send.';
+      status.style.color = '#166534'; status.textContent = '✓ ' + pname + ' drafted it. Edit anything below, then send.';
     } catch (e) {
       status.style.color = '#b91c1c'; status.textContent = 'Draft failed: ' + (e.message || 'network error');
     } finally { btn.disabled = false; btn.textContent = orig; }
@@ -49552,12 +49579,13 @@ ${questionsPage}
     var btn = document.getElementById('ccSendBtn');
     if (!to) { status.style.color = '#b91c1c'; status.textContent = 'Enter at least one recipient email.'; return; }
     if (!body) { status.style.color = '#b91c1c'; status.textContent = 'Write a message, or have Claire draft one.'; return; }
+    var pname = ccPersona() === 'emma' ? 'Emma' : 'Claire';
     btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Sending…';
-    status.style.color = '#5a7390'; status.textContent = 'Sending as Claire…';
+    status.style.color = '#5a7390'; status.textContent = 'Sending as ' + pname + '…';
     try {
       var r = await window._authFetch('/api/email-triage/compose', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: to, cc: cc, subject: subject, community_name: community_name, body: body }),
+        body: JSON.stringify({ to: to, cc: cc, subject: subject, community_name: community_name, body: body, persona: ccPersona() }),
       });
       var j = await r.json();
       if (!r.ok || !j.sent) {

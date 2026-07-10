@@ -344,41 +344,55 @@ router.post('/compose', express.json(), async (req, res) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return; // 403 already sent
-    const { to, cc, subject, body, community_name } = req.body || {};
+    const { to, cc, subject, body, community_name, persona } = req.body || {};
+    const asEmma = String(persona || '').toLowerCase() === 'emma';
     const toList = parseAddrs(to);
     const ccList = parseAddrs(cc);
     if (toList.length === 0) return res.status(400).json({ error: 'to_required', detail: 'Enter at least one valid recipient email.' });
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
-    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'claire@bedrocktx.com send is not wired yet — the Azure app (Mail.Send) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET must be set.' });
+    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'AI-team email send is not wired yet — the Azure app (Mail.Send) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET must be set.' });
 
     const subj = (subject && String(subject).trim()) ? String(subject).trim() : '(no subject)';
 
-    // Place this on the right homeowner for the record (best-effort, keyed on
-    // the FIRST recipient — the primary addressee).
+    // Homeowner linkage only makes sense for Claire (front office). Emma's
+    // recipients are vendors, so we don't file her mail onto a homeowner record.
     let resolved_contact_id = null, resolved_property_id = null, community_id = null, commName = community_name || '';
-    try {
-      const { data: c } = await supabase.from('contacts').select('id').or(`primary_email.ilike.${toList[0]},secondary_email.ilike.${toList[0]}`).limit(1);
-      if (c && c[0]) {
-        resolved_contact_id = c[0].id;
-        const { data: o } = await supabase.from('property_ownerships').select('property_id, properties(community_id, communities:community_id(name))').eq('contact_id', resolved_contact_id).is('end_date', null).limit(1);
-        if (o && o[0]) { resolved_property_id = o[0].property_id; if (o[0].properties) { community_id = o[0].properties.community_id; if (!commName && o[0].properties.communities) commName = o[0].properties.communities.name; } }
-      }
-    } catch (_) { /* non-fatal — send anyway, just less linkage */ }
+    if (!asEmma) {
+      // Place this on the right homeowner for the record (best-effort, keyed on
+      // the FIRST recipient — the primary addressee).
+      try {
+        const { data: c } = await supabase.from('contacts').select('id').or(`primary_email.ilike.${toList[0]},secondary_email.ilike.${toList[0]}`).limit(1);
+        if (c && c[0]) {
+          resolved_contact_id = c[0].id;
+          const { data: o } = await supabase.from('property_ownerships').select('property_id, properties(community_id, communities:community_id(name))').eq('contact_id', resolved_contact_id).is('end_date', null).limit(1);
+          if (o && o[0]) { resolved_property_id = o[0].property_id; if (o[0].properties) { community_id = o[0].properties.community_id; if (!commName && o[0].properties.communities) commName = o[0].properties.communities.name; } }
+        }
+      } catch (_) { /* non-fatal — send anyway, just less linkage */ }
+    }
 
-    const { buildClaireEmail } = require('../lib/email/claire_signature');
-    const { html, attachments } = buildClaireEmail(String(body).trim(), commName);
-    await graphSend.sendAs({ to: toList, cc: ccList, subject: subj, html, attachments });
+    // Send in the right voice: Emma from emma@ (AP/vendors), Claire from claire@.
+    let html, attachments, fromMailbox, senderLabel, personaName;
+    if (asEmma) {
+      const { buildEmmaEmail } = require('../lib/email/emma_signature');
+      ({ html, attachments } = buildEmmaEmail(String(body).trim()));
+      fromMailbox = graphSend.EMMA_MAILBOX; senderLabel = 'Emma Brooks (Bedrock AI)'; personaName = 'Emma';
+    } else {
+      const { buildClaireEmail } = require('../lib/email/claire_signature');
+      ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.CLAIRE_MAILBOX; senderLabel = 'Claire (Bedrock AI)'; personaName = 'Claire';
+    }
+    await graphSend.sendAs({ from: fromMailbox, to: toList, cc: ccList, subject: subj, html, attachments });
 
     const allRecipients = [...toList, ...ccList];
     await supabase.from('email_messages').insert({
-      mailbox: graphSend.CLAIRE_MAILBOX, direction: 'outbound', sender_email: graphSend.CLAIRE_MAILBOX,
-      sender_name: 'Claire (Bedrock AI)', recipients: allRecipients, subject: subj, body_preview: String(body).trim().slice(0, 2000),
-      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `Claire emailed ${allRecipients.join(', ')} (composed by ${admin.full_name || admin.email})`,
+      mailbox: fromMailbox, direction: 'outbound', sender_email: fromMailbox,
+      sender_name: senderLabel, recipients: allRecipients, subject: subj, body_preview: String(body).trim().slice(0, 2000),
+      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `${personaName} emailed ${allRecipients.join(', ')} (composed by ${admin.full_name || admin.email})`,
       community_id, resolved_contact_id, resolved_property_id, resolution_confidence: resolved_contact_id ? 'high' : 'low',
       triage_status: 'handled', record_ownership: 'association_record', reviewed_by: admin.full_name || admin.email || 'admin', reviewed_at: new Date().toISOString(),
     });
 
-    res.json({ sent: true, to: toList, cc: ccList, from: graphSend.CLAIRE_MAILBOX, linked_to_homeowner: !!resolved_contact_id });
+    res.json({ sent: true, to: toList, cc: ccList, from: fromMailbox, persona: personaName.toLowerCase(), linked_to_homeowner: !!resolved_contact_id });
   } catch (err) {
     console.error('[email_triage] compose failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -392,8 +406,9 @@ router.post('/compose-draft', express.json(), async (req, res) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return; // 403 already sent
-    const { intent, to, community_name } = req.body || {};
-    if (!intent || !String(intent).trim()) return res.status(400).json({ error: 'intent_required', detail: 'Tell Claire what you want the email to say.' });
+    const { intent, to, community_name, persona } = req.body || {};
+    const draftPersona = String(persona || '').toLowerCase() === 'emma' ? 'emma' : 'claire';
+    if (!intent || !String(intent).trim()) return res.status(400).json({ error: 'intent_required', detail: 'Tell the AI what you want the email to say.' });
 
     // Light recipient context so the draft can greet by name / fit the community.
     const firstTo = parseAddrs(to)[0] || null;
@@ -412,7 +427,7 @@ router.post('/compose-draft', express.json(), async (req, res) => {
     }
 
     const { draftEmailFromIntent } = require('../lib/email/compose_draft');
-    const draft = await draftEmailFromIntent(intent, { to: firstTo, recipientName, community: commName });
+    const draft = await draftEmailFromIntent(intent, { to: firstTo, recipientName, community: commName, persona: draftPersona });
     if (draft.degraded) return res.status(503).json({ error: 'draft_unavailable', detail: 'Claire could not draft this right now. Write it yourself, or try again.' });
     res.json({ ok: true, subject: draft.subject, body: draft.body });
   } catch (err) {

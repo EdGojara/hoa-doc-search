@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Collections Report Ingest — Bedrock</title>
+<title>Legal Collections Report — Bedrock</title>
 <link rel="stylesheet" href="/brand.css">
 <style>
   :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
@@ -46,8 +46,8 @@
 <div class="wrap">
   <a href="/" onclick="if(document.referrer&&history.length>1){history.back();return false;}" style="display:inline-flex;gap:6px;color:#5a7390;text-decoration:none;font-size:13px;font-weight:600;margin-bottom:12px;">&larr; Back to trustEd</a>
   <div class="head">
-    <h1>Collections Report Ingest</h1>
-    <div class="sub">Drop the Winstead PC monthly "Matter Detail" report &mdash; it reads every matter, proposes a collection status, shows what changed since last month, and (on approve) files it onto each property. Feeds the Board Portal, board packet, and Homeowner 360.</div>
+    <h1>Legal Collections Report</h1>
+    <div class="sub">Drop your law firm's monthly collections report (the matter-detail export) &mdash; it reads every matter, proposes a collection status, shows what changed since last month, and (on approve) files it onto each property. Works with any of the collections firms Bedrock uses. Feeds the Board Portal, board packet, and Homeowner 360.</div>
   </div>
   <div id="body"><div class="empty">Loading&hellip;</div></div>
 </div>
@@ -64,13 +64,13 @@ function renderPicker(communities){
   document.getElementById('body').innerHTML = `
     <div class="row">
       <select id="comm"><option value="">Select association&hellip;</option>${opts}</select>
-      <label class="drop" id="drop"><span id="dropText">Drop the Winstead PDF here, or click to choose</span><input id="file" type="file" accept="application/pdf" style="display:none"></label>
+      <label class="drop" id="drop"><span id="dropText">Drop the legal collections report (PDF) here, or click to choose</span><input id="file" type="file" accept="application/pdf" style="display:none"></label>
       <button class="btn" id="analyze" disabled>Analyze</button>
     </div>
     <div id="result"></div>`;
   const fileInput=document.getElementById('file'), drop=document.getElementById('drop'), analyze=document.getElementById('analyze'), dropText=document.getElementById('dropText');
   let chosen=null;
-  const setFile=f=>{ chosen=f; dropText.textContent=f?('📄 '+f.name):'Drop the Winstead PDF here, or click to choose'; analyze.disabled=!f; };
+  const setFile=f=>{ chosen=f; dropText.textContent=f?('📄 '+f.name):'Drop the legal collections report (PDF) here, or click to choose'; analyze.disabled=!f; };
   drop.addEventListener('click',()=>fileInput.click());
   fileInput.addEventListener('change',e=>setFile(e.target.files[0]));
   drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over');});
