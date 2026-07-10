@@ -105,11 +105,14 @@ function renderInvoiceHTML({ invoice, lineItems, community, managementCo }) {
   const comm = community || {};
   const mgmt = managementCo || {};
 
+  const isBuilder = inv.invoice_type === 'builder_arc';
   const periodLabel = fmtPeriodRange(inv.service_period_start, inv.service_period_end);
-  const periodNote = inv.invoice_type === 'activity'
-    ? `${fmtPeriodMonthYear(inv.service_period_start)} activity, billed in arrears`
-    : `${fmtPeriodMonthYear(inv.service_period_start)} fees, billed in advance`;
-  const typeLabel = inv.invoice_type === 'activity' ? 'Activity' : 'Fixed';
+  const periodNote = isBuilder
+    ? `${fmtPeriodMonthYear(inv.service_period_start)} architectural submissions received, billed in arrears`
+    : inv.invoice_type === 'activity'
+      ? `${fmtPeriodMonthYear(inv.service_period_start)} activity, billed in arrears`
+      : `${fmtPeriodMonthYear(inv.service_period_start)} fees, billed in advance`;
+  const typeLabel = isBuilder ? 'Builder ARC' : inv.invoice_type === 'activity' ? 'Activity' : 'Fixed';
 
   const dueDateLabel = inv.due_date ? fmtDateShort(inv.due_date) : 'On receipt';
   const invoiceDateLabel = fmtDateShort(inv.invoice_date);
@@ -152,6 +155,26 @@ function renderInvoiceHTML({ invoice, lineItems, community, managementCo }) {
 
   const commName = comm.name || '(community)';
   const commLegal = comm.legal_name || commName;
+
+  // "Billed to" block. HOA invoices go to the association c/o Bedrock. Builder
+  // ARC invoices go straight to the builder (Lennar / DRB) at their own mailing
+  // address — no "c/o Bedrock" line, and referencing the community they cover.
+  let billedToHtml;
+  if (isBuilder) {
+    const recName = inv.recipient_name || 'Builder';
+    const recAddr = (inv.recipient_address || '').split(/,\s*/).filter(Boolean);
+    const addrTop = recAddr.length >= 3 ? recAddr.slice(0, recAddr.length - 2).join(', ') : recAddr[0] || '';
+    const addrBottom = recAddr.length >= 3 ? recAddr.slice(recAddr.length - 2).join(', ') : recAddr.slice(1).join(', ');
+    billedToHtml = `
+          <strong>${escapeHtml(recName)}</strong><br>
+          ${addrTop ? `${escapeHtml(addrTop)}<br>` : ''}${addrBottom ? `${escapeHtml(addrBottom)}<br>` : ''}
+          <span style="color:var(--ink-muted); font-size:12px;">Architectural review — ${escapeHtml(commName)}</span>`;
+  } else {
+    billedToHtml = `
+          <strong>${escapeHtml(commLegal)}</strong><br>
+          c/o ${escapeHtml(mgmtName)}<br>
+          ${escapeHtml(mgmtAddrTop)}${mgmtAddrBottom ? `<br>${escapeHtml(mgmtAddrBottom)}` : ''}`;
+  }
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -416,10 +439,7 @@ function renderInvoiceHTML({ invoice, lineItems, community, managementCo }) {
     <section class="meta">
       <div class="meta-block">
         <div class="label">Billed to</div>
-        <div class="body">
-          <strong>${escapeHtml(commLegal)}</strong><br>
-          c/o ${escapeHtml(mgmtName)}<br>
-          ${escapeHtml(mgmtAddrTop)}${mgmtAddrBottom ? `<br>${escapeHtml(mgmtAddrBottom)}` : ''}
+        <div class="body">${billedToHtml}
         </div>
       </div>
       <div class="meta-block">

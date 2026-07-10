@@ -513,6 +513,170 @@ router.post('/communities/:communityId/draft-invoice', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// POST /api/billing/communities/:communityId/builder-invoice
+//   body: { builder_company_id, period: 'YYYY-MM' }
+// ----------------------------------------------------------------------------
+// Builder ARC billing: Bedrock invoices the BUILDER (Lennar at Still Creek, DRB
+// at August Meadows) for the new-home ARC submissions RECEIVED in the period,
+// at communities.builder_arc_fee_cents each. Billed to the builder — NOT the
+// association — so it is a separate invoice (invoice_type='builder_arc') with
+// the builder as recipient. Per submission received (Ed 2026-07-10), so the
+// count keys on submitted_at, not decided_at.
+// ----------------------------------------------------------------------------
+router.post('/communities/:communityId/builder-invoice', async (req, res) => {
+  try {
+    const { communityId } = req.params;
+    const builderCompanyId = (req.body && req.body.builder_company_id) || null;
+    const period = (req.body && req.body.period) || '';
+    if (!builderCompanyId) return res.status(400).json({ error: 'builder_company_id required' });
+    if (!/^\d{4}-\d{2}$/.test(period)) return res.status(400).json({ error: 'period required as YYYY-MM' });
+
+    const { data: comm, error: commErr } = await supabase
+      .from('communities')
+      .select('id, name, billing_code, vantaca_code, builder_arc_fee_cents, management_company_id')
+      .eq('id', communityId)
+      .single();
+    if (commErr || !comm) return res.status(404).json({ error: 'Community not found' });
+    const feeCents = Number(comm.builder_arc_fee_cents || 0);
+    if (!feeCents) return res.status(400).json({ error: 'Builder ARC fee not configured for this community (builder_arc_fee_cents).' });
+    const feeDollars = money(feeCents / 100);
+
+    const { data: builder, error: bErr } = await supabase
+      .from('builder_companies')
+      .select('id, company_name, legal_name, mailing_address, primary_contact_email')
+      .eq('id', builderCompanyId)
+      .single();
+    if (bErr || !builder) return res.status(404).json({ error: 'Builder company not found' });
+
+    const { start: serviceStart, end: serviceEnd } = periodBoundaries(period);
+    // Submissions RECEIVED in the period (submitted_at). Page through in case a
+    // busy builder-month exceeds the 1000-row cap.
+    const subs = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from('builder_applications')
+        .select('id, reference_number, street_address, submitter_name, submitted_at')
+        .eq('community_id', communityId)
+        .eq('builder_company_id', builderCompanyId)
+        .gte('submitted_at', serviceStart + 'T00:00:00Z')
+        .lt('submitted_at', serviceEnd + 'T23:59:59.999Z')
+        .order('submitted_at')
+        .range(from, from + 999);
+      if (error) throw error;
+      subs.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    const count = subs.length;
+    const subtotal = money(count * feeDollars);
+
+    const invoiceNumber = `${period.slice(2, 4)}${period.slice(5, 7)}${comm.billing_code || comm.vantaca_code || ''}B`;
+
+    const { data: invoice, error: insErr } = await supabase
+      .from('invoices')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community_id: communityId,
+        builder_company_id: builderCompanyId,
+        invoice_number: invoiceNumber,
+        invoice_type: 'builder_arc',
+        service_period_start: serviceStart,
+        service_period_end: serviceEnd,
+        invoice_date: new Date().toISOString().slice(0, 10),
+        status: 'draft',
+        subtotal,
+        total: subtotal,
+        recipient_name: builder.company_name,
+        recipient_email: builder.primary_contact_email || null,
+        recipient_address: builder.mailing_address || null,
+      })
+      .select()
+      .single();
+    if (insErr) {
+      if (insErr.code === '23505') {
+        const { data: existing } = await supabase
+          .from('invoices')
+          .select('id, invoice_number, invoice_type, status, subtotal, total, created_at, service_period_start, service_period_end')
+          .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+          .eq('invoice_number', invoiceNumber)
+          .single();
+        return res.status(409).json({ error: `Builder invoice ${invoiceNumber} already exists for this period.`, invoice_number: invoiceNumber, existing });
+      }
+      throw insErr;
+    }
+
+    // One line item: submissions x fee. Store each reference in vantaca_source_ref
+    // so the builder invoice is self-documenting (which submissions it covers).
+    if (count > 0) {
+      const { error: liErr } = await supabase.from('invoice_line_items').insert({
+        invoice_id: invoice.id,
+        source: 'adhoc',
+        description: `Architectural review — new-home submissions received (${period})`,
+        qty: count,
+        unit_price: feeDollars,
+        amount: subtotal,
+        sort_order: 10,
+        vantaca_source_ref: subs.map((s) => s.reference_number).filter(Boolean).join(', ').slice(0, 500) || null,
+      });
+      if (liErr) throw liErr;
+    }
+
+    const { error: evErr } = await supabase.from('invoice_events').insert({
+      invoice_id: invoice.id,
+      kind: 'created',
+      payload: { source: 'api/billing builder-invoice', builder_company_id: builderCompanyId, period, submissions: count, fee_cents: feeCents, subtotal },
+    });
+    if (evErr) throw evErr;
+
+    res.json({
+      invoice,
+      invoice_number: invoiceNumber,
+      builder_name: builder.company_name,
+      submissions: count,
+      fee: feeDollars,
+      subtotal,
+      submission_refs: subs.map((s) => ({ reference_number: s.reference_number, street_address: s.street_address, submitted_at: s.submitted_at })),
+    });
+  } catch (err) {
+    console.error('[billing] builder-invoice failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/billing/communities/:communityId/builders
+// ----------------------------------------------------------------------------
+// Builders active at a community (for the builder-invoice picker) with their
+// current-open submission counts, so staff sees who to bill.
+// ----------------------------------------------------------------------------
+router.get('/communities/:communityId/builders', async (req, res) => {
+  try {
+    const { communityId } = req.params;
+    // Builders that have submitted at this community.
+    const { data: apps, error } = await supabase
+      .from('builder_applications')
+      .select('builder_company_id')
+      .eq('community_id', communityId)
+      .not('builder_company_id', 'is', null)
+      .limit(5000);
+    if (error) throw error;
+    const ids = [...new Set((apps || []).map((a) => a.builder_company_id))];
+    if (!ids.length) return res.json({ builders: [] });
+    const { data: builders } = await supabase
+      .from('builder_companies')
+      .select('id, company_name, mailing_address, primary_contact_email')
+      .in('id', ids);
+    const { data: comm } = await supabase
+      .from('communities').select('builder_arc_fee_cents').eq('id', communityId).single();
+    res.json({
+      builders: builders || [],
+      builder_arc_fee_cents: comm ? Number(comm.builder_arc_fee_cents || 0) : 0,
+    });
+  } catch (err) {
+    console.error('[billing] builders failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/billing/invoices?status=draft&limit=50&community_id=...
 // ----------------------------------------------------------------------------
 router.get('/invoices', async (req, res) => {
@@ -526,6 +690,7 @@ router.get('/invoices', async (req, res) => {
         invoice_date, due_date, status,
         subtotal, total,
         community_id, contract_id, contract_version,
+        builder_company_id, recipient_name,
         sent_at, paid_at, created_at,
         community:communities(name, vantaca_code)
       `)
@@ -1753,7 +1918,11 @@ router.get('/activity-report', async (req, res) => {
     const row = (cid) => (byComm[cid] || (byComm[cid] = {
       community_id: cid, name: nameById[cid] || 'Unknown',
       violations: 0,
+      // Resident ACC only — this is what the HOA's ARC application fee bills on.
       arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0,
+      // Builder ARC (Lennar / DRB) is billed to the BUILDER, never the HOA, so it
+      // is broken out separately and must NOT feed the arc_* counts above.
+      builder_arc: 0,
       _letters: new Map(), // envelope key -> { delivery_method, page_count }
     }));
 
@@ -1777,8 +1946,11 @@ router.get('/activity-report', async (req, res) => {
       else if (s === 'denied' || s === 'rejected') r.arc_denied += 1;
       else r.arc_other += 1; // pending / withdrawn / tabled / other
     };
-    decisions.forEach((d) => tallyArc(d.community_id, d.status));
+    // Resident ACC decisions feed the HOA's ARC fee counts. Builder ARC does NOT —
+    // it is billed to the builder on a separate builder invoice, so it is only
+    // counted for the break-out (Ed 2026-07-10: separate homeowner vs builder ARC).
     accDecisions.forEach((d) => tallyArc(d.community_id, d.decision_type));
+    decisions.forEach((d) => { row(d.community_id).builder_arc += 1; });
 
     const communities = Object.values(byComm)
       .map(({ _letters, ...r }) => {
@@ -1817,7 +1989,8 @@ router.get('/activity-report', async (req, res) => {
       arc_denied: t.arc_denied + r.arc_denied,
       arc_conditions: t.arc_conditions + r.arc_conditions,
       arc_other: t.arc_other + r.arc_other,
-    }), { violations: 0, letters_sent: 0, certified_sent: 0, first_class_sent: 0, first_class_postage_cents: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0 });
+      builder_arc: t.builder_arc + r.builder_arc,
+    }), { violations: 0, letters_sent: 0, certified_sent: 0, first_class_sent: 0, first_class_postage_cents: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0, builder_arc: 0 });
 
     res.json({ period: { start, end }, communities, totals, page_tracking: hasPageCount });
   } catch (err) {

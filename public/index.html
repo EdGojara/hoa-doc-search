@@ -3897,6 +3897,36 @@
       <div id="billing-recent-invoices" style="font-size:14px; color:#888; margin-top:10px;">Loading…</div>
     </details>
 
+    <!-- Builder ARC Invoices — Bedrock bills the BUILDER (Lennar / DRB), not the
+         HOA, for new-home ARC submissions received. Only shown for communities
+         that have builders on record. -->
+    <details class="panel" id="billing-builder-panel" style="margin-bottom:16px; display:none;">
+      <summary style="cursor:pointer; font-weight:600; font-size:14px; list-style:none; padding:4px 0;">
+        🏗️ Builder ARC Invoices <span style="color:#888; font-weight:400; font-size:12px;">(billed to the builder — new-home submissions received)</span>
+      </summary>
+      <div style="padding-top:12px;">
+        <div style="font-size:12.5px; color:#666; margin-bottom:12px;">
+          Bills the builder at the community's per-submission rate for every new-home architectural submission received in the month. This is separate from the association invoice, so builder activity never lands on the HOA's bill.
+        </div>
+        <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:12px;">
+          <div>
+            <div class="section-label">Builder</div>
+            <select id="billing-builder-select" style="padding:6px; min-width:220px; font-size:13px;"></select>
+          </div>
+          <div>
+            <div class="section-label">Month</div>
+            <input type="month" id="billing-builder-period" style="padding:6px; font-size:13px;">
+          </div>
+          <div>
+            <div class="section-label">Rate</div>
+            <div id="billing-builder-rate" style="padding:6px 10px; background:#f0f4f8; border:1px solid #d0d7de; border-radius:4px; font-size:13px; min-width:80px; text-align:center;">—</div>
+          </div>
+          <button class="action-btn" onclick="billingGenerateBuilderInvoice()" style="font-size:13px; padding:7px 16px; background:#0B1D34; color:#fff;">Generate builder invoice</button>
+        </div>
+        <div id="billing-builder-result" style="font-size:13px;"></div>
+      </div>
+    </details>
+
     <!-- Activity Report — moved here (Ed 2026-07-09), scoped to THIS community.
          actRptRun() reads billing-community-select so it only reports this one. -->
     <details class="panel" id="billing-activity-panel" style="margin-bottom:16px;" open>
@@ -4094,7 +4124,7 @@
       const detailUrl = (c, extra = '') => `/api/billing/activity-detail?community_id=${encodeURIComponent(c.community_id)}&period_start=${start}&period_end=${end}${extra}`;
       // A count cell that links to its own detail view when > 0.
       const cellLink = (v, url, title, inner) => `<td style="padding:7px 10px; border-bottom:1px solid #eee; text-align:right; font-size:13px;">${(v > 0) ? `<a href="${url}" target="_blank" rel="noopener" title="${title}" style="color:#0B1D34; font-weight:600; text-decoration:none; border-bottom:1px solid #cbd5e1;">${inner != null ? inner : v}</a>` : (inner != null ? inner : v)}</td>`;
-      const body = rows.filter(c => c.violations || c.letters_sent || c.pages_printed || c.arc_approved || c.arc_denied || c.arc_conditions || c.arc_other).map(c => `
+      const body = rows.filter(c => c.violations || c.letters_sent || c.pages_printed || c.arc_approved || c.arc_denied || c.arc_conditions || c.arc_other || c.builder_arc).map(c => `
         <tr>
           <td style="padding:7px 10px; border-bottom:1px solid #eee; font-size:13px; font-weight:600;"><a href="${detailUrl(c)}" target="_blank" rel="noopener" title="Open the full board detail report — every letter + ARC decision with PDF links" style="color:#0B1D34; text-decoration:none; border-bottom:1px solid #94a3b8;">${escapeHtml(c.name)} <span style="font-size:10px; opacity:0.6;">↗ detail</span></a></td>
           ${cell(c.violations || 0)}
@@ -4102,25 +4132,26 @@
           ${cell(c.first_class_sent || 0)}
           ${cell(c.certified_sent ? `<strong style="color:#92400e;">${c.certified_sent}</strong>` : 0)}
           ${cell(c.pages_printed || (c.pages_unknown ? '<span style=\"color:#b45309;\" title=\"Run the page-count backfill to fill these\">—</span>' : 0))}
-          ${cellLink(c.arc_approved, detailUrl(c, '&arc=approved#arc'), 'See the approved ARC decisions')}
-          ${cellLink(c.arc_denied, detailUrl(c, '&arc=denied#arc'), 'See the denied ARC decisions')}
+          ${cellLink(c.arc_approved, detailUrl(c, '&arc=approved#arc'), 'See the approved resident ARC decisions')}
+          ${cellLink(c.arc_denied, detailUrl(c, '&arc=denied#arc'), 'See the denied resident ARC decisions')}
           ${cell(c.arc_conditions + c.arc_other)}
-        </tr>`).join('') || '<tr><td colspan="9" style="padding:16px; text-align:center; color:#888; font-size:13px;">No billable activity in this period.</td></tr>';
+          ${cellLink(c.builder_arc, detailUrl(c, '#arc'), 'Builder ARC — billed to the builder, not the HOA', c.builder_arc ? `<span style="color:#7c3aed;">${c.builder_arc}</span>` : 0)}
+        </tr>`).join('') || '<tr><td colspan="10" style="padding:16px; text-align:center; color:#888; font-size:13px;">No billable activity in this period.</td></tr>';
       const th = (label) => `<th style="padding:7px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#64748b; border-bottom:2px solid #e2e8f0;">${label}</th>`;
       host.innerHTML = `
         ${!j.page_tracking ? '<div style="background:#fffbeb; border:1px solid #fbbf24; border-radius:6px; padding:8px 10px; font-size:12px; color:#92400e; margin-bottom:10px;">⚠ Pages-printed is not live yet — apply migration 257 and run the page-count backfill, then re-run. Notice + ARC counts are accurate now.</div>' : ''}
         <table style="width:100%; border-collapse:collapse;">
           <thead><tr>
             <th style="padding:7px 10px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#64748b; border-bottom:2px solid #e2e8f0;">Community</th>
-            ${th('Violations')}${th('Letters sent')}${th('First-class')}${th('Certified')}${th('Pages printed')}${th('ARC approved')}${th('ARC denied')}${th('ARC other')}
+            ${th('Violations')}${th('Letters sent')}${th('First-class')}${th('Certified')}${th('Pages printed')}${th('ARC approved')}${th('ARC denied')}${th('ARC other')}${th('Builder ARC')}
           </tr></thead>
           <tbody>${body}</tbody>
           <tfoot><tr style="font-weight:700; background:#f8fafc;">
             <td style="padding:8px 10px;">${_cid ? 'Community total' : 'Portfolio total'}</td>
-            ${cell(t.violations || 0)}${cell(t.letters_sent || 0)}${cell(t.first_class_sent || 0)}${cell(t.certified_sent || 0)}${cell(t.pages_printed || 0)}${cell(t.arc_approved || 0)}${cell(t.arc_denied || 0)}${cell((t.arc_conditions || 0) + (t.arc_other || 0))}
+            ${cell(t.violations || 0)}${cell(t.letters_sent || 0)}${cell(t.first_class_sent || 0)}${cell(t.certified_sent || 0)}${cell(t.pages_printed || 0)}${cell(t.arc_approved || 0)}${cell(t.arc_denied || 0)}${cell((t.arc_conditions || 0) + (t.arc_other || 0))}${cell(t.builder_arc ? `<span style="color:#7c3aed;">${t.builder_arc}</span>` : 0)}
           </tr></tfoot>
         </table>
-        <div style="font-size:11px; color:#94a3b8; margin-top:8px;">Violations = individual violation letters generated. Letters sent = physical envelopes mailed (a bundle of several violations to one owner = one letter), split by mail class (certified costs more postage). Postage + certified + pages bill per letter, not per violation. ARC/ACC = decisions rendered in the period (builder ARC + resident ACC). "ARC approved" includes approved-with-conditions. "ARC other" = pending/withdrawn.</div>`;
+        <div style="font-size:11px; color:#94a3b8; margin-top:8px;">Violations = individual violation letters generated. Letters sent = physical envelopes mailed (a bundle of several violations to one owner = one letter), split by mail class (certified costs more postage). Postage + certified + pages bill per letter, not per violation. The three <strong>ARC</strong> columns are <strong>resident</strong> ARC/ACC decisions — what the association's ARC fee bills on ("ARC approved" includes approved-with-conditions; "ARC other" = pending/withdrawn). <strong>Builder ARC</strong> is broken out separately because it is billed to the builder (Lennar / DRB) on its own invoice, never to the HOA.</div>`;
     } catch (e) {
       host.innerHTML = `<div style="color:#b91c1c; font-size:13px; padding:12px;">Could not run report: ${escapeHtml(e.message)}</div>`;
     }
@@ -4339,6 +4370,7 @@
       billingTypeChanged();
 
       billingLoadInvoicesForCommunity(communityId);
+      billingLoadBuilders(communityId);
     } catch (e) {
       // 404 = no active contract for this community (a freshly seeded one).
       if (String(e.message).includes('404')) {
@@ -5008,7 +5040,7 @@
         return `
         <tr onclick="billingShowInvoice('${r.id}')" style="cursor:pointer;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=''">
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; font-family:monospace;">${r.invoice_number}</td>
-          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${r.invoice_type === 'activity' ? 'Activity' : 'Fixed'}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${r.invoice_type === 'builder_arc' ? '🏗️ Builder ARC' + (r.recipient_name ? ' <span style="color:#888; font-size:11px;">· ' + escapeHtml(r.recipient_name) + '</span>' : '') : r.invoice_type === 'activity' ? 'Activity' : 'Fixed'}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${r.service_period_start} → ${r.service_period_end}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${statusCell}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${billingMoney(r.total)}</td>
@@ -5056,6 +5088,66 @@
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       billingReloadRecent();
     } catch (e) { alert(`Could not delete ${number}: ${e.message}`); }
+  }
+
+  // ---- Builder ARC invoices (billed to Lennar / DRB, not the HOA) ----------
+  let billingBuilderFeeCents = 0;
+  async function billingLoadBuilders(communityId) {
+    const panel = document.getElementById('billing-builder-panel');
+    const sel = document.getElementById('billing-builder-select');
+    const rate = document.getElementById('billing-builder-rate');
+    if (!panel || !sel) return;
+    try {
+      const r = await fetch(`/api/billing/communities/${communityId}/builders`);
+      const data = await r.json().catch(() => ({}));
+      const builders = (data && data.builders) || [];
+      if (!r.ok || builders.length === 0) { panel.style.display = 'none'; return; }
+      billingBuilderFeeCents = Number((data && data.builder_arc_fee_cents) || 0);
+      sel.innerHTML = builders.map(b => `<option value="${b.id}">${escapeHtml(b.company_name)}</option>`).join('');
+      rate.textContent = billingBuilderFeeCents ? billingMoney(billingBuilderFeeCents / 100) + ' / submission' : 'not set';
+      // Default month to last month (submissions are billed in arrears).
+      const per = document.getElementById('billing-builder-period');
+      if (per && !per.value) {
+        const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+        per.value = d.toISOString().slice(0, 7);
+      }
+      document.getElementById('billing-builder-result').innerHTML = '';
+      panel.style.display = '';
+    } catch (e) {
+      panel.style.display = 'none';
+    }
+  }
+
+  async function billingGenerateBuilderInvoice() {
+    if (!billingCurrentCommunityId) return;
+    const builderId = document.getElementById('billing-builder-select').value;
+    const period = document.getElementById('billing-builder-period').value;
+    const out = document.getElementById('billing-builder-result');
+    if (!builderId) { out.innerHTML = '<div style="color:#a00;">Pick a builder first.</div>'; return; }
+    if (!period) { out.innerHTML = '<div style="color:#a00;">Pick a month first.</div>'; return; }
+    if (billingBuilderFeeCents === 0) { out.innerHTML = '<div style="color:#a00;">No per-submission rate is set for this community. Set the builder ARC fee first.</div>'; return; }
+    out.innerHTML = '<div style="color:#888;">Generating…</div>';
+    try {
+      const r = await fetch(`/api/billing/communities/${billingCurrentCommunityId}/builder-invoice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ builder_company_id: builderId, period })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 409) {
+        out.innerHTML = `<div style="background:#fff3cd; border:1px solid #f5d78a; border-radius:6px; padding:10px;">A builder invoice (${escapeHtml(j.invoice_number || '')}) already exists for this month. Find it in Recent Invoices to view, edit, or void it.</div>`;
+        return;
+      }
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      out.innerHTML = `<div style="background:#e8f5e9; border:1px solid #b8d8b8; border-radius:6px; padding:12px;">
+        ✅ Draft <strong>${escapeHtml(j.invoice_number)}</strong> for <strong>${escapeHtml(j.builder_name)}</strong> —
+        ${j.submissions} submission${j.submissions === 1 ? '' : 's'} × ${billingMoney(j.fee)} = <strong>${billingMoney(j.subtotal)}</strong>.
+        <br><span style="font-size:12px; color:#666;">See it in Recent Invoices below to review the line detail and download the PDF.</span>
+      </div>`;
+      billingReloadRecent();
+    } catch (e) {
+      out.innerHTML = `<div style="color:#a00;">Could not generate: ${escapeHtml(e.message)}</div>`;
+    }
   }
 
   async function billingGenerateDraft() {
