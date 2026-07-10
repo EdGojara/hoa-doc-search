@@ -2040,17 +2040,16 @@ router.get('/activity-report', async (req, res) => {
       if (communityId) q = q.eq('community_id', communityId);
       return q;
     });
-    // Resident ACC decisions live in arc_historical_decisions — the ACC decision
-    // LOG. Online-portal decisions are promoted here on finalize, and staff log
-    // committee decisions here directly, so it's the fuller record (counting
-    // community_applications too would double-count the online ones). decided_at
-    // is a DATE, so compare against plain YYYY-MM-DD bounds.
+    // Resident ACC decisions we RAN through trustEd live in acc_decisions — the
+    // decisions staff issued + generated a letter for (Ed 2026-07-10). That is the
+    // billable ACC work; arc_historical_decisions is the prior manager's imported
+    // history (decided before us) and must NOT be billed. created_at is the decision
+    // timestamp; compare against the day-boundary UTC bounds.
     let accDecisions = await fetchAll(() => {
-      let q = supabase.from('arc_historical_decisions')
-        .select('community_id, decision_type, decided_at')
-        .not('decided_at', 'is', null)
-        .gte('decided_at', start)
-        .lt('decided_at', endEx);
+      let q = supabase.from('acc_decisions')
+        .select('community_id, decision_type, created_at')
+        .gte('created_at', start + 'T00:00:00Z')
+        .lt('created_at', endEx + 'T00:00:00Z');
       if (communityId) q = q.eq('community_id', communityId);
       return q;
     });
@@ -2207,14 +2206,12 @@ router.get('/activity-detail', async (req, res) => {
         .eq('community_id', communityId)
         .not('decided_at', 'is', null)
         .gte('decided_at', start + 'T00:00:00Z').lt('decided_at', endEx + 'T00:00:00Z')),
-      // Resident ACC decisions — the ACC decision log (arc_historical_decisions),
-      // which captures both online-portal decisions and staff-logged committee
-      // decisions. decided_at is a DATE.
-      fetchAll(() => supabase.from('arc_historical_decisions')
-        .select('id, property_address, homeowner_name, project_type, project_description, decision_type, conditions, decided_at, source_document_path')
+      // Resident ACC decisions we ran through trustEd (acc_decisions) — the ones
+      // staff issued + generated a letter for. created_at is the decision timestamp.
+      fetchAll(() => supabase.from('acc_decisions')
+        .select('id, homeowner_address, homeowner_name, project_summary, decision_type, created_at, letter_pdf_storage_path')
         .eq('community_id', communityId)
-        .not('decided_at', 'is', null)
-        .gte('decided_at', start).lt('decided_at', endEx)),
+        .gte('created_at', start + 'T00:00:00Z').lt('created_at', endEx + 'T00:00:00Z')),
     ]);
     if (!community) return res.status(404).json({ error: 'community_not_found' });
 
@@ -2281,7 +2278,7 @@ router.get('/activity-detail', async (req, res) => {
 
     // 7-day signed URLs for the ACC decision letters (the PDF sent to the
     // homeowner) so the board can open them straight from the report, no login.
-    const accPaths = [...new Set(accDecisions.map((d) => d.source_document_path).filter(Boolean))];
+    const accPaths = [...new Set(accDecisions.map((d) => d.letter_pdf_storage_path).filter(Boolean))];
     const accSignedByPath = {};
     for (let i = 0; i < accPaths.length; i += 100) {
       const { data: signed } = await supabase.storage.from('documents')
@@ -2303,13 +2300,13 @@ router.get('/activity-detail', async (req, res) => {
         project: d.reference_number || null, conditions: null, kind: 'Builder ARC',
         outcome: outcomeOf(d.status), date: (d.decided_at || '').slice(0, 10),
       })),
-      // Resident ACC — capture WHAT was approved: the project + any conditions +
-      // a link to the actual approval letter sent to the homeowner.
+      // Resident ACC — capture WHAT was approved: the project + a link to the
+      // actual approval letter trustEd generated + sent to the homeowner.
       ...accDecisions.map((d) => ({
-        property: d.property_address || '(no address)', applicant: d.homeowner_name || '—',
-        project: d.project_type || null, conditions: d.conditions || null, kind: 'Resident ACC',
-        outcome: outcomeOf(d.decision_type), date: (d.decided_at || '').slice(0, 10),
-        letter_url: d.source_document_path ? (accSignedByPath[d.source_document_path] || null) : null,
+        property: d.homeowner_address || '(no address)', applicant: d.homeowner_name || '—',
+        project: d.project_summary || null, conditions: null, kind: 'Resident ACC',
+        outcome: outcomeOf(d.decision_type), date: (d.created_at || '').slice(0, 10),
+        letter_url: d.letter_pdf_storage_path ? (accSignedByPath[d.letter_pdf_storage_path] || null) : null,
       })),
     ].sort((a, b) => a.property.localeCompare(b.property));
 

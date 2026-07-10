@@ -2143,6 +2143,15 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
     // 1) Render the letter PDF first — if this fails, nothing else matters.
     const pdfBuffer = await renderLetterPdfBuffer(body);
 
+    // Resolve the community_id from the name so the decision is community-scoped.
+    // Historically only community_name was stored, which left billing's monthly
+    // ACC activity capture blind to these rows (Ed 2026-07-10).
+    let accCommunityId = body.community_id || null;
+    if (!accCommunityId && body.community) {
+      const { data: cm } = await supabase.from('communities').select('id').ilike('name', String(body.community).trim()).maybeSingle();
+      if (cm) accCommunityId = cm.id;
+    }
+
     // 2) Insert the decision row so we have an id to namespace storage paths.
     let decisionId = null;
     let letterStoragePath = null;
@@ -2153,6 +2162,7 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
         .from('acc_decisions')
         .insert({
           management_company_id: BEDROCK_MGMT_CO_ID,
+          community_id: accCommunityId,
           community_name: body.community || '',
           homeowner_name: body.homeowner_name || null,
           homeowner_address: body.homeowner_address || null,
