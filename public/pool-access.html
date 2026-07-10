@@ -157,40 +157,81 @@ async function uploadFiles(files){
 }
 function resetDz(){ $('dz').innerHTML='📎 Drop a batch of pool-access forms (PDF) here — fob registrations and extended-hours forms. The system reads each one and files it to the right homeowner. You review before anything is saved.'; $('file').value=''; }
 
+let PA={batch_id:null,community_id:null,rows:[]};
+
+function paTypeOptions(sel){
+  const known=(sel==='fob_registration'||sel==='extended_hours');
+  return `<option value="fob_registration"${sel==='fob_registration'?' selected':''}>Fob</option>`
+    + `<option value="extended_hours"${sel==='extended_hours'?' selected':''}>Ext. hours</option>`
+    + `<option value="unknown"${known?'':' selected'}>? pick</option>`;
+}
+function paMatchCell(r){
+  if(r.property_id) return `<span style="color:#166534;font-weight:600;">✓ ${esc(r.matched_address||'matched')}</span>${r.contact_name?` <span class="rel">· ${esc(r.contact_name)}</span>`:''}${r.matched_by==='name'?' <span class="rel">(by name)</span>':''}`;
+  return '<span class="flag">unmatched — will skip</span>';
+}
+function paRowHtml(r,i){
+  const dup=r.dup_active?` <span class="flag" title="Tag active on ${esc(r.dup_on)}">reissue → ${esc(r.dup_on)}</span>`:'';
+  return `<tr>
+    <td style="min-width:250px;">
+      <input data-i="${i}" data-f="property_address" value="${esc(r.property_address||'')}" placeholder="address (leave blank to match by name)" oninput="paEdit(this)" style="width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--line);border-radius:6px;">
+      <div style="display:flex;gap:7px;align-items:center;margin-top:4px;">
+        <button class="btn ghost sm" onclick="paResolve(${i})">Find</button>
+        <span id="pa-m-${i}" style="font-size:11px;">${paMatchCell(r)}</span>
+      </div>
+    </td>
+    <td><input data-i="${i}" data-f="primary_homeowner_name" value="${esc(r.primary_homeowner_name||r.contact_name||'')}" placeholder="homeowner name" oninput="paEdit(this)" style="width:100%;padding:6px 8px;font-size:12.5px;border:1px solid var(--line);border-radius:6px;"></td>
+    <td><select data-i="${i}" data-f="form_type" onchange="paEdit(this)" style="padding:6px;font-size:12.5px;border:1px solid var(--line);border-radius:6px;">${paTypeOptions(r.form_type)}</select></td>
+    <td><input data-i="${i}" data-f="fob_tag_number" value="${esc(r.fob_tag_number||'')}" placeholder="tag #" oninput="paEdit(this)" style="width:92px;padding:6px 8px;font-size:12.5px;border:1px solid var(--line);border-radius:6px;">${dup}</td>
+    <td><input data-i="${i}" data-f="season_year" value="${r.season_year||''}" placeholder="yr" oninput="paEdit(this)" style="width:60px;padding:6px 8px;font-size:12.5px;border:1px solid var(--line);border-radius:6px;"></td>
+    <td><input data-i="${i}" data-f="notes" value="${esc(r.notes||'')}" placeholder="comments…" oninput="paEdit(this)" style="width:100%;min-width:150px;padding:6px 8px;font-size:12.5px;border:1px solid var(--line);border-radius:6px;"></td>
+    <td class="rel" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;">${esc(r.source_filename||'')}</td>
+  </tr>`;
+}
+function paEdit(el){
+  const r=PA.rows[el.dataset.i]; if(!r)return; const f=el.dataset.f;
+  if(f==='season_year'){ const n=parseInt(el.value,10); r.season_year=Number.isFinite(n)?n:null; }
+  else r[f]=el.value;
+  if(f==='form_type') paUpdateCount(); // type change flips whether the row is fileable
+}
+async function paResolve(i){
+  const r=PA.rows[i]; const box=$('pa-m-'+i); box.innerHTML='<span class="rel">Finding…</span>';
+  try{
+    const res=await fetch(`${API}/resolve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:PA.community_id,address:r.property_address||'',homeowner_name:r.primary_homeowner_name||''})});
+    const j=await res.json();
+    if(j.matched){ r.property_id=j.property_id; r.matched_address=j.matched_address; r.contact_id=j.contact_id; r.contact_name=j.contact_name; r.matched_by=j.matched_by; }
+    else { r.property_id=null; r.matched_address=null; r.contact_id=null; r.matched_by=null; }
+    box.innerHTML=paMatchCell(r)+(!j.matched&&j.hint?` <span class="rel">${esc(j.hint)}</span>`:'');
+    paUpdateCount();
+  }catch(e){ box.innerHTML='<span class="flag">error — try again</span>'; }
+}
+function paUpdateCount(){
+  const n=PA.rows.filter(r=>r.property_id&&(r.form_type==='fob_registration'||r.form_type==='extended_hours')).length;
+  const b=$('pa-approve'); if(b){ b.textContent=`File ${n} record${n===1?'':'s'}`; b.disabled=!n; }
+}
 function showPreview(j){
-  const rows=j.rows||[];
-  const dups=rows.filter(r=>r.dup_active).length;
-  const rowsHtml=rows.map(r=>{
-    const matched=r.property_id && (r.form_type==='fob_registration'||r.form_type==='extended_hours');
-    const addr=r.matched_address||r.property_address||'<span class="flag">no address</span>';
-    return `<tr class="${matched?'':'unmatched'}">
-      <td>${esc(addr)}${matched?'':' <span class="flag">unmatched — will skip</span>'}</td>
-      <td>${esc(r.contact_name||r.primary_homeowner_name||'—')}</td>
-      <td>${typePill(r.form_type)}</td>
-      <td class="tag">${r.fob_tag_number?esc(r.fob_tag_number):'<span class="rel">—</span>'}${r.dup_active?` <span class="flag" title="Tag already active on ${esc(r.dup_on)}">reissue → supersedes ${esc(r.dup_on)}</span>`:''}</td>
-      <td>${(r.authorized_persons||[]).length} listed</td>
-      <td>${r.season_year||'—'}</td>
-      <td>${esc(r.source_filename||'')}</td>
-    </tr>`;
-  }).join('');
+  PA={batch_id:j.batch_id,community_id:cid(),rows:(j.rows||[]).map(r=>({...r}))};
+  const dups=PA.rows.filter(r=>r.dup_active).length;
   const html=`<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
     <h2>Review before filing</h2>
-    <div class="sub">${j.forms_matched} of ${j.total_forms} ready to file onto a homeowner. ${j.forms_unmatched?`<b>${j.forms_unmatched}</b> couldn't be matched and will be skipped.`:''}${j.degraded?' <span class="flag">some forms need manual entry</span>':''}</div>
-    ${dups?`<div class="warn">⚠ ${dups} fob tag${dups>1?'s are':' is'} already registered active elsewhere. Approving will treat these as reissues and revoke the prior registration for that tag.</div>`:''}
-    <div style="overflow:auto;max-height:52vh;margin-top:10px;"><table><thead><tr>
-      <th>Property</th><th>Homeowner</th><th>Type</th><th>Tag #</th><th>People</th><th>Season</th><th>Source</th>
-    </tr></thead><tbody>${rowsHtml}</tbody></table></div>
+    <div class="sub">Fix anything the scan misread, add comments, then file. Left an address blank because it was illegible? Type the homeowner's name and press <b>Find</b> — the system matches the name to their address. Rows still unmatched are skipped.</div>
+    ${j.degraded?'<div class="warn">📄 One or more forms were hard to read. Fill in what you can below and use <b>Find</b> to match the homeowner.</div>':''}
+    ${dups?`<div class="warn">⚠ ${dups} fob tag${dups>1?'s are':' is'} already active elsewhere. Filing treats these as reissues and revokes the prior registration for that tag.</div>`:''}
+    <div style="overflow:auto;max-height:56vh;margin-top:10px;"><table><thead><tr>
+      <th>Property / match</th><th>Homeowner</th><th>Type</th><th>Tag #</th><th>Season</th><th>Comments</th><th>Source</th>
+    </tr></thead><tbody>${PA.rows.map(paRowHtml).join('')}</tbody></table></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="discardBatch('${j.batch_id}')">Discard</button>
-      <button class="btn gold" onclick="approveBatch('${j.batch_id}')">File ${j.forms_matched} record${j.forms_matched===1?'':'s'}</button>
+      <button class="btn gold" id="pa-approve" onclick="approveBatch('${j.batch_id}')">File</button>
     </div>
   </div></div>`;
   $('modal').innerHTML=html;
+  paUpdateCount();
 }
 function closeModal(){ $('modal').innerHTML=''; }
 async function discardBatch(id){ await fetch(`${API}/ingest/${id}/discard`,{method:'POST'}); closeModal(); }
 async function approveBatch(id){
-  const r=await fetch(`${API}/ingest/${id}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const btn=$('pa-approve'); if(btn){ btn.disabled=true; btn.textContent='Filing…'; }
+  const r=await fetch(`${API}/ingest/${id}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:PA.rows})});
   const j=await r.json(); closeModal();
   if(!j.ok){ alert(j.error||'Approve failed'); return; }
   let msg=`Filed ${j.filed} record${j.filed===1?'':'s'}.`;

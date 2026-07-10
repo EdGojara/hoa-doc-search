@@ -27,7 +27,7 @@ const multer = require('multer');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { extractPoolForms } = require('../lib/pool_access/extract');
-const { resolveProperty } = require('../lib/entity_resolution');
+const { resolveProperty, namesAreEquivalent } = require('../lib/entity_resolution');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -63,16 +63,46 @@ async function ownerOfProperty(propertyId) {
   return { contact_id: row ? row.contact_id : null, name: row && row.contacts ? row.contacts.full_name : null };
 }
 
+// Name -> property, scoped to a community. When a scanned form's ADDRESS is
+// illegible but the homeowner's NAME reads, find the property by owner name
+// (Ed 2026-07-10). Returns a single confident match only — a name that matches
+// several owners returns null so staff picks the address rather than us guessing.
+async function matchPropertyByOwnerName(communityId, name) {
+  if (!communityId || !name || !String(name).trim()) return null;
+  const all = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from('property_ownerships')
+      .select('property_id, contact_id, contacts:contact_id(full_name), properties:property_id(community_id, street_address, unit)')
+      .is('end_date', null).range(from, from + 999);
+    if (error) break;
+    all.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  const inComm = all.filter((r) => r.properties && r.properties.community_id === communityId && r.contacts);
+  const hits = inComm.filter((r) => namesAreEquivalent(r.contacts.full_name, name));
+  // Dedupe to distinct properties — co-owners on one lot shouldn't read as ambiguous.
+  const distinct = [...new Map(hits.map((h) => [h.property_id, h])).values()];
+  if (distinct.length !== 1) return null;
+  const h = distinct[0];
+  return { id: h.property_id, street_address: h.properties.street_address, unit: h.properties.unit || null, contact_id: h.contact_id, contact_name: h.contacts.full_name, match_confidence: 'name', matched_by: 'name' };
+}
+
 // Expand extracted forms into ROSTER ROWS (one per fob tag, one per
 // extended-hours approval), resolve each to a property + owner, and cross-check
 // fob tags against existing active grants.
 async function resolveRows(forms, communityId, sourceFilename) {
   const rows = [];
   for (const f of forms) {
-    // Resolve property (match-only; unmatched surfaces for operator triage)
-    let match = null;
+    // Resolve property (match-only; unmatched surfaces for operator triage).
+    // Address first; if the address is illegible/missing, fall back to matching
+    // the homeowner NAME to a property in this community.
+    let match = null, matchedBy = null;
     if (communityId && f.property_address) {
-      try { const m = await resolveProperty(supabase, communityId, f.property_address); if (m && m.id) match = m; } catch (_) {}
+      try { const m = await resolveProperty(supabase, communityId, f.property_address); if (m && m.id) { match = m; matchedBy = 'address'; } } catch (_) {}
+    }
+    if (!match && communityId && f.primary_homeowner_name) {
+      const nm = await matchPropertyByOwnerName(communityId, f.primary_homeowner_name);
+      if (nm) { match = nm; matchedBy = 'name'; }
     }
     const owner = match ? await ownerOfProperty(match.id) : { contact_id: null, name: null };
     const base = {
@@ -88,6 +118,7 @@ async function resolveRows(forms, communityId, sourceFilename) {
       property_id: match ? match.id : null,
       matched_address: match ? `${match.street_address}${match.unit ? ' #' + match.unit : ''}` : null,
       match_confidence: match ? match.match_confidence : null,
+      matched_by: matchedBy,
       contact_id: owner.contact_id,
       contact_name: owner.name,
       needs_review: !FILEABLE.has(f.form_type) || !match,
@@ -203,10 +234,19 @@ router.post('/ingest/:batch_id/approve', express.json(), async (req, res) => {
     if (!batch) return res.status(404).json({ error: 'batch_not_found' });
     if (batch.status !== 'previewed') return res.status(409).json({ error: `batch already ${batch.status}` });
 
-    const rows = (batch.raw_extraction && Array.isArray(batch.raw_extraction.rows)) ? batch.raw_extraction.rows : [];
+    // Use the operator's reviewed/edited rows when supplied (illegible scans get
+    // fixed by hand in the review step — Ed 2026-07-10); else the staged extraction.
+    const editedRows = (req.body && Array.isArray(req.body.rows) && req.body.rows.length) ? req.body.rows : null;
+    const rows = editedRows || ((batch.raw_extraction && Array.isArray(batch.raw_extraction.rows)) ? batch.raw_extraction.rows : []);
     let filed = 0, skipped = 0, superseded = 0;
     for (const r of rows) {
       if (!r.property_id || !FILEABLE.has(r.form_type)) { skipped++; continue; }
+      // Safety: an edited row must resolve to a property that actually belongs to
+      // this batch's community — never file a grant onto another community's lot.
+      if (editedRows) {
+        const { data: prop } = await supabase.from('properties').select('community_id').eq('id', r.property_id).maybeSingle();
+        if (!prop || prop.community_id !== batch.community_id) { skipped++; continue; }
+      }
       // Reissue: revoke any active grant on this tag (existing OR earlier this
       // batch) so exactly one active row per tag survives. Last write wins.
       if (r.form_type === 'fob_registration' && r.fob_tag_number) {
@@ -254,6 +294,41 @@ router.post('/ingest/:batch_id/discard', async (req, res) => {
     await supabase.from('pool_access_batches').update({ status: 'discarded' }).eq('id', req.params.batch_id);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// ----------------------------------------------------------------------------
+// POST /resolve — interactive property match for the review step. Staff fixes an
+// illegible row by typing the address OR just the homeowner name; this resolves
+// it (address first, name second) and returns the property + current owner so
+// the row becomes fileable. No write. Body: { community_id, address?, homeowner_name? }
+// ----------------------------------------------------------------------------
+router.post('/resolve', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.community_id) return res.status(400).json({ error: 'community_id required' });
+    let match = null, matchedBy = null;
+    if (b.address && String(b.address).trim()) {
+      try { const m = await resolveProperty(supabase, b.community_id, b.address); if (m && m.id) { match = m; matchedBy = 'address'; } } catch (_) {}
+    }
+    if (!match && b.homeowner_name && String(b.homeowner_name).trim()) {
+      const nm = await matchPropertyByOwnerName(b.community_id, b.homeowner_name);
+      if (nm) { match = nm; matchedBy = 'name'; }
+    }
+    if (!match) {
+      return res.json({ ok: true, matched: false, matched_by: null, hint: b.homeowner_name && !b.address ? 'No single owner by that name in this community — try the address.' : 'No property matched — check the address or try the homeowner name.' });
+    }
+    const owner = await ownerOfProperty(match.id);
+    res.json({
+      ok: true, matched: true, matched_by: matchedBy,
+      property_id: match.id,
+      matched_address: `${match.street_address}${match.unit ? ' #' + match.unit : ''}`,
+      contact_id: owner.contact_id, contact_name: owner.name,
+      match_confidence: match.match_confidence || null,
+    });
+  } catch (err) {
+    console.error('[pool_access] resolve failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
 });
 
 // ----------------------------------------------------------------------------
