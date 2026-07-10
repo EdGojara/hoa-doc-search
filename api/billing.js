@@ -1712,10 +1712,11 @@ router.get('/activity-report', async (req, res) => {
     const tallyArc = (cid, statusRaw) => {
       const r = row(cid);
       const s = (statusRaw || '').toLowerCase();
-      if (s === 'approved') r.arc_approved += 1;
+      // Approved-with-conditions counts as APPROVED (Ed 2026-07-10) — it IS an
+      // approval, just contingent on conditions.
+      if (s === 'approved' || s.includes('condition')) r.arc_approved += 1;
       else if (s === 'denied' || s === 'rejected') r.arc_denied += 1;
-      else if (s.includes('condition')) r.arc_conditions += 1;
-      else r.arc_other += 1; // withdrawn / closed / other
+      else r.arc_other += 1; // pending / withdrawn / tabled / other
     };
     decisions.forEach((d) => tallyArc(d.community_id, d.status));
     accDecisions.forEach((d) => tallyArc(d.community_id, d.decision_type));
@@ -1815,7 +1816,7 @@ router.get('/activity-detail', async (req, res) => {
       // which captures both online-portal decisions and staff-logged committee
       // decisions. decided_at is a DATE.
       fetchAll(() => supabase.from('arc_historical_decisions')
-        .select('property_address, homeowner_name, project_type, decision_type, decided_at')
+        .select('property_address, homeowner_name, project_type, project_description, decision_type, conditions, decided_at')
         .eq('community_id', communityId)
         .not('decided_at', 'is', null)
         .gte('decided_at', start).lt('decided_at', endEx)),
@@ -1894,13 +1895,13 @@ router.get('/activity-detail', async (req, res) => {
       // Builder ARC
       ...decisions.map((d) => ({
         property: d.street_address || '(no address)', applicant: d.submitter_name || '—',
-        reference: d.reference_number || null, kind: 'Builder ARC',
+        project: d.reference_number || null, conditions: null, kind: 'Builder ARC',
         outcome: outcomeOf(d.status), date: (d.decided_at || '').slice(0, 10),
       })),
-      // Resident ACC
+      // Resident ACC — capture WHAT was approved: the project + any conditions.
       ...accDecisions.map((d) => ({
         property: d.property_address || '(no address)', applicant: d.homeowner_name || '—',
-        reference: d.project_type || null, kind: 'Resident ACC',
+        project: d.project_type || null, conditions: d.conditions || null, kind: 'Resident ACC',
         outcome: outcomeOf(d.decision_type), date: (d.decided_at || '').slice(0, 10),
       })),
     ].sort((a, b) => a.property.localeCompare(b.property));
@@ -1943,11 +1944,11 @@ router.get('/activity-detail', async (req, res) => {
       </table>` : '<p class="muted">No violation letters mailed in this period.</p>';
     const arcTable = arcRowsShown.length ? `
       <table class="t">
-        <thead><tr><th>Property</th><th>Applicant</th><th>Type</th><th>Reference</th><th>Decision</th><th>Date</th></tr></thead>
+        <thead><tr><th>Property</th><th>Applicant</th><th>Type</th><th>Project — what was approved</th><th>Decision</th><th>Date</th></tr></thead>
         <tbody>${arcRowsShown.map((r) => `<tr>
           <td><strong>${esc(r.property)}</strong></td><td>${esc(r.applicant)}</td>
           <td>${esc(r.kind || '—')}</td>
-          <td>${esc(r.reference || '—')}</td>
+          <td>${esc(r.project || '—')}${r.conditions ? `<div class="muted" style="font-size:11px; margin-top:2px;">Conditions: ${esc(String(r.conditions).slice(0, 160))}</div>` : ''}</td>
           <td>${r.outcome === 'Denied' ? `<span class="denied">${esc(r.outcome)}</span>` : esc(r.outcome)}</td>
           <td>${esc(fmtUS(r.date))}</td>
         </tr>`).join('')}</tbody>

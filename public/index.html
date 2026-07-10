@@ -4120,7 +4120,7 @@
             ${cell(t.violations || 0)}${cell(t.letters_sent || 0)}${cell(t.first_class_sent || 0)}${cell(t.certified_sent || 0)}${cell(t.pages_printed || 0)}${cell(t.arc_approved || 0)}${cell(t.arc_denied || 0)}${cell((t.arc_conditions || 0) + (t.arc_other || 0))}
           </tr></tfoot>
         </table>
-        <div style="font-size:11px; color:#94a3b8; margin-top:8px;">Violations = individual violation letters generated. Letters sent = physical envelopes mailed (a bundle of several violations to one owner = one letter), split by mail class (certified costs more postage). Postage + certified + pages bill per letter, not per violation. ARC/ACC = decisions rendered in the period. "ARC other" = conditions/pending.</div>`;
+        <div style="font-size:11px; color:#94a3b8; margin-top:8px;">Violations = individual violation letters generated. Letters sent = physical envelopes mailed (a bundle of several violations to one owner = one letter), split by mail class (certified costs more postage). Postage + certified + pages bill per letter, not per violation. ARC/ACC = decisions rendered in the period (builder ARC + resident ACC). "ARC approved" includes approved-with-conditions. "ARC other" = pending/withdrawn.</div>`;
     } catch (e) {
       host.innerHTML = `<div style="color:#b91c1c; font-size:13px; padding:12px;">Could not run report: ${escapeHtml(e.message)}</div>`;
     }
