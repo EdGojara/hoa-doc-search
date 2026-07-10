@@ -3581,24 +3581,24 @@
 </div>
 
 <!-- ===========================================================================
-     Bedrock Office — Client Billing
-     Internal back-office module: prepare and send monthly invoices to HOA
-     clients. Pulls fee schedule from the active management contract; future
-     additions: Vantaca activity import, PDF render, leakage detection,
-     Financial Review, Board Packet.
+     Bedrock Office — Proposals & Contracts
+     Contract setup surface (separate from invoice generation): the Bedrock
+     standard rate sheet + legal body that every new community management
+     agreement inherits. Moved out of Billing 2026-07-09 (Ed) — this is contract
+     setup, not invoicing.
      ========================================================================= -->
-<div class="tab-content" id="tab-billing" style="overflow-y: auto; padding: 24px;">
+<div class="tab-content" id="tab-contracts" style="overflow-y: auto; padding: 24px;">
   <div style="margin-bottom:16px;">
-    <h2 style="margin:0 0 4px 0;">💼 Bedrock Office — Client Billing</h2>
+    <h2 style="margin:0 0 4px 0;">📄 Proposals &amp; Contracts</h2>
     <p style="color:#888; font-size:14px; margin:0;">
-      Generate fixed and activity invoices to HOA clients. Rates come from the active management contract.
+      The Bedrock standard rate sheet and legal boilerplate applied when a new community contract is created. Editing here does not rewrite executed agreements.
     </p>
   </div>
 
   <!-- Bedrock-wide contract defaults: the standard rate sheet + legal body
        template every new community contract inherits. Edits here do NOT
        retroactively rewrite executed agreements. -->
-  <details class="panel" id="billing-defaults-panel" style="margin-bottom:16px;">
+  <details class="panel" id="billing-defaults-panel" style="margin-bottom:16px;" open>
     <summary style="cursor:pointer; font-weight:600; font-size:14px; list-style:none; padding:4px 0;">
       ⚙️ Contract Defaults <span style="color:#888; font-weight:400; font-size:12px;">(Bedrock standard rate sheet + legal body — applied when a new community contract is created)</span>
     </summary>
@@ -3644,6 +3644,24 @@
       </div>
     </div>
   </details>
+</div>
+
+<!-- ===========================================================================
+     Bedrock Office — Client Billing
+     Internal back-office module: prepare and send monthly invoices to HOA
+     clients. Pulls fee schedule from the active management contract; future
+     additions: Vantaca activity import, PDF render, leakage detection,
+     Financial Review, Board Packet.
+     ========================================================================= -->
+<div class="tab-content" id="tab-billing" style="overflow-y: auto; padding: 24px;">
+  <div style="margin-bottom:16px;">
+    <h2 style="margin:0 0 4px 0;">💼 Bedrock Office — Client Billing</h2>
+    <p style="color:#888; font-size:14px; margin:0;">
+      Generate fixed and activity invoices to HOA clients. Rates come from the active management contract.
+    </p>
+  </div>
+
+  <!-- Contract Defaults moved to the 📄 Proposals & Contracts tab (Ed 2026-07-09). -->
 
   <!-- Activity report: billable production per community for a period -->
   <details class="panel" id="billing-activity-panel" style="margin-bottom:16px;" open>
@@ -43696,6 +43714,7 @@ ${questionsPage}
       label: '💼 Bedrock Office',
       children: [
         { id: 'billing',        label: '💼 Billing' },
+        { id: 'contracts',      label: '📄 Proposals & Contracts' },
         { id: 'presentations',  label: '🎬 Presentations' },
         { id: '__values',       label: '✨ Values', href: '/training-values.html' },
       ],
@@ -43928,6 +43947,7 @@ ${questionsPage}
     if (typeof orig !== 'function') return;
     const initOnce = {
       billing:  { done: false, run: () => { if (typeof billingLoadCommunities === 'function') billingLoadCommunities(); } },
+      contracts: { done: false, run: () => { if (typeof defLoad === 'function') defLoad(); } },
       vendors:  { done: false, run: () => { if (typeof vendorsLoadCommunities === 'function') vendorsLoadCommunities(); } },
       packets:  { done: false, run: () => {
         if (typeof packetsLoadCommunities === 'function') packetsLoadCommunities();
