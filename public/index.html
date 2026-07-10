@@ -546,11 +546,12 @@
        approve files collection status onto each property (ar_account_collections
        SSOT → Board Portal / packet / 360). Standalone page. -->
   <div class="tab" data-admin-only onclick="window.location.href='/admin/collections'">⚖️ Collections</div>
-  <!-- 💳 Payment Plans — ADMIN ONLY (Ed). Drop a signed payment-plan agreement
-       (or a firm report listing several); AI extracts terms, matches each to a
-       property + owner, files into payment_plans (mig 273). Roster of everyone
-       on a plan; each surfaces on that homeowner's 360. Standalone page. -->
-  <div class="tab" data-admin-only onclick="window.location.href='/admin/payment-plans'">💳 Payment Plans</div>
+  <!-- 💳 Payment Plans — STAFF (Ed 2026-07-10, opened from admin-only so staff
+       can upload agreements). Drop a signed payment-plan agreement (or a firm
+       report listing several); AI extracts terms, matches each to a property +
+       owner, files into payment_plans (mig 273). Roster of everyone on a plan;
+       each surfaces on that homeowner's 360. Standalone page. -->
+  <div class="tab" onclick="window.location.href='/admin/payment-plans'">💳 Payment Plans</div>
   <!-- 🧾 Accounts Payable (Emma) — ADMIN ONLY. Vendor invoices in (email/upload/
        scan) -> deduped -> ap_invoices review queue. Standalone page. -->
   <div class="tab" data-admin-only onclick="window.location.href='/admin/ap'">🧾 Payables (Emma)</div>

@@ -19,7 +19,8 @@ const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { extractPaymentPlans, FREQUENCIES, PLAN_STATUSES } = require('../lib/payment_plans/extract');
 const { resolveProperty } = require('../lib/entity_resolution');
-const { requireAdmin } = require('./_require_admin');
+// Access: staff-accessible (Ed 2026-07-10 — staff upload/manage payment plans).
+// Protected by the global staff-cookie gate in server.js; no admin-only gate.
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -47,7 +48,6 @@ async function ownerOf(propertyId) {
 // stashes the source PDF for the audit trail and returns rows for review.
 // ----------------------------------------------------------------------------
 router.post('/ingest', upload.single('pdf'), async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
   const t0 = Date.now();
   try {
     if (!req.file) return res.status(400).json({ error: 'No PDF uploaded (expected field "pdf").' });
@@ -119,7 +119,6 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
 // One ACTIVE plan per property: an existing active plan is UPDATED, else INSERT.
 // ----------------------------------------------------------------------------
 router.post('/approve', express.json({ limit: '2mb' }), async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
   try {
     const b = req.body || {};
     const communityId = b.community_id;
@@ -185,7 +184,6 @@ router.post('/approve', express.json({ limit: '2mb' }), async (req, res) => {
 // owner + property for the 360.
 // ----------------------------------------------------------------------------
 router.get('/list', async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
   try {
     let q = supabase.from('payment_plans')
       .select('id, community_id, property_id, contact_id, status, debtor_name, property_address, total_amount_cents, installment_amount_cents, num_installments, frequency, start_date, next_due_date, end_date, balance_remaining_cents, terms_summary, source_document_path, created_at, updated_at, communities(name), contacts(full_name), properties(street_address)')
@@ -213,7 +211,6 @@ router.get('/list', async (req, res) => {
 // number). allowedFields only — never patch raw body.
 // ----------------------------------------------------------------------------
 router.patch('/:id', express.json(), async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
   try {
     const b = req.body || {};
     const patch = {};
