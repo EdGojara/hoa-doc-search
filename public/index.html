@@ -5379,14 +5379,27 @@
       // certified demand line; pages = color copies (Ed 2026-07-09); ARC
       // decisions = ARC fees.
       const map = {
-        postage_drv_notices: c.first_class_sent || 0,
         deed_restriction_certified_demand_letter: c.certified_sent || 0,
         color_copies: c.pages_printed || 0,
         arc_application_fee: arcTotal,
       };
       const applied = [];
       billingCurrentInvoiceLineItems.forEach((li) => {
-        if (Object.prototype.hasOwnProperty.call(map, li.category)) {
+        if (li.category === 'postage_drv_notices') {
+          // Postage bills at the USPS first-class rate in effect on the letters'
+          // MAIL dates (auto-adjusts as rates change), not the static rate card.
+          const q = Number(c.first_class_sent) || 0;
+          li.qty = q;
+          if (c.first_class_postage_cents != null && q > 0) {
+            const amt = Math.round(Number(c.first_class_postage_cents)) / 100;
+            li.amount = amt;
+            li.unit_price = Math.round((amt / q) * 10000) / 10000; // = exact rate in a single-rate month; blended if a rate change fell in the period
+          } else {
+            li.amount = Math.round(q * Number(li.unit_price || 0) * 100) / 100;
+          }
+          const rateLabel = c.first_class_rate_cents != null ? '$' + (c.first_class_rate_cents / 100).toFixed(2) : 'rate card';
+          applied.push(`${li.description} = ${q} @ ${rateLabel}${c.first_class_rate_mixed ? ' (rate change in period — blended)' : ''}`);
+        } else if (Object.prototype.hasOwnProperty.call(map, li.category)) {
           const q = Number(map[li.category]) || 0;
           li.qty = q;
           li.amount = Math.round(q * Number(li.unit_price || 0) * 100) / 100;

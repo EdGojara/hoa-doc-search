@@ -1706,9 +1706,12 @@ router.get('/activity-report', async (req, res) => {
       r.violations += 1;
       const key = letterKey(l);
       if (!r._letters.has(key)) {
-        r._letters.set(key, { delivery_method: l.delivery_method, page_count: Number(l.page_count || 0) });
+        r._letters.set(key, { delivery_method: l.delivery_method, page_count: Number(l.page_count || 0), postmark_date: l.postmark_date });
       }
     });
+    // First-class postage bills at the USPS rate in effect on each letter's MAIL
+    // date (auto-adjusts as USPS changes rates — no per-community rate editing).
+    const { firstClassRateCents } = require('../lib/postage/usps_rates');
     const tallyArc = (cid, statusRaw) => {
       const r = row(cid);
       const s = (statusRaw || '').toLowerCase();
@@ -1725,13 +1728,22 @@ router.get('/activity-report', async (req, res) => {
       .map(({ _letters, ...r }) => {
         const vals = [..._letters.values()];
         const letters_sent = vals.length;
-        const certified_sent = vals.filter((x) => x.delivery_method === 'certified_mail').length;
+        const firstClass = vals.filter((x) => x.delivery_method !== 'certified_mail');
+        const certified_sent = letters_sent - firstClass.length;
         const pages_printed = vals.reduce((s, x) => s + x.page_count, 0);
+        // Date-aware first-class postage: rate effective on each letter's postmark.
+        const first_class_postage_cents = firstClass.reduce((s, x) => s + firstClassRateCents(x.postmark_date), 0);
+        const rateSet = [...new Set(firstClass.map((x) => firstClassRateCents(x.postmark_date)))].sort((a, b) => a - b);
         return {
           ...r,
           letters_sent,
           certified_sent,
-          first_class_sent: letters_sent - certified_sent,
+          first_class_sent: firstClass.length,
+          first_class_postage_cents,
+          // Effective per-piece rate(s) in cents — one value normally; a range in
+          // the month a USPS increase lands.
+          first_class_rate_cents: rateSet.length ? rateSet[rateSet.length - 1] : null,
+          first_class_rate_mixed: rateSet.length > 1,
           pages_printed,
           pages_unknown: letters_sent > 0 && pages_printed === 0,
         };
@@ -1743,12 +1755,13 @@ router.get('/activity-report', async (req, res) => {
       letters_sent: t.letters_sent + r.letters_sent,
       certified_sent: t.certified_sent + r.certified_sent,
       first_class_sent: t.first_class_sent + r.first_class_sent,
+      first_class_postage_cents: t.first_class_postage_cents + (r.first_class_postage_cents || 0),
       pages_printed: t.pages_printed + r.pages_printed,
       arc_approved: t.arc_approved + r.arc_approved,
       arc_denied: t.arc_denied + r.arc_denied,
       arc_conditions: t.arc_conditions + r.arc_conditions,
       arc_other: t.arc_other + r.arc_other,
-    }), { violations: 0, letters_sent: 0, certified_sent: 0, first_class_sent: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0 });
+    }), { violations: 0, letters_sent: 0, certified_sent: 0, first_class_sent: 0, first_class_postage_cents: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0 });
 
     res.json({ period: { start, end }, communities, totals, page_tracking: hasPageCount });
   } catch (err) {
