@@ -3644,74 +3644,21 @@
       </div>
     </div>
   </details>
-</div>
 
-<!-- ===========================================================================
-     Bedrock Office — Client Billing
-     Internal back-office module: prepare and send monthly invoices to HOA
-     clients. Pulls fee schedule from the active management contract; future
-     additions: Vantaca activity import, PDF render, leakage detection,
-     Financial Review, Board Packet.
-     ========================================================================= -->
-<div class="tab-content" id="tab-billing" style="overflow-y: auto; padding: 24px;">
-  <div style="margin-bottom:16px;">
-    <h2 style="margin:0 0 4px 0;">💼 Bedrock Office — Client Billing</h2>
-    <p style="color:#888; font-size:14px; margin:0;">
-      Generate fixed and activity invoices to HOA clients. Rates come from the active management contract.
-    </p>
+  <!-- Per-community contract work — moved out of Billing (Ed 2026-07-09). -->
+  <div style="margin-top:8px;">
+    <div class="section-label">Choose a community</div>
+    <select id="contracts-community-select" onchange="contractsPickerChanged()" style="padding:8px; width:100%; max-width:560px; font-size:14px;">
+      <option value="">— Select a community —</option>
+    </select>
+    <div style="font-size:12px; color:#888; margin-top:6px;">Select a community to upload / review its contract, fee schedule, and management agreement.</div>
   </div>
 
-  <!-- Contract Defaults moved to the 📄 Proposals & Contracts tab (Ed 2026-07-09). -->
+  <div id="contracts-community-detail" style="display:none; margin-top:16px;">
+    <h3 id="contracts-detail-name" style="margin:0 0 4px 0;"></h3>
+    <div id="contracts-detail-meta" style="color:#888; font-size:13px; margin-bottom:16px;"></div>
 
-  <!-- Activity report: billable production per community for a period -->
-  <details class="panel" id="billing-activity-panel" style="margin-bottom:16px;" open>
-    <summary style="cursor:pointer; font-weight:600; font-size:14px; list-style:none; padding:4px 0;">
-      📊 Activity Report <span style="color:#888; font-weight:400; font-size:12px;">(violation notices sent, pages printed, ARC/ACC decisions — for billing)</span>
-    </summary>
-    <div style="padding-top:12px;">
-      <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:12px;">
-        <div>
-          <div class="section-label">From</div>
-          <input type="date" id="actRptStart" style="padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
-        </div>
-        <div>
-          <div class="section-label">To</div>
-          <input type="date" id="actRptEnd" style="padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
-        </div>
-        <div style="display:flex; gap:6px;">
-          <button class="action-btn" onclick="actRptQuick('month')" style="font-size:11.5px; padding:6px 10px;">This month</button>
-          <button class="action-btn" onclick="actRptQuick('lastmonth')" style="font-size:11.5px; padding:6px 10px;">Last month</button>
-        </div>
-        <button class="action-btn" onclick="actRptRun()" style="font-size:13px; padding:7px 16px; background:#0B1D34; color:#fff;">Run report</button>
-      </div>
-      <div id="actRptResults"></div>
-    </div>
-  </details>
-
-  <!-- Communities list view -->
-  <div id="billing-communities-view">
-    <div id="billing-communities-loading" style="padding:20px; text-align:center; color:#888;">
-      Loading communities…
-    </div>
-    <div id="billing-communities-picker" style="display:none; max-width:560px;">
-      <div class="section-label" style="margin-bottom:6px;">Choose a client</div>
-      <select id="billing-community-select" onchange="billingPickerChanged()" style="padding:8px; width:100%; font-size:14px;">
-        <option value="">— Select a community —</option>
-      </select>
-      <div id="billing-picker-hint" style="font-size:12px; color:#888; margin-top:6px;">
-        Select a community to view its contract, generate invoices, or edit drafts.
-      </div>
-    </div>
-    <div id="billing-communities-error" style="display:none; padding:16px; background:#fee; border:1px solid #fcc; border-radius:4px; color:#800;"></div>
-  </div>
-
-  <!-- Community detail view -->
-  <div id="billing-community-detail" style="display:none;">
-    <button class="secondary-btn" onclick="billingBackToList()">← Back to communities</button>
-    <h3 id="billing-detail-name" style="margin-top:16px; margin-bottom:4px;"></h3>
-    <div id="billing-detail-meta" style="color:#888; font-size:13px; margin-bottom:16px;"></div>
-
-    <!-- Contract Intake / Management -->
+    <!-- Contract Intake / Management (moved from Billing) -->
     <div class="panel" style="margin-bottom:16px;" id="billing-contract-mgmt-panel">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <h4 style="margin:0;">📤 Upload / Update Contract</h4>
@@ -3732,7 +3679,6 @@
           <p style="margin:4px 0 0 0; color:#888; font-size:11px;">The system reads it and extracts the fee schedule</p>
         </div>
         <input type="file" id="billing-contract-file" accept=".pdf" style="display:none" onchange="if(this.files[0]) billingContractParse(this.files[0])">
-
         <div id="billing-contract-parse-status" style="margin-top:12px;"></div>
         <div id="billing-contract-review" style="margin-top:16px; display:none;"></div>
       </div>
@@ -3743,6 +3689,26 @@
       <div id="billing-contract-summary" style="font-size:14px;"></div>
     </div>
 
+    <details class="panel" id="billing-fee-schedule-panel" style="margin-bottom:16px;" open>
+      <summary style="cursor:pointer; font-weight:600; font-size:14px; list-style:none; padding:4px 0;">
+        📋 Fee Schedule <span style="color:#888; font-weight:400; font-size:12px;">(click to expand)</span>
+      </summary>
+      <div style="padding-top:12px;">
+        <details open style="margin-bottom:8px;">
+          <summary style="cursor:pointer; font-weight:600; font-size:13px;">Fixed Monthly</summary>
+          <div id="billing-fee-fixed" style="margin-top:6px;"></div>
+        </details>
+        <details style="margin-bottom:8px;">
+          <summary style="cursor:pointer; font-weight:600; font-size:13px;">Reimbursables (billed to Association as-used)</summary>
+          <div id="billing-fee-reimbursables" style="margin-top:6px;"></div>
+        </details>
+        <details>
+          <summary style="cursor:pointer; font-weight:600; font-size:13px;">Owner Charges (billed to Association, collected from Owner where legal)</summary>
+          <div id="billing-fee-owner-charges" style="margin-top:6px;"></div>
+        </details>
+      </div>
+    </details>
+
     <!-- Management-agreement pricing + generation. Per-lot math is internal
          only — the agreement prints only the final monthly fee. -->
     <div class="panel" id="billing-mgmt-agreement-panel" style="margin-bottom:16px;">
@@ -3751,7 +3717,7 @@
         <button class="action-btn" id="mgmtAgreementGenerateBtn" onclick="mgmtAgreementGenerate()" style="font-size:12px; padding:6px 12px;">📄 Generate Agreement PDF</button>
       </div>
       <p style="font-size:12px; color:#666; margin:8px 0 12px 0;">
-        Per-lot math is internal — only the resulting monthly fee prints on the agreement. Boilerplate legal text + rate sheet defaults live in <strong>Contract Defaults</strong> at the top of this tab.
+        Per-lot math is internal — only the resulting monthly fee prints on the agreement. Boilerplate legal text + rate sheet defaults live in <strong>Contract Defaults</strong> above.
       </p>
       <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:10px;">
         <div>
@@ -3780,6 +3746,57 @@
       </div>
       <div id="mgmtAgreementStatus" style="font-size:13px; margin-top:10px;"></div>
       <div id="mgmtAgreementRecent" style="font-size:12px; color:#475569; margin-top:8px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===========================================================================
+     Bedrock Office — Client Billing
+     Internal back-office module: prepare and send monthly invoices to HOA
+     clients. Pulls fee schedule from the active management contract; future
+     additions: Vantaca activity import, PDF render, leakage detection,
+     Financial Review, Board Packet.
+     ========================================================================= -->
+<div class="tab-content" id="tab-billing" style="overflow-y: auto; padding: 24px;">
+  <div style="margin-bottom:16px;">
+    <h2 style="margin:0 0 4px 0;">💼 Bedrock Office — Client Billing</h2>
+    <p style="color:#888; font-size:14px; margin:0;">
+      Generate fixed and activity invoices to HOA clients. Rates come from the active management contract.
+    </p>
+  </div>
+
+  <!-- Contract Defaults moved to the 📄 Proposals & Contracts tab (Ed 2026-07-09).
+       Activity Report moved to the BOTTOM of the selected community's detail
+       (scoped to that community) — see #billing-activity-panel below. -->
+
+  <!-- Communities list view -->
+  <div id="billing-communities-view">
+    <div id="billing-communities-loading" style="padding:20px; text-align:center; color:#888;">
+      Loading communities…
+    </div>
+    <div id="billing-communities-picker" style="display:none; max-width:560px;">
+      <div class="section-label" style="margin-bottom:6px;">Choose a client</div>
+      <select id="billing-community-select" onchange="billingPickerChanged()" style="padding:8px; width:100%; font-size:14px;">
+        <option value="">— Select a community —</option>
+      </select>
+      <div id="billing-picker-hint" style="font-size:12px; color:#888; margin-top:6px;">
+        Select a community to view its contract, generate invoices, or edit drafts.
+      </div>
+    </div>
+    <div id="billing-communities-error" style="display:none; padding:16px; background:#fee; border:1px solid #fcc; border-radius:4px; color:#800;"></div>
+  </div>
+
+  <!-- Community detail view -->
+  <div id="billing-community-detail" style="display:none;">
+    <button class="secondary-btn" onclick="billingBackToList()">← Back to communities</button>
+    <h3 id="billing-detail-name" style="margin-top:16px; margin-bottom:4px;"></h3>
+    <div id="billing-detail-meta" style="color:#888; font-size:13px; margin-bottom:16px;"></div>
+
+    <!-- Contract, fee schedule & management agreement moved to the Proposals &
+         Contracts tab (Ed 2026-07-09). Billing links there instead. -->
+    <div class="panel" style="margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div style="font-size:13px; color:#475569;">📄 This community's <strong>contract</strong>, <strong>fee schedule</strong> &amp; <strong>management agreement</strong> live in Proposals &amp; Contracts.</div>
+      <button class="action-btn" onclick="billingOpenContractTab()" style="font-size:12px; padding:6px 12px; white-space:nowrap;">Open contract &amp; agreement →</button>
     </div>
 
     <div class="panel" id="billing-community-inputs-panel" style="margin-bottom:16px; display:none;">
@@ -3844,31 +3861,37 @@
       <div id="billing-draft-result" style="margin-top:12px; font-size:14px;"></div>
     </div>
 
-    <details class="panel" id="billing-fee-schedule-panel" style="margin-bottom:16px;">
-      <summary style="cursor:pointer; font-weight:600; font-size:14px; list-style:none; padding:4px 0;">
-        📋 Fee Schedule <span style="color:#888; font-weight:400; font-size:12px;">(click to expand)</span>
-      </summary>
-      <div style="padding-top:12px;">
-        <details open style="margin-bottom:8px;">
-          <summary style="cursor:pointer; font-weight:600; font-size:13px;">Fixed Monthly</summary>
-          <div id="billing-fee-fixed" style="margin-top:6px;"></div>
-        </details>
-        <details style="margin-bottom:8px;">
-          <summary style="cursor:pointer; font-weight:600; font-size:13px;">Reimbursables (billed to Association as-used)</summary>
-          <div id="billing-fee-reimbursables" style="margin-top:6px;"></div>
-        </details>
-        <details>
-          <summary style="cursor:pointer; font-weight:600; font-size:13px;">Owner Charges (billed to Association, collected from Owner where legal)</summary>
-          <div id="billing-fee-owner-charges" style="margin-top:6px;"></div>
-        </details>
-      </div>
-    </details>
-
     <details class="panel">
       <summary style="cursor:pointer; font-weight:600; font-size:14px; list-style:none; padding:4px 0;">
         🧾 Recent Invoices <span id="billing-recent-invoices-count" style="color:#888; font-weight:400; font-size:12px;"></span>
       </summary>
       <div id="billing-recent-invoices" style="font-size:14px; color:#888; margin-top:10px;">Loading…</div>
+    </details>
+
+    <!-- Activity Report — moved here (Ed 2026-07-09), scoped to THIS community.
+         actRptRun() reads billing-community-select so it only reports this one. -->
+    <details class="panel" id="billing-activity-panel" style="margin-bottom:16px;" open>
+      <summary style="cursor:pointer; font-weight:600; font-size:14px; list-style:none; padding:4px 0;">
+        📊 Activity Report <span style="color:#888; font-weight:400; font-size:12px;">(this community — notices sent, pages printed, ARC/ACC decisions, for billing)</span>
+      </summary>
+      <div style="padding-top:12px;">
+        <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:12px;">
+          <div>
+            <div class="section-label">From</div>
+            <input type="date" id="actRptStart" style="padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+          </div>
+          <div>
+            <div class="section-label">To</div>
+            <input type="date" id="actRptEnd" style="padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="action-btn" onclick="actRptQuick('month')" style="font-size:11.5px; padding:6px 10px;">This month</button>
+            <button class="action-btn" onclick="actRptQuick('lastmonth')" style="font-size:11.5px; padding:6px 10px;">Last month</button>
+          </div>
+          <button class="action-btn" onclick="actRptRun()" style="font-size:13px; padding:7px 16px; background:#0B1D34; color:#fff;">Run report</button>
+        </div>
+        <div id="actRptResults"></div>
+      </div>
     </details>
   </div>
 
@@ -4026,7 +4049,11 @@
     if (!start || !end) { host.innerHTML = '<div style="color:#b45309; font-size:13px;">Pick a From and To date.</div>'; return; }
     host.innerHTML = '<div style="color:#888; font-size:13px; padding:12px;">Running…</div>';
     try {
-      const r = await window._authFetch(`/api/billing/activity-report?period_start=${start}&period_end=${end}`);
+      // Scope to the community currently open in Billing (the report lives on
+      // that community's detail page now). Falls back to all if none selected.
+      const _cid = (document.getElementById('billing-community-select') || {}).value || '';
+      const _cidQs = _cid ? `&community_id=${encodeURIComponent(_cid)}` : '';
+      const r = await window._authFetch(`/api/billing/activity-report?period_start=${start}&period_end=${end}${_cidQs}`);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       const rows = j.communities || [];
@@ -4103,6 +4130,9 @@
         html += '</optgroup>';
       }
       select.innerHTML = html;
+      // Same list drives the Proposals & Contracts community picker.
+      const cSel = document.getElementById('contracts-community-select');
+      if (cSel) cSel.innerHTML = html;
 
       loading.style.display = 'none';
       picker.style.display = 'block';
@@ -4120,6 +4150,31 @@
     billingShowCommunity(id);
   }
 
+  // Proposals & Contracts community picker — reuses billingShowCommunity, which
+  // populates both the billing detail (hidden by the tab) and the contract
+  // panels that now live on this tab.
+  function contractsPickerChanged() {
+    const id = (document.getElementById('contracts-community-select') || {}).value;
+    if (!id) { const d = document.getElementById('contracts-community-detail'); if (d) d.style.display = 'none'; return; }
+    if (document.getElementById('billing-community-select')) document.getElementById('billing-community-select').value = id;
+    billingShowCommunity(id);
+  }
+  window.contractsPickerChanged = contractsPickerChanged;
+
+  // "Open contract →" from the Billing detail — jump to Proposals & Contracts
+  // for the same community (already populated by billingShowCommunity).
+  function billingOpenContractTab() {
+    const id = billingCurrentCommunityId;
+    if (id) {
+      const cSel = document.getElementById('contracts-community-select');
+      if (cSel) cSel.value = id;
+      const d = document.getElementById('contracts-community-detail');
+      if (d) d.style.display = 'block';
+    }
+    if (typeof switchTab === 'function') switchTab('contracts');
+  }
+  window.billingOpenContractTab = billingOpenContractTab;
+
   async function billingShowCommunity(communityId) {
     billingCurrentCommunityId = communityId;
     document.getElementById('billing-communities-view').style.display = 'none';
@@ -4128,8 +4183,22 @@
     const community = billingCommunitiesCache.find(c => c.id === communityId);
     document.getElementById('billing-detail-name').textContent = community ? community.name : '(loading…)';
     document.getElementById('billing-detail-meta').textContent = community
-      ? `${community.legal_name || ''} · Vantaca code: ${community.vantaca_code || '?'}`
+      ? (community.legal_name || '')
       : '';
+
+    // Mirror the selection into Proposals & Contracts (contract / fee schedule /
+    // agreement panels live there now) so "Open contract →" lands populated.
+    const _cSel = document.getElementById('contracts-community-select');
+    if (_cSel) _cSel.value = communityId;
+    const _cDetail = document.getElementById('contracts-community-detail');
+    if (_cDetail) _cDetail.style.display = 'block';
+    const _cName = document.getElementById('contracts-detail-name');
+    if (_cName) _cName.textContent = community ? community.name : '';
+    const _cMeta = document.getElementById('contracts-detail-meta');
+    if (_cMeta) _cMeta.textContent = community ? (community.legal_name || '') : '';
+    // Surface this community's activity report (bottom of the page) for the
+    // current month.
+    setTimeout(() => { try { if (typeof actRptQuick === 'function') actRptQuick('month'); } catch (_) {} }, 0);
 
     // Reset all panels to visible (in case a previous community had no contract and hid them)
     const _draft = document.getElementById('billing-draft-invoice-panel');
@@ -4406,6 +4475,11 @@
     // Reset the picker to the placeholder so re-selecting works.
     const sel = document.getElementById('billing-community-select');
     if (sel) sel.value = '';
+    // Also reset the Proposals & Contracts view for the same community.
+    const cSel = document.getElementById('contracts-community-select');
+    if (cSel) cSel.value = '';
+    const cDetail = document.getElementById('contracts-community-detail');
+    if (cDetail) cDetail.style.display = 'none';
     billingCurrentCommunityId = null;
     // Reset the contract intake panel to clean state for next community
     billingContractClearReview();
