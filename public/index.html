@@ -40024,10 +40024,15 @@ ${questionsPage}
       const res = await fetch(`/api/vendors/${vendorId}/w9`, { method: 'POST', body: fd });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || 'upload failed');
+      if (j.duplicate) {
+        if (status) { status.style.color = '#a06400'; status.textContent = 'ℹ ' + (j.message || 'That W-9 is already on file — nothing changed.'); }
+        return; // no reload needed; nothing changed
+      }
       if (status) {
         status.style.color = '#166534';
         const p = j.parsed;
-        status.textContent = '✓ W-9 on file.' + (p ? ` Read as ${p.tax_classification}${p.tin ? ', TIN captured' : ''} — 1099 set to ${j.suggested_1099 ? 'Yes' : 'No'} (change the toggle if needed).` : ' Could not auto-read it — set the 1099 fields by hand.');
+        status.textContent = (j.replaced_prior ? '✓ New W-9 on file (prior kept as history).' : '✓ W-9 on file.')
+          + (p ? ` Read as ${p.tax_classification}${p.tin ? ', TIN captured' : ''} — 1099 set to ${j.suggested_1099 ? 'Yes' : 'No'} (change the toggle if needed).` : ' Could not auto-read it — set the 1099 fields by hand.');
       }
       setTimeout(() => vendorsShowVendor(vendorId), 900); // reload detail with the new W-9 + tax fields
     } catch (e) {
@@ -40216,7 +40221,10 @@ ${questionsPage}
       const v = data.vendor;
       const invoices = data.invoices || [];
       const documents = data.documents || [];
-      const w9doc = documents.find(d => d.doc_type === 'w9') || null;
+      const w9all = documents.filter(d => d.doc_type === 'w9')
+        .sort((a, b) => String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || '')));
+      const w9doc = w9all.find(d => d.is_current) || w9all[0] || null;
+      const w9history = w9all.filter(d => d.id !== (w9doc && w9doc.id));
 
       const invoiceRows = invoices.length === 0
         ? `<tr><td colspan="8" style="padding:16px; text-align:center; color:#888;">No invoices on file.</td></tr>`
@@ -40320,6 +40328,13 @@ ${questionsPage}
             <input type="file" id="vendor-w9-file" accept=".pdf" style="display:none" onchange="if(this.files[0]) vendorsUploadW9('${v.id}', this.files[0])">
           </div>
           <div id="vendor-w9-status" style="margin-top:8px; font-size:12px;"></div>
+          ${w9history.length ? `<div style="margin-top:10px; font-size:12px;">
+            <div style="color:#888; margin-bottom:4px;">Prior W-9s on file (${w9history.length}):</div>
+            ${w9history.map(d => `<div style="padding:3px 0; border-top:1px solid #f0f0f0;">
+              ${vendorsFmtDate(d.superseded_at || d.uploaded_at)}${d.notes ? ` · ${escapeHtml(d.notes)}` : ''}
+              ${d.file_url ? ` · <a href="/api/vendors/documents/${d.id}/file" target="_blank" style="color:#315A87;">view</a>` : ''}
+            </div>`).join('')}
+          </div>` : ''}
         </div>
 
         <div class="panel" style="margin-bottom:16px;">

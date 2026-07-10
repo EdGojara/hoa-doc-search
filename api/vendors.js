@@ -1097,11 +1097,24 @@ router.get('/rfps/:id/decision-log', async (req, res) => {
   }
 });
 
+// A vendor has ONE current W-9; a genuinely different upload (new TIN, name, or
+// classification) supersedes the old one but KEEPS it as history. A re-upload of
+// the same W-9 (identical file, or same substantive fields) is a no-op dedup.
+function w9ContentHash(parsed) {
+  if (!parsed) return null;
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const tin = String(parsed.tin || '').replace(/[^0-9]/g, '');
+  if (!tin && !parsed.legal_name) return null; // nothing substantive to key on
+  return crypto.createHash('sha256')
+    .update([norm(parsed.legal_name), tin, norm(parsed.tax_classification)].join('|'))
+    .digest('hex');
+}
+
 // ----------------------------------------------------------------------------
 // POST /api/vendors/:vendorId/w9  — upload the vendor's W-9 (drag/click).
-// Stores the PDF, files it as a vendor_document(doc_type='w9'), flips w9_on_file,
-// and AI-reads it to capture the tax classification + TIN and SUGGEST the 1099
-// flag (operator can still override the toggle).
+// Dedups exact + same-content re-uploads; versions genuinely different ones
+// (prior W-9 kept as history). AI-reads the tax classification + TIN and
+// SUGGESTS the 1099 flag (operator can override the toggle).
 // ----------------------------------------------------------------------------
 router.post('/:vendorId/w9', upload.single('pdf'), async (req, res) => {
   const { vendorId } = req.params;
@@ -1112,25 +1125,51 @@ router.post('/:vendorId/w9', upload.single('pdf'), async (req, res) => {
     const { data: vendor } = await supabase.from('vendors').select('id, ein, tax_id').eq('id', vendorId).maybeSingle();
     if (!vendor) return res.status(404).json({ error: 'Vendor not found' });
 
-    // Store the PDF (audit trail). Non-fatal on storage failure.
-    let storagePath = null;
-    try {
-      const hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
-      const safe = (req.file.originalname || 'w9.pdf').replace(/[^a-zA-Z0-9._\-]/g, '_');
-      storagePath = `vendor_w9/${vendorId}/${hash}_${safe}`;
-      await supabase.storage.from('documents').upload(storagePath, req.file.buffer, { contentType: 'application/pdf', upsert: true });
-    } catch (e) { console.warn('[vendors] W-9 storage upload failed (non-fatal):', e.message); storagePath = null; }
+    const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+
+    // Existing W-9s for this vendor (for dedup + supersede).
+    const { data: priorW9s } = await supabase.from('vendor_documents')
+      .select('id, file_hash, content_hash, is_current, uploaded_at')
+      .eq('vendor_id', vendorId).eq('doc_type', 'w9');
+    const priors = priorW9s || [];
+
+    // Dedup 1: byte-identical file already on file.
+    if (priors.some(d => d.file_hash && d.file_hash === fileHash)) {
+      return res.json({ ok: true, duplicate: true, reason: 'identical_file', message: 'That exact W-9 is already on file — nothing changed.' });
+    }
 
     // Read the W-9 (degrades gracefully — the doc still files if parse fails).
     const { extractW9 } = require('../lib/vendors/w9_extract');
     let ex = { parsed: null, suggested_1099: true, degraded: true };
     try { ex = await extractW9(req.file.buffer); } catch (e) { console.warn('[vendors] W-9 parse failed (non-fatal):', e.message); }
+    const contentHash = w9ContentHash(ex.parsed);
+
+    // Dedup 2: same substantive content (a re-scan of the same W-9) -> no-op.
+    if (contentHash && priors.some(d => d.content_hash && d.content_hash === contentHash)) {
+      return res.json({ ok: true, duplicate: true, reason: 'same_content', message: 'A W-9 with the same name, TIN, and classification is already on file — kept the existing one.' });
+    }
+
+    // Store the PDF (audit trail). Non-fatal on storage failure.
+    let storagePath = null;
+    try {
+      const safe = (req.file.originalname || 'w9.pdf').replace(/[^a-zA-Z0-9._\-]/g, '_');
+      storagePath = `vendor_w9/${vendorId}/${fileHash.slice(0, 16)}_${safe}`;
+      await supabase.storage.from('documents').upload(storagePath, req.file.buffer, { contentType: 'application/pdf', upsert: true });
+    } catch (e) { console.warn('[vendors] W-9 storage upload failed (non-fatal):', e.message); storagePath = null; }
+
+    // Supersede the current W-9 (keep it as history), then file the new one as current.
+    const hadPriorCurrent = priors.some(d => d.is_current);
+    if (hadPriorCurrent) {
+      await supabase.from('vendor_documents')
+        .update({ is_current: false, superseded_at: new Date().toISOString() })
+        .eq('vendor_id', vendorId).eq('doc_type', 'w9').eq('is_current', true);
+    }
 
     const today = new Date().toISOString().slice(0, 10);
     const { data: doc, error: docErr } = await supabase.from('vendor_documents').insert({
       vendor_id: vendorId, doc_type: 'w9',
       file_name: req.file.originalname || 'W-9.pdf', file_url: storagePath,
-      effective_date: today,
+      effective_date: today, is_current: true, file_hash: fileHash, content_hash: contentHash,
       notes: ex.parsed ? `${ex.parsed.tax_classification}${ex.parsed.tin ? ' · TIN on file' : ''}` : 'W-9 (not auto-read)',
     }).select().single();
     if (docErr) throw docErr;
@@ -1146,7 +1185,7 @@ router.post('/:vendorId/w9', upload.single('pdf'), async (req, res) => {
     const { data: updated, error: upErr } = await supabase.from('vendors').update(vUpdate).eq('id', vendorId).select().single();
     if (upErr) throw upErr;
 
-    res.json({ ok: true, document: doc, vendor: updated, parsed: ex.parsed, suggested_1099: ex.suggested_1099, degraded: ex.degraded });
+    res.json({ ok: true, document: doc, vendor: updated, parsed: ex.parsed, suggested_1099: ex.suggested_1099, degraded: ex.degraded, replaced_prior: hadPriorCurrent });
   } catch (err) {
     console.error('[vendors] W-9 upload failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -1190,7 +1229,7 @@ router.get('/spend', async (req, res) => {
     const [{ data: vendors }, { data: comms }, { data: w9docs }] = await Promise.all([
       supabase.from('vendors').select('id, name, is_1099_vendor, w9_on_file, tax_id, tax_classification').in('id', vendorIds),
       communityIds.length ? supabase.from('communities').select('id, name').in('id', communityIds) : Promise.resolve({ data: [] }),
-      supabase.from('vendor_documents').select('id, vendor_id, uploaded_at').eq('doc_type', 'w9').in('vendor_id', vendorIds).order('uploaded_at', { ascending: false }),
+      supabase.from('vendor_documents').select('id, vendor_id, uploaded_at').eq('doc_type', 'w9').eq('is_current', true).in('vendor_id', vendorIds).order('uploaded_at', { ascending: false }),
     ]);
     const vById = Object.fromEntries((vendors || []).map(v => [v.id, v]));
     const cById = Object.fromEntries((comms || []).map(c => [c.id, c.name]));
