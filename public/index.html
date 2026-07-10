@@ -4417,13 +4417,13 @@
     const rows = lines.map((l, i) => `
       <tr>
         <td style="padding:5px 8px; border-bottom:1px solid #eee; font-size:13px;">${escapeHtml(l.description || '')}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right; color:#666;">${billingMoney(l.unit_price)}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;"><input type="number" min="0" step="0.01" value="${l.qty}" onchange="billingDraftPreviewQty(${i}, this.value)" style="width:72px; padding:3px 5px; text-align:right; font-size:13px;"></td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right; font-variant-numeric:tabular-nums;" id="billing-preview-amt-${i}">${billingMoney(l.amount)}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;"><input type="number" min="0" step="0.01" value="${l.unit_price}" id="billing-preview-rate-${i}" onchange="billingDraftPreviewRate(${i}, this.value)" style="width:92px; padding:3px 5px; text-align:right; font-size:13px;"></td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;"><input type="number" min="0" step="0.01" value="${l.qty}" id="billing-preview-qty-${i}" onchange="billingDraftPreviewQty(${i}, this.value)" style="width:72px; padding:3px 5px; text-align:right; font-size:13px;"></td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;"><input type="number" min="0" step="0.01" value="${l.amount}" id="billing-preview-amt-${i}" onchange="billingDraftPreviewAmount(${i}, this.value)" style="width:100px; padding:3px 5px; text-align:right; font-size:13px; font-variant-numeric:tabular-nums;"></td>
         <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:center;"><a href="#" onclick="event.preventDefault(); billingDraftPreviewRemove(${i})" title="Remove from this invoice" style="color:#a00; font-size:14px; text-decoration:none;">×</a></td>
       </tr>`).join('');
     el.innerHTML = `
-      <div class="section-label" style="margin-bottom:6px;">Categories on this invoice <span style="font-weight:400; color:#888; font-size:11px;">— edit quantities; remove with ×; add one-offs below</span></div>
+      <div class="section-label" style="margin-bottom:6px;">Categories on this invoice <span style="font-weight:400; color:#888; font-size:11px;">— edit rate, qty, or amount; remove with ×; add one-offs below</span></div>
       <table style="width:100%; border-collapse:collapse; background:#fafbfc; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden;">
         <thead><tr style="background:#f0f4f8;">
           <th style="text-align:left; padding:6px 8px; font-size:11px; color:#666; font-weight:600;">Category</th>
@@ -4440,17 +4440,47 @@
       </table>`;
   }
 
-  function billingDraftPreviewQty(i, val) {
-    const line = billingDraftPreviewLines[i];
-    if (!line) return;
-    const q = Number(val || 0);
-    line.qty = q;
-    line.amount = Math.round(q * Number(line.unit_price || 0) * 100) / 100;
-    const amtEl = document.getElementById('billing-preview-amt-' + i);
-    if (amtEl) amtEl.textContent = billingMoney(line.amount);
+  function billingDraftPreviewSubtotal() {
     const sub = billingDraftPreviewLines.reduce((s, l) => s + Number(l.amount || 0), 0);
     const subEl = document.getElementById('billing-preview-subtotal');
     if (subEl) subEl.textContent = billingMoney(sub);
+  }
+  // Rate x Qty = Amount, three-way editable: change rate or qty and amount
+  // recomputes; type an amount directly and the rate back-fills (amount / qty).
+  function billingDraftPreviewQty(i, val) {
+    const line = billingDraftPreviewLines[i];
+    if (!line) return;
+    line.qty = Number(val || 0);
+    line.amount = Math.round(line.qty * Number(line.unit_price || 0) * 100) / 100;
+    const amtEl = document.getElementById('billing-preview-amt-' + i);
+    if (amtEl) amtEl.value = line.amount;
+    billingDraftPreviewSubtotal();
+  }
+  function billingDraftPreviewRate(i, val) {
+    const line = billingDraftPreviewLines[i];
+    if (!line) return;
+    line.unit_price = Number(val || 0);
+    line.amount = Math.round(Number(line.qty || 0) * line.unit_price * 100) / 100;
+    const amtEl = document.getElementById('billing-preview-amt-' + i);
+    if (amtEl) amtEl.value = line.amount;
+    billingDraftPreviewSubtotal();
+  }
+  function billingDraftPreviewAmount(i, val) {
+    const line = billingDraftPreviewLines[i];
+    if (!line) return;
+    line.amount = Math.round(Number(val || 0) * 100) / 100;
+    // A line with qty 0 would zero out on save (qty x rate). If an amount is
+    // typed, bump qty to 1 so the amount persists as its own line.
+    if (Number(line.qty || 0) <= 0 && line.amount !== 0) {
+      line.qty = 1;
+      const qtyEl = document.getElementById('billing-preview-qty-' + i);
+      if (qtyEl) qtyEl.value = 1;
+    }
+    const q = Number(line.qty || 0);
+    line.unit_price = q > 0 ? Math.round((line.amount / q) * 10000) / 10000 : line.amount;
+    const rateEl = document.getElementById('billing-preview-rate-' + i);
+    if (rateEl) rateEl.value = line.unit_price;
+    billingDraftPreviewSubtotal();
   }
 
   function billingDraftPreviewRemove(i) {
