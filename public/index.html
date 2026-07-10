@@ -3948,6 +3948,7 @@
     </div>
 
     <div style="display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap;">
+      <button class="action-btn" onclick="billingPopulateFromActivity()" style="background:#0B5563;" title="Fill quantities from this period's activity report (notices, pages, ARC). You can override any line before saving.">⚡ Populate from activity</button>
       <button class="action-btn" onclick="billingSaveLineItems()">💾 Save Changes</button>
       <button class="secondary-btn" onclick="billingViewPdf()">📄 View PDF</button>
       <button class="secondary-btn" onclick="billingDownloadPdf()">⬇ Download PDF</button>
@@ -5216,6 +5217,54 @@
     li.amount = Math.round(qty * Number(li.unit_price || 0) * 100) / 100;
     billingRenderLineItems();
   }
+
+  // Fill line-item quantities from this invoice period's activity report.
+  // Maps the activity metrics onto the matching billable categories; everything
+  // else stays at whatever it was (manual). Ed reviews + overrides, then Saves.
+  async function billingPopulateFromActivity() {
+    const inv = billingCurrentInvoice;
+    const resultEl = document.getElementById('billing-invoice-detail-result');
+    if (!inv) return;
+    const start = String(inv.service_period_start || '').slice(0, 10);
+    const end = String(inv.service_period_end || '').slice(0, 10);
+    const cid = inv.community_id || (inv.community && inv.community.id);
+    if (!start || !end || !cid) { if (resultEl) resultEl.innerHTML = '<div style="color:#b45309; font-size:13px;">This invoice has no service period / community to pull activity for.</div>'; return; }
+    if (resultEl) resultEl.innerHTML = '<div style="color:#888; font-size:13px;">Fetching activity…</div>';
+    try {
+      const r = await window._authFetch(`/api/billing/activity-report?period_start=${start}&period_end=${end}&community_id=${encodeURIComponent(cid)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const c = (j.communities || [])[0] || {};
+      const arcTotal = (c.arc_approved || 0) + (c.arc_denied || 0) + (c.arc_conditions || 0) + (c.arc_other || 0);
+      // Category → quantity from the activity report. Deed-restriction violation
+      // notices = the enforcement letters we mail; certified §209 = the $35
+      // certified demand line; pages = B&W copies; ARC decisions = ARC fees.
+      const map = {
+        postage_drv_notices: c.first_class_sent || 0,
+        deed_restriction_certified_demand_letter: c.certified_sent || 0,
+        bw_copies: c.pages_printed || 0,
+        arc_application_fee: arcTotal,
+      };
+      const applied = [];
+      billingCurrentInvoiceLineItems.forEach((li) => {
+        if (Object.prototype.hasOwnProperty.call(map, li.category)) {
+          const q = Number(map[li.category]) || 0;
+          li.qty = q;
+          li.amount = Math.round(q * Number(li.unit_price || 0) * 100) / 100;
+          applied.push(`${li.description} = ${q}`);
+        }
+      });
+      billingRenderLineItems();
+      if (resultEl) {
+        resultEl.innerHTML = applied.length
+          ? `<div style="color:#15803d; font-size:13px;">⚡ Populated from activity — ${applied.map(escapeHtml).join(' · ')}. Review, override any quantity, then <strong>Save Changes</strong>. (Other postage rows, copies-color, staffing and one-offs stay manual — the activity report can't tell those apart.)</div>`
+          : '<div style="color:#b45309; font-size:13px;">No activity-mapped line items on this invoice (this is a fixed invoice, or the reimbursable rows aren\'t present).</div>';
+      }
+    } catch (e) {
+      if (resultEl) resultEl.innerHTML = `<div style="color:#b91c1c; font-size:13px;">Could not populate: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+  window.billingPopulateFromActivity = billingPopulateFromActivity;
 
   async function billingUpdateUnitPrice(idx, val, el) {
     const li = billingCurrentInvoiceLineItems[idx];
