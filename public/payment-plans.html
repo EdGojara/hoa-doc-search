@@ -70,10 +70,11 @@ function renderShell(communities){
   const opts = communities.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
   document.getElementById('body').innerHTML = `
     <div class="row">
-      <select id="comm"><option value="">Select association&hellip;</option>${opts}</select>
-      <label class="drop" id="drop"><span id="dropText">Drop the payment-plan agreement (PDF) here, or click to choose</span><input id="file" type="file" accept="application/pdf" style="display:none"></label>
+      <select id="comm"><option value="">Auto-detect association</option>${opts}</select>
+      <label class="drop" id="drop"><span id="dropText">Drop one or more payment-plan PDFs here, or click to choose</span><input id="file" type="file" accept="application/pdf" multiple style="display:none"></label>
       <button class="btn" id="analyze" disabled>Analyze</button>
     </div>
+    <div class="sub" style="margin-top:-6px;margin-bottom:6px;">Leave the association on <strong>Auto-detect</strong> and the system reads it from each document. Drop several files at once and it splits them apart by association. Or pick one association to force every plan to it.</div>
     <div id="result"></div>
 
     <h2>On a payment plan</h2>
@@ -89,48 +90,46 @@ function renderShell(communities){
     <div id="roster"><div class="empty">Loading roster&hellip;</div></div>`;
 
   const fileInput=document.getElementById('file'), drop=document.getElementById('drop'), analyze=document.getElementById('analyze'), dropText=document.getElementById('dropText');
-  let chosen=null;
-  const setFile=f=>{ chosen=f; dropText.textContent=f?('📄 '+f.name):'Drop the payment-plan agreement (PDF) here, or click to choose'; analyze.disabled=!f; };
+  let chosen=[];
+  const setFiles=list=>{ chosen=Array.from(list||[]).filter(f=>f&&(f.type==='application/pdf'||/\.pdf$/i.test(f.name))); dropText.textContent=chosen.length?('📄 '+(chosen.length===1?chosen[0].name:chosen.length+' PDFs selected')):'Drop one or more payment-plan PDFs here, or click to choose'; analyze.disabled=!chosen.length; };
   drop.addEventListener('click',()=>fileInput.click());
-  fileInput.addEventListener('change',e=>setFile(e.target.files[0]));
+  fileInput.addEventListener('change',e=>setFiles(e.target.files));
   drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over');});
   drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
-  drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');setFile(e.dataTransfer.files[0]);});
-  analyze.addEventListener('click',()=>{ const cid=document.getElementById('comm').value; if(!cid)return alert('Pick an association first.'); if(!chosen)return; doAnalyze(cid,chosen,analyze); });
+  drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');setFiles(e.dataTransfer.files);});
+  analyze.addEventListener('click',()=>{ if(!chosen.length)return; doAnalyze(document.getElementById('comm').value||'',chosen,analyze); });
   loadRoster();
 }
 
-async function doAnalyze(cid,file,btn){
+async function doAnalyze(cid,files,btn){
   btn.disabled=true; btn.textContent='Analyzing…';
-  const res=document.getElementById('result'); res.innerHTML='<div class="empty">Reading the agreement&hellip; (up to ~60s)</div>';
+  const res=document.getElementById('result');
+  res.innerHTML='<div class="empty">Reading '+files.length+' document'+(files.length===1?'':'s')+'&hellip; (up to ~60s each)</div>';
   try{
-    const fd=new FormData(); fd.append('pdf',file); fd.append('community_id',cid);
+    const fd=new FormData(); files.forEach(f=>fd.append('pdf',f)); if(cid)fd.append('community_id',cid);
     const r=await af('/api/payment-plans/ingest',{method:'POST',body:fd});
     const j=await r.json().catch(()=>({}));
     if(r.status>=500){ res.innerHTML='<div class="warn">🛑 System error — nothing was saved. Try again shortly.</div>'; return; }
     if(!j.ok){ res.innerHTML='<div class="warn">Could not read: '+esc(j.error||'unknown')+'</div>'; return; }
-    _preview={community_id:cid, source_filename:j.source_filename, source_storage_path:j.source_storage_path, rows:j.rows, allowed_statuses:j.allowed_statuses};
+    _preview={rows:j.rows||[], allowed_statuses:j.allowed_statuses, communities:j.communities||_communities, files:j.files||[]};
     renderPreview(j);
-  }catch(e){ res.innerHTML='<div class="warn">Could not read the agreement.</div>'; }
+  }catch(e){ res.innerHTML='<div class="warn">Could not read the documents.</div>'; }
   finally{ btn.disabled=false; btn.textContent='Analyze'; }
 }
 
 const STAT_LABEL={active:'Active',completed:'Completed',defaulted:'Defaulted',cancelled:'Cancelled'};
 
-function renderPreview(j){
-  let h=`<div class="stats">
-      <div class="stat"><b>${j.total_plans}</b><span>Plans</span></div>
-      <div class="stat"><b>${j.plans_matched}</b><span>Matched</span></div>
-      <div class="stat"><b>${j.plans_unmatched}</b><span>Unmatched</span></div>
-    </div>
-    <div class="sub" style="margin-bottom:8px;">${j.document_date?'Document dated <strong>'+esc(j.document_date)+'</strong>. ':''}Review each plan (override status if needed), then approve. Unmatched rows are skipped on approve.</div>`;
-  if(j.plans_unmatched) h+=`<div class="warn">${j.plans_unmatched} plan(s) did not match a property (address typo or not on file). Fix the address in the document or add the property, then re-run.</div>`;
-  const opts=s=>(j.allowed_statuses||['active']).map(o=>`<option value="${o}"${o===s?' selected':''}>${STAT_LABEL[o]||o}</option>`).join('');
-  h+=`<table><thead><tr><th>Property / owner</th><th>Total</th><th>Installment</th><th># / freq</th><th>Start</th><th>Next due</th><th>Status</th><th>Match</th></tr></thead><tbody>`;
-  j.rows.forEach((r,i)=>{
-    const disabled = !r.property_id;
+function groupTable(idxs){
+  const opts=s=>(_preview.allowed_statuses||['active']).map(o=>`<option value="${o}"${o===s?' selected':''}>${STAT_LABEL[o]||o}</option>`).join('');
+  let h=`<table><thead><tr><th>Property / owner</th><th>Total</th><th>Installment</th><th># / freq</th><th>Start</th><th>Next due</th><th>Status</th><th>Match</th></tr></thead><tbody>`;
+  idxs.forEach(i=>{
+    const r=_preview.rows[i]; const disabled=!r.property_id;
+    const note = disabled ? (r.community_id?'no property match':'assign an association first') : '';
+    const badge = r.delta==='matched' ? '<span class="badge d-matched">matched</span>'
+                : r.community_id ? '<span class="badge d-unmatched">no property</span>'
+                : '<span class="badge d-unmatched">no association</span>';
     h+=`<tr data-i="${i}">
-      <td class="addr">${esc(r.matched_address||r.property_address||'?')}${disabled?'<div class="note" style="color:#991b1b">no property match</div>':''}
+      <td class="addr">${esc(r.matched_address||r.property_address||'?')}${note?`<div class="note" style="color:#991b1b">${note}</div>`:''}
         <div class="note">${esc(r.contact_name||r.debtor_name||'')}</div>
         ${r.terms_summary?`<div class="note">${esc(r.terms_summary)}</div>`:''}</td>
       <td class="num">${moneyD(r.total_amount)}</td>
@@ -139,14 +138,73 @@ function renderPreview(j){
       <td class="num">${d10(r.start_date)}</td>
       <td class="num">${d10(r.next_due_date)}</td>
       <td>${disabled?'—':`<select class="st" data-i="${i}">${opts(r.status)}</select>`}</td>
-      <td><span class="badge d-${r.delta}">${r.delta}</span></td></tr>`;
+      <td>${badge}</td></tr>`;
   });
-  h+=`</tbody></table>
-    <div class="actions">
+  return h+`</tbody></table>`;
+}
+
+function renderPreview(){
+  const rows=_preview.rows||[];
+  const fileable=rows.filter(r=>r.property_id&&r.community_id).length;
+  const needAssoc=rows.filter(r=>!r.community_id).length;
+  const noProp=rows.filter(r=>r.community_id&&!r.property_id).length;
+  const nfiles=(_preview.files||[]).length||1;
+  let h=`<div class="stats">
+      <div class="stat"><b>${nfiles}</b><span>Files</span></div>
+      <div class="stat"><b>${rows.length}</b><span>Plans</span></div>
+      <div class="stat"><b>${fileable}</b><span>Ready to file</span></div>
+      <div class="stat"><b>${needAssoc}</b><span>Need association</span></div>
+      <div class="stat"><b>${noProp}</b><span>No property</span></div>
+    </div>
+    <div class="sub" style="margin-bottom:6px;">Each document is broken out below. Assign an association where it wasn't detected, override any status, then approve. Rows without an association or a property match are skipped on approve.</div>`;
+  // Group by source document (each file is normally one association).
+  const groups={}; const order=[];
+  rows.forEach((r,i)=>{ const k=r.source_filename||'(document)'; if(!groups[k]){groups[k]=[];order.push(k);} groups[k].push(i); });
+  order.forEach(fname=>{
+    const idxs=groups[fname];
+    const needs=idxs.some(i=>!rows[i].community_id);
+    const assoc=rows[idxs[0]].association_detected;
+    const cids=[...new Set(idxs.map(i=>rows[i].community_id).filter(Boolean))];
+    const firstMatched=idxs.find(i=>rows[i].community_id);
+    const commName=cids.length===1&&firstMatched!=null?rows[firstMatched].community_name:(cids.length>1?'multiple associations':null);
+    h+=`<div style="margin-top:14px;background:#fff;border:1px solid var(--line);border-radius:9px;padding:10px 12px;">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+        <span class="doc">📄 ${esc(fname)}</span>
+        ${assoc?`<span class="note" style="margin:0;">reads &ldquo;${esc(assoc)}&rdquo;</span>`:'<span class="note" style="margin:0;">no association name printed</span>'}
+        ${needs
+          ? `<span class="badge d-unmatched">association not detected</span>
+             <select class="assign" style="padding:4px 6px;font-size:12px;min-width:180px;" data-file="${esc(fname)}" onchange="assignGroup(this)"><option value="">Assign association&hellip;</option>${(_preview.communities||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select>`
+          : `<span class="badge d-matched">${esc(commName||'matched')}</span>`}
+      </div>
+      ${groupTable(idxs)}
+    </div>`;
+  });
+  h+=`<div class="actions">
       <button class="btn ghost" onclick="discardPreview()">Discard</button>
-      <button class="btn go" id="approveBtn" onclick="approvePreview()">Approve &amp; file ${j.plans_matched} plan${j.plans_matched===1?'':'s'}</button>
+      <button class="btn go" id="approveBtn" onclick="approvePreview()"${fileable?'':' disabled'}>Approve &amp; file ${fileable} plan${fileable===1?'':'s'}</button>
     </div>`;
   document.getElementById('result').innerHTML=h;
+}
+
+// Operator assigns a community to a document whose association we couldn't
+// detect. Re-resolves that group's properties (cheap, no re-read) and updates.
+async function assignGroup(sel){
+  const fname=sel.dataset.file, cid=sel.value; if(!cid)return;
+  captureStatusEdits();
+  sel.disabled=true;
+  const idxs=[]; _preview.rows.forEach((r,i)=>{ if((r.source_filename||'(document)')===fname) idxs.push(i); });
+  try{
+    const r=await af('/api/payment-plans/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid,rows:idxs.map(i=>_preview.rows[i])})});
+    const j=await r.json().catch(()=>({}));
+    if(!j.ok){ sel.disabled=false; return alert('Could not match: '+(j.error||'unknown')); }
+    j.rows.forEach((nr,k)=>{ _preview.rows[idxs[k]]=nr; });
+    renderPreview();
+  }catch(e){ sel.disabled=false; alert('Could not match properties.'); }
+}
+
+// Persist status-dropdown edits back onto the rows before any re-render.
+function captureStatusEdits(){
+  document.querySelectorAll('select.st[data-i]').forEach(s=>{ const i=Number(s.dataset.i); if(_preview.rows[i]) _preview.rows[i].status=s.value; });
 }
 
 function discardPreview(){ _preview=null; document.getElementById('result').innerHTML=''; }
@@ -154,17 +212,14 @@ function discardPreview(){ _preview=null; document.getElementById('result').inne
 async function approvePreview(){
   if(!_preview)return;
   const btn=document.getElementById('approveBtn'); btn.disabled=true; btn.textContent='Filing…';
-  // Apply any status overrides back onto the rows.
-  document.querySelectorAll('select.st').forEach(s=>{ const i=Number(s.dataset.i); if(_preview.rows[i]) _preview.rows[i].status=s.value; });
+  captureStatusEdits();
   try{
-    const r=await af('/api/payment-plans/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      community_id:_preview.community_id, source_filename:_preview.source_filename, source_storage_path:_preview.source_storage_path, rows:_preview.rows,
-    })});
+    const r=await af('/api/payment-plans/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:_preview.rows})});
     const j=await r.json().catch(()=>({}));
     if(r.status>=500){ document.getElementById('result').innerHTML='<div class="warn">🛑 System error — nothing saved. Try again.</div>'; return; }
     if(!j.ok){ btn.disabled=false; btn.textContent='Approve'; return alert('Could not file: '+(j.error||'unknown')); }
     const n=(j.plans_filed||0)+(j.plans_updated||0);
-    document.getElementById('result').innerHTML=`<div class="soon"><b>✅ Filed ${n} plan${n===1?'':'s'}</b>${j.plans_updated?j.plans_updated+' updated an existing active plan. ':''}${j.rows_skipped_unmatched?j.rows_skipped_unmatched+' unmatched row(s) skipped. ':''}They now show on each homeowner's 360.</div>`;
+    document.getElementById('result').innerHTML=`<div class="soon"><b>✅ Filed ${n} plan${n===1?'':'s'}</b>${j.plans_updated?j.plans_updated+' updated an existing active plan. ':''}${j.rows_skipped_unmatched?j.rows_skipped_unmatched+' row(s) skipped (no association or property match). ':''}They now show on each homeowner's 360.</div>`;
     _preview=null; loadRoster();
   }catch(e){ btn.disabled=false; btn.textContent='Approve'; alert('Could not file.'); }
 }
