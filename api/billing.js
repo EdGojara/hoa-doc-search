@@ -194,9 +194,104 @@ router.get('/communities/:communityId/contract', async (req, res) => {
   }
 });
 
+// Build the default draft line items for a contract + type + period. Fixed =
+// one line per contract_fixed_items (qty 1). Activity = last month's billed
+// lines (qty reset) if there is a prior invoice, else the default_on_invoice
+// rate rows (mig 271), qty 0. Extracted so the generate-preview endpoint and
+// the create endpoint share ONE definition of "what lines go on this invoice".
+async function buildDraftLineItems({ contractId, type, period, communityId }) {
+  if (type === 'fixed') {
+    const { data: fixed, error } = await supabase
+      .from('contract_fixed_items').select('*').eq('contract_id', contractId).order('sort_order');
+    if (error) throw error;
+    return (fixed || []).map((f) => ({
+      source: 'contract_fixed', source_ref_id: f.id, category: null, description: f.description,
+      qty: 1, unit_price: Number(f.monthly_amount), amount: money(f.monthly_amount), sort_order: f.sort_order,
+    }));
+  }
+  // activity
+  const periodStart = period + '-01';
+  const { data: priorInv } = await supabase
+    .from('invoices').select('id')
+    .eq('community_id', communityId).eq('invoice_type', 'activity').neq('status', 'voided')
+    .lt('service_period_start', periodStart).order('service_period_start', { ascending: false })
+    .limit(1).maybeSingle();
+  let priorLines = [];
+  if (priorInv) {
+    const { data: pl } = await supabase
+      .from('invoice_line_items').select('source, source_ref_id, category, description, unit_price, sort_order')
+      .eq('invoice_id', priorInv.id).gt('qty', 0).order('sort_order');
+    priorLines = pl || [];
+  }
+  if (priorLines.length > 0) {
+    return priorLines.map((p) => ({
+      source: p.source, source_ref_id: p.source_ref_id, category: p.category, description: p.description,
+      qty: 0, unit_price: Number(p.unit_price || 0), amount: 0, sort_order: p.sort_order,
+    }));
+  }
+  const { data: reimb, error: rErr } = await supabase
+    .from('contract_reimbursables').select('*').eq('contract_id', contractId).eq('default_on_invoice', true).order('sort_order');
+  if (rErr) throw rErr;
+  const { data: owner, error: oErr } = await supabase
+    .from('contract_owner_charges').select('*').eq('contract_id', contractId).eq('default_on_invoice', true).order('sort_order');
+  if (oErr) throw oErr;
+  const lines = (reimb || []).map((r) => ({
+    source: 'reimbursable', source_ref_id: r.id, category: r.category, description: r.description,
+    qty: 0, unit_price: r.unit_price !== null ? Number(r.unit_price) : 0, amount: 0,
+    vantaca_source_ref: r.vantaca_source, sort_order: r.sort_order,
+  }));
+  const ownerOffset = 1000;
+  (owner || []).forEach((o) => lines.push({
+    source: 'owner_charge', source_ref_id: o.id, category: o.category, description: o.description,
+    qty: 0, unit_price: Number(o.fee_amount), amount: 0, sort_order: ownerOffset + o.sort_order,
+  }));
+  return lines;
+}
+
+// Sanitize client-supplied line items to the exact invoice_line_items columns
+// (the create endpoint spreads them straight into the insert).
+function sanitizeDraftLines(arr) {
+  return (Array.isArray(arr) ? arr : []).map((li, idx) => {
+    const qty = Number(li.qty || 0);
+    const unit = Number(li.unit_price || 0);
+    return {
+      source: li.source || 'adhoc', source_ref_id: li.source_ref_id || null,
+      category: li.category || null, description: li.description || '(no description)',
+      qty, unit_price: unit, amount: money(qty * unit),
+      vantaca_source_ref: li.vantaca_source_ref || null,
+      sort_order: li.sort_order != null ? li.sort_order : idx * 10,
+    };
+  });
+}
+
+// ----------------------------------------------------------------------------
+// GET /api/billing/communities/:communityId/draft-invoice/preview?type=&period=
+// The line items a draft WOULD get, without creating anything — so the operator
+// can review/edit the categories before generating. Same builder as create.
+// ----------------------------------------------------------------------------
+router.get('/communities/:communityId/draft-invoice/preview', async (req, res) => {
+  const { communityId } = req.params;
+  const type = req.query.type;
+  const period = req.query.period;
+  if (!['fixed', 'activity'].includes(type)) return res.status(400).json({ error: "type must be 'fixed' or 'activity'" });
+  if (!/^\d{4}-\d{2}$/.test(period || '')) return res.status(400).json({ error: "period must be 'YYYY-MM'" });
+  try {
+    const { data: contracts, error } = await supabase
+      .from('contracts').select('id').eq('community_id', communityId).eq('status', 'active')
+      .order('version', { ascending: false }).limit(1);
+    if (error) throw error;
+    if (!contracts || !contracts.length) return res.status(404).json({ error: 'No active contract for this community' });
+    const lineItems = await buildDraftLineItems({ contractId: contracts[0].id, type, period, communityId });
+    res.json({ line_items: lineItems });
+  } catch (err) {
+    console.error('[billing] draft-invoice preview failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ----------------------------------------------------------------------------
 // POST /api/billing/communities/:communityId/draft-invoice
-// body: { type: 'fixed' | 'activity', period: 'YYYY-MM', invoice_date?: 'YYYY-MM-DD' }
+// body: { type: 'fixed' | 'activity', period: 'YYYY-MM', invoice_date?, line_items? }
 //
 // FIXED:
 //   Creates a draft invoice with one line item per contract_fixed_items row.
@@ -212,7 +307,7 @@ router.get('/communities/:communityId/contract', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.post('/communities/:communityId/draft-invoice', async (req, res) => {
   const { communityId } = req.params;
-  const { type, period, invoice_date: invoiceDateOverride } = req.body || {};
+  const { type, period, invoice_date: invoiceDateOverride, line_items: clientLines } = req.body || {};
 
   if (!['fixed', 'activity'].includes(type)) {
     return res.status(400).json({ error: "type must be 'fixed' or 'activity'" });
@@ -258,108 +353,12 @@ router.post('/communities/:communityId/draft-invoice', async (req, res) => {
     }
     const contract = contracts[0];
 
-    // Build line items from the rate card.
-    let lineItems = [];
-    if (type === 'fixed') {
-      const { data: fixed, error: fErr } = await supabase
-        .from('contract_fixed_items')
-        .select('*')
-        .eq('contract_id', contract.id)
-        .order('sort_order');
-      if (fErr) throw fErr;
-      lineItems = (fixed || []).map(f => ({
-        source: 'contract_fixed',
-        source_ref_id: f.id,
-        category: null,
-        description: f.description,
-        qty: 1,
-        unit_price: Number(f.monthly_amount),
-        amount: money(f.monthly_amount),
-        sort_order: f.sort_order
-      }));
-    } else {
-      // activity — template from the prior month when there is one, else the
-      // slim default set (Ed 2026-07-09). Everything else on the rate card stays
-      // addable via Add Line Item.
-      const periodStart = period + '-01';
-      const { data: priorInv } = await supabase
-        .from('invoices')
-        .select('id')
-        .eq('community_id', communityId)
-        .eq('invoice_type', 'activity')
-        .neq('status', 'voided')
-        .lt('service_period_start', periodStart)
-        .order('service_period_start', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      let priorLines = [];
-      if (priorInv) {
-        // "What was billed last month" = the lines that actually had a quantity.
-        const { data: pl } = await supabase
-          .from('invoice_line_items')
-          .select('source, source_ref_id, category, description, unit_price, sort_order')
-          .eq('invoice_id', priorInv.id)
-          .gt('qty', 0)
-          .order('sort_order');
-        priorLines = pl || [];
-      }
-
-      if (priorLines.length > 0) {
-        // Template: same lines as last month, quantities reset for the new period.
-        lineItems = priorLines.map(p => ({
-          source: p.source,
-          source_ref_id: p.source_ref_id,
-          category: p.category,
-          description: p.description,
-          qty: 0,
-          unit_price: Number(p.unit_price || 0),
-          amount: 0,
-          sort_order: p.sort_order
-        }));
-      } else {
-        // Fresh: only the default_on_invoice rate rows (migration 271).
-        const { data: reimb, error: rErr } = await supabase
-          .from('contract_reimbursables')
-          .select('*')
-          .eq('contract_id', contract.id)
-          .eq('default_on_invoice', true)
-          .order('sort_order');
-        if (rErr) throw rErr;
-        const { data: owner, error: oErr } = await supabase
-          .from('contract_owner_charges')
-          .select('*')
-          .eq('contract_id', contract.id)
-          .eq('default_on_invoice', true)
-          .order('sort_order');
-        if (oErr) throw oErr;
-
-        lineItems = (reimb || []).map(r => ({
-          source: 'reimbursable',
-          source_ref_id: r.id,
-          category: r.category,
-          description: r.description,
-          qty: 0,
-          unit_price: r.unit_price !== null ? Number(r.unit_price) : 0,
-          amount: 0,
-          vantaca_source_ref: r.vantaca_source,
-          sort_order: r.sort_order
-        }));
-        const ownerOffset = 1000;
-        (owner || []).forEach(o => {
-          lineItems.push({
-            source: 'owner_charge',
-            source_ref_id: o.id,
-            category: o.category,
-            description: o.description,
-            qty: 0,
-            unit_price: Number(o.fee_amount),
-            amount: 0,
-            sort_order: ownerOffset + o.sort_order
-          });
-        });
-      }
-    }
+    // Build line items: use the operator's reviewed/edited lines from the
+    // generate preview when supplied, else the default builder (same source the
+    // preview endpoint uses, so they match).
+    const lineItems = (Array.isArray(clientLines) && clientLines.length)
+      ? sanitizeDraftLines(clientLines)
+      : await buildDraftLineItems({ contractId: contract.id, type, period, communityId });
 
     const subtotal = money(lineItems.reduce((s, li) => s + Number(li.amount || 0), 0));
     const { start: serviceStart, end: serviceEnd } = periodBoundaries(period);

@@ -3806,33 +3806,50 @@
   <!-- Community detail view -->
   <div id="billing-community-detail" style="display:none;">
     <button class="secondary-btn" onclick="billingBackToList()">← Back to communities</button>
-    <h3 id="billing-detail-name" style="margin-top:16px; margin-bottom:4px;"></h3>
+    <!-- Contract & agreement is a compact button next to the community name —
+         it's opened rarely, so it no longer takes its own panel (Ed 2026-07-10). -->
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:16px; margin-bottom:4px;">
+      <h3 id="billing-detail-name" style="margin:0;"></h3>
+      <button class="secondary-btn" onclick="billingOpenContractTab()" style="font-size:12px; padding:5px 11px; white-space:nowrap;" title="Contract, fee schedule &amp; management agreement (in Proposals &amp; Contracts)">📄 Contract &amp; agreement →</button>
+    </div>
     <div id="billing-detail-meta" style="color:#888; font-size:13px; margin-bottom:16px;"></div>
 
-    <!-- Contract, fee schedule & management agreement moved to the Proposals &
-         Contracts tab (Ed 2026-07-09). Billing links there instead. -->
-    <div class="panel" style="margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-      <div style="font-size:13px; color:#475569;">📄 This community's <strong>contract</strong>, <strong>fee schedule</strong> &amp; <strong>management agreement</strong> live in Proposals &amp; Contracts.</div>
-      <button class="action-btn" onclick="billingOpenContractTab()" style="font-size:12px; padding:6px 12px; white-space:nowrap;">Open contract &amp; agreement →</button>
-    </div>
-
-    <div class="panel" id="billing-community-inputs-panel" style="margin-bottom:16px; display:none;">
-      <h4 style="margin-top:0;">📎 Activity Inputs (optional)</h4>
-      <p style="font-size:12px; color:#666; margin:0 0 10px 0;">
-        Upload a Vantaca activity report; the next Generate will create the invoice with those line items already populated. You can also generate empty and add lines manually.
-      </p>
-      <div id="billing-community-drop-area"
-           style="border:2px dashed #d0d7de; border-radius:8px; padding:16px; text-align:center; cursor:pointer; background:#f9f9f9; transition:border-color 0.15s;"
-           onclick="document.getElementById('billing-community-vantaca-file').click()"
-           ondragover="event.preventDefault(); this.style.borderColor='#1976d2'; this.style.background='#eef5ff';"
-           ondragleave="this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9';"
-           ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files[0]) billingStageVantacaFile(event.dataTransfer.files[0]);">
-        <div id="billing-vantaca-staged-state">
-          <div style="font-size:24px;">📄</div>
-          <p style="margin:6px 0 0 0; color:#444; font-size:14px;">Click or drop a Vantaca activity report PDF</p>
+    <!-- Generate Draft Invoice — the primary action, first after the community.
+         Between Type and Service period sits the editable categories preview
+         (fixed = the recurring fee lines; activity = the standard template). -->
+    <div class="panel" id="billing-draft-invoice-panel" style="margin-bottom:16px;">
+      <h4 style="margin-top:0;">✨ Generate Draft Invoice</h4>
+      <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px;">
+        <div>
+          <div class="section-label">Type</div>
+          <select id="billing-draft-type" style="padding:6px;" onchange="billingTypeChanged()">
+            <option value="fixed">Fixed (recurring, billed in advance)</option>
+            <option value="activity">Activity (variable, billed in arrears)</option>
+          </select>
         </div>
-        <input type="file" id="billing-community-vantaca-file" accept=".pdf" style="display:none" onchange="billingStageVantacaFile(this.files[0])">
       </div>
+
+      <!-- Editable categories for this invoice — populated from the contract by
+           type (fixed fee lines / standard activity template). Edit quantities
+           here; add one-offs in Manual Line Items below. -->
+      <div id="billing-draft-preview" style="margin-bottom:14px;"></div>
+
+      <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+        <div>
+          <div class="section-label">Service period</div>
+          <input type="month" id="billing-draft-period" style="padding:6px;" onchange="billingUpdatePeriodHint(); billingUpdateInvoiceNumberPreview(); billingLoadDraftPreview();">
+          <div id="billing-period-hint" style="font-size:11px; color:#888; margin-top:4px;"></div>
+        </div>
+        <div>
+          <div class="section-label">Will be numbered</div>
+          <div id="billing-preview-invoice-number" style="padding:6px 10px; background:#f0f4f8; border:1px solid #d0d7de; border-radius:4px; font-family:monospace; font-size:14px; min-width:90px; text-align:center;">—</div>
+        </div>
+        <div>
+          <button class="action-btn" onclick="billingGenerateDraft()">Generate</button>
+          <div style="font-size:11px; color:#888; margin-top:4px; text-align:center;">Creates a draft invoice below</div>
+        </div>
+      </div>
+      <div id="billing-draft-result" style="margin-top:12px; font-size:14px;"></div>
     </div>
 
     <div class="panel" id="billing-community-manual-panel" style="margin-bottom:16px;">
@@ -3854,28 +3871,23 @@
       <div id="billing-pending-line-items" style="font-size:13px;"></div>
     </div>
 
-    <div class="panel" id="billing-draft-invoice-panel" style="margin-bottom:16px;">
-      <h4 style="margin-top:0;">✨ Generate Draft Invoice</h4>
-      <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
-        <div>
-          <div class="section-label">Type</div>
-          <select id="billing-draft-type" style="padding:6px;" onchange="billingTypeChanged()">
-            <option value="fixed">Fixed (recurring, billed in advance)</option>
-            <option value="activity">Activity (variable, billed in arrears)</option>
-          </select>
+    <div class="panel" id="billing-community-inputs-panel" style="margin-bottom:16px; display:none;">
+      <h4 style="margin-top:0;">📎 Activity Inputs (optional)</h4>
+      <p style="font-size:12px; color:#666; margin:0 0 10px 0;">
+        Upload a Vantaca activity report; the next Generate will create the invoice with those line items already populated. You can also generate empty and add lines manually.
+      </p>
+      <div id="billing-community-drop-area"
+           style="border:2px dashed #d0d7de; border-radius:8px; padding:16px; text-align:center; cursor:pointer; background:#f9f9f9; transition:border-color 0.15s;"
+           onclick="document.getElementById('billing-community-vantaca-file').click()"
+           ondragover="event.preventDefault(); this.style.borderColor='#1976d2'; this.style.background='#eef5ff';"
+           ondragleave="this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9';"
+           ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files[0]) billingStageVantacaFile(event.dataTransfer.files[0]);">
+        <div id="billing-vantaca-staged-state">
+          <div style="font-size:24px;">📄</div>
+          <p style="margin:6px 0 0 0; color:#444; font-size:14px;">Click or drop a Vantaca activity report PDF</p>
         </div>
-        <div>
-          <div class="section-label">Service period</div>
-          <input type="month" id="billing-draft-period" style="padding:6px;" onchange="billingUpdatePeriodHint(); billingUpdateInvoiceNumberPreview();">
-          <div id="billing-period-hint" style="font-size:11px; color:#888; margin-top:4px;"></div>
-        </div>
-        <div>
-          <div class="section-label">Will be numbered</div>
-          <div id="billing-preview-invoice-number" style="padding:6px 10px; background:#f0f4f8; border:1px solid #d0d7de; border-radius:4px; font-family:monospace; font-size:14px; min-width:90px; text-align:center;">—</div>
-        </div>
-        <button class="action-btn" onclick="billingGenerateDraft()">Generate</button>
+        <input type="file" id="billing-community-vantaca-file" accept=".pdf" style="display:none" onchange="billingStageVantacaFile(this.files[0])">
       </div>
-      <div id="billing-draft-result" style="margin-top:12px; font-size:14px;"></div>
     </div>
 
     <details class="panel">
@@ -4365,6 +4377,84 @@
     // Show the Vantaca inputs panel only for activity invoices.
     const panel = document.getElementById('billing-community-inputs-panel');
     if (panel) panel.style.display = type === 'activity' ? 'block' : 'none';
+
+    // Refresh the editable categories preview for the new type.
+    billingLoadDraftPreview();
+  }
+
+  // ----- Editable categories preview (between Type and Service period) --------
+  let billingDraftPreviewLines = [];
+
+  async function billingLoadDraftPreview() {
+    const el = document.getElementById('billing-draft-preview');
+    if (!el || !billingCurrentCommunityId) return;
+    const type = document.getElementById('billing-draft-type').value;
+    const period = document.getElementById('billing-draft-period').value;
+    if (!period) { el.innerHTML = '<div style="font-size:12px; color:#888;">Pick a service period to preview the categories.</div>'; billingDraftPreviewLines = []; return; }
+    el.innerHTML = '<div style="font-size:12px; color:#888;">Loading categories…</div>';
+    try {
+      const r = await fetch(`/api/billing/communities/${billingCurrentCommunityId}/draft-invoice/preview?type=${type}&period=${period}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      billingDraftPreviewLines = (j.line_items || []).map(l => ({ ...l }));
+      billingRenderDraftPreview();
+    } catch (e) {
+      el.innerHTML = `<div style="font-size:12px; color:#a00;">Could not load categories: ${escapeHtml(e.message)}</div>`;
+      billingDraftPreviewLines = [];
+    }
+  }
+
+  function billingRenderDraftPreview() {
+    const el = document.getElementById('billing-draft-preview');
+    if (!el) return;
+    const lines = billingDraftPreviewLines;
+    if (!lines.length) {
+      el.innerHTML = '<div style="font-size:12px; color:#888; padding:6px 0;">No standard categories for this type yet. Generate anyway, or add lines in Manual Line Items below.</div>';
+      return;
+    }
+    const subtotal = lines.reduce((s, l) => s + Number(l.amount || 0), 0);
+    const rows = lines.map((l, i) => `
+      <tr>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; font-size:13px;">${escapeHtml(l.description || '')}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right; color:#666;">${billingMoney(l.unit_price)}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;"><input type="number" min="0" step="0.01" value="${l.qty}" onchange="billingDraftPreviewQty(${i}, this.value)" style="width:72px; padding:3px 5px; text-align:right; font-size:13px;"></td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right; font-variant-numeric:tabular-nums;" id="billing-preview-amt-${i}">${billingMoney(l.amount)}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:center;"><a href="#" onclick="event.preventDefault(); billingDraftPreviewRemove(${i})" title="Remove from this invoice" style="color:#a00; font-size:14px; text-decoration:none;">×</a></td>
+      </tr>`).join('');
+    el.innerHTML = `
+      <div class="section-label" style="margin-bottom:6px;">Categories on this invoice <span style="font-weight:400; color:#888; font-size:11px;">— edit quantities; remove with ×; add one-offs below</span></div>
+      <table style="width:100%; border-collapse:collapse; background:#fafbfc; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden;">
+        <thead><tr style="background:#f0f4f8;">
+          <th style="text-align:left; padding:6px 8px; font-size:11px; color:#666; font-weight:600;">Category</th>
+          <th style="text-align:right; padding:6px 8px; font-size:11px; color:#666; font-weight:600;">Rate</th>
+          <th style="text-align:right; padding:6px 8px; font-size:11px; color:#666; font-weight:600;">Qty</th>
+          <th style="text-align:right; padding:6px 8px; font-size:11px; color:#666; font-weight:600;">Amount</th>
+          <th style="width:26px;"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr style="font-weight:700; background:#f0f4f8;">
+          <td colspan="3" style="padding:6px 8px; text-align:right; font-size:12px;">Subtotal</td>
+          <td style="padding:6px 8px; text-align:right; font-size:13px;" id="billing-preview-subtotal">${billingMoney(subtotal)}</td><td></td>
+        </tr></tfoot>
+      </table>`;
+  }
+
+  function billingDraftPreviewQty(i, val) {
+    const line = billingDraftPreviewLines[i];
+    if (!line) return;
+    const q = Number(val || 0);
+    line.qty = q;
+    line.amount = Math.round(q * Number(line.unit_price || 0) * 100) / 100;
+    const amtEl = document.getElementById('billing-preview-amt-' + i);
+    if (amtEl) amtEl.textContent = billingMoney(line.amount);
+    const sub = billingDraftPreviewLines.reduce((s, l) => s + Number(l.amount || 0), 0);
+    const subEl = document.getElementById('billing-preview-subtotal');
+    if (subEl) subEl.textContent = billingMoney(sub);
+  }
+
+  function billingDraftPreviewRemove(i) {
+    billingDraftPreviewLines.splice(i, 1);
+    billingRenderDraftPreview();
   }
 
   function billingUpdateInvoiceNumberPreview() {
@@ -4938,7 +5028,7 @@
       const r = await fetch(`/api/billing/communities/${billingCurrentCommunityId}/draft-invoice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, period })
+        body: JSON.stringify({ type, period, line_items: billingDraftPreviewLines })
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
