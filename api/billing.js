@@ -310,6 +310,47 @@ router.get('/communities/:communityId/draft-invoice/preview', async (req, res) =
 });
 
 // ----------------------------------------------------------------------------
+// POST /api/billing/communities/:communityId/recalc-lot-count
+// Recompute the active contract's lot_count from HOMEOWNERS ON RECORD (properties
+// with a current owner), so the per-lot management fee stays current as a
+// community sells out. Returns the new count + per-lot dollar amount.
+// ----------------------------------------------------------------------------
+router.post('/communities/:communityId/recalc-lot-count', async (req, res) => {
+  const { communityId } = req.params;
+  try {
+    const { data: contracts } = await supabase.from('contracts')
+      .select('id, per_lot_monthly_fee, lot_count').eq('community_id', communityId)
+      .eq('status', 'active').order('version', { ascending: false }).limit(1);
+    if (!contracts || !contracts.length) return res.status(404).json({ error: 'No active contract for this community' });
+    const contract = contracts[0];
+
+    // All property ids for the community (paged past the 1000-row cap).
+    const propIds = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from('properties').select('id').eq('community_id', communityId).range(from, from + 999);
+      if (error) throw error;
+      propIds.push(...(data || []).map((p) => p.id));
+      if (!data || data.length < 1000) break;
+    }
+    // Homeowners on record = properties with a current (active) owner contact.
+    const owned = new Set();
+    for (let i = 0; i < propIds.length; i += 200) {
+      const { data: own } = await supabase.from('property_ownerships')
+        .select('property_id, contact_id').in('property_id', propIds.slice(i, i + 200)).is('end_date', null);
+      (own || []).forEach((o) => { if (o.contact_id) owned.add(o.property_id); });
+    }
+    const count = owned.size;
+    const { error: upErr } = await supabase.from('contracts').update({ lot_count: count }).eq('id', contract.id);
+    if (upErr) throw upErr;
+    const rate = Number(contract.per_lot_monthly_fee || 0);
+    res.json({ ok: true, lot_count: count, prior_lot_count: contract.lot_count, per_lot_monthly_fee: rate, per_lot_amount: money(rate * count), has_per_lot: rate > 0 });
+  } catch (err) {
+    console.error('[billing] recalc-lot-count failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // POST /api/billing/communities/:communityId/draft-invoice
 // body: { type: 'fixed' | 'activity', period: 'YYYY-MM', invoice_date?, line_items? }
 //

@@ -4437,7 +4437,23 @@
           <td colspan="3" style="padding:6px 8px; text-align:right; font-size:12px;">Subtotal</td>
           <td style="padding:6px 8px; text-align:right; font-size:13px;" id="billing-preview-subtotal">${billingMoney(subtotal)}</td><td></td>
         </tr></tfoot>
-      </table>`;
+      </table>${lines.some(l => /per lot/i.test(l.description || '')) ? `
+      <div style="margin-top:8px;"><button class="secondary-btn" onclick="billingRecalcLots()" style="font-size:12px; padding:5px 11px;" title="Recount homeowners on record and update the per-lot quantity">🔄 Recalc lot count from homeowners on record</button></div>` : ''}`;
+  }
+
+  async function billingRecalcLots() {
+    if (!billingCurrentCommunityId) return;
+    const res = document.getElementById('billing-draft-result');
+    if (res) { res.style.color = '#888'; res.innerHTML = '<div style="font-size:13px; color:#888;">Recounting homeowners on record…</div>'; }
+    try {
+      const r = await fetch(`/api/billing/communities/${billingCurrentCommunityId}/recalc-lot-count`, { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await billingLoadDraftPreview(); // re-render with the updated per-lot qty
+      if (res) res.innerHTML = `<div style="color:#166534; font-size:13px;">✓ Lot count updated to <strong>${j.lot_count}</strong> homeowner${j.lot_count === 1 ? '' : 's'} on record (was ${j.prior_lot_count ?? '—'}). Per-lot fee = ${billingMoney(j.per_lot_amount)}.</div>`;
+    } catch (e) {
+      if (res) res.innerHTML = `<div style="color:#b91c1c; font-size:13px;">Could not recalc lot count: ${escapeHtml(e.message)}</div>`;
+    }
   }
 
   function billingDraftPreviewSubtotal() {
