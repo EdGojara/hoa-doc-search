@@ -1524,9 +1524,12 @@ router.post('/contracts/:id/management-agreement', async (req, res) => {
 // GET /api/billing/activity-report
 //   ?period_start=YYYY-MM-DD&period_end=YYYY-MM-DD&community_id=(optional)
 // Billable production activity per community for a period (Ed 2026-07-02):
-//   - notices_sent   : violation letters mailed (postmark_date in range)
-//   - pages_printed  : physical pages of those letters (deduped by PDF path so
-//                      a bundled letter's pages are counted once)
+//   - violations     : individual violation letters generated (row count)
+//   - letters_sent   : physical envelopes mailed — deduped by bundle_id so a
+//                      bundle of several violations to one owner counts ONCE.
+//                      first_class_sent / certified_sent split the same envelopes
+//                      (postage bills per envelope, not per violation).
+//   - pages_printed  : physical pages of those letters (per envelope)
 //   - arc_*          : ARC/ACC decisions rendered in range (builder_applications
 //                      decided_at), split approved / denied / conditions / other
 // Dates are inclusive on the day boundary in the period. Read-only.
@@ -1572,11 +1575,11 @@ router.get('/activity-report', async (req, res) => {
     let letters;
     let hasPageCount = true;
     try {
-      letters = await letterCols('id, community_id, content, page_count, type, delivery_method, postmark_date');
+      letters = await letterCols('id, community_id, content, bundle_id, page_count, type, delivery_method, postmark_date');
     } catch (e) {
       if (/page_count/.test(e.message || '')) {
         hasPageCount = false;
-        letters = await letterCols('id, community_id, content, type, delivery_method, postmark_date');
+        letters = await letterCols('id, community_id, content, bundle_id, type, delivery_method, postmark_date');
       } else { throw e; }
     }
 
@@ -1595,27 +1598,28 @@ router.get('/activity-report', async (req, res) => {
     const { data: comms } = await supabase.from('communities').select('id, name');
     const nameById = Object.fromEntries((comms || []).map((c) => [c.id, c.name]));
 
+    // A bundle_id is ONE physical envelope (auto-bundle groups a property's
+    // violations into a single mailing that shares one PDF + one admin fee).
+    // "violations" counts the letter rows; postage / certified / pages are billed
+    // per ENVELOPE, so they dedupe to the distinct letter (bundle_id, then the
+    // shared PDF path, then the row id for an un-bundled singleton).
+    const letterKey = (l) => l.bundle_id || l.content || ('id:' + l.id);
+
     // Aggregate per community.
     const byComm = {};
     const row = (cid) => (byComm[cid] || (byComm[cid] = {
       community_id: cid, name: nameById[cid] || 'Unknown',
-      notices_sent: 0, certified_sent: 0, first_class_sent: 0, pages_printed: 0,
+      violations: 0,
       arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0,
-      _seenPaths: new Set(),
+      _letters: new Map(), // envelope key -> { delivery_method, page_count }
     }));
 
     letters.forEach((l) => {
       const r = row(l.community_id);
-      r.notices_sent += 1;
-      // Split by mail class — certified costs materially more postage than
-      // first-class, and the board detail bills them at different rates.
-      if (l.delivery_method === 'certified_mail') r.certified_sent += 1;
-      else r.first_class_sent += 1;
-      // Pages: count each physical PDF once (bundled letters share a path).
-      const key = l.content || l.id;
-      if (!r._seenPaths.has(key)) {
-        r._seenPaths.add(key);
-        r.pages_printed += Number(l.page_count || 0);
+      r.violations += 1;
+      const key = letterKey(l);
+      if (!r._letters.has(key)) {
+        r._letters.set(key, { delivery_method: l.delivery_method, page_count: Number(l.page_count || 0) });
       }
     });
     decisions.forEach((d) => {
@@ -1628,11 +1632,25 @@ router.get('/activity-report', async (req, res) => {
     });
 
     const communities = Object.values(byComm)
-      .map(({ _seenPaths, ...r }) => ({ ...r, pages_unknown: r.notices_sent > 0 && r.pages_printed === 0 }))
+      .map(({ _letters, ...r }) => {
+        const vals = [..._letters.values()];
+        const letters_sent = vals.length;
+        const certified_sent = vals.filter((x) => x.delivery_method === 'certified_mail').length;
+        const pages_printed = vals.reduce((s, x) => s + x.page_count, 0);
+        return {
+          ...r,
+          letters_sent,
+          certified_sent,
+          first_class_sent: letters_sent - certified_sent,
+          pages_printed,
+          pages_unknown: letters_sent > 0 && pages_printed === 0,
+        };
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
 
     const totals = communities.reduce((t, r) => ({
-      notices_sent: t.notices_sent + r.notices_sent,
+      violations: t.violations + r.violations,
+      letters_sent: t.letters_sent + r.letters_sent,
       certified_sent: t.certified_sent + r.certified_sent,
       first_class_sent: t.first_class_sent + r.first_class_sent,
       pages_printed: t.pages_printed + r.pages_printed,
@@ -1640,7 +1658,7 @@ router.get('/activity-report', async (req, res) => {
       arc_denied: t.arc_denied + r.arc_denied,
       arc_conditions: t.arc_conditions + r.arc_conditions,
       arc_other: t.arc_other + r.arc_other,
-    }), { notices_sent: 0, certified_sent: 0, first_class_sent: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0 });
+    }), { violations: 0, letters_sent: 0, certified_sent: 0, first_class_sent: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0 });
 
     res.json({ period: { start, end }, communities, totals, page_tracking: hasPageCount });
   } catch (err) {
@@ -1696,7 +1714,7 @@ router.get('/activity-detail', async (req, res) => {
     const [{ data: community }, letters, decisions] = await Promise.all([
       supabase.from('communities').select('id, name, legal_name').eq('id', communityId).maybeSingle(),
       fetchAll(() => supabase.from('interactions')
-        .select('id, property_id, type, delivery_method, postmark_date, content')
+        .select('id, property_id, type, delivery_method, postmark_date, content, bundle_id, page_count')
         .eq('community_id', communityId).in('type', LETTER_TYPES)
         .not('printed_at', 'is', null).gte('postmark_date', start).lt('postmark_date', endEx)),
       fetchAll(() => supabase.from('builder_applications')
@@ -1725,12 +1743,33 @@ router.get('/activity-detail', async (req, res) => {
       (signed || []).forEach((s) => { if (s && s.signedUrl && !s.error) signedByPath[s.path] = s.signedUrl; });
     }
 
-    const letterRows = letters.map((l) => ({
-      property: addrById[l.property_id] || '(unknown address)',
-      date: l.postmark_date,
-      stage: STAGE_LABEL[l.type] || l.type,
-      mail_class: l.delivery_method === 'certified_mail' ? 'Certified' : 'First-class',
-      pdf_url: l.content ? (signedByPath[l.content] || null) : null,
+    // Group by ENVELOPE (bundle_id) so the detail reconciles with the report:
+    // one row per physical letter, listing the violations it covers. This is why
+    // the PDF count in the detail now matches "Letters sent," not "Violations".
+    const letterKey = (l) => l.bundle_id || l.content || ('id:' + l.id);
+    const groups = new Map();
+    for (const l of letters) {
+      const key = letterKey(l);
+      let g = groups.get(key);
+      if (!g) {
+        g = { property: addrById[l.property_id] || '(unknown address)', dates: [], stages: new Set(),
+              violations: 0, delivery_method: l.delivery_method, page_count: 0, content: l.content || null };
+        groups.set(key, g);
+      }
+      g.violations += 1;
+      if (l.postmark_date) g.dates.push(l.postmark_date);
+      g.stages.add(STAGE_LABEL[l.type] || l.type);
+      g.page_count = Math.max(g.page_count, Number(l.page_count || 0)); // members share one PDF
+      if (!g.content && l.content) g.content = l.content;
+    }
+    const letterRows = [...groups.values()].map((g) => ({
+      property: g.property,
+      date: g.dates.sort()[0] || null,
+      stage: [...g.stages].join(', '),
+      violations: g.violations,
+      pages: g.page_count,
+      mail_class: g.delivery_method === 'certified_mail' ? 'Certified' : 'First-class',
+      pdf_url: g.content ? (signedByPath[g.content] || null) : null,
     })).sort((a, b) => (a.property).localeCompare(b.property) || String(a.date).localeCompare(String(b.date)));
 
     const arcRows = decisions.map((d) => {
@@ -1755,6 +1794,7 @@ router.get('/activity-detail', async (req, res) => {
 
     const certCount = letterRows.filter((r) => r.mail_class === 'Certified').length;
     const summary = {
+      violations: letters.length,
       letters_total: letterRows.length,
       certified: certCount,
       first_class: letterRows.length - certCount,
@@ -1771,12 +1811,14 @@ router.get('/activity-detail', async (req, res) => {
     const fmtLong = (s) => { const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? s + 'T12:00:00' : s); return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/Chicago' }); };
     const NAVY = '#0B1D34';
     const letterTable = letterRows.length ? `
+      <p class="muted" style="margin:0 0 10px;"><strong>${summary.violations}</strong> violation${summary.violations === 1 ? '' : 's'} mailed across <strong>${summary.letters_total}</strong> letter${summary.letters_total === 1 ? '' : 's'} (${summary.certified} certified, ${summary.first_class} first-class). One row per letter; a bundle to one owner counts once.</p>
       <table class="t">
-        <thead><tr><th>Property</th><th>Date</th><th>Stage</th><th>Mail class</th><th>Letter</th></tr></thead>
+        <thead><tr><th>Property</th><th>Date</th><th>Stage(s)</th><th>Mail class</th><th style="text-align:center;">Violations</th><th>Letter</th></tr></thead>
         <tbody>${letterRows.map((r) => `<tr>
           <td><strong>${esc(r.property)}</strong></td><td>${esc(fmtUS(r.date))}</td>
           <td>${esc(r.stage)}</td>
           <td>${r.mail_class === 'Certified' ? '<span class="cert">Certified</span>' : 'First-class'}</td>
+          <td style="text-align:center;">${r.violations}${r.violations > 1 ? ' <span class="muted">(bundle)</span>' : ''}</td>
           <td>${r.pdf_url ? `<a href="${esc(r.pdf_url)}" target="_blank" rel="noopener">View PDF ↗</a>` : '<span class="muted">—</span>'}</td>
         </tr>`).join('')}</tbody>
       </table>` : '<p class="muted">No violation letters mailed in this period.</p>';
