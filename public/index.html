@@ -4845,7 +4845,9 @@
     }
   }
 
+  let billingRecentCommunityId = null;
   async function billingLoadInvoicesForCommunity(communityId) {
+    billingRecentCommunityId = communityId;
     const el = document.getElementById('billing-recent-invoices');
     el.innerHTML = '<div style="color:#888;">Loading…</div>';
     try {
@@ -4856,16 +4858,26 @@
         el.innerHTML = '<div style="color:#888;">No invoices yet for this community.</div>';
         return;
       }
+      const actBtn = (label, fn, id, num, bg, color) => `<button onclick="event.stopPropagation(); ${fn}('${id}','${String(num).replace(/'/g, "\\'")}')" style="padding:3px 9px; margin-left:4px; font-size:11px; font-weight:600; border:none; border-radius:5px; cursor:pointer; background:${bg}; color:${color};">${label}</button>`;
       // Build a clickable table — each row enters the invoice detail view.
-      const rowsHtml = data.invoices.map(r => `
+      const rowsHtml = data.invoices.map(r => {
+        const isDraft = r.status === 'draft' || r.status === 'review';
+        const actions = isDraft
+          ? actBtn('Sent', 'billingMarkSent', r.id, r.invoice_number, '#166534', '#fff')
+            + actBtn('Delete', 'billingDeleteInvoice', r.id, r.invoice_number, '#fde7e7', '#a00')
+          : (r.status === 'sent' ? '<span style="font-size:11px; color:#166534;">✓ sent</span>' : '');
+        const statusCell = r.status === 'void' ? '<span style="color:#a00;">void</span>'
+          : (r.status === 'sent' ? '<span style="color:#166534;">sent</span>' : r.status);
+        return `
         <tr onclick="billingShowInvoice('${r.id}')" style="cursor:pointer;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=''">
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; font-family:monospace;">${r.invoice_number}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${r.invoice_type === 'activity' ? 'Activity' : 'Fixed'}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${r.service_period_start} → ${r.service_period_end}</td>
-          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${r.status === 'void' ? '<span style="color:#a00;">void</span>' : r.status}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${statusCell}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${billingMoney(r.total)}</td>
-        </tr>
-      `).join('');
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right; white-space:nowrap;">${actions}</td>
+        </tr>`;
+      }).join('');
       el.innerHTML = `
         <table style="width:100%; border-collapse:collapse;">
           <thead><tr>
@@ -4874,14 +4886,39 @@
             <th style="text-align:left; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Period</th>
             <th style="text-align:left; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Status</th>
             <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Total</th>
+            <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Actions</th>
           </tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
-        <div style="font-size:11px; color:#888; margin-top:6px;">Click a row to view, edit line items, or void.</div>
+        <div style="font-size:11px; color:#888; margin-top:6px;">Click a row to view or edit line items (drafts and sent invoices are editable). <b>Sent</b> keeps the invoice; <b>Delete</b> removes a draft.</div>
       `;
     } catch (e) {
       el.innerHTML = `<div style="color:#a00;">Failed to load invoices: ${e.message}</div>`;
     }
+  }
+
+  function billingReloadRecent() {
+    const cid = billingRecentCommunityId || billingCurrentCommunityId;
+    if (cid) billingLoadInvoicesForCommunity(cid);
+  }
+
+  async function billingMarkSent(id, number) {
+    try {
+      const r = await fetch(`/api/billing/invoices/${id}/mark-sent`, { method: 'POST' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      billingReloadRecent();
+    } catch (e) { alert(`Could not mark ${number} sent: ${e.message}`); }
+  }
+
+  async function billingDeleteInvoice(id, number) {
+    if (!confirm(`Delete draft invoice ${number}? This permanently removes it. (Sent invoices can't be deleted — void them instead.)`)) return;
+    try {
+      const r = await fetch(`/api/billing/invoices/${id}`, { method: 'DELETE' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      billingReloadRecent();
+    } catch (e) { alert(`Could not delete ${number}: ${e.message}`); }
   }
 
   async function billingGenerateDraft() {
@@ -5077,8 +5114,9 @@
         ${inv.status === 'void' && inv.void_reason ? `<div style="margin-top:6px; font-size:12px; color:#888;">Voided: ${inv.void_reason}</div>` : ''}
       `;
 
-      // Hide Add/Save/Void affordances for void or paid invoices.
-      const editable = inv.status === 'draft' || inv.status === 'review';
+      // Hide Add/Save/Void affordances for void or paid invoices. Sent invoices
+      // stay editable (Ed 2026-07-10 — a sent invoice sometimes needs a fix).
+      const editable = ['draft', 'review', 'sent'].includes(inv.status);
       document.getElementById('billing-add-line-panel').style.display = editable ? 'block' : 'none';
       document.querySelectorAll('#billing-invoice-detail .action-btn').forEach(b => {
         b.style.display = editable ? '' : 'none';
@@ -5184,7 +5222,7 @@
       return;
     }
     const subtotal = billingCurrentInvoiceLineItems.reduce((s, li) => s + Number(li.amount || 0), 0);
-    const editable = billingCurrentInvoice && (billingCurrentInvoice.status === 'draft' || billingCurrentInvoice.status === 'review');
+    const editable = billingCurrentInvoice && ['draft', 'review', 'sent'].includes(billingCurrentInvoice.status);
     const rows = billingCurrentInvoiceLineItems.map((li, idx) => {
       const overrideTag = li.manual_override
         ? ` <span title="Override reason: ${(li.manual_override_reason || '').replace(/"/g, '&quot;')}" style="color:#a60; font-size:11px; cursor:help; margin-left:4px;">⚠ override</span>`

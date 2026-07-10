@@ -532,6 +532,66 @@ router.post('/invoices/:invoiceId/void', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// POST /api/billing/invoices/:invoiceId/mark-sent
+// Transitions a draft/review/approved invoice to 'sent' (keeps it — sent
+// invoices are the ones we retain). Records an invoice_event. Idempotent-ish:
+// re-marking a sent invoice is a no-op success.
+// ----------------------------------------------------------------------------
+router.post('/invoices/:invoiceId/mark-sent', async (req, res) => {
+  const { invoiceId } = req.params;
+  try {
+    const { data: existing, error: findErr } = await supabase
+      .from('invoices').select('id, status').eq('id', invoiceId).single();
+    if (findErr || !existing) return res.status(404).json({ error: 'Invoice not found' });
+    if (existing.status === 'sent') return res.json({ invoice: existing, already_sent: true });
+    if (!['draft', 'review', 'approved'].includes(existing.status)) {
+      return res.status(400).json({ error: `Cannot mark a '${existing.status}' invoice as sent.` });
+    }
+    const { data: updated, error: updErr } = await supabase
+      .from('invoices')
+      .update({ status: 'sent', sent_at: new Date().toISOString() })
+      .eq('id', invoiceId).select().single();
+    if (updErr) throw updErr;
+    await supabase.from('invoice_events').insert({
+      invoice_id: invoiceId, kind: 'sent', payload: { prior_status: existing.status, marked_manually: true }
+    });
+    res.json({ invoice: updated, sent: true });
+  } catch (err) {
+    console.error('[billing] mark-sent failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// DELETE /api/billing/invoices/:invoiceId
+// Hard-deletes a DRAFT/REVIEW invoice (and its line items + events cascade).
+// Sent/approved/paid/void invoices are kept — those are voided, never deleted,
+// so the audit trail and any sent record survive.
+// ----------------------------------------------------------------------------
+router.delete('/invoices/:invoiceId', async (req, res) => {
+  const { invoiceId } = req.params;
+  try {
+    const { data: existing, error: findErr } = await supabase
+      .from('invoices').select('id, status, invoice_number').eq('id', invoiceId).single();
+    if (findErr || !existing) return res.status(404).json({ error: 'Invoice not found' });
+    if (!['draft', 'review'].includes(existing.status)) {
+      return res.status(400).json({
+        error: `Only draft invoices can be deleted. This one is '${existing.status}' — void it instead to keep the record.`
+      });
+    }
+    // Remove line items explicitly (in case the FK isn't ON DELETE CASCADE),
+    // then the invoice (invoice_events cascade on the invoice FK).
+    await supabase.from('invoice_line_items').delete().eq('invoice_id', invoiceId);
+    const { error: delErr } = await supabase.from('invoices').delete().eq('id', invoiceId);
+    if (delErr) throw delErr;
+    res.json({ deleted: true, invoice_number: existing.invoice_number });
+  } catch (err) {
+    console.error('[billing] delete failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // PUT /api/billing/invoices/:invoiceId/line-items
 // body: { line_items: [{ source_ref_id, description, qty, unit_price, ... }] }
 //
@@ -555,9 +615,12 @@ router.put('/invoices/:invoiceId/line-items', async (req, res) => {
       .eq('id', invoiceId)
       .single();
     if (findErr || !invoice) return res.status(404).json({ error: 'Invoice not found' });
-    if (!['draft', 'review'].includes(invoice.status)) {
+    // Editable while in draft/review, AND after it's been sent (Ed 2026-07-10 —
+    // a sent invoice sometimes needs a correction). A sent edit is logged as
+    // 'edited_after_send' for the audit trail. Void/paid stay locked.
+    if (!['draft', 'review', 'sent'].includes(invoice.status)) {
       return res.status(400).json({
-        error: `Cannot edit line items on invoice with status '${invoice.status}'. Only 'draft' or 'review' invoices are editable.`
+        error: `Cannot edit line items on invoice with status '${invoice.status}'. Only draft, review, or sent invoices are editable.`
       });
     }
 
@@ -607,7 +670,7 @@ router.put('/invoices/:invoiceId/line-items', async (req, res) => {
 
     await supabase.from('invoice_events').insert({
       invoice_id: invoiceId,
-      kind: 'edited',
+      kind: invoice.status === 'sent' ? 'edited_after_send' : 'edited',
       payload: { line_count: lineItems.length, subtotal }
     });
 
