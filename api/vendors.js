@@ -210,6 +210,16 @@ router.get('/', async (req, res) => {
       }
     }
 
+    // Attach the 1099 flag (not on v_vendors_with_status) so the master list
+    // can show the 1099 column without a per-row query.
+    if (vendors.length) {
+      const { data: flags } = await supabase.from('vendors')
+        .select('id, is_1099_vendor, w9_received_date, tax_classification')
+        .in('id', vendors.map(v => v.id));
+      const byId = Object.fromEntries((flags || []).map(f => [f.id, f]));
+      vendors = vendors.map(v => ({ ...v, ...(byId[v.id] || {}) }));
+    }
+
     res.json({ vendors });
   } catch (err) {
     console.error('[vendors] list failed:', err.message);
@@ -251,7 +261,8 @@ router.get('/:vendorId', async (req, res) => {
 // PATCH /api/vendors/:id  — update vendor fields
 router.patch('/:vendorId', async (req, res) => {
   const { vendorId } = req.params;
-  const allowed = ['name','dba','ein','address','phone','email','category','status','w9_on_file','notes'];
+  const allowed = ['name','dba','ein','address','phone','email','category','status','w9_on_file','notes',
+                   'is_1099_vendor','tax_classification','tax_id','w9_received_date'];
   const update = {};
   for (const k of allowed) if (k in (req.body || {})) update[k] = req.body[k];
   if (req.body && req.body.w9_on_file === true) update.w9_uploaded_at = new Date().toISOString();
@@ -398,6 +409,10 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
         vendor_id: matchResult.vendor.id,
         invoice_number: parsed.invoice_number || null,
         invoice_date: parsed.invoice_date || null,
+        // Cash-basis paid date (drives the 1099/spend year). Batch value from the
+        // Historical Invoices box; the AI's read is the fallback. NULL -> the
+        // spend view falls back to invoice_date (flagged estimated).
+        paid_date: (req.body && req.body.paid_date) || parsed.paid_date || null,
         service_period_start: parsed.service_period_start || null,
         service_period_end: parsed.service_period_end || null,
         due_date: parsed.due_date || null,
@@ -1078,6 +1093,136 @@ router.get('/rfps/:id/decision-log', async (req, res) => {
     res.json({ log: data || [] });
   } catch (err) {
     console.error('[vendors] decision log fetch failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/vendors/:vendorId/w9  — upload the vendor's W-9 (drag/click).
+// Stores the PDF, files it as a vendor_document(doc_type='w9'), flips w9_on_file,
+// and AI-reads it to capture the tax classification + TIN and SUGGEST the 1099
+// flag (operator can still override the toggle).
+// ----------------------------------------------------------------------------
+router.post('/:vendorId/w9', upload.single('pdf'), async (req, res) => {
+  const { vendorId } = req.params;
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No PDF uploaded (expected field "pdf").' });
+    if (req.file.mimetype !== 'application/pdf') return res.status(400).json({ error: `Unsupported file type: ${req.file.mimetype}` });
+
+    const { data: vendor } = await supabase.from('vendors').select('id, ein, tax_id').eq('id', vendorId).maybeSingle();
+    if (!vendor) return res.status(404).json({ error: 'Vendor not found' });
+
+    // Store the PDF (audit trail). Non-fatal on storage failure.
+    let storagePath = null;
+    try {
+      const hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
+      const safe = (req.file.originalname || 'w9.pdf').replace(/[^a-zA-Z0-9._\-]/g, '_');
+      storagePath = `vendor_w9/${vendorId}/${hash}_${safe}`;
+      await supabase.storage.from('documents').upload(storagePath, req.file.buffer, { contentType: 'application/pdf', upsert: true });
+    } catch (e) { console.warn('[vendors] W-9 storage upload failed (non-fatal):', e.message); storagePath = null; }
+
+    // Read the W-9 (degrades gracefully — the doc still files if parse fails).
+    const { extractW9 } = require('../lib/vendors/w9_extract');
+    let ex = { parsed: null, suggested_1099: true, degraded: true };
+    try { ex = await extractW9(req.file.buffer); } catch (e) { console.warn('[vendors] W-9 parse failed (non-fatal):', e.message); }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: doc, error: docErr } = await supabase.from('vendor_documents').insert({
+      vendor_id: vendorId, doc_type: 'w9',
+      file_name: req.file.originalname || 'W-9.pdf', file_url: storagePath,
+      effective_date: today,
+      notes: ex.parsed ? `${ex.parsed.tax_classification}${ex.parsed.tin ? ' · TIN on file' : ''}` : 'W-9 (not auto-read)',
+    }).select().single();
+    if (docErr) throw docErr;
+
+    // Flip w9_on_file + capture tax fields + set the SUGGESTED 1099 flag.
+    const vUpdate = { w9_on_file: true, w9_uploaded_at: new Date().toISOString(), w9_received_date: today };
+    if (ex.parsed) {
+      vUpdate.tax_classification = ex.parsed.tax_classification;
+      if (ex.parsed.tin) vUpdate.tax_id = ex.parsed.tin;
+      if (ex.parsed.tin && ex.parsed.tin_type === 'ein' && !vendor.ein) vUpdate.ein = ex.parsed.tin;
+      vUpdate.is_1099_vendor = ex.suggested_1099;
+    }
+    const { data: updated, error: upErr } = await supabase.from('vendors').update(vUpdate).eq('id', vendorId).select().single();
+    if (upErr) throw upErr;
+
+    res.json({ ok: true, document: doc, vendor: updated, parsed: ex.parsed, suggested_1099: ex.suggested_1099, degraded: ex.degraded });
+  } catch (err) {
+    console.error('[vendors] W-9 upload failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/vendors/documents/:docId/file  — open a stored vendor document
+// (W-9, contract, COI). Redirects to a short-lived signed URL. Bucket 'documents'.
+router.get('/documents/:docId/file', async (req, res) => {
+  try {
+    const { data: doc } = await supabase.from('vendor_documents').select('file_url').eq('id', req.params.docId).maybeSingle();
+    if (!doc || !doc.file_url) return res.status(404).json({ error: 'document_not_found' });
+    const { data, error } = await supabase.storage.from('documents').createSignedUrl(String(doc.file_url), 60 * 60);
+    if (error || !data || !data.signedUrl) return res.status(404).json({ error: 'file_not_found' });
+    res.redirect(data.signedUrl);
+  } catch (err) {
+    console.error('[vendors] document file failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/vendors/spend?year=&community_id=  — annual spend per vendor x
+// community (both rails: historical uploads + Emma-paid), keyed on the CASH
+// paid date, with the 1099 flag + W-9 status. Drives the spend report AND the
+// 1099 file (the frontend filters to >= $600 for the 1099 view). 1099 is per
+// filer (community/EIN), so rows stay per (vendor x community).
+const CENTS_1099_THRESHOLD = 60000; // $600
+router.get('/spend', async (req, res) => {
+  try {
+    const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+    let q = supabase.from('v_vendor_annual_spend').select('*').eq('paid_year', year);
+    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+    const { data: spendRows, error } = await q;
+    if (error) throw error;
+    const rows = spendRows || [];
+    if (!rows.length) return res.json({ year, threshold_cents: CENTS_1099_THRESHOLD, rows: [] });
+
+    const vendorIds = [...new Set(rows.map(r => r.vendor_id).filter(Boolean))];
+    const communityIds = [...new Set(rows.map(r => r.community_id).filter(Boolean))];
+
+    const [{ data: vendors }, { data: comms }, { data: w9docs }] = await Promise.all([
+      supabase.from('vendors').select('id, name, is_1099_vendor, w9_on_file, tax_id, tax_classification').in('id', vendorIds),
+      communityIds.length ? supabase.from('communities').select('id, name').in('id', communityIds) : Promise.resolve({ data: [] }),
+      supabase.from('vendor_documents').select('id, vendor_id, uploaded_at').eq('doc_type', 'w9').in('vendor_id', vendorIds).order('uploaded_at', { ascending: false }),
+    ]);
+    const vById = Object.fromEntries((vendors || []).map(v => [v.id, v]));
+    const cById = Object.fromEntries((comms || []).map(c => [c.id, c.name]));
+    const w9ById = {}; for (const d of (w9docs || [])) if (!w9ById[d.vendor_id]) w9ById[d.vendor_id] = d.id; // latest per vendor
+
+    const out = rows.map(r => {
+      const v = vById[r.vendor_id] || {};
+      const total = Number(r.total_cents) || 0;
+      return {
+        vendor_id: r.vendor_id,
+        vendor_name: v.name || '(unknown vendor)',
+        community_id: r.community_id,
+        community_name: r.community_id ? (cById[r.community_id] || '(unknown)') : 'Unassigned',
+        year,
+        total_cents: total,
+        historical_cents: Number(r.historical_cents) || 0,
+        current_cents: Number(r.current_cents) || 0,
+        payment_count: Number(r.payment_count) || 0,
+        has_estimated_dates: !!r.has_estimated_dates,
+        is_1099_vendor: !!v.is_1099_vendor,
+        w9_on_file: !!v.w9_on_file,
+        w9_doc_id: w9ById[r.vendor_id] || null,
+        tax_id: v.tax_id || null,
+        tax_classification: v.tax_classification || null,
+        over_threshold: total >= CENTS_1099_THRESHOLD,
+        needs_w9: !!v.is_1099_vendor && !v.w9_on_file,
+      };
+    }).sort((a, b) => b.total_cents - a.total_cents);
+
+    res.json({ year, threshold_cents: CENTS_1099_THRESHOLD, rows: out });
+  } catch (err) {
+    console.error('[vendors] spend report failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

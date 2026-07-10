@@ -9808,26 +9808,38 @@
      ========================================================================= -->
 <div class="tab-content" id="tab-vendors" style="overflow-y: auto; padding: 24px;">
   <div style="max-width: 1200px;">
-    <h2 style="margin:0 0 4px 0;">🏢 Vendors — Master & Invoice Intake</h2>
-    <p style="color:#888; margin:0 0 20px 0; font-size:13px;">
-      Drop any vendor invoice PDF — Bedrock parses, deduplicates the vendor, files the invoice, and starts building your audit-ready vendor master.
-      <span style="color:#315A87; font-weight:500;">Layer 3 in the making.</span>
+    <h2 style="margin:0 0 4px 0;">🏢 Vendors — Master, Spend & 1099</h2>
+    <p style="color:#888; margin:0 0 12px 0; font-size:13px;">
+      Upload historical invoices to build each vendor's annual spend by community, track 1099 status + W-9s, and run the 1099 file.
+      Current spend flows in automatically from what Emma pays.
     </p>
+    <div style="margin:0 0 20px 0;">
+      <button class="action-btn" onclick="vendorsShowSpendReport()">📊 Spend &amp; 1099 Report</button>
+    </div>
 
-    <!-- Drop a Vendor Invoice -->
+    <!-- Historical vendor invoices (record only) -->
     <div class="panel" id="vendors-upload-panel" style="margin-bottom: 20px;">
-      <h3 style="margin-top:0;">📥 Drop a Vendor Invoice</h3>
+      <h3 style="margin-top:0;">📥 Historical Invoices <span style="font-size:12px; font-weight:400; color:#a06400;">(record only)</span></h3>
+      <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:8px 11px; font-size:12px; color:#92400e; margin-bottom:12px;">
+        <strong>Historical invoices only</strong> — invoices already paid, uploaded to build the annual spend + 1099 record.
+        For anything that still needs to be <strong>paid</strong>, send it to <strong>Emma</strong> (accounts payable), not here.
+      </div>
       <p style="color:#666; font-size:12px; margin:0 0 12px 0;">
-        PDF only. The system extracts vendor identity, invoice number, dates (including service period for accrual-aware matching), and line items.
+        PDF only. The system extracts vendor identity, invoice number, dates, and amount, and files the spend against the community.
         New vendors are added to the master automatically with fuzzy dedup.
       </p>
 
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+      <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; margin-bottom:12px;">
         <div>
           <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Community (which HOA paid this?)</label>
           <select id="vendors-upload-community" style="padding:8px; width:100%; font-size:14px;">
             <option value="">— Select community —</option>
           </select>
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Paid date <span style="color:#a06400;">(drives 1099 year)</span></label>
+          <input type="date" id="vendors-upload-paid-date" style="padding:8px; width:100%; font-size:14px;">
+          <div style="font-size:10.5px; color:#999; margin-top:2px;">Applies to this batch. Blank = use each invoice's own date.</div>
         </div>
         <div>
           <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Default category (optional, system may override)</label>
@@ -9920,6 +9932,40 @@
     <div id="vendors-invoice-view" style="display:none;">
       <button class="secondary-btn" onclick="vendorsBackToVendor()">← Back to vendor</button>
       <div id="vendors-invoice-body" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- Spend & 1099 report view -->
+    <div id="vendors-spend-view" style="display:none;">
+      <button class="secondary-btn" onclick="vendorsBackFromSpend()">← Back to vendor list</button>
+      <div class="panel" style="margin-top:12px;">
+        <h3 style="margin-top:0;">📊 Spend & 1099 Report</h3>
+        <p style="color:#888; font-size:12px; margin:0 0 12px 0;">
+          Total paid per vendor by community, keyed on the <strong>paid date</strong> (cash basis, what 1099s use). Combines historical uploads + what Emma pays.
+          1099 threshold is <strong>$600 per community</strong> (each association is its own filer/EIN).
+        </p>
+        <div style="display:grid; grid-template-columns: auto auto auto 1fr auto; gap:10px; align-items:end; margin-bottom:12px;">
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Tax year</label>
+            <select id="vendors-spend-year" onchange="vendorsLoadSpend()" style="padding:8px; font-size:14px;"></select>
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Community</label>
+            <select id="vendors-spend-community" onchange="vendorsLoadSpend()" style="padding:8px; font-size:14px;">
+              <option value="">All communities</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">View</label>
+            <select id="vendors-spend-mode" onchange="vendorsRenderSpend()" style="padding:8px; font-size:14px;">
+              <option value="all">All spend</option>
+              <option value="1099">1099 file ($600+)</option>
+            </select>
+          </div>
+          <div></div>
+          <button class="secondary-btn" onclick="vendorsExportSpendCsv()">⬇ Download CSV</button>
+        </div>
+        <div id="vendors-spend-container" style="font-size:13px; color:#888;">Pick a year to run the report.</div>
+      </div>
     </div>
   </div>
 </div><!-- /tab-vendors -->
@@ -39705,7 +39751,8 @@ ${questionsPage}
 
       const upload = document.getElementById('vendors-upload-community');
       const filter = document.getElementById('vendors-filter-community');
-      [upload, filter].forEach(sel => {
+      const spend = document.getElementById('vendors-spend-community');
+      [upload, filter, spend].forEach(sel => {
         if (!sel) return;
         const first = sel.options[0];
         sel.innerHTML = '';
@@ -39801,6 +39848,7 @@ ${questionsPage}
 
     vendorsQueueRunning = true;
     const category = document.getElementById('vendors-upload-category').value;
+    const paidDate = document.getElementById('vendors-upload-paid-date')?.value || '';
 
     for (const item of vendorsQueue) {
       if (item.status !== 'pending') continue;       // skip already-processed
@@ -39808,20 +39856,23 @@ ${questionsPage}
       item.resultHtml = `<div style="color:#666; font-size:12px;">Parsing… (10–30s)</div>`;
       vendorsRenderQueue();
 
-      await vendorsUploadOne(item, communityId, category, false);
+      await vendorsUploadOne(item, communityId, category, false, paidDate);
     }
 
     vendorsQueueRunning = false;
     setTimeout(() => vendorsLoadList(), 400);
   }
 
-  async function vendorsUploadOne(item, communityId, category, forceInsert) {
+  async function vendorsUploadOne(item, communityId, category, forceInsert, paidDate) {
     try {
       const fd = new FormData();
       fd.append('pdf', item.file);
       fd.append('community_id', communityId);
       if (category) fd.append('category_hint', category);
       if (forceInsert) fd.append('force_insert', 'true');
+      // Batch paid date (falls back to the box if not passed, e.g. force-insert retry).
+      const pd = paidDate != null ? paidDate : (document.getElementById('vendors-upload-paid-date')?.value || '');
+      if (pd) fd.append('paid_date', pd);
 
       const res = await fetch('/api/vendors/invoices/upload', { method: 'POST', body: fd });
       const data = await res.json();
@@ -39926,6 +39977,165 @@ ${questionsPage}
     }
   }
 
+  // 1099 status cell for the vendor master list: required Yes/No + W-9 state,
+  // with a red flag when a 1099 vendor is missing its W-9.
+  function vendors1099Cell(v) {
+    const req = v.is_1099_vendor
+      ? '<span style="color:#92400e; font-weight:600;">1099: Yes</span>'
+      : '<span style="color:#888;">1099: No</span>';
+    const w9 = v.w9_on_file
+      ? '<span style="color:#2e7d32;">✓ W-9</span>'
+      : (v.is_1099_vendor ? '<span style="color:#a00; font-weight:600;">⚠ no W-9</span>' : '<span style="color:#aaa;">no W-9</span>');
+    return `${req}<br>${w9}`;
+  }
+
+  // ---- Tax / 1099 / W-9 + spend report ------------------------------------
+  let vendorsSpendData = [];
+
+  function vendorsCents(c) {
+    if (c == null || isNaN(c)) return '$0.00';
+    return '$' + (Number(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  function vendorsMaskTin(tin) {
+    const s = String(tin).replace(/[^0-9]/g, '');
+    if (s.length < 4) return '••••';
+    return '•••••' + s.slice(-4);
+  }
+
+  async function vendorsSet1099(vendorId, checked) {
+    try {
+      const res = await fetch(`/api/vendors/${vendorId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_1099_vendor: checked }),
+      });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'save failed'); }
+    } catch (e) {
+      alert('Could not save 1099 setting: ' + e.message);
+      const cb = document.getElementById('vendor-1099-toggle'); if (cb) cb.checked = !checked;
+    }
+  }
+
+  async function vendorsUploadW9(vendorId, file) {
+    const status = document.getElementById('vendor-w9-status');
+    if (file && file.type !== 'application/pdf') { if (status) { status.style.color = '#a00'; status.textContent = 'W-9 must be a PDF.'; } return; }
+    if (status) { status.style.color = '#666'; status.textContent = 'Reading the W-9… (10–20s)'; }
+    try {
+      const fd = new FormData(); fd.append('pdf', file);
+      const res = await fetch(`/api/vendors/${vendorId}/w9`, { method: 'POST', body: fd });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || 'upload failed');
+      if (status) {
+        status.style.color = '#166534';
+        const p = j.parsed;
+        status.textContent = '✓ W-9 on file.' + (p ? ` Read as ${p.tax_classification}${p.tin ? ', TIN captured' : ''} — 1099 set to ${j.suggested_1099 ? 'Yes' : 'No'} (change the toggle if needed).` : ' Could not auto-read it — set the 1099 fields by hand.');
+      }
+      setTimeout(() => vendorsShowVendor(vendorId), 900); // reload detail with the new W-9 + tax fields
+    } catch (e) {
+      if (status) { status.style.color = '#a00'; status.textContent = 'W-9 upload failed: ' + e.message; }
+    }
+  }
+
+  function vendorsShowSpendReport() {
+    document.getElementById('vendors-list-view').style.display = 'none';
+    document.getElementById('vendors-detail-view').style.display = 'none';
+    document.getElementById('vendors-invoice-view').style.display = 'none';
+    document.getElementById('vendors-spend-view').style.display = 'block';
+    const yearSel = document.getElementById('vendors-spend-year');
+    if (yearSel && !yearSel.options.length) {
+      const now = new Date().getFullYear();
+      for (let y = now; y >= now - 5; y--) { const o = document.createElement('option'); o.value = y; o.textContent = y; yearSel.appendChild(o); }
+    }
+    vendorsLoadSpend();
+  }
+  function vendorsBackFromSpend() {
+    document.getElementById('vendors-spend-view').style.display = 'none';
+    document.getElementById('vendors-list-view').style.display = 'block';
+  }
+
+  async function vendorsLoadSpend() {
+    const container = document.getElementById('vendors-spend-container');
+    const year = document.getElementById('vendors-spend-year')?.value;
+    if (!year) return;
+    const communityId = document.getElementById('vendors-spend-community')?.value || '';
+    container.innerHTML = '<div style="color:#888;">Running…</div>';
+    try {
+      const qs = 'year=' + encodeURIComponent(year) + (communityId ? '&community_id=' + encodeURIComponent(communityId) : '');
+      const res = await fetch('/api/vendors/spend?' + qs);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'load failed');
+      vendorsSpendData = data.rows || [];
+      vendorsRenderSpend();
+    } catch (e) {
+      container.innerHTML = `<div style="color:#a00;">Could not run the report: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function vendorsSpendRows() {
+    const mode = document.getElementById('vendors-spend-mode')?.value || 'all';
+    let rows = vendorsSpendData.slice();
+    if (mode === '1099') rows = rows.filter(r => r.over_threshold || r.is_1099_vendor);
+    return { mode, rows };
+  }
+
+  function vendorsRenderSpend() {
+    const container = document.getElementById('vendors-spend-container');
+    const { mode, rows } = vendorsSpendRows();
+    if (!rows.length) { container.innerHTML = `<div style="color:#888; padding:20px;">No ${mode === '1099' ? 'reportable 1099' : 'vendor'} spend for this year${mode === '1099' ? ' (nothing at or above $600, and no vendor flagged 1099)' : ''}.</div>`; return; }
+    const totalCents = rows.reduce((s, r) => s + r.total_cents, 0);
+    const needW9 = rows.filter(r => r.needs_w9).length;
+    const body = rows.map(r => {
+      const w9 = r.w9_on_file
+        ? (r.w9_doc_id ? `<a href="/api/vendors/documents/${r.w9_doc_id}/file" target="_blank" style="color:#315A87; font-weight:600;">View W-9</a>` : '<span style="color:#2e7d32;">✓ on file</span>')
+        : (r.is_1099_vendor ? '<span style="color:#a00; font-weight:600;">⚠ needed</span>' : '<span style="color:#aaa;">—</span>');
+      return `<tr style="border-bottom:1px solid #eee;">
+        <td style="padding:8px; font-weight:500; color:#315A87; cursor:pointer;" onclick="vendorsShowVendor('${r.vendor_id}')">${escapeHtml(r.vendor_name)}</td>
+        <td style="padding:8px;">${escapeHtml(r.community_name)}</td>
+        <td style="padding:8px; text-align:right; font-variant-numeric:tabular-nums; font-weight:600;">${vendorsCents(r.total_cents)}${r.has_estimated_dates ? ' <span title="Some paid dates are estimated from the invoice date" style="color:#a06400;">*</span>' : ''}</td>
+        <td style="padding:8px; text-align:right; font-variant-numeric:tabular-nums; color:#666;">${vendorsCents(r.historical_cents)}</td>
+        <td style="padding:8px; text-align:right; font-variant-numeric:tabular-nums; color:#666;">${vendorsCents(r.current_cents)}</td>
+        <td style="padding:8px; text-align:center;">${r.is_1099_vendor ? '<span style="color:#92400e; font-weight:600;">Yes</span>' : '<span style="color:#888;">No</span>'}</td>
+        <td style="padding:8px; text-align:center; font-size:12px;">${w9}</td>
+      </tr>`;
+    }).join('');
+    container.innerHTML = `
+      <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:10px; font-size:13px;">
+        <div><strong>${rows.length}</strong> vendor-community line${rows.length === 1 ? '' : 's'}</div>
+        <div><strong>${vendorsCents(totalCents)}</strong> total paid</div>
+        ${needW9 ? `<div style="color:#a00;"><strong>${needW9}</strong> flagged 1099 but missing a W-9</div>` : ''}
+      </div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead><tr style="background:#f5f5f5; border-bottom:2px solid #ddd;">
+            <th style="padding:8px; text-align:left;">Vendor</th>
+            <th style="padding:8px; text-align:left;">Community (filer)</th>
+            <th style="padding:8px; text-align:right;">Total paid</th>
+            <th style="padding:8px; text-align:right;">Historical</th>
+            <th style="padding:8px; text-align:right;">Emma (current)</th>
+            <th style="padding:8px; text-align:center;">1099</th>
+            <th style="padding:8px; text-align:center;">W-9</th>
+          </tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:8px; font-size:11px; color:#888;">${mode === '1099' ? 'Showing vendors at/above $600 for the community, or flagged 1099. Each community is its own filer/EIN.' : 'All vendor spend for the year.'} <span style="color:#a06400;">*</span> = paid date estimated from the invoice date.</div>`;
+  }
+
+  function vendorsExportSpendCsv() {
+    const { rows } = vendorsSpendRows();
+    if (!rows.length) { alert('Nothing to export.'); return; }
+    const year = document.getElementById('vendors-spend-year')?.value || '';
+    const hdr = ['Vendor', 'Community', 'Year', 'Total paid', 'Historical', 'Emma current', '1099 required', 'W-9 on file', 'TIN', 'Tax classification'];
+    const esc = (s) => `"${String(s == null ? '' : s).replace(/"/g, '""')}"`;
+    const lines = [hdr.map(esc).join(',')];
+    for (const r of rows) {
+      lines.push([r.vendor_name, r.community_name, year, (r.total_cents / 100).toFixed(2), (r.historical_cents / 100).toFixed(2), (r.current_cents / 100).toFixed(2),
+        r.is_1099_vendor ? 'Yes' : 'No', r.w9_on_file ? 'Yes' : 'No', r.tax_id || '', r.tax_classification || ''].map(esc).join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `vendor-spend-1099-${year}.csv`; a.click(); URL.revokeObjectURL(a.href);
+  }
+
   async function vendorsLoadList() {
     const container = document.getElementById('vendors-table-container');
     container.innerHTML = `<div style="color:#888;">Loading…</div>`;
@@ -39961,7 +40171,7 @@ ${questionsPage}
           <td style="padding:10px 8px; text-align:right; font-variant-numeric: tabular-nums; color:#666;">${v.invoice_count || 0}</td>
           <td style="padding:10px 8px; font-size:12px; color:#666;">${vendorsFmtDate(v.last_invoice_at)}</td>
           <td style="padding:10px 8px;">${vendorsCoiBadge(v.earliest_coi_expiry)}</td>
-          <td style="padding:10px 8px; font-size:11px;">${v.w9_on_file ? '<span style="color:#2e7d32;">✓ W-9</span>' : '<span style="color:#a00;">no W-9</span>'}</td>
+          <td style="padding:10px 8px; font-size:11px;">${vendors1099Cell(v)}</td>
         </tr>
       `).join('');
 
@@ -40006,6 +40216,7 @@ ${questionsPage}
       const v = data.vendor;
       const invoices = data.invoices || [];
       const documents = data.documents || [];
+      const w9doc = documents.find(d => d.doc_type === 'w9') || null;
 
       const invoiceRows = invoices.length === 0
         ? `<tr><td colspan="8" style="padding:16px; text-align:center; color:#888;">No invoices on file.</td></tr>`
@@ -40079,6 +40290,36 @@ ${questionsPage}
             <div style="grid-column: 1 / -1;"><strong>Address:</strong> ${escapeHtml(v.address || '—')}</div>
             ${v.notes ? `<div style="grid-column: 1 / -1;"><strong>Notes:</strong> ${escapeHtml(v.notes)}</div>` : ''}
           </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:16px;">
+          <h4 style="margin-top:0;">🧾 Tax &amp; 1099</h4>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; font-size:13px; align-items:center;">
+            <div>
+              <label style="display:inline-flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="vendor-1099-toggle" ${v.is_1099_vendor ? 'checked' : ''} onchange="vendorsSet1099('${v.id}', this.checked)">
+                <strong>1099 required</strong>
+              </label>
+              <div style="font-size:11px; color:#888; margin-top:2px;">Corporations are usually exempt; attorneys/medical are 1099-able even as corps.</div>
+            </div>
+            <div><strong>Tax classification:</strong> ${escapeHtml(v.tax_classification || '—')}</div>
+            <div><strong>TIN / Tax ID:</strong> ${v.tax_id ? escapeHtml(vendorsMaskTin(v.tax_id)) : '—'}</div>
+            <div>
+              <strong>W-9:</strong>
+              ${v.w9_on_file ? '<span style="color:#2e7d32;">✓ on file</span>' : '<span style="color:#a00;">not on file</span>'}
+              ${w9doc ? ` · <a href="/api/vendors/documents/${w9doc.id}/file" target="_blank" style="color:#315A87; font-weight:600;">View W-9</a>` : ''}
+            </div>
+          </div>
+          <div id="vendor-w9-drop"
+               style="margin-top:12px; border:2px dashed #d0d7de; border-radius:8px; padding:16px; text-align:center; background:#f9f9f9; cursor:pointer; font-size:12px; color:#666;"
+               onclick="document.getElementById('vendor-w9-file').click()"
+               ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
+               ondragleave="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9';"
+               ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files.length) vendorsUploadW9('${v.id}', event.dataTransfer.files[0]);">
+            📄 Drop or click to upload the vendor's W-9 (PDF) — the system reads the tax classification + TIN and sets the 1099 flag.
+            <input type="file" id="vendor-w9-file" accept=".pdf" style="display:none" onchange="if(this.files[0]) vendorsUploadW9('${v.id}', this.files[0])">
+          </div>
+          <div id="vendor-w9-status" style="margin-top:8px; font-size:12px;"></div>
         </div>
 
         <div class="panel" style="margin-bottom:16px;">
