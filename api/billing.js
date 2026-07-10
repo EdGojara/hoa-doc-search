@@ -204,10 +204,25 @@ async function buildDraftLineItems({ contractId, type, period, communityId }) {
     const { data: fixed, error } = await supabase
       .from('contract_fixed_items').select('*').eq('contract_id', contractId).order('sort_order');
     if (error) throw error;
-    return (fixed || []).map((f) => ({
+    const lines = (fixed || []).map((f) => ({
       source: 'contract_fixed', source_ref_id: f.id, category: null, description: f.description,
       qty: 1, unit_price: Number(f.monthly_amount), amount: money(f.monthly_amount), sort_order: f.sort_order,
     }));
+    // Per-lot management fee broken out as rate x lot count (Ed 2026-07-10) when
+    // the contract carries a per-lot fee. lot_count is what we bill against
+    // (homeowners on record); edit it on the contract as owners move in.
+    const { data: c } = await supabase.from('contracts')
+      .select('per_lot_monthly_fee, lot_count').eq('id', contractId).maybeSingle();
+    if (c && c.per_lot_monthly_fee != null && Number(c.per_lot_monthly_fee) > 0) {
+      const lots = Number(c.lot_count || 0);
+      const rate = Number(c.per_lot_monthly_fee);
+      lines.push({
+        source: 'contract_fixed', source_ref_id: null, category: null,
+        description: 'Management Fee — per lot', qty: lots, unit_price: rate,
+        amount: money(rate * lots), sort_order: 15,
+      });
+    }
+    return lines.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   }
   // activity — categories are sorted ALPHABETICALLY by description (Ed 2026-07-10,
   // easier to find), with sort_order reassigned so the order persists onto the
