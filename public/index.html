@@ -5238,11 +5238,12 @@
       const arcTotal = (c.arc_approved || 0) + (c.arc_denied || 0) + (c.arc_conditions || 0) + (c.arc_other || 0);
       // Category → quantity from the activity report. Deed-restriction violation
       // notices = the enforcement letters we mail; certified §209 = the $35
-      // certified demand line; pages = B&W copies; ARC decisions = ARC fees.
+      // certified demand line; pages = color copies (Ed 2026-07-09); ARC
+      // decisions = ARC fees.
       const map = {
         postage_drv_notices: c.first_class_sent || 0,
         deed_restriction_certified_demand_letter: c.certified_sent || 0,
-        bw_copies: c.pages_printed || 0,
+        color_copies: c.pages_printed || 0,
         arc_application_fee: arcTotal,
       };
       const applied = [];
