@@ -4329,7 +4329,8 @@
         description: x.description,
         unit_price: Number(x.amount)
       }));
-      billingCommunityRateCard = [...reimbCC, ...ownerCC];
+      billingCommunityRateCard = [...reimbCC, ...ownerCC]
+        .sort((a, b) => String(a.description || '').localeCompare(String(b.description || '')));
       billingPendingLineItems = [];   // reset stale staged items when switching communities
       billingPopulateCommunityCategoryDropdown();
       billingRenderPendingLineItems();
@@ -5252,7 +5253,8 @@
         description: x.description,
         unit_price: Number(x.amount)
       }));
-      billingCurrentRateCard = [...reimb, ...owner];
+      billingCurrentRateCard = [...reimb, ...owner]
+        .sort((a, b) => String(a.description || '').localeCompare(String(b.description || '')));
       billingPopulateCategoryDropdown();
     } catch (e) {
       console.error('billingLoadRateCard failed:', e);

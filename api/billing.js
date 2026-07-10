@@ -209,7 +209,12 @@ async function buildDraftLineItems({ contractId, type, period, communityId }) {
       qty: 1, unit_price: Number(f.monthly_amount), amount: money(f.monthly_amount), sort_order: f.sort_order,
     }));
   }
-  // activity
+  // activity — categories are sorted ALPHABETICALLY by description (Ed 2026-07-10,
+  // easier to find), with sort_order reassigned so the order persists onto the
+  // saved invoice + PDF.
+  const alpha = (arr) => arr.slice()
+    .sort((a, b) => String(a.description || '').localeCompare(String(b.description || '')))
+    .map((l, i) => ({ ...l, sort_order: i * 10 }));
   const periodStart = period + '-01';
   const { data: priorInv } = await supabase
     .from('invoices').select('id')
@@ -224,10 +229,10 @@ async function buildDraftLineItems({ contractId, type, period, communityId }) {
     priorLines = pl || [];
   }
   if (priorLines.length > 0) {
-    return priorLines.map((p) => ({
+    return alpha(priorLines.map((p) => ({
       source: p.source, source_ref_id: p.source_ref_id, category: p.category, description: p.description,
       qty: 0, unit_price: Number(p.unit_price || 0), amount: 0, sort_order: p.sort_order,
-    }));
+    })));
   }
   const { data: reimb, error: rErr } = await supabase
     .from('contract_reimbursables').select('*').eq('contract_id', contractId).eq('default_on_invoice', true).order('sort_order');
@@ -245,7 +250,7 @@ async function buildDraftLineItems({ contractId, type, period, communityId }) {
     source: 'owner_charge', source_ref_id: o.id, category: o.category, description: o.description,
     qty: 0, unit_price: Number(o.fee_amount), amount: 0, sort_order: ownerOffset + o.sort_order,
   }));
-  return lines;
+  return alpha(lines);
 }
 
 // Sanitize client-supplied line items to the exact invoice_line_items columns
@@ -1594,7 +1599,8 @@ router.post('/contracts/:id/management-agreement', async (req, res) => {
 //   - pages_printed  : physical pages of those letters (per envelope)
 //   - arc_*          : ARC/ACC decisions rendered in range — BOTH builder ARC
 //                      (builder_applications.decided_at) AND resident ACC
-//                      (community_applications.final_decided_at). Split
+//                      (arc_historical_decisions.decided_at — the ACC decision
+//                      log, where both portal + committee decisions land). Split
 //                      approved / denied / conditions / other.
 // Dates are inclusive on the day boundary in the period. Read-only.
 // ============================================================================
@@ -1660,12 +1666,17 @@ router.get('/activity-report', async (req, res) => {
       if (communityId) q = q.eq('community_id', communityId);
       return q;
     });
+    // Resident ACC decisions live in arc_historical_decisions — the ACC decision
+    // LOG. Online-portal decisions are promoted here on finalize, and staff log
+    // committee decisions here directly, so it's the fuller record (counting
+    // community_applications too would double-count the online ones). decided_at
+    // is a DATE, so compare against plain YYYY-MM-DD bounds.
     let accDecisions = await fetchAll(() => {
-      let q = supabase.from('community_applications')
-        .select('community_id, final_status, final_decided_at')
-        .not('final_decided_at', 'is', null)
-        .gte('final_decided_at', start + 'T00:00:00Z')
-        .lt('final_decided_at', endEx + 'T00:00:00Z');
+      let q = supabase.from('arc_historical_decisions')
+        .select('community_id, decision_type, decided_at')
+        .not('decided_at', 'is', null)
+        .gte('decided_at', start)
+        .lt('decided_at', endEx);
       if (communityId) q = q.eq('community_id', communityId);
       return q;
     });
@@ -1707,7 +1718,7 @@ router.get('/activity-report', async (req, res) => {
       else r.arc_other += 1; // withdrawn / closed / other
     };
     decisions.forEach((d) => tallyArc(d.community_id, d.status));
-    accDecisions.forEach((d) => tallyArc(d.community_id, d.final_status));
+    accDecisions.forEach((d) => tallyArc(d.community_id, d.decision_type));
 
     const communities = Object.values(byComm)
       .map(({ _letters, ...r }) => {
@@ -1800,12 +1811,14 @@ router.get('/activity-detail', async (req, res) => {
         .eq('community_id', communityId)
         .not('decided_at', 'is', null)
         .gte('decided_at', start + 'T00:00:00Z').lt('decided_at', endEx + 'T00:00:00Z')),
-      // Resident ACC decisions (community_applications) — the other ARC rail.
-      fetchAll(() => supabase.from('community_applications')
-        .select('reference_number, property_address, submitter_name, final_status, final_decided_at')
+      // Resident ACC decisions — the ACC decision log (arc_historical_decisions),
+      // which captures both online-portal decisions and staff-logged committee
+      // decisions. decided_at is a DATE.
+      fetchAll(() => supabase.from('arc_historical_decisions')
+        .select('property_address, homeowner_name, project_type, decision_type, decided_at')
         .eq('community_id', communityId)
-        .not('final_decided_at', 'is', null)
-        .gte('final_decided_at', start + 'T00:00:00Z').lt('final_decided_at', endEx + 'T00:00:00Z')),
+        .not('decided_at', 'is', null)
+        .gte('decided_at', start).lt('decided_at', endEx)),
     ]);
     if (!community) return res.status(404).json({ error: 'community_not_found' });
 
@@ -1886,9 +1899,9 @@ router.get('/activity-detail', async (req, res) => {
       })),
       // Resident ACC
       ...accDecisions.map((d) => ({
-        property: d.property_address || '(no address)', applicant: d.submitter_name || '—',
-        reference: d.reference_number || null, kind: 'Resident ACC',
-        outcome: outcomeOf(d.final_status), date: (d.final_decided_at || '').slice(0, 10),
+        property: d.property_address || '(no address)', applicant: d.homeowner_name || '—',
+        reference: d.project_type || null, kind: 'Resident ACC',
+        outcome: outcomeOf(d.decision_type), date: (d.decided_at || '').slice(0, 10),
       })),
     ].sort((a, b) => a.property.localeCompare(b.property));
 
