@@ -1197,6 +1197,14 @@ router.post('/contracts/parse', upload.single('pdf'), async (req, res) => {
   }
 });
 
+// The confirmed set of rate rows that seed a line on a fresh activity invoice
+// (mirrors migration 271's default_on_invoice flags). Single source of truth so
+// NEW community contracts get the same invoice floor migration 271 backfilled
+// onto existing ones — the contract editor UI has no per-row toggle, so the flag
+// is applied here by category, not by the operator.
+const DEFAULT_INVOICE_REIMBURSABLES = new Set(['postage_drv_notices', 'color_copies', 'electronic_voting']);
+const DEFAULT_INVOICE_OWNER_CHARGES = new Set(['deed_restriction_certified_demand_letter', 'arc_application_fee']);
+
 /**
  * POST /api/billing/contracts/save
  * Body: { community_id, parsed }   where parsed matches the schema returned by /parse
@@ -1290,8 +1298,25 @@ router.post('/contracts/save', async (req, res) => {
         ? item.billing_method : 'per_unit',
       unit_price: item.unit_price != null ? Number(item.unit_price) : null,
       notes: item.notes || null,
-      sort_order: i
+      sort_order: i,
+      default_on_invoice: item.default_on_invoice != null
+        ? !!item.default_on_invoice
+        : DEFAULT_INVOICE_REIMBURSABLES.has(item.category),
     }));
+    // Guarantee Electronic Voting ($750) is on every new contract's rate card —
+    // same floor migration 271 backfilled onto existing contracts.
+    if (!reimbRows.some(r => r.category === 'electronic_voting')) {
+      reimbRows.push({
+        contract_id: contractId,
+        category: 'electronic_voting',
+        description: 'Electronic Voting',
+        billing_method: 'per_unit',
+        unit_price: 750,
+        notes: null,
+        sort_order: 500,
+        default_on_invoice: true,
+      });
+    }
     if (reimbRows.length > 0) {
       const { error: rErr } = await supabase.from('contract_reimbursables').insert(reimbRows);
       if (rErr) throw rErr;
@@ -1303,7 +1328,10 @@ router.post('/contracts/save', async (req, res) => {
       description: item.description,
       fee_amount: Number(item.fee_amount) || 0,
       notes: item.notes || null,
-      sort_order: i
+      sort_order: i,
+      default_on_invoice: item.default_on_invoice != null
+        ? !!item.default_on_invoice
+        : DEFAULT_INVOICE_OWNER_CHARGES.has(item.category),
     }));
     if (ownerRows.length > 0) {
       const { error: oErr } = await supabase.from('contract_owner_charges').insert(ownerRows);

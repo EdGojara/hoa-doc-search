@@ -4096,7 +4096,7 @@
           </tr></thead>
           <tbody>${body}</tbody>
           <tfoot><tr style="font-weight:700; background:#f8fafc;">
-            <td style="padding:8px 10px;">Portfolio total</td>
+            <td style="padding:8px 10px;">${_cid ? 'Community total' : 'Portfolio total'}</td>
             ${cell(t.notices_sent || 0)}${cell(t.first_class_sent || 0)}${cell(t.certified_sent || 0)}${cell(t.pages_printed || 0)}${cell(t.arc_approved || 0)}${cell(t.arc_denied || 0)}${cell((t.arc_conditions || 0) + (t.arc_other || 0))}
           </tr></tfoot>
         </table>
