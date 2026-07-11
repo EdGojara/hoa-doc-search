@@ -254,6 +254,25 @@ router.get('/journal-entries/:id/edits', async (req, res) => {
   }
 });
 
+// Phase 2 — suggest the GL account for a transaction (vendor default -> history
+// -> budget fit -> description), the way a CPA would. Read-only; the AP/JE flows
+// call this to pre-code entries, and staff confirm/correct in review.
+router.get('/classify', async (req, res) => {
+  try {
+    const { community_id, vendor_id, vendor_name, description, payment_leg } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { suggestClassification } = require('../lib/accounting/gl_classifier');
+    const suggestion = await suggestClassification({
+      communityId: community_id, vendorId: vendor_id || null, vendorName: vendor_name || null,
+      description: description || null, isPaymentLeg: payment_leg === '1' || payment_leg === 'true',
+    });
+    res.json({ suggestion });
+  } catch (err) {
+    console.error('[books] classify failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/journal-entries/:id/void', express.json(), async (req, res) => {
   try {
     const { id } = req.params;
