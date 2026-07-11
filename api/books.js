@@ -27,7 +27,7 @@ const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const { postJournalEntry, voidJournalEntry } = require('../lib/accounting/posting');
+const { postJournalEntry, voidJournalEntry, editJournalEntry } = require('../lib/accounting/posting');
 const { onboardCommunityToGL, openInitialPeriods } = require('../lib/accounting/coa_template');
 const { balanceSheet, incomeStatement, equityStatement, budgetVsActual } = require('../lib/accounting/financial_statements');
 const { extractBudget } = require('../lib/accounting/budget_pdf_extractor');
@@ -214,6 +214,42 @@ router.get('/journal-entries/:id', async (req, res) => {
     res.json({ entry: je, lines: lines || [] });
   } catch (err) {
     console.error('[books] JE detail failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Edit a posted entry in place (open period only) with a change-log row.
+router.patch('/journal-entries/:id', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const result = await editJournalEntry({
+      journal_entry_id: req.params.id,
+      edited_by_user_id: b.edited_by_user_id, edited_by_name: b.edited_by_name, reason: b.reason,
+      description: b.description, notes: b.notes,
+      source_document_id: b.source_document_id, source_document_path: b.source_document_path,
+      classification_reason: b.classification_reason, needs_review: b.needs_review,
+      lines: b.lines,
+    });
+    res.json(result);
+  } catch (err) {
+    if (['unbalanced', 'invalid_input', 'period_closed', 'invalid_state', 'not_found'].includes(err.code)) {
+      return res.status(400).json({ error: err.message, code: err.code });
+    }
+    console.error('[books] edit JE failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Change history for one entry (audit trail of in-place edits).
+router.get('/journal-entries/:id/edits', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('journal_entry_edits')
+      .select('id, edited_by_user_id, edited_by_name, reason, changes, created_at')
+      .eq('journal_entry_id', req.params.id).order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ edits: data || [] });
+  } catch (err) {
+    console.error('[books] JE edits failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
