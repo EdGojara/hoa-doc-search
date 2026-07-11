@@ -1336,6 +1336,7 @@
       <td><input type="checkbox" class="chk-inv" value="${i.id}" data-amt="${i.balance_cents}" checked onchange="chkUpdateBar()"></td>
       <td>${esc(i.vendor_name)}</td><td>${esc(i.vendor_invoice_number||'—')}</td>
       <td>${esc(fmtDate(i.invoice_date))}</td><td>${esc(i.description||'')}</td>
+      <td>${i.support_doc_url?`<a href="${i.support_doc_url}" target="_blank" rel="noopener" title="Open the invoice">📎 View</a>`:'<span class="muted">—</span>'}</td>
       <td class="num">${fmt(i.balance_cents)}</td></tr>`).join('');
     $('chkPay').innerHTML = `<div class="card" style="margin-bottom:14px;">
       <h2 class="sec" style="margin-bottom:8px;">Bills ready to pay</h2>
@@ -1344,7 +1345,7 @@
         <span id="chk-bar" class="muted" style="font-size:13px;"></span>
         <button id="chk-print" onclick="chkPrintRun()" style="margin-left:auto; ${CHK_BTN}">Print checks</button>
       </div>
-      <table><thead><tr><th></th><th>Vendor</th><th>Invoice</th><th>Date</th><th>Description</th><th class="num">Amount</th></tr></thead>
+      <table><thead><tr><th></th><th>Vendor</th><th>Invoice</th><th>Date</th><th>Description</th><th>Support</th><th class="num">Amount</th></tr></thead>
       <tbody>${rows}</tbody></table>
       <div class="muted" style="font-size:12px; margin-top:8px;">One check per vendor — multiple bills for the same vendor combine onto one check with an itemized stub.</div></div>`;
     chkUpdateBar();
