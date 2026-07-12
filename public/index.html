@@ -415,6 +415,13 @@
         if (me.role !== 'admin') {
           document.querySelectorAll('[data-admin-only]').forEach((el) => { el.style.display = 'none'; });
         }
+        // Owner-only UI (Ed's personal surfaces, e.g. Tessa) — hide for anyone
+        // but the owner, not merely non-admins. The endpoints also hard-gate
+        // via requireOwner, so this is defense-in-depth, not the only control.
+        const OWNER_EMAIL = 'egojara@bedrocktx.com';
+        if (!me.email || String(me.email).toLowerCase() !== OWNER_EMAIL) {
+          document.querySelectorAll('[data-owner-only]').forEach((el) => { el.style.display = 'none'; });
+        }
       }
       document.body.style.visibility = 'visible';
     } catch (e) {
@@ -531,6 +538,12 @@
   <!-- 📬 Communications — email triage board: Claire's drafted replies waiting
        for review + approve-to-send. Standalone page. -->
   <div class="tab" onclick="window.location.href='/admin/communications'">📬 Communications</div>
+  <!-- 💼 Tessa — OWNER ONLY (Ed). Ed's personal executive assistant: dictate or
+       type a thought -> she drafts + sends email (as Ed or as Tessa), tracks
+       his follow-ups, and drafts replies to anything he forwards to tessa@.
+       Hidden for everyone but Ed via data-owner-only; every endpoint also
+       hard-gates via requireOwner. Standalone page. -->
+  <div class="tab" data-owner-only onclick="window.location.href='/admin/tessa'">💼 Tessa (my EA)</div>
   <!-- ✉️ AI Team Email — ADMIN ONLY (Ed). One compose surface for the AI team
        members: send as Claire (front office / homeowners + boards) or Emma
        (accounts payable / vendors), chosen in the modal. Hidden for staff via
