@@ -44,4 +44,18 @@ async function requireAdmin(req, res) {
   return u;
 }
 
-module.exports = { getAuthedUser, requireAdmin };
+// Stricter gate: OWNER only (Ed), not merely "an admin". For personal surfaces
+// like Tessa (Ed's EA) that must never be visible to anyone else, even a future
+// second admin. Matches the authed user's email to OWNER_EMAIL (Ed 2026-07-11).
+const OWNER_EMAIL = (process.env.OWNER_EMAIL || 'egojara@bedrocktx.com').toLowerCase();
+async function requireOwner(req, res) {
+  const u = await getAuthedUser(req);
+  const email = (u && u.email ? String(u.email) : '').toLowerCase();
+  if (!u || u.role !== 'admin' || email !== OWNER_EMAIL) {
+    res.status(403).json({ error: 'owner_only', detail: 'This is the owner’s personal workspace.' });
+    return null;
+  }
+  return u;
+}
+
+module.exports = { getAuthedUser, requireAdmin, requireOwner, OWNER_EMAIL };

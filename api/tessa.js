@@ -1,14 +1,14 @@
 // ============================================================================
 // api/tessa.js — mounted at /api/tessa. Ed's executive assistant, Tessa McCall.
 // ----------------------------------------------------------------------------
-// Ed-ONLY (requireAdmin). Draft an email from a thought, review, send it (as Ed
+// OWNER-ONLY (requireOwner — Ed's email, not merely any admin). Draft an email from a thought, review, send it (as Ed
 // or as Tessa), and track Ed's personal follow-ups. Payment items belong to
 // Emma, not here — Tessa handles Ed's correspondence + admin/banking/vendor
 // chase-ups, not AP.
 // ============================================================================
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const { requireAdmin } = require('./_require_admin');
+const { requireOwner } = require('./_require_admin');
 const { draftEmail } = require('../lib/ea/tessa');
 const graphSend = require('../lib/email/graph_send');
 const { safeErrorMessage } = require('./_safe_error');
@@ -20,7 +20,7 @@ const parseAddrs = (v) => String(v || '').split(/[,;]/).map((s) => s.trim()).fil
 
 // POST /draft — turn a thought into a send-ready email (nothing sent).
 router.post('/draft', express.json({ limit: '32kb' }), async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
+  const admin = await requireOwner(req, res); if (!admin) return;
   try {
     const { thought, mode, recipient_name } = req.body || {};
     if (!thought || !String(thought).trim()) return res.status(400).json({ error: 'thought_required' });
@@ -35,7 +35,7 @@ router.post('/draft', express.json({ limit: '32kb' }), async (req, res) => {
 
 // POST /send — send the approved draft, as Ed (ghostwrite) or as Tessa.
 router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
+  const admin = await requireOwner(req, res); if (!admin) return;
   try {
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'Email is not connected yet (Microsoft Graph credentials + the mailbox must be set up).' });
     const b = req.body || {};
@@ -81,7 +81,7 @@ router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
 
 // ---- Follow-up ledger --------------------------------------------------------
 router.get('/followups', async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
+  const admin = await requireOwner(req, res); if (!admin) return;
   try {
     let q = supabase.from('ea_followups').select('*').order('due_date', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).limit(500);
     const status = req.query.status;
@@ -94,7 +94,7 @@ router.get('/followups', async (req, res) => {
 });
 
 router.post('/followups', express.json(), async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
+  const admin = await requireOwner(req, res); if (!admin) return;
   try {
     const b = req.body || {};
     if (!b.title || !String(b.title).trim()) return res.status(400).json({ error: 'title_required' });
@@ -109,7 +109,7 @@ router.post('/followups', express.json(), async (req, res) => {
 });
 
 router.patch('/followups/:id', express.json(), async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
+  const admin = await requireOwner(req, res); if (!admin) return;
   try {
     const b = req.body || {}; const patch = {};
     if (b.status !== undefined) { if (!['open', 'waiting', 'done', 'dropped'].includes(b.status)) return res.status(400).json({ error: 'bad_status' }); patch.status = b.status; }
