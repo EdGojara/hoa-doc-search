@@ -27,6 +27,9 @@ const { requireAdmin } = require('./_require_admin');
 // One brain, two faces — Emma grounds in the AP ledger, Claire in the 360.
 function personaFor(m) {
   if (!m) return 'claire';
+  // DRV: an inbound Claire routed to Miranda (open enforcement case) carries a
+  // drv persona hint stamped at ingest — her approved reply sends from miranda@.
+  if (m.extracted && m.extracted.drv && m.extracted.drv.persona === 'miranda') return 'miranda';
   const mailbox = String(m.mailbox || '').toLowerCase();
   if (mailbox === String(graphSend.EMMA_MAILBOX || '').toLowerCase()) return 'emma';
   if (m.resolved_vendor_id) return 'emma';
@@ -250,7 +253,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
     const { body, to, subject, reviewed_by } = req.body || {};
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
     const { data: m, error } = await supabase.from('email_messages')
-      .select('sender_email, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, community:community_id(name)')
+      .select('sender_email, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, extracted, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
@@ -273,6 +276,10 @@ router.post('/:id/send', express.json(), async (req, res) => {
       const { buildEmmaEmail } = require('../lib/email/emma_signature');
       ({ html, attachments } = buildEmmaEmail(String(body).trim()));
       fromMailbox = graphSend.EMMA_MAILBOX; senderLabel = 'Emma Brooks (Bedrock AI)';
+    } else if (persona === 'miranda') {
+      const { buildMirandaEmail } = require('../lib/email/miranda_signature');
+      ({ html, attachments } = buildMirandaEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.MIRANDA_MAILBOX; senderLabel = 'Miranda Pierce (Bedrock AI)';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
       ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
@@ -290,6 +297,13 @@ router.post('/:id/send', express.json(), async (req, res) => {
       community_id: m.community_id, resolved_contact_id: m.resolved_contact_id, resolved_property_id: m.resolved_property_id, resolved_vendor_id: m.resolved_vendor_id,
       resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'association_record', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString(),
     });
+    // DRV: log Miranda's sent reply onto the enforcement case history.
+    if (persona === 'miranda' && m.extracted && m.extracted.drv && m.extracted.drv.violation_id) {
+      try {
+        const { logDrvOutbound } = require('../lib/enforcement/drv_reply');
+        await logDrvOutbound({ violationId: m.extracted.drv.violation_id, communityId: m.community_id, propertyId: m.resolved_property_id, contactId: m.resolved_contact_id, subject: subj, body: String(body).trim(), sentBy: reviewed_by || 'staff' });
+      } catch (e) { console.warn('[email_triage] drv outbound log skipped:', e.message); }
+    }
     res.json({ sent: true, to: recipient, from: fromMailbox, persona });
   } catch (err) {
     console.error('[email_triage] send failed:', err.message);
