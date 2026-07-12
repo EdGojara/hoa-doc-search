@@ -10,6 +10,7 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { requireOwner } = require('./_require_admin');
 const { draftEmail } = require('../lib/ea/tessa');
+const { pollTessaInbox } = require('../lib/ea/tessa_inbox');
 const graphSend = require('../lib/email/graph_send');
 const { safeErrorMessage } = require('./_safe_error');
 
@@ -124,6 +125,100 @@ router.patch('/followups/:id', express.json(), async (req, res) => {
     if (error) throw error;
     res.json({ followup: data });
   } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// ---- Forwarded-inbox: emails Ed sends Tessa, she drafts a reply -------------
+
+// POST /poll-inbox — pull new tessa@ mail, draft a reply for each, queue it.
+// Owner-only, and reads ONLY into ea_inbox (never the staff triage table).
+router.post('/poll-inbox', async (req, res) => {
+  const admin = await requireOwner(req, res); if (!admin) return;
+  try {
+    const out = await pollTessaInbox({ max: 25, mode: 'ed' });
+    if (out.error) {
+      const hint = out.error.startsWith('graph_read_failed_403')
+        ? 'Tessa can’t read her mailbox yet. In Azure, add tessa@bedrocktx.com to the app’s Mail.Read access policy.'
+        : out.error === 'graph_not_configured'
+        ? 'Email is not connected yet (Microsoft Graph credentials must be set up).'
+        : out.error === 'tessa_mailbox_not_configured'
+        ? 'Tessa’s mailbox (TESSA_MAILBOX) is not set in the environment yet.'
+        : 'Could not read Tessa’s mailbox right now.';
+      return res.status(400).json({ error: hint, code: out.error });
+    }
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    console.error('[tessa] poll-inbox failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /inbox — the review queue (defaults to items still needing review).
+router.get('/inbox', async (req, res) => {
+  const admin = await requireOwner(req, res); if (!admin) return;
+  try {
+    let q = supabase.from('ea_inbox').select('*').order('received_at', { ascending: false, nullsFirst: false }).limit(200);
+    const status = req.query.status || 'needs_review';
+    if (status !== 'all') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ inbox: data || [] });
+  } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// PATCH /inbox/:id — edit the draft, or mark replied / dismissed.
+router.patch('/inbox/:id', express.json(), async (req, res) => {
+  const admin = await requireOwner(req, res); if (!admin) return;
+  try {
+    const b = req.body || {}; const patch = {};
+    if (b.status !== undefined) { if (!['needs_review', 'replied', 'dismissed'].includes(b.status)) return res.status(400).json({ error: 'bad_status' }); patch.status = b.status; }
+    if (b.draft_subject !== undefined) patch.draft_subject = String(b.draft_subject || '');
+    if (b.draft_body !== undefined) patch.draft_body = String(b.draft_body || '');
+    if (b.draft_mode !== undefined) { if (!['ed', 'tessa'].includes(b.draft_mode)) return res.status(400).json({ error: 'bad_mode' }); patch.draft_mode = b.draft_mode; }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'no_fields' });
+    patch.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('ea_inbox').update(patch).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json({ item: data });
+  } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /inbox/:id/send — send the reviewed reply (as Ed or Tessa) + mark replied.
+router.post('/inbox/:id/send', express.json({ limit: '64kb' }), async (req, res) => {
+  const admin = await requireOwner(req, res); if (!admin) return;
+  try {
+    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'Email is not connected yet (Microsoft Graph credentials + the mailbox must be set up).' });
+    const { data: item, error: e0 } = await supabase.from('ea_inbox').select('*').eq('id', req.params.id).single();
+    if (e0 || !item) return res.status(404).json({ error: 'not_found' });
+
+    const b = req.body || {};
+    const to = parseAddrs(b.to || item.from_email);
+    const cc = parseAddrs(b.cc);
+    const subject = String(b.subject || item.draft_subject || item.subject || '').trim() || '(no subject)';
+    const body = String(b.body || item.draft_body || '').trim();
+    const asEd = String(b.mode || item.draft_mode || 'ed') === 'ed';
+    if (!to.length) return res.status(400).json({ error: 'No recipient to reply to.' });
+    if (!body) return res.status(400).json({ error: 'The reply body is empty.' });
+
+    const from = asEd ? graphSend.ED_MAILBOX : graphSend.TESSA_MAILBOX;
+    const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">${body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
+    await graphSend.sendAs({ from, to, cc, subject, html });
+
+    await supabase.from('ea_inbox').update({ status: 'replied', draft_subject: subject, draft_body: body, draft_mode: asEd ? 'ed' : 'tessa', updated_at: new Date().toISOString() }).eq('id', item.id);
+    try {
+      await supabase.from('email_messages').insert({
+        mailbox: from, direction: 'outbound', sender_email: from,
+        sender_name: asEd ? 'Ed Gojara' : 'Tessa McCall (Bedrock EA)',
+        recipients: [...to, ...cc], subject, body_preview: body.slice(0, 2000),
+        classification: 'outbound_reply', classification_confidence: 'high',
+        ai_summary: `Tessa reply ${asEd ? 'as Ed' : 'as Tessa'} to ${[...to, ...cc].join(', ')}`,
+        triage_status: 'handled', reviewed_at: new Date().toISOString(),
+      });
+    } catch (e) { console.warn('[tessa] inbox-send log skipped:', e.message); }
+    res.json({ sent: true, from, to, cc });
+  } catch (err) {
+    console.error('[tessa] inbox-send failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
 });
 
 module.exports = { router };

@@ -72,6 +72,15 @@ function render(){
         <div class="row" style="margin-top:10px;"><button class="btn" id="draftBtn" onclick="doDraft()">Draft it</button><span id="draftMsg" class="note"></span></div>
         <div id="draftArea"></div>
       </div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between;">
+          <h2 style="margin:0;">Forwarded to Tessa</h2>
+          <button class="btn ghost sm" id="pollBtn" onclick="pollInbox()">Check for new</button>
+        </div>
+        <div class="note">Forward or BCC any email to <b>tessa@bedrocktx.com</b>. She drafts a reply here for you to review, edit, and send, as you or as Tessa.</div>
+        <div id="pollMsg" class="result"></div>
+        <div id="inboxList" style="margin-top:10px;"><div class="note">Loading&hellip;</div></div>
+      </div>
     </div>
     <div>
       <div class="card">
@@ -90,6 +99,64 @@ function render(){
     </div>
   </div>`;
   loadFu();
+  loadInbox();
+}
+
+const _ibmode={};
+async function pollInbox(){
+  const btn=$('pollBtn'); btn.disabled=true; $('pollMsg').innerHTML='<span class="note">Checking Tessa’s mailbox…</span>';
+  try{
+    const r=await af('/api/tessa/poll-inbox',{method:'POST'}); const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'poll failed');
+    $('pollMsg').innerHTML='<span class="ok">'+(j.drafted?('✅ '+j.drafted+' new draft'+(j.drafted>1?'s':'')+' ready.'):'No new forwarded emails.')+'</span>';
+    loadInbox();
+  }catch(e){ $('pollMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+  finally{ btn.disabled=false; }
+}
+async function loadInbox(){
+  try{
+    const r=await af('/api/tessa/inbox?status=needs_review'); const j=await r.json();
+    const list=j.inbox||[];
+    if(!list.length){ $('inboxList').innerHTML='<div class="note">Nothing waiting. Forward an email to tessa@bedrocktx.com, then Check for new.</div>'; return; }
+    $('inboxList').innerHTML=list.map(it=>{
+      _ibmode[it.id]=it.draft_mode==='tessa'?'tessa':'ed';
+      const snip=esc((it.body_preview||'').slice(0,240))+((it.body_preview||'').length>240?'…':'');
+      return `<div class="fu" id="ib-${it.id}">
+        <div class="t">${esc(it.subject||'(no subject)')}</div>
+        <div class="note">from ${esc(it.from_name||it.from_email||'unknown')}${it.received_at?' · '+new Date(it.received_at).toLocaleString():''}</div>
+        <details style="margin:6px 0;"><summary class="note" style="cursor:pointer;">Show original</summary><div class="note" style="white-space:pre-wrap;margin-top:4px;">${snip}</div></details>
+        <label>Reply to</label><input id="ib-to-${it.id}" value="${esc(it.from_email||'')}">
+        <label>Subject</label><input id="ib-subj-${it.id}" value="${esc(it.draft_subject||('Re: '+(it.subject||'')))}">
+        <label>Tessa’s draft</label><textarea id="ib-body-${it.id}" rows="7">${esc(it.draft_body||'')}</textarea>
+        <div class="row" style="justify-content:space-between;margin-top:8px;">
+          <div class="modewrap">
+            <button id="ibm-ed-${it.id}" class="${_ibmode[it.id]==='ed'?'on':''}" onclick="ibMode('${it.id}','ed')">As me</button>
+            <button id="ibm-t-${it.id}" class="${_ibmode[it.id]==='tessa'?'on':''}" onclick="ibMode('${it.id}','tessa')">As Tessa</button>
+          </div>
+          <div class="row">
+            <button class="btn ghost sm" onclick="ibDismiss('${it.id}')">Dismiss</button>
+            <button class="btn gold sm" id="ibsend-${it.id}" onclick="ibSend('${it.id}')">Send reply</button>
+          </div>
+        </div>
+        <div id="ibmsg-${it.id}" class="result"></div>
+      </div>`;
+    }).join('');
+  }catch(e){ $('inboxList').innerHTML='<div class="err note">Could not load the inbox.</div>'; }
+}
+function ibMode(id,m){ _ibmode[id]=m; $('ibm-ed-'+id).className=m==='ed'?'on':''; $('ibm-t-'+id).className=m==='tessa'?'on':''; }
+async function ibSend(id){
+  const to=$('ib-to-'+id).value.trim(); const msg=$('ibmsg-'+id);
+  if(!to){ msg.innerHTML='<span class="err">Add a recipient to reply to.</span>'; return; }
+  const btn=$('ibsend-'+id); btn.disabled=true; msg.innerHTML='<span class="note">Sending…</span>';
+  try{
+    const r=await af('/api/tessa/inbox/'+id+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to, subject:$('ib-subj-'+id).value, body:$('ib-body-'+id).value, mode:_ibmode[id]})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'send failed');
+    const el=$('ib-'+id); if(el){ el.style.opacity='.5'; el.innerHTML='<div class="ok">✅ Replied '+(_ibmode[id]==='ed'?'as you':'as Tessa')+'.</div>'; setTimeout(loadInbox,1200); }
+  }catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; btn.disabled=false; }
+}
+async function ibDismiss(id){
+  await af('/api/tessa/inbox/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'dismissed'})});
+  loadInbox();
 }
 function setMode(m){ _mode=m; $('m-ed').className=m==='ed'?'on':''; $('m-tessa').className=m==='tessa'?'on':''; $('mode-note').textContent = m==='ed'?'Ghostwritten in your voice, from your mailbox.':'Sent as Tessa, on your behalf.'; }
 
