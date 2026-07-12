@@ -61,7 +61,7 @@ router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
         mailbox: from, direction: 'outbound', sender_email: from,
         sender_name: asEd ? 'Ed Gojara' : 'Tessa McCall (Bedrock EA)',
         recipients: [...to, ...cc], subject, body_preview: body.slice(0, 2000),
-        classification: 'outbound_reply', classification_confidence: 'high',
+        classification: 'outbound_reply', classification_confidence: 'high', persona: 'tessa',
         ai_summary: `Tessa sent ${asEd ? 'as Ed' : 'as Tessa'} to ${[...to, ...cc].join(', ')}`,
         triage_status: 'handled', reviewed_at: new Date().toISOString(),
       });
@@ -255,7 +255,7 @@ router.post('/inbox/:id/send', express.json({ limit: '64kb' }), async (req, res)
         mailbox: from, direction: 'outbound', sender_email: from,
         sender_name: asEd ? 'Ed Gojara' : 'Tessa McCall (Bedrock EA)',
         recipients: [...to, ...cc], subject, body_preview: body.slice(0, 2000),
-        classification: 'outbound_reply', classification_confidence: 'high',
+        classification: 'outbound_reply', classification_confidence: 'high', persona: 'tessa',
         ai_summary: `Tessa reply ${asEd ? 'as Ed' : 'as Tessa'} to ${[...to, ...cc].join(', ')}`,
         triage_status: 'handled', reviewed_at: new Date().toISOString(),
       });

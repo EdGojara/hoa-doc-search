@@ -20,7 +20,14 @@ const { safeErrorMessage } = require('./_safe_error');
 const { draftReply } = require('../lib/email/draft_reply');
 const graphSend = require('../lib/email/graph_send');
 const graphIngest = require('../lib/email/graph_ingest');
-const { requireAdmin } = require('./_require_admin');
+const { requireAdmin, getAuthedUser, OWNER_EMAIL } = require('./_require_admin');
+
+// Is the requester Ed (the owner)? Gates Tessa's PRIVATE mail off the shared
+// board — she is only visible to Ed, never to staff.
+async function isOwner(req) {
+  const u = await getAuthedUser(req);
+  return !!(u && u.role === 'admin' && String(u.email || '').toLowerCase() === OWNER_EMAIL);
+}
 
 // Which team member owns this email? Emma (AP) when it arrived at emma@, resolves
 // to a vendor, or is a vendor/financial message; Claire (front office) otherwise.
@@ -67,10 +74,17 @@ router.get('/', async (req, res) => {
     const { status, classification, community_id, persona, q } = req.query;
     const limit = Math.min(200, parseInt(req.query.limit, 10) || 100);
     const offset = parseInt(req.query.offset, 10) || 0;
+    const owner = await isOwner(req);
+    // Tessa's mail is Ed's private EA workspace — non-owners can never request
+    // it, and it's excluded from every non-owner query regardless of filter.
+    if (persona && String(persona).split(',').includes('tessa') && !owner) {
+      return res.status(403).json({ error: 'owner_only' });
+    }
     let query = supabase.from('email_messages').select(SELECT).order('received_at', { ascending: false }).range(offset, offset + limit - 1);
     if (status) query = query.in('triage_status', String(status).split(','));
     if (classification) query = query.in('classification', String(classification).split(','));
     if (persona) query = query.in('persona', String(persona).split(','));
+    if (!owner) query = query.neq('persona', 'tessa');
     if (community_id) query = query.eq('community_id', community_id);
     if (q) query = query.or(`subject.ilike.%${q}%,sender_email.ilike.%${q}%,ai_summary.ilike.%${q}%`);
     const { data, error } = await query;
@@ -86,9 +100,11 @@ router.get('/', async (req, res) => {
 // so the board shows names you can click to expand all of their emails.
 router.get('/team', async (req, res) => {
   try {
-    const { TEAM } = require('../lib/email/persona');
+    const { TEAM, TESSA_CARD } = require('../lib/email/persona');
+    const owner = await isOwner(req);
+    const list = owner ? [...TEAM, TESSA_CARD] : TEAM;
     const roster = [];
-    for (const t of TEAM) {
+    for (const t of list) {
       const total = await supabase.from('email_messages').select('id', { count: 'exact', head: true }).eq('persona', t.persona);
       const unrev = await supabase.from('email_messages').select('id', { count: 'exact', head: true }).eq('persona', t.persona).in('triage_status', ['needs_review', 'new']);
       const latest = await supabase.from('email_messages').select('received_at').eq('persona', t.persona).order('received_at', { ascending: false }).limit(1).maybeSingle();
@@ -104,7 +120,10 @@ router.get('/team', async (req, res) => {
 // GET /stats — board header counts
 router.get('/stats', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('email_messages').select('triage_status, classification').limit(5000);
+    const owner = await isOwner(req);
+    let sq = supabase.from('email_messages').select('triage_status, classification').limit(5000);
+    if (!owner) sq = sq.neq('persona', 'tessa'); // keep Tessa's private mail out of staff counts
+    const { data, error } = await sq;
     if (error) throw error;
     const byStatus = {}, byClass = {};
     (data || []).forEach((r) => { byStatus[r.triage_status] = (byStatus[r.triage_status] || 0) + 1; byClass[r.classification] = (byClass[r.classification] || 0) + 1; });
