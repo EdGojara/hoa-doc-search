@@ -64,12 +64,13 @@ const SELECT = 'id, mailbox, direction, sender_email, sender_name, subject, body
 // GET / — triage list
 router.get('/', async (req, res) => {
   try {
-    const { status, classification, community_id, q } = req.query;
+    const { status, classification, community_id, persona, q } = req.query;
     const limit = Math.min(200, parseInt(req.query.limit, 10) || 100);
     const offset = parseInt(req.query.offset, 10) || 0;
     let query = supabase.from('email_messages').select(SELECT).order('received_at', { ascending: false }).range(offset, offset + limit - 1);
     if (status) query = query.in('triage_status', String(status).split(','));
     if (classification) query = query.in('classification', String(classification).split(','));
+    if (persona) query = query.in('persona', String(persona).split(','));
     if (community_id) query = query.eq('community_id', community_id);
     if (q) query = query.or(`subject.ilike.%${q}%,sender_email.ilike.%${q}%,ai_summary.ilike.%${q}%`);
     const { data, error } = await query;
@@ -77,6 +78,25 @@ router.get('/', async (req, res) => {
     res.json({ messages: data || [] });
   } catch (err) {
     console.error('[email_triage] list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /team — the AI team roster: one row per teammate with their mail counts,
+// so the board shows names you can click to expand all of their emails.
+router.get('/team', async (req, res) => {
+  try {
+    const { TEAM } = require('../lib/email/persona');
+    const roster = [];
+    for (const t of TEAM) {
+      const total = await supabase.from('email_messages').select('id', { count: 'exact', head: true }).eq('persona', t.persona);
+      const unrev = await supabase.from('email_messages').select('id', { count: 'exact', head: true }).eq('persona', t.persona).in('triage_status', ['needs_review', 'new']);
+      const latest = await supabase.from('email_messages').select('received_at').eq('persona', t.persona).order('received_at', { ascending: false }).limit(1).maybeSingle();
+      roster.push({ ...t, total: total.count || 0, unreviewed: unrev.count || 0, latest_at: latest.data ? latest.data.received_at : null });
+    }
+    res.json({ team: roster });
+  } catch (err) {
+    console.error('[email_triage] team failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -293,7 +313,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
     await supabase.from('email_messages').insert({
       mailbox: fromMailbox, direction: 'outbound', sender_email: fromMailbox,
       sender_name: senderLabel, recipients: [recipient], subject: subj, body_preview: String(body).trim().slice(0, 2000),
-      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `${persona === 'emma' ? 'Emma' : 'Claire'} replied to ${recipient}`,
+      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `${senderLabel.split(' ')[0]} replied to ${recipient}`, persona,
       community_id: m.community_id, resolved_contact_id: m.resolved_contact_id, resolved_property_id: m.resolved_property_id, resolved_vendor_id: m.resolved_vendor_id,
       resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'association_record', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString(),
     });
@@ -322,7 +342,7 @@ router.post('/pull', express.json(), async (req, res) => {
     // ALWAYS pull both info@ and claire@ (union with any env override), so a
     // single-value EMAIL_INGEST_MAILBOX on Render can't silently drop claire@.
     const extra = (process.env.EMAIL_INGEST_MAILBOX || '').split(',').map((m) => m.trim()).filter(Boolean);
-    const mailboxes = [...new Set(['info@bedrocktx.com', 'claire@bedrocktx.com', graphSend.EMMA_MAILBOX, ...extra])];
+    const mailboxes = [...new Set(['info@bedrocktx.com', 'claire@bedrocktx.com', graphSend.EMMA_MAILBOX, graphSend.ANNIE_MAILBOX, graphSend.MIRANDA_MAILBOX, ...extra])];
     const days = Math.min(60, parseInt((req.body || {}).days, 10) || 14);
     const sinceISO = new Date(Date.now() - days * 864e5).toISOString();
     const results = {}; let kept = 0, drafted = 0, invoicesLoaded = 0;

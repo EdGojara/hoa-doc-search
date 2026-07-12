@@ -55,7 +55,7 @@
   <div class="head">
     <div>
       <h1>Communications</h1>
-      <div class="sub">info@bedrocktx.com &middot; read-only triage &middot; the system understands and links every email &mdash; <strong>nothing is sent</strong></div>
+      <div class="sub">Your AI team's inbox &middot; click a name to review their emails &middot; every reply is drafted for you, <strong>nothing sends until you approve</strong></div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;">
       <button id="pullBtn" onclick="pullNow()" style="background:#fff;color:var(--navy);border:1px solid var(--line);padding:10px 16px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;">&#128260; Pull inbox</button>
@@ -111,33 +111,48 @@ function linkCell(m){
   return hint + cands;
 }
 
+const PNAME = { claire:'Claire', emma:'Emma Brooks', annie:'Annie Reeves', miranda:'Miranda Pierce' };
+const PMAIL = { claire:'claire@bedrocktx.com', emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com', miranda:'miranda@bedrocktx.com' };
+let openPersona = null;   // which teammate's emails are expanded
+let teamCache = [];
+
+// The board = a roster of the AI team; click a name to expand all their emails.
 async function loadList(){
-  // "Needs review" covers BOTH needs_review and new (unhandled) — matches the
-  // "need review" stat count, and surfaces internal / staff-to-Claire replies
-  // that land as 'new'.
+  try { const r = await af(API+'/team'); const j = await r.json(); teamCache = j.team||[]; }
+  catch(_){ teamCache = []; }
+  renderBoard();
+}
+function personaCardHtml(t){
+  const active = openPersona===t.persona;
+  return `<div onclick="togglePersona('${t.persona}')" style="cursor:pointer;border:1px solid ${active?'var(--gold)':'var(--line)'};background:${active?'#fffdf5':'#fff'};border-radius:11px;padding:12px 14px;min-width:150px;flex:1 1 150px;transition:border-color .1s;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <span style="font-weight:700;color:var(--navy);font-size:14px;">${t.emoji||''} ${esc(t.name)}</span>
+      ${t.unreviewed?`<span title="need review" style="background:#fee2e2;color:#991b1b;font-size:11px;font-weight:700;border-radius:20px;padding:2px 8px;">${t.unreviewed}</span>`:''}
+    </div>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:3px;">${esc(t.title)} &middot; ${t.total} email${t.total===1?'':'s'}</div>
+    <div style="font-size:11px;color:${active?'var(--gold)':'#9fb0c2'};margin-top:6px;font-weight:600;">${active?'▾ showing emails':'▸ click to view'}</div>
+  </div>`;
+}
+function renderBoard(){
+  const roster = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">${teamCache.map(personaCardHtml).join('')}</div>`;
+  const body = openPersona
+    ? `<div style="margin:4px 0 8px;padding:9px 13px;background:var(--navy);color:#fff;border-radius:9px;display:flex;justify-content:space-between;align-items:center;">
+         <span style="font-weight:700;font-size:14px;">${esc(PNAME[openPersona]||openPersona)}</span>
+         <span style="font-size:11.5px;opacity:.75;">${esc(PMAIL[openPersona]||'')}</span>
+       </div><div id="personaList"><div class="empty">Loading&hellip;</div></div>`
+    : `<div class="empty">Pick a teammate above to review their emails.</div>`;
+  document.getElementById('list').innerHTML = roster + body;
+  if(openPersona) loadPersonaList();
+}
+function togglePersona(p){ openPersona = (openPersona===p ? null : p); renderBoard(); }
+async function loadPersonaList(){
   const statusParam = filter === 'needs_review' ? 'needs_review,new' : filter;
-  const url = API + (statusParam?`?status=${statusParam}`:'?status=needs_review,new,linked,spam,dismissed,handled') + '&limit=200';
-  const r = await af(url); const j = await r.json();
-  const msgs = j.messages||[];
-  if(!msgs.length){ document.getElementById('list').innerHTML='<div class="empty">Nothing here yet. Once info@ is ingested, triaged messages appear here.</div>'; return; }
-  // Split by mailbox so it stops being confusing: each AI team member gets its
-  // own section (Claire = front office, Emma = accounts payable / vendors), and
-  // the info@ intake box below.
-  const isClaire = m => /claire@/i.test(m.mailbox||'');
-  const isEmma = m => /emma@/i.test(m.mailbox||'');
-  const claireMsgs = msgs.filter(isClaire);
-  const emmaMsgs = msgs.filter(isEmma);
-  const infoMsgs = msgs.filter(m => !isClaire(m) && !isEmma(m));
-  const section = (icon,title,addr,arr) => arr.length ? (
-    `<div style="margin:14px 0 8px;padding:9px 13px;background:var(--navy);color:#fff;border-radius:9px;display:flex;justify-content:space-between;align-items:center;">
-       <span style="font-weight:700;font-size:14px;">${icon} ${title}</span>
-       <span style="font-size:11.5px;opacity:.75;">${addr} &middot; ${arr.length}</span>
-     </div>` + arr.map(msgHtml).join('')
-  ) : '';
-  document.getElementById('list').innerHTML =
-    section('📨','Claire','claire@bedrocktx.com',claireMsgs) +
-    section('🧾','Emma — Accounts Payable','emma@bedrocktx.com',emmaMsgs) +
-    section('📥','Info inbox','info@bedrocktx.com',infoMsgs);
+  const url = API + `?persona=${openPersona}&` + (statusParam?`status=${statusParam}`:'status=needs_review,new,linked,spam,dismissed,handled') + '&limit=200';
+  const el = document.getElementById('personaList'); if(!el) return;
+  try{
+    const r = await af(url); const j = await r.json(); const msgs = j.messages||[];
+    el.innerHTML = msgs.length ? msgs.map(msgHtml).join('') : '<div class="empty">No emails in this view. Try the “All” filter above.</div>';
+  }catch(e){ el.innerHTML='<div class="empty">Could not load.</div>'; }
 }
 function msgHtml(m){
   const cls = m.classification||'other';
@@ -150,7 +165,7 @@ function msgHtml(m){
           <div class="from">${esc(m.sender_email||'')} &middot; ${m.received_at?new Date(m.received_at).toLocaleString():''}</div>
         </div>
         <div style="display:flex; gap:6px;">
-          <button class="act draft" onclick="doDraft('${m.id}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>
+          <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>
           <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
           ${cls==='spam'?'':`<button class="act spam" onclick="dismiss('${m.id}','spam')">Spam</button>`}
         </div>
@@ -158,7 +173,7 @@ function msgHtml(m){
       <div class="summary">${esc(m.ai_summary||'')} <a href="#" onclick="event.preventDefault();showThread('${m.id}',this)" style="font-size:11.5px;color:#0B1D34;font-weight:600;white-space:nowrap;">🧵 Show full email + thread</a></div>
       <div id="thread-${m.id}"></div>
       <div class="link-row">${linkCell(m)}</div>
-      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful):''}</div>
+      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire'):''}</div>
     </div>`;
 }
 // Expand/collapse the full message body + its email chain for reference.
@@ -195,19 +210,23 @@ async function dismiss(id, as){
   const r = await af(`${API}/${id}/dismiss`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({as})});
   if(r.ok){ loadStats(); loadList(); }
 }
-function draftBoxHtml(id, subject, body, careful){
+function draftBoxHtml(id, subject, body, careful, persona){
+  persona = persona || 'claire';
+  const who = PNAME[persona] || 'Claire';
+  const whoFirst = who.split(' ')[0];
+  const mail = PMAIL[persona] || 'claire@bedrocktx.com';
   return `<div class="draftbox">
-    ${careful?`<div class="refuse">⚠ Compliance-sensitive (legal / violation / ACC / money). Claire drafted her best answer from the account + §209 / governing docs — <strong>read carefully</strong> before sending.</div>`:''}
-    <div class="note">Claire's draft${subject?' ('+esc(subject)+')':''} — review / edit, then approve. Nothing sends until you click.</div>
+    ${careful?`<div class="refuse">⚠ Compliance-sensitive (legal / violation / ACC / money). ${esc(whoFirst)} drafted a careful answer from the account + §209 / governing docs — <strong>read carefully</strong> before sending.</div>`:''}
+    <div class="note">${esc(whoFirst)}'s draft${subject?' ('+esc(subject)+')':''} — review / edit, then approve. Nothing sends until you click.</div>
     <textarea id="dt-${id}">${esc(body||'')}</textarea>
-    <div class="note" style="margin-top:5px;">Sends from <strong>claire@bedrocktx.com</strong> with Claire's AI signature appended.</div>
+    <div class="note" style="margin-top:5px;">Sends from <strong>${esc(mail)}</strong> with ${esc(whoFirst)}'s AI signature appended.</div>
     <div style="margin-top:6px; display:flex; gap:6px;">
-      <button class="act send" onclick="doSend('${id}', this, ${careful?'true':'false'})">✅ Approve &amp; send as Claire</button>
+      <button class="act send" onclick="doSend('${id}', this, ${careful?'true':'false'}, '${persona}')">✅ Approve &amp; send as ${esc(whoFirst)}</button>
       <button class="act draft" onclick="navigator.clipboard.writeText(document.getElementById('dt-${id}').value); this.textContent='Copied ✓';">Copy</button>
       <button class="act dismiss" onclick="document.getElementById('draft-${id}').innerHTML='';">Close</button>
     </div></div>`;
 }
-async function doDraft(id){
+async function doDraft(id, persona){
   const box = document.getElementById('draft-'+id);
   const prevHtml = box.innerHTML;
   // Preserve the current text: if a draft is already open (possibly edited),
@@ -221,16 +240,17 @@ async function doDraft(id){
   // On any failure, restore the previous draft instead of wiping it.
   if(!r.ok){ box.innerHTML = prevHtml || `<div class="draftbox"><div class="refuse">Couldn't draft: ${esc(j.error||'')}</div></div>`; if(prevHtml) alert('Couldn’t regenerate: '+(j.error||'error')+'. Your current draft is unchanged.'); return; }
   if(j.draftable===false){ box.innerHTML = `<div class="draftbox"><div class="refuse">No draft — ${esc(j.reason)}.</div></div>`; return; }
-  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful);
+  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona);
 }
-async function doSend(id, btn, careful){
-  if(careful && !confirm('This is a compliance-sensitive reply (legal / violation / ACC / money). Send it as Claire now?')) return;
+async function doSend(id, btn, careful, persona){
+  const who = (PNAME[persona]||'Claire').split(' ')[0];
+  if(careful && !confirm(`This is a compliance-sensitive reply (legal / violation / ACC / money). Send it as ${who} now?`)) return;
   const body = document.getElementById('dt-'+id).value;
   btn.disabled = true; btn.textContent = 'Sending…';
   const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body})});
   const j = await r.json();
-  if(r.ok){ document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as Claire to ${esc(j.to)}.</div></div>`; loadStats(); setTimeout(loadList, 800); }
-  else { btn.disabled=false; btn.textContent='✅ Approve & send as Claire'; alert(j.detail || j.error || 'Send failed'); }
+  if(r.ok){ document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}.</div></div>`; loadStats(); setTimeout(loadList, 800); }
+  else { btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert(j.detail || j.error || 'Send failed'); }
 }
 function showComingSoon(){
   document.querySelector('.wrap').innerHTML =
