@@ -67,9 +67,15 @@ function render(){
         </div>
         <label>To</label><input id="to" placeholder="name@example.com">
         <label>Recipient name (optional, helps the greeting)</label><input id="rname" placeholder="e.g. Karla at DRB">
-        <label>Your thought</label>
+        <label>Your thought <span class="note" style="font-weight:400;">(type it, or tap the mic and talk)</span></label>
         <textarea id="thought" rows="4" placeholder="e.g. Ask the bank for the June statement for the Waterview operating account, we need it for the rec"></textarea>
-        <div class="row" style="margin-top:10px;"><button class="btn" id="draftBtn" onclick="doDraft()">Draft it</button><span id="draftMsg" class="note"></span></div>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn" id="draftBtn" onclick="doDraft()">Draft it</button>
+          <button class="btn ghost" id="micBtn" onclick="toggleMic()">🎙 Dictate</button>
+          <span id="draftMsg" class="note"></span>
+        </div>
+        <div id="voiceMsg" class="result"></div>
+        <div id="voiceTasks"></div>
         <div id="draftArea"></div>
       </div>
       <div class="card">
@@ -167,14 +173,70 @@ async function doDraft(){
     const r=await af('/api/tessa/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thought, mode:_mode, recipient_name:$('rname').value.trim()||null})});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||'draft failed');
     $('draftMsg').textContent='';
-    $('draftArea').innerHTML=`<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px;">
-      <label>Subject</label><input id="d-subj" value="${esc(j.subject)}">
-      <label>Body</label><textarea id="d-body" rows="10">${esc(j.body)}</textarea>
-      <label style="display:flex;gap:7px;align-items:center;font-weight:400;color:var(--ink);margin-top:10px;"><input type="checkbox" id="d-fu"> Track a follow-up on this</label>
-      <div class="row" style="margin-top:10px;"><button class="btn gold" id="sendBtn" onclick="doSend()">Send ${_mode==='ed'?'as me':'as Tessa'}</button><span id="sendMsg" class="result"></span></div>
-    </div>`;
+    showEmailDraft(j.subject, j.body);
   }catch(e){ $('draftMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
   finally{ btn.disabled=false; }
+}
+function showEmailDraft(subject, body){
+  $('draftArea').innerHTML=`<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px;">
+    <label>Subject</label><input id="d-subj" value="${esc(subject)}">
+    <label>Body</label><textarea id="d-body" rows="10">${esc(body)}</textarea>
+    <label style="display:flex;gap:7px;align-items:center;font-weight:400;color:var(--ink);margin-top:10px;"><input type="checkbox" id="d-fu"> Track a follow-up on this</label>
+    <div class="row" style="margin-top:10px;"><button class="btn gold" id="sendBtn" onclick="doSend()">Send ${_mode==='ed'?'as me':'as Tessa'}</button><span id="sendMsg" class="result"></span></div>
+  </div>`;
+}
+
+// ---- Voice dictation --------------------------------------------------------
+let _rec=null, _chunks=[], _recording=false;
+async function toggleMic(){
+  if(_recording) return stopRec();
+  const btn=$('micBtn');
+  if(!navigator.mediaDevices || !window.MediaRecorder){ $('voiceMsg').innerHTML='<span class="err">This browser can’t record audio. Try Chrome or Edge.</span>'; return; }
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    _chunks=[]; _rec=new MediaRecorder(stream);
+    _rec.ondataavailable=e=>{ if(e.data && e.data.size) _chunks.push(e.data); };
+    _rec.onstop=async()=>{ stream.getTracks().forEach(t=>t.stop()); await sendVoice(); };
+    _rec.start(); _recording=true;
+    btn.textContent='⏹ Stop'; btn.classList.add('gold'); $('voiceMsg').innerHTML='<span class="note">Listening… tap Stop when you’re done.</span>';
+  }catch(e){ $('voiceMsg').innerHTML='<span class="err">Microphone blocked. Allow mic access and try again.</span>'; }
+}
+function stopRec(){ if(_rec && _recording){ _recording=false; $('micBtn').textContent='🎙 Dictate'; $('micBtn').classList.remove('gold'); $('voiceMsg').innerHTML='<span class="note">Transcribing…</span>'; try{_rec.stop();}catch(_){} } }
+async function sendVoice(){
+  try{
+    const type=(_rec && _rec.mimeType)||'audio/webm';
+    const blob=new Blob(_chunks,{type});
+    const fd=new FormData(); fd.append('audio', blob, 'dictation.webm');
+    const r=await af('/api/tessa/voice',{method:'POST',body:fd});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'voice failed');
+    if(j.transcript) $('thought').value=j.transcript;
+    $('voiceMsg').innerHTML = j.summary ? '<span class="ok">Heard: '+esc(j.summary)+'</span>' : (j.note?'<span class="note">'+esc(j.note)+'</span>':'');
+    if(j.email){ setMode('ed'); showEmailDraft(j.email.subject, j.email.body); if(j.email.recipient_hint) $('rname').value=j.email.recipient_hint; }
+    renderVoiceTasks(j.tasks||[]);
+  }catch(e){ $('voiceMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+}
+function renderVoiceTasks(tasks){
+  if(!tasks.length){ $('voiceTasks').innerHTML=''; return; }
+  window._voiceTasks=tasks;
+  $('voiceTasks').innerHTML=`<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px;">
+    <div class="note" style="margin-bottom:6px;">Follow-ups she pulled out:</div>
+    ${tasks.map((t,i)=>`<label class="fu" style="display:flex;gap:8px;align-items:flex-start;font-weight:400;">
+      <input type="checkbox" class="vt-chk" data-i="${i}" checked style="width:auto;margin-top:3px;">
+      <span><span class="t">${esc(t.title)}</span><br><span class="note">${esc(t.category)}${t.waiting_on?' · waiting on '+esc(t.waiting_on):''}${t.due_hint?' · '+esc(t.due_hint):''}</span></span>
+    </label>`).join('')}
+    <button class="btn gold sm" style="margin-top:6px;" id="vtAdd" onclick="addVoiceTasks()">Add checked to follow-ups</button>
+    <span id="vtMsg" class="result"></span>
+  </div>`;
+}
+async function addVoiceTasks(){
+  const picked=[...document.querySelectorAll('.vt-chk')].filter(c=>c.checked).map(c=>window._voiceTasks[+c.dataset.i]).filter(Boolean);
+  if(!picked.length){ $('vtMsg').innerHTML='<span class="note">Nothing checked.</span>'; return; }
+  const btn=$('vtAdd'); btn.disabled=true; $('vtMsg').innerHTML='<span class="note">Adding…</span>';
+  try{
+    const r=await af('/api/tessa/followups/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:picked})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'add failed');
+    $('vtMsg').innerHTML='<span class="ok">✅ Added '+j.added+'.</span>'; $('voiceTasks').innerHTML=''; loadFu();
+  }catch(e){ $('vtMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; btn.disabled=false; }
 }
 async function doSend(){
   const to=$('to').value.trim(); if(!to){ $('sendMsg').innerHTML='<span class="err">Add a recipient (To) above.</span>'; return; }

@@ -7,12 +7,16 @@
 // chase-ups, not AP.
 // ============================================================================
 const express = require('express');
+const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { requireOwner } = require('./_require_admin');
 const { draftEmail } = require('../lib/ea/tessa');
 const { pollTessaInbox } = require('../lib/ea/tessa_inbox');
+const { transcribeAudio, routeDictation, sttConfigured } = require('../lib/ea/tessa_voice');
 const graphSend = require('../lib/email/graph_send');
 const { safeErrorMessage } = require('./_safe_error');
+
+const uploadAudio = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
@@ -78,6 +82,48 @@ router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
     console.error('[tessa] send failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
+});
+
+// POST /voice — Ed dictates; transcribe, then route into an email draft and/or
+// follow-up tasks. Nothing is sent or saved; the UI confirms. Owner-only.
+router.post('/voice', uploadAudio.single('audio'), async (req, res) => {
+  const admin = await requireOwner(req, res); if (!admin) return;
+  try {
+    if (!sttConfigured()) return res.status(400).json({ error: 'Voice is not connected yet (transcription key missing).' });
+    if (!req.file || !req.file.buffer || !req.file.buffer.length) return res.status(400).json({ error: 'No audio came through. Try recording again.' });
+    let transcript = '';
+    try { transcript = await transcribeAudio(req.file.buffer, req.file.mimetype); }
+    catch (e) {
+      console.error('[tessa] transcribe failed:', e.message, e.detail || '');
+      return res.status(502).json({ error: 'Tessa could not hear that clearly. Try again in a quieter spot.' });
+    }
+    if (!transcript) return res.status(200).json({ transcript: '', summary: '', email: null, tasks: [], note: 'Nothing was picked up.' });
+    const routed = await routeDictation(transcript);
+    res.json({ transcript, summary: routed.summary || '', email: routed.email, tasks: routed.tasks || [] });
+  } catch (err) {
+    console.error('[tessa] voice failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /followups/bulk — add several follow-ups at once (from a dictation).
+router.post('/followups/bulk', express.json({ limit: '32kb' }), async (req, res) => {
+  const admin = await requireOwner(req, res); if (!admin) return;
+  try {
+    const items = Array.isArray(req.body && req.body.tasks) ? req.body.tasks : [];
+    if (!items.length) return res.status(400).json({ error: 'no_tasks' });
+    const cats = ['admin', 'banking', 'vendor', 'personal', 'other'];
+    const rows = items.filter((x) => x && x.title && String(x.title).trim()).slice(0, 25).map((x) => ({
+      title: String(x.title).trim(), detail: x.detail || null,
+      category: cats.includes(x.category) ? x.category : 'other',
+      status: x.waiting_on ? 'waiting' : 'open', waiting_on: x.waiting_on || null,
+      due_date: x.due_date || null, created_by: 'tessa-voice',
+    }));
+    if (!rows.length) return res.status(400).json({ error: 'no_valid_tasks' });
+    const { data, error } = await supabase.from('ea_followups').insert(rows).select('id');
+    if (error) throw error;
+    res.json({ added: data ? data.length : 0 });
+  } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // ---- Follow-up ledger --------------------------------------------------------
