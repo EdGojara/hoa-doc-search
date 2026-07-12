@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tessa McCall — Executive Assistant</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width:1080px; margin:0 auto; padding:20px 18px 70px; }
+  a.back { display:inline-flex; gap:6px; color:#5a7390; text-decoration:none; font-size:13px; font-weight:600; margin-bottom:12px; }
+  h1 { margin:0; color:var(--navy); font-size:22px; }
+  .sub { color:var(--muted); font-size:12.5px; margin:4px 0 16px; }
+  .grid { display:grid; grid-template-columns:1.3fr 1fr; gap:18px; align-items:start; }
+  @media (max-width:820px){ .grid { grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  h2 { color:var(--navy); font-size:15px; margin:0 0 10px; }
+  label { display:block; font-size:12px; color:var(--muted); font-weight:600; margin:10px 0 4px; }
+  textarea, input, select { width:100%; padding:8px 10px; font-size:13.5px; border:1px solid var(--line); border-radius:7px; font-family:inherit; }
+  textarea { resize:vertical; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .btn { border:none; border-radius:7px; padding:9px 16px; font-size:13.5px; font-weight:600; cursor:pointer; background:var(--navy); color:#fff; }
+  .btn.gold { background:var(--gold); color:var(--navy); }
+  .btn.ghost { background:#fff; color:var(--navy); border:1px solid var(--line); }
+  .btn.sm { padding:4px 10px; font-size:12px; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .modewrap { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .modewrap button { border:none; background:#fff; padding:7px 14px; font-size:12.5px; cursor:pointer; color:var(--muted); }
+  .modewrap button.on { background:var(--navy); color:#fff; }
+  .note { font-size:11.5px; color:var(--muted); margin-top:6px; }
+  .fu { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
+  .fu .t { font-weight:600; font-size:13.5px; color:var(--ink); }
+  .pill { display:inline-block; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; padding:2px 7px; border-radius:20px; background:#eef2f7; color:#475569; }
+  .p-waiting{background:#fef3c7;color:#92400e;} .p-open{background:#dbeafe;color:#1e40af;}
+  .result { font-size:13px; margin-top:8px; }
+  .ok { color:#166534; } .err { color:#991b1b; }
+  .soon { text-align:center; padding:70px 20px; color:var(--muted); } .soon b { display:block; color:var(--navy); font-size:18px; margin-bottom:6px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/" onclick="if(document.referrer&&history.length>1){history.back();return false;}">&larr; Back to trustEd</a>
+  <h1>Tessa McCall</h1>
+  <div class="sub">Your executive assistant. Give her a thought and she drafts the email. Send it as you, or as Tessa on your behalf. She tracks your admin, banking, and vendor follow-ups.</div>
+  <div id="body"><div class="soon">Loading&hellip;</div></div>
+</div>
+<script>
+let _supa=null, af=null, _mode='ed';
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const $=id=>document.getElementById(id);
+function showComingSoon(){ $('body').innerHTML='<div class="soon"><b>Owner only</b>Tessa is Ed’s assistant.</div>'; }
+
+function render(){
+  $('body').innerHTML = `<div class="grid">
+    <div>
+      <div class="card">
+        <h2>Draft an email</h2>
+        <div class="row" style="justify-content:space-between;">
+          <div class="modewrap">
+            <button id="m-ed" class="on" onclick="setMode('ed')">Send as me</button>
+            <button id="m-tessa" onclick="setMode('tessa')">Send as Tessa</button>
+          </div>
+          <span class="note" id="mode-note">Ghostwritten in your voice, from your mailbox.</span>
+        </div>
+        <label>To</label><input id="to" placeholder="name@example.com">
+        <label>Recipient name (optional, helps the greeting)</label><input id="rname" placeholder="e.g. Karla at DRB">
+        <label>Your thought</label>
+        <textarea id="thought" rows="4" placeholder="e.g. Ask the bank for the June statement for the Waterview operating account, we need it for the rec"></textarea>
+        <div class="row" style="margin-top:10px;"><button class="btn" id="draftBtn" onclick="doDraft()">Draft it</button><span id="draftMsg" class="note"></span></div>
+        <div id="draftArea"></div>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between;"><h2 style="margin:0;">Follow-ups</h2><button class="btn ghost sm" onclick="toggleAddFu()">+ Add</button></div>
+        <div id="fuAdd" style="display:none; margin-top:10px;">
+          <input id="fu-title" placeholder="What to follow up on">
+          <div class="row" style="margin-top:6px;">
+            <select id="fu-cat" style="flex:1;"><option value="admin">Admin</option><option value="banking">Banking</option><option value="vendor">Vendor</option><option value="personal">Personal</option><option value="other">Other</option></select>
+            <input id="fu-due" type="date" style="flex:1;">
+          </div>
+          <input id="fu-wait" placeholder="Waiting on (who/what)" style="margin-top:6px;">
+          <button class="btn gold sm" style="margin-top:8px;" onclick="addFu()">Add follow-up</button>
+        </div>
+        <div id="fuList" style="margin-top:10px;"><div class="note">Loading&hellip;</div></div>
+      </div>
+    </div>
+  </div>`;
+  loadFu();
+}
+function setMode(m){ _mode=m; $('m-ed').className=m==='ed'?'on':''; $('m-tessa').className=m==='tessa'?'on':''; $('mode-note').textContent = m==='ed'?'Ghostwritten in your voice, from your mailbox.':'Sent as Tessa, on your behalf.'; }
+
+async function doDraft(){
+  const thought=$('thought').value.trim(); if(!thought) return;
+  const btn=$('draftBtn'); btn.disabled=true; $('draftMsg').textContent='Drafting…';
+  try{
+    const r=await af('/api/tessa/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thought, mode:_mode, recipient_name:$('rname').value.trim()||null})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'draft failed');
+    $('draftMsg').textContent='';
+    $('draftArea').innerHTML=`<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px;">
+      <label>Subject</label><input id="d-subj" value="${esc(j.subject)}">
+      <label>Body</label><textarea id="d-body" rows="10">${esc(j.body)}</textarea>
+      <label style="display:flex;gap:7px;align-items:center;font-weight:400;color:var(--ink);margin-top:10px;"><input type="checkbox" id="d-fu"> Track a follow-up on this</label>
+      <div class="row" style="margin-top:10px;"><button class="btn gold" id="sendBtn" onclick="doSend()">Send ${_mode==='ed'?'as me':'as Tessa'}</button><span id="sendMsg" class="result"></span></div>
+    </div>`;
+  }catch(e){ $('draftMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+  finally{ btn.disabled=false; }
+}
+async function doSend(){
+  const to=$('to').value.trim(); if(!to){ $('sendMsg').innerHTML='<span class="err">Add a recipient (To) above.</span>'; return; }
+  const btn=$('sendBtn'); btn.disabled=true; $('sendMsg').textContent='Sending…';
+  try{
+    const r=await af('/api/tessa/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to, subject:$('d-subj').value, body:$('d-body').value, mode:_mode, create_followup:$('d-fu').checked, followup_title:'Follow up: '+$('d-subj').value})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'send failed');
+    $('sendMsg').innerHTML='<span class="ok">✅ Sent '+(_mode==='ed'?'as you':'as Tessa')+'.</span>';
+    $('thought').value=''; $('to').value=''; $('rname').value=''; $('draftArea').innerHTML=''; if(j.followup_id) loadFu();
+  }catch(e){ $('sendMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; btn.disabled=false; }
+}
+
+function toggleAddFu(){ const a=$('fuAdd'); a.style.display=a.style.display==='none'?'block':'none'; }
+async function addFu(){
+  const title=$('fu-title').value.trim(); if(!title) return;
+  await af('/api/tessa/followups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title, category:$('fu-cat').value, due_date:$('fu-due').value||null, waiting_on:$('fu-wait').value.trim()||null})});
+  $('fu-title').value=''; $('fu-wait').value=''; $('fu-due').value=''; toggleAddFu(); loadFu();
+}
+async function loadFu(){
+  try{
+    const r=await af('/api/tessa/followups?status=active'); const j=await r.json();
+    const list=j.followups||[];
+    $('fuList').innerHTML = list.length ? list.map(f=>`<div class="fu">
+      <div class="row" style="justify-content:space-between;"><span class="t">${esc(f.title)}</span><span class="pill p-${f.status}">${esc(f.status)}</span></div>
+      <div class="note">${esc(f.category)}${f.waiting_on?' · waiting on '+esc(f.waiting_on):''}${f.due_date?' · due '+esc(f.due_date):''}</div>
+      <div class="row" style="margin-top:6px;"><button class="btn ghost sm" onclick="setFu('${f.id}','waiting')">Waiting</button><button class="btn ghost sm" onclick="setFu('${f.id}','done')">Done</button></div>
+    </div>`).join('') : '<div class="note">Nothing open. Add one, or send an email and track a follow-up.</div>';
+  }catch(e){ $('fuList').innerHTML='<div class="err note">Could not load follow-ups.</div>'; }
+}
+async function setFu(id,status){ await af('/api/tessa/followups/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})}); loadFu(); }
+
+(async function boot(){
+  try{
+    const cfg=await (await fetch('/api/auth/config')).json();
+    if(!cfg||!cfg.enabled||!window.supabase) return showComingSoon();
+    _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    const {data:{session}}=await _supa.auth.getSession();
+    if(!session||!session.access_token) return showComingSoon();
+    af=async(u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
+    const meRes=await fetch('/api/me',{headers:{Authorization:'Bearer '+session.access_token}});
+    const me=meRes.ok?(await meRes.json()).user:null;
+    if(!me||me.role!=='admin') return showComingSoon();   // Ed's own assistant — owner only
+    render();
+  }catch(e){ showComingSoon(); }
+})();
+</script>
+</body>
+</html>

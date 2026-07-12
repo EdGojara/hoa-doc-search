@@ -980,6 +980,9 @@ app.get('/admin/collections', (req, res) => {
 app.get('/admin/payment-plans', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'payment-plans.html'));
 });
+app.get('/admin/tessa', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'tessa.html'));
+});
 app.get('/admin/ap', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'ap-invoices.html'));
 });
@@ -1365,6 +1368,9 @@ const { router: collectionsIngestRouter } = require('./api/collections_ingest');
 app.use('/api/collections-ingest', collectionsIngestRouter);
 const { router: paymentPlansRouter } = require('./api/payment_plans');
 app.use('/api/payment-plans', paymentPlansRouter);
+
+const { router: tessaRouter } = require('./api/tessa');
+app.use('/api/tessa', tessaRouter);
 
 const { router: apIntakeRouter } = require('./api/ap_intake');
 app.use('/api/ap-intake', apIntakeRouter);
