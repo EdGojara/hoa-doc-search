@@ -1780,4 +1780,4 @@ router.post('/:id/send-decision', express.json({ limit: '2mb' }), async (req, re
   }
 });
 
-module.exports = { router, runAssessment };
+module.exports = { router, runAssessment, nextReferenceNumber, normalizeAddress };
