@@ -4826,6 +4826,7 @@
         deed_restriction_certified_demand_letter: c.certified_sent || 0,
         color_copies: c.pages_printed || 0,
         arc_application_fee: arcTotal,
+        payment_plan_fee: c.payment_plans || 0,
       };
       const applied = [];
       billingDraftPreviewLines.forEach((li) => {
@@ -4843,6 +4844,19 @@
           li.amount = Math.round(q * Number(li.unit_price || 0) * 100) / 100;
           if (q > 0) applied.push(`${li.description} = ${q}`);
         }
+      });
+      // Activity-driven charges that AREN'T default invoice lines (e.g. payment
+      // plans) — add the line from the rate card only when there's activity, so
+      // they appear when there's something to bill and don't clutter with $0.
+      Object.entries(map).forEach(([cat, count]) => {
+        const q = Number(count) || 0;
+        if (q <= 0) return;
+        if (billingDraftPreviewLines.some((l) => l.category === cat)) return;
+        const rc = (billingPiCatalog || []).find((it) => it.category === cat);
+        if (!rc) return;
+        const unit = Number(rc.unit_price || 0);
+        billingDraftPreviewLines.push({ source: 'owner_charge', source_ref_id: null, category: cat, description: rc.description, qty: q, unit_price: unit, amount: Math.round(q * unit * 100) / 100, sort_order: 2000 });
+        applied.push(`${rc.description} = ${q}`);
       });
       const rateStr = (c.postage_rate_cents != null ? '$' + (c.postage_rate_cents / 100).toFixed(2) : null);
       billingWorksheetAutofillNote = applied.length
@@ -6004,6 +6018,7 @@
         deed_restriction_certified_demand_letter: c.certified_sent || 0,
         color_copies: c.pages_printed || 0,
         arc_application_fee: arcTotal,
+        payment_plan_fee: c.payment_plans || 0,
       };
       const applied = [];
       billingCurrentInvoiceLineItems.forEach((li) => {

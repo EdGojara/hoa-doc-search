@@ -2428,6 +2428,21 @@ router.get('/activity-report', async (req, res) => {
       return q;
     });
 
+    // Payment plans set up in the period — the HOA's payment-plan fee bills per
+    // plan (Ed 2026-07-13, sourced from the payment plan module). NSF/returned
+    // checks will come from the bank-activity import once that lands.
+    let paymentPlans = [];
+    try {
+      paymentPlans = await fetchAll(() => {
+        let q = supabase.from('payment_plans')
+          .select('community_id, created_at')
+          .gte('created_at', start + 'T00:00:00Z')
+          .lt('created_at', endEx + 'T00:00:00Z');
+        if (communityId) q = q.eq('community_id', communityId);
+        return q;
+      });
+    } catch (_) { paymentPlans = []; }
+
     // Community name lookup.
     const { data: comms } = await supabase.from('communities').select('id, name');
     const nameById = Object.fromEntries((comms || []).map((c) => [c.id, c.name]));
@@ -2449,6 +2464,7 @@ router.get('/activity-report', async (req, res) => {
       // Builder ARC (Lennar / DRB) is billed to the BUILDER, never the HOA, so it
       // is broken out separately and must NOT feed the arc_* counts above.
       builder_arc: 0,
+      payment_plans: 0, // plans set up this period — bills the payment-plan fee
       _letters: new Map(), // envelope key -> { delivery_method, page_count }
     }));
 
@@ -2477,6 +2493,7 @@ router.get('/activity-report', async (req, res) => {
     // counted for the break-out (Ed 2026-07-10: separate homeowner vs builder ARC).
     accDecisions.forEach((d) => tallyArc(d.community_id, d.decision_type));
     decisions.forEach((d) => { row(d.community_id).builder_arc += 1; });
+    paymentPlans.forEach((p) => { if (p.community_id) row(p.community_id).payment_plans += 1; });
 
     const communities = Object.values(byComm)
       .map(({ _letters, ...r }) => {
@@ -2504,6 +2521,7 @@ router.get('/activity-report', async (req, res) => {
           // can price date-aware off a single source — not just the DRV line.
           postage_rate_cents: firstClassRateCents(end),
           pages_printed,
+          payment_plans: r.payment_plans || 0,
           pages_unknown: letters_sent > 0 && pages_printed === 0,
         };
       })
@@ -2521,7 +2539,8 @@ router.get('/activity-report', async (req, res) => {
       arc_conditions: t.arc_conditions + r.arc_conditions,
       arc_other: t.arc_other + r.arc_other,
       builder_arc: t.builder_arc + r.builder_arc,
-    }), { violations: 0, letters_sent: 0, certified_sent: 0, first_class_sent: 0, first_class_postage_cents: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0, builder_arc: 0 });
+      payment_plans: t.payment_plans + (r.payment_plans || 0),
+    }), { violations: 0, letters_sent: 0, certified_sent: 0, first_class_sent: 0, first_class_postage_cents: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0, builder_arc: 0, payment_plans: 0 });
 
     res.json({ period: { start, end }, communities, totals, page_tracking: hasPageCount, postage_rate_cents: firstClassRateCents(end) });
   } catch (err) {
