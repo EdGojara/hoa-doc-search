@@ -1525,14 +1525,18 @@ CRITICAL RULES:
   }
 });
 
-app.post('/acc-review', upload.any(), async (req, res) => {
-  try {
-    const { community, details: typedDetails, notes, additionalContext, decision, conditions } = req.body;
-    const files = req.files || [];
+// ── Shared ACC decision engine (faithful lift 2026-07-13) ────────────────────
+// The ONE path all three intake doors run through: staff upload, homeowner
+// portal, and Annie's email. The extraction / governing-doc retrieval /
+// decision-draft / letter-writing logic below is UNCHANGED from the original
+// /acc-review route — only the req/res wrapper moved out (to the thin route at
+// the bottom) so non-HTTP callers (the email + portal intake) invoke the exact
+// same engine. Throws { status } on bad input; returns the responseBody object.
+async function assessAndDraftAcc({ community, typedDetails, notes, additionalContext, decision, conditions, files = [], isAdmin = false }) {
     const pdfFile = files.find((f) => f.fieldname === 'pdf');
     const imageFiles = files.filter((f) => f.fieldname === 'images');
     if (!pdfFile && imageFiles.length === 0 && !(typedDetails && typedDetails.trim())) {
-      return res.status(400).json({ error: 'Provide application details, a PDF, or photos.' });
+      const e = new Error('Provide application details, a PDF, or photos.'); e.status = 400; throw e;
     }
 
     // Build the multimodal content array for extraction. The vision model sees
@@ -2021,8 +2025,7 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
     //    explicit INTERNAL header so even an accidental copy travels with a
     //    DO-NOT-DISTRIBUTE marker.
     // ----------------------------------------------------------------------
-    const role = await resolveUserRole(req);
-    const isAdmin = role === 'admin';
+    // isAdmin is supplied by the caller (the route resolves it from req).
 
     // Run the customer-bound letter body through the leak filter (audience='customer').
     const letterScreen = letterBody
@@ -2051,7 +2054,20 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
     if (isAdmin) {
       responseBody.review = `*** INTERNAL — BEDROCK WORKPAPER — DO NOT DISTRIBUTE — REMOVE BEFORE SENDING TO HOMEOWNER OR BOARD ***\n\n${reviewText}\n\n*** END INTERNAL — DO NOT DISTRIBUTE ***`;
     }
-    // role echo so the UI can adjust without re-querying /api/me
+    return responseBody;
+}
+// Register the engine so non-HTTP callers (email + portal intake, in lib/) can
+// run the identical decision engine without touching its code or the auth gate.
+try { require('./lib/acc/engine_registry').setEngine(assessAndDraftAcc); } catch (_) {}
+
+// Thin HTTP wrapper — staff upload. Parses the request, runs the shared engine,
+// echoes the viewer role. (Email + portal call assessAndDraftAcc directly.)
+app.post('/acc-review', upload.any(), async (req, res) => {
+  try {
+    const { community, details: typedDetails, notes, additionalContext, decision, conditions } = req.body;
+    const files = req.files || [];
+    const role = await resolveUserRole(req);
+    const responseBody = await assessAndDraftAcc({ community, typedDetails, notes, additionalContext, decision, conditions, files, isAdmin: role === 'admin' });
     responseBody.viewer_role = role;
     res.json(responseBody);
   } catch (err) {
@@ -2072,7 +2088,7 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
     } else if (/openai|embedding/i.test(msg)) {
       userMessage = 'Embedding service failed during document retrieval. Click Review again.';
     }
-    res.status(500).json({ error: userMessage, debug_id: Date.now().toString(36) });
+    res.status(err && err.status ? err.status : 500).json({ error: userMessage, debug_id: Date.now().toString(36) });
   }
 });
 
