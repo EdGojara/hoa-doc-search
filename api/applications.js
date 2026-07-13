@@ -821,9 +821,11 @@ router.post('/public/:slug/submit', upload.any(), async (req, res) => {
       return res.status(400).json({ error: 'This community has not enabled ARC applications. Contact management.' });
     }
 
-    // Reference number (e.g., LPF-ARC-2026-0042)
+    // Reference number (e.g., LPF-ARC-2026-0042). Counter service_type must be a
+    // value migration 218's constraint allows ('resident_acc'); the application
+    // row keeps service_type='arc'.
     const prefix = (comm.name || 'APP').replace(/[^A-Z]/gi, '').slice(0, 3).toUpperCase() + '-ARC';
-    const reference = await nextReferenceNumber(comm.id, 'arc', prefix);
+    const reference = await nextReferenceNumber(comm.id, 'resident_acc', prefix);
 
     // Roster match (optional — used as flag only, no auth gate)
     const normalized = normalizeAddress(b.property_address);
