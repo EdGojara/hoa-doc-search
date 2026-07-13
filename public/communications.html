@@ -111,6 +111,7 @@ function linkCell(m){
   return hint + cands;
 }
 
+let coversByMsg = {};   // messageId -> [{id, subject}] other emails this reply covers
 const PNAME = { claire:'Claire', emma:'Emma Brooks', annie:'Annie Reeves', miranda:'Miranda Pierce' };
 const PMAIL = { claire:'claire@bedrocktx.com', emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com', miranda:'miranda@bedrocktx.com' };
 let openPersona = null;   // which teammate's emails are expanded
@@ -233,13 +234,18 @@ async function dismiss(id, as){
   const r = await af(`${API}/${id}/dismiss`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({as})});
   if(r.ok){ loadStats(); loadList(); }
 }
-function draftBoxHtml(id, subject, body, careful, persona){
+function draftBoxHtml(id, subject, body, careful, persona, covers){
   persona = persona || 'claire';
   const who = PNAME[persona] || 'Claire';
   const whoFirst = who.split(' ')[0];
   const mail = PMAIL[persona] || 'claire@bedrocktx.com';
+  covers = covers || [];
+  const coversNote = covers.length
+    ? `<div class="note" style="background:#eef6ff;border:1px solid #bcdcff;border-radius:6px;padding:6px 9px;color:#0b4a8f;">📎 This homeowner sent ${covers.length+1} emails close together — this one reply covers them all${covers.length? ' ('+covers.map(c=>esc(c.subject||'(no subject)')).join(', ')+')':''}. Sending clears all ${covers.length+1}.</div>`
+    : '';
   return `<div class="draftbox">
     ${careful?`<div class="refuse">⚠ Compliance-sensitive (legal / violation / ACC / money). ${esc(whoFirst)} drafted a careful answer from the account + §209 / governing docs — <strong>read carefully</strong> before sending.</div>`:''}
+    ${coversNote}
     <div class="note">${esc(whoFirst)}'s draft${subject?' ('+esc(subject)+')':''} — review / edit, then approve. Nothing sends until you click.</div>
     <textarea id="dt-${id}">${esc(body||'')}</textarea>
     <div class="note" style="margin-top:5px;">Sends from <strong>${esc(mail)}</strong> with ${esc(whoFirst)}'s AI signature appended.</div>
@@ -285,7 +291,8 @@ async function doDraft(id, persona){
   // On any failure, restore the previous draft instead of wiping it.
   if(!r.ok){ box.innerHTML = prevHtml || `<div class="draftbox"><div class="refuse">Couldn't draft: ${esc(j.error||'')}</div></div>`; if(prevHtml) alert('Couldn’t regenerate: '+(j.error||'error')+'. Your current draft is unchanged.'); return; }
   if(j.draftable===false){ box.innerHTML = `<div class="draftbox"><div class="refuse">No draft — ${esc(j.reason)}.</div></div>`; return; }
-  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona);
+  coversByMsg[id] = j.covers || [];
+  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id]);
 }
 // Rewrite the open draft incorporating the reviewer's notes (Ed's thoughts).
 async function doRewrite(id, persona){
@@ -302,16 +309,19 @@ async function doRewrite(id, persona){
   catch(e){ box.innerHTML = prevHtml; alert('Rewrite failed: '+(e.message||'network')); return; }
   if(!r.ok){ box.innerHTML = prevHtml; alert('Couldn’t rewrite: '+(j.error||'error')+'. Your draft is unchanged.'); return; }
   if(j.draftable===false){ box.innerHTML = prevHtml; alert('No draft — '+(j.reason||'')); return; }
-  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona);
+  coversByMsg[id] = j.covers || [];
+  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id]);
 }
 async function doSend(id, btn, careful, persona){
   const who = (PNAME[persona]||'Claire').split(' ')[0];
+  const covers = coversByMsg[id] || [];
   if(careful && !confirm(`This is a compliance-sensitive reply (legal / violation / ACC / money). Send it as ${who} now?`)) return;
   const body = document.getElementById('dt-'+id).value;
   btn.disabled = true; btn.textContent = 'Sending…';
-  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body})});
+  const also_handle = covers.map(c=>c.id);
+  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, also_handle})});
   const j = await r.json();
-  if(r.ok){ document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}.</div></div>`; loadStats(); setTimeout(loadList, 800); }
+  if(r.ok){ document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}${j.also_handled?` — cleared ${j.also_handled+1} emails`:''}.</div></div>`; delete coversByMsg[id]; loadStats(); setTimeout(loadList, 800); }
   else { btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert(j.detail || j.error || 'Send failed'); }
 }
 // ---- Forward to a teammate (loop someone in before replying) --------------

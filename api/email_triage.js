@@ -252,6 +252,29 @@ router.post('/ingest', express.json(), async (req, res) => {
   }
 });
 
+// Other UNHANDLED inbound emails from the SAME sender within a short window —
+// homeowners often send a second (or third) note because they forgot something
+// or want to add info. One reply should cover them all so the homeowner gets a
+// single coherent answer, not several. Returns [{id, subject, body, received_at}].
+async function findSiblingEmails(message) {
+  if (!message || message.direction === 'outbound' || !message.sender_email) return [];
+  const center = new Date(message.received_at || Date.now()).getTime();
+  if (!Number.isFinite(center)) return [];
+  const WINDOW = 7 * 24 * 3600 * 1000; // 7 days either side
+  try {
+    const { data } = await supabase.from('email_messages')
+      .select('id, subject, body_full, body_preview, received_at')
+      .ilike('sender_email', message.sender_email)
+      .eq('direction', 'inbound')
+      .neq('id', message.id)
+      .in('triage_status', ['new', 'needs_review', 'linked'])
+      .gte('received_at', new Date(center - WINDOW).toISOString())
+      .lte('received_at', new Date(center + WINDOW).toISOString())
+      .order('received_at', { ascending: true }).limit(6);
+    return (data || []).map((s) => ({ id: s.id, subject: s.subject, body: s.body_full || s.body_preview || '', received_at: s.received_at }));
+  } catch (_) { return []; }
+}
+
 // POST /:id/draft-reply — AI suggests a reply (NOT sent). Guardrails in the lib
 // force a human for legal/enforcement/ACC/financial. Returns the draft for
 // review; the row's triage_status is left as-is until a human acts.
@@ -262,14 +285,19 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     const notes = (req.body && req.body.notes) ? String(req.body.notes).slice(0, 3000) : null;
     const currentDraft = (req.body && req.body.current_draft) ? String(req.body.current_draft).slice(0, 4000) : null;
     const { data: m, error } = await supabase.from('email_messages')
-      .select('subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, graph_id, mailbox, has_attachments, resolved_contact:resolved_contact_id(full_name), resolved_vendor:resolved_vendor_id(name), community:community_id(name)')
+      .select('subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, graph_id, mailbox, has_attachments, received_at, direction, resolved_contact:resolved_contact_id(full_name), resolved_vendor:resolved_vendor_id(name), community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
 
+    // Other UNHANDLED inbound emails from the same homeowner in a short window —
+    // "forgot something / sent more info." Reply once, cover them all.
+    const siblings = await findSiblingEmails({ id: req.params.id, ...m });
+
     // Persona routing: a vendor / AP conversation (came to emma@, or resolves to
     // a vendor, or is vendor-financial) is Emma's — she grounds the reply in the
     // AP subledger. Everything else is Claire's (homeowner/front-office).
+    const covers = siblings.map((s) => ({ id: s.id, subject: s.subject }));
     if (personaFor(m) === 'emma') {
       const { draftEmmaReply } = require('../lib/email/emma_reply');
       const draft = await draftEmmaReply({
@@ -277,7 +305,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
         vendorId: m.resolved_vendor_id, vendorName: m.resolved_vendor ? m.resolved_vendor.name : (m.sender_name || null),
         notes, currentDraft,
       });
-      return res.json(draft);
+      return res.json({ ...draft, covers });
     }
 
     const draft = await draftReply({
@@ -290,8 +318,9 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       communityName: m.community ? m.community.name : null,
       force: true, // Ed clicked "Draft reply" explicitly — always produce a reply, even internal/spam
       notes, currentDraft, // reviewer steering (Rewrite with my notes)
+      siblings, // cover the homeowner's other recent emails in one reply
     });
-    res.json(draft);
+    res.json({ ...draft, covers });
   } catch (err) {
     console.error('[email_triage] draft-reply failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -390,6 +419,12 @@ router.post('/:id/send', express.json(), async (req, res) => {
 
     // Mark the inbound handled + log the outbound reply on the record.
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', req.params.id);
+    // This reply covered the homeowner's other recent emails — mark those
+    // handled too, so sending once clears them all instead of leaving stragglers.
+    const alsoHandle = Array.isArray(req.body && req.body.also_handle) ? req.body.also_handle.filter(Boolean).slice(0, 10) : [];
+    if (alsoHandle.length) {
+      try { await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: `${reviewed_by || 'staff'} (covered by one reply)`, reviewed_at: new Date().toISOString() }).in('id', alsoHandle); } catch (_) {}
+    }
     await supabase.from('email_messages').insert({
       mailbox: fromMailbox, direction: 'outbound', sender_email: fromMailbox,
       sender_name: senderLabel, recipients: [recipient], subject: subj, body_preview: String(body).trim().slice(0, 2000),
@@ -404,7 +439,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
         await logDrvOutbound({ violationId: m.extracted.drv.violation_id, communityId: m.community_id, propertyId: m.resolved_property_id, contactId: m.resolved_contact_id, subject: subj, body: String(body).trim(), sentBy: reviewed_by || 'staff' });
       } catch (e) { console.warn('[email_triage] drv outbound log skipped:', e.message); }
     }
-    res.json({ sent: true, to: recipient, from: fromMailbox, persona });
+    res.json({ sent: true, to: recipient, from: fromMailbox, persona, also_handled: alsoHandle.length });
   } catch (err) {
     console.error('[email_triage] send failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
