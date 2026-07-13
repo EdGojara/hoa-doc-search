@@ -3844,6 +3844,17 @@
     </div>
     <div id="billing-detail-meta" style="color:#888; font-size:13px; margin-bottom:16px;"></div>
 
+    <!-- Monthly billing package — Tessa assembles the invoices + supporting
+         activity and emails them to Ed for review (nothing goes to the board). -->
+    <div class="panel" id="billing-package-panel" style="margin-bottom:16px; border-left:3px solid #D4AF37;">
+      <h4 style="margin-top:0;">📦 Monthly billing package <span style="font-weight:400; color:#888; font-size:12px;">— Tessa bundles the management invoice, the prior month's activity invoice, and the supporting activity detail, and emails them to you to review</span></h4>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input type="month" id="billing-pkg-month" style="padding:6px 9px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+        <button class="action-btn" onclick="billingMonthlyPackage()" style="padding:7px 16px; background:#0B1D34; color:#fff;">📦 Prepare &amp; email me the package</button>
+      </div>
+      <div id="billing-pkg-status" style="font-size:12.5px; margin-top:8px; color:#888;"></div>
+    </div>
+
     <!-- Invoice recipient — the saved "send invoices to" contact for this
          community. The email flow auto-fills from here (single source of truth);
          falls back to the board treasurer only when unset. -->
@@ -4432,6 +4443,30 @@
   }
   window.billingSaveBillingContact = billingSaveBillingContact;
 
+  // ---- Monthly billing package (Tessa assembles + emails it to Ed) ----------
+  async function billingMonthlyPackage() {
+    const cid = billingCurrentCommunityId; if (!cid) return;
+    const monthEl = document.getElementById('billing-pkg-month');
+    const now = new Date();
+    const month = (monthEl && monthEl.value) || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const status = document.getElementById('billing-pkg-status');
+    if (!confirm(`Prepare the ${month} billing package and email it to you for review?\n\nTessa bundles the management invoice, the prior month's activity invoice, and the supporting activity detail, and sends them to you. Nothing goes to the board.`)) return;
+    if (status) { status.style.color = '#888'; status.textContent = '📦 Tessa is assembling the package (rendering PDFs)…'; }
+    try {
+      const r = await fetch(`/api/billing/communities/${cid}/monthly-package`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }) });
+      const j = await r.json();
+      if (!r.ok) { if (status) { status.style.color = '#b91c1c'; status.textContent = '✗ ' + (j.error || `HTTP ${r.status}`); } return; }
+      if (j.needs_activity_invoice) { if (status) { status.style.color = '#b45309'; status.textContent = '⚠ ' + j.message; } return; }
+      if (status) {
+        status.style.color = j.emailed ? '#166534' : '#b45309';
+        status.innerHTML = j.emailed
+          ? `✓ Emailed the ${j.month} package to <strong>${escapeHtml(j.email_to)}</strong> — ${j.attachments} attachments (${escapeHtml(j.fixed_invoice)}${j.fixed_generated ? ' — auto-generated' : ''}, ${escapeHtml(j.activity_invoice)}, activity detail). Saved to the system. Reply to Tessa to send it on to the board.`
+          : `⚠ Package assembled + saved (${j.attachments} PDFs), but the email didn't go out: ${escapeHtml(j.email_error || 'unknown')}. (Tessa's mailbox / Graph needs connecting.)`;
+      }
+    } catch (e) { if (status) { status.style.color = '#b91c1c'; status.textContent = '✗ ' + e.message; } }
+  }
+  window.billingMonthlyPackage = billingMonthlyPackage;
+
   // ---- Pending billing items (staged ad-hoc charges) -----------------------
   let billingPiCatalog = [];   // rate-card items for the category dropdown
 
@@ -4560,6 +4595,7 @@
     document.getElementById('billing-community-detail').style.display = 'block';
     billingLoadBillingContact(communityId);
     billingLoadPendingItems(communityId);
+    { const _pm = document.getElementById('billing-pkg-month'); if (_pm) { const _n = new Date(); _pm.value = `${_n.getFullYear()}-${String(_n.getMonth() + 1).padStart(2, '0')}`; } }
 
     const community = billingCommunitiesCache.find(c => c.id === communityId);
     document.getElementById('billing-detail-name').textContent = community ? community.name : '(loading…)';

@@ -971,7 +971,7 @@ router.post('/invoices/:invoiceId/email-send', async (req, res) => {
       '@odata.type': '#microsoft.graph.fileAttachment',
       name: `invoice_${invoice.invoice_number || invoiceId}.pdf`,
       contentType: 'application/pdf',
-      contentBytes: buffer.toString('base64'),
+      contentBytes: Buffer.from(buffer).toString('base64'),
     });
 
     // Invoices are Bedrock billing the association (Bedrock's own AR), so they
@@ -1708,6 +1708,159 @@ async function renderInvoicePdfBuffer(invoiceId) {
     if (browser) { try { await browser.close(); } catch (_) { /* swallow */ } }
   }
 }
+
+// Supporting "activity detail" PDF for the board — the per-property breakdown
+// behind the activity invoice (violation letters + ARC/ACC decisions). Queries
+// the SAME source tables + filters as GET /activity-detail and the activity
+// report, so the counts reconcile with the invoice. (Kept separate from the
+// interactive /activity-detail route, which adds signed letter links; unify if
+// they drift.)
+async function renderActivityDetailPdfBuffer(communityId, start, end) {
+  const endEx = (() => { const d = new Date(end + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); })();
+  const LETTER_TYPES = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
+  const STAGE_LABEL = { letter_courtesy_1: 'Courtesy 1', letter_courtesy_2: 'Courtesy 2', letter_209: 'Certified §209', letter_postcard_reminder: 'Postcard reminder' };
+  async function fetchAll(build) { const out = []; for (let f = 0; ; f += 1000) { const { data, error } = await build().range(f, f + 999); if (error) break; out.push(...(data || [])); if (!data || data.length < 1000) break; } return out; }
+  const { data: community } = await supabase.from('communities').select('id, name').eq('id', communityId).maybeSingle();
+  const letters = await fetchAll(() => supabase.from('interactions').select('id, property_id, type, delivery_method, postmark_date, content, bundle_id').eq('community_id', communityId).in('type', LETTER_TYPES).not('printed_at', 'is', null).gte('postmark_date', start).lt('postmark_date', endEx));
+  const accDecisions = await fetchAll(() => supabase.from('acc_decisions').select('homeowner_address, homeowner_name, project_summary, decision_type, created_at').eq('community_id', communityId).gte('created_at', start + 'T00:00:00Z').lt('created_at', endEx + 'T00:00:00Z'));
+  const propIds = [...new Set(letters.map((l) => l.property_id).filter(Boolean))];
+  const addrById = {};
+  for (let i = 0; i < propIds.length; i += 500) { const { data: props } = await supabase.from('properties').select('id, street_address').in('id', propIds.slice(i, i + 500)); (props || []).forEach((p) => { addrById[p.id] = p.street_address; }); }
+  const groups = new Map();
+  for (const l of letters) { const key = l.bundle_id || l.content || ('id:' + l.id); let g = groups.get(key); if (!g) { g = { property: addrById[l.property_id] || '(unknown)', dates: [], stages: new Set(), delivery_method: l.delivery_method, violations: 0 }; groups.set(key, g); } g.violations += 1; if (l.postmark_date) g.dates.push(l.postmark_date); g.stages.add(STAGE_LABEL[l.type] || l.type); }
+  const letterRows = [...groups.values()].map((g) => ({ property: g.property, date: g.dates.sort()[0] || null, stage: [...g.stages].join(', '), mail_class: g.delivery_method === 'certified_mail' ? 'Certified' : 'First-class', violations: g.violations })).sort((a, b) => a.property.localeCompare(b.property));
+  const certCount = letterRows.filter((r) => r.mail_class === 'Certified').length;
+  const outcomeOf = (s) => { s = (s || '').toLowerCase(); return s.includes('condition') ? 'Approved w/ conditions' : /approved/.test(s) ? 'Approved' : (s.includes('deni') || s.includes('reject')) ? 'Denied' : (s ? s[0].toUpperCase() + s.slice(1) : '—'); };
+  const arcRows = accDecisions.map((d) => ({ property: d.homeowner_address || '(no address)', applicant: d.homeowner_name || '—', project: d.project_summary || '—', outcome: outcomeOf(d.decision_type), date: (d.created_at || '').slice(0, 10) })).sort((a, b) => a.property.localeCompare(b.property));
+
+  const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fmtUS = (s) => { if (!s) return ''; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? s + 'T12:00:00' : s); return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Chicago' }); };
+  const NAVY = '#0B1D34';
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><style>
+    *{box-sizing:border-box;} body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;color:#1a1a1a;margin:0;background:#fff;font-size:12.5px;line-height:1.5;}
+    .page{padding:0.55in 0.5in;} .head{border-bottom:2px solid ${NAVY};padding-bottom:12px;margin-bottom:18px;}
+    .brand{font-weight:700;color:${NAVY};letter-spacing:.02em;} .tag{float:right;font-size:10px;letter-spacing:.12em;color:#64748b;}
+    h1{font-size:19px;color:${NAVY};margin:10px 0 4px;} .sub{color:#475569;font-size:12px;} .meta{color:#64748b;font-size:10.5px;margin-top:5px;}
+    .stats{display:flex;gap:14px;flex-wrap:wrap;margin:14px 0 20px;padding:11px 13px;background:#EAF0F7;border-radius:6px;}
+    .stat{text-align:center;min-width:70px;} .stat-n{font-size:19px;font-weight:700;color:${NAVY};} .stat-l{font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:#475569;margin-top:2px;}
+    h2{font-size:14px;color:${NAVY};margin:22px 0 8px;padding-bottom:5px;border-bottom:1px solid #d4d4d8;}
+    table.t{width:100%;border-collapse:collapse;} table.t th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;border-bottom:1.5px solid ${NAVY};padding:5px 7px;}
+    table.t td{padding:5px 7px;border-bottom:1px solid #eee;vertical-align:top;} .cert{color:#92400e;font-weight:700;} .muted{color:#94a3b8;}
+  </style></head><body><div class="page">
+    <div class="head"><div><span class="brand">${esc(BRAND.service.name)}</span><span class="tag">${esc(BRAND.service.taglineUpper)}</span></div>
+      <h1>${esc(community ? community.name : '')} — Compliance &amp; ARC Activity</h1>
+      <div class="sub">Supporting detail for <strong>${esc(fmtUS(start))}</strong> through <strong>${esc(fmtUS(end))}</strong></div>
+      <div class="meta">${esc(BRAND.service.legal)} on behalf of the ${esc(community ? community.name : '')} Board of Directors</div></div>
+    <div class="stats">
+      <div class="stat"><div class="stat-n">${letterRows.length}</div><div class="stat-l">Letters sent</div></div>
+      <div class="stat"><div class="stat-n">${letterRows.length - certCount}</div><div class="stat-l">First-class</div></div>
+      <div class="stat"><div class="stat-n">${certCount}</div><div class="stat-l">Certified</div></div>
+      <div class="stat"><div class="stat-n">${arcRows.length}</div><div class="stat-l">ARC decisions</div></div></div>
+    <h2>Violation letters</h2>
+    ${letterRows.length ? `<table class="t"><thead><tr><th>Property</th><th>Date</th><th>Stage(s)</th><th>Mail class</th><th style="text-align:center;">Violations</th></tr></thead><tbody>${letterRows.map((r) => `<tr><td><strong>${esc(r.property)}</strong></td><td>${esc(fmtUS(r.date))}</td><td>${esc(r.stage)}</td><td>${r.mail_class === 'Certified' ? '<span class="cert">Certified</span>' : 'First-class'}</td><td style="text-align:center;">${r.violations}${r.violations > 1 ? ' <span class="muted">(bundle)</span>' : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No violation letters mailed in this period.</p>'}
+    <h2>ARC / ACC decisions</h2>
+    ${arcRows.length ? `<table class="t"><thead><tr><th>Property</th><th>Applicant</th><th>Project</th><th>Decision</th><th>Date</th></tr></thead><tbody>${arcRows.map((r) => `<tr><td><strong>${esc(r.property)}</strong></td><td>${esc(r.applicant)}</td><td>${esc(r.project)}</td><td>${r.outcome === 'Denied' ? `<span class="cert">${esc(r.outcome)}</span>` : esc(r.outcome)}</td><td>${esc(fmtUS(r.date))}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No ARC/ACC decisions rendered in this period.</p>'}
+  </div></body></html>`;
+
+  let browser;
+  try {
+    browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+    return await page.pdf({ format: 'Letter', printBackground: true, margin: { top: 0, right: 0, bottom: 0, left: 0 } });
+  } finally { if (browser) { try { await browser.close(); } catch (_) { /* swallow */ } } }
+}
+
+// Find the community's fixed (management-fee) draft for a period, or generate
+// one. Safe to auto-generate: the fixed invoice is the deterministic recurring
+// fee from the contract, no activity judgment involved.
+async function ensureFixedInvoice(communityId, period) {
+  const { start, end } = periodBoundaries(period);
+  const { data: existing } = await supabase.from('invoices').select('id, invoice_number')
+    .eq('community_id', communityId).eq('invoice_type', 'fixed').eq('service_period_start', start).neq('status', 'void').limit(1).maybeSingle();
+  if (existing) return { invoiceId: existing.id, invoiceNumber: existing.invoice_number, generated: false };
+  const { data: comm } = await supabase.from('communities').select('billing_code, vantaca_code, name').eq('id', communityId).maybeSingle();
+  const { data: contracts } = await supabase.from('contracts').select('id, version, payment_terms').eq('community_id', communityId).eq('status', 'active').order('version', { ascending: false }).limit(1);
+  if (!contracts || !contracts.length) return { missingContract: true };
+  const contract = contracts[0];
+  const lineItems = sanitizeDraftLines(await buildDraftLineItems({ contractId: contract.id, type: 'fixed', period, communityId }));
+  const subtotal = money(lineItems.reduce((s, li) => s + Number(li.amount || 0), 0));
+  const invoiceNumber = buildInvoiceNumber({ billingCode: comm.billing_code, vantacaCode: comm.vantaca_code, period, type: 'fixed' });
+  const { data: inv, error } = await supabase.from('invoices').insert({
+    management_company_id: BEDROCK_MGMT_CO_ID, community_id: communityId, contract_id: contract.id, contract_version: contract.version,
+    invoice_number: invoiceNumber, invoice_type: 'fixed', service_period_start: start, service_period_end: end,
+    invoice_date: new Date().toISOString().slice(0, 10), payment_terms: contract.payment_terms, status: 'draft', subtotal, total: subtotal, recipient_name: comm.name,
+  }).select('id, invoice_number').single();
+  if (error) {
+    if (error.code === '23505') { const { data: ex2 } = await supabase.from('invoices').select('id, invoice_number').eq('invoice_number', invoiceNumber).maybeSingle(); if (ex2) return { invoiceId: ex2.id, invoiceNumber: ex2.invoice_number, generated: false }; }
+    throw error;
+  }
+  if (lineItems.length) await supabase.from('invoice_line_items').insert(lineItems.map((li) => ({ ...li, invoice_id: inv.id })));
+  await supabase.from('invoice_events').insert({ invoice_id: inv.id, kind: 'created', payload: { source: 'monthly-package fixed auto-generate', type: 'fixed', period } });
+  return { invoiceId: inv.id, invoiceNumber: inv.invoice_number, generated: true };
+}
+
+// POST /communities/:communityId/monthly-package  body: { month:'YYYY-MM' }
+// Assembles the board billing package: the fixed management invoice (this month,
+// auto-generated if missing), the prior month's ACTIVITY invoice (must already
+// be generated + reviewed in the worksheet — carries any pending billing items),
+// and the supporting activity-detail PDF. Renders all three, SAVES them to
+// storage, and EMAILS them to Ed (as Tessa) for review. Nothing goes to the
+// board here — Ed reviews, then sends.
+router.post('/communities/:communityId/monthly-package', async (req, res) => {
+  try {
+    const communityId = req.params.communityId;
+    const month = String((req.body && req.body.month) || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month required as YYYY-MM' });
+    const { data: comm } = await supabase.from('communities').select('id, name').eq('id', communityId).maybeSingle();
+    if (!comm) return res.status(404).json({ error: 'community_not_found' });
+
+    const [yy, mm] = month.split('-').map(Number);
+    const prior = new Date(Date.UTC(yy, mm - 2, 1));
+    const priorMonth = `${prior.getUTCFullYear()}-${String(prior.getUTCMonth() + 1).padStart(2, '0')}`;
+    const { start: aStart, end: aEnd } = periodBoundaries(priorMonth);
+
+    const fixed = await ensureFixedInvoice(communityId, month);
+    if (fixed.missingContract) return res.status(400).json({ error: 'No active contract for this community.' });
+
+    const { data: activityInv } = await supabase.from('invoices')
+      .select('id, invoice_number').eq('community_id', communityId).eq('invoice_type', 'activity')
+      .eq('service_period_start', aStart).neq('status', 'void').limit(1).maybeSingle();
+    if (!activityInv) {
+      return res.json({ ok: false, needs_activity_invoice: true, prior_month: priorMonth,
+        message: `Generate ${comm.name}'s ${periodMonthLabel(aStart)} activity invoice in the worksheet first (so you review the month's numbers), then run this again.` });
+    }
+
+    const attachments = [], saved = [];
+    async function addPdf(name, buffer) {
+      attachments.push({ '@odata.type': '#microsoft.graph.fileAttachment', name, contentType: 'application/pdf', contentBytes: Buffer.from(buffer).toString('base64') });
+      const path = `billing_packages/${communityId}/${month}/${name}`;
+      try { await supabase.storage.from('documents').upload(path, buffer, { contentType: 'application/pdf', upsert: true }); saved.push(path); } catch (e) { console.warn('[monthly-package] save failed:', e.message); }
+    }
+    await addPdf(`${(fixed.invoiceNumber || 'management').replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`, (await renderInvoicePdfBuffer(fixed.invoiceId)).buffer);
+    await addPdf(`${(activityInv.invoice_number || 'activity').replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`, (await renderInvoicePdfBuffer(activityInv.id)).buffer);
+    await addPdf(`${comm.name.replace(/[^A-Za-z0-9]+/g, '_')}_activity_detail_${priorMonth}.pdf`, await renderActivityDetailPdfBuffer(communityId, aStart, aEnd));
+
+    const graphSend = require('../lib/email/graph_send');
+    let emailed = false, emailError = null;
+    if (graphSend.isConfigured()) {
+      try {
+        const { buildTessaEmail } = require('../lib/email/tessa_signature');
+        const body = `Hi Ed,\n\nHere is ${comm.name}'s billing package for your review: the management invoice for ${periodMonthLabel(month + '-01')}, the ${periodMonthLabel(aStart)} activity invoice, and the supporting activity detail. Take a look and let me know who to send it to, or if anything needs adjusting.`;
+        const { html } = buildTessaEmail(body);
+        await graphSend.sendAs({ from: graphSend.TESSA_MAILBOX, to: graphSend.ED_MAILBOX, subject: `${comm.name} — billing package for review (${periodMonthLabel(month + '-01')})`, html, attachments });
+        emailed = true;
+      } catch (e) { emailError = e.message; console.error('[monthly-package] email failed:', e.message); }
+    } else { emailError = 'email_not_configured'; }
+
+    res.json({ ok: true, community: comm.name, month, prior_month: priorMonth,
+      fixed_invoice: fixed.invoiceNumber, fixed_generated: fixed.generated, activity_invoice: activityInv.invoice_number,
+      attachments: attachments.length, saved_paths: saved, emailed, email_to: graphSend.ED_MAILBOX, email_error: emailError });
+  } catch (err) {
+    console.error('[billing] monthly-package failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/invoices/:invoiceId/pdf', async (req, res) => {
   const { invoiceId } = req.params;
