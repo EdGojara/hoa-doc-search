@@ -14048,18 +14048,17 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <select id="acc-filter-community" class="draft-type-select" onchange="accLoadList()">
         <option value="">All communities</option>
       </select>
-      <select id="acc-filter-type" class="draft-type-select" onchange="accLoadList()">
-        <option value="">All types</option>
-        <option value="arc">🏗️ ARC applications</option>
-        <option value="fob">🔑 Pool / key fobs</option>
+      <select id="acc-filter-source" class="draft-type-select" onchange="accLoadList()">
+        <option value="">All sources</option>
+        <option value="email">✉️ Email (Annie)</option>
+        <option value="portal">🏠 Homeowner portal</option>
+        <option value="staff_upload">📎 Staff upload</option>
+        <option value="web">🌐 Web</option>
       </select>
       <select id="acc-filter-status" class="draft-type-select" onchange="accLoadList()">
-        <option value="pending_committee_review">⏳ Awaiting review (default)</option>
-        <option value="">All statuses</option>
-        <option value="approved">✓ Approved</option>
-        <option value="denied">✗ Denied</option>
-        <option value="withdrawn">↩ Withdrawn</option>
-        <option value="closed">Closed</option>
+        <option value="pending_review">⏳ In the queue (default)</option>
+        <option value="decided">✓ Done</option>
+        <option value="">All</option>
       </select>
       <input id="acc-search" type="search" placeholder="Reference, name, address…" oninput="accSearchDebounced()" style="flex:1; min-width:240px; padding:7px 12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />
       <button class="secondary-btn" onclick="accLoadList()" style="font-size:13px;">⟳ Refresh</button>
@@ -14126,7 +14125,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // ============================================================
   let accCommunities = [];
   let accCurrentList = [];
-  let accCurrent = null;       // { application, assessments, responses, attachments }
+  let accCurrent = null;       // full acc_decisions row currently open
 
   async function accInit() {
     if (accCommunities.length === 0) {
@@ -14152,34 +14151,58 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     accSearchTimer = setTimeout(accLoadList, 250);
   }
 
+  // Source display helpers — the board is organized "by source" per Ed's spec.
+  const ACC_SOURCES = {
+    email:        { label: 'Email', icon: '✉️', bg: '#ede9fe', fg: '#5b21b6' },
+    portal:       { label: 'Portal', icon: '🏠', bg: '#dcfce7', fg: '#166534' },
+    staff_upload: { label: 'Staff upload', icon: '📎', bg: '#e0e7ff', fg: '#3730a3' },
+    web:          { label: 'Web', icon: '🌐', bg: '#e0f2fe', fg: '#075985' },
+  };
+  function accSourceMeta(s) {
+    return ACC_SOURCES[s] || { label: (s || 'Other'), icon: '📄', bg: '#f1f5f9', fg: '#475569' };
+  }
+  function accSourceBadge(s) {
+    const m = accSourceMeta(s);
+    return `<span class="acc-pill" style="background:${m.bg}; color:${m.fg};">${m.icon} ${accEsc(m.label)}</span>`;
+  }
+
+  // Decision-type display (used for both AI recommendation and final decision).
+  function accDecisionMeta(d) {
+    switch (d) {
+      case 'approved':
+      case 'approved_no_conditions': return { label: 'Approve', cls: 'approved' };
+      case 'approved_with_conditions': return { label: 'Approve w/ conditions', cls: 'approved' };
+      case 'request_more_info':
+      case 'incomplete': return { label: 'More info needed', cls: 'incomplete' };
+      case 'denied': return { label: 'Deny', cls: 'denied' };
+      default: return { label: (d || '—'), cls: 'manual' };
+    }
+  }
+  function accDecisionBadge(d, prefix) {
+    if (!d) return '';
+    const m = accDecisionMeta(d);
+    return `<span class="acc-pill acc-pill-${m.cls}">${prefix ? prefix + ' ' : ''}${accEsc(m.label)}</span>`;
+  }
+
   async function accLoadList() {
     const params = new URLSearchParams();
     const cid = document.getElementById('acc-filter-community').value;
     const status = document.getElementById('acc-filter-status').value;
-    const typeFilter = document.getElementById('acc-filter-type').value;
-    if (cid) params.set('community_id', cid);
-    if (status) params.set('final_status', status);
+    const source = document.getElementById('acc-filter-source').value;
+    // community filter is by name on this endpoint; resolve id -> name
+    if (cid) {
+      const c = accCommunities.find(x => String(x.id) === String(cid));
+      if (c) params.set('community', c.name);
+    }
+    if (status) params.set('status', status);
+    if (source) params.set('source', source);
+    const q = document.getElementById('acc-search').value.trim();
+    if (q) params.set('q', q);
     try {
-      const r = await fetch('/api/applications?' + params.toString());
+      const r = await fetch('/acc-review/decisions?' + params.toString());
       const j = await r.json();
       if (j.error) throw new Error(j.error);
-      accCurrentList = j.applications || [];
-      // Apply service-type + free-text search client-side
-      // "fob" maps to pool_amenity / gate_vehicle / gym_access; "arc" maps to arc.
-      if (typeFilter === 'arc') {
-        accCurrentList = accCurrentList.filter(a => a.service_type === 'arc');
-      } else if (typeFilter === 'fob') {
-        accCurrentList = accCurrentList.filter(a =>
-          a.service_type === 'pool_amenity' || a.service_type === 'gate_vehicle' || a.service_type === 'gym_access'
-        );
-      }
-      const q = document.getElementById('acc-search').value.trim().toLowerCase();
-      if (q) {
-        accCurrentList = accCurrentList.filter(a => {
-          const hay = `${a.reference_number || ''} ${a.submitter_name || ''} ${a.submitter_email || ''} ${a.property_address || ''} ${a.assessment_summary || ''}`.toLowerCase();
-          return hay.includes(q);
-        });
-      }
+      accCurrentList = j.decisions || [];
       accRenderList();
       accRenderStats();
     } catch (err) { console.warn('accLoadList', err); }
@@ -14189,17 +14212,24 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const wrap = document.getElementById('acc-stats-pills');
     if (!wrap) return;
     const all = accCurrentList;
-    const pending = all.filter(a => a.final_status === 'pending_committee_review').length;
-    const overdue = all.filter(a => {
-      if (a.final_status !== 'pending_committee_review' || !a.submitted_at) return false;
-      const age = (Date.now() - new Date(a.submitted_at).getTime()) / 1000 / 3600;
-      return age > 24;
+    const queued = all.filter(a => a.status === 'pending_review');
+    const done = all.filter(a => a.status === 'decided');
+    const overdue = queued.filter(a => {
+      if (!a.created_at) return false;
+      return (Date.now() - new Date(a.created_at).getTime()) / 3600000 > 24;
     }).length;
-    const approved = all.filter(a => a.final_status === 'approved').length;
+    // by-source breakdown of the queue
+    const bySource = {};
+    queued.forEach(a => { const k = a.source || 'other'; bySource[k] = (bySource[k] || 0) + 1; });
+    const srcPills = Object.keys(bySource).sort().map(k => {
+      const m = accSourceMeta(k);
+      return `<span class="acc-stats-pill" style="background:${m.bg}; color:${m.fg};">${m.icon} ${bySource[k]}</span>`;
+    }).join('');
     wrap.innerHTML = `
-      <span class="acc-stats-pill amber">${pending} pending</span>
+      <span class="acc-stats-pill amber">${queued.length} in queue</span>
       ${overdue > 0 ? `<span class="acc-stats-pill red">${overdue} over 24h</span>` : ''}
-      <span class="acc-stats-pill green">${approved} approved</span>
+      <span class="acc-stats-pill green">${done.length} done</span>
+      ${srcPills ? `<span style="margin-left:8px;">${srcPills}</span>` : ''}
     `;
   }
 
@@ -14210,72 +14240,64 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       wrap.innerHTML = ''; empty.style.display = ''; return;
     }
     empty.style.display = 'none';
-    wrap.innerHTML = accCurrentList.map(a => {
-      const submitted = a.submitted_at ? new Date(a.submitted_at) : null;
-      const ageHours = submitted ? (Date.now() - submitted.getTime()) / 1000 / 3600 : null;
-      const ageClass = ageHours == null ? '' : (ageHours > 48 ? 'danger' : ageHours > 24 ? 'warn' : '');
+    // Queue first (oldest first = most urgent), then done (newest first).
+    const queued = accCurrentList.filter(a => a.status === 'pending_review')
+      .sort((a,b) => new Date(a.created_at||0) - new Date(b.created_at||0));
+    const done = accCurrentList.filter(a => a.status !== 'pending_review')
+      .sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+
+    function rowHtml(a) {
+      const created = a.created_at ? new Date(a.created_at) : null;
+      const ageHours = created ? (Date.now() - created.getTime()) / 3600000 : null;
+      const isQueue = a.status === 'pending_review';
+      const ageClass = ageHours == null ? '' : (isQueue && ageHours > 48 ? 'danger' : isQueue && ageHours > 24 ? 'warn' : '');
       const ageTxt = ageHours == null ? '—' : (ageHours < 1 ? `${Math.round(ageHours*60)}m ago` : ageHours < 24 ? `${Math.round(ageHours)}h ago` : `${Math.round(ageHours/24)}d ago`);
-      const urgent = a.final_status === 'pending_committee_review' && ageHours > 24;
-
-      // Service-type badge — distinguishes ARC apps (judgment) from fobs (transactional)
-      const isFob = a.service_type === 'pool_amenity' || a.service_type === 'gate_vehicle' || a.service_type === 'gym_access';
-      const serviceBadge = isFob
-        ? '<span class="acc-pill" style="background:#dbeafe; color:#1e3a8a;">🔑 Fob</span>'
-        : '<span class="acc-pill" style="background:#e0e7ff; color:#3730a3;">🏗️ ARC</span>';
-
-      // ARC has AI assessment; fobs do not
-      const middleCell = isFob
-        ? `<div>
-             <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Request</strong>
-             <span style="font-size:12px; color:#444;">${accEsc((a.assessment_summary || '').slice(0, 80) || (a.application_data?.request_type ? a.application_data.request_type.replace(/_/g,' ') : '—'))}</span>
-           </div>`
-        : `<div>
-             <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">System assessment</strong>
-             ${a.assessment_status ? `<span class="acc-pill acc-pill-${a.assessment_status === 'likely_approved' ? 'likely' : a.assessment_status === 'concerns_identified' ? 'concerns' : a.assessment_status === 'incomplete' ? 'incomplete' : 'manual'}">${accFormatAssessmentStatus(a.assessment_status)}</span>` : ''}
-           </div>`;
-
-      const finalPill = a.final_status === 'approved' ? '<span class="acc-pill acc-pill-approved">✓ Approved</span>'
-                       : a.final_status === 'denied' ? '<span class="acc-pill acc-pill-denied">✗ Denied</span>'
-                       : '<span class="acc-pill acc-pill-pending">⏳ Pending</span>';
-
+      const urgent = isQueue && ageHours != null && ageHours > 24;
+      const statusCell = isQueue
+        ? (a.ai_recommendation ? accDecisionBadge(a.ai_recommendation, '🤖') : '<span class="acc-pill acc-pill-pending">⏳ Drafted</span>')
+        : accDecisionBadge(a.decision_type) || '<span class="acc-pill acc-pill-approved">✓ Done</span>';
       return `
         <div class="acc-row ${urgent ? 'urgent' : ''}" onclick="accOpenDetail('${a.id}')">
           <div>
-            <div class="ref">${accEsc(a.reference_number)}</div>
-            <div style="font-size:11px; color:#888; margin-top:3px;">${accEsc(a.community?.name || '')}</div>
-            <div style="margin-top:4px;">${serviceBadge}</div>
+            <div class="ref">${accEsc(a.reference_number || '—')}</div>
+            <div style="font-size:11px; color:#888; margin-top:3px;">${accEsc(a.community_name || '')}</div>
+            <div style="margin-top:4px;">${accSourceBadge(a.source)}</div>
           </div>
           <div>
-            <div class="submitter">${accEsc(a.submitter_name)}</div>
-            <div class="addr">${accEsc(a.property_address)}</div>
-            ${a.assessment_summary && !isFob ? `<div class="summary">${accEsc(a.assessment_summary)}</div>` : ''}
+            <div class="submitter">${accEsc(a.homeowner_name || a.submitter_email || 'Unknown')}</div>
+            <div class="addr">${accEsc(a.homeowner_address || '')}</div>
+            ${a.project_summary ? `<div class="summary">${accEsc(a.project_summary)}</div>` : ''}
           </div>
-          ${middleCell}
+          <div>
+            <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">${isQueue ? 'System recommends' : 'Decision'}</strong>
+            ${statusCell}
+          </div>
           <div>
             <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Status</strong>
-            ${finalPill}
+            ${isQueue ? '<span class="acc-pill acc-pill-pending">⏳ In queue</span>' : '<span class="acc-pill acc-pill-approved">✓ Done</span>'}
           </div>
           <div class="acc-age ${ageClass}">${ageTxt}</div>
         </div>`;
-    }).join('');
-  }
-
-  function accFormatAssessmentStatus(s) {
-    switch (s) {
-      case 'likely_approved': return '✓ Likely approve';
-      case 'incomplete': return '📝 Incomplete';
-      case 'concerns_identified': return '⚠ Concerns';
-      case 'manual_review': return '👤 Manual';
-      default: return s || '—';
     }
+
+    let html = '';
+    if (queued.length) {
+      html += `<div style="font-size:12px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:0.5px; margin:2px 0 8px;">⏳ In the queue — ${queued.length}</div>`;
+      html += queued.map(rowHtml).join('');
+    }
+    if (done.length) {
+      html += `<div style="font-size:12px; font-weight:700; color:#166534; text-transform:uppercase; letter-spacing:0.5px; margin:${queued.length ? '20px' : '2px'} 0 8px;">✓ Done — ${done.length}</div>`;
+      html += done.map(rowHtml).join('');
+    }
+    wrap.innerHTML = html;
   }
 
   async function accOpenDetail(id) {
     try {
-      const r = await fetch('/api/applications/' + id);
+      const r = await fetch('/acc-review/decisions/' + id + '/full');
       const j = await r.json();
       if (j.error) throw new Error(j.error);
-      accCurrent = j;
+      accCurrent = j.decision;
       accRenderDetail();
     } catch (err) { alert('Load failed: ' + err.message); }
   }
@@ -14287,35 +14309,26 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   }
 
   function accRenderDetail() {
-    const a = accCurrent.application;
-    const latestAssess = accCurrent.assessments[0];
-    const audit = accCurrent.latest_audit || null;
+    const a = accCurrent;
     const view = document.getElementById('acc-detail-view');
     document.getElementById('acc-list-view').style.display = 'none';
     view.style.display = '';
 
-    const appData = a.application_data || {};
-    const submitted = a.submitted_at ? new Date(a.submitted_at).toLocaleString() : null;
-    const ageHours = a.submitted_at ? (Date.now() - new Date(a.submitted_at).getTime()) / 1000 / 3600 : null;
-    const heldForReview = audit && audit.final_status === 'held_for_review';
+    const isQueue = a.status === 'pending_review';
+    const created = a.created_at ? new Date(a.created_at) : null;
+    const ageHours = created ? (Date.now() - created.getTime()) / 3600000 : null;
+    const letterBody = (isQueue ? (a.ai_letter_body || a.letter_body) : (a.letter_body || a.ai_letter_body)) || '';
+    const recip = a.submitter_email || '';
+    const rec = a.ai_recommendation || a.decision_type || '';
 
-    // "Start new ACC for this property" — appears once a decision is final
-    // (approved / approved_with_conditions / denied / withdrawn / closed).
-    // Opens the existing public apply form pre-filled via query params, so
-    // the new application runs through the same validation / auto-assess /
-    // draft / notification pipeline. Same code path = same bug surface.
-    const isFinal = a.final_status && a.final_status !== 'pending_committee_review';
-    const newAccUrl = (() => {
-      const slug = a.community?.slug;
-      if (!slug) return null;
-      const params = new URLSearchParams();
-      if (a.submitter_name) params.set('name', a.submitter_name);
-      if (a.submitter_email) params.set('email', a.submitter_email);
-      if (a.submitter_phone) params.set('phone', a.submitter_phone);
-      if (a.property_address) params.set('address', a.property_address);
-      params.set('source', 'prior_' + a.reference_number);
-      return '/apply/' + encodeURIComponent(slug) + '?' + params.toString();
-    })();
+    // Decision options for the selector.
+    const decisionOptions = [
+      ['approved_no_conditions', 'Approve — no conditions'],
+      ['approved_with_conditions', 'Approve — with conditions'],
+      ['request_more_info', 'Request more information (stays in queue)'],
+      ['denied', 'Deny'],
+    ];
+    const selectedDecision = (rec === 'approved') ? 'approved_no_conditions' : (rec || 'approved_with_conditions');
 
     view.innerHTML = `
       <div style="margin-bottom:14px;">
@@ -14325,426 +14338,116 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div class="acc-card">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
           <div>
-            <div style="font-family: ui-monospace, SFMono-Regular, monospace; font-size:12px; color:#0B1D34; font-weight:700; margin-bottom:6px;">${accEsc(a.reference_number)}</div>
-            <h2 style="font-size:22px; font-weight:700; color:#0B1D34;">${accEsc(a.submitter_name)} — ${accEsc(a.property_address)}</h2>
-            <div style="font-size:13px; color:#5a7390; margin-top:4px;">
-              ${accEsc(a.community?.name || '')} · ${accEsc(a.submitter_email)}${a.submitter_phone ? ' · ' + accEsc(a.submitter_phone) : ''}${submitted ? ' · Submitted ' + accEsc(submitted) : ''}
+            <div style="font-family: ui-monospace, SFMono-Regular, monospace; font-size:12px; color:#0B1D34; font-weight:700; margin-bottom:6px;">${accEsc(a.reference_number || '—')}</div>
+            <h2 style="font-size:22px; font-weight:700; color:#0B1D34;">${accEsc(a.homeowner_name || 'Unknown')}${a.homeowner_address ? ' — ' + accEsc(a.homeowner_address) : ''}</h2>
+            <div style="font-size:13px; color:#5a7390; margin-top:4px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+              ${accSourceBadge(a.source)}
+              <span>${accEsc(a.community_name || '')}</span>
+              ${recip ? '<span>· ' + accEsc(recip) + '</span>' : ''}
+              ${created ? '<span>· Received ' + created.toLocaleString() + '</span>' : ''}
             </div>
-            ${ageHours != null && a.final_status === 'pending_committee_review' && ageHours > 24
-              ? '<div style="margin-top:8px; padding:6px 12px; background:#fee2e2; color:#991b1b; border-radius:6px; font-size:12px; font-weight:600; display:inline-block;">⚠ Pending for ' + Math.round(ageHours) + ' hours — homeowner is waiting</div>'
-              : ''
-            }
+            ${isQueue && ageHours != null && ageHours > 24
+              ? '<div style="margin-top:8px; padding:6px 12px; background:#fee2e2; color:#991b1b; border-radius:6px; font-size:12px; font-weight:600; display:inline-block;">⚠ In queue ' + Math.round(ageHours) + ' hours — homeowner is waiting</div>'
+              : ''}
           </div>
-          ${isFinal && newAccUrl ? `
-            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
-              <a href="${accEsc(newAccUrl)}" target="_blank" rel="noopener"
-                 style="background:#16a34a; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px; font-size:13px; font-weight:700; border:1px solid #15803d; box-shadow:0 1px 2px rgba(0,0,0,0.05); white-space:nowrap;">
-                ＋ Start a new ACC for this property
-              </a>
-              <div style="font-size:11px; color:#5a7390; text-align:right; max-width:240px;">
-                Opens the application form with name, email, and property address pre-filled.
-              </div>
-            </div>
-          ` : ''}
+          <div style="text-align:right;">
+            ${isQueue
+              ? (a.ai_recommendation ? '<div style="font-size:11px; color:#5a7390; margin-bottom:4px;">System recommends</div>' + accDecisionBadge(a.ai_recommendation, '🤖') : '')
+              : '<div style="font-size:11px; color:#5a7390; margin-bottom:4px;">Decision</div>' + accDecisionBadge(a.decision_type)}
+          </div>
         </div>
       </div>
 
-      <!-- Held-for-review banner — fires when Layer 1 guards or Layer 2
-           validators tripped on the latest assessment run. The manager
-           MUST review + fix or hand-write before any letter goes out. -->
-      ${heldForReview ? `
-        <div class="acc-card" style="border:2px solid #b91c1c; background:#fef2f2;">
-          <div style="display:flex; align-items:flex-start; gap:14px;">
-            <div style="font-size:32px; line-height:1;">🛑</div>
-            <div style="flex:1;">
-              <h3 style="margin:0 0 6px; color:#991b1b;">Held for review — do not send without manager edit</h3>
-              <p style="margin:0 0 10px; font-size:13px; color:#7f1d1d; line-height:1.55;">
-                The system assessment for this application tripped one or more safety checks. The draft below is shown for context but is NOT safe to send as-is. Review the flags, edit the message, or click Re-assess after addressing the underlying issue (e.g., ingest the community's CC&Rs if missing).
-              </p>
-              ${audit.hold_reason ? `<div style="font-size:11px; color:#5a7390; margin-bottom:8px;"><strong>Hold codes:</strong> ${accEsc(audit.hold_reason)}</div>` : ''}
-              ${(audit.guards_fired || []).length > 0 ? `
-                <div style="margin-top:8px;">
-                  <strong style="font-size:12px; color:#7f1d1d;">Pre-flight guards fired:</strong>
-                  <ul style="margin:4px 0 0; padding-left:22px; font-size:12px; color:#7f1d1d;">
-                    ${audit.guards_fired.map(g => `
-                      <li style="margin-bottom:3px;">
-                        <strong>${accEsc(g.code || '?')}</strong>
-                        <span style="font-size:10px; padding:1px 6px; background:${g.severity === 'block' ? '#991b1b' : '#92400e'}; color:#fff; border-radius:3px; margin-left:4px;">${accEsc(g.severity || '')}</span>
-                        ${g.detail ? `<div style="font-size:11px; color:#5a7390; margin-left:4px; margin-top:2px;">${accEsc(g.detail)}</div>` : ''}
-                      </li>`).join('')}
-                  </ul>
-                </div>` : ''
-              }
-              ${audit.validators && Object.keys(audit.validators).length > 0 ? `
-                <div style="margin-top:10px;">
-                  <strong style="font-size:12px; color:#7f1d1d;">Cross-validators:</strong>
-                  <ul style="margin:4px 0 0; padding-left:22px; font-size:12px;">
-                    ${Object.entries(audit.validators).map(([k, v]) => `
-                      <li style="margin-bottom:3px; color:${v.severity === 'block' ? '#991b1b' : v.severity === 'warn' ? '#92400e' : '#166534'};">
-                        <strong>${accEsc(k.replace(/_/g, ' '))}</strong>
-                        <span style="font-size:10px; padding:1px 6px; background:${v.severity === 'block' ? '#991b1b' : v.severity === 'warn' ? '#92400e' : '#166534'}; color:#fff; border-radius:3px; margin-left:4px;">${accEsc(v.severity || (v.ok ? 'ok' : '?'))}</span>
-                        ${v.detail ? `<div style="font-size:11px; color:#5a7390; margin-left:4px; margin-top:2px;">${accEsc(v.detail)}</div>` : ''}
-                      </li>`).join('')}
-                  </ul>
-                </div>` : ''
-              }
-            </div>
-          </div>
-        </div>` : ''
-      }
+      ${a.project_summary ? `
+        <div class="acc-card">
+          <h3>📋 What was submitted</h3>
+          <div style="font-size:14px; line-height:1.6; color:#1f2937; white-space:pre-wrap;">${accEsc(a.project_summary)}</div>
+        </div>` : ''}
 
-      <!-- Retrieval fingerprint — always shown when audit exists, even on
-           clean runs, so the manager can spot-check whether the model was
-           actually seeing the right community's docs before signing. -->
-      ${audit ? `
-        <div class="acc-card" style="background:#f8fafc;">
-          <details>
-            <summary style="cursor:pointer; font-weight:600; color:#0B1D34;">
-              📊 Retrieval &amp; audit
-              <span style="font-weight:400; font-size:12px; color:#5a7390; margin-left:8px;">
-                ${audit.retrieved_chunk_count || 0} chunks · ${audit.community_chunk_count || 0} community · ${audit.law_general_chunk_count || 0} reference${audit.contamination_ratio != null ? ` · contamination ${Math.round((audit.contamination_ratio || 0) * 100)}%` : ''}
-              </span>
-            </summary>
-            <div style="margin-top:10px; font-size:12px; color:#5a7390;">
-              <div style="margin-bottom:8px;">
-                <strong>Model:</strong> ${accEsc(audit.ai_model || '?')}
-                · <strong>Tokens:</strong> in=${audit.ai_input_tokens || '?'} / out=${audit.ai_output_tokens || '?'}${audit.ai_max_tokens ? ' / max=' + audit.ai_max_tokens : ''}
-                · <strong>Stop:</strong> ${accEsc(audit.ai_stop_reason || '?')}
-                · <strong>Took:</strong> ${audit.ai_duration_ms ? Math.round(audit.ai_duration_ms / 100) / 10 + 's' : '?'}
-              </div>
-              ${(audit.retrieved_chunks || []).length > 0 ? `
-                <table style="width:100%; border-collapse:collapse; font-size:11px;">
-                  <thead><tr style="background:#e2e8f0;">
-                    <th style="padding:4px 8px; text-align:left;">Filename</th>
-                    <th style="padding:4px 8px; text-align:left;">Community</th>
-                    <th style="padding:4px 8px; text-align:left;">Sources</th>
-                  </tr></thead>
-                  <tbody>
-                    ${audit.retrieved_chunks.slice(0, 18).map(c => {
-                      const isTarget = (c.community || '').toLowerCase() === (a.community?.name || '').toLowerCase();
-                      const isReference = (c.community || '').toLowerCase() === 'law' || (c.community || '').toLowerCase() === 'general';
-                      const color = isTarget ? '#166534' : (isReference ? '#5a7390' : '#991b1b');
-                      return `<tr style="border-bottom:1px solid #e2e8f0; color:${color};">
-                        <td style="padding:3px 8px;">${accEsc(c.filename || '?')}</td>
-                        <td style="padding:3px 8px;"><strong>${accEsc(c.community || '?')}</strong></td>
-                        <td style="padding:3px 8px;">${accEsc(c.sources || '')}</td>
-                      </tr>`;
-                    }).join('')}
-                  </tbody>
-                </table>` : ''
-              }
-            </div>
+      ${a.ai_review_text ? `
+        <div class="acc-card acc-ai-card">
+          <details ${isQueue ? 'open' : ''}>
+            <summary style="cursor:pointer; font-weight:700; color:#0B1D34;">🤖 System analysis (internal — not sent to the homeowner)</summary>
+            <div style="font-size:13px; line-height:1.6; color:#334155; white-space:pre-wrap; margin-top:10px;">${accEsc(a.ai_review_text)}</div>
           </details>
-        </div>` : ''
-      }
+        </div>` : ''}
 
-      <!-- AI assessment -->
-      ${latestAssess ? `
-        <div class="acc-card acc-ai-card${heldForReview ? '' : ''}">
-          <h3>Preliminary system assessment${heldForReview ? ' <span style="font-size:13px; font-weight:400; color:#991b1b;">— held for review</span>' : ''}</h3>
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
-            <span class="acc-pill acc-pill-${latestAssess.status === 'likely_approved' ? 'likely' : latestAssess.status === 'concerns_identified' ? 'concerns' : latestAssess.status === 'incomplete' ? 'incomplete' : 'manual'}">${accFormatAssessmentStatus(latestAssess.status)}</span>
-            <span style="font-size:11px; color:#5a7390; align-self:center;">Confidence: <strong>${accEsc(latestAssess.confidence || '—')}</strong></span>
-            <button class="secondary-btn" onclick="accReassess('${a.id}')" style="margin-left:auto; padding:4px 10px; font-size:11px;">🔄 Re-assess</button>
-          </div>
-          ${latestAssess.summary ? `<div style="font-size:14px; line-height:1.6; margin-bottom:12px;"><strong>Summary:</strong> ${accEsc(latestAssess.summary)}</div>` : ''}
-          ${(latestAssess.concerns || []).length > 0 ? `
-            <div style="margin-bottom:10px;">
-              <strong style="font-size:12px; color:#5a7390;">⚠ Concerns:</strong>
-              <ul style="margin:4px 0 0; padding-left:22px; font-size:13px;">
-                ${latestAssess.concerns.map(c => `<li><strong>${accEsc(c.concern || '')}</strong>${c.citation ? ` <span style="color:#666; font-size:11px;">(${accEsc(c.citation)})</span>` : ''}${c.severity ? ` <span class="acc-pill acc-pill-${c.severity === 'high' ? 'concerns' : c.severity === 'medium' ? 'incomplete' : 'manual'}" style="font-size:9px;">${accEsc(c.severity)}</span>` : ''}</li>`).join('')}
-              </ul>
-            </div>` : ''
-          }
-          ${(latestAssess.missing_items || []).length > 0 ? `
-            <div style="margin-bottom:10px;">
-              <strong style="font-size:12px; color:#5a7390;">📝 Missing items:</strong>
-              <ul style="margin:4px 0 0; padding-left:22px; font-size:13px;">
-                ${latestAssess.missing_items.map(m => `<li>${accEsc(m.item || '')}${m.required ? ' <strong style="color:#b91c1c; font-size:11px;">REQUIRED</strong>' : ''}${m.hint ? ` <span style="color:#666; font-size:11px;">— ${accEsc(m.hint)}</span>` : ''}</li>`).join('')}
-              </ul>
-            </div>` : ''
-          }
-          ${(latestAssess.citations || []).length > 0 ? `
-            <details style="margin-top:10px;">
-              <summary style="cursor:pointer; font-size:12px; font-weight:600; color:#5a7390;">📚 Cited sources</summary>
-              <ul style="margin:6px 0 0; padding-left:22px; font-size:12px;">
-                ${latestAssess.citations.map(c => `<li><strong>${accEsc(c.document || '')}</strong>${c.section ? ` · ${accEsc(c.section)}` : ''}${c.quote ? `: <em>"${accEsc(c.quote)}"</em>` : ''}</li>`).join('')}
-              </ul>
-            </details>` : ''
-          }
-        </div>` : '<div class="acc-card">No assessment yet. <button class="secondary-btn" onclick="accReassess(\'' + a.id + '\')" style="font-size:13px;">Run one now</button></div>'
-      }
-
-      <!-- Action buttons + draft response editor -->
       <div class="acc-card">
-        <h3>📨 Send response to homeowner</h3>
-        <p style="font-size:12px; color:#5a7390; margin-bottom:12px;">
-          ${(latestAssess && latestAssess.draft_response) ? 'trustEd drafted this response in your voice. Edit freely — what you save is what the homeowner sees on their status page.' : 'No draft response yet. Click "Re-assess" above to generate one, or write your own.'}
-          (Outbound email comes in Phase 2; for now, use Outlook with this text after finalizing.)
-        </p>
+        <h3>📨 ${isQueue ? 'Review the decision & send to the homeowner' : 'Decision letter'}</h3>
+        ${isQueue ? `<p style="font-size:12px; color:#5a7390; margin-bottom:12px;">trustEd drafted this letter from the community's governing documents. Accept it, or edit the decision and the wording, then send. What you send is what the homeowner receives.</p>` : ''}
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div class="fld">
+            <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Decision</label>
+            <select id="acc-decision-select" class="draft-type-select" style="width:100%;">
+              ${decisionOptions.map(([v,l]) => `<option value="${v}" ${v===selectedDecision?'selected':''}>${l}</option>`).join('')}
+            </select>
+          </div>
+          <div class="fld">
+            <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Send to (homeowner email)</label>
+            <input id="acc-recipient" type="email" value="${accEsc(recip)}" placeholder="homeowner@email.com" style="width:100%; padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />
+          </div>
+        </div>
         <div class="fld">
-          <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Message to homeowner</label>
-          <textarea id="acc-msg" rows="12" style="padding:12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px; line-height:1.55; width:100%;">${accEsc(accBuildDraftResponse(a, latestAssess))}</textarea>
-        </div>
-        <div class="fld" style="margin-top:10px;">
-          <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Conditions (if conditional approval)</label>
-          <textarea id="acc-conditions" rows="2" placeholder="e.g., 'Must use neutral palette; must complete by October 30.'" style="padding:10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;"></textarea>
-        </div>
-        <div class="fld" style="margin-top:10px;">
-          <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Internal notes (not sent to homeowner)</label>
-          <textarea id="acc-internal" rows="2" style="padding:10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;"></textarea>
-        </div>
-        <div style="margin-top:10px; padding:8px 12px; background:#f0fdf4; border:1px solid #86efac; border-radius:6px;">
-          <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer; font-size:12px; color:#166534;">
-            <input id="acc-promote" type="checkbox" checked style="margin-top:2px;" />
-            <span><strong>Add this decision to the ACC History library</strong> — your decision becomes precedent for future assessments at ${accEsc(a.community?.name || 'this community')}. The system gets sharper with every approval / denial you finalize.</span>
-          </label>
+          <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Letter to homeowner</label>
+          <textarea id="acc-letter-edit" rows="16" style="padding:12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px; line-height:1.55; width:100%;">${accEsc(letterBody)}</textarea>
         </div>
         <div class="acc-ai-actions">
-          <button class="acc-action-btn approve" onclick="accFinalize('approve', '${a.id}')">✓ Approve — preview letter</button>
-          <button class="acc-action-btn conditional" onclick="accFinalize('approve_with_conditions', '${a.id}')">⚠ Approve w/ conditions — preview letter</button>
-          <button class="acc-action-btn more-info" onclick="accFinalize('request_more_info', '${a.id}')">📝 Request more info (stays in queue)</button>
-          <button class="acc-action-btn deny" onclick="accFinalize('deny', '${a.id}')">✗ Deny — preview letter</button>
-          <button class="secondary-btn" style="margin-left:auto;" onclick="accCopyToClipboard('${a.id}')">📋 Copy message</button>
+          <button class="acc-action-btn approve" onclick="accSend('${a.id}', true)">✉ Send to homeowner (as Annie)</button>
+          <button class="acc-action-btn modify" onclick="accSend('${a.id}', false)">💾 Mark done without emailing</button>
+          <a class="secondary-btn" href="/acc-review/decisions/${a.id}/letter" target="_blank" rel="noopener" style="align-self:center; text-decoration:none;">⬇ Download letter PDF</a>
+          <a class="secondary-btn" href="/acc-review/decisions/${a.id}/packet" target="_blank" rel="noopener" style="align-self:center; text-decoration:none;">⬇ Packet</a>
         </div>
         <p id="acc-action-status" style="margin-top:10px; font-size:12px; text-align:right;"></p>
       </div>
-
-      <!-- Application details -->
-      <div class="acc-card">
-        <h3>📋 What was submitted</h3>
-        <div class="acc-field-pair"><div class="k">Project type</div><div>${accEsc(appData.project_type || '—')}</div></div>
-        <div class="acc-field-pair"><div class="k">Description</div><div style="white-space:pre-wrap;">${accEsc(appData.project_description || '—')}</div></div>
-        ${appData.materials ? `<div class="acc-field-pair"><div class="k">Materials</div><div>${accEsc(appData.materials)}</div></div>` : ''}
-        ${appData.dimensions ? `<div class="acc-field-pair"><div class="k">Dimensions</div><div>${accEsc(appData.dimensions)}</div></div>` : ''}
-        ${appData.location_on_property ? `<div class="acc-field-pair"><div class="k">Location</div><div>${accEsc(appData.location_on_property)}</div></div>` : ''}
-        ${appData.start_date ? `<div class="acc-field-pair"><div class="k">Start date</div><div>${accEsc(appData.start_date)}</div></div>` : ''}
-        ${appData.completion_date ? `<div class="acc-field-pair"><div class="k">Completion</div><div>${accEsc(appData.completion_date)}</div></div>` : ''}
-        ${appData.contractor ? `<div class="acc-field-pair"><div class="k">Contractor</div><div>${accEsc(appData.contractor)}</div></div>` : ''}
-        ${appData.estimated_cost ? `<div class="acc-field-pair"><div class="k">Est. cost</div><div>$${accEsc(appData.estimated_cost)}</div></div>` : ''}
-        ${appData.additional_notes ? `<div class="acc-field-pair"><div class="k">Notes</div><div style="white-space:pre-wrap;">${accEsc(appData.additional_notes)}</div></div>` : ''}
-      </div>
-
-      <!-- Response history — shows WHO finalized each response. Newest
-           rows use the per-user FK (action_by_name reflects the actor
-           captured from the JWT). Legacy rows show whatever free-text
-           name was stored under the old code. -->
-      ${accCurrent.responses.length > 0 ? `
-        <div class="acc-card">
-          <h3>📒 Response history</h3>
-          ${accCurrent.responses.map(r => `
-            <div style="padding:10px 0; border-bottom:1px solid #f0f2f5; font-size:13px;">
-              <div style="font-weight:600; color:#0B1D34;">${accEsc(r.response_type)} ${r.action_at ? '<span style="font-weight:400; color:#888; font-size:11px;">' + new Date(r.action_at).toLocaleString() + '</span>' : ''}${r.action_by_name ? '<span style="font-weight:400; color:#5a7390; font-size:11px; margin-left:6px;">by ' + accEsc(r.action_by_name) + '</span>' : ''}</div>
-              ${r.message_to_owner ? `<div style="white-space:pre-wrap; margin-top:5px; color:#444;">${accEsc(r.message_to_owner)}</div>` : ''}
-              ${r.internal_notes ? `<div style="margin-top:5px; padding:6px 10px; background:#f5f8fc; border-radius:4px; font-size:11px; color:#5a7390;"><strong>Internal:</strong> ${accEsc(r.internal_notes)}</div>` : ''}
-            </div>
-          `).join('')}
-        </div>` : ''
-      }
     `;
   }
 
-  function accBuildDraftResponse(a, assessment) {
-    // Use the AI's pre-written draft_response if it was generated — that's
-    // tailored to this specific application, written in Bedrock voice, with
-    // the right reasoning. Falls back to a generic template if absent
-    // (e.g., assessment failed or hasn't run yet).
-    if (assessment && assessment.draft_response && assessment.draft_response.trim()) {
-      return assessment.draft_response.trim();
-    }
-    // Also fall back to the denormalized field on the application row
-    if (a.assessment_draft_response && a.assessment_draft_response.trim()) {
-      return a.assessment_draft_response.trim();
-    }
-    const ref = a.reference_number;
-    const name = a.submitter_name;
-    const project = (a.application_data && a.application_data.project_type) || 'project';
-    return `Hi ${name},
-
-Thanks for submitting your ARC application (${ref}). I've reviewed the details about your ${project} and want to follow up with the next step.
-
-[Your decision and reasoning here]
-
-If you have questions or want to discuss alternatives, just reply or give us a call.
-
-— Bedrock Association Management`;
-  }
-
-  async function accReassess(appId) {
+  async function accSend(id, send) {
+    const decision = document.getElementById('acc-decision-select').value;
+    const body_text = document.getElementById('acc-letter-edit').value;
+    const to_email = document.getElementById('acc-recipient').value.trim();
     const status = document.getElementById('acc-action-status');
-    if (status) status.textContent = 'Re-assessing…';
-    try {
-      const r = await fetch('/api/applications/' + appId + '/assess', { method: 'POST' });
-      const j = await r.json();
-      if (j.error) throw new Error(j.error);
-      await accOpenDetail(appId);
-    } catch (err) {
-      if (status) { status.textContent = 'Error: ' + err.message; status.style.color = '#b91c1c'; }
-      else alert('Re-assess failed: ' + err.message);
-    }
-  }
-  window.accReassess = accReassess;
 
-  async function accFinalize(action, appId) {
-    const msg = document.getElementById('acc-msg').value.trim();
-    const internal = document.getElementById('acc-internal').value.trim();
-    const conditionsEl = document.getElementById('acc-conditions');
-    const conditions = conditionsEl ? conditionsEl.value.trim() : '';
-    const promoteEl = document.getElementById('acc-promote');
-    const promote = promoteEl ? promoteEl.checked : true;
-
-    if (!msg) {
-      alert('Please write a message to the homeowner first.');
+    if (send && !to_email) {
+      status.textContent = 'Enter the homeowner’s email, or use "Mark done without emailing".';
+      status.style.color = '#b91c1c';
       return;
     }
-    if (action === 'approve_with_conditions' && !conditions) {
-      if (!confirm('You selected "Approve with conditions" but didn\'t fill in the conditions field. Proceed anyway?')) return;
-    }
-    const labels = {
-      approve: 'Approve and send this response?' + (promote ? '\n\n(This decision will be added to the ACC History library for AI to learn from.)' : ''),
-      approve_with_conditions: 'Approve with conditions and send this response?' + (promote ? '\n\n(This decision will be added to the ACC History library.)' : ''),
-      deny: 'Deny and send this response?' + (promote ? '\n\n(This denial will be added to the ACC History library.)' : ''),
-      request_more_info: 'Request more info and send this message?'
-    };
-    if (!confirm(labels[action] || 'Send?')) return;
+    const isMoreInfo = decision === 'request_more_info';
+    const verb = send ? (isMoreInfo ? 'email the request for more information to' : 'send this decision to') + ' ' + to_email
+                      : 'mark this application done without emailing';
+    if (!confirm('Are you sure you want to ' + verb + '?' + (isMoreInfo ? '\n\n(Request-more-info keeps the application in the queue.)' : ''))) return;
 
-    const status = document.getElementById('acc-action-status');
-    status.textContent = 'Saving…'; status.style.color = '#5a7390';
-    try {
-      // Send the Bearer token — finalize now requires per-user auth so the
-      // FK (acted_by_user_id) gets stamped from the JWT instead of a free-
-      // text name in the body.
-      const headers = { 'Content-Type': 'application/json' };
-      try {
-        const { data: { session } } = await window.supa.auth.getSession();
-        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
-      } catch (_) { /* no session — server will 401 and the catch below shows it */ }
-      const r = await fetch('/api/applications/' + appId + '/finalize', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          action,
-          message_to_owner: msg,
-          internal_notes: internal || null,
-          conditions: conditions || null,
-          promote_to_history: promote
-        })
-      });
-      const j = await r.json();
-      if (j.error) throw new Error(j.error);
-
-      // request_more_info stays in queue — no letter goes out
-      if (action === 'request_more_info') {
-        status.textContent = '✓ Recorded — application stays in queue for follow-up.';
-        status.style.color = '#166534';
-        setTimeout(() => accOpenDetail(appId), 1200);
-        return;
-      }
-
-      // Approve / deny → preview the drafted letter + explicit Send button
-      const finalStatus = (action === 'deny') ? 'denied' : 'approved';
-      status.textContent = '✓ Letter drafted — preview below, click Send when ready.';
-      status.style.color = '#a16207';
-      accOpenLetterPreview(appId, j.decision_letter_html, j.decision_letter_subject, finalStatus, j.application?.submitter_email);
-    } catch (err) {
-      status.textContent = 'Error: ' + err.message; status.style.color = '#b91c1c';
-    }
-  }
-  window.accFinalize = accFinalize;
-
-  // ----- Letter preview + send modal (Phase 1A) ------------------------------
-  // After finalize, the API returns a rendered decision letter draft. We show
-  // it here as a preview; staff can edit the body in the textarea, re-render,
-  // and click Send to actually deliver via /send-decision.
-  function accOpenLetterPreview(appId, letterHtml, subject, finalStatus, recipientEmail) {
-    // Remove any existing modal
-    const existing = document.getElementById('acc-letter-modal');
-    if (existing) existing.remove();
-
-    const modal = document.createElement('div');
-    modal.id = 'acc-letter-modal';
-    modal.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
-    modal.innerHTML = `
-      <div style="background:#fff; border-radius:10px; max-width:1100px; width:100%; max-height:92vh; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,0.35);">
-        <div style="padding:14px 22px; border-bottom:1px solid #e2e8f0; display:flex; align-items:center; justify-content:space-between; gap:12px;">
-          <div>
-            <h3 style="margin:0; color:#0B1D34; font-size:17px;">Preview decision letter</h3>
-            <div style="font-size:12px; color:#64748b; margin-top:2px;">
-              Will send to <strong>${(recipientEmail || '—').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</strong> with the letter attached as PDF.
-            </div>
-          </div>
-          <button onclick="document.getElementById('acc-letter-modal').remove();" style="background:none; border:0; font-size:24px; color:#64748b; cursor:pointer; line-height:1;">×</button>
-        </div>
-        <div style="flex:1; min-height:0; display:grid; grid-template-columns:1fr 1fr; overflow:hidden;">
-          <div style="padding:14px 18px; border-right:1px solid #e2e8f0; overflow-y:auto; background:#f9fafb;">
-            <div style="font-size:11.5px; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:6px;">Subject</div>
-            <input id="acc-letter-subject" type="text" value="${(subject || '').replace(/"/g, '&quot;')}" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:5px; font-size:13px; margin-bottom:12px;">
-            <div style="font-size:11.5px; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:6px;">Letter preview (read-only — re-finalize with edited message to change)</div>
-            <div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">To edit the body, close this modal, change the "Message to homeowner" field above, and re-run Approve/Deny.</div>
-          </div>
-          <div style="overflow-y:auto;">
-            <iframe id="acc-letter-iframe" style="width:100%; height:100%; border:0; background:#fff;" sandbox="allow-same-origin"></iframe>
-          </div>
-        </div>
-        <div style="padding:14px 22px; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:10px; align-items:center;">
-          <div id="acc-send-status" style="margin-right:auto; font-size:12.5px;"></div>
-          <button onclick="document.getElementById('acc-letter-modal').remove();" style="background:#fff; color:#0B1D34; border:1px solid #cbd5e1; padding:8px 16px; border-radius:6px; font-size:13px; cursor:pointer;">Save draft &amp; close</button>
-          <button id="acc-send-btn" onclick="accSendDecision('${appId}', '${finalStatus}')" style="background:#0B1D34; color:#fff; border:0; padding:8px 18px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">✉ Send to homeowner</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(modal);
-    const iframe = document.getElementById('acc-letter-iframe');
-    if (iframe && iframe.contentWindow) {
-      iframe.contentWindow.document.open();
-      iframe.contentWindow.document.write(letterHtml || '<p style="padding:20px; font-family:sans-serif; color:#64748b;">(no letter rendered)</p>');
-      iframe.contentWindow.document.close();
-    }
-  }
-  window.accOpenLetterPreview = accOpenLetterPreview;
-
-  async function accSendDecision(appId, finalStatus) {
-    const sendBtn = document.getElementById('acc-send-btn');
-    const status = document.getElementById('acc-send-status');
-    const subject = document.getElementById('acc-letter-subject')?.value?.trim() || null;
-    sendBtn.disabled = true;
-    status.textContent = 'Rendering PDF + sending email…'; status.style.color = '#a16207';
-
+    status.textContent = send ? 'Rendering letter + emailing…' : 'Saving…';
+    status.style.color = '#a16207';
     try {
       const headers = { 'Content-Type': 'application/json' };
       try {
         const { data: { session } } = await window.supa.auth.getSession();
         if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
       } catch (_) {}
-      const r = await fetch('/api/applications/' + appId + '/send-decision', {
+      const r = await fetch('/acc-review/decisions/' + id + '/finalize', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ final_status: finalStatus, subject }),
+        body: JSON.stringify({ decision_type: decision, body_text, to_email, send }),
       });
       const j = await r.json();
-      if (!j.ok) throw new Error(j.error || j.email_error || 'send failed');
-      status.textContent = '✓ Sent to ' + j.sent_to + ' — application closed.';
+      if (j.error) throw new Error(j.error);
+      if (j.email && j.email.sent) {
+        status.textContent = '✓ Sent to ' + to_email + (j.final ? ' — moved to Done.' : ' — stays in queue for follow-up.');
+      } else {
+        status.textContent = j.final ? '✓ Marked done.' : '✓ Recorded — stays in queue.';
+      }
       status.style.color = '#15803d';
-      setTimeout(() => {
-        document.getElementById('acc-letter-modal')?.remove();
-        accOpenDetail(appId);
-      }, 1500);
+      setTimeout(() => accBackToList(), 1400);
     } catch (err) {
-      status.textContent = '✗ ' + err.message; status.style.color = '#b91c1c';
-      sendBtn.disabled = false;
+      status.textContent = '✗ ' + err.message;
+      status.style.color = '#b91c1c';
     }
   }
-  window.accSendDecision = accSendDecision;
-
-  function accCopyToClipboard(appId) {
-    const msg = document.getElementById('acc-msg').value;
-    navigator.clipboard.writeText(msg).then(() => {
-      const status = document.getElementById('acc-action-status');
-      status.textContent = '✓ Copied to clipboard — paste into Outlook'; status.style.color = '#166534';
-      setTimeout(() => { status.textContent = ''; }, 3000);
-    }).catch(err => alert('Copy failed: ' + err.message));
-  }
-  window.accCopyToClipboard = accCopyToClipboard;
+  window.accSend = accSend;
+  window.accOpenDetail = accOpenDetail;
+  window.accBackToList = accBackToList;
 
   function accEsc(s) {
     return (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');

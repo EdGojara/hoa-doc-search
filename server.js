@@ -2270,24 +2270,47 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
   }
 });
 
-// /acc-review/decisions — list past decisions, optionally filtered by address.
+// /acc-review/decisions — list ACC applications. Doubles as the status board:
+// every application from any door (email / portal / staff upload) lands here,
+// queued (status='pending_review') or done (status='decided'). Filter by
+// status/source/community/address; free-text via q.
 app.get('/acc-review/decisions', async (req, res) => {
   try {
-    const { address, community, q } = req.query;
+    const { address, community, q, status, source } = req.query;
     let query = supabase
       .from('acc_decisions')
-      .select('id, community_name, homeowner_name, homeowner_address, project_summary, reference_number, decision_type, created_at')
+      .select('id, community_name, homeowner_name, homeowner_address, project_summary, reference_number, decision_type, status, source, ai_recommendation, submitter_email, created_at, updated_at')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('created_at', { ascending: false })
-      .limit(200);
+      .limit(500);
+    if (status) query = query.eq('status', status);
+    if (source) query = query.eq('source', source);
     if (address) query = query.ilike('homeowner_address', `%${address}%`);
     if (community) query = query.ilike('community_name', `%${community}%`);
-    if (q) query = query.or(`homeowner_name.ilike.%${q}%,homeowner_address.ilike.%${q}%,project_summary.ilike.%${q}%`);
+    if (q) query = query.or(`homeowner_name.ilike.%${q}%,homeowner_address.ilike.%${q}%,project_summary.ilike.%${q}%,reference_number.ilike.%${q}%`);
     const { data, error } = await query;
     if (error) throw error;
     res.json({ decisions: data || [] });
   } catch (err) {
     console.error('[acc-review/decisions] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// /acc-review/decisions/:id/full — full row for the review screen, including
+// the engine's drafted recommendation, workpaper, and letter body.
+app.get('/acc-review/decisions/:id/full', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('acc_decisions')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .single();
+    if (error || !data) return res.status(404).json({ error: 'Decision not found' });
+    res.json({ decision: data });
+  } catch (err) {
+    console.error('[acc-review/decisions/:id/full] failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -2428,6 +2451,162 @@ app.get('/acc-review/decisions/:id/packet', async (req, res) => {
   } catch (err) {
     console.error('[acc-review/decisions/:id/packet] failed:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// /acc-review/decisions/:id/finalize — decide + communicate back to the
+// homeowner. A queued application (status='pending_review') carries the
+// engine's drafted recommendation + letter; the reviewer accepts or edits the
+// letter body + decision, then finalizes. This renders the letter PDF, files
+// it under the decision, optionally emails the homeowner AS Annie (the ACC
+// specialist mailbox — threads with the acknowledgment she already sent), and
+// flips the row to status='decided'. Idempotent-safe: a decided row can be
+// re-finalized (e.g. corrected letter) without creating a duplicate.
+app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
+  try {
+    const actor = await getActingUser(req);
+    const body = req.body || {};
+    const { id } = req.params;
+
+    // Load the pending decision.
+    const { data: dec, error: qErr } = await supabase
+      .from('acc_decisions')
+      .select('*')
+      .eq('id', id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .single();
+    if (qErr || !dec) return res.status(404).json({ error: 'Decision not found' });
+
+    const decisionType = (body.decision_type || dec.decision_type || dec.ai_recommendation || '').trim();
+    if (!decisionType) return res.status(400).json({ error: 'decision_type is required' });
+
+    // "request_more_info" is not a final decision — it keeps the item in the
+    // queue but still emails the homeowner what's missing. We do NOT flip to
+    // 'decided' in that case.
+    const isFinal = decisionType !== 'request_more_info';
+
+    // The letter body the reviewer approved (falls back to the engine draft).
+    let bodyText = (body.body_text != null ? body.body_text : dec.ai_letter_body) || '';
+    if (!bodyText.trim()) return res.status(400).json({ error: 'letter body is empty' });
+
+    // IP-leak guard — same discipline as /acc-review/letter. Auto-rewrite soft
+    // phrases; hard-block if an internal-only phrase survives.
+    const bodyScreen = screenForLeaks(bodyText, { audience: 'customer', autoRewrite: true });
+    if (bodyScreen.blocks.length > 0) {
+      return res.status(400).json({
+        error: 'Letter contains internal-only phrases that cannot be sent to a homeowner. Edit the highlighted phrases before sending. ' +
+               'Blocked: ' + bodyScreen.blocks.map((b) => `"${b.matches.join('", "')}"`).join(', '),
+        blocked_phrases: bodyScreen.blocks,
+      });
+    }
+    bodyText = bodyScreen.text;
+
+    // Render the decision letter PDF.
+    const pdfBuffer = await renderLetterPdfBuffer({
+      community: dec.community_name,
+      homeowner_name: body.homeowner_name || dec.homeowner_name,
+      homeowner_address: body.homeowner_address || dec.homeowner_address,
+      project_summary: body.project_summary || dec.project_summary,
+      reference_number: dec.reference_number,
+      decision_type: decisionType,
+      body_text: bodyText,
+    });
+
+    // File the letter PDF under the decision.
+    const letterStoragePath = `acc_decisions/${id}/letter.pdf`;
+    try {
+      await supabase.storage.from('documents').upload(letterStoragePath, pdfBuffer, {
+        contentType: 'application/pdf', upsert: true,
+      });
+    } catch (e) { console.warn('[acc-finalize] letter upload failed:', e.message); }
+
+    // Communicate back to the homeowner (opt-in via send=true). Sent AS Annie,
+    // the ACC specialist mailbox, so it threads with her acknowledgment.
+    let emailResult = { attempted: false, sent: false };
+    const toEmail = (body.to_email || dec.submitter_email || '').trim();
+    if (body.send && toEmail) {
+      emailResult.attempted = true;
+      try {
+        const graph = require('./lib/email/graph_send');
+        if (!graph.isConfigured()) throw new Error('email_not_configured');
+        const verb = decisionType.startsWith('approved') ? 'Approved'
+                   : decisionType === 'denied' ? 'Decision'
+                   : decisionType === 'request_more_info' ? 'More information needed'
+                   : 'Decision';
+        const subject = `${dec.community_name} architectural request — ${verb}${dec.reference_number ? ' (' + dec.reference_number + ')' : ''}`;
+        const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#1a2332;white-space:pre-wrap;">${bodyText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</div>`;
+        await graph.sendAs({
+          from: graph.ANNIE_MAILBOX,
+          to: toEmail,
+          subject,
+          html,
+          attachments: [{
+            '@odata.type': '#microsoft.graph.fileAttachment',
+            name: `${(dec.reference_number || 'ACC_decision').replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`,
+            contentType: 'application/pdf',
+            contentBytes: pdfBuffer.toString('base64'),
+          }],
+        });
+        emailResult.sent = true;
+      } catch (e) {
+        console.error('[acc-finalize] email send failed:', e.message);
+        emailResult.error = e.message;
+      }
+    }
+
+    // If the reviewer asked to send but the email failed, do NOT flip to
+    // decided — surface the failure so it can be retried. The letter PDF is
+    // already filed, so no work is lost.
+    if (body.send && emailResult.attempted && !emailResult.sent) {
+      return res.status(502).json({
+        error: 'The decision letter was generated but could not be emailed to the homeowner: ' + (emailResult.error || 'unknown') +
+               '. Nothing was marked done — you can retry, or download the letter and send it manually.',
+        email: emailResult,
+      });
+    }
+
+    // Persist the decision. request_more_info stays queued; everything else is done.
+    const patch = {
+      decision_type: decisionType,
+      letter_body: bodyText,
+      letter_pdf_storage_path: letterStoragePath,
+      decided_by_user_id: actor?.id || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (isFinal) patch.status = 'decided';
+    const { error: upErr } = await supabase.from('acc_decisions').update(patch).eq('id', id);
+    if (upErr) { console.error('[acc-finalize] update failed:', upErr.message); throw upErr; }
+
+    // Record the outbound communication on the timeline (best-effort).
+    if (emailResult.sent) {
+      try {
+        const annie = require('./lib/email/graph_send').ANNIE_MAILBOX;
+        await supabase.from('email_messages').insert({
+          mailbox: annie,
+          direction: 'outbound',
+          sender_email: annie,
+          sender_name: 'Annie Reeves',
+          recipients: [{ emailAddress: { address: toEmail } }],
+          subject: `ACC decision sent — ${dec.reference_number || ''}`.trim(),
+          body_preview: bodyText.slice(0, 240),
+          classification: 'acc_decision_sent',
+          community_id: dec.community_id || null,
+          received_at: new Date().toISOString(),
+        });
+      } catch (_) { /* timeline logging is best-effort */ }
+    }
+
+    res.json({
+      status: 'ok',
+      id,
+      decision_type: decisionType,
+      final: isFinal,
+      new_status: isFinal ? 'decided' : 'pending_review',
+      email: emailResult,
+    });
+  } catch (err) {
+    console.error('[acc-review/decisions/:id/finalize] failed:', err.message);
+    res.status(err && err.status ? err.status : 500).json({ error: err.message });
   }
 });
 
