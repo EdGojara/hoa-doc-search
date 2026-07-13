@@ -604,9 +604,21 @@ Return the JSON assessment now.`;
     response_excerpt: (rawText || '').slice(0, 600),
   });
 
-  // Persist to application_assessments (full history) — only if we have a parse
+  // Persist to application_assessments (full history) — only if we have a parse.
   if (parsed && !evalMode) {
-    await supabase.from('application_assessments').insert({
+    // triggered_by is CHECK-constrained (migration 021) to
+    // initial_submission/revision/manual_remap/periodic_recheck. Map the
+    // internal trigger label to that vocabulary — passing the raw label
+    // ('public_submit','email_intake',...) silently violated the constraint,
+    // which is why NO assessment (web or email) ever persisted.
+    const TRIGGER_MAP = {
+      public_submit: 'initial_submission', email_intake: 'initial_submission',
+      backfill_fixup: 'initial_submission', diag: 'initial_submission',
+      reassess: 'revision', revision: 'revision',
+      manual_remap: 'manual_remap', periodic: 'periodic_recheck', periodic_recheck: 'periodic_recheck',
+    };
+    const triggeredBy = TRIGGER_MAP[triggerSource] || 'initial_submission';
+    const { error: persistErr } = await supabase.from('application_assessments').insert({
       application_id: application.id,
       status: parsed.status,
       summary: parsed.summary,
@@ -621,8 +633,9 @@ Return the JSON assessment now.`;
       ai_output_tokens: completion.usage?.output_tokens || null,
       ai_duration_ms: durationMs,
       prompt_version: 'v2_hardened',
-      triggered_by: triggerSource,
+      triggered_by: triggeredBy,
     });
+    if (persistErr) console.error('[applications] assessment persist FAILED:', persistErr.message);
 
     // Denormalize latest snapshot onto the application row. If held for
     // review, force the status into a manual_review-flavored bucket so the
