@@ -448,13 +448,13 @@ router.post('/pull', express.json(), async (req, res) => {
     const mailboxes = [...new Set(['info@bedrocktx.com', 'claire@bedrocktx.com', graphSend.EMMA_MAILBOX, graphSend.ANNIE_MAILBOX, graphSend.MIRANDA_MAILBOX, ...extra])];
     const days = Math.min(60, parseInt((req.body || {}).days, 10) || 14);
     const sinceISO = new Date(Date.now() - days * 864e5).toISOString();
-    const results = {}; let kept = 0, drafted = 0, invoicesLoaded = 0;
+    const results = {}; let kept = 0, drafted = 0, invoicesLoaded = 0, filed = 0;
     // Mailboxes are independent — pull them at the same time instead of waiting
     // for each to finish before starting the next.
     await Promise.all(mailboxes.map(async (mbx) => {
       try {
         const s = await graphIngest.ingestMailbox(mbx, { sinceISO, light: false, onlyLinked: false, max: 500 });
-        results[mbx] = s; kept += s.kept || 0; invoicesLoaded += s.invoices_loaded || 0;
+        results[mbx] = s; kept += s.kept || 0; invoicesLoaded += s.invoices_loaded || 0; filed += s.filed || 0;
       } catch (e) { results[mbx] = { error: e.message }; }
     }));
     // Count fresh drafts awaiting review (non-spam/internal inbound with a draft)
@@ -463,7 +463,7 @@ router.post('/pull', express.json(), async (req, res) => {
         .eq('direction', 'inbound').eq('triage_status', 'needs_review').not('extracted->draft', 'is', null);
       drafted = count || 0;
     } catch (_) {}
-    res.json({ ok: true, since: sinceISO, mailboxes, kept, drafts_waiting: drafted, invoices_loaded: invoicesLoaded, results });
+    res.json({ ok: true, since: sinceISO, mailboxes, kept, drafts_waiting: drafted, invoices_loaded: invoicesLoaded, filed, results });
   } catch (err) {
     console.error('[email_triage] pull failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

@@ -308,7 +308,7 @@ window.pullNow = async function(){
     const r=await af('/api/email-triage/pull',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     const j=await r.json();
     if(!r.ok||!j.ok){ st.style.color='#b91c1c'; st.textContent=j.detail||j.error||'Pull failed.'; }
-    else{ st.style.color='#166534'; st.textContent=`✓ Pulled. ${j.kept} message${j.kept===1?'':'s'} in the window · ${j.drafts_waiting} draft${j.drafts_waiting===1?'':'s'} waiting${j.invoices_loaded?` · ${j.invoices_loaded} invoice${j.invoices_loaded===1?'':'s'} loaded to Payables`:''}.`; loadStats(); loadList(); }
+    else{ st.style.color='#166534'; st.textContent=`✓ Pulled. ${j.kept} message${j.kept===1?'':'s'} in the window · ${j.drafts_waiting} draft${j.drafts_waiting===1?'':'s'} waiting${j.invoices_loaded?` · ${j.invoices_loaded} invoice${j.invoices_loaded===1?'':'s'} loaded to Payables`:''}${j.filed?` · ${j.filed} moved out of the Outlook inbox`:''}.`; loadStats(); loadList(); }
   }catch(e){ st.style.color='#b91c1c'; st.textContent='Pull failed: '+(e.message||'network'); }
   finally{ btn.disabled=false; btn.innerHTML=o; }
 };
