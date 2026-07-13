@@ -1336,9 +1336,12 @@ app.use('/api/bedrock-connect', bedrockConnectRouter);
 // Per-homeowner-per-property conversation threads with SLA enforcement,
 // close-with-agreement flow, master inbox view. Foundation for Bedrock
 // Connect's reply handling + future Claire cross-channel integration.
-// See migrations/161_messaging_system.sql for data model.
-const messagingRouter = require('./api/messaging');
-app.use('/api/messaging', messagingRouter);
+// Messaging/threads "Inbox" retired 2026-07-13 — abandoned early build,
+// superseded by Communications (/api/email-triage). Its Inbox nav tab was
+// removed; unmount the endpoint so it stops 500ing. api/messaging.js +
+// lib/messaging + migration 161 remain in the tree for reference/history.
+// const messagingRouter = require('./api/messaging');
+// app.use('/api/messaging', messagingRouter);
 
 // Board Packets — Bedrock board packet generator
 // Endpoints under /api/board-packets/*. See api/board_packets.js and

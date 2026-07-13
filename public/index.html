@@ -524,9 +524,10 @@
   <div class="tab" onclick="switchTab('calendar')">🗓️ Calendar</div>
   <div class="tab" onclick="switchTab('perf')">📊 Performance</div>
   <div class="tab" onclick="switchTab('quick')">⚡ Quick</div>
-  <!-- Inbox — Bedrock ↔ homeowner messaging. Master thread list, SLA
-       color dots, three-pane reader, close-with-agreement flow. -->
-  <div class="tab" onclick="switchTab('inbox')">📬 Inbox</div>
+  <!-- 📬 Inbox (messaging_threads / SLA, migration 161) removed 2026-07-13 —
+       abandoned early build: not live in prod (endpoint 500s), no data, unused,
+       superseded by Communications. Orphaned UI/JS below is unreachable;
+       /api/messaging unmounted in server.js. Safe to fully delete later. -->
   <!-- 🔎 Lookup — portfolio property/account search: address or homeowner →
        open violations, balance, legal / bankruptcy status. Accounts-at-legal
        list one click away. (Ed 2026-07-01) -->
