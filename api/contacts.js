@@ -2896,7 +2896,7 @@ router.delete('/homeowner-notes/:noteId', async (req, res) => {
 // ===========================================================================
 router.get('/property-lookup', async (req, res) => {
   try {
-    const { q, community_id, legal_only, limit } = req.query;
+    const { q, community_id, legal_only, late_assessments, limit } = req.query;
     const lim = Math.min(parseInt(limit, 10) || 100, 300);
     const LEGAL = ['at_legal', 'in_bankruptcy', 'lien_filed', 'judgment', 'in_collections'];
 
@@ -2907,6 +2907,41 @@ router.get('/property-lookup', async (req, res) => {
     const { data: states } = await stQ.limit(3000);
     const stateBy = new Map((states || []).map((s) => [s.property_id, s]));
     const legalIds = (states || []).filter((s) => LEGAL.includes(s.state)).map((s) => s.property_id);
+
+    // Late on ASSESSMENTS — portfolio watchlist. Assessment-class past-due only
+    // (assessment + late_fee + interest), matching the amenity-access rule, so
+    // fines-only debt never lands here. Each row carries its amenity-access
+    // status: restricted, or allowed because on a plan / in bankruptcy.
+    if (late_assessments === '1' || late_assessments === 'true') {
+      let dq = supabase.from('v_assessment_delinquency')
+        .select('property_id, contact_id, total_balance_cents, assessment_past_due_cents')
+        .gt('assessment_past_due_cents', 0).order('assessment_past_due_cents', { ascending: false }).limit(1000);
+      if (community_id) dq = dq.eq('community_id', community_id);
+      const del = (await dq).data || [];
+      if (!del.length) return res.json({ results: [], count: 0, mode: 'late_assessments' });
+      const delBy = new Map(del.map((d) => [d.property_id, d]));
+      const ids = del.map((d) => d.property_id).filter(Boolean);
+      let sq = supabase.from('v_property_summary').select('*').in('property_id', ids).limit(1000);
+      if (community_id) sq = sq.eq('community_id', community_id);
+      const sumRows = (await sq).data || [];
+      const results = sumRows.map((r) => {
+        const d = delBy.get(r.property_id); const st = stateBy.get(r.property_id);
+        const onPlan = (st && st.state === 'on_payment_plan') || r.ar_payment_plan_active === true;
+        const inBk = st && st.state === 'in_bankruptcy';
+        const amenity_status = inBk ? 'allowed_bankruptcy' : onPlan ? 'allowed_payment_plan' : 'restricted';
+        return {
+          property_id: r.property_id, community_name: r.community_name,
+          street_address: r.street_address, unit: r.unit, owner_name: r.owner_name, owner_email: r.owner_email,
+          open_violations: r.open_violations || 0, worst_open_stage: r.worst_open_stage || null,
+          current_balance: d ? d.assessment_past_due_cents / 100 : r.current_balance,
+          total_balance: d ? d.total_balance_cents / 100 : null,
+          amenity_status, on_payment_plan: onPlan,
+        };
+      });
+      results.sort((a, b) => Number(b.current_balance || 0) - Number(a.current_balance || 0));
+      const restricted = results.filter((r) => r.amenity_status === 'restricted').length;
+      return res.json({ results, count: results.length, restricted, mode: 'late_assessments' });
+    }
 
     let rows = [];
     if (legal_only === '1' || legal_only === 'true') {
