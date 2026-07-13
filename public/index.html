@@ -3844,6 +3844,29 @@
     </div>
     <div id="billing-detail-meta" style="color:#888; font-size:13px; margin-bottom:16px;"></div>
 
+    <!-- Invoice recipient — the saved "send invoices to" contact for this
+         community. The email flow auto-fills from here (single source of truth);
+         falls back to the board treasurer only when unset. -->
+    <div class="panel" id="billing-recipient-panel" style="margin-bottom:16px;">
+      <h4 style="margin-top:0;">✉ Invoice recipient <span style="font-weight:400; color:#888; font-size:12px;">— where this community's invoices get emailed (auto-fills the send form; override per send anytime)</span></h4>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+        <div style="flex:1; min-width:150px;">
+          <div class="section-label">Name</div>
+          <input id="billing-rcpt-name" type="text" placeholder="e.g. Jane Smith, Treasurer" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+        </div>
+        <div style="flex:1; min-width:180px;">
+          <div class="section-label">Email (To)</div>
+          <input id="billing-rcpt-email" type="email" placeholder="treasurer@example.com" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+        </div>
+        <div style="flex:1; min-width:180px;">
+          <div class="section-label">Cc <span style="color:#aaa; font-weight:400;">(comma-separated)</span></div>
+          <input id="billing-rcpt-cc" type="text" placeholder="president@example.com" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+        </div>
+        <button class="action-btn" onclick="billingSaveBillingContact()" style="padding:7px 16px; background:#0B1D34; color:#fff;">Save</button>
+      </div>
+      <div id="billing-rcpt-status" style="font-size:12px; margin-top:8px; color:#888;"></div>
+    </div>
+
     <!-- Generate Draft Invoice — the primary action, first after the community.
          Between Type and Service period sits the editable categories preview
          (fixed = the recurring fee lines; activity = the standard template). -->
@@ -3927,11 +3950,11 @@
       <div id="billing-recent-invoices" style="font-size:14px; color:#888; margin-top:10px;">Loading…</div>
     </details>
 
-    <!-- Email as Emma — review modal (staff approves before anything sends). -->
+    <!-- Email as Tessa — review modal (staff approves before anything sends). -->
     <div id="billing-email-modal" style="display:none; position:fixed; inset:0; background:rgba(11,29,52,0.45); z-index:9999; align-items:center; justify-content:center;">
       <div style="background:#fff; border-radius:10px; width:min(620px,94vw); max-height:92vh; overflow:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
         <div style="padding:16px 20px; border-bottom:1px solid #e5e7eb; display:flex; justify-content:space-between; align-items:center;">
-          <div style="font-weight:700; font-size:15px; color:#0B1D34;">✉ Email invoice as Emma <span id="billing-email-invnum" style="color:#888; font-weight:400; font-size:13px; font-family:monospace;"></span></div>
+          <div style="font-weight:700; font-size:15px; color:#0B1D34;">✉ Email invoice as Tessa <span id="billing-email-invnum" style="color:#888; font-weight:400; font-size:13px; font-family:monospace;"></span></div>
           <button onclick="billingEmailClose()" style="background:none; border:none; font-size:20px; cursor:pointer; color:#888;">×</button>
         </div>
         <div style="padding:18px 20px;">
@@ -3953,12 +3976,12 @@
             <div class="section-label">Message</div>
             <textarea id="billing-email-body" rows="8" style="width:100%; padding:8px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; font-family:inherit; resize:vertical;"></textarea>
           </div>
-          <div style="font-size:11.5px; color:#666; background:#f6f8fa; border-radius:6px; padding:8px 10px;">📎 The Bedrock invoice PDF attaches automatically. Sends from <strong>emma@bedrocktx.com</strong> with Emma's signature. The invoice is marked <strong>sent</strong> and logged to the community record.</div>
+          <div style="font-size:11.5px; color:#666; background:#f6f8fa; border-radius:6px; padding:8px 10px;">📎 The Bedrock invoice PDF attaches automatically. Sends from <strong>tessa@bedrocktx.com</strong> with Tessa's signature. The invoice is marked <strong>sent</strong> and logged to the community record.</div>
           <div id="billing-email-result" style="font-size:13px; margin-top:10px;"></div>
         </div>
         <div style="padding:14px 20px; border-top:1px solid #e5e7eb; display:flex; justify-content:flex-end; gap:8px;">
           <button onclick="billingEmailClose()" class="secondary-btn" style="padding:8px 16px;">Cancel</button>
-          <button id="billing-email-send-btn" onclick="billingEmailSend()" class="action-btn" style="padding:8px 18px; background:#0B1D34; color:#fff;">Send as Emma</button>
+          <button id="billing-email-send-btn" onclick="billingEmailSend()" class="action-btn" style="padding:8px 18px; background:#0B1D34; color:#fff;">Send as Tessa</button>
         </div>
       </div>
     </div>
@@ -4330,10 +4353,54 @@
   }
   window.contractsSaveBillingCode = contractsSaveBillingCode;
 
+  // ---- Saved invoice recipient (per community) -----------------------------
+  async function billingLoadBillingContact(communityId) {
+    const status = document.getElementById('billing-rcpt-status');
+    const setV = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+    setV('billing-rcpt-name', ''); setV('billing-rcpt-email', ''); setV('billing-rcpt-cc', '');
+    if (status) status.textContent = '';
+    try {
+      const r = await fetch(`/api/billing/communities/${communityId}/billing-contact`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      setV('billing-rcpt-name', j.billing_contact_name);
+      setV('billing-rcpt-email', j.billing_contact_email);
+      setV('billing-rcpt-cc', j.billing_cc_emails);
+      if (status) {
+        if (j.billing_contact_email) status.innerHTML = '<span style="color:#166534;">✓ Invoices for this community auto-fill to this contact.</span>';
+        else if (j.board_fallback) status.innerHTML = `No billing contact saved — invoices would fall back to <strong>${escapeHtml(j.board_fallback.name || j.board_fallback.email)}</strong>${j.board_fallback.position ? ' (' + escapeHtml(j.board_fallback.position) + ')' : ''}. Set one above to lock it in.`;
+        else status.innerHTML = '<span style="color:#b45309;">No billing contact saved and no board email on file — set one above so invoices know where to go.</span>';
+      }
+    } catch (e) { if (status) status.textContent = 'Could not load recipient: ' + e.message; }
+  }
+  window.billingLoadBillingContact = billingLoadBillingContact;
+
+  async function billingSaveBillingContact() {
+    const communityId = billingCurrentCommunityId;
+    if (!communityId) return;
+    const status = document.getElementById('billing-rcpt-status');
+    if (status) { status.style.color = '#888'; status.textContent = 'Saving…'; }
+    try {
+      const r = await fetch(`/api/billing/communities/${communityId}/billing-contact`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          billing_contact_name: document.getElementById('billing-rcpt-name').value,
+          billing_contact_email: document.getElementById('billing-rcpt-email').value,
+          billing_cc_emails: document.getElementById('billing-rcpt-cc').value,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (status) { status.style.color = '#166534'; status.innerHTML = '✓ Saved — invoices for this community will auto-fill to this recipient.'; }
+    } catch (e) { if (status) { status.style.color = '#b91c1c'; status.textContent = '✗ ' + e.message; } }
+  }
+  window.billingSaveBillingContact = billingSaveBillingContact;
+
   async function billingShowCommunity(communityId) {
     billingCurrentCommunityId = communityId;
     document.getElementById('billing-communities-view').style.display = 'none';
     document.getElementById('billing-community-detail').style.display = 'block';
+    billingLoadBillingContact(communityId);
 
     const community = billingCommunitiesCache.find(c => c.id === communityId);
     document.getElementById('billing-detail-name').textContent = community ? community.name : '(loading…)';

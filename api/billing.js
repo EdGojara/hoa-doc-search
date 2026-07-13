@@ -805,8 +805,8 @@ function periodMonthLabel(startYmd) {
   return `${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
 }
 
-// Best-effort billing recipient for an HOA (non-builder) invoice: an active
-// board member with an email, treasurer first, then president, then anyone.
+// Board-member fallback: an active board member with an email, treasurer first,
+// then president, then anyone.
 async function resolveBoardBillingEmail(communityId) {
   const { data } = await supabase.from('board_members')
     .select('name, position, email')
@@ -816,6 +816,36 @@ async function resolveBoardBillingEmail(communityId) {
   const pick = (re) => rows.find((r) => re.test(String(r.position || '').toLowerCase()));
   const chosen = pick(/treasurer/) || pick(/president/) || rows[0] || null;
   return chosen ? { email: chosen.email, name: chosen.name, position: chosen.position } : null;
+}
+
+// The invoice recipient for a community: the SAVED billing contact
+// (communities.billing_contact_*) is the single source of truth; fall back to
+// the board treasurer/president only when no billing contact is set. Returns
+// { to, cc, name, source } or null.
+async function resolveInvoiceRecipient(communityId) {
+  if (!communityId) return null;
+  // Migration-safe: if 295 hasn't been applied yet, the billing_contact_*
+  // columns don't exist — degrade to the board fallback instead of 500ing.
+  const { data: comm, error: commErr } = await supabase.from('communities')
+    .select('billing_contact_name, billing_contact_email, billing_cc_emails')
+    .eq('id', communityId).maybeSingle();
+  if (commErr) {
+    if (!/billing_contact|column/i.test(commErr.message || '')) console.warn('[billing] recipient lookup:', commErr.message);
+    return resolveBoardBillingEmail(communityId).then((b) => b ? { to: b.email, cc: '', name: b.name || null, source: `board ${b.position || 'member'}${b.name ? ' (' + b.name + ')' : ''}` } : null);
+  }
+  if (comm && comm.billing_contact_email && EMAIL_ONE_RE.test(String(comm.billing_contact_email).trim())) {
+    return {
+      to: comm.billing_contact_email.trim(),
+      cc: (comm.billing_cc_emails || '').trim(),
+      name: comm.billing_contact_name || null,
+      source: 'billing contact on file',
+    };
+  }
+  const board = await resolveBoardBillingEmail(communityId);
+  if (board) {
+    return { to: board.email, cc: '', name: board.name || null, source: `board ${board.position || 'member'}${board.name ? ' (' + board.name + ')' : ''}` };
+  }
+  return null;
 }
 
 function draftBillingCoverNote({ invoice, community }) {
@@ -840,10 +870,11 @@ router.get('/invoices/:invoiceId/email-preview', async (req, res) => {
     if (error || !invoice) return res.status(404).json({ error: 'Invoice not found' });
 
     let to = invoice.recipient_email || '';
+    let cc = '';
     let recipient_source = invoice.recipient_email ? 'invoice recipient' : null;
     if (!to && invoice.invoice_type !== 'builder_arc') {
-      const board = await resolveBoardBillingEmail(invoice.community_id);
-      if (board) { to = board.email; recipient_source = `board ${board.position || 'member'} (${board.name || ''})`.trim(); }
+      const rcpt = await resolveInvoiceRecipient(invoice.community_id);
+      if (rcpt) { to = rcpt.to; cc = rcpt.cc || ''; recipient_source = rcpt.source; }
     }
     const commName = (invoice.community && invoice.community.name) || '';
     const subject = invoice.invoice_type === 'builder_arc'
@@ -851,7 +882,7 @@ router.get('/invoices/:invoiceId/email-preview', async (req, res) => {
       : `${commName} — invoice ${invoice.invoice_number} (${periodMonthLabel(invoice.service_period_start)})`;
 
     res.json({
-      to, cc: '', subject,
+      to, cc, subject,
       body: draftBillingCoverNote({ invoice, community: invoice.community || {} }),
       recipient_source,
       has_recipient: !!to,
@@ -871,9 +902,9 @@ router.post('/invoices/:invoiceId/email-send', async (req, res) => {
   const { invoiceId } = req.params;
   try {
     const graphSend = require('../lib/email/graph_send');
-    const { buildEmmaEmail } = require('../lib/email/emma_signature');
+    const { buildTessaEmail } = require('../lib/email/tessa_signature');
     if (!graphSend.isConfigured()) {
-      return res.status(400).json({ error: 'Emma is not connected to email yet (Microsoft Graph credentials missing).' });
+      return res.status(400).json({ error: 'Tessa is not connected to email yet (Microsoft Graph credentials missing).' });
     }
     const to = String((req.body && req.body.to) || '').split(/[,;]/).map((s) => s.trim()).filter((s) => EMAIL_ONE_RE.test(s));
     const cc = String((req.body && req.body.cc) || '').split(/[,;]/).map((s) => s.trim()).filter((s) => EMAIL_ONE_RE.test(s));
@@ -895,7 +926,7 @@ router.post('/invoices/:invoiceId/email-send', async (req, res) => {
 
     // Render the Bedrock PDF and attach it (byte-identical to the download).
     const { buffer } = await renderInvoicePdfBuffer(invoiceId);
-    const { html, attachments } = buildEmmaEmail(body);
+    const { html, attachments } = buildTessaEmail(body);
     attachments.push({
       '@odata.type': '#microsoft.graph.fileAttachment',
       name: `invoice_${invoice.invoice_number || invoiceId}.pdf`,
@@ -903,15 +934,18 @@ router.post('/invoices/:invoiceId/email-send', async (req, res) => {
       contentBytes: buffer.toString('base64'),
     });
 
-    await graphSend.sendAs({ from: graphSend.EMMA_MAILBOX, to, cc, subject, html, attachments });
+    // Invoices are Bedrock billing the association (Bedrock's own AR), so they
+    // come from Tessa (Ed's office / Bedrock-side), not a community-facing
+    // persona and not Emma the AP/vendor persona (Ed 2026-07-13).
+    await graphSend.sendAs({ from: graphSend.TESSA_MAILBOX, to, cc, subject, html, attachments });
 
     // Log the outbound correspondence (association record).
     const allRecipients = [...to, ...cc];
     await supabase.from('email_messages').insert({
-      mailbox: graphSend.EMMA_MAILBOX, direction: 'outbound', sender_email: graphSend.EMMA_MAILBOX,
-      sender_name: 'Emma Brooks (Bedrock AI)', recipients: allRecipients, subject,
+      mailbox: graphSend.TESSA_MAILBOX, direction: 'outbound', sender_email: graphSend.TESSA_MAILBOX,
+      sender_name: 'Tessa McCall (Bedrock)', recipients: allRecipients, subject,
       body_preview: body.slice(0, 2000), classification: 'outbound_reply', classification_confidence: 'high',
-      ai_summary: `Emma emailed invoice ${invoice.invoice_number} to ${allRecipients.join(', ')}`,
+      ai_summary: `Tessa emailed invoice ${invoice.invoice_number} to ${allRecipients.join(', ')}`,
       community_id: invoice.community_id, triage_status: 'handled', record_ownership: 'association_record',
       reviewed_at: new Date().toISOString(),
     });
@@ -923,12 +957,70 @@ router.post('/invoices/:invoiceId/email-send', async (req, res) => {
     }
     await supabase.from('invoice_events').insert({
       invoice_id: invoiceId, kind: wasSent ? 'resent' : 'sent',
-      payload: { emailed: true, via: 'emma', to: allRecipients, subject },
+      payload: { emailed: true, via: 'tessa', to: allRecipients, subject },
     });
 
-    res.json({ sent: true, to, cc, invoice_number: invoice.invoice_number, from: graphSend.EMMA_MAILBOX });
+    res.json({ sent: true, to, cc, invoice_number: invoice.invoice_number, from: graphSend.TESSA_MAILBOX });
   } catch (err) {
     console.error('[billing] email-send failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Saved "send invoices to" contact per community — the single source of truth
+// the invoice email flow auto-fills from (see resolveInvoiceRecipient).
+router.get('/communities/:communityId/billing-contact', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('communities')
+      .select('billing_contact_name, billing_contact_email, billing_cc_emails')
+      .eq('id', req.params.communityId).maybeSingle();
+    // Migration-safe: before 295 is applied the columns don't exist — return
+    // empty + the board fallback rather than erroring.
+    if (error && /billing_contact|column/i.test(error.message || '')) {
+      const board = await resolveBoardBillingEmail(req.params.communityId);
+      return res.json({ billing_contact_name: null, billing_contact_email: null, billing_cc_emails: null, board_fallback: board ? { email: board.email, name: board.name, position: board.position } : null, needs_migration: true });
+    }
+    if (error) throw error;
+    // Surface the board fallback so the UI can show who invoices would go to
+    // when no billing contact is set.
+    let fallback = null;
+    if (!data || !data.billing_contact_email) {
+      const board = await resolveBoardBillingEmail(req.params.communityId);
+      if (board) fallback = { email: board.email, name: board.name, position: board.position };
+    }
+    res.json({
+      billing_contact_name: data ? data.billing_contact_name : null,
+      billing_contact_email: data ? data.billing_contact_email : null,
+      billing_cc_emails: data ? data.billing_cc_emails : null,
+      board_fallback: fallback,
+    });
+  } catch (err) {
+    console.error('[billing] billing-contact get failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/communities/:communityId/billing-contact', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const email = String(b.billing_contact_email || '').trim();
+    if (email && !EMAIL_ONE_RE.test(email)) {
+      return res.status(400).json({ error: 'That primary email doesn\'t look valid.' });
+    }
+    // Validate each Cc address; keep them comma-separated.
+    const ccList = String(b.billing_cc_emails || '').split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+    const badCc = ccList.find((c) => !EMAIL_ONE_RE.test(c));
+    if (badCc) return res.status(400).json({ error: `Cc address "${badCc}" doesn't look valid.` });
+
+    const { error } = await supabase.from('communities').update({
+      billing_contact_name: (b.billing_contact_name || '').trim() || null,
+      billing_contact_email: email || null,
+      billing_cc_emails: ccList.length ? ccList.join(', ') : null,
+    }).eq('id', req.params.communityId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[billing] billing-contact put failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
