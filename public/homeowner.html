@@ -96,6 +96,10 @@ async function openProfile(cid){
   const openV=(d.violations||[]).filter(v=>v.open);
   const flagChips=(d.flags||[]).map(f=>`<span class="chip flag">${esc(String(f.state).replace(/_/g,' '))}</span>`).join('');
   const balChip = d.ar.balance_cents>0?`<span class="chip bal">Owes ${money(d.ar.balance_cents)}</span>`:(d.ar.balance_cents<0?`<span class="chip ok">Credit ${money(-d.ar.balance_cents)}</span>`:`<span class="chip ok">Current</span>`);
+  const am=d.amenity;
+  const amenChip = (am&&am.allowed===false)?`<span class="chip" style="background:#fee2e2;color:#991b1b;font-weight:700;">🚫 Amenity restricted · past-due assessments</span>`
+    :(am&&am.enforcement_override==='on_payment_plan')?`<span class="chip" style="background:#dbeafe;color:#1e40af;">Amenity OK · payment plan</span>`
+    :(am&&am.enforcement_override==='in_bankruptcy')?`<span class="chip" style="background:#ede9fe;color:#5b21b6;">Amenity OK · bankruptcy</span>`:'';
   const openChip = openV.length?`<span class="chip flag">${openV.length} open violation${openV.length===1?'':'s'}</span>`:`<span class="chip ok">No open violations</span>`;
 
   // Collection / legal status (STAFF-ONLY). Glanceable header chip + a card below.
@@ -121,7 +125,7 @@ async function openProfile(cid){
         <div class="nm">${esc(c.full_name)}</div>
         <div class="ct">${esc(c.primary_email||c.secondary_email||'no email')} · ${esc(c.primary_phone||'no phone')}</div>
         <div class="ct">${ps.map(p=>esc(p.address)+(p.community?' · '+esc(p.community):'')).join('<br>')||'no property on file'}</div>
-        <div class="chips">${balChip}${openChip}${legalChip}${flagChips}</div>
+        <div class="chips">${balChip}${amenChip}${openChip}${legalChip}${flagChips}</div>
       </div>
     </div></div>
 
@@ -131,6 +135,7 @@ async function openProfile(cid){
       <div class="card">
         <div class="sec-title">💵 Balance & recent activity</div>
         <div style="font-size:18px;font-weight:700;margin-bottom:8px;" class="money">${money(d.ar.balance_cents)}</div>
+        ${(am&&am.allowed===false)?`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:#991b1b;">🚫 <b>Amenity access restricted</b> — ${esc(am.reason)}</div>`:''}
         ${(d.ar.transactions||[]).slice(0,8).map(t=>`<div class="li"><span class="t">${d10(t.transaction_date)}</span> · ${esc(t.txn_type||t.charge_category||'txn')} <span class="money" style="float:right;">${money(t.amount_cents)}</span></div>`).join('')||'<div class="empty">No transactions.</div>'}
       </div>
       ${colls.length?`<div class="card" style="border-left:4px solid #b45309; background:#fffdf7;">

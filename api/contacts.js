@@ -2921,9 +2921,15 @@ router.get('/property-lookup', async (req, res) => {
       if (!del.length) return res.json({ results: [], count: 0, mode: 'late_assessments' });
       const delBy = new Map(del.map((d) => [d.property_id, d]));
       const ids = del.map((d) => d.property_id).filter(Boolean);
-      let sq = supabase.from('v_property_summary').select('*').in('property_id', ids).limit(1000);
-      if (community_id) sq = sq.eq('community_id', community_id);
-      const sumRows = (await sq).data || [];
+      // Chunk the .in() — hundreds of UUIDs in one query exceeds the URL length
+      // limit (PostgREST 400). Fetch summaries in batches and merge.
+      const sumRows = [];
+      for (let i = 0; i < ids.length; i += 150) {
+        let sq = supabase.from('v_property_summary').select('*').in('property_id', ids.slice(i, i + 150));
+        if (community_id) sq = sq.eq('community_id', community_id);
+        const { data } = await sq;
+        if (data && data.length) sumRows.push(...data);
+      }
       const results = sumRows.map((r) => {
         const d = delBy.get(r.property_id); const st = stateBy.get(r.property_id);
         const onPlan = (st && st.state === 'on_payment_plan') || r.ar_payment_plan_active === true;

@@ -21,6 +21,7 @@ const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
+const { evaluateAmenityAccess } = require('../lib/ar/amenity_access');
 const Anthropic = require('@anthropic-ai/sdk');
 
 const router = express.Router();
@@ -188,7 +189,16 @@ async function assemble(contactId) {
   }
   violations = violations.map((v) => ({ ...v, letter_path: letterByViolation[v.id] || null }));
 
-  return { contact, properties, ar: { balance_cents, transactions: txns }, flags, collections, violations, arc, interactions, emails, calls, poolAccess, paymentPlans };
+  // Assessment-delinquency / amenity-access status — the SAME engine the pool
+  // gate uses, so 360 shows exactly what would block a fob. Assessments only
+  // (not fines/late/interest), never in bankruptcy or on a plan.
+  let amenity = null;
+  const primaryProp = properties.find((p) => p.is_primary) || properties[0];
+  if (primaryProp) {
+    try { amenity = await evaluateAmenityAccess(supabase, { propertyId: primaryProp.property_id, communityId: primaryProp.community_id }); } catch (_) {}
+  }
+
+  return { contact, properties, ar: { balance_cents, transactions: txns }, amenity, flags, collections, violations, arc, interactions, emails, calls, poolAccess, paymentPlans };
 }
 
 // GET /profile/:contactId — the assembled 360 (fast, no AI)
