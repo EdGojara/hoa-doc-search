@@ -125,9 +125,13 @@ async function loadList(){
 function personaCardHtml(t){
   const active = openPersona===t.persona;
   const priv = !!t.owner_only;   // Tessa — Ed's private EA; opens her own workspace
+  const catchAll = !!t.catch_all; // General inbox — the solicitations/junk bucket
   const border = active?'var(--gold)':(priv?'#c7b6e8':'var(--line)');
-  const foot = priv ? '🔒 private &middot; opens your workspace' : (active?'▾ showing emails':'▸ click to view');
-  return `<div onclick="clickCard('${t.persona}')" style="cursor:pointer;border:1px solid ${border};background:${active?'#fffdf5':(priv?'#faf8ff':'#fff')};border-radius:11px;padding:12px 14px;min-width:150px;flex:1 1 150px;transition:border-color .1s;">
+  const bg = active?'#fffdf5':(priv?'#faf8ff':(catchAll?'#f4f6f8':'#fff'));
+  const foot = priv ? '🔒 private &middot; opens your workspace'
+             : catchAll ? (active?'▾ showing emails':'▸ skim &middot; no auto-replies')
+             : (active?'▾ showing emails':'▸ click to view');
+  return `<div onclick="clickCard('${t.persona}')" style="cursor:pointer;border:1px ${catchAll?'dashed':'solid'} ${border};background:${bg};border-radius:11px;padding:12px 14px;min-width:150px;flex:1 1 150px;transition:border-color .1s;">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
       <span style="font-weight:700;color:var(--navy);font-size:14px;">${t.emoji||''} ${esc(t.name)}</span>
       ${t.unreviewed?`<span title="need review" style="background:#fee2e2;color:#991b1b;font-size:11px;font-weight:700;border-radius:20px;padding:2px 8px;">${t.unreviewed}</span>`:''}
@@ -159,7 +163,10 @@ async function loadPersonaList(){
   const el = document.getElementById('personaList'); if(!el) return;
   try{
     const r = await af(url); const j = await r.json(); const msgs = j.messages||[];
-    el.innerHTML = msgs.length ? msgs.map(msgHtml).join('') : '<div class="empty">No emails in this view. Try the “All” filter above.</div>';
+    if(!msgs.length){ el.innerHTML='<div class="empty">No emails in this view. Try the “All” filter above.</div>'; return; }
+    const note = openPersona==='general'
+      ? '<div class="note" style="margin:4px 0 8px;color:var(--muted);">Solicitations and unsorted mail. No replies are drafted here automatically — use <b>Draft reply</b> on any message if you want to respond.</div>' : '';
+    el.innerHTML = note + msgs.map(msgHtml).join('');
   }catch(e){ el.innerHTML='<div class="empty">Could not load.</div>'; }
 }
 function msgHtml(m){
