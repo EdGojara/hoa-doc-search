@@ -52,8 +52,14 @@ router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
     if (!body) return res.status(400).json({ error: 'The email body is empty.' });
 
     const from = asEd ? graphSend.ED_MAILBOX : graphSend.TESSA_MAILBOX;
-    const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">${body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
-    await graphSend.sendAs({ from, to, cc, subject, html });
+    // As Ed = his own email, no signature block. As Tessa = light branded sign-off.
+    let html, attachments;
+    if (asEd) {
+      html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">${body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
+    } else {
+      ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(body));
+    }
+    await graphSend.sendAs({ from, to, cc, subject, html, attachments });
 
     // Log the outbound (best-effort; a log failure never blocks the send).
     try {
@@ -246,8 +252,14 @@ router.post('/inbox/:id/send', express.json({ limit: '64kb' }), async (req, res)
     if (!body) return res.status(400).json({ error: 'The reply body is empty.' });
 
     const from = asEd ? graphSend.ED_MAILBOX : graphSend.TESSA_MAILBOX;
-    const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">${body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
-    await graphSend.sendAs({ from, to, cc, subject, html });
+    // As Ed = his own email, no signature block. As Tessa = light branded sign-off.
+    let html, attachments;
+    if (asEd) {
+      html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">${body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
+    } else {
+      ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(body));
+    }
+    await graphSend.sendAs({ from, to, cc, subject, html, attachments });
 
     await supabase.from('ea_inbox').update({ status: 'replied', draft_subject: subject, draft_body: body, draft_mode: asEd ? 'ed' : 'tessa', updated_at: new Date().toISOString() }).eq('id', item.id);
     try {
