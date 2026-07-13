@@ -160,7 +160,10 @@ function renderBoard(){
 }
 function togglePersona(p){ openPersona = (openPersona===p ? null : p); renderBoard(); }
 async function loadPersonaList(){
-  const statusParam = filter === 'needs_review' ? 'needs_review,new' : filter;
+  // Default "Needs review" view = everything that still needs a reply: new,
+  // needs_review, AND linked (an email confidently linked to a homeowner but not
+  // yet answered still needs a response — it was dropping out of view here).
+  const statusParam = filter === 'needs_review' ? 'needs_review,new,linked' : filter;
   const url = API + `?persona=${openPersona}&` + (statusParam?`status=${statusParam}`:'status=needs_review,new,linked,spam,dismissed,handled') + '&limit=200';
   const el = document.getElementById('personaList'); if(!el) return;
   try{
