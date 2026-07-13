@@ -275,6 +275,31 @@ async function findSiblingEmails(message) {
   } catch (_) { return []; }
 }
 
+// Greet the person who actually emailed, NOT the household account name. A joint
+// owner record ("Julie McKay & James Storm") would otherwise make Claire greet
+// the first-listed owner (Julie) even when James is the one who wrote in. The
+// sender's own display name is the truest signal of who to address; when that's
+// missing we match the sender's email local-part to the right side of a joint
+// name (jim.storm@ -> "...James Storm"). Ed 2026-07-13 (the Jim Storm thread).
+function greetingNameFor(m) {
+  const sender = (m.sender_name || '').trim();
+  const isPersonal = (s) => s && /[A-Za-z]/.test(s) && !s.includes('@')
+    && !/^(the\s|info|admin|board|office|no.?reply|noreply|do.?not.?reply|billing|accounts?|management|support|team)\b/i.test(s);
+  if (isPersonal(sender)) return sender;
+
+  const contactFull = m.resolved_contact ? (m.resolved_contact.full_name || '').trim() : '';
+  // Joint household + no usable sender name: pick the owner the sender's email
+  // points at, so a reply to jim.storm@ greets "James", not "Julie".
+  const parts = contactFull.split(/\s+(?:&|and)\s+/i).map((p) => p.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    const local = String(m.sender_email || '').split('@')[0].toLowerCase();
+    const tokens = local.split(/[^a-z]+/).filter((t) => t.length > 2);
+    const hit = parts.find((p) => { const pl = p.toLowerCase(); return tokens.some((t) => pl.includes(t)); });
+    if (hit) return hit;
+  }
+  return contactFull || sender || null;
+}
+
 // POST /:id/draft-reply — AI suggests a reply (NOT sent). Guardrails in the lib
 // force a human for legal/enforcement/ACC/financial. Returns the draft for
 // review; the row's triage_status is left as-is until a human acts.
@@ -312,9 +337,10 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, conversation_id: m.conversation_id, sender_email: m.sender_email, graph_id: m.graph_id, mailbox: m.mailbox, has_attachments: m.has_attachments },
       classification: m.classification,
       contactId: m.resolved_contact_id, propertyId: m.resolved_property_id, communityId: m.community_id,
-      // Reply-to name: the homeowner when resolved, else the sender (so staff/
-      // internal replies can greet the teammate by name).
-      contactName: (m.resolved_contact ? m.resolved_contact.full_name : null) || m.sender_name || null,
+      // Greet whoever actually wrote in (the sender), not the household account
+      // name — so a joint "Julie McKay & James Storm" record still gets "Hi James"
+      // when James emailed. Account DATA still comes from contactId/propertyId.
+      contactName: greetingNameFor(m),
       communityName: m.community ? m.community.name : null,
       force: true, // Ed clicked "Draft reply" explicitly — always produce a reply, even internal/spam
       notes, currentDraft, // reviewer steering (Rewrite with my notes)
