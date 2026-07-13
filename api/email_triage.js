@@ -293,6 +293,53 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
   }
 });
 
+// POST /:id/forward-internal — hand this item to a teammate to verify / weigh
+// in BEFORE we reply. Sends the homeowner's message + Claire's draft + your note
+// from Ed's office to the teammate's inbox, and records the hand-off on the item.
+// Nothing goes to the homeowner. (Ed 2026-07-13 — the light-touch "loop someone
+// in" option, not a new assignment workflow.)
+router.post('/:id/forward-internal', express.json(), async (req, res) => {
+  try {
+    const { to_email, to_name, note } = req.body || {};
+    const to = String(to_email || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: 'Pick a teammate with a valid email address.' });
+    const { data: m, error } = await supabase.from('email_messages')
+      .select('subject, body_full, body_preview, sender_email, sender_name, classification, extracted, community:community_id(name)')
+      .eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!m) return res.status(404).json({ error: 'not_found' });
+    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email_not_connected', detail: 'Graph credentials missing — internal forward needs email connected.' });
+
+    const draft = m.extracted && m.extracted.draft;
+    const orig = (m.body_full || m.body_preview || '').slice(0, 6000);
+    const e = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">
+${note ? `<p style="margin:0 0 12px;"><strong>Note:</strong> ${e(note).replace(/\n/g, '<br>')}</p>` : ''}
+<p style="margin:0 0 6px;color:#5a7390;">Forwarding this homeowner email for your review before we reply — nothing has been sent to the homeowner yet.</p>
+<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin:10px 0;">
+  <div style="font-size:12px;color:#5a7390;">From ${e(m.sender_name || m.sender_email || '')}${m.community ? ' · ' + e(m.community.name) : ''}${m.classification ? ' · ' + e(m.classification) : ''}</div>
+  <div style="font-weight:700;margin:4px 0;">${e(m.subject || '(no subject)')}</div>
+  <div style="white-space:pre-wrap;">${e(orig)}</div>
+</div>
+${draft && draft.body ? `<div style="border-left:3px solid #D4AF37;padding:8px 12px;margin:10px 0;background:#fbf7ec;"><div style="font-size:12px;color:#5a7390;">Claire's draft reply (not sent):</div><div style="white-space:pre-wrap;">${e(draft.body)}</div></div>` : ''}
+${draft && draft.review_hint ? `<p style="margin:8px 0;color:#8a6d00;"><strong>Claire suggests:</strong> ${e(draft.review_hint)}</p>` : ''}
+<p style="margin:12px 0 0;">Reply here with what you find and we'll take it from there.</p>
+</div>`;
+    await graphSend.sendAs({ from: graphSend.ED_MAILBOX, to, subject: `For your review: ${m.subject || 'homeowner email'}`, html });
+
+    // Record the hand-off on the item (no triage_status change — keeps it a
+    // light annotation, not a workflow state).
+    try {
+      const merged = Object.assign({}, m.extracted || {}, { forwarded: { to, name: to_name || null, at: new Date().toISOString(), note: note || null } });
+      await supabase.from('email_messages').update({ extracted: merged }).eq('id', req.params.id);
+    } catch (_) { /* annotation best-effort */ }
+    res.json({ ok: true, to });
+  } catch (err) {
+    console.error('[email_triage] forward-internal failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /:id/send — approve-to-send: a human reviewed the draft; send it from
 // claire@ (honest-AI signature), log it, mark the inbound handled. Defense in
 // depth: refuse to send for non-draftable (compliance) classes even if asked.

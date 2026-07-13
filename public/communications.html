@@ -183,13 +183,17 @@ function msgHtml(m){
         <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
           ${m.persona==='emma'?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button><button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}
           <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>
+          <button class="act" onclick="forwardPrompt('${m.id}')" title="Forward to a teammate to check before we reply">↪ Forward</button>
           <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
           ${cls==='spam'?'':`<button class="act spam" onclick="dismiss('${m.id}','spam')">Spam</button>`}
         </div>
       </div>
       <div class="summary">${esc(m.ai_summary||'')} <a href="#" onclick="event.preventDefault();showThread('${m.id}',this)" style="font-size:11.5px;color:#0B1D34;font-weight:600;white-space:nowrap;">🧵 Show full email + thread</a></div>
       ${m.extracted&&m.extracted.auto_gl?`<div style="font-size:11.5px;color:#166534;font-weight:600;margin-top:4px;">🤖 Auto-recorded to GL — $${((m.extracted.auto_gl.amount_cents||0)/100).toFixed(2)}, flagged for your month-end review.</div>`:''}
+      ${m.extracted&&m.extracted.draft&&m.extracted.draft.review_hint?`<div style="font-size:12px;color:#8a6d00;background:#fbf7ec;border:1px solid #e8dcae;border-radius:6px;padding:6px 9px;margin-top:5px;">💡 <strong>Claire suggests:</strong> ${esc(m.extracted.draft.review_hint)} <a href="#" onclick="event.preventDefault();forwardPrompt('${m.id}')" style="color:#0B1D34;font-weight:600;white-space:nowrap;">↪ Loop someone in</a></div>`:''}
+      ${m.extracted&&m.extracted.forwarded?`<div style="font-size:11.5px;color:#5b21b6;font-weight:600;margin-top:4px;">↪ Forwarded to ${esc(m.extracted.forwarded.name||m.extracted.forwarded.to)}${m.extracted.forwarded.at?' · '+new Date(m.extracted.forwarded.at).toLocaleString():''} — awaiting their review</div>`:''}
       <div id="thread-${m.id}"></div>
+      <div id="fwd-${m.id}"></div>
       <div class="link-row">${linkCell(m)}</div>
       <div id="filemsg-${m.id}" class="result" style="margin-top:4px;"></div>
       <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire'):''}</div>
@@ -289,6 +293,53 @@ async function doSend(id, btn, careful, persona){
   if(r.ok){ document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}.</div></div>`; loadStats(); setTimeout(loadList, 800); }
   else { btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert(j.detail || j.error || 'Send failed'); }
 }
+// ---- Forward to a teammate (loop someone in before replying) --------------
+let staffCache = [];
+async function loadStaff(){
+  try {
+    const r = await af('/api/users'); const j = await r.json();
+    const list = Array.isArray(j) ? j : (j.users || []);
+    staffCache = list.filter(u => u && u.email && (u.is_active === undefined || u.is_active));
+  } catch(_) { staffCache = []; }
+}
+function forwardPrompt(id){
+  const box = document.getElementById('fwd-'+id);
+  if(!box) return;
+  if(box.innerHTML){ box.innerHTML=''; return; } // toggle closed
+  const opts = staffCache.map(u=>`<option value="${esc(u.email)}" data-name="${esc(u.full_name||'')}">${esc(u.full_name||u.email)}${u.role?' ('+esc(u.role)+')':''}</option>`).join('');
+  box.innerHTML = `<div class="draftbox">
+    <div class="note">↪ Forward to a teammate to check before we reply — they get this email + Claire's draft + your note. Nothing goes to the homeowner.</div>
+    <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:6px 0;">
+      <select id="fwd-to-${id}" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px;min-width:200px;">
+        ${opts ? '<option value="">— pick a teammate —</option>'+opts : '<option value="">(type an email below)</option>'}
+      </select>
+      <input id="fwd-email-${id}" type="email" placeholder="or type an email" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px;flex:1;min-width:180px;">
+    </div>
+    <textarea id="fwd-note-${id}" placeholder="Add a note — e.g. 'Please verify the photo matches this address before we reply.'" style="width:100%;min-height:56px;"></textarea>
+    <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+      <button class="act send" onclick="doForward('${id}',this)">↪ Forward</button>
+      <button class="act dismiss" onclick="document.getElementById('fwd-${id}').innerHTML='';">Cancel</button>
+      <span id="fwd-status-${id}" class="note"></span>
+    </div></div>`;
+}
+async function doForward(id, btn){
+  const sel = document.getElementById('fwd-to-'+id);
+  const typed = (document.getElementById('fwd-email-'+id).value||'').trim();
+  const to_email = typed || (sel ? sel.value : '');
+  const to_name = typed ? '' : (sel && sel.selectedOptions[0] ? (sel.selectedOptions[0].getAttribute('data-name')||'') : '');
+  const note = (document.getElementById('fwd-note-'+id).value||'').trim();
+  const st = document.getElementById('fwd-status-'+id);
+  if(!to_email){ if(st){ st.style.color='#b91c1c'; st.textContent='Pick a teammate or type an email.'; } return; }
+  btn.disabled=true; const prev=btn.textContent; btn.textContent='Forwarding…';
+  try{
+    const r = await af(`${API}/${id}/forward-internal`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email,to_name,note})});
+    const j = await r.json();
+    if(!r.ok){ if(st){ st.style.color='#b91c1c'; st.textContent=j.detail||j.error||'Forward failed'; } btn.disabled=false; btn.textContent=prev; return; }
+    if(st){ st.style.color='#166534'; st.textContent='✓ Forwarded to '+j.to; }
+    setTimeout(loadList, 1100);
+  }catch(e){ if(st){ st.style.color='#b91c1c'; st.textContent=e.message; } btn.disabled=false; btn.textContent=prev; }
+}
+
 function showComingSoon(){
   document.querySelector('.wrap').innerHTML =
     `<a href="/" style="display:inline-flex;align-items:center;gap:6px;color:#5a7390;text-decoration:none;font-size:13px;font-weight:600;margin-bottom:12px;">&larr; Back to trustEd</a>
@@ -393,7 +444,7 @@ window.ncSend = async function(){
     const meRes = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + session.access_token } });
     const me = meRes.ok ? (await meRes.json()).user : null;
     if (!me || me.role !== 'admin') return showComingSoon();
-    loadStats(); loadList();
+    loadStats(); loadList(); loadStaff();
   } catch (e) { showComingSoon(); }
 })();
 </script>
