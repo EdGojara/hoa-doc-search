@@ -887,17 +887,18 @@ async function resolveInvoiceRecipient(communityId) {
   return null;
 }
 
-function draftBillingCoverNote({ invoice, community }) {
+// Cover note deliberately carries NO dollar amounts (Ed 2026-07-13 — amounts
+// live on the attached invoices, not in the email body). `attachmentsDesc`
+// describes what's attached (a single invoice, or the monthly package).
+function draftBillingCoverNote({ invoice, community, attachmentsDesc }) {
   const period = periodMonthLabel(invoice.service_period_start);
-  const total = fmtUsd(invoice.total);
   const commName = (community && community.name) || 'your community';
-  if (invoice.invoice_type === 'builder_arc') {
-    return `Hi there,\n\nAttached is Bedrock's architectural review invoice for ${commName}, covering ${period}. It reflects the new-home submissions received that month, for ${total} total.\n\nJust reply here with any questions and I'll take care of it.`;
-  }
-  if (invoice.invoice_type === 'activity') {
-    return `Hi,\n\nAttached is ${commName}'s activity invoice for ${period}, totaling ${total}. It covers the violation notices mailed and ARC decisions processed that month.\n\nHappy to walk through any line if that's helpful, just reply here.`;
-  }
-  return `Hi,\n\nAttached is ${commName}'s management invoice for ${period}, totaling ${total}.\n\nLet me know if you have any questions, just reply here.`;
+  const what = attachmentsDesc || (invoice.invoice_type === 'builder_arc'
+    ? "Bedrock's architectural review invoice"
+    : invoice.invoice_type === 'activity'
+      ? 'the activity invoice and supporting detail'
+      : 'the management invoice');
+  return `Hi,\n\nPlease see attached ${what} for ${commName}${period ? ', ' + period : ''}. Let me know if you have any questions, just reply here.`;
 }
 
 router.get('/invoices/:invoiceId/email-preview', async (req, res) => {
