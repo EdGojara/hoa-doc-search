@@ -137,6 +137,7 @@ function personaCardHtml(t){
       ${t.unreviewed?`<span title="need review" style="background:#fee2e2;color:#991b1b;font-size:11px;font-weight:700;border-radius:20px;padding:2px 8px;">${t.unreviewed}</span>`:''}
     </div>
     <div style="font-size:11.5px;color:var(--muted);margin-top:3px;">${esc(t.title)} &middot; ${t.total} email${t.total===1?'':'s'}</div>
+    ${t.routing?`<div style="font-size:11px;color:var(--muted);margin-top:2px;">📨 to ${esc((t.mailbox||'').split(' ')[0])} ${t.routing.direct} &middot; ↪ via info@ ${t.routing.via_info}</div>`:''}
     <div style="font-size:11px;color:${active?'var(--gold)':(priv?'#7c5cbf':'#9fb0c2')};margin-top:6px;font-weight:600;">${foot}</div>
   </div>`;
 }
@@ -179,7 +180,8 @@ function msgHtml(m){
           <div class="subj" style="margin-top:5px;">${esc(m.subject||'(no subject)')}</div>
           <div class="from">${esc(m.sender_email||'')} &middot; ${m.received_at?new Date(m.received_at).toLocaleString():''}</div>
         </div>
-        <div style="display:flex; gap:6px;">
+        <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
+          ${m.persona==='emma'?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button><button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}
           <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>
           <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
           ${cls==='spam'?'':`<button class="act spam" onclick="dismiss('${m.id}','spam')">Spam</button>`}
@@ -188,6 +190,7 @@ function msgHtml(m){
       <div class="summary">${esc(m.ai_summary||'')} <a href="#" onclick="event.preventDefault();showThread('${m.id}',this)" style="font-size:11.5px;color:#0B1D34;font-weight:600;white-space:nowrap;">🧵 Show full email + thread</a></div>
       <div id="thread-${m.id}"></div>
       <div class="link-row">${linkCell(m)}</div>
+      <div id="filemsg-${m.id}" class="result" style="margin-top:4px;"></div>
       <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire'):''}</div>
     </div>`;
 }
@@ -240,6 +243,24 @@ function draftBoxHtml(id, subject, body, careful, persona){
       <button class="act draft" onclick="navigator.clipboard.writeText(document.getElementById('dt-${id}').value); this.textContent='Copied ✓';">Copy</button>
       <button class="act dismiss" onclick="document.getElementById('draft-${id}').innerHTML='';">Close</button>
     </div></div>`;
+}
+// Emma files a bill without replying: to Payables (queue) or straight to the GL.
+async function doFile(id, action, btn){
+  const msg = document.getElementById('filemsg-'+id);
+  const ask = action==='to-gl'
+    ? 'Record this to the GL now (debit the expense, credit Operating Cash), flagged for your month-end review? No email is sent.'
+    : 'File this bill to Payables? No email is sent.';
+  if(!confirm(ask)) return;
+  btn.disabled=true; const prev=btn.textContent; btn.textContent='Filing…';
+  try{
+    const r=await af(`${API}/${id}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j=await r.json();
+    if(!r.ok){ if(msg) msg.innerHTML='<span class="err">'+esc(j.detail||j.error||'Failed')+'</span>'; btn.disabled=false; btn.textContent=prev; return; }
+    if(msg) msg.innerHTML = action==='to-payables'
+      ? '<span class="ok">✅ Filed to Payables'+(j.loaded?' ('+j.loaded+' bill'+(j.loaded===1?'':'s')+')':'')+(j.duplicates?' &middot; '+j.duplicates+' flagged as possible duplicate':'')+'.</span>'
+      : '<span class="ok">✅ Recorded to GL — $'+((j.amount_cents||0)/100).toFixed(2)+(j.account?' to '+esc(j.account):'')+', flagged for month-end review.</span>';
+    loadStats(); setTimeout(loadList, 1300);
+  }catch(e){ if(msg) msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; btn.disabled=false; btn.textContent=prev; }
 }
 async function doDraft(id, persona){
   const box = document.getElementById('draft-'+id);

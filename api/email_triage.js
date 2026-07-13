@@ -103,12 +103,21 @@ router.get('/team', async (req, res) => {
     const { TEAM, TESSA_CARD } = require('../lib/email/persona');
     const owner = await isOwner(req);
     const list = owner ? [...TEAM, TESSA_CARD] : TEAM;
+    // Each teammate's OWN address — used to split "addressed directly to them"
+    // vs "came to info@ and was routed to them."
+    const SELF = { claire: 'claire@', emma: 'emma@', annie: 'annie@', miranda: 'miranda@' };
     const roster = [];
     for (const t of list) {
       const total = await supabase.from('email_messages').select('id', { count: 'exact', head: true }).eq('persona', t.persona);
       const unrev = await supabase.from('email_messages').select('id', { count: 'exact', head: true }).eq('persona', t.persona).in('triage_status', ['needs_review', 'new']);
       const latest = await supabase.from('email_messages').select('received_at').eq('persona', t.persona).order('received_at', { ascending: false }).limit(1).maybeSingle();
-      roster.push({ ...t, total: total.count || 0, unreviewed: unrev.count || 0, latest_at: latest.data ? latest.data.received_at : null });
+      const entry = { ...t, total: total.count || 0, unreviewed: unrev.count || 0, latest_at: latest.data ? latest.data.received_at : null };
+      if (SELF[t.persona]) {
+        const d = await supabase.from('email_messages').select('id', { count: 'exact', head: true }).eq('persona', t.persona).ilike('mailbox', `%${SELF[t.persona]}%`);
+        const direct = d.count || 0;
+        entry.routing = { direct, via_info: Math.max(0, entry.total - direct) };
+      }
+      roster.push(entry);
     }
     res.json({ team: roster });
   } catch (err) {
@@ -348,6 +357,84 @@ router.post('/:id/send', express.json(), async (req, res) => {
     console.error('[email_triage] send failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
+});
+
+// POST /:id/to-payables — Emma files an emailed bill into the AP queue (the
+// same deduped intake as uploads/scans), marks the email handled, sends NO
+// reply. The bill posts to the GL on approval in Payables.
+router.post('/:id/to-payables', express.json(), async (req, res) => {
+  try {
+    const { data: m } = await supabase.from('email_messages')
+      .select('id, mailbox, graph_id, subject, community_id, resolved_vendor_id, has_attachments')
+      .eq('id', req.params.id).maybeSingle();
+    if (!m) return res.status(404).json({ error: 'not_found' });
+    if (!m.graph_id || !m.has_attachments) return res.status(400).json({ error: 'no_attachment', detail: 'No bill is attached to file. Use Record to GL for a payment confirmation, or handle it in Accounting.' });
+    const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
+    const { autoIntake } = require('../lib/ap/intake');
+    const pdfs = (await fetchAllAttachmentBuffers(m.mailbox, m.graph_id)).filter((f) => f.isPdf);
+    if (!pdfs.length) return res.status(400).json({ error: 'no_pdf', detail: 'No PDF bill attached to file to Payables.' });
+    let loaded = 0, dup = 0;
+    for (const pdf of pdfs) {
+      const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '' });
+      if (out && out.outcome === 'loaded') loaded += 1;
+      else if (out && out.outcome === 'held_suspected_duplicate') dup += 1;
+    }
+    await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
+    res.json({ ok: true, loaded, duplicates: dup });
+  } catch (err) { console.error('[email_triage] to-payables failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /:id/to-gl — Emma records an already-handled payment (e.g. an auto-pay
+// confirmation) straight to the GL: Dr the classified expense / Cr 1000
+// Operating Cash, flagged needs_review for month-end. NO reply is sent. Guarded
+// hard — bails (never posts) unless community + a single clear amount + a
+// confident expense account are all present, so it can't corrupt the books.
+router.post('/:id/to-gl', express.json(), async (req, res) => {
+  try {
+    const { data: m } = await supabase.from('email_messages')
+      .select('id, subject, sender_name, community_id, resolved_vendor_id, extracted, received_at')
+      .eq('id', req.params.id).maybeSingle();
+    if (!m) return res.status(404).json({ error: 'not_found' });
+    if (!m.community_id) return res.status(400).json({ error: 'no_community', detail: 'Link this email to a community first — the entry has to post to the right association books.' });
+
+    const b = req.body || {};
+    let cents = (b.amount_cents && Number.isInteger(+b.amount_cents) && +b.amount_cents > 0) ? +b.amount_cents : null;
+    if (!cents) {
+      const amts = [...new Set((m.extracted && Array.isArray(m.extracted.amounts) ? m.extracted.amounts : [])
+        .map((a) => { const n = parseFloat(String(a).replace(/[^0-9.]/g, '')); return Number.isFinite(n) ? Math.round(n * 100) : null; })
+        .filter((x) => x && x > 0))];
+      if (amts.length === 1) cents = amts[0];
+      else return res.status(400).json({ error: 'ambiguous_amount', detail: `Couldn't pin a single amount (${amts.length} found). Record this one in Accounting so the figure is exact.` });
+    }
+    const { suggestClassification } = require('../lib/accounting/gl_classifier');
+    const desc = String(m.subject || m.sender_name || 'Vendor payment').slice(0, 120);
+    const cls = await suggestClassification({ communityId: m.community_id, vendorId: m.resolved_vendor_id || null, vendorName: m.sender_name || null, description: desc, isPaymentLeg: false });
+    if (!cls.account_id) return res.status(400).json({ error: 'no_account', detail: 'Couldn\'t confidently pick an expense account. Record this in Accounting so it\'s coded right.' });
+    const cash = await suggestClassification({ communityId: m.community_id, isPaymentLeg: true });
+    if (!cash.account_id) return res.status(400).json({ error: 'no_cash', detail: 'No 1000 Operating Cash account on this community\'s chart.' });
+
+    const { postJournalEntry } = require('../lib/accounting/posting');
+    const postingDate = String(m.received_at || new Date().toISOString()).slice(0, 10);
+    let je;
+    try {
+      je = await postJournalEntry({
+        community_id: m.community_id, posting_date: postingDate,
+        description: `Emma: ${desc}`, source_module: 'manual', source_reference: `email:${m.id}`,
+        notes: `Recorded from Emma's inbox (${m.sender_name || 'vendor'}). Flagged for month-end review.`,
+        lines: [
+          { account_id: cls.account_id, debit_cents: cents, credit_cents: 0 },
+          { account_id: cash.account_id, debit_cents: 0, credit_cents: cents },
+        ],
+      });
+    } catch (e) {
+      if (e.code === 'period_closed') return res.status(400).json({ error: 'period_closed', detail: 'That accounting period is closed. Record it in the current period from Accounting.' });
+      throw e;
+    }
+    const jeId = je && je.entry ? je.entry.id : null;
+    if (jeId) { try { await supabase.from('journal_entries').update({ needs_review: true, classification_reason: cls.reason || null }).eq('id', jeId); } catch (_) {} }
+    await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: b.reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
+    res.json({ ok: true, amount_cents: cents, account: cls.account_number || cls.account_name || null, needs_review: true });
+  } catch (err) { console.error('[email_triage] to-gl failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // POST /pull — ADMIN ONLY. On-demand "pull now": ingest current mail from both
