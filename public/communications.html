@@ -243,6 +243,10 @@ function draftBoxHtml(id, subject, body, careful, persona){
     <div class="note">${esc(whoFirst)}'s draft${subject?' ('+esc(subject)+')':''} — review / edit, then approve. Nothing sends until you click.</div>
     <textarea id="dt-${id}">${esc(body||'')}</textarea>
     <div class="note" style="margin-top:5px;">Sends from <strong>${esc(mail)}</strong> with ${esc(whoFirst)}'s AI signature appended.</div>
+    <div style="margin-top:8px; display:flex; gap:6px; align-items:center;">
+      <input id="notes-${id}" type="text" placeholder="Your notes for ${esc(whoFirst)} — e.g. 'be firmer, and say we'll trim the common-area side' — then Rewrite" style="flex:1; min-width:200px; padding:7px 9px; border:1px solid var(--line); border-radius:6px; font-size:12.5px;" onkeydown="if(event.key==='Enter'){event.preventDefault();doRewrite('${id}','${persona}');}">
+      <button class="act" onclick="doRewrite('${id}','${persona}')" title="Have ${esc(whoFirst)} rewrite the draft incorporating your notes">↻ Rewrite with my notes</button>
+    </div>
     <div style="margin-top:6px; display:flex; gap:6px;">
       <button class="act send" onclick="doSend('${id}', this, ${careful?'true':'false'}, '${persona}')">✅ Approve &amp; send as ${esc(whoFirst)}</button>
       <button class="act draft" onclick="navigator.clipboard.writeText(document.getElementById('dt-${id}').value); this.textContent='Copied ✓';">Copy</button>
@@ -281,6 +285,23 @@ async function doDraft(id, persona){
   // On any failure, restore the previous draft instead of wiping it.
   if(!r.ok){ box.innerHTML = prevHtml || `<div class="draftbox"><div class="refuse">Couldn't draft: ${esc(j.error||'')}</div></div>`; if(prevHtml) alert('Couldn’t regenerate: '+(j.error||'error')+'. Your current draft is unchanged.'); return; }
   if(j.draftable===false){ box.innerHTML = `<div class="draftbox"><div class="refuse">No draft — ${esc(j.reason)}.</div></div>`; return; }
+  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona);
+}
+// Rewrite the open draft incorporating the reviewer's notes (Ed's thoughts).
+async function doRewrite(id, persona){
+  const notesEl = document.getElementById('notes-'+id);
+  const notes = notesEl ? notesEl.value.trim() : '';
+  if(!notes){ if(notesEl) notesEl.focus(); return; }
+  const cur = document.getElementById('dt-'+id);
+  const current_draft = cur ? cur.value : '';
+  const box = document.getElementById('draft-'+id);
+  const prevHtml = box.innerHTML;
+  box.innerHTML = '<div class="draftbox"><div class="note">'+esc((PNAME[persona]||'Claire').split(' ')[0])+' is rewriting with your notes…</div></div>';
+  let r, j;
+  try { r = await af(`${API}/${id}/draft-reply`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ notes, current_draft })}); j = await r.json(); }
+  catch(e){ box.innerHTML = prevHtml; alert('Rewrite failed: '+(e.message||'network')); return; }
+  if(!r.ok){ box.innerHTML = prevHtml; alert('Couldn’t rewrite: '+(j.error||'error')+'. Your draft is unchanged.'); return; }
+  if(j.draftable===false){ box.innerHTML = prevHtml; alert('No draft — '+(j.reason||'')); return; }
   box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona);
 }
 async function doSend(id, btn, careful, persona){

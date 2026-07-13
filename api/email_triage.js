@@ -258,6 +258,10 @@ router.post('/ingest', express.json(), async (req, res) => {
 // review; the row's triage_status is left as-is until a human acts.
 router.post('/:id/draft-reply', express.json(), async (req, res) => {
   try {
+    // Optional reviewer steering: notes (Ed's thoughts to incorporate) + the
+    // current draft text to revise instead of starting fresh.
+    const notes = (req.body && req.body.notes) ? String(req.body.notes).slice(0, 3000) : null;
+    const currentDraft = (req.body && req.body.current_draft) ? String(req.body.current_draft).slice(0, 4000) : null;
     const { data: m, error } = await supabase.from('email_messages')
       .select('subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, graph_id, mailbox, has_attachments, resolved_contact:resolved_contact_id(full_name), resolved_vendor:resolved_vendor_id(name), community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
@@ -272,6 +276,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       const draft = await draftEmmaReply({
         email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full },
         vendorId: m.resolved_vendor_id, vendorName: m.resolved_vendor ? m.resolved_vendor.name : (m.sender_name || null),
+        notes, currentDraft,
       });
       return res.json(draft);
     }
@@ -285,6 +290,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       contactName: (m.resolved_contact ? m.resolved_contact.full_name : null) || m.sender_name || null,
       communityName: m.community ? m.community.name : null,
       force: true, // Ed clicked "Draft reply" explicitly — always produce a reply, even internal/spam
+      notes, currentDraft, // reviewer steering (Rewrite with my notes)
     });
     res.json(draft);
   } catch (err) {
