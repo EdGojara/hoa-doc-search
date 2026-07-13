@@ -4518,6 +4518,27 @@
   // and edits survive (this only runs on load / period change).
   let billingWorksheetAutofillNote = '';
 
+  // ONE place that prices ANY postage line date-aware, referenced by both the
+  // worksheet auto-fill and the invoice-detail populate. The rate comes from the
+  // single USPS schedule (server lib/postage/usps_rates.js, surfaced on the
+  // activity report) — no per-community rate-card drift. The tracked
+  // violation-letter line uses the exact per-letter blended rate; every other
+  // postage category uses the period rate. Returns a per-piece unit price in
+  // dollars, or null if this isn't a postage line (leave it on its rate card).
+  function billingIsPostageCategory(cat) {
+    return cat === 'postage' || String(cat || '').startsWith('postage_');
+  }
+  function billingPostagePerPiece(li, c) {
+    if (!billingIsPostageCategory(li.category)) return null;
+    if (li.category === 'postage_drv_notices' && Number(c.first_class_sent) > 0 && c.first_class_postage_cents != null) {
+      // Exact per-letter blend (auto-adjusts if a USPS rate change fell mid-period).
+      return Math.round((Number(c.first_class_postage_cents) / Number(c.first_class_sent)) * 100) / 10000;
+    }
+    const cents = (c.postage_rate_cents != null) ? c.postage_rate_cents
+                : (c.first_class_rate_cents != null) ? c.first_class_rate_cents : null;
+    return cents != null ? cents / 100 : null;
+  }
+
   async function billingAutofillWorksheetFromActivity(period) {
     // period is 'YYYY-MM' from the month input; convert to a full day range.
     const [yy, mm] = String(period || '').split('-').map(Number);
@@ -4543,19 +4564,13 @@
       };
       const applied = [];
       billingDraftPreviewLines.forEach((li) => {
-        if (li.category === 'postage_drv_notices') {
-          // Violation-letter postage at the USPS first-class rate on the letters'
-          // mail dates (auto-adjusts as rates change), not the static rate card.
-          const q = Number(c.first_class_sent) || 0;
-          li.qty = q;
-          if (c.first_class_postage_cents != null && q > 0) {
-            const amt = Math.round(Number(c.first_class_postage_cents)) / 100;
-            li.amount = amt;
-            li.unit_price = Math.round((amt / q) * 10000) / 10000;
-          } else {
-            li.amount = Math.round(q * Number(li.unit_price || 0) * 100) / 100;
-          }
-          if (q > 0) applied.push(`${li.description} = ${q}`);
+        const pp = billingPostagePerPiece(li, c);
+        if (pp != null) {
+          // ALL postage lines price date-aware off the one USPS schedule.
+          li.unit_price = pp;
+          if (li.category === 'postage_drv_notices') li.qty = Number(c.first_class_sent) || 0;
+          li.amount = Math.round(Number(li.qty || 0) * li.unit_price * 100) / 100;
+          if (Number(li.qty) > 0) applied.push(`${li.description} = ${li.qty}`);
         } else if (Object.prototype.hasOwnProperty.call(map, li.category)) {
           const q = Number(map[li.category]) || 0;
           li.qty = q;
@@ -4563,9 +4578,10 @@
           if (q > 0) applied.push(`${li.description} = ${q}`);
         }
       });
+      const rateStr = (c.postage_rate_cents != null ? '$' + (c.postage_rate_cents / 100).toFixed(2) : null);
       billingWorksheetAutofillNote = applied.length
-        ? `⚡ Auto-filled from activity for ${period}: ${applied.join(' · ')}. Review and override any quantity before generating. Pages = color copies by default; other postage lines, staffing and one-offs stay manual.`
-        : `No billable activity found for ${period} — quantities left at 0. Enter them manually or pick a different period.`;
+        ? `⚡ Auto-filled from activity for ${period}: ${applied.join(' · ')}.${rateStr ? ` All postage priced date-aware at ${rateStr} (USPS rate for this period).` : ''} Review and override any quantity before generating. Pages = color copies by default; staffing and one-offs stay manual.`
+        : `No billable activity found for ${period} — quantities left at 0.${rateStr ? ` Postage set date-aware to ${rateStr}.` : ''} Enter quantities manually or pick a different period.`;
       billingRenderDraftPreview();
     } catch (e) {
       billingWorksheetAutofillNote = `Could not auto-fill from activity (${escapeHtml(e.message)}) — enter quantities manually.`;
@@ -5725,20 +5741,16 @@
       };
       const applied = [];
       billingCurrentInvoiceLineItems.forEach((li) => {
-        if (li.category === 'postage_drv_notices') {
-          // Postage bills at the USPS first-class rate in effect on the letters'
-          // MAIL dates (auto-adjusts as rates change), not the static rate card.
-          const q = Number(c.first_class_sent) || 0;
-          li.qty = q;
-          if (c.first_class_postage_cents != null && q > 0) {
-            const amt = Math.round(Number(c.first_class_postage_cents)) / 100;
-            li.amount = amt;
-            li.unit_price = Math.round((amt / q) * 10000) / 10000; // = exact rate in a single-rate month; blended if a rate change fell in the period
-          } else {
-            li.amount = Math.round(q * Number(li.unit_price || 0) * 100) / 100;
-          }
-          const rateLabel = c.first_class_rate_cents != null ? '$' + (c.first_class_rate_cents / 100).toFixed(2) : 'rate card';
-          applied.push(`${li.description} = ${q} @ ${rateLabel}${c.first_class_rate_mixed ? ' (rate change in period — blended)' : ''}`);
+        const pp = billingPostagePerPiece(li, c);
+        if (pp != null) {
+          // ALL postage lines price date-aware off the one USPS schedule
+          // (not just DRV). DRV qty comes from the letters actually mailed;
+          // other postage categories keep their qty (manual) at the same rate.
+          li.unit_price = pp;
+          if (li.category === 'postage_drv_notices') li.qty = Number(c.first_class_sent) || 0;
+          li.amount = Math.round(Number(li.qty || 0) * li.unit_price * 100) / 100;
+          const rateLabel = '$' + pp.toFixed(2);
+          if (Number(li.qty) > 0) applied.push(`${li.description} = ${li.qty} @ ${rateLabel}${c.first_class_rate_mixed && li.category === 'postage_drv_notices' ? ' (rate change in period — blended)' : ''}`);
         } else if (Object.prototype.hasOwnProperty.call(map, li.category)) {
           const q = Number(map[li.category]) || 0;
           li.qty = q;

@@ -2124,6 +2124,11 @@ router.get('/activity-report', async (req, res) => {
           // the month a USPS increase lands.
           first_class_rate_cents: rateSet.length ? rateSet[rateSet.length - 1] : null,
           first_class_rate_mixed: rateSet.length > 1,
+          // Period-level first-class rate from the ONE USPS schedule
+          // (lib/postage/usps_rates.js), always present even with no letters, so
+          // EVERY postage line (annual billing, meeting notices, nomination, etc.)
+          // can price date-aware off a single source — not just the DRV line.
+          postage_rate_cents: firstClassRateCents(end),
           pages_printed,
           pages_unknown: letters_sent > 0 && pages_printed === 0,
         };
@@ -2144,7 +2149,7 @@ router.get('/activity-report', async (req, res) => {
       builder_arc: t.builder_arc + r.builder_arc,
     }), { violations: 0, letters_sent: 0, certified_sent: 0, first_class_sent: 0, first_class_postage_cents: 0, pages_printed: 0, arc_approved: 0, arc_denied: 0, arc_conditions: 0, arc_other: 0, builder_arc: 0 });
 
-    res.json({ period: { start, end }, communities, totals, page_tracking: hasPageCount });
+    res.json({ period: { start, end }, communities, totals, page_tracking: hasPageCount, postage_rate_cents: firstClassRateCents(end) });
   } catch (err) {
     console.error('[billing] activity-report failed:', err.message);
     res.status(500).json({ error: err.message });
