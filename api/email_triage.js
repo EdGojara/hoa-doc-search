@@ -365,7 +365,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
 router.post('/:id/to-payables', express.json(), async (req, res) => {
   try {
     const { data: m } = await supabase.from('email_messages')
-      .select('id, mailbox, graph_id, subject, community_id, resolved_vendor_id, has_attachments')
+      .select('id, mailbox, graph_id, subject, community_id, resolved_vendor_id, has_attachments, extracted, sender_name')
       .eq('id', req.params.id).maybeSingle();
     if (!m) return res.status(404).json({ error: 'not_found' });
     if (!m.graph_id || !m.has_attachments) return res.status(400).json({ error: 'no_attachment', detail: 'No bill is attached to file. Use Record to GL for a payment confirmation, or handle it in Accounting.' });
@@ -378,6 +378,13 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
       const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '' });
       if (out && out.outcome === 'loaded') loaded += 1;
       else if (out && out.outcome === 'held_suspected_duplicate') dup += 1;
+    }
+    // Teach the map so the next bill on this account/vendor auto-routes.
+    if (m.community_id) {
+      try {
+        const { learnMapping } = require('../lib/ap/vendor_community');
+        await learnMapping({ accountNumber: (m.extracted && m.extracted.account_number) || null, vendorId: m.resolved_vendor_id || null, vendorName: m.sender_name || null, communityId: m.community_id });
+      } catch (e) { console.warn('[email_triage] learn (payables) skipped:', e.message); }
     }
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
     res.json({ ok: true, loaded, duplicates: dup });
@@ -398,42 +405,32 @@ router.post('/:id/to-gl', express.json(), async (req, res) => {
     if (!m.community_id) return res.status(400).json({ error: 'no_community', detail: 'Link this email to a community first — the entry has to post to the right association books.' });
 
     const b = req.body || {};
-    let cents = (b.amount_cents && Number.isInteger(+b.amount_cents) && +b.amount_cents > 0) ? +b.amount_cents : null;
-    if (!cents) {
-      const amts = [...new Set((m.extracted && Array.isArray(m.extracted.amounts) ? m.extracted.amounts : [])
-        .map((a) => { const n = parseFloat(String(a).replace(/[^0-9.]/g, '')); return Number.isFinite(n) ? Math.round(n * 100) : null; })
-        .filter((x) => x && x > 0))];
-      if (amts.length === 1) cents = amts[0];
-      else return res.status(400).json({ error: 'ambiguous_amount', detail: `Couldn't pin a single amount (${amts.length} found). Record this one in Accounting so the figure is exact.` });
+    const { recordVendorPaymentToGL, singleAmountCents } = require('../lib/accounting/record_vendor_payment');
+    let cents = (b.amount_cents && Number.isInteger(+b.amount_cents) && +b.amount_cents > 0) ? +b.amount_cents : singleAmountCents(m.extracted && m.extracted.amounts);
+    if (!cents) return res.status(400).json({ error: 'ambiguous_amount', detail: 'Couldn\'t pin a single amount. Record this one in Accounting so the figure is exact.' });
+    const desc = `Emma: ${String(m.subject || m.sender_name || 'Vendor payment').slice(0, 110)}`;
+    const out = await recordVendorPaymentToGL({
+      communityId: m.community_id, amountCents: cents, glAccountId: b.gl_account_id || null,
+      vendorId: m.resolved_vendor_id || null, vendorName: m.sender_name || null, description: desc,
+      postingDate: String(m.received_at || new Date().toISOString()).slice(0, 10), sourceRef: `email:${m.id}`,
+      notes: `Recorded from Emma's inbox (${m.sender_name || 'vendor'}). Flagged for month-end review.`,
+    });
+    if (out.error) {
+      const detail = out.error === 'no_account' ? 'Couldn\'t confidently pick an expense account. Record it in Accounting so it\'s coded right.'
+        : out.error === 'no_cash' ? 'No 1000 Operating Cash account on this community\'s chart.'
+        : out.error === 'period_closed' ? 'That accounting period is closed. Record it in the current period from Accounting.'
+        : 'Could not record to the GL.';
+      return res.status(400).json({ error: out.error, detail });
     }
-    const { suggestClassification } = require('../lib/accounting/gl_classifier');
-    const desc = String(m.subject || m.sender_name || 'Vendor payment').slice(0, 120);
-    const cls = await suggestClassification({ communityId: m.community_id, vendorId: m.resolved_vendor_id || null, vendorName: m.sender_name || null, description: desc, isPaymentLeg: false });
-    if (!cls.account_id) return res.status(400).json({ error: 'no_account', detail: 'Couldn\'t confidently pick an expense account. Record this in Accounting so it\'s coded right.' });
-    const cash = await suggestClassification({ communityId: m.community_id, isPaymentLeg: true });
-    if (!cash.account_id) return res.status(400).json({ error: 'no_cash', detail: 'No 1000 Operating Cash account on this community\'s chart.' });
-
-    const { postJournalEntry } = require('../lib/accounting/posting');
-    const postingDate = String(m.received_at || new Date().toISOString()).slice(0, 10);
-    let je;
+    // Teach the map: this vendor + account number -> this community + GL account,
+    // so the next identical bill records itself.
     try {
-      je = await postJournalEntry({
-        community_id: m.community_id, posting_date: postingDate,
-        description: `Emma: ${desc}`, source_module: 'manual', source_reference: `email:${m.id}`,
-        notes: `Recorded from Emma's inbox (${m.sender_name || 'vendor'}). Flagged for month-end review.`,
-        lines: [
-          { account_id: cls.account_id, debit_cents: cents, credit_cents: 0 },
-          { account_id: cash.account_id, debit_cents: 0, credit_cents: cents },
-        ],
-      });
-    } catch (e) {
-      if (e.code === 'period_closed') return res.status(400).json({ error: 'period_closed', detail: 'That accounting period is closed. Record it in the current period from Accounting.' });
-      throw e;
-    }
-    const jeId = je && je.entry ? je.entry.id : null;
-    if (jeId) { try { await supabase.from('journal_entries').update({ needs_review: true, classification_reason: cls.reason || null }).eq('id', jeId); } catch (_) {} }
+      const { learnMapping } = require('../lib/ap/vendor_community');
+      const admin = await getAuthedUser(req);
+      await learnMapping({ accountNumber: (m.extracted && m.extracted.account_number) || null, vendorId: m.resolved_vendor_id || null, vendorName: m.sender_name || null, communityId: m.community_id, glAccountId: out.gl_account_id, taughtByUserId: admin && admin.user ? admin.user.id : null, taughtByName: admin ? admin.full_name : null });
+    } catch (e) { console.warn('[email_triage] learn mapping skipped:', e.message); }
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: b.reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
-    res.json({ ok: true, amount_cents: cents, account: cls.account_number || cls.account_name || null, needs_review: true });
+    res.json({ ok: true, amount_cents: cents, needs_review: true });
   } catch (err) { console.error('[email_triage] to-gl failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
