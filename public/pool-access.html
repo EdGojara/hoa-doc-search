@@ -232,13 +232,47 @@ async function discardBatch(id){ await fetch(`${API}/ingest/${id}/discard`,{meth
 async function approveBatch(id){
   const btn=$('pa-approve'); if(btn){ btn.disabled=true; btn.textContent='Filing…'; }
   const r=await fetch(`${API}/ingest/${id}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:PA.rows})});
+  const j=await r.json();
+  if(!j.ok){ closeModal(); alert(j.error||'Approve failed'); return; }
+  // Hard block: some owners are past-due on assessments. Nothing filed yet.
+  if(j.needs_confirmation && (j.blocked||[]).length){ if(btn){btn.disabled=false;btn.textContent='File';} return showBlocked(id, j.blocked); }
+  closeModal();
+  let msg=`Filed ${j.filed} record${j.filed===1?'':'s'}.`;
+  if(j.superseded)msg+=` ${j.superseded} prior fob registration${j.superseded===1?'':'s'} superseded.`;
+  if(j.skipped)msg+=` ${j.skipped} skipped.`;
+  alert(msg);
+  loadRoster();
+}
+function showBlocked(id, blocked){
+  window._paBlocked=blocked;
+  const money=c=>'$'+((c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  $('modal').innerHTML=`<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:660px;">
+    <h2>⛔ ${blocked.length} blocked — past-due on assessments</h2>
+    <div class="sub">Amenity access is restricted while an owner is past-due on <b>assessments</b> (late fees, interest, and fines don't count) with no payment plan or bankruptcy on file. To grant anyway, type a clarification or explanation — it's recorded on the record. Leave blank to keep the owner restricted.</div>
+    <div style="max-height:52vh; overflow:auto; margin-top:10px;">
+    ${blocked.map((b,i)=>`<div style="border:1px solid #fecaca; background:#fef2f2; border-radius:8px; padding:10px 12px; margin-bottom:8px;">
+      <div style="font-weight:700; color:#0B1D34;">${esc(b.address||'This property')}${b.fob_tag_number?' &middot; tag '+esc(b.fob_tag_number):''}${b.owner_name?' &middot; '+esc(b.owner_name):''}</div>
+      <div style="font-size:12px; color:#991b1b; margin:5px 0;">${esc(b.reason)}</div>
+      <label class="fld" style="font-size:11px;">Override reason (leave blank to keep blocked)</label>
+      <input id="ovr-${i}" placeholder="e.g. balance disputed / paid in full today, receipt on file">
+    </div>`).join('')}
+    </div>
+    <div class="row" style="justify-content:flex-end; gap:8px; margin-top:12px;">
+      <button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn gold" onclick="confirmBlocked('${id}')">File &mdash; grant overrides, skip the rest</button>
+    </div>
+  </div></div>`;
+}
+async function confirmBlocked(id){
+  const overrides={};
+  (window._paBlocked||[]).forEach((b,i)=>{ const el=$('ovr-'+i); const v=el?(el.value||'').trim():''; if(v) overrides[b.property_id]=v; });
+  const r=await fetch(`${API}/ingest/${id}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:PA.rows, overrides, confirm:true})});
   const j=await r.json(); closeModal();
   if(!j.ok){ alert(j.error||'Approve failed'); return; }
   let msg=`Filed ${j.filed} record${j.filed===1?'':'s'}.`;
-  if(j.superseded)msg+=` ${j.superseded} prior fob registration${j.superseded===1?'':'s'} superseded.`;
-  if(j.skipped)msg+=` ${j.skipped} skipped (unmatched / not a fileable form).`;
-  alert(msg);
-  loadRoster();
+  if(j.superseded)msg+=` ${j.superseded} superseded.`;
+  if(j.blocked_unresolved)msg+=` ${j.blocked_unresolved} left restricted (not granted — still past-due).`;
+  alert(msg); loadRoster();
 }
 
 /* ---------- manual grant ---------- */
@@ -272,6 +306,29 @@ async function submitGrant(){
     season_year:$('g_season')&&$('g_season').value?parseInt($('g_season').value,10):null,
     extended_hours_detail:$('g_hours')?$('g_hours').value.trim():null,
     authorized_persons:people, form_signed_date:$('g_signed').value||null };
+  window._gBody=body;
+  const r=await fetch(`${API}/grant`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json();
+  if(r.status===409&&j.blocked){ return gShowBlock(j.reason); }
+  if(!j.ok){ alert(j.error||'Could not add'); return; }
+  closeModal(); loadRoster();
+}
+function gShowBlock(reason){
+  $('modal').innerHTML=`<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:560px;">
+    <h2>⛔ Blocked — past-due on assessments</h2>
+    <div style="border:1px solid #fecaca; background:#fef2f2; border-radius:8px; padding:11px 13px; margin:8px 0; font-size:13px; color:#991b1b;">${esc(reason||'This owner is past-due on assessments.')}</div>
+    <div class="sub">To grant anyway, type a clarification or explanation (recorded on the record). Leave blank to keep the owner restricted.</div>
+    <label class="fld">Override reason</label><input id="g_override" placeholder="e.g. balance disputed / paid in full today, receipt on file">
+    <div class="row" style="justify-content:flex-end; gap:8px; margin-top:12px;">
+      <button class="btn ghost" onclick="closeModal()">Keep restricted</button>
+      <button class="btn gold" onclick="gOverride()">Grant with override</button>
+    </div>
+  </div></div>`;
+}
+async function gOverride(){
+  const reason=($('g_override').value||'').trim();
+  if(!reason){ alert('Type a reason to override, or Keep restricted.'); return; }
+  const body=Object.assign({},window._gBody,{override_reason:reason});
   const r=await fetch(`${API}/grant`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const j=await r.json();
   if(!j.ok){ alert(j.error||'Could not add'); return; }

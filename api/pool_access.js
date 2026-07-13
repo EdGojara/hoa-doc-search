@@ -238,6 +238,33 @@ router.post('/ingest/:batch_id/approve', express.json(), async (req, res) => {
     // fixed by hand in the review step — Ed 2026-07-10); else the staged extraction.
     const editedRows = (req.body && Array.isArray(req.body.rows) && req.body.rows.length) ? req.body.rows : null;
     const rows = editedRows || ((batch.raw_extraction && Array.isArray(batch.raw_extraction.rows)) ? batch.raw_extraction.rows : []);
+    // Per-property overrides: { [property_id]: "typed clarification/explanation" }.
+    // A hard block on assessment-delinquent owners can only be released with one.
+    const overrides = (req.body && req.body.overrides && typeof req.body.overrides === 'object') ? req.body.overrides : {};
+    const confirm = !!(req.body && req.body.confirm);
+    const { evaluateAmenityAccess } = require('../lib/ar/amenity_access');
+
+    // PRE-PASS — hard block: an assessment-delinquent owner (no plan/bankruptcy)
+    // cannot be granted amenity access unless staff supply a typed override.
+    // Nothing is filed on the pass that first surfaces a block, so re-approving
+    // never double-files. Confirm (with any overrides) to proceed.
+    const blocked = [];
+    for (const r of rows) {
+      if (!r.property_id || !FILEABLE.has(r.form_type)) continue;
+      if (overrides[r.property_id] && String(overrides[r.property_id]).trim()) continue; // will be overridden
+      let decision = null;
+      try { decision = await evaluateAmenityAccess(supabase, { propertyId: r.property_id, communityId: batch.community_id }); } catch (_) {}
+      if (decision && decision.allowed === false) {
+        blocked.push({ property_id: r.property_id, fob_tag_number: r.fob_tag_number || null, form_type: r.form_type, owner_name: r.homeowner_name || r.owner_name || null, address: r.street_address || null, reason: decision.reason, assessment_past_due_cents: decision.assessment_past_due_cents || 0 });
+      }
+    }
+    if (blocked.length && !confirm) {
+      // Nothing filed. Staff must review the exact reason and either override
+      // (typed clarification) or leave restricted, then confirm.
+      return res.json({ ok: true, needs_confirmation: true, blocked, filed: 0 });
+    }
+    const blockedIds = new Set(blocked.map((b) => b.property_id));
+
     let filed = 0, skipped = 0, superseded = 0;
     for (const r of rows) {
       if (!r.property_id || !FILEABLE.has(r.form_type)) { skipped++; continue; }
@@ -247,6 +274,9 @@ router.post('/ingest/:batch_id/approve', express.json(), async (req, res) => {
         const { data: prop } = await supabase.from('properties').select('community_id').eq('id', r.property_id).maybeSingle();
         if (!prop || prop.community_id !== batch.community_id) { skipped++; continue; }
       }
+      // Restricted + not overridden (operator confirmed anyway) → skip, don't grant.
+      if (blockedIds.has(r.property_id)) { skipped++; continue; }
+      const overrideReason = overrides[r.property_id] ? String(overrides[r.property_id]).trim() : '';
       // Reissue: revoke any active grant on this tag (existing OR earlier this
       // batch) so exactly one active row per tag survives. Last write wins.
       if (r.form_type === 'fob_registration' && r.fob_tag_number) {
@@ -269,7 +299,7 @@ router.post('/ingest/:batch_id/approve', express.json(), async (req, res) => {
         authorized_persons: r.authorized_persons || [],
         form_signed_date: r.form_signed_date || null,
         status: 'active',
-        notes: r.notes || null,
+        notes: overrideReason ? `${r.notes ? r.notes + '\n' : ''}[Override] Granted despite past-due assessments — ${overrideReason}`.slice(0, 1000) : (r.notes || null),
         source_batch_id: batch.id,
         source_storage_path: r._storage_path || null,
         source_filename: r.source_filename || null,
@@ -279,7 +309,9 @@ router.post('/ingest/:batch_id/approve', express.json(), async (req, res) => {
       filed++;
     }
     await supabase.from('pool_access_batches').update({ status: 'approved', approved_at: new Date().toISOString() }).eq('id', batch.id);
-    res.json({ ok: true, filed, skipped, superseded });
+    // `blocked` here = restricted owners the operator confirmed WITHOUT an
+    // override (left un-granted on purpose); reported so the count is honest.
+    res.json({ ok: true, filed, skipped, superseded, blocked_unresolved: blocked.length });
   } catch (err) {
     console.error('[pool_access] approve failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -441,6 +473,19 @@ router.post('/grant', express.json(), async (req, res) => {
     if (!propertyId) return res.status(400).json({ error: 'could not resolve a property — pass property_id or a matchable address' });
     const owner = await ownerOfProperty(propertyId);
 
+    // HARD BLOCK: past-due on assessments (no plan/bankruptcy) → refuse unless a
+    // typed override reason is supplied. Return the exact reason so the UI shows
+    // precisely why it's blocked.
+    const overrideReason = b.override_reason ? String(b.override_reason).trim() : '';
+    if (!overrideReason) {
+      const { evaluateAmenityAccess } = require('../lib/ar/amenity_access');
+      let decision = null;
+      try { decision = await evaluateAmenityAccess(supabase, { propertyId, communityId: b.community_id }); } catch (_) {}
+      if (decision && decision.allowed === false) {
+        return res.status(409).json({ error: 'amenity_restricted', blocked: true, reason: decision.reason, assessment_past_due_cents: decision.assessment_past_due_cents || 0 });
+      }
+    }
+
     if (b.form_type === 'fob_registration' && b.fob_tag_number) {
       const { data: prior } = await supabase.from('pool_access').select('id')
         .eq('community_id', b.community_id).eq('fob_tag_number', String(b.fob_tag_number).trim()).eq('status', 'active');
@@ -452,7 +497,8 @@ router.post('/grant', express.json(), async (req, res) => {
       season_year: b.season_year || null, extended_hours_detail: b.extended_hours_detail || null,
       authorized_persons: Array.isArray(b.authorized_persons) ? b.authorized_persons : [],
       form_signed_date: /^\d{4}-\d{2}-\d{2}$/.test(b.form_signed_date || '') ? b.form_signed_date : null,
-      status: 'active', notes: b.notes || null, record_ownership: 'association_record',
+      status: 'active', notes: overrideReason ? `${b.notes ? b.notes + '\n' : ''}[Override] Granted despite past-due assessments — ${overrideReason}`.slice(0, 1000) : (b.notes || null),
+      record_ownership: 'association_record',
     }).select('id').single();
     if (error) throw error;
     res.json({ ok: true, id: data.id });
