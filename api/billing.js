@@ -2434,10 +2434,13 @@ router.get('/activity-report', async (req, res) => {
     let paymentPlans = [];
     try {
       paymentPlans = await fetchAll(() => {
+        // Only plans INITIATED in the period — keyed on start_date (when the
+        // plan was initiated). Fall back to created_at ONLY when a plan has no
+        // start_date, so a plan entered late but initiated in another month
+        // doesn't land on the wrong bill.
         let q = supabase.from('payment_plans')
-          .select('community_id, created_at')
-          .gte('created_at', start + 'T00:00:00Z')
-          .lt('created_at', endEx + 'T00:00:00Z');
+          .select('community_id, start_date, created_at')
+          .or(`and(start_date.gte.${start},start_date.lte.${end}),and(start_date.is.null,created_at.gte.${start}T00:00:00Z,created_at.lt.${endEx}T00:00:00Z)`);
         if (communityId) q = q.eq('community_id', communityId);
         return q;
       });
