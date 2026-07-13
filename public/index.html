@@ -3871,7 +3871,11 @@
          by Tessa email intake or added by hand; they auto-drop onto the next
          activity draft invoice. -->
     <div class="panel" id="billing-pending-panel" style="margin-bottom:16px;">
-      <h4 style="margin-top:0;">🧾 Pending billing items <span style="font-weight:400; color:#888; font-size:12px;">— staged charges that drop onto the next activity invoice (from Tessa's billing inbox or added here)</span></h4>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <h4 style="margin:0;">🧾 Pending billing items <span style="font-weight:400; color:#888; font-size:12px;">— staged charges that drop onto the next activity invoice (from Tessa's billing inbox or added here)</span></h4>
+        <button class="secondary-btn" onclick="billingPollInbox()" style="font-size:12px; padding:5px 11px; white-space:nowrap;" title="Have Tessa read new emails in the billing inbox and stage any charges">📥 Check billing inbox</button>
+      </div>
+      <div id="billing-poll-status" style="font-size:12px; margin:6px 0 8px; color:#888;"></div>
       <div id="billing-pending-list" style="font-size:13px; color:#888; margin-bottom:10px;">Loading…</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; border-top:1px dashed #e5e7eb; padding-top:10px;">
         <div style="flex:2; min-width:160px;">
@@ -4518,6 +4522,26 @@
     } catch (e) { if (status) { status.style.color = '#b91c1c'; status.textContent = '✗ ' + e.message; } }
   }
   window.billingAddPendingItem = billingAddPendingItem;
+
+  async function billingPollInbox() {
+    const status = document.getElementById('billing-poll-status');
+    if (status) { status.style.color = '#888'; status.textContent = '📥 Tessa is reading the billing inbox…'; }
+    try {
+      const r = await fetch('/api/billing/poll-inbox', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (j.status === 'not_configured' || j.status === 'not_authorized') { if (status) { status.style.color = '#b45309'; status.textContent = j.message || 'Billing inbox isn\'t connected yet (Microsoft Graph credentials / billing@ mailbox needed).'; } return; }
+      const t = j.tally || {};
+      const parts = [];
+      if (t.staged) parts.push(`${t.staged} email(s) staged charges`);
+      if (t.needs_clarification) parts.push(`${t.needs_clarification} needed clarification (Tessa replied)`);
+      if (t.exists) parts.push(`${t.exists} already handled`);
+      if (t.no_items) parts.push(`${t.no_items} had nothing to bill`);
+      if (status) { status.style.color = '#166534'; status.textContent = `✓ Checked ${j.processed || 0} message(s). ${parts.join(' · ') || 'Nothing new.'}`; }
+      if (billingCurrentCommunityId) billingLoadPendingItems(billingCurrentCommunityId);
+    } catch (e) { if (status) { status.style.color = '#b91c1c'; status.textContent = '✗ ' + e.message; } }
+  }
+  window.billingPollInbox = billingPollInbox;
 
   async function billingDismissPendingItem(id) {
     if (!confirm('Dismiss this pending charge? It won\'t be billed.')) return;

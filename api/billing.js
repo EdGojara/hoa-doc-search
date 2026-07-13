@@ -1064,6 +1064,19 @@ router.put('/communities/:communityId/billing-contact', async (req, res) => {
   }
 });
 
+// Poll the billing intake mailbox (staff -> Tessa billing items). Tessa reads
+// each message, stages the charges, and replies. Manual trigger for now.
+router.post('/poll-inbox', async (req, res) => {
+  try {
+    const { pollBillingInbox } = require('../lib/billing/email_intake');
+    const out = await pollBillingInbox({ limit: Number(req.body?.limit) || 15 });
+    res.json(out);
+  } catch (err) {
+    console.error('[billing] poll-inbox failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---- Pending billing items (staged ad-hoc charges) -------------------------
 // List a community's staged charges (default: still-pending). Migration-safe.
 router.get('/communities/:communityId/pending-items', async (req, res) => {
