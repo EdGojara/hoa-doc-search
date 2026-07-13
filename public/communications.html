@@ -171,6 +171,24 @@ async function loadPersonaList(){
   try{
     const r = await af(url); const j = await r.json(); const msgs = j.messages||[];
     if(!msgs.length){ el.innerHTML='<div class="empty">No emails in this view. Try the “All” filter above.</div>'; return; }
+    // Group back-to-back emails from the SAME homeowner (a follow-up sent because
+    // they forgot something) so one reply can cover the burst. Pure client-side
+    // over the emails already fetched — no extra calls, no reprocessing.
+    const SIB_WIN = 2*3600*1000; // 2 hours either side — a genuine "forgot something / more info" burst, not unrelated later mail
+    // Skip automated senders and internal staff — a "forgot something" burst is a
+    // homeowner following up, not a bot report or a teammate emailing about two properties.
+    const AUTOMATED = /no-?reply|do-?not-?reply|donotreply|mailer-daemon|postmaster|notif|spamlab|quarantine|@appriver|@bedrocktx\.com|@bedrocktxai\.com/i;
+    const inbound = msgs.filter(m=>m.direction!=='outbound' && m.sender_email && !AUTOMATED.test(m.sender_email));
+    for(const m of msgs){
+      m._siblings = [];
+      if(!m.sender_email || m.direction==='outbound' || AUTOMATED.test(m.sender_email)) continue;
+      const se=(m.sender_email||'').toLowerCase(), t=new Date(m.received_at||0).getTime();
+      if(!isFinite(t)) continue;
+      m._siblings = inbound.filter(o=>o.id!==m.id
+        && (o.sender_email||'').toLowerCase()===se
+        && Math.abs(new Date(o.received_at||0).getTime()-t)<=SIB_WIN)
+        .map(o=>({id:o.id, subject:o.subject}));
+    }
     const note = openPersona==='general'
       ? '<div class="note" style="margin:4px 0 8px;color:var(--muted);">Solicitations and unsorted mail. No replies are drafted here automatically — use <b>Draft reply</b> on any message if you want to respond.</div>' : '';
     el.innerHTML = note + msgs.map(msgHtml).join('');
@@ -195,6 +213,7 @@ function msgHtml(m){
         </div>
       </div>
       <div class="summary">${esc(m.ai_summary||'')} <a href="#" onclick="event.preventDefault();showThread('${m.id}',this)" style="font-size:11.5px;color:#0B1D34;font-weight:600;white-space:nowrap;">🧵 Show full email + thread</a></div>
+      ${m._siblings&&m._siblings.length?`<div class="note" style="background:#eef6ff;border:1px solid #bcdcff;border-radius:6px;padding:6px 9px;margin-top:6px;color:#0b4a8f;font-size:12px;">📎 ${esc((m.sender_name||'This homeowner').split(' ')[0])} sent ${m._siblings.length+1} emails close together (${esc([m.subject].concat(m._siblings.map(s=>s.subject||'(no subject)')).join(', '))}). Click <b>↻ Re-draft</b> here and ${esc((PNAME[m.persona]||'Claire').split(' ')[0])} will fold them into one reply — sending then clears all ${m._siblings.length+1}.</div>`:''}
       ${m.extracted&&m.extracted.auto_gl?`<div style="font-size:11.5px;color:#166534;font-weight:600;margin-top:4px;">🤖 Auto-recorded to GL — $${((m.extracted.auto_gl.amount_cents||0)/100).toFixed(2)}, flagged for your month-end review.</div>`:''}
       ${m.extracted&&m.extracted.draft&&m.extracted.draft.review_hint?`<div style="font-size:12px;color:#8a6d00;background:#fbf7ec;border:1px solid #e8dcae;border-radius:6px;padding:6px 9px;margin-top:5px;">💡 <strong>Claire suggests:</strong> ${esc(m.extracted.draft.review_hint)} <a href="#" onclick="event.preventDefault();forwardPrompt('${m.id}')" style="color:#0B1D34;font-weight:600;white-space:nowrap;">↪ Loop someone in</a></div>`:''}
       ${m.extracted&&m.extracted.forwarded?`<div style="font-size:11.5px;color:#5b21b6;font-weight:600;margin-top:4px;">↪ Forwarded to ${esc(m.extracted.forwarded.name||m.extracted.forwarded.to)}${m.extracted.forwarded.at?' · '+new Date(m.extracted.forwarded.at).toLocaleString():''} — awaiting their review</div>`:''}

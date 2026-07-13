@@ -260,7 +260,7 @@ async function findSiblingEmails(message) {
   if (!message || message.direction === 'outbound' || !message.sender_email) return [];
   const center = new Date(message.received_at || Date.now()).getTime();
   if (!Number.isFinite(center)) return [];
-  const WINDOW = 7 * 24 * 3600 * 1000; // 7 days either side
+  const WINDOW = 2 * 3600 * 1000; // 2 hours either side — a real "forgot something" burst, not unrelated later mail
   try {
     const { data } = await supabase.from('email_messages')
       .select('id, subject, body_full, body_preview, received_at')
