@@ -211,16 +211,31 @@ router.post('/:id/link', express.json(), async (req, res) => {
     const { data, error } = await supabase.from('email_messages').update(patch).eq('id', req.params.id).select(SELECT).single();
     if (error) throw error;
 
-    // Learning loop: if we just confirmed a contact for an email address the
-    // contact doesn't have on file, add it as secondary_email so next time it
-    // auto-links. Only when the primary slot differs and secondary is empty.
+    // Learning loop: when we confirm a contact for an email address they don't
+    // have on file, record it so the NEXT email from that address auto-links.
+    // Write to contact_methods (the canonical N-email store the resolver reads)
+    // rather than the single flat secondary_email slot, which held only one
+    // address and silently no-op'd when already occupied.
     let learned = false;
     if (write_back_email && contact_id && msg && msg.sender_email) {
-      const { data: c } = await supabase.from('contacts').select('primary_email, secondary_email').eq('id', contact_id).maybeSingle();
-      const s = (msg.sender_email || '').toLowerCase();
-      if (c && s && (c.primary_email || '').toLowerCase() !== s && !(c.secondary_email || '').toLowerCase().includes(s)) {
-        await supabase.from('contacts').update({ secondary_email: msg.sender_email }).eq('id', contact_id).is('secondary_email', null);
-        learned = true;
+      const s = (msg.sender_email || '').toLowerCase().trim();
+      if (s) {
+        const { data: c } = await supabase.from('contacts').select('primary_email, secondary_email').eq('id', contact_id).maybeSingle();
+        const inFlat = !!c && ((c.primary_email || '').toLowerCase().includes(s) || (c.secondary_email || '').toLowerCase().includes(s));
+        let inMethods = false;
+        try {
+          const { data: cm } = await supabase.from('contact_methods').select('id').eq('contact_id', contact_id).eq('method_type', 'email').ilike('value', `%${s}%`).limit(1);
+          inMethods = !!(cm && cm.length);
+        } catch (_) { /* table optional */ }
+        if (!inFlat && !inMethods) {
+          try {
+            const { error: cmErr } = await supabase.from('contact_methods').insert({
+              contact_id, method_type: 'email', value: msg.sender_email, subtype: 'learned', is_primary: false, notes: 'learned from email triage',
+            });
+            if (cmErr) console.warn('[email_triage] learn contact_method failed:', cmErr.message);
+            else learned = true;
+          } catch (e) { console.warn('[email_triage] learn contact_method failed:', e.message); }
+        }
       }
     }
     res.json({ message: data, learned });
