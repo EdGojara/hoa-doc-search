@@ -158,9 +158,15 @@ async function assemble(contactId) {
     .select('id, type, direction, subject, content, delivery_method, sent_at, created_at, violation_id')
     .or(`contact_id.eq.${contactId}${propIds.length ? ',property_id.in.(' + propIds.join(',') + ')' : ''}`)
     .order('created_at', { ascending: false }).limit(60));
+  // Match emails by resolved contact OR by any owned property — mirrors the
+  // interactions query above so property-linked correspondence (unknown sender,
+  // or an email about this property) surfaces on the owner's history, not just
+  // mail from a known contact. (Was contact-only, which dropped property-linked
+  // emails onto nobody's 360.)
   const emails = await safe(() => supabase.from('email_messages')
     .select('direction, sender_email, subject, ai_summary, classification, received_at')
-    .eq('resolved_contact_id', contactId).order('received_at', { ascending: false }).limit(40));
+    .or(`resolved_contact_id.eq.${contactId}${propIds.length ? ',resolved_property_id.in.(' + propIds.join(',') + ')' : ''}`)
+    .order('received_at', { ascending: false }).limit(40));
 
   // Phone calls Claire / the team handled (voice log), linked by caller.
   const calls = await safe(() => supabase.from('homeowner_calls')
