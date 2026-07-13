@@ -544,11 +544,10 @@
        Hidden for everyone but Ed via data-owner-only; every endpoint also
        hard-gates via requireOwner. Standalone page. -->
   <div class="tab" data-owner-only onclick="window.location.href='/admin/tessa'">💼 Tessa (my EA)</div>
-  <!-- ✉️ AI Team Email — ADMIN ONLY (Ed). One compose surface for the AI team
-       members: send as Claire (front office / homeowners + boards) or Emma
-       (accounts payable / vendors), chosen in the modal. Hidden for staff via
-       data-admin-only; the endpoint also enforces admin server-side. -->
-  <div class="tab" data-admin-only onclick="openAiTeamCompose()">✉️ AI Team Email</div>
+  <!-- ✉️ AI Team Email moved INTO Communications (the "New email" button there),
+       with a Send-as picker for all four teammates (Claire / Emma / Annie /
+       Miranda). Tessa composes from her own owner-only page. -->
+  <div class="tab" onclick="window.location.href='/admin/communications'">✉️ AI Team Email</div>
   <!-- 🛑 System Errors — ADMIN ONLY (Ed). Every server 5xx in the last 7 days,
        so a broken feature surfaces here in minutes instead of after staff waste
        hours. Fails closed to coming-soon for non-admins. Standalone page. -->

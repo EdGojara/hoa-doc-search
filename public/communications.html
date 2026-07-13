@@ -314,9 +314,24 @@ window.pullNow = async function(){
 };
 
 // ---- New email (compose as Claire) — same endpoints as the main-app tab ----
+const COMPOSE_PERSONAS = {
+  claire:  {name:'Claire',         first:'Claire',  mail:'claire@bedrocktx.com'},
+  emma:    {name:'Emma Brooks',    first:'Emma',    mail:'emma@bedrocktx.com'},
+  annie:   {name:'Annie Reeves',   first:'Annie',   mail:'annie@bedrocktx.com'},
+  miranda: {name:'Miranda Pierce', first:'Miranda', mail:'miranda@bedrocktx.com'},
+};
+function ncP(){ return document.getElementById('nmPersona').value || 'claire'; }
+window.ncPersonaChange = function(){
+  const p = COMPOSE_PERSONAS[ncP()] || COMPOSE_PERSONAS.claire;
+  document.getElementById('nmHeaderTitle').innerHTML = '✉️ New email from '+esc(p.first);
+  document.getElementById('nmFromHint').innerHTML = 'Sends from <strong>'+esc(p.mail)+'</strong> with the Bedrock logo + honest-AI signature.';
+  document.getElementById('nmDraftLabel').innerHTML = '✍️ Have '+esc(p.first)+' write it <span style="font-weight:400; color:var(--muted);">— tell '+esc(p.first)+' the gist, she drafts it, you edit below</span>';
+  document.getElementById('nmSendBtn').textContent = 'Send as '+esc(p.first);
+};
 window.openCompose = function(){
   document.getElementById('nmStatus').textContent='';
   ['nmTo','nmCc','nmSubject','nmCommunity','nmIntent','nmBody'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('nmPersona').value='claire'; ncPersonaChange();
   document.getElementById('composeModal').style.display='flex';
   setTimeout(()=>document.getElementById('nmTo').focus(),30);
 };
@@ -326,15 +341,16 @@ window.ncDraft = async function(){
   const to=document.getElementById('nmTo').value.trim();
   const community_name=document.getElementById('nmCommunity').value.trim();
   const st=document.getElementById('nmStatus'); const btn=document.getElementById('nmDraftBtn');
-  if(!intent){ st.style.color='#b91c1c'; st.textContent='Tell Claire what you want the email to say.'; return; }
-  btn.disabled=true; const o=btn.textContent; btn.textContent='Writing…'; st.style.color='#5a7390'; st.textContent='Claire is drafting…';
+  const who=(COMPOSE_PERSONAS[ncP()]||COMPOSE_PERSONAS.claire).first;
+  if(!intent){ st.style.color='#b91c1c'; st.textContent='Tell '+who+' what you want the email to say.'; return; }
+  btn.disabled=true; const o=btn.textContent; btn.textContent='Writing…'; st.style.color='#5a7390'; st.textContent=who+' is drafting…';
   try{
-    const r=await af('/api/email-triage/compose-draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({intent,to,community_name})});
+    const r=await af('/api/email-triage/compose-draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({intent,to,community_name,persona:ncP()})});
     const j=await r.json();
     if(!r.ok||!j.ok){ st.style.color='#b91c1c'; st.textContent=j.detail||j.error||'Could not draft.'; return; }
     if(j.subject && !document.getElementById('nmSubject').value.trim()) document.getElementById('nmSubject').value=j.subject;
     document.getElementById('nmBody').value=j.body||'';
-    st.style.color='#166534'; st.textContent='✓ Claire drafted it. Edit anything below, then send.';
+    st.style.color='#166534'; st.textContent='✓ '+who+' drafted it. Edit anything below, then send.';
   }catch(e){ st.style.color='#b91c1c'; st.textContent='Draft failed: '+(e.message||'network'); }
   finally{ btn.disabled=false; btn.textContent=o; }
 };
@@ -343,11 +359,12 @@ window.ncSend = async function(){
   const subject=document.getElementById('nmSubject').value.trim(), community_name=document.getElementById('nmCommunity').value.trim();
   const body=document.getElementById('nmBody').value.trim();
   const st=document.getElementById('nmStatus'); const btn=document.getElementById('nmSendBtn');
+  const who=(COMPOSE_PERSONAS[ncP()]||COMPOSE_PERSONAS.claire).first;
   if(!to){ st.style.color='#b91c1c'; st.textContent='Enter at least one recipient email.'; return; }
-  if(!body){ st.style.color='#b91c1c'; st.textContent='Write a message, or have Claire draft one.'; return; }
-  btn.disabled=true; const o=btn.textContent; btn.textContent='Sending…'; st.style.color='#5a7390'; st.textContent='Sending as Claire…';
+  if(!body){ st.style.color='#b91c1c'; st.textContent='Write a message, or have '+who+' draft one.'; return; }
+  btn.disabled=true; const o=btn.textContent; btn.textContent='Sending…'; st.style.color='#5a7390'; st.textContent='Sending as '+who+'…';
   try{
-    const r=await af('/api/email-triage/compose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to,cc,subject,community_name,body})});
+    const r=await af('/api/email-triage/compose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to,cc,subject,community_name,body,persona:ncP()})});
     const j=await r.json();
     if(!r.ok||!j.sent){ st.style.color='#b91c1c'; st.textContent=j.detail||j.error||('Send failed (HTTP '+r.status+').'); }
     else{ const t=Array.isArray(j.to)?j.to.join(', '):j.to; st.style.color='#166534'; st.textContent='✓ Sent to '+t+(j.linked_to_homeowner?' — filed on their record.':'.'); setTimeout(()=>{closeCompose(); loadStats(); loadList();},1500); }
@@ -384,11 +401,18 @@ window.ncSend = async function(){
 <div id="composeModal" style="display:none; position:fixed; inset:0; background:rgba(11,29,52,0.5); z-index:2000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow:auto;">
   <div style="background:#fff; border-radius:14px; max-width:640px; width:100%;">
     <div style="background:var(--navy); color:#fff; padding:14px 18px; border-radius:14px 14px 0 0; display:flex; justify-content:space-between; align-items:center;">
-      <div style="font-weight:700; font-size:16px;">&#9993;&#65039; New email from Claire</div>
+      <div id="nmHeaderTitle" style="font-weight:700; font-size:16px;">&#9993;&#65039; New AI team email</div>
       <button onclick="closeCompose()" style="background:rgba(255,255,255,0.15); color:#fff; border:none; padding:5px 11px; border-radius:6px; cursor:pointer; font-size:14px;">&#10005;</button>
     </div>
     <div style="padding:18px;">
-      <div style="font-size:12px; color:var(--muted); margin-bottom:12px;">Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + signature. Logged on the homeowner's record when the address matches one on file.</div>
+      <label style="display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px;">Send as</label>
+      <select id="nmPersona" onchange="ncPersonaChange()" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px; margin-bottom:8px;">
+        <option value="claire">Claire — front office (homeowners &amp; boards)</option>
+        <option value="emma">Emma Brooks — accounts payable (vendors)</option>
+        <option value="annie">Annie Reeves — architectural review (ACC/ARC)</option>
+        <option value="miranda">Miranda Pierce — compliance / DRV</option>
+      </select>
+      <div id="nmFromHint" style="font-size:12px; color:var(--muted); margin-bottom:12px;">Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + honest-AI signature. Logged on the homeowner's record when the address matches one on file.</div>
       <div style="display:flex; gap:11px; margin-bottom:11px;">
         <div style="flex:1;"><label style="display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px;">To <span style="font-weight:400;">(commas for multiple)</span></label>
           <input id="nmTo" type="text" placeholder="board@…, owner@…" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;"></div>
@@ -402,7 +426,7 @@ window.ncSend = async function(){
           <input id="nmCommunity" placeholder="e.g. Eaglewood" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;"></div>
       </div>
       <div style="background:#f8fafc; border:1px solid #e6edf5; border-radius:9px; padding:10px 11px; margin-bottom:11px;">
-        <label style="display:block; font-size:12px; font-weight:600; color:var(--navy); margin-bottom:3px;">&#9997;&#65039; Have Claire write it <span style="font-weight:400; color:var(--muted);">— tell her the gist, she drafts it, you edit below</span></label>
+        <label id="nmDraftLabel" style="display:block; font-size:12px; font-weight:600; color:var(--navy); margin-bottom:3px;">&#9997;&#65039; Have Claire write it <span style="font-weight:400; color:var(--muted);">— tell her the gist, she drafts it, you edit below</span></label>
         <div style="display:flex; gap:8px;">
           <input id="nmIntent" type="text" placeholder="e.g. tell the Waterview board the pool reopens Monday" style="flex:1; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;" onkeydown="if(event.key==='Enter'){event.preventDefault();ncDraft();}">
           <button id="nmDraftBtn" onclick="ncDraft()" style="background:var(--navy); color:#fff; border:none; padding:9px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap;">Draft it</button>

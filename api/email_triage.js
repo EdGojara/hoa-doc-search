@@ -484,7 +484,8 @@ router.post('/compose', express.json(), async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return; // 403 already sent
     const { to, cc, subject, body, community_name, persona } = req.body || {};
-    const asEmma = String(persona || '').toLowerCase() === 'emma';
+    const P = ['emma', 'annie', 'miranda'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
+    const asEmma = P === 'emma';
     const toList = parseAddrs(to);
     const ccList = parseAddrs(cc);
     if (toList.length === 0) return res.status(400).json({ error: 'to_required', detail: 'Enter at least one valid recipient email.' });
@@ -509,12 +510,20 @@ router.post('/compose', express.json(), async (req, res) => {
       } catch (_) { /* non-fatal — send anyway, just less linkage */ }
     }
 
-    // Send in the right voice: Emma from emma@ (AP/vendors), Claire from claire@.
+    // Send in each teammate's voice + from their own mailbox, all branded.
     let html, attachments, fromMailbox, senderLabel, personaName;
-    if (asEmma) {
+    if (P === 'emma') {
       const { buildEmmaEmail } = require('../lib/email/emma_signature');
       ({ html, attachments } = buildEmmaEmail(String(body).trim()));
       fromMailbox = graphSend.EMMA_MAILBOX; senderLabel = 'Emma Brooks (Bedrock AI)'; personaName = 'Emma';
+    } else if (P === 'annie') {
+      const { buildAnnieEmail } = require('../lib/email/annie_signature');
+      ({ html, attachments } = buildAnnieEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.ANNIE_MAILBOX; senderLabel = 'Annie Reeves (Bedrock AI)'; personaName = 'Annie';
+    } else if (P === 'miranda') {
+      const { buildMirandaEmail } = require('../lib/email/miranda_signature');
+      ({ html, attachments } = buildMirandaEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.MIRANDA_MAILBOX; senderLabel = 'Miranda Pierce (Bedrock AI)'; personaName = 'Miranda';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
       ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
@@ -526,7 +535,7 @@ router.post('/compose', express.json(), async (req, res) => {
     await supabase.from('email_messages').insert({
       mailbox: fromMailbox, direction: 'outbound', sender_email: fromMailbox,
       sender_name: senderLabel, recipients: allRecipients, subject: subj, body_preview: String(body).trim().slice(0, 2000),
-      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `${personaName} emailed ${allRecipients.join(', ')} (composed by ${admin.full_name || admin.email})`,
+      classification: 'outbound_reply', classification_confidence: 'high', persona: P, ai_summary: `${personaName} emailed ${allRecipients.join(', ')} (composed by ${admin.full_name || admin.email})`,
       community_id, resolved_contact_id, resolved_property_id, resolution_confidence: resolved_contact_id ? 'high' : 'low',
       triage_status: 'handled', record_ownership: 'association_record', reviewed_by: admin.full_name || admin.email || 'admin', reviewed_at: new Date().toISOString(),
     });
@@ -546,7 +555,7 @@ router.post('/compose-draft', express.json(), async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return; // 403 already sent
     const { intent, to, community_name, persona } = req.body || {};
-    const draftPersona = String(persona || '').toLowerCase() === 'emma' ? 'emma' : 'claire';
+    const draftPersona = ['emma', 'annie', 'miranda'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
     if (!intent || !String(intent).trim()) return res.status(400).json({ error: 'intent_required', detail: 'Tell the AI what you want the email to say.' });
 
     // Light recipient context so the draft can greet by name / fit the community.
