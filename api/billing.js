@@ -284,6 +284,30 @@ function sanitizeDraftLines(arr) {
   });
 }
 
+// Pending ad-hoc charges (billing_pending_items) staged for a community, shaped
+// as draft line objects so they drop onto the worksheet after the standard
+// lines. Each carries a `pending_item_id` marker the generate endpoint uses to
+// flip the staged row to 'billed'. Migration-safe: returns [] if 296 isn't
+// applied yet.
+async function pendingItemsAsLines(communityId) {
+  const { data, error } = await supabase.from('billing_pending_items')
+    .select('id, category, description, qty, unit_price, amount, source, submitted_by')
+    .eq('community_id', communityId).eq('status', 'pending')
+    .order('created_at', { ascending: true });
+  if (error) {
+    if (!/billing_pending_items|relation|does not exist|column/i.test(error.message || '')) console.warn('[billing] pending items:', error.message);
+    return [];
+  }
+  return (data || []).map((p, i) => ({
+    source: 'adhoc', source_ref_id: null,
+    category: p.category || null, description: p.description,
+    qty: Number(p.qty || 0), unit_price: Number(p.unit_price || 0), amount: Number(p.amount || 0),
+    sort_order: 5000 + i * 10,     // after the standard rate-card / activity lines
+    pending_item_id: p.id,         // marker: generate flips these to 'billed'
+    _pending_source: p.source, _pending_by: p.submitted_by || null,
+  }));
+}
+
 // ----------------------------------------------------------------------------
 // GET /api/billing/communities/:communityId/draft-invoice/preview?type=&period=
 // The line items a draft WOULD get, without creating anything — so the operator
@@ -302,7 +326,10 @@ router.get('/communities/:communityId/draft-invoice/preview', async (req, res) =
     if (error) throw error;
     if (!contracts || !contracts.length) return res.status(404).json({ error: 'No active contract for this community' });
     const lineItems = await buildDraftLineItems({ contractId: contracts[0].id, type, period, communityId });
-    res.json({ line_items: lineItems });
+    // Ad-hoc charges staged for this community (Tessa email intake / manual add)
+    // ride on activity invoices, after the standard lines.
+    const pending = type === 'activity' ? await pendingItemsAsLines(communityId) : [];
+    res.json({ line_items: [...lineItems, ...pending], pending_count: pending.length });
   } catch (err) {
     console.error('[billing] draft-invoice preview failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -482,6 +509,18 @@ router.post('/communities/:communityId/draft-invoice', async (req, res) => {
         .from('invoice_line_items')
         .insert(itemsToInsert);
       if (liErr) throw liErr;
+    }
+
+    // Flip any staged pending charges that made it onto this invoice to 'billed'
+    // (the client lines carry a pending_item_id marker; sanitize strips it, so
+    // read it from the raw client lines). Best-effort — never fail the invoice.
+    const pendingItemIds = (Array.isArray(clientLines) ? clientLines : [])
+      .map((l) => l && l.pending_item_id).filter(Boolean);
+    if (pendingItemIds.length) {
+      const { error: pbErr } = await supabase.from('billing_pending_items')
+        .update({ status: 'billed', invoice_id: invoiceRows.id, billed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .in('id', pendingItemIds).eq('status', 'pending');
+      if (pbErr) console.warn('[billing] mark pending items billed failed:', pbErr.message);
     }
 
     // Event row.
@@ -1021,6 +1060,82 @@ router.put('/communities/:communityId/billing-contact', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[billing] billing-contact put failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Pending billing items (staged ad-hoc charges) -------------------------
+// List a community's staged charges (default: still-pending). Migration-safe.
+router.get('/communities/:communityId/pending-items', async (req, res) => {
+  try {
+    const status = req.query.status || 'pending';
+    let q = supabase.from('billing_pending_items')
+      .select('*').eq('community_id', req.params.communityId)
+      .order('created_at', { ascending: false });
+    if (status !== 'all') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) {
+      if (/billing_pending_items|relation|does not exist/i.test(error.message || '')) return res.json({ items: [], needs_migration: true });
+      throw error;
+    }
+    res.json({ items: data || [] });
+  } catch (err) {
+    console.error('[billing] pending-items get failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manually stage a charge (the same shape Tessa's email intake will insert).
+router.post('/communities/:communityId/pending-items', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const description = String(b.description || '').trim();
+    if (!description) return res.status(400).json({ error: 'A description is required.' });
+    let qty = Number(b.qty); if (!(qty > 0)) qty = 1;
+    let unit = Number(b.unit_price); if (!(unit >= 0)) unit = 0;
+    let amount = (b.amount != null && b.amount !== '') ? Number(b.amount) : null;
+    if (amount == null) amount = Math.round(qty * unit * 100) / 100;
+    else if (!(unit > 0)) unit = qty > 0 ? Math.round((amount / qty) * 10000) / 10000 : amount; // amount typed directly
+    const { data, error } = await supabase.from('billing_pending_items').insert({
+      management_company_id: BEDROCK_MGMT_CO_ID,
+      community_id: req.params.communityId,
+      category: (b.category || '').trim() || null,
+      description, qty, unit_price: unit, amount,
+      source: 'manual', submitted_by: b.submitted_by || null, note: b.note || null,
+    }).select('id').single();
+    if (error) {
+      if (/billing_pending_items|relation|does not exist/i.test(error.message || '')) return res.status(400).json({ error: 'Billing items need migration 296 applied first.' });
+      throw error;
+    }
+    res.json({ ok: true, id: data.id });
+  } catch (err) {
+    console.error('[billing] pending-items post failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Edit or dismiss a staged charge (no manual flip to 'billed' — only generating
+// an invoice does that).
+router.patch('/pending-items/:id', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const { data: cur, error: e0 } = await supabase.from('billing_pending_items').select('*').eq('id', req.params.id).single();
+    if (e0 || !cur) return res.status(404).json({ error: 'Item not found' });
+    const patch = { updated_at: new Date().toISOString() };
+    if (b.status && ['pending', 'dismissed'].includes(b.status)) patch.status = b.status;
+    if (b.description != null) patch.description = String(b.description).trim() || cur.description;
+    if (b.category != null) patch.category = String(b.category).trim() || null;
+    if (b.note != null) patch.note = String(b.note).trim() || null;
+    if (b.qty != null || b.unit_price != null) {
+      const qty = b.qty != null ? Number(b.qty) : Number(cur.qty);
+      const unit = b.unit_price != null ? Number(b.unit_price) : Number(cur.unit_price);
+      patch.qty = qty; patch.unit_price = unit; patch.amount = Math.round(qty * unit * 100) / 100;
+    }
+    const { error } = await supabase.from('billing_pending_items').update(patch).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[billing] pending-items patch failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

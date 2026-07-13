@@ -3867,6 +3867,38 @@
       <div id="billing-rcpt-status" style="font-size:12px; margin-top:8px; color:#888;"></div>
     </div>
 
+    <!-- Pending billing items — ad-hoc charges (reimbursables, events) staged
+         by Tessa email intake or added by hand; they auto-drop onto the next
+         activity draft invoice. -->
+    <div class="panel" id="billing-pending-panel" style="margin-bottom:16px;">
+      <h4 style="margin-top:0;">🧾 Pending billing items <span style="font-weight:400; color:#888; font-size:12px;">— staged charges that drop onto the next activity invoice (from Tessa's billing inbox or added here)</span></h4>
+      <div id="billing-pending-list" style="font-size:13px; color:#888; margin-bottom:10px;">Loading…</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; border-top:1px dashed #e5e7eb; padding-top:10px;">
+        <div style="flex:2; min-width:160px;">
+          <div class="section-label">Category <span style="color:#aaa; font-weight:400;">(optional)</span></div>
+          <select id="billing-pi-category" onchange="billingPiCategoryPick()" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;"><option value="">— pick a rate-card item —</option></select>
+        </div>
+        <div style="flex:2; min-width:160px;">
+          <div class="section-label">Description</div>
+          <input id="billing-pi-desc" type="text" placeholder="e.g. Pool event staffing" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+        </div>
+        <div style="width:70px;">
+          <div class="section-label">Qty</div>
+          <input id="billing-pi-qty" type="number" min="0" step="0.01" value="1" oninput="billingPiRecalc()" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; text-align:right;">
+        </div>
+        <div style="width:90px;">
+          <div class="section-label">Rate</div>
+          <input id="billing-pi-rate" type="number" min="0" step="0.01" value="0" oninput="billingPiRecalc()" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; text-align:right;">
+        </div>
+        <div style="width:90px;">
+          <div class="section-label">Amount</div>
+          <input id="billing-pi-amount" type="number" min="0" step="0.01" value="0" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; text-align:right;">
+        </div>
+        <button class="action-btn" onclick="billingAddPendingItem()" style="padding:7px 16px; background:#0B1D34; color:#fff;">+ Add</button>
+      </div>
+      <div id="billing-pi-status" style="font-size:12px; margin-top:8px; color:#888;"></div>
+    </div>
+
     <!-- Generate Draft Invoice — the primary action, first after the community.
          Between Type and Service period sits the editable categories preview
          (fixed = the recurring fee lines; activity = the standard template). -->
@@ -4396,11 +4428,114 @@
   }
   window.billingSaveBillingContact = billingSaveBillingContact;
 
+  // ---- Pending billing items (staged ad-hoc charges) -----------------------
+  let billingPiCatalog = [];   // rate-card items for the category dropdown
+
+  function billingSetPiCatalog(feeSchedule) {
+    const reimb = (feeSchedule && feeSchedule.reimbursables) || [];
+    const owner = (feeSchedule && feeSchedule.owner_charges) || [];
+    billingPiCatalog = [...reimb, ...owner].map(it => ({
+      category: it.category, description: it.description,
+      unit_price: it.unit_price != null ? Number(it.unit_price) : (it.amount != null ? Number(it.amount) : 0),
+    })).filter(it => it.category);
+    const sel = document.getElementById('billing-pi-category');
+    if (!sel) return;
+    while (sel.options.length > 1) sel.remove(1);
+    billingPiCatalog.forEach((it, i) => {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = it.description + (it.unit_price ? ` ($${it.unit_price.toFixed(2)})` : '');
+      sel.appendChild(o);
+    });
+  }
+  function billingPiCategoryPick() {
+    const sel = document.getElementById('billing-pi-category');
+    const it = billingPiCatalog[Number(sel.value)];
+    if (!it) return;
+    if (!document.getElementById('billing-pi-desc').value.trim()) document.getElementById('billing-pi-desc').value = it.description || '';
+    document.getElementById('billing-pi-rate').value = it.unit_price || 0;
+    billingPiRecalc();
+  }
+  window.billingPiCategoryPick = billingPiCategoryPick;
+  function billingPiRecalc() {
+    const qty = Number(document.getElementById('billing-pi-qty').value || 0);
+    const rate = Number(document.getElementById('billing-pi-rate').value || 0);
+    document.getElementById('billing-pi-amount').value = Math.round(qty * rate * 100) / 100;
+  }
+  window.billingPiRecalc = billingPiRecalc;
+
+  async function billingLoadPendingItems(communityId) {
+    const list = document.getElementById('billing-pending-list');
+    if (!list) return;
+    list.innerHTML = 'Loading…';
+    try {
+      const r = await fetch(`/api/billing/communities/${communityId}/pending-items?status=pending`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (j.needs_migration) { list.innerHTML = '<span style="color:#b45309;">Migration 296 not applied yet — staged charges will show here once it is.</span>'; return; }
+      const items = j.items || [];
+      if (!items.length) { list.innerHTML = '<span style="color:#888;">No pending charges. Add one below, or they arrive from Tessa\'s billing inbox.</span>'; return; }
+      list.innerHTML = items.map(it => `
+        <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid #f0f2f5;">
+          <div style="flex:1;">
+            <strong>${escapeHtml(it.description)}</strong>${it.category ? `<span style="color:#888; font-size:11px;"> · ${escapeHtml(it.category)}</span>` : ''}${it.source === 'email' ? ' <span style="background:#ede9fe; color:#5b21b6; font-size:9px; font-weight:700; padding:2px 6px; border-radius:99px;">✉️ TESSA</span>' : ''}
+            <div style="color:#888; font-size:11px;">${Number(it.qty)} × ${billingMoney(it.unit_price)} = <strong>${billingMoney(it.amount)}</strong>${it.submitted_by ? ' · from ' + escapeHtml(it.submitted_by) : ''}</div>
+          </div>
+          <a href="#" onclick="event.preventDefault(); billingDismissPendingItem('${it.id}')" title="Dismiss (won't be billed)" style="color:#a00; text-decoration:none; font-size:16px;">×</a>
+        </div>`).join('');
+    } catch (e) { list.innerHTML = `<span style="color:#b91c1c;">Could not load: ${escapeHtml(e.message)}</span>`; }
+  }
+  window.billingLoadPendingItems = billingLoadPendingItems;
+
+  async function billingAddPendingItem() {
+    const communityId = billingCurrentCommunityId;
+    if (!communityId) return;
+    const status = document.getElementById('billing-pi-status');
+    const desc = document.getElementById('billing-pi-desc').value.trim();
+    if (!desc) { if (status) { status.style.color = '#b91c1c'; status.textContent = 'Enter a description.'; } return; }
+    const sel = document.getElementById('billing-pi-category');
+    const cat = billingPiCatalog[Number(sel.value)];
+    if (status) { status.style.color = '#888'; status.textContent = 'Adding…'; }
+    try {
+      const r = await fetch(`/api/billing/communities/${communityId}/pending-items`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: cat ? cat.category : null, description: desc,
+          qty: document.getElementById('billing-pi-qty').value,
+          unit_price: document.getElementById('billing-pi-rate').value,
+          amount: document.getElementById('billing-pi-amount').value,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (status) { status.style.color = '#166534'; status.textContent = '✓ Added — it will appear on the next activity invoice.'; }
+      document.getElementById('billing-pi-desc').value = '';
+      document.getElementById('billing-pi-qty').value = 1;
+      document.getElementById('billing-pi-rate').value = 0;
+      document.getElementById('billing-pi-amount').value = 0;
+      sel.value = '';
+      billingLoadPendingItems(communityId);
+    } catch (e) { if (status) { status.style.color = '#b91c1c'; status.textContent = '✗ ' + e.message; } }
+  }
+  window.billingAddPendingItem = billingAddPendingItem;
+
+  async function billingDismissPendingItem(id) {
+    if (!confirm('Dismiss this pending charge? It won\'t be billed.')) return;
+    try {
+      const r = await fetch(`/api/billing/pending-items/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'dismissed' }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      billingLoadPendingItems(billingCurrentCommunityId);
+    } catch (e) { alert('Dismiss failed: ' + e.message); }
+  }
+  window.billingDismissPendingItem = billingDismissPendingItem;
+
   async function billingShowCommunity(communityId) {
     billingCurrentCommunityId = communityId;
     document.getElementById('billing-communities-view').style.display = 'none';
     document.getElementById('billing-community-detail').style.display = 'block';
     billingLoadBillingContact(communityId);
+    billingLoadPendingItems(communityId);
 
     const community = billingCommunitiesCache.find(c => c.id === communityId);
     document.getElementById('billing-detail-name').textContent = community ? community.name : '(loading…)';
@@ -4476,6 +4611,9 @@
         { label: 'Category', render: r => r.description },
         { label: 'Fee', align: 'right', render: r => billingMoney(r.amount) }
       ]);
+
+      // Populate the pending-item category dropdown from this community's rate card.
+      billingSetPiCatalog(data.fee_schedule);
 
       // Build community-detail rate card (used by Manual Line Items dropdown).
       const reimbCC = (data.fee_schedule.reimbursables || []).map(x => ({
@@ -4631,6 +4769,7 @@
       };
       const applied = [];
       billingDraftPreviewLines.forEach((li) => {
+        if (li.source === 'adhoc') return; // staged pending charge — never auto-overwrite
         const pp = billingPostagePerPiece(li, c);
         if (pp != null) {
           // ALL postage lines price date-aware off the one USPS schedule.
@@ -5808,6 +5947,7 @@
       };
       const applied = [];
       billingCurrentInvoiceLineItems.forEach((li) => {
+        if (li.source === 'adhoc') return; // staged pending / one-off charge — never auto-overwrite
         const pp = billingPostagePerPiece(li, c);
         if (pp != null) {
           // ALL postage lines price date-aware off the one USPS schedule
