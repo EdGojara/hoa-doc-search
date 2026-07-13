@@ -4496,10 +4496,80 @@
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       billingDraftPreviewLines = (j.line_items || []).map(l => ({ ...l }));
-      billingRenderDraftPreview();
+      billingWorksheetAutofillNote = '';
+      // Activity invoices bill in arrears from what actually happened — so pull
+      // the quantities straight from the activity report instead of leaving them
+      // at 0 for staff to re-key. Every field stays editable (manual override).
+      if (type === 'activity') {
+        await billingAutofillWorksheetFromActivity(period);
+      } else {
+        billingRenderDraftPreview();
+      }
     } catch (e) {
       el.innerHTML = `<div style="font-size:12px; color:#a00;">Could not load categories: ${escapeHtml(e.message)}</div>`;
       billingDraftPreviewLines = [];
+    }
+  }
+
+  // ----- Auto-fill worksheet Qty from the Activity Report --------------------
+  // Same category→metric mapping as billingPopulateFromActivity() on the invoice
+  // detail view, but applied to the pre-generate worksheet so activity flows in
+  // automatically. Manual overrides: every Rate/Qty/Amount cell is still editable
+  // and edits survive (this only runs on load / period change).
+  let billingWorksheetAutofillNote = '';
+
+  async function billingAutofillWorksheetFromActivity(period) {
+    // period is 'YYYY-MM' from the month input; convert to a full day range.
+    const [yy, mm] = String(period || '').split('-').map(Number);
+    if (!yy || !mm) { billingRenderDraftPreview(); return; }
+    const start = `${period}-01`;
+    const end = `${period}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`; // last day of month
+    // Use the auth-attaching wrapper when present (M365 sessions); fall back to
+    // plain cookie-authed fetch (shared-password sessions) so it works in both.
+    const af = window._authFetch || ((u, o) => fetch(u, o));
+    try {
+      const r = await af(`/api/billing/activity-report?period_start=${start}&period_end=${end}&community_id=${encodeURIComponent(billingCurrentCommunityId)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const c = (j.communities || [])[0] || {};
+      const arcTotal = (c.arc_approved || 0) + (c.arc_denied || 0) + (c.arc_conditions || 0) + (c.arc_other || 0);
+      // certified §209 = the $35 certified demand line; pages = color copies
+      // (almost always color — Ed 2026-07-13, override to B&W manually if not);
+      // ARC decisions (all rendered) = ARC fees.
+      const map = {
+        deed_restriction_certified_demand_letter: c.certified_sent || 0,
+        color_copies: c.pages_printed || 0,
+        arc_application_fee: arcTotal,
+      };
+      const applied = [];
+      billingDraftPreviewLines.forEach((li) => {
+        if (li.category === 'postage_drv_notices') {
+          // Violation-letter postage at the USPS first-class rate on the letters'
+          // mail dates (auto-adjusts as rates change), not the static rate card.
+          const q = Number(c.first_class_sent) || 0;
+          li.qty = q;
+          if (c.first_class_postage_cents != null && q > 0) {
+            const amt = Math.round(Number(c.first_class_postage_cents)) / 100;
+            li.amount = amt;
+            li.unit_price = Math.round((amt / q) * 10000) / 10000;
+          } else {
+            li.amount = Math.round(q * Number(li.unit_price || 0) * 100) / 100;
+          }
+          if (q > 0) applied.push(`${li.description} = ${q}`);
+        } else if (Object.prototype.hasOwnProperty.call(map, li.category)) {
+          const q = Number(map[li.category]) || 0;
+          li.qty = q;
+          li.amount = Math.round(q * Number(li.unit_price || 0) * 100) / 100;
+          if (q > 0) applied.push(`${li.description} = ${q}`);
+        }
+      });
+      billingWorksheetAutofillNote = applied.length
+        ? `⚡ Auto-filled from activity for ${period}: ${applied.join(' · ')}. Review and override any quantity before generating. Pages = color copies by default; other postage lines, staffing and one-offs stay manual.`
+        : `No billable activity found for ${period} — quantities left at 0. Enter them manually or pick a different period.`;
+      billingRenderDraftPreview();
+    } catch (e) {
+      billingWorksheetAutofillNote = `Could not auto-fill from activity (${escapeHtml(e.message)}) — enter quantities manually.`;
+      billingRenderDraftPreview();
     }
   }
 
@@ -4535,7 +4605,8 @@
           <td colspan="3" style="padding:6px 8px; text-align:right; font-size:12px;">Subtotal</td>
           <td style="padding:6px 8px; text-align:right; font-size:13px;" id="billing-preview-subtotal">${billingMoney(subtotal)}</td><td></td>
         </tr></tfoot>
-      </table>${lines.some(l => /per lot/i.test(l.description || '')) ? `
+      </table>${billingWorksheetAutofillNote ? `
+      <div style="margin-top:8px; font-size:12px; color:#15803d; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:7px 10px; line-height:1.5;">${escapeHtml(billingWorksheetAutofillNote)}</div>` : ''}${lines.some(l => /per lot/i.test(l.description || '')) ? `
       <div style="margin-top:8px;"><button class="secondary-btn" onclick="billingRecalcLots()" style="font-size:12px; padding:5px 11px;" title="Recount homeowners on record and update the per-lot quantity">🔄 Recalc lot count from homeowners on record</button></div>` : ''}`;
   }
 
