@@ -721,6 +721,80 @@ router.post('/:id/to-gl', express.json(), async (req, res) => {
   } catch (err) { console.error('[email_triage] to-gl failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// POST /vendor-process — BULK. Run every selected (or all active) vendor email
+// through the classifier and route it, so Emma's inbox flows into payables in
+// one pass instead of one manual link at a time:
+//   already_paid  -> record Dr expense / Cr cash (needs_review, reversible), and
+//                    flag the vendor auto_pay_ach so it reads "historically ACH".
+//   payable + PDF -> load to payables (autoIntake, deduped).
+//   otherwise     -> left in the inbox with a SPECIFIC reason (no community, no
+//                    amount, no PDF, or not a bill). Nothing posts on a guess.
+// Returns a per-email result so staff see exactly what happened. (Ed 2026-07-14.)
+router.post('/vendor-process', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ids = Array.isArray(b.ids) ? b.ids.filter(Boolean) : null;
+    let q = supabase.from('email_messages')
+      .select('id, mailbox, graph_id, subject, ai_summary, community_id, resolved_vendor_id, sender_name, sender_email, has_attachments, extracted, classification, triage_status, received_at')
+      .eq('persona', 'emma');
+    if (ids && ids.length) q = q.in('id', ids);
+    else q = q.in('triage_status', ['new', 'needs_review']).in('classification', ['vendor_financial', 'vendor_general']);
+    const { data: msgs } = await q.limit(200);
+
+    const { classifyBill } = require('../lib/ap/email_bill_classifier');
+    const { recordVendorPaymentToGL, singleAmountCents } = require('../lib/accounting/record_vendor_payment');
+    const { autoIntake } = require('../lib/ap/intake');
+    const glErrDetail = (e) => e === 'no_account' ? 'couldn\'t confidently pick an expense account'
+      : e === 'no_cash' ? 'no Operating Cash account on this chart'
+      : e === 'period_closed' ? 'that accounting period is closed' : 'could not record to the GL';
+    const now = new Date().toISOString();
+    const results = [];
+
+    for (const m of (msgs || [])) {
+      const label = String(m.subject || m.sender_name || '(no subject)').slice(0, 70);
+      const cls = classifyBill({ subject: m.subject || '', bodyText: m.ai_summary || '', hasPdf: !!m.has_attachments, extracted: m.extracted });
+      try {
+        if (cls.disposition === 'already_paid') {
+          if (!m.community_id) { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'autopay confirmation — no community linked yet' }); continue; }
+          const cents = singleAmountCents(m.extracted && m.extracted.amounts);
+          if (!cents) { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'autopay confirmation — amount is ambiguous' }); continue; }
+          const out = await recordVendorPaymentToGL({
+            communityId: m.community_id, amountCents: cents, glAccountId: null,
+            vendorId: m.resolved_vendor_id || null, vendorName: m.sender_name || null,
+            description: `Emma: ${label}`, postingDate: String(m.received_at || now).slice(0, 10),
+            sourceRef: `email:${m.graph_id || m.id}`, notes: `Autopay (${cls.method}) recorded from Emma's inbox. Flagged for month-end review.`,
+          });
+          if (out.error) { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: glErrDetail(out.error) }); continue; }
+          if (m.resolved_vendor_id) { try { await supabase.from('vendors').update({ auto_pay_ach: true }).eq('id', m.resolved_vendor_id); } catch (_) { /* flag is best-effort */ } }
+          await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: b.reviewed_by || 'emma-bulk', reviewed_at: now }).eq('id', m.id);
+          results.push({ id: m.id, label, action: 'recorded_paid', method: cls.method, amount_cents: cents });
+        } else if (cls.disposition === 'payable') {
+          if (!m.has_attachments || !m.graph_id) { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'reads as a payable but has no attached bill to load' }); continue; }
+          const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
+          const pdfs = (await fetchAllAttachmentBuffers(m.mailbox, m.graph_id)).filter((f) => f.isPdf);
+          if (!pdfs.length) { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'no PDF found in the attachments' }); continue; }
+          let loaded = 0, dup = 0;
+          for (const pdf of pdfs) {
+            const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '' });
+            if (out && out.outcome === 'loaded') loaded += 1;
+            else if (out && out.outcome === 'held_suspected_duplicate') dup += 1;
+          }
+          if (loaded || dup) {
+            await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: b.reviewed_by || 'emma-bulk', reviewed_at: now }).eq('id', m.id);
+            results.push({ id: m.id, label, action: 'loaded_payable', loaded, duplicates: dup });
+          } else {
+            results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'couldn\'t auto-load — vendor/community/amount not resolvable from the bill' });
+          }
+        } else {
+          results.push({ id: m.id, label, action: 'skipped_review', reason: cls.reason });
+        }
+      } catch (e) { results.push({ id: m.id, label, action: 'error', reason: e.message }); }
+    }
+    const summary = results.reduce((a, r) => { a[r.action] = (a[r.action] || 0) + 1; return a; }, {});
+    res.json({ ok: true, processed: results.length, summary, results });
+  } catch (err) { console.error('[email_triage] vendor-process failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // POST /pull — ADMIN ONLY. On-demand "pull now": ingest current mail from both
 // info@ and claire@ (replies to Claire), draft every reply for review. Manual
 // by design — Ed reviews everything, so a button he presses beats a silent

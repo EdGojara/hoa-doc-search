@@ -285,9 +285,34 @@ function renderBulkBar(){
   if(!n){ bar.style.display='none'; return; }
   bar.style.display='flex';
   bar.innerHTML = `<b style="margin-right:2px;">${n} selected</b>
+    <button class="act" style="background:#16a34a;color:#fff;" onclick="bulkProcessVendor()" title="Auto-sort vendor emails: autopay confirmations post as already-paid, invoices load to payables">🧾 Post to Payables ${n}</button>
     <button class="act" style="background:#e2e8f0;color:#0f172a;" onclick="bulkDismiss('dismissed')">Dismiss ${n}</button>
     <button class="act" style="background:#fee2e2;color:#b91c1c;" onclick="bulkDismiss('spam')">Spam ${n}</button>
     <button class="act" style="background:transparent;color:#cbd5e1;" onclick="clearSelection()">Clear</button>`;
+}
+// Bulk-route vendor emails into payables: Emma classifies each (autopay
+// confirmation vs invoice vs not-a-bill) and posts the clear ones, leaving only
+// genuine exceptions with a reason. (Ed 2026-07-14.)
+async function bulkProcessVendor(){
+  const ids=[...selectedIds]; if(!ids.length) return;
+  const bar=document.getElementById('bulkbar'); if(bar) bar.innerHTML='<b>Processing… reading each email + posting</b>';
+  try{
+    const r=await af(`${API}/vendor-process`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+    const j=await r.json();
+    if(!r.ok){ alert('Could not process: '+(j.detail||j.error||'error')); renderBulkBar(); return; }
+    const s=j.summary||{};
+    const lines=[
+      s.recorded_paid?`✓ ${s.recorded_paid} recorded as already paid (autopay)`:'',
+      s.loaded_payable?`✓ ${s.loaded_payable} loaded to payables (needs approval)`:'',
+      s.needs_manual?`• ${s.needs_manual} still need you`:'',
+      s.skipped_review?`• ${s.skipped_review} skipped — not a bill`:'',
+      s.error?`⚠ ${s.error} errored`:'',
+    ].filter(Boolean).join('\n');
+    const stuck=(j.results||[]).filter(x=>x.action==='needs_manual').slice(0,12).map(x=>`   • ${x.label} — ${x.reason}`).join('\n');
+    alert(`Processed ${j.processed}:\n${lines}${stuck?'\n\nStill need you:\n'+stuck:''}`);
+    selectedIds.clear();
+    loadStats(); loadList();
+  }catch(e){ alert('Failed: '+(e.message||'network')); renderBulkBar(); }
 }
 async function bulkDismiss(as){
   const ids=[...selectedIds]; if(!ids.length) return;
