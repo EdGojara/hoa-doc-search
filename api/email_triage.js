@@ -512,7 +512,7 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
 router.post('/:id/to-gl', express.json(), async (req, res) => {
   try {
     const { data: m } = await supabase.from('email_messages')
-      .select('id, subject, sender_name, community_id, resolved_vendor_id, extracted, received_at')
+      .select('id, graph_id, subject, sender_name, community_id, resolved_vendor_id, extracted, received_at')
       .eq('id', req.params.id).maybeSingle();
     if (!m) return res.status(404).json({ error: 'not_found' });
     if (!m.community_id) return res.status(400).json({ error: 'no_community', detail: 'Link this email to a community first — the entry has to post to the right association books.' });
@@ -525,7 +525,7 @@ router.post('/:id/to-gl', express.json(), async (req, res) => {
     const out = await recordVendorPaymentToGL({
       communityId: m.community_id, amountCents: cents, glAccountId: b.gl_account_id || null,
       vendorId: m.resolved_vendor_id || null, vendorName: m.sender_name || null, description: desc,
-      postingDate: String(m.received_at || new Date().toISOString()).slice(0, 10), sourceRef: `email:${m.id}`,
+      postingDate: String(m.received_at || new Date().toISOString()).slice(0, 10), sourceRef: `email:${m.graph_id || m.id}`,
       notes: `Recorded from Emma's inbox (${m.sender_name || 'vendor'}). Flagged for month-end review.`,
     });
     if (out.error) {
