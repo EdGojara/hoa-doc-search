@@ -460,11 +460,32 @@ router.post('/:id/forward-internal', express.json(), async (req, res) => {
     // CC — e.g. hand an AP question to Emma and keep the staffer who asked copied.
     const cc = emailList(cc_email).join(', ');
     const { data: m, error } = await supabase.from('email_messages')
-      .select('subject, body_full, body_preview, sender_email, sender_name, classification, extracted, community:community_id(name)')
+      .select('subject, body_full, body_preview, sender_email, sender_name, classification, extracted, graph_id, mailbox, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email_not_connected', detail: 'Graph credentials missing — internal forward needs email connected.' });
+
+    // Carry the ORIGINAL attachments to the teammate — Emma needs the invoice PDF
+    // to make the journal entry / pay it, not just the note. Skip tiny inline
+    // images (signature logos). (Ed 2026-07-14.)
+    let fwdAttachments = [];
+    try {
+      if (m.graph_id && m.mailbox) {
+        const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
+        const files = await fetchAllAttachmentBuffers(m.mailbox, m.graph_id);
+        fwdAttachments = files
+          .filter((f) => {
+            if (!f.buffer || f.buffer.length > 12 * 1024 * 1024) return false;
+            // Skip signature/inline images (auto-named image.png, image001.png,
+            // logo.png, etc.) — Emma wants the invoice, not the letterhead.
+            if (f.isImage && /^(image\d*|logo|signature|bedrock)[-_ ]?\d*\.(png|jpe?g|gif|bmp|webp)$/i.test(String(f.filename || ''))) return false;
+            return f.isPdf || f.isImage;
+          })
+          .slice(0, 10)
+          .map((f) => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: f.filename, contentType: f.contentType, contentBytes: f.buffer.toString('base64') }));
+      }
+    } catch (_) { /* best-effort — forward still goes without them */ }
 
     const draft = m.extracted && m.extracted.draft;
     const orig = (m.body_full || m.body_preview || '').slice(0, 6000);
@@ -479,13 +500,14 @@ ${note ? `<p style="margin:0 0 12px;"><strong>Note:</strong> ${e(note).replace(/
 </div>
 ${draft && draft.body ? `<div style="border-left:3px solid #D4AF37;padding:8px 12px;margin:10px 0;background:#fbf7ec;"><div style="font-size:12px;color:#5a7390;">Claire's draft reply (not sent):</div><div style="white-space:pre-wrap;">${e(draft.body)}</div></div>` : ''}
 ${draft && draft.review_hint ? `<p style="margin:8px 0;color:#8a6d00;"><strong>Claire suggests:</strong> ${e(draft.review_hint)}</p>` : ''}
+${fwdAttachments.length ? `<p style="margin:8px 0;color:#166534;"><strong>Attachments included:</strong> ${e(fwdAttachments.map((a) => a.name).join(', '))}</p>` : ''}
 <p style="margin:12px 0 0;">Reply here with what you find and we'll take it from there.</p>
 </div>`;
     // Send from Claire's (authorized) mailbox, not Ed's personal one — the app's
     // Azure Application Access Policy only covers the bot mailboxes, so sending as
     // egojara@ is blocked (403 RAOP). Claire forwarding to the teammate is also the
     // right sender. (Ed 2026-07-14.)
-    await graphSend.sendAs({ from: graphSend.CLAIRE_MAILBOX, to, cc: cc || undefined, subject: `For your review: ${m.subject || 'homeowner email'}`, html });
+    await graphSend.sendAs({ from: graphSend.CLAIRE_MAILBOX, to, cc: cc || undefined, subject: `For your review: ${m.subject || 'homeowner email'}`, html, attachments: fwdAttachments.length ? fwdAttachments : undefined });
 
     // Record the hand-off on the item (no triage_status change — keeps it a
     // light annotation, not a workflow state).
