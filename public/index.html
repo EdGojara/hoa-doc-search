@@ -43900,6 +43900,11 @@ ${questionsPage}
                 <div>Confidence: ${apConfidenceBadge(inv.auto_coding_confidence)}</div>
                 <div style="margin-top:4px;">Signal: <code style="background:#fff; padding:1px 6px; border-radius:3px;">${apEsc(inv.auto_coding_signal || '—')}</code></div>
                 <div style="margin-top:4px;">JE: ${inv.posting_journal_entry_id ? '<span style="color:#16a34a;">✓ Posted</span>' : '<span style="color:#dc2626;">⚠ Not posted — GL coding incomplete</span>'}</div>
+                <div style="margin-top:8px; padding-top:8px; border-top:1px solid #e2e8f0;">
+                  <div style="font-weight:600; margin-bottom:4px;">Expense account ${inv.coded_gl_account_id ? '<span style="color:#16a34a;">✓ coded</span>' : '<span style="color:#b45309;">— not coded</span>'}</div>
+                  <input id="ap-gl-search-${inv.id}" type="text" placeholder="Search expense account (e.g. security, landscape, 5770)…" oninput="apCodeSearch('${inv.id}','${inv.community_id}')" style="width:100%; padding:6px 9px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;">
+                  <div id="ap-gl-results-${inv.id}" style="margin-top:4px; max-height:160px; overflow:auto;"></div>
+                </div>
               </div>
             </div>
             <div>
@@ -43917,8 +43922,24 @@ ${questionsPage}
             <div style="display:flex; gap:8px;">
               <button class="secondary-btn" onclick="apCloseDetail()">Close</button>
               ${notFinal ? `<button class="secondary-btn" onclick="apVoidInvoice('${inv.id}')" style="color:#b91c1c; border-color:#fecaca;" title="Vendor sent another copy — discard this duplicate">🗑 Delete duplicate</button>` : ''}
-              ${notFinal ? `<button class="secondary-btn" onclick="apMarkPaid('${inv.id}')" title="Already paid by ACH / debit / wire — record the entry, no check">💳 Already paid</button>` : ''}
+              ${notFinal ? `<button class="secondary-btn" onclick="apMarkPaid('${inv.id}', ${(inv.total_cents || 0) - (inv.amount_paid_cents || 0)})" title="Already paid by ACH / debit card — record the entry, no check">💳 Already paid</button>` : ''}
               ${canApprove ? `<button class="action-btn" onclick="apApproveInvoice('${inv.id}')" style="background:#16a34a; border-color:#15803d;">✓ Approve Invoice</button>` : ''}
+            </div>
+          </div>
+          <div id="ap-paidpanel-${inv.id}" style="display:none; margin-top:12px; padding:12px 14px; background:#f0f7ff; border:1px solid #bcdcff; border-radius:8px;">
+            <div style="font-weight:600; color:#0B1D34; margin-bottom:8px;">Record as already paid (no check)</div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <label style="font-size:12.5px;">How paid
+                <select id="ap-paid-method-${inv.id}" style="margin-left:5px; padding:6px 9px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;">
+                  <option value="ach">ACH</option>
+                  <option value="credit_card">Debit / credit card</option>
+                  <option value="wire">Wire</option>
+                </select></label>
+              <label style="font-size:12.5px;">Amount $
+                <input id="ap-paid-amt-${inv.id}" type="number" step="0.01" value="${(((inv.total_cents || 0) - (inv.amount_paid_cents || 0)) / 100).toFixed(2)}" style="margin-left:5px; width:110px; padding:6px 9px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;"></label>
+              <span style="font-size:11.5px; color:#64748b;">edit if a credit/debit adjusts it</span>
+              <button class="action-btn" onclick="apRecordPaid('${inv.id}')" style="background:#0B1D34;">Record payment</button>
+              <button class="secondary-btn" onclick="document.getElementById('ap-paidpanel-${inv.id}').style.display='none'">Cancel</button>
             </div>
           </div>
         </div>
@@ -43953,21 +43974,48 @@ ${questionsPage}
       } catch (e) { alert('Could not delete: ' + e.message); }
     };
 
-    // Already paid outside a check run (ACH / debit / wire) — records Dr AP / Cr Cash, clears the payable, no check.
-    window.apMarkPaid = async function (id) {
-      const map = { '1': 'ach', '2': 'credit_card', '3': 'wire' };
-      const pick = prompt('This was already paid — how? Enter 1 = ACH, 2 = debit/credit card, 3 = wire', '1');
-      if (pick === null) return;
-      const method = map[String(pick).trim()] || 'ach';
-      if (!confirm('Record this as already paid by ' + method.replace('_', '/') + '? This posts the journal entry (expense + cash), clears the payable, and no check is cut.')) return;
+    // Already paid outside a check run — opens the inline panel (method + amount).
+    window.apMarkPaid = function (id) {
+      const p = document.getElementById('ap-paidpanel-' + id);
+      if (p) { p.style.display = p.style.display === 'none' ? 'block' : 'none'; }
+    };
+    window.apRecordPaid = async function (id) {
+      const method = (document.getElementById('ap-paid-method-' + id) || {}).value || 'ach';
+      const amt = parseFloat((document.getElementById('ap-paid-amt-' + id) || {}).value || '0');
+      if (!(amt > 0)) { alert('Enter a valid amount.'); return; }
+      const amount_cents = Math.round(amt * 100);
       try {
         const r = await fetch('/api/ap/invoices/' + encodeURIComponent(id) + '/mark-paid', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method, amount_cents }),
         });
         const j = await r.json();
         if (!r.ok) throw new Error(j.detail || j.error || 'mark-paid failed');
         apOpenInvoice(id); apLoadList(); apLoadCounts();
       } catch (e) { alert('Could not record payment: ' + e.message); }
+    };
+
+    // Manual GL coding — search the community's expense accounts and set one, which
+    // posts the accrual so the bill is real + approvable/payable. (Ed 2026-07-14.)
+    let _apChart = {};
+    window.apCodeSearch = async function (invId, communityId) {
+      const q = ((document.getElementById('ap-gl-search-' + invId) || {}).value || '').trim().toLowerCase();
+      const res = document.getElementById('ap-gl-results-' + invId); if (!res) return;
+      let accts = _apChart[communityId];
+      if (!accts) {
+        try { const r = await (window._authFetch || fetch)('/api/gl/' + encodeURIComponent(communityId) + '/chart-of-accounts'); const j = await r.json(); accts = j.accounts || j.chart || (Array.isArray(j) ? j : []); _apChart[communityId] = accts; }
+        catch (e) { res.innerHTML = '<div style="color:#dc2626; font-size:12px;">Could not load the chart.</div>'; return; }
+      }
+      const exp = accts.filter(a => String(a.account_type || '') === 'expense' || /^5/.test(String(a.account_number || '')));
+      const hits = (q ? exp.filter(a => (a.account_number + ' ' + a.account_name).toLowerCase().includes(q)) : exp).slice(0, 12);
+      res.innerHTML = hits.length ? hits.map(a => `<div style="display:flex; justify-content:space-between; gap:8px; padding:4px 6px; border-bottom:1px solid #eef2f7; align-items:center;"><span style="font-size:12.5px;">${apEsc(a.account_number)} ${apEsc(a.account_name)}</span><button class="secondary-btn" style="font-size:11px; padding:3px 9px;" onclick="apSetCode('${invId}','${a.id}')">Set</button></div>`).join('') : '<div style="font-size:12px; color:#888; padding:4px;">No matching expense account.</div>';
+    };
+    window.apSetCode = async function (invId, glId) {
+      try {
+        const r = await fetch('/api/ap/invoices/' + encodeURIComponent(invId) + '/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gl_account_id: glId }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || j.error || 'code failed');
+        apOpenInvoice(invId); apLoadList(); apLoadCounts();
+      } catch (e) { alert('Could not set the expense account: ' + e.message); }
     };
 
     // Open the source invoice PDF. The file endpoint is admin-gated (needs the

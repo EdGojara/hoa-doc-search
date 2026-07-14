@@ -430,17 +430,61 @@ router.post('/invoices/:id/mark-paid', express.json(), async (req, res) => {
     if (inv.status === 'voided') return res.status(400).json({ error: 'voided', detail: 'This invoice was voided.' });
     const owed = (inv.total_cents || 0) - (inv.amount_paid_cents || 0);
     if (owed <= 0) return res.status(400).json({ error: 'nothing_due', detail: 'This invoice is already fully paid.' });
+    // Staff can override the amount when a credit/debit adjusts what was actually
+    // paid (e.g. a vendor credit reduces the check). Defaults to the full owed.
+    const override = Number((req.body || {}).amount_cents);
+    const amt = Number.isInteger(override) && override > 0 ? override : owed;
     const result = await recordPayment({
-      community_id: inv.community_id, vendor_id: inv.vendor_id, amount_cents: owed,
+      community_id: inv.community_id, vendor_id: inv.vendor_id, amount_cents: amt,
       payment_date: (req.body || {}).payment_date || new Date().toISOString().slice(0, 10),
-      payment_method: method, applications: [{ invoice_id: id, applied_cents: owed }],
-      notes: `Already paid via ${method} (recorded, not check-printed)`,
+      payment_method: method, applications: [{ invoice_id: id, applied_cents: amt }],
+      notes: `Already paid via ${method} (recorded, not check-printed)${amt !== owed ? ` — adjusted from ${(owed / 100).toFixed(2)}` : ''}`,
     });
-    res.json({ ok: true, method, amount_cents: owed, ...result });
+    res.json({ ok: true, method, amount_cents: amt, ...result });
   } catch (err) {
     if (err.code === 'invalid_input' || err.code === 'invalid_state') return res.status(400).json({ error: err.message, code: err.code });
     console.error('[ap] mark-paid failed:', err); res.status(500).json({ error: safeErrorMessage(err) });
   }
+});
+
+// POST /invoices/:id/code — manually set (or change) the GL expense account when
+// auto-coding didn't (no learned vendor mapping). Posts the accrual (Dr expense /
+// Cr AP) so the bill is real, re-coding voids the prior accrual first, and teaches
+// the vendor->GL map so it auto-codes next time. (Ed 2026-07-14.)
+router.post('/invoices/:id/code', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const gl_account_id = (req.body || {}).gl_account_id;
+    if (!gl_account_id) return res.status(400).json({ error: 'gl_account_id_required' });
+    const { data: inv } = await supabase.from('ap_invoices').select('*, vendors(name)').eq('id', id).maybeSingle();
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    if (inv.status === 'voided') return res.status(400).json({ error: 'voided' });
+    const { data: acct } = await supabase.from('chart_of_accounts')
+      .select('id, account_number, account_name').eq('id', gl_account_id).eq('community_id', inv.community_id).maybeSingle();
+    if (!acct) return res.status(400).json({ error: 'invalid_account', detail: 'That account is not on this community\'s chart.' });
+
+    // Re-coding an already-posted accrual: reverse the old one first.
+    let jeId = inv.posting_journal_entry_id;
+    if (jeId && inv.coded_gl_account_id !== gl_account_id) {
+      try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: jeId, void_reason: 'Re-coded expense account' }); } catch (e) { console.warn('[ap] recode reversal:', e.message); }
+      jeId = null;
+    }
+    await supabase.from('ap_invoices').update({ coded_gl_account_id: gl_account_id, auto_coded: false, needs_review: false, posting_journal_entry_id: jeId, updated_at: new Date().toISOString() }).eq('id', id);
+
+    if (!jeId) {
+      const { postAccrualForInvoice } = require('../lib/ap/intake');
+      jeId = await postAccrualForInvoice({
+        codedAccountId: gl_account_id, totalCents: inv.total_cents, invoiceDate: inv.invoice_date,
+        communityId: inv.community_id, vendorInvoiceNumber: inv.vendor_invoice_number,
+        vendorName: (inv.vendors && inv.vendors.name) || inv.vendor_name, vendorId: inv.vendor_id, invoiceId: inv.id,
+        classificationReason: 'Manually coded by staff', sourceDocumentPath: inv.source_storage_path || null,
+      });
+    }
+    // Teach the vendor->community->GL map so the next identical bill auto-codes.
+    try { const { learnMapping } = require('../lib/ap/vendor_community'); await learnMapping({ accountNumber: inv.account_number || null, vendorId: inv.vendor_id || null, vendorName: (inv.vendors && inv.vendors.name) || inv.vendor_name || null, communityId: inv.community_id, glAccountId: gl_account_id }); } catch (e) { console.warn('[ap] learn map:', e.message); }
+
+    res.json({ ok: true, gl_account: `${acct.account_number} ${acct.account_name}`, posting_journal_entry_id: jeId, posted: !!jeId });
+  } catch (err) { console.error('[ap] code failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 router.post('/payments', express.json(), async (req, res) => {

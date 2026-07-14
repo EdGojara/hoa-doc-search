@@ -33,7 +33,7 @@ router.get('/:communityId/chart-of-accounts', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('chart_of_accounts')
-      .select('account_number, account_name, account_type, account_subtype, normal_balance, is_active, fund_id, account_funds:fund_id(fund_code, fund_name)')
+      .select('id, account_number, account_name, account_type, account_subtype, normal_balance, is_active, fund_id, account_funds:fund_id(fund_code, fund_name)')
       .eq('community_id', req.params.communityId)
       .order('account_number');
     if (error) throw error;
