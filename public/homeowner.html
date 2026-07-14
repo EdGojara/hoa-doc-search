@@ -212,6 +212,22 @@ async function openProfile(cid){
         }).join(''):'<div class="empty">No pool access on file.</div>'}
       </div>
       <div class="card">
+        <div class="sec-title">📎 Files &amp; photos (${(d.attachments||[]).length})</div>
+        <div style="font-size:12px;color:#5a7390;margin-bottom:8px;">Capture a current photo (attorney request, property condition, at-legal file) or attach a PDF. Date-stamped to this account.</div>
+        <input type="file" id="attFile" accept="image/*,application/pdf" capture="environment" style="display:none" onchange="uploadAttachment('${cid}', this.files[0])">
+        <button onclick="document.getElementById('attFile').click()" style="background:#0B1D34;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;">📷 Add photo / document</button>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;">
+        ${(d.attachments||[]).map(a=>{
+          const url=`/api/homeowner/file?kind=${a.kind==='photo'?'photo':'document'}&path=${encodeURIComponent(a.file_path)}`;
+          const meta=`${d10(a.captured_at)} · ${esc(a.captured_by||'staff')}`;
+          const del=`<span onclick="deleteAttachment('${a.id}','${cid}')" title="Remove" style="cursor:pointer;color:#b91c1c;font-weight:700;margin-left:6px;">✕</span>`;
+          return a.kind==='photo'
+            ? `<div style="width:128px;"><a href="${url}" target="_blank"><img src="${url}" loading="lazy" style="width:128px;height:128px;object-fit:cover;border-radius:8px;border:1px solid var(--line);"></a><div class="t" style="margin-top:3px;">${esc(a.caption||'')}</div><div class="t">${meta}${del}</div></div>`
+            : `<div style="width:180px;padding:10px;border:1px solid var(--line);border-radius:8px;"><a href="${url}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;font-size:12.5px;">📄 ${esc((a.original_name||'PDF').slice(0,34))}</a><div class="t" style="margin-top:4px;">${esc(a.caption||'')}</div><div class="t">${meta}${del}</div></div>`;
+        }).join('')||'<div class="empty">No files yet.</div>'}
+        </div>
+      </div>
+      <div class="card">
         <div class="sec-title">✉️ Correspondence &amp; notes (${tl.length})</div>
         <div class="notebox"><input id="noteInput" placeholder="Add a note to this account…" onkeydown="if(event.key==='Enter')addNote('${cid}')"><button onclick="addNote('${cid}')">Add note</button></div>
         <div class="timeline">${tl.map(x=>`<div class="li ${x.dir==='inbound'?'tl-in':(x.note?'tl-note':'tl-out')}"><span class="t">${d10(x.t)} · ${esc(x.kind)} ${x.dir==='inbound'?'↓':x.dir==='internal'?'•':'↑'}</span>${x.note?`<span onclick="deleteNote('${x.id}','${cid}')" title="Delete note" style="float:right;cursor:pointer;color:#b91c1c;font-weight:700;">✕</span>`:''}<br>${esc(String(x.label).slice(0,110))}${x.letterPath?` <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(x.letterPath)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:4px;">📄 View letter</a>`:''}</div>`).join('')||'<div class="empty">No correspondence on file yet.</div>'}</div>
@@ -222,6 +238,30 @@ async function openProfile(cid){
     if(!confirm('Delete this note? This can’t be undone.'))return;
     const r=await fetch(API+'/note/'+id,{method:'DELETE'});
     if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(j.detail||'Could not delete'); }
+  };
+  // Upload a photo/PDF to the account. On a phone the file input opens the camera
+  // (capture=environment). Grabs GPS for field photos (best-effort). (Ed 2026-07-14.)
+  window.uploadAttachment=async function(cid, file){
+    if(!file) return;
+    const caption=prompt('Note for this file (e.g. "Attorney requested — current condition, at legal"):','');
+    if(caption===null){ const el=document.getElementById('attFile'); if(el) el.value=''; return; }
+    const send=async(lat,lng)=>{
+      const fd=new FormData(); fd.append('file',file);
+      if(caption) fd.append('caption',caption);
+      if(lat!=null){ fd.append('gps_lat',lat); fd.append('gps_lng',lng); }
+      let r; try{ r=await fetch(API+'/'+cid+'/attachment',{method:'POST',body:fd}); }catch(e){ alert('Upload failed — check your connection.'); return; }
+      const j=await r.json().catch(()=>({}));
+      const el=document.getElementById('attFile'); if(el) el.value='';
+      if(r.ok){ openProfile(cid); } else { alert(j.detail||j.error||'Could not upload'); }
+    };
+    if(navigator.geolocation && (file.type||'').startsWith('image/')){
+      navigator.geolocation.getCurrentPosition(p=>send(p.coords.latitude,p.coords.longitude), ()=>send(null,null), {timeout:4000,enableHighAccuracy:true});
+    } else send(null,null);
+  };
+  window.deleteAttachment=async function(id,cid){
+    if(!confirm('Remove this file from the account?'))return;
+    const r=await fetch(API+'/attachment/'+id,{method:'DELETE'});
+    if(r.ok){ openProfile(cid); } else alert('Could not remove');
   };
   let _reviewEmail=null;
   const GDZ_TEXT='📎 Drop an email (.msg/.eml) here to file it to the right homeowner(s) — the system finds who it\'s from and about, you confirm.';

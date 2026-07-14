@@ -184,6 +184,12 @@ async function assemble(contactId) {
     .select('id, status, total_amount_cents, down_payment_cents, installment_amount_cents, num_installments, frequency, start_date, next_due_date, end_date, balance_remaining_cents, terms_summary, source_document_path, updated_at')
     .in('property_id', propIds).order('status', { ascending: true }).order('updated_at', { ascending: false }).limit(20)) : [];
 
+  // Staff-captured photos + PDFs filed against the account (e.g. an attorney-
+  // requested current photo of a property at legal). Date-stamped, with who + note.
+  const attachments = propIds.length ? await safe(() => supabase.from('account_attachments')
+    .select('id, kind, file_path, mime_type, original_name, caption, captured_by, captured_at, property_id')
+    .in('property_id', propIds).order('captured_at', { ascending: false }).limit(100)) : [];
+
   // Map each violation to the letter PDF that was actually sent for it (from the
   // interactions ledger), so the 360 can link the real letter right on the
   // violation row — next to the photo.
@@ -204,7 +210,7 @@ async function assemble(contactId) {
     try { amenity = await evaluateAmenityAccess(supabase, { propertyId: primaryProp.property_id, communityId: primaryProp.community_id }); } catch (_) {}
   }
 
-  return { contact, properties, ar: { balance_cents, transactions: txns }, amenity, flags, collections, violations, arc, interactions, emails, calls, poolAccess, paymentPlans };
+  return { contact, properties, ar: { balance_cents, transactions: txns }, amenity, flags, collections, violations, arc, interactions, emails, calls, poolAccess, paymentPlans, attachments };
 }
 
 // GET /profile/:contactId — the assembled 360 (fast, no AI)
@@ -309,6 +315,58 @@ router.post('/:contactId/note', express.json(), async (req, res) => {
     res.json({ ok: true, note: data });
   } catch (err) {
     console.error('[homeowner360] note failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /:contactId/attachment — file a photo or PDF against the account. Camera
+// capture on mobile, file upload on desktop. Stores in the 'documents' bucket +
+// indexes in account_attachments, date-stamped with who + an optional caption,
+// so an attorney-requested "current photo of the property at legal" is a
+// defensible record on the account (not an email lost in a thread). (Ed 2026-07-14.)
+router.post('/:contactId/attachment', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    const mime = req.file.mimetype || '';
+    const isImg = /^image\//.test(mime);
+    const isPdf = mime === 'application/pdf' || /\.pdf$/i.test(req.file.originalname || '');
+    if (!isImg && !isPdf) return res.status(400).json({ error: 'unsupported_type', detail: 'Only photos (JPG/PNG/HEIC) or PDFs.' });
+    const props = await ownedProperties(req.params.contactId);
+    const primary = props.find((p) => p.is_primary) || props[0] || null;
+    if (!primary) return res.status(400).json({ error: 'no_property', detail: 'This homeowner has no linked property to file the photo/PDF to.' });
+    const b = req.body || {};
+    const chosen = props.find((p) => p.property_id === b.property_id) || primary;
+    const safeName = String(req.file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-60);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const path = `account-attachments/${chosen.community_id}/${chosen.property_id}/${stamp}-${safeName}`;
+    const { error: upErr } = await supabase.storage.from('documents').upload(path, req.file.buffer, { contentType: mime || (isPdf ? 'application/pdf' : 'image/jpeg'), upsert: true });
+    if (upErr) throw upErr;
+    const num = (v) => (v != null && v !== '' && !isNaN(parseFloat(v))) ? parseFloat(v) : null;
+    const { data, error } = await supabase.from('account_attachments').insert({
+      property_id: chosen.property_id, community_id: chosen.community_id, contact_id: req.params.contactId,
+      kind: isImg ? 'photo' : 'document', file_path: path, mime_type: mime, original_name: req.file.originalname || null,
+      caption: b.caption ? String(b.caption).slice(0, 300) : null,
+      captured_by: b.captured_by ? String(b.captured_by).slice(0, 120) : 'staff',
+      gps_lat: num(b.gps_lat), gps_lng: num(b.gps_lng),
+    }).select('id, kind, file_path, caption, captured_at, captured_by, original_name').single();
+    if (error) throw error;
+    res.json({ ok: true, attachment: data });
+  } catch (err) {
+    console.error('[homeowner360] attachment failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// DELETE /attachment/:id — remove a wrongly-added file (mistake correction).
+router.delete('/attachment/:id', async (req, res) => {
+  try {
+    const { data: row } = await supabase.from('account_attachments').select('file_path').eq('id', req.params.id).maybeSingle();
+    const { error } = await supabase.from('account_attachments').delete().eq('id', req.params.id);
+    if (error) throw error;
+    if (row && row.file_path) { try { await supabase.storage.from('documents').remove([row.file_path]); } catch (_) { /* index gone is enough */ } }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[homeowner360] attachment delete failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
