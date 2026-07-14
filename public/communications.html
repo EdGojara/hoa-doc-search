@@ -410,7 +410,7 @@ function forwardPrompt(id){
     <div class="note">↪ Forward to a teammate to check before we reply — they get this email + Claire's draft + your note. Nothing goes to the homeowner.</div>
     <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:6px 0;">
       <select id="fwd-to-${id}" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px;min-width:200px;">
-        ${opts ? '<option value="">— pick a teammate —</option>'+opts : '<option value="">(type an email below)</option>'}
+        ${opts ? '<option value="">— pick a teammate —</option><option value="__all__">👥 Everyone (all teammates)</option>'+opts : '<option value="">(type an email below)</option>'}
       </select>
       <input id="fwd-email-${id}" type="email" placeholder="or type an email" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px;flex:1;min-width:180px;">
     </div>
@@ -427,7 +427,7 @@ function forwardPrompt(id){
 async function doForwardNote(id, btn){
   const ta = document.getElementById('fwd-note-'+id);
   const sel = document.getElementById('fwd-to-'+id);
-  const to_name = sel && sel.selectedOptions[0] ? (sel.selectedOptions[0].getAttribute('data-name')||'') : '';
+  const to_name = (sel && sel.value==='__all__') ? 'team' : (sel && sel.selectedOptions[0] ? (sel.selectedOptions[0].getAttribute('data-name')||'') : '');
   const thoughts = (ta.value||'').trim();
   const prev = btn.textContent; btn.disabled=true; btn.textContent='Writing…';
   try{
@@ -441,8 +441,15 @@ async function doForwardNote(id, btn){
 async function doForward(id, btn){
   const sel = document.getElementById('fwd-to-'+id);
   const typed = (document.getElementById('fwd-email-'+id).value||'').trim();
-  const to_email = typed || (sel ? sel.value : '');
-  const to_name = typed ? '' : (sel && sel.selectedOptions[0] ? (sel.selectedOptions[0].getAttribute('data-name')||'') : '');
+  const selVal = sel ? sel.value : '';
+  let to_email, to_name;
+  if(selVal==='__all__'){                                 // 👥 Everyone — forward to the whole team
+    to_email = staffCache.map(u=>u.email).filter(Boolean).join(', ');
+    to_name = 'the team';
+  } else {
+    to_email = typed || selVal;
+    to_name = typed ? '' : (sel && sel.selectedOptions[0] ? (sel.selectedOptions[0].getAttribute('data-name')||'') : '');
+  }
   const note = (document.getElementById('fwd-note-'+id).value||'').trim();
   const st = document.getElementById('fwd-status-'+id);
   if(!to_email){ if(st){ st.style.color='#b91c1c'; st.textContent='Pick a teammate or type an email.'; } return; }

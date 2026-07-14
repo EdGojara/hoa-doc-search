@@ -388,8 +388,11 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
 router.post('/:id/forward-internal', express.json(), async (req, res) => {
   try {
     const { to_email, to_name, note } = req.body || {};
-    const to = String(to_email || '').trim();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: 'Pick a teammate with a valid email address.' });
+    // Accept one OR several recipients (comma/semicolon-separated) so "Everyone"
+    // can forward to the whole team at once. sendAs handles the list.
+    const recips = String(to_email || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+    if (!recips.length) return res.status(400).json({ error: 'Pick a teammate with a valid email address.' });
+    const to = recips.join(', ');
     const { data: m, error } = await supabase.from('email_messages')
       .select('subject, body_full, body_preview, sender_email, sender_name, classification, extracted, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
