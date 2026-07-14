@@ -1843,6 +1843,31 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       mailed_to: pRow.owner_mailing_address || `${pRow.street_address || ''}${pRow.unit ? ' #' + pRow.unit : ''}, ${pRow.city || ''} ${pRow.state || 'TX'} ${pRow.zip || ''}`,
     });
   } catch (err) {
+    // Validation failures are OPERATOR-actionable, not server faults. Surface the
+    // specific reasons in plain language (never a blank "an error") + a clear
+    // next step, and return 400 so it doesn't read as a crash. The imported-
+    // violation-can't-certify case is the common one. (Ed 2026-07-14.)
+    if (err && Array.isArray(err.validationErrors) && err.validationErrors.length) {
+      const reasons = err.validationErrors;
+      const noPriors = reasons.some((r) => /prior_notices is empty/i.test(r));
+      const plain = reasons.map((r) => r
+        .replace(/^violations\[\d+\]\.?\s*/i, '')
+        .replace(/ai_description required.*/i, 'no written description of what was observed')
+        .replace(/observation_captured_at required.*/i, 'no observation date on record')
+        .replace(/prior_notices is empty.*/i, 'no prior courtesy/notice history recorded in trustEd (a §209 certified letter must cite documented prior contact)'));
+      const stageName = letterType === 'letter_209' ? 'certified §209' : (letterType || '').replace('letter_', '').replace('_', ' ');
+      const hint = noPriors
+        ? 'This violation was imported (e.g. from Vantaca), so trustEd has no prior-notice trail to cite. Record the prior notices on this violation, or issue the certified letter manually with today\'s date.'
+        : 'Add the missing details on the violation, then retry.';
+      return res.status(400).json({
+        // Fold the actionable next step INTO error so every call site that shows
+        // j.error surfaces the full plain-language reason (not a blank "an error").
+        error: `This ${stageName} letter can't be drafted from trustEd yet:\n• ${plain.join('\n• ')}\n\n→ ${hint}`,
+        validation_errors: reasons,
+        stage: 'letter_validation',
+        hint,
+      });
+    }
     console.error('[enforcement.generate-letter]', err);
     console.error('[enforcement.generate-letter] stack:', err.stack);
     res.status(500).json({
