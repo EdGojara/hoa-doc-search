@@ -375,12 +375,29 @@ function forwardPrompt(id){
       </select>
       <input id="fwd-email-${id}" type="email" placeholder="or type an email" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px;flex:1;min-width:180px;">
     </div>
-    <textarea id="fwd-note-${id}" placeholder="Add a note — e.g. 'Please verify the photo matches this address before we reply.'" style="width:100%;min-height:56px;"></textarea>
-    <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+    <textarea id="fwd-note-${id}" placeholder="Type a few words — e.g. 'has this been paid?' — then ✍️ Write, or write the note yourself." style="width:100%;min-height:56px;"></textarea>
+    <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
       <button class="act send" onclick="doForward('${id}',this)">↪ Forward</button>
+      <button class="act" onclick="doForwardNote('${id}',this)" title="Turn your few words into a full note to the teammate">✍️ Write from my notes</button>
       <button class="act dismiss" onclick="document.getElementById('fwd-${id}').innerHTML='';">Cancel</button>
       <span id="fwd-status-${id}" class="note"></span>
     </div></div>`;
+}
+// "Write from my notes" — expand the operator's few words into a full forward
+// note to the teammate (mirrors "Rewrite with my notes" on replies).
+async function doForwardNote(id, btn){
+  const ta = document.getElementById('fwd-note-'+id);
+  const sel = document.getElementById('fwd-to-'+id);
+  const to_name = sel && sel.selectedOptions[0] ? (sel.selectedOptions[0].getAttribute('data-name')||'') : '';
+  const thoughts = (ta.value||'').trim();
+  const prev = btn.textContent; btn.disabled=true; btn.textContent='Writing…';
+  try{
+    const r = await af(`${API}/${id}/forward-note`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thoughts,to_name})});
+    const j = await r.json();
+    if(r.ok && j.note){ ta.value = j.note; ta.focus(); }
+    else { const st=document.getElementById('fwd-status-'+id); if(st){st.style.color='#b91c1c';st.textContent=j.error||'Could not write the note.';} }
+  }catch(e){ const st=document.getElementById('fwd-status-'+id); if(st){st.style.color='#b91c1c';st.textContent=e.message||'Write failed.';} }
+  btn.disabled=false; btn.textContent=prev;
 }
 async function doForward(id, btn){
   const sel = document.getElementById('fwd-to-'+id);

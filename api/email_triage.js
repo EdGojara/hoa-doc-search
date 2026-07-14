@@ -427,6 +427,29 @@ ${draft && draft.review_hint ? `<p style="margin:8px 0;color:#8a6d00;"><strong>C
   }
 });
 
+// POST /:id/forward-note — "write my forward note from a few words." Same idea as
+// "Rewrite with my notes" on replies: the operator types shorthand, we expand it
+// into a short internal note to the teammate, referencing what's being forwarded.
+// Nothing is sent — returns the note text for the operator to review/edit.
+router.post('/:id/forward-note', express.json(), async (req, res) => {
+  try {
+    const thoughts = (req.body && req.body.thoughts) ? String(req.body.thoughts).slice(0, 1000) : '';
+    const toName = (req.body && req.body.to_name) ? String(req.body.to_name) : '';
+    const { data: m } = await supabase.from('email_messages')
+      .select('subject, sender_name, ai_summary, extracted').eq('id', req.params.id).maybeSingle();
+    if (!m) return res.status(404).json({ error: 'not_found' });
+    const { draftForwardNote } = require('../lib/email/compose_draft');
+    const out = await draftForwardNote({
+      thoughts, toName,
+      email: { subject: m.subject, sender_name: m.sender_name, ai_summary: m.ai_summary, draft_body: (m.extracted && m.extracted.draft && m.extracted.draft.body) || '' },
+    });
+    res.json({ ok: true, note: out.note, degraded: out.degraded });
+  } catch (err) {
+    console.error('[email_triage] forward-note failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /:id/send — approve-to-send: a human reviewed the draft; send it from
 // claire@ (honest-AI signature), log it, mark the inbound handled. Defense in
 // depth: refuse to send for non-draftable (compliance) classes even if asked.
