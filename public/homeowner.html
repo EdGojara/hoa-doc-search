@@ -140,7 +140,11 @@ async function openProfile(cid){
   // merged correspondence timeline — every channel in one consistent view:
   // letters/notes (interactions) + emails (hub) + phone calls (voice log).
   const tl=[
-    ...(d.interactions||[]).map(i=>({t:i.created_at||i.sent_at, dir:i.direction, kind:(i.type||'').replace(/_/g,' '), label:i.type==='internal_note'?(i.content||i.subject):(i.subject||i.type), id:i.id, note:i.type==='internal_note', letterPath:(/letter/i.test(i.type||'')&&i.content&&/\.pdf$/i.test(i.content))?i.content:null})),
+    // Stage-change audit logs (Stage advanced/corrected/recalculated) are
+    // enforcement activity, not correspondence — they clutter this view on
+    // every account that ever changes stage. Keep them out; the actual letters
+    // still show. (Ed 2026-07-14.)
+    ...(d.interactions||[]).filter(i=>!(i.type==='observation_note' && /^Stage (advanced|corrected|recalculated|reset|recomputed)/i.test(i.subject||''))).map(i=>({t:i.created_at||i.sent_at, dir:i.direction, kind:(i.type||'').replace(/_/g,' '), label:i.type==='internal_note'?(i.content||i.subject):(i.subject||i.type), id:i.id, note:i.type==='internal_note', letterPath:(/letter/i.test(i.type||'')&&i.content&&/\.pdf$/i.test(i.content))?i.content:null})),
     ...(d.emails||[]).map(e=>({t:e.received_at, dir:e.direction, kind:'email', label:e.ai_summary||e.subject||'email'})),
     ...(d.calls||[]).map(c=>({t:c.started_at, dir:'inbound', kind:'call', label:(c.brief||('phone call'+(c.status?' · '+c.status:'')))+(c.duration_seconds?' ('+Math.round(c.duration_seconds/60)+'m)':'')})),
   ].filter(x=>x.t).sort((a,b)=>String(b.t).localeCompare(String(a.t))).slice(0,30);
