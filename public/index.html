@@ -568,9 +568,8 @@
   <!-- 🧾 Accounts Payable (Emma) — ADMIN ONLY. Vendor invoices in (email/upload/
        scan) -> deduped -> ap_invoices review queue. Standalone page. -->
   <div class="tab" data-admin-only onclick="switchTab('ap')">🧾 Payables (Emma)</div>
-  <!-- 🏦 Bank Setup — ADMIN ONLY. Per-community bank account for check printing;
-       account number stored encrypted. Standalone page. -->
-  <div class="tab" data-admin-only onclick="window.location.href='/admin/bank-setup'">🏦 Bank Setup</div>
+  <!-- 🏦 Bank Setup moved into the 💰 Finance group (trustEd Books) 2026-07-14 —
+       Ed couldn't find it among the loose top-level tabs. See TAB_GROUPS.finance. -->
   <!-- 📑 Statement Tracker — STAFF. Live grid of which monthly bank statements
        are still needed vs imported. Standalone page. -->
   <div class="tab" onclick="window.location.href='/admin/statement-tracker'">📑 Statement Tracker</div>
@@ -44779,6 +44778,7 @@ ${questionsPage}
         { id: '__accounting',    label: '📒 Accounting',       section: 'trustEd Books', href: '/admin/accounting' },
         { id: '__home_sales',    label: '🏠 Home Sales',       section: 'trustEd Books', href: '/admin/home-sales' },
         { id: 'ap',              label: '💵 Enter Bills (AP)', section: 'trustEd Books' },
+        { id: '__bank_setup',    label: '🏦 Bank Setup',       section: 'trustEd Books', href: '/admin/bank-setup' },
         { id: 'finrev',          label: '📊 Financial Review', section: 'Vantaca & Legacy' },
         { id: 'ownerar',         label: '💵 Owner AR',         section: 'Vantaca & Legacy' },
         { id: 'reports',         label: '📑 Reports',          section: 'Vantaca & Legacy' },
