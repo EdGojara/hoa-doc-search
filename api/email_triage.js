@@ -762,4 +762,24 @@ router.post('/:id/dismiss', express.json(), async (req, res) => {
   }
 });
 
+// POST /dismiss-bulk — dismiss/spam MANY emails at once (checkbox multi-select),
+// so staff aren't clicking one by one. Status-only, same as /:id/dismiss — the
+// homeowner link (resolved_contact_id/property) is preserved, so dismissed mail
+// still shows on the homeowner's 360.
+router.post('/dismiss-bulk', express.json(), async (req, res) => {
+  try {
+    const as = ['dismissed', 'spam', 'handled'].includes((req.body || {}).as) ? req.body.as : 'dismissed';
+    const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.filter(Boolean).slice(0, 500) : [];
+    if (!ids.length) return res.status(400).json({ error: 'no_ids', detail: 'Select at least one email.' });
+    const { data, error } = await supabase.from('email_messages')
+      .update({ triage_status: as, reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() })
+      .in('id', ids).select('id');
+    if (error) throw error;
+    res.json({ ok: true, updated: (data || []).length });
+  } catch (err) {
+    console.error('[email_triage] dismiss-bulk failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = { router };

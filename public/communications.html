@@ -114,6 +114,7 @@ function linkCell(m){
 }
 
 let coversByMsg = {};   // messageId -> [{id, subject}] other emails this reply covers
+let selectedIds = new Set();   // checkbox multi-select for bulk dismiss
 const PNAME = { claire:'Claire', emma:'Emma Brooks', annie:'Annie Reeves', miranda:'Miranda Pierce' };
 const PMAIL = { claire:'claire@bedrocktx.com', emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com', miranda:'miranda@bedrocktx.com' };
 let openPersona = null;   // which teammate's emails are expanded
@@ -191,18 +192,26 @@ async function loadPersonaList(){
     }
     const note = openPersona==='general'
       ? '<div class="note" style="margin:4px 0 8px;color:var(--muted);">Solicitations and unsorted mail. No replies are drafted here automatically — use <b>Draft reply</b> on any message if you want to respond.</div>' : '';
-    el.innerHTML = note + msgs.map(msgHtml).join('');
+    selectedIds.clear();  // fresh selection per view
+    const toolbar = `<div style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;font-size:12.5px;color:var(--muted);">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="sel-all" onchange="toggleSelectAll(this)" style="width:15px;height:15px;cursor:pointer;"> Select all (${msgs.length})</label>
+      <span style="opacity:.7;">— check emails to dismiss several at once</span></div>`;
+    el.innerHTML = note + toolbar + msgs.map(msgHtml).join('');
+    renderBulkBar();
   }catch(e){ el.innerHTML='<div class="empty">Could not load.</div>'; }
 }
 function msgHtml(m){
   const cls = m.classification||'other';
   return `<div class="msg">
       <div class="msg-top">
-        <div>
-          <span class="badge b-${cls}">${CLASS_LABEL[cls]||cls}</span>
-          <span class="conf c-${m.classification_confidence||'none'}">${m.classification_confidence||''}</span>
-          <div class="subj" style="margin-top:5px;">${esc(m.subject||'(no subject)')}</div>
-          <div class="from">${esc(m.sender_email||'')} &middot; ${m.received_at?new Date(m.received_at).toLocaleString():''}</div>
+        <div style="display:flex; gap:9px; align-items:flex-start;">
+          <input type="checkbox" class="msg-sel" data-id="${m.id}" ${selectedIds.has(m.id)?'checked':''} onchange="toggleSelect('${m.id}',this)" title="Select for bulk dismiss" style="width:16px;height:16px;margin-top:3px;cursor:pointer;flex-shrink:0;">
+          <div>
+            <span class="badge b-${cls}">${CLASS_LABEL[cls]||cls}</span>
+            <span class="conf c-${m.classification_confidence||'none'}">${m.classification_confidence||''}</span>
+            <div class="subj" style="margin-top:5px;">${esc(m.subject||'(no subject)')}</div>
+            <div class="from">${esc(m.sender_email||'')} &middot; ${m.received_at?new Date(m.received_at).toLocaleString():''}</div>
+          </div>
         </div>
         <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
           ${m.persona==='emma'?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button><button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}
@@ -258,6 +267,36 @@ async function doLink(id, cand){
   else if(cand.type==='vendor'){ body.vendor_id=cand.id; }
   const r = await af(`${API}/${id}/link`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(r.ok){ loadStats(); loadList(); } else { alert('Link failed'); }
+}
+// ---- Bulk select + dismiss ------------------------------------------------
+function toggleSelect(id, cb){ if(cb.checked) selectedIds.add(id); else { selectedIds.delete(id); const sa=document.getElementById('sel-all'); if(sa) sa.checked=false; } renderBulkBar(); }
+function toggleSelectAll(cb){
+  document.querySelectorAll('.msg-sel').forEach(c=>{ c.checked=cb.checked; const id=c.getAttribute('data-id'); if(cb.checked) selectedIds.add(id); else selectedIds.delete(id); });
+  renderBulkBar();
+}
+function clearSelection(){ selectedIds.clear(); document.querySelectorAll('.msg-sel').forEach(c=>c.checked=false); const sa=document.getElementById('sel-all'); if(sa) sa.checked=false; renderBulkBar(); }
+function renderBulkBar(){
+  let bar = document.getElementById('bulkbar');
+  if(!bar){ bar=document.createElement('div'); bar.id='bulkbar'; document.body.appendChild(bar);
+    bar.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:20px;z-index:60;background:var(--navy,#0B1D34);color:#fff;border-radius:12px;padding:10px 16px;box-shadow:0 8px 28px rgba(0,0,0,.28);display:none;gap:10px;align-items:center;font-size:13px;'; }
+  const n = selectedIds.size;
+  if(!n){ bar.style.display='none'; return; }
+  bar.style.display='flex';
+  bar.innerHTML = `<b style="margin-right:2px;">${n} selected</b>
+    <button class="act" style="background:#e2e8f0;color:#0f172a;" onclick="bulkDismiss('dismissed')">Dismiss ${n}</button>
+    <button class="act" style="background:#fee2e2;color:#b91c1c;" onclick="bulkDismiss('spam')">Spam ${n}</button>
+    <button class="act" style="background:transparent;color:#cbd5e1;" onclick="clearSelection()">Clear</button>`;
+}
+async function bulkDismiss(as){
+  const ids=[...selectedIds]; if(!ids.length) return;
+  const bar=document.getElementById('bulkbar'); if(bar) bar.innerHTML='<b>Working…</b>';
+  try{
+    const r=await af(`${API}/dismiss-bulk`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,as})});
+    const j=await r.json();
+    if(!r.ok){ alert('Could not '+(as==='spam'?'mark spam':'dismiss')+': '+(j.detail||j.error||'error')); renderBulkBar(); return; }
+    selectedIds.clear();
+    loadStats(); loadList();  // loadList re-renders + hides the bar
+  }catch(e){ alert('Failed: '+(e.message||'network')); renderBulkBar(); }
 }
 async function dismiss(id, as){
   const r = await af(`${API}/${id}/dismiss`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({as})});
