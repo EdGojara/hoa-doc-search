@@ -243,7 +243,7 @@ async function showThread(id, link){
         : `<a href="${a.data_uri}" target="_blank" title="${esc(a.name)} — click to open full size"><img src="${a.data_uri}" alt="${esc(a.name)}" style="max-width:240px;max-height:240px;border-radius:8px;border:1px solid var(--line);object-fit:cover;display:block;"></a>`).join('')}</div>` : '';
     box.innerHTML = `<div class="draftbox">
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">This message</div>
-      <div style="font-size:13px;white-space:pre-wrap;color:#1a2230;">${esc((j.full_body||'').slice(0,6000))||'<span class="note">No body captured.</span>'}</div>
+      <div style="font-size:13px;white-space:pre-wrap;color:#1a2230;">${esc((j.full_body||'').slice(0,20000))||'<span class="note">No body captured.</span>'}</div>
       ${attHtml}
       ${chain?`<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 2px;">Email chain (${j.thread.length})</div>${chain}`:'<div class="note" style="margin-top:8px;">No earlier messages in this thread.</div>'}
     </div>`;

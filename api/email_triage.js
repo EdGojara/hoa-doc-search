@@ -201,7 +201,23 @@ router.get('/:id/thread', async (req, res) => {
       attachments = files.filter((f) => f.buffer && f.buffer.length <= 8 * 1024 * 1024).slice(0, 8)
         .map((f) => ({ name: f.filename, is_pdf: !!f.isPdf, data_uri: `data:${f.contentType};base64,${f.buffer.toString('base64')}` }));
     } catch (_) { /* best-effort — thread still renders without them */ }
-    res.json({ ok: true, full_body: m.body_full || m.body_preview || '', thread, attachments });
+    // Full body: body_preview is Microsoft's ~255-char teaser, and body_full is
+    // often empty (not captured at ingest), so "see the original" gets cut off.
+    // Pull the real body from Graph when what we have looks like a preview, and
+    // backfill body_full so it's not lost next time. (Ed 2026-07-14.)
+    let fullBody = m.body_full || '';
+    if (m.graph_id && m.mailbox && fullBody.length < 4000) {
+      try {
+        const { fetchMessageText } = require('../lib/email/graph_attachments');
+        const t = await fetchMessageText(m.mailbox, m.graph_id);
+        if (t && t.length > fullBody.length) {
+          fullBody = t;
+          try { await supabase.from('email_messages').update({ body_full: t }).eq('id', req.params.id); } catch (_) {}
+        }
+      } catch (_) { /* fall back to what we have */ }
+    }
+    if (!fullBody) fullBody = m.body_preview || '';
+    res.json({ ok: true, full_body: fullBody, thread, attachments });
   } catch (err) {
     console.error('[email_triage] thread failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
