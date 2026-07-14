@@ -51,13 +51,17 @@ Analyze this scanned mail document and extract the information. Respond ONLY wit
   "summary": "2-4 sentence plain-English summary",
   "homeownerName": "the specific homeowner this mail is addressed to or about, if any (else empty)",
   "propertyAddress": "the property street address this mail concerns, if any (else empty)",
+  "homeownerEmail": "the homeowner's email address if the document provides one (e.g. an owner info/contact sheet), else empty",
+  "homeownerPhone": "the homeowner's phone number if the document provides one, else empty",
+  "isContactInfoSheet": "true only if this is a homeowner information/contact sheet or a document whose purpose is to provide/update an owner's contact details (name, email, phone), else false",
   "actions": [ { "text": "action, wrap the key phrase in <strong></strong>" } ]
 }
 
 Urgency: critical = legal demand/attorney/subpoena/lawsuit; high = government/tax/collections/NSF/financial with a deadline; normal = invoices, owner correspondence, insurance certs, board; discard = junk/marketing.
 Routing: legal/critical -> Ed immediate; government/financial-with-deadline -> Ed same day; invoices -> Martha (AP) EOD; owner correspondence -> Community Manager EOD; insurance -> Martha EOD; board -> Community Manager EOD.
 Always include a "Community" field (value "Unknown — review required" + unknown:true if you cannot tell). Extract 6-8 fields. conf: 90+ clearly readable, 70-89 inferred, 50-69 uncertain, <50 set unknown:true. Include 4-6 action items.
-When the mail concerns a SPECIFIC homeowner or property (owner correspondence, a collections/legal notice about an owner, a violation, an ARC matter, an estoppel, a check from an owner), set homeownerName + propertyAddress so the scan can be filed onto that homeowner's record. Leave both empty for vendor invoices, government/regulatory, insurance, and general mail not tied to one owner.`;
+When the mail concerns a SPECIFIC homeowner or property (owner correspondence, a collections/legal notice about an owner, a violation, an ARC matter, an estoppel, a check from an owner), set homeownerName + propertyAddress so the scan can be filed onto that homeowner's record. Leave both empty for vendor invoices, government/regulatory, insurance, and general mail not tied to one owner.
+If this is a HOMEOWNER INFORMATION / CONTACT SHEET (a form giving an owner's name, email, phone, sometimes their property address), set isContactInfoSheet:true, put the owner in homeownerName, their address in propertyAddress, and their email/phone in homeownerEmail/homeownerPhone so the system can update that homeowner's contact record — the way a person would if they saw a contact sheet.`;
 
 // Resolve a scan's addressee (homeowner name + property address from the
 // classification) to a contact/property so the scan can be filed onto the
@@ -223,6 +227,21 @@ router.post('/log', upload.single('file'), async (req, res) => {
             received_at: new Date().toISOString(),
           }).select('id').single();
           linked = { interaction_id: ix ? ix.id : null, contact_id: r.contact_id, property_id: r.property_id };
+
+          // If the scan carries the homeowner's contact info (an info/contact
+          // sheet), UPDATE their record — add the email/phone to their contact,
+          // the way a person would if they saw it. Canonical store = contact_methods
+          // (+ flat), deduped. Ed 2026-07-14.
+          const fieldVal = (re) => (cls.fields || []).find((f) => re.test(String(f.label || '')))?.value || '';
+          const email = cls.homeownerEmail || fieldVal(/e-?mail/i);
+          const phone = cls.homeownerPhone || fieldVal(/phone|mobile|cell/i);
+          if (r.contact_id && (email || phone)) {
+            try {
+              const { enrichContactFromEmail } = require('../lib/email/contact_enrich');
+              const added = await enrichContactFromEmail(supabase, r.contact_id, { email, phone });
+              linked.contact_updated = { added, from_info_sheet: !!cls.isContactInfoSheet };
+            } catch (e) { console.warn('[mail-scan] contact update skipped:', e.message); }
+          }
         }
       }
     } catch (e) { console.warn('[mail-scan] addressee link skipped:', e.message); }
