@@ -204,7 +204,7 @@ async function loadPersonaList(){
 }
 function msgHtml(m){
   const cls = m.classification||'other';
-  return `<div class="msg">
+  return `<div class="msg" id="msg-${m.id}">
       <div class="msg-top">
         <div style="display:flex; gap:9px; align-items:flex-start;">
           <input type="checkbox" class="msg-sel" data-id="${m.id}" ${selectedIds.has(m.id)?'checked':''} onchange="toggleSelect('${m.id}',this)" title="Select for bulk dismiss" style="width:16px;height:16px;margin-top:3px;cursor:pointer;flex-shrink:0;">
@@ -408,22 +408,31 @@ async function viewDoc(docId){
   catch(e){ alert('Could not open the document.'); }
 }
 // Emma files a bill without replying: to Payables (queue) or straight to the GL.
+const _filingIds = new Set(); // in-flight guard: one filing per email at a time
 async function doFile(id, action, btn){
+  if(_filingIds.has(id)) return;               // already filing this email — ignore the double-press
   const msg = document.getElementById('filemsg-'+id);
   const ask = action==='to-gl'
     ? 'Record this to the GL now (debit the expense, credit Operating Cash), flagged for your month-end review? No email is sent.'
     : 'File this bill to Payables? No email is sent.';
   if(!confirm(ask)) return;
-  btn.disabled=true; const prev=btn.textContent; btn.textContent='Filing…';
+  _filingIds.add(id);
+  // Disable BOTH action buttons on this row so a second click can't fire either path.
+  const card = document.getElementById('msg-'+id);
+  const rowBtns = card ? Array.from(card.querySelectorAll('button')) : [btn];
+  rowBtns.forEach(b=>b.disabled=true);
+  const prev=btn.textContent; btn.textContent='Filing…';
   try{
     const r=await af(`${API}/${id}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     const j=await r.json();
-    if(!r.ok){ if(msg) msg.innerHTML='<span class="err">'+esc(j.detail||j.error||'Failed')+'</span>'; btn.disabled=false; btn.textContent=prev; return; }
-    if(msg) msg.innerHTML = action==='to-payables'
-      ? '<span class="ok">✅ Filed to Payables'+(j.loaded?' ('+j.loaded+' bill'+(j.loaded===1?'':'s')+')':'')+(j.duplicates?' &middot; '+j.duplicates+' flagged as possible duplicate':'')+'.</span>'
-      : '<span class="ok">✅ Recorded to GL — $'+((j.amount_cents||0)/100).toFixed(2)+(j.account?' to '+esc(j.account):'')+', flagged for month-end review.</span>';
-    loadStats(); setTimeout(loadList, 1300);
-  }catch(e){ if(msg) msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; btn.disabled=false; btn.textContent=prev; }
+    if(!r.ok){ if(msg) msg.innerHTML='<span class="err">'+esc(j.detail||j.error||'Failed')+'</span>'; rowBtns.forEach(b=>b.disabled=false); btn.textContent=prev; _filingIds.delete(id); return; }
+    // Success — the email is handled. Remove it from the inbox so it disappears
+    // (and can't be clicked again). Backend is idempotent (a duplicate press
+    // returns the existing entry, never a second post).
+    if(card){ card.style.transition='opacity .25s'; card.style.opacity='0'; setTimeout(()=>{ card.remove(); }, 260); }
+    selectedIds.delete(id);
+    loadStats();
+  }catch(e){ if(msg) msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; rowBtns.forEach(b=>b.disabled=false); btn.textContent=prev; _filingIds.delete(id); }
 }
 async function doDraft(id, persona){
   const box = document.getElementById('draft-'+id);
