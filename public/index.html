@@ -43835,8 +43835,9 @@ ${questionsPage}
       const approvals = payload.approvals || [];
       const body = document.getElementById('ap-detail-body');
       const vendorName = inv.vendors?.name || '(unknown vendor)';
-      const pdfUrl = inv.library_documents?.storage_path ? '/api/library/file/' + encodeURIComponent(inv.library_documents.storage_path) : null;
+      const pdfUrl = inv.source_storage_path ? '/api/ap-intake/' + encodeURIComponent(inv.id) + '/invoice-file' : null;
       const canApprove = inv.status === 'awaiting_approval' && !!inv.posting_journal_entry_id;
+      const notFinal = inv.status !== 'paid' && inv.status !== 'voided';
       const linesHtml = lines.map((ln) => `
         <tr style="border-bottom:1px solid #f3f4f6;">
           <td style="padding:6px 10px;">${apEsc(ln.description)}</td>
@@ -43915,6 +43916,8 @@ ${questionsPage}
             </div>
             <div style="display:flex; gap:8px;">
               <button class="secondary-btn" onclick="apCloseDetail()">Close</button>
+              ${notFinal ? `<button class="secondary-btn" onclick="apVoidInvoice('${inv.id}')" style="color:#b91c1c; border-color:#fecaca;" title="Vendor sent another copy — discard this duplicate">🗑 Delete duplicate</button>` : ''}
+              ${notFinal ? `<button class="secondary-btn" onclick="apMarkPaid('${inv.id}')" title="Already paid by ACH / debit / wire — record the entry, no check">💳 Already paid</button>` : ''}
               ${canApprove ? `<button class="action-btn" onclick="apApproveInvoice('${inv.id}')" style="background:#16a34a; border-color:#15803d;">✓ Approve Invoice</button>` : ''}
             </div>
           </div>
@@ -43934,6 +43937,37 @@ ${questionsPage}
         apLoadList();
         apLoadCounts();
       } catch (e) { alert('Approve failed: ' + e.message); }
+    };
+
+    // Discard a duplicate — reverses the accrual and voids it, so it drops out of payables.
+    window.apVoidInvoice = async function (id) {
+      const reason = prompt('Delete this invoice (e.g. duplicate the vendor re-sent)? It will be reversed out of payables. Reason:', 'Duplicate');
+      if (reason === null) return;
+      try {
+        const r = await fetch('/api/ap/invoices/' + encodeURIComponent(id) + '/void', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || j.error || 'void failed');
+        apCloseDetail(); apLoadList(); apLoadCounts();
+      } catch (e) { alert('Could not delete: ' + e.message); }
+    };
+
+    // Already paid outside a check run (ACH / debit / wire) — records Dr AP / Cr Cash, clears the payable, no check.
+    window.apMarkPaid = async function (id) {
+      const map = { '1': 'ach', '2': 'credit_card', '3': 'wire' };
+      const pick = prompt('This was already paid — how? Enter 1 = ACH, 2 = debit/credit card, 3 = wire', '1');
+      if (pick === null) return;
+      const method = map[String(pick).trim()] || 'ach';
+      if (!confirm('Record this as already paid by ' + method.replace('_', '/') + '? This posts the journal entry (expense + cash), clears the payable, and no check is cut.')) return;
+      try {
+        const r = await fetch('/api/ap/invoices/' + encodeURIComponent(id) + '/mark-paid', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || j.error || 'mark-paid failed');
+        apOpenInvoice(id); apLoadList(); apLoadCounts();
+      } catch (e) { alert('Could not record payment: ' + e.message); }
     };
 
     // Auto-load on tab activation (CLAUDE.md scar pattern)

@@ -396,6 +396,53 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
   }
 });
 
+// POST /invoices/:id/void — discard a duplicate / erroneous invoice (vendor sent
+// another copy). Reverses the AP accrual with an offsetting entry (never a hard
+// delete) and marks it voided, so it drops out of payables and never hits a check
+// run. Cannot void something already paid. (Ed 2026-07-14.)
+router.post('/invoices/:id/void', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: inv } = await supabase.from('ap_invoices').select('*').eq('id', id).maybeSingle();
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    if (inv.status === 'voided') return res.json({ ok: true, already_voided: true });
+    if (inv.status === 'paid' || (inv.amount_paid_cents || 0) > 0) return res.status(400).json({ error: 'cannot_void_paid', detail: 'A payment is recorded on this invoice — void the payment first.' });
+    const reason = String((req.body || {}).reason || 'Duplicate / discarded').slice(0, 200);
+    if (inv.posting_journal_entry_id) {
+      try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: inv.posting_journal_entry_id, void_reason: `AP invoice voided: ${reason}` }); }
+      catch (e) { console.warn('[ap] void accrual reversal failed:', e.message); }
+    }
+    await supabase.from('ap_invoices').update({ status: 'voided', voided_at: new Date().toISOString(), voided_reason: reason }).eq('id', id);
+    res.json({ ok: true });
+  } catch (err) { console.error('[ap] void failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /invoices/:id/mark-paid — the bill was ALREADY PAID outside a check run
+// (ACH, debit/credit card, wire). Records the payment (Dr AP / Cr Cash) so the
+// expense + cash post and the payable clears — it never shows in a check run and
+// no check is cut. (Ed 2026-07-14.)
+router.post('/invoices/:id/mark-paid', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const method = ['ach', 'credit_card', 'wire', 'cash', 'other'].includes((req.body || {}).method) ? req.body.method : 'ach';
+    const { data: inv } = await supabase.from('ap_invoices').select('*').eq('id', id).maybeSingle();
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    if (inv.status === 'voided') return res.status(400).json({ error: 'voided', detail: 'This invoice was voided.' });
+    const owed = (inv.total_cents || 0) - (inv.amount_paid_cents || 0);
+    if (owed <= 0) return res.status(400).json({ error: 'nothing_due', detail: 'This invoice is already fully paid.' });
+    const result = await recordPayment({
+      community_id: inv.community_id, vendor_id: inv.vendor_id, amount_cents: owed,
+      payment_date: (req.body || {}).payment_date || new Date().toISOString().slice(0, 10),
+      payment_method: method, applications: [{ invoice_id: id, applied_cents: owed }],
+      notes: `Already paid via ${method} (recorded, not check-printed)`,
+    });
+    res.json({ ok: true, method, amount_cents: owed, ...result });
+  } catch (err) {
+    if (err.code === 'invalid_input' || err.code === 'invalid_state') return res.status(400).json({ error: err.message, code: err.code });
+    console.error('[ap] mark-paid failed:', err); res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/payments', express.json(), async (req, res) => {
   try {
     const result = await recordPayment(req.body || {});
