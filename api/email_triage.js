@@ -481,7 +481,11 @@ ${draft && draft.body ? `<div style="border-left:3px solid #D4AF37;padding:8px 1
 ${draft && draft.review_hint ? `<p style="margin:8px 0;color:#8a6d00;"><strong>Claire suggests:</strong> ${e(draft.review_hint)}</p>` : ''}
 <p style="margin:12px 0 0;">Reply here with what you find and we'll take it from there.</p>
 </div>`;
-    await graphSend.sendAs({ from: graphSend.ED_MAILBOX, to, cc: cc || undefined, subject: `For your review: ${m.subject || 'homeowner email'}`, html });
+    // Send from Claire's (authorized) mailbox, not Ed's personal one — the app's
+    // Azure Application Access Policy only covers the bot mailboxes, so sending as
+    // egojara@ is blocked (403 RAOP). Claire forwarding to the teammate is also the
+    // right sender. (Ed 2026-07-14.)
+    await graphSend.sendAs({ from: graphSend.CLAIRE_MAILBOX, to, cc: cc || undefined, subject: `For your review: ${m.subject || 'homeowner email'}`, html });
 
     // Record the hand-off on the item (no triage_status change — keeps it a
     // light annotation, not a workflow state).
@@ -525,6 +529,8 @@ router.post('/:id/forward-note', express.json(), async (req, res) => {
 router.post('/:id/send', express.json(), async (req, res) => {
   try {
     const { body, to, subject, reviewed_by } = req.body || {};
+    // Optional Cc — copy a teammate, the board, another owner on the reply.
+    const ccList = String((req.body || {}).cc || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).join(', ');
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
     const { data: m, error } = await supabase.from('email_messages')
       .select('sender_email, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, extracted, community:community_id(name)')
@@ -583,7 +589,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
       } catch (_) { /* best-effort */ }
     }
 
-    await graphSend.sendAs({ from: fromMailbox, to: recipient, subject: subj, html, attachments });
+    await graphSend.sendAs({ from: fromMailbox, to: recipient, cc: ccList || undefined, subject: subj, html, attachments });
 
     // Mark the inbound handled + log the outbound reply on the record.
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', req.params.id);

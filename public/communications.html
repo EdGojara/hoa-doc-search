@@ -319,6 +319,10 @@ function draftBoxHtml(id, subject, body, careful, persona, covers){
     <div class="note">${esc(whoFirst)}'s draft${subject?' ('+esc(subject)+')':''} — review / edit, then approve. Nothing sends until you click.</div>
     <textarea id="dt-${id}">${esc(body||'')}</textarea>
     <div class="note" style="margin-top:5px;">Sends from <strong>${esc(mail)}</strong> with ${esc(whoFirst)}'s AI signature appended.</div>
+    <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
+      <label style="font-size:12px;color:var(--muted);min-width:24px;">Cc</label>
+      <input id="cc-${id}" type="text" placeholder="copy anyone — a teammate, the board, another owner (commas for multiple)" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;flex:1;">
+    </div>
     ${attachRowHtml(id)}
     <div style="margin-top:8px; display:flex; gap:6px; align-items:center;">
       <input id="notes-${id}" type="text" placeholder="Your notes for ${esc(whoFirst)} — e.g. 'be firmer, and say we'll trim the common-area side' — then Rewrite" style="flex:1; min-width:200px; padding:7px 9px; border:1px solid var(--line); border-radius:6px; font-size:12.5px;" onkeydown="if(event.key==='Enter'){event.preventDefault();doRewrite('${id}','${persona}');}">
@@ -446,7 +450,8 @@ async function doSend(id, btn, careful, persona){
   // Auto attachments (the ARC form) attach server-side by classification; send the
   // documents the operator picked manually.
   const attach_doc_ids = (attachByMsg[id]||[]).filter(a=>!a.auto).map(a=>a.id);
-  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, also_handle, attach_doc_ids})});
+  const ccEl = document.getElementById('cc-'+id); const cc = ccEl ? (ccEl.value||'').trim() : '';
+  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, also_handle, attach_doc_ids, cc})});
   const j = await r.json();
   if(r.ok){ document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}${j.also_handled?` — cleared ${j.also_handled+1} emails`:''}.</div></div>`; delete coversByMsg[id]; loadStats(); setTimeout(loadList, 800); }
   else { btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert(j.detail || j.error || 'Send failed'); }
