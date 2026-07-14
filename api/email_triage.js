@@ -180,7 +180,7 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/thread', async (req, res) => {
   try {
     const { data: m, error } = await supabase.from('email_messages')
-      .select('conversation_id, body_full, body_preview, subject').eq('id', req.params.id).maybeSingle();
+      .select('conversation_id, body_full, body_preview, subject, graph_id, mailbox').eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
     let thread = [];
@@ -190,7 +190,18 @@ router.get('/:id/thread', async (req, res) => {
         .eq('conversation_id', m.conversation_id).order('received_at', { ascending: true }).limit(30);
       thread = data || [];
     }
-    res.json({ ok: true, full_body: m.body_full || m.body_preview || '', thread });
+    // Image/PDF attachments — homeowners photograph violations, and iPhone photos
+    // arrive INLINE (Outlook reports hasAttachments=false), so fetch straight from
+    // Graph by id. Staff need to SEE the evidence Claire read, not just her word
+    // for it. (Ed 2026-07-14 — a violation report's photo wasn't visible.)
+    let attachments = [];
+    try {
+      const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
+      const files = await fetchAllAttachmentBuffers(m.mailbox, m.graph_id);
+      attachments = files.filter((f) => f.buffer && f.buffer.length <= 8 * 1024 * 1024).slice(0, 8)
+        .map((f) => ({ name: f.filename, is_pdf: !!f.isPdf, data_uri: `data:${f.contentType};base64,${f.buffer.toString('base64')}` }));
+    } catch (_) { /* best-effort — thread still renders without them */ }
+    res.json({ ok: true, full_body: m.body_full || m.body_preview || '', thread, attachments });
   } catch (err) {
     console.error('[email_triage] thread failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

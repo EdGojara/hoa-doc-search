@@ -237,9 +237,14 @@ async function showThread(id, link){
         <div style="font-size:11px;color:var(--muted);font-weight:600;">${t.direction==='outbound'?'Claire':esc(t.sender_name||t.sender_email||'Them')} &middot; ${t.received_at?new Date(t.received_at).toLocaleString():''}</div>
         <div style="font-size:12.5px;white-space:pre-wrap;color:#33414f;">${esc((t.body_preview||'').slice(0,1500))}</div>
       </div>`).join('');
+    const atts = j.attachments||[];
+    const attHtml = atts.length ? `<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 4px;">Attachments (${atts.length})</div><div style="display:flex;flex-wrap:wrap;gap:8px;">${atts.map(a=>a.is_pdf
+        ? `<a href="${a.data_uri}" download="${esc(a.name)}" target="_blank" style="font-size:12.5px;color:#0B1D34;font-weight:600;padding:6px 10px;border:1px solid var(--line);border-radius:8px;">📄 ${esc(a.name)}</a>`
+        : `<a href="${a.data_uri}" target="_blank" title="${esc(a.name)} — click to open full size"><img src="${a.data_uri}" alt="${esc(a.name)}" style="max-width:240px;max-height:240px;border-radius:8px;border:1px solid var(--line);object-fit:cover;display:block;"></a>`).join('')}</div>` : '';
     box.innerHTML = `<div class="draftbox">
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">This message</div>
       <div style="font-size:13px;white-space:pre-wrap;color:#1a2230;">${esc((j.full_body||'').slice(0,6000))||'<span class="note">No body captured.</span>'}</div>
+      ${attHtml}
       ${chain?`<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 2px;">Email chain (${j.thread.length})</div>${chain}`:'<div class="note" style="margin-top:8px;">No earlier messages in this thread.</div>'}
     </div>`;
     link.textContent='🧵 Hide thread';
