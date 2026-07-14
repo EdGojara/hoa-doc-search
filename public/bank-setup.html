@@ -101,6 +101,25 @@ window.designateCheck = async function(id){
 };
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function showComingSoon(){ document.getElementById('body').innerHTML='<div class="soon"><b>Coming soon</b>Owner-only.</div>'; }
+async function saveBank(){
+  const name=document.getElementById('bk_name').value.trim(), routing=document.getElementById('bk_routing').value.trim();
+  const msg=document.getElementById('bkmsg');
+  if(!name){ msg.style.color='#b91c1c'; msg.textContent='Bank name is required.'; return; }
+  if(routing && !/^\d{9}$/.test(routing)){ msg.style.color='#b91c1c'; msg.textContent='Routing number must be 9 digits.'; return; }
+  msg.style.color='#5a7390'; msg.textContent='Adding…';
+  try{
+    const r=await af('/api/banks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name, aba_check:routing||null})});
+    const j=await r.json();
+    if(r.ok && !j.error){ msg.style.color='#166534'; msg.textContent='✓ Bank added.'; setTimeout(()=>location.reload(),700); }
+    else { msg.style.color='#b91c1c'; msg.textContent=j.error||'Could not add bank.'; }
+  }catch(e){ msg.style.color='#b91c1c'; msg.textContent=e.message; }
+}
+async function setRouting(id){
+  const el=document.getElementById('rt-'+id); const v=el?el.value.trim():'';
+  if(!/^\d{9}$/.test(v)){ alert('Routing number must be 9 digits.'); return; }
+  try{ const r=await af('/api/banks/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({aba_check:v})}); if(r.ok){location.reload();}else{const j=await r.json();alert('Could not save routing: '+(j.error||''));} }
+  catch(e){ alert('Failed: '+e.message); }
+}
 
 async function shell(){
   const [cr, br, ar] = await Promise.all([af('/api/ap-intake/communities'), af('/api/checks/banks'), af('/api/checks/accounts')]);
@@ -137,6 +156,17 @@ async function shell(){
     <div class="note" style="margin-bottom:6px;">Most communities already have their accounts here from the accounting setup — they just need the <strong>bank</strong> linked and the <strong>full account number</strong> entered. Use <strong>Edit</strong>. "Ready" needs both the routing (bank) and the full account number.</div>
     <table><thead><tr><th>Community</th><th>Bank</th><th>Account</th><th>Next check</th><th>Stock</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     <div id="editArea"></div>
+    <h2>Banks</h2>
+    <div class="card">
+      <div class="note" style="margin-bottom:6px;">Add the bank first (with its routing number for checks), then create the check account below and pick it. A check account only prints when its bank has a routing number.</div>
+      <div id="banksList" style="margin-bottom:10px;">${(banks||[]).length ? banks.map(b=>`<div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid #eef2f7;flex-wrap:wrap;"><span style="min-width:190px;font-weight:600;">${esc(b.name)}</span>${b.aba_check?`<span class="badge b-ready">routing ${esc(b.aba_check)}</span>`:`<input id="rt-${esc(b.id)}" placeholder="add 9-digit routing" inputmode="numeric" style="padding:4px 7px;font-size:12px;border:1px solid #cbd5e1;border-radius:5px;"><button class="btn" style="padding:3px 9px;font-size:11.5px;margin:0;" onclick="setRouting('${esc(b.id)}')">Save routing</button>`}</div>`).join('') : '<div class="note">No banks yet — add one below.</div>'}</div>
+      <div class="grid2">
+        <div><label>Bank name</label><input id="bk_name" type="text" placeholder="e.g. Columbia Bank"></div>
+        <div><label>Routing number (for checks)</label><input id="bk_routing" type="text" inputmode="numeric" autocomplete="off" placeholder="9-digit ABA"></div>
+      </div>
+      <button class="btn" id="saveBank" onclick="saveBank()">Add bank</button>
+      <div id="bkmsg" class="note" style="margin-top:8px;"></div>
+    </div>
     <h2>Add a bank account</h2>
     <div class="card">
       <div class="warn">The account number is entered here over a secure connection and stored encrypted. Don't email it or paste it in chat.</div>
