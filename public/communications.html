@@ -502,10 +502,35 @@ window.ncPersonaChange = function(){
   document.getElementById('nmDraftLabel').innerHTML = '✍️ Have '+esc(p.first)+' write it <span style="font-weight:400; color:var(--muted);">— tell '+esc(p.first)+' the gist, she drafts it, you edit below</span>';
   document.getElementById('nmSendBtn').textContent = 'Send as '+esc(p.first);
 };
+// Populate the To/Cc quick-add pickers: Everyone (all staff), each staff member,
+// and the AI-agent mailboxes. Free-text stays for external addresses.
+async function ncFillPickers(){
+  if(!staffCache.length){ try{ await loadStaff(); }catch(_){} }
+  const staffOpts = staffCache.map(u=>`<option value="${esc(u.email)}">${esc(u.full_name||u.email)}${u.role?' ('+esc(u.role)+')':''}</option>`).join('');
+  const agentOpts = Object.values(COMPOSE_PERSONAS).map(p=>`<option value="${esc(p.mail)}">${esc(p.name)}</option>`).join('');
+  const html = `<option value="">+ add staff, everyone, or an AI agent…</option>`
+    + `<option value="__all_staff__">👥 Everyone (all staff)</option>`
+    + (staffOpts?`<optgroup label="Staff">${staffOpts}</optgroup>`:'')
+    + `<optgroup label="AI agents">${agentOpts}</optgroup>`;
+  const tp=document.getElementById('nmToPick'), cp=document.getElementById('nmCcPick');
+  if(tp) tp.innerHTML=html; if(cp) cp.innerHTML=html;
+}
+// Append the picked address(es) to the To/Cc field, de-duped. Keeps whatever the
+// operator already typed (external emails included).
+function ncAddRecip(fieldId, sel){
+  const v=sel.value; sel.value='';
+  if(!v) return;
+  const field=document.getElementById(fieldId); if(!field) return;
+  const toAdd = v==='__all_staff__' ? staffCache.map(u=>u.email).filter(Boolean) : [v];
+  const existing = field.value.split(/[,;]/).map(x=>x.trim()).filter(Boolean);
+  for(const a of toAdd){ if(!existing.some(e=>e.toLowerCase()===a.toLowerCase())) existing.push(a); }
+  field.value = existing.join(', ');
+}
 window.openCompose = function(){
   document.getElementById('nmStatus').textContent='';
   ['nmTo','nmCc','nmSubject','nmCommunity','nmIntent','nmBody'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('nmPersona').value='claire'; ncPersonaChange();
+  ncFillPickers();
   document.getElementById('composeModal').style.display='flex';
   setTimeout(()=>document.getElementById('nmTo').focus(),30);
 };
@@ -589,9 +614,11 @@ window.ncSend = async function(){
       <div id="nmFromHint" style="font-size:12px; color:var(--muted); margin-bottom:12px;">Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + honest-AI signature. Logged on the homeowner's record when the address matches one on file.</div>
       <div style="display:flex; gap:11px; margin-bottom:11px;">
         <div style="flex:1;"><label style="display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px;">To <span style="font-weight:400;">(commas for multiple)</span></label>
-          <input id="nmTo" type="text" placeholder="board@…, owner@…" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;"></div>
+          <input id="nmTo" type="text" placeholder="board@…, owner@…, or pick below" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;">
+          <select id="nmToPick" onchange="ncAddRecip('nmTo',this)" style="margin-top:5px; width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:8px; font-size:12px; color:var(--muted);"></select></div>
         <div style="flex:1;"><label style="display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px;">Cc <span style="font-weight:400;">(optional)</span></label>
-          <input id="nmCc" type="text" placeholder="cc@…" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;"></div>
+          <input id="nmCc" type="text" placeholder="cc@…, or pick below" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px;">
+          <select id="nmCcPick" onchange="ncAddRecip('nmCc',this)" style="margin-top:5px; width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:8px; font-size:12px; color:var(--muted);"></select></div>
       </div>
       <div style="display:flex; gap:11px; margin-bottom:11px;">
         <div style="flex:2;"><label style="display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:3px;">Subject</label>
