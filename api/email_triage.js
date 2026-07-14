@@ -490,9 +490,13 @@ router.post('/:id/forward-internal', express.json(), async (req, res) => {
     const draft = m.extracted && m.extracted.draft;
     const orig = (m.body_full || m.body_preview || '').slice(0, 6000);
     const e = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const isInternal = String(m.classification || '').toLowerCase() === 'internal' || /@bedrocktx\.com$/i.test(String(m.sender_email || ''));
+    const contextLine = isInternal
+      ? 'Forwarding this internal Bedrock email for you to review and handle. Nothing has been sent externally.'
+      : 'Forwarding this homeowner email for your review before we reply. Nothing has been sent to the homeowner yet.';
     const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">
-${note ? `<p style="margin:0 0 12px;"><strong>Note:</strong> ${e(note).replace(/\n/g, '<br>')}</p>` : ''}
-<p style="margin:0 0 6px;color:#5a7390;">Forwarding this homeowner email for your review before we reply — nothing has been sent to the homeowner yet.</p>
+${note ? `<p style="margin:0 0 12px;">${e(note).replace(/\n/g, '<br>')}</p>` : ''}
+<p style="margin:0 0 6px;color:#5a7390;">${contextLine}</p>
 <div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin:10px 0;">
   <div style="font-size:12px;color:#5a7390;">From ${e(m.sender_name || m.sender_email || '')}${m.community ? ' · ' + e(m.community.name) : ''}${m.classification ? ' · ' + e(m.classification) : ''}</div>
   <div style="font-weight:700;margin:4px 0;">${e(m.subject || '(no subject)')}</div>
