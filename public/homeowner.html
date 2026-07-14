@@ -72,6 +72,32 @@ const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').rep
 const money=c=>{c=Number(c)||0;return (c<0?'-':'')+'$'+(Math.abs(c)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
 const d10=s=>s?String(s).slice(0,10):'';
 
+// Inline edit of the homeowner's email / phone / name, right on the 360 — no
+// hunting through property records. Updates the canonical contact. (Ed 2026-07-14.)
+function hoToggleEdit(){
+  const line=document.getElementById('ho-ctline'), ed=document.getElementById('ho-ctedit');
+  if(!line||!ed) return;
+  const show = ed.style.display==='none';
+  ed.style.display = show?'block':'none'; line.style.display = show?'none':'block';
+  if(show){ const em=document.getElementById('ho-email'); if(em) em.focus(); }
+}
+async function hoSaveContact(cid){
+  const email=(document.getElementById('ho-email').value||'').trim();
+  const phone=(document.getElementById('ho-phone').value||'').trim();
+  const name=(document.getElementById('ho-name').value||'').trim();
+  const msg=document.getElementById('ho-editmsg');
+  if(email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ msg.style.color='#b91c1c'; msg.textContent='Enter a valid email.'; return; }
+  msg.style.color='#5a7390'; msg.textContent='Saving…';
+  try{
+    const body={ primary_email: email||null, primary_phone: phone||null };
+    if(name) body.full_name=name;
+    const r=await fetch('/api/contacts/'+encodeURIComponent(cid),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json();
+    if(!r.ok){ msg.style.color='#b91c1c'; msg.textContent='Could not save: '+(j.error||'error'); return; }
+    openProfile(cid); // refresh the card with the saved values
+  }catch(e){ msg.style.color='#b91c1c'; msg.textContent=e.message||'Save failed'; }
+}
+
 async function doSearch(){
   const q=document.getElementById('q').value.trim();
   if(q.length<2)return;
@@ -121,9 +147,19 @@ async function openProfile(cid){
 
   document.getElementById('profile').innerHTML=`
     <div class="card"><div class="hdr">
-      <div>
-        <div class="nm">${esc(c.full_name)}</div>
-        <div class="ct">${esc(c.primary_email||c.secondary_email||'no email')} · ${esc(c.primary_phone||'no phone')}</div>
+      <div style="flex:1;">
+        <div class="nm">${esc(c.full_name)} <a href="#" onclick="event.preventDefault();hoToggleEdit()" style="font-size:12.5px;color:#1E2761;font-weight:600;text-decoration:none;white-space:nowrap;">✏️ Edit</a></div>
+        <div id="ho-ctline"><div class="ct">${esc(c.primary_email||c.secondary_email||'no email')} · ${esc(c.primary_phone||'no phone')}</div></div>
+        <div id="ho-ctedit" style="display:none;margin:6px 0;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <input id="ho-name" value="${esc(c.full_name||'')}" placeholder="Name" style="padding:6px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:150px;">
+            <input id="ho-email" value="${esc(c.primary_email||'')}" placeholder="Email" style="padding:6px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:190px;">
+            <input id="ho-phone" value="${esc(c.primary_phone||'')}" placeholder="Phone" style="padding:6px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;min-width:130px;">
+            <button onclick="hoSaveContact('${c.id}')" style="background:#0B1D34;color:#fff;border:none;padding:6px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Save</button>
+            <button onclick="hoToggleEdit()" style="background:#fff;color:#334155;border:1px solid #cbd5e1;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;">Cancel</button>
+            <span id="ho-editmsg" style="font-size:12px;"></span>
+          </div>
+        </div>
         <div class="ct">${ps.map(p=>esc(p.address)+(p.community?' · '+esc(p.community):'')).join('<br>')||'no property on file'}</div>
         <div class="chips">${balChip}${amenChip}${openChip}${legalChip}${flagChips}</div>
       </div>
