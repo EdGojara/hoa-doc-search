@@ -115,6 +115,8 @@ function linkCell(m){
 
 let coversByMsg = {};   // messageId -> [{id, subject}] other emails this reply covers
 let selectedIds = new Set();   // checkbox multi-select for bulk dismiss
+let attachByMsg = {};   // messageId -> [{id, title, auto}] documents attached to the reply
+let communityByMsg = {};// messageId -> community_id (scopes the document search)
 const PNAME = { claire:'Claire', emma:'Emma Brooks', annie:'Annie Reeves', miranda:'Miranda Pierce' };
 const PMAIL = { claire:'claire@bedrocktx.com', emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com', miranda:'miranda@bedrocktx.com' };
 let openPersona = null;   // which teammate's emails are expanded
@@ -317,6 +319,7 @@ function draftBoxHtml(id, subject, body, careful, persona, covers){
     <div class="note">${esc(whoFirst)}'s draft${subject?' ('+esc(subject)+')':''} — review / edit, then approve. Nothing sends until you click.</div>
     <textarea id="dt-${id}">${esc(body||'')}</textarea>
     <div class="note" style="margin-top:5px;">Sends from <strong>${esc(mail)}</strong> with ${esc(whoFirst)}'s AI signature appended.</div>
+    ${attachRowHtml(id)}
     <div style="margin-top:8px; display:flex; gap:6px; align-items:center;">
       <input id="notes-${id}" type="text" placeholder="Your notes for ${esc(whoFirst)} — e.g. 'be firmer, and say we'll trim the common-area side' — then Rewrite" style="flex:1; min-width:200px; padding:7px 9px; border:1px solid var(--line); border-radius:6px; font-size:12.5px;" onkeydown="if(event.key==='Enter'){event.preventDefault();doRewrite('${id}','${persona}');}">
       <button class="act" onclick="doRewrite('${id}','${persona}')" title="Have ${esc(whoFirst)} rewrite the draft incorporating your notes">↻ Rewrite with my notes</button>
@@ -326,6 +329,54 @@ function draftBoxHtml(id, subject, body, careful, persona, covers){
       <button class="act draft" onclick="navigator.clipboard.writeText(document.getElementById('dt-${id}').value); this.textContent='Copied ✓';">Copy</button>
       <button class="act dismiss" onclick="document.getElementById('draft-${id}').innerHTML='';">Close</button>
     </div></div>`;
+}
+// ---- Attach documents to a reply -----------------------------------------
+function chipsHtml(id){
+  const atts = attachByMsg[id]||[];
+  const chips = atts.map(a=>`<span style="display:inline-flex;align-items:center;gap:5px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:3px 8px;font-size:12px;color:#3730a3;">📎 <a href="#" onclick="event.preventDefault();viewDoc('${a.id}')" style="color:#3730a3;text-decoration:underline;">${esc(a.title)}</a>${a.auto?' <span style="opacity:.65;font-size:11px;">auto</span>':` <a href="#" onclick="event.preventDefault();removeAttach('${id}','${a.id}')" title="Remove" style="color:#b91c1c;text-decoration:none;font-weight:700;">×</a>`}</span>`).join('');
+  return chips + `<button class="act" style="font-size:12px;" onclick="toggleAttachPicker('${id}')">📎 Attach a document</button>`;
+}
+function attachRowHtml(id){
+  return `<div style="margin-top:7px;">
+    <div id="attchips-${id}" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">${chipsHtml(id)}</div>
+    <div id="attpick-${id}" style="display:none;margin-top:6px;">
+      <input id="attq-${id}" type="text" placeholder="Search filed documents — e.g. application, policy, letter…" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;" oninput="searchDocs('${id}')">
+      <div id="attres-${id}" style="margin-top:4px;max-height:190px;overflow:auto;"></div>
+    </div></div>`;
+}
+function renderAttachChips(id){ const w=document.getElementById('attchips-'+id); if(w) w.innerHTML=chipsHtml(id); }
+function toggleAttachPicker(id){
+  const p=document.getElementById('attpick-'+id); if(!p) return;
+  if(p.style.display==='none'){ p.style.display='block'; const q=document.getElementById('attq-'+id); if(q){q.focus();} searchDocs(id); }
+  else p.style.display='none';
+}
+let _attTimer=null;
+function searchDocs(id){
+  clearTimeout(_attTimer);
+  _attTimer=setTimeout(async()=>{
+    const q=(document.getElementById('attq-'+id)||{}).value||'';
+    const cid=communityByMsg[id]||'';
+    const res=document.getElementById('attres-'+id); if(res) res.innerHTML='<div class="note">Searching…</div>';
+    try{
+      const r=await af(`${API}/docs?q=${encodeURIComponent(q)}${cid?'&community_id='+cid:''}`); const j=await r.json();
+      const docs=j.docs||[];
+      if(res) res.innerHTML = docs.length ? docs.map(d=>`<div style="padding:5px 7px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center;">
+        <span style="font-size:12.5px;">${esc(d.title)} <span style="color:var(--muted);font-size:11px;">${esc(d.category||'')}</span></span>
+        <button class="act" style="font-size:11.5px;" onclick="addAttach('${id}','${d.id}',${JSON.stringify(d.title).replace(/"/g,'&quot;')})">Add</button></div>`).join('')
+        : '<div class="note">No matching documents.</div>';
+    }catch(e){ if(res) res.innerHTML='<div class="note">Search failed.</div>'; }
+  }, 250);
+}
+function addAttach(id, docId, title){
+  attachByMsg[id]=attachByMsg[id]||[];
+  if(!attachByMsg[id].some(a=>a.id===docId)) attachByMsg[id].push({id:docId, title, auto:false});
+  renderAttachChips(id);
+  const p=document.getElementById('attpick-'+id); if(p) p.style.display='none';
+}
+function removeAttach(id, docId){ attachByMsg[id]=(attachByMsg[id]||[]).filter(a=>a.id!==docId); renderAttachChips(id); }
+async function viewDoc(docId){
+  try{ const r=await af(`${API}/doc/${docId}/url`); const j=await r.json(); if(j.url) window.open(j.url,'_blank'); else alert('Could not open the document.'); }
+  catch(e){ alert('Could not open the document.'); }
 }
 // Emma files a bill without replying: to Payables (queue) or straight to the GL.
 async function doFile(id, action, btn){
@@ -360,6 +411,7 @@ async function doDraft(id, persona){
   if(!r.ok){ box.innerHTML = prevHtml || `<div class="draftbox"><div class="refuse">Couldn't draft: ${esc(j.error||'')}</div></div>`; if(prevHtml) alert('Couldn’t regenerate: '+(j.error||'error')+'. Your current draft is unchanged.'); return; }
   if(j.draftable===false){ box.innerHTML = `<div class="draftbox"><div class="refuse">No draft — ${esc(j.reason)}.</div></div>`; return; }
   coversByMsg[id] = j.covers || [];
+  attachByMsg[id] = j.auto_attachments || []; communityByMsg[id] = j.community_id || '';
   box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id]);
 }
 // Rewrite the open draft incorporating the reviewer's notes (Ed's thoughts).
@@ -378,6 +430,10 @@ async function doRewrite(id, persona){
   if(!r.ok){ box.innerHTML = prevHtml; alert('Couldn’t rewrite: '+(j.error||'error')+'. Your draft is unchanged.'); return; }
   if(j.draftable===false){ box.innerHTML = prevHtml; alert('No draft — '+(j.reason||'')); return; }
   coversByMsg[id] = j.covers || [];
+  // Keep any documents the operator manually attached; refresh the auto ones.
+  const manual = (attachByMsg[id]||[]).filter(a=>!a.auto);
+  attachByMsg[id] = [...(j.auto_attachments||[]), ...manual];
+  communityByMsg[id] = j.community_id || communityByMsg[id] || '';
   box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id]);
 }
 async function doSend(id, btn, careful, persona){
@@ -387,7 +443,10 @@ async function doSend(id, btn, careful, persona){
   const body = document.getElementById('dt-'+id).value;
   btn.disabled = true; btn.textContent = 'Sending…';
   const also_handle = covers.map(c=>c.id);
-  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, also_handle})});
+  // Auto attachments (the ARC form) attach server-side by classification; send the
+  // documents the operator picked manually.
+  const attach_doc_ids = (attachByMsg[id]||[]).filter(a=>!a.auto).map(a=>a.id);
+  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, also_handle, attach_doc_ids})});
   const j = await r.json();
   if(r.ok){ document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}${j.also_handled?` — cleared ${j.also_handled+1} emails`:''}.</div></div>`; delete coversByMsg[id]; loadStats(); setTimeout(loadList, 800); }
   else { btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert(j.detail || j.error || 'Send failed'); }

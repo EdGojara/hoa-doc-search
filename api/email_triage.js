@@ -161,6 +161,34 @@ router.get('/for-record', async (req, res) => {
   }
 });
 
+// GET /docs?community_id=&q= — search filed documents to attach to a reply/compose.
+// Registered BEFORE /:id so "docs" isn't captured as an email id.
+router.get('/docs', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const communityId = req.query.community_id || null;
+    let query = supabase.from('library_documents')
+      .select('id, title, category, file_name_original, community_id')
+      .not('file_path', 'is', null).order('uploaded_at', { ascending: false }).limit(20);
+    if (communityId) query = query.or(`community_id.eq.${communityId},community_id.is.null`);
+    if (q) query = query.or(`title.ilike.%${q}%,file_name_original.ilike.%${q}%,category.ilike.%${q}%`);
+    const { data } = await query;
+    res.json({ docs: (data || []).map((d) => ({ id: d.id, title: d.title || d.file_name_original || '(untitled)', category: d.category })) });
+  } catch (err) { console.error('[email_triage] docs failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// GET /doc/:id/url — a short-lived signed URL to VIEW a filed document (so staff
+// can see the attachment before sending). Registered before /:id.
+router.get('/doc/:id/url', async (req, res) => {
+  try {
+    const { data: doc } = await supabase.from('library_documents').select('title, file_path').eq('id', req.params.id).maybeSingle();
+    if (!doc || !doc.file_path) return res.status(404).json({ error: 'not_found' });
+    const { data: signed, error } = await supabase.storage.from('documents').createSignedUrl(doc.file_path, 600);
+    if (error || !signed) return res.status(500).json({ error: 'sign_failed' });
+    res.json({ url: signed.signedUrl, title: doc.title });
+  } catch (err) { console.error('[email_triage] doc url failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // GET /:id
 router.get('/:id', async (req, res) => {
   try {
@@ -389,9 +417,9 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
 
     // Architectural request: if the community has a blank ARC application form,
     // Claire tells them it's attached (the form itself is attached on send).
-    let arcFormTitle = null;
+    let arcFormTitle = null, autoAttachments = [];
     if (m.classification === 'acc_request' && communityId) {
-      try { const { getArcApplicationForm } = require('../lib/email/arc_application'); const f = await getArcApplicationForm(communityId); if (f) arcFormTitle = f.title; } catch (_) {}
+      try { const { getArcApplicationForm } = require('../lib/email/arc_application'); const f = await getArcApplicationForm(communityId); if (f) { arcFormTitle = f.title; autoAttachments.push({ id: f.id, title: f.title, auto: true }); } } catch (_) {}
     }
 
     const draft = await draftReply({
@@ -408,7 +436,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       notes, currentDraft, // reviewer steering (Rewrite with my notes)
       siblings, // cover the homeowner's other recent emails in one reply
     });
-    res.json({ ...draft, covers });
+    res.json({ ...draft, covers, auto_attachments: autoAttachments, community_id: communityId });
   } catch (err) {
     console.error('[email_triage] draft-reply failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -538,6 +566,18 @@ router.post('/:id/send', express.json(), async (req, res) => {
         const arc = await getArcApplicationAttachment(m.community_id);
         if (arc && arc.attachment) attachments = [...(attachments || []), arc.attachment];
       } catch (_) { /* best-effort — the reply still sends without the form */ }
+    }
+
+    // Documents the operator picked to attach (any filed library doc).
+    const attachDocIds = Array.isArray(req.body && req.body.attach_doc_ids) ? req.body.attach_doc_ids.filter(Boolean).slice(0, 6) : [];
+    if (attachDocIds.length) {
+      try {
+        const { getDocAttachment } = require('../lib/email/doc_attachment');
+        for (const did of attachDocIds) {
+          const a = await getDocAttachment(did);
+          if (a && a.attachment) attachments = [...(attachments || []), a.attachment];
+        }
+      } catch (_) { /* best-effort */ }
     }
 
     await graphSend.sendAs({ from: fromMailbox, to: recipient, subject: subj, html, attachments });
