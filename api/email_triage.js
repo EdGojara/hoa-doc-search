@@ -360,15 +360,39 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       return res.json({ ...draft, covers });
     }
 
+    // Homeowner linked but community/property didn't come across (e.g. matched by
+    // name from a NEW email address) — derive their current property + community so
+    // Claire pulls THAT community's rules and confirms the address, instead of
+    // asking "what's your address?". (Ed 2026-07-14, the Bishen Calloo shed thread.)
+    let communityId = m.community_id, propertyId = m.resolved_property_id;
+    let communityName = m.community ? m.community.name : null;
+    if (m.resolved_contact_id && (!communityId || !propertyId)) {
+      try {
+        const { data: po } = await supabase.from('property_ownerships')
+          .select('property:property_id(id, street_address, community_id)')
+          .eq('contact_id', m.resolved_contact_id).is('end_date', null)
+          .order('is_primary', { ascending: false }).limit(1);
+        const prop = po && po[0] && po[0].property;
+        if (prop) {
+          propertyId = propertyId || prop.id;
+          communityId = communityId || prop.community_id;
+          if (!communityName && communityId) {
+            const { data: cm } = await supabase.from('communities').select('name').eq('id', communityId).maybeSingle();
+            communityName = cm ? cm.name : null;
+          }
+        }
+      } catch (_) { /* best-effort — Claire will ask for the address if we can't derive it */ }
+    }
+
     const draft = await draftReply({
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, conversation_id: m.conversation_id, sender_email: m.sender_email, graph_id: m.graph_id, mailbox: m.mailbox, has_attachments: m.has_attachments },
       classification: m.classification,
-      contactId: m.resolved_contact_id, propertyId: m.resolved_property_id, communityId: m.community_id,
+      contactId: m.resolved_contact_id, propertyId, communityId,
       // Greet whoever actually wrote in (the sender), not the household account
       // name — so a joint "Julie McKay & James Storm" record still gets "Hi James"
       // when James emailed. Account DATA still comes from contactId/propertyId.
       contactName: greetingNameFor(m),
-      communityName: m.community ? m.community.name : null,
+      communityName,
       force: true, // Ed clicked "Draft reply" explicitly — always produce a reply, even internal/spam
       notes, currentDraft, // reviewer steering (Rewrite with my notes)
       siblings, // cover the homeowner's other recent emails in one reply
