@@ -380,8 +380,18 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
             const { data: cm } = await supabase.from('communities').select('name').eq('id', communityId).maybeSingle();
             communityName = cm ? cm.name : null;
           }
+          // Persist the derived link so the send path, the 360, and everything
+          // else have it too — not just this draft.
+          try { await supabase.from('email_messages').update({ community_id: communityId, resolved_property_id: propertyId }).eq('id', req.params.id); } catch (_) {}
         }
       } catch (_) { /* best-effort — Claire will ask for the address if we can't derive it */ }
+    }
+
+    // Architectural request: if the community has a blank ARC application form,
+    // Claire tells them it's attached (the form itself is attached on send).
+    let arcFormTitle = null;
+    if (m.classification === 'acc_request' && communityId) {
+      try { const { getArcApplicationForm } = require('../lib/email/arc_application'); const f = await getArcApplicationForm(communityId); if (f) arcFormTitle = f.title; } catch (_) {}
     }
 
     const draft = await draftReply({
@@ -393,6 +403,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       // when James emailed. Account DATA still comes from contactId/propertyId.
       contactName: greetingNameFor(m),
       communityName,
+      arcFormTitle, // if set, tell them the ARC application is attached
       force: true, // Ed clicked "Draft reply" explicitly — always produce a reply, even internal/spam
       notes, currentDraft, // reviewer steering (Rewrite with my notes)
       siblings, // cover the homeowner's other recent emails in one reply
@@ -516,6 +527,17 @@ router.post('/:id/send', express.json(), async (req, res) => {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
       ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
       fromMailbox = graphSend.CLAIRE_MAILBOX; senderLabel = 'Claire (Bedrock AI)';
+    }
+
+    // Architectural request: attach the community's blank ARC application form so
+    // the homeowner gets the actual form to complete, not just a description of
+    // the process. (Ed 2026-07-14 — the Bishen Calloo shed thread.)
+    if (m.classification === 'acc_request' && m.community_id) {
+      try {
+        const { getArcApplicationAttachment } = require('../lib/email/arc_application');
+        const arc = await getArcApplicationAttachment(m.community_id);
+        if (arc && arc.attachment) attachments = [...(attachments || []), arc.attachment];
+      } catch (_) { /* best-effort — the reply still sends without the form */ }
     }
 
     await graphSend.sendAs({ from: fromMailbox, to: recipient, subject: subj, html, attachments });
