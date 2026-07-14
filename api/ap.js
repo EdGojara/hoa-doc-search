@@ -487,6 +487,24 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
   } catch (err) { console.error('[ap] code failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// GET /invoices/:id/suggest-code — infer the expense account for an uncoded bill
+// from the community's own ledger (how this vendor has been coded before), so
+// staff don't hand-code a recurring vendor the books already answer. (Ed 2026-07-14.)
+router.get('/invoices/:id/suggest-code', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: inv } = await supabase.from('ap_invoices').select('*, vendors(name)').eq('id', id).maybeSingle();
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    const { suggestClassification } = require('../lib/accounting/gl_classifier');
+    const vendorName = (inv.vendors && inv.vendors.name) || inv.vendor_name || null;
+    const suggestion = await suggestClassification({
+      communityId: inv.community_id, vendorId: inv.vendor_id, vendorName,
+      description: vendorName || inv.vendor_invoice_number || null,
+    });
+    res.json({ ok: true, suggestion });
+  } catch (err) { console.error('[ap] suggest-code failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 router.post('/payments', express.json(), async (req, res) => {
   try {
     const result = await recordPayment(req.body || {});
