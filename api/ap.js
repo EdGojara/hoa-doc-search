@@ -365,7 +365,7 @@ router.get('/invoices/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const [{ data: invoice }, { data: lines }, { data: approvals }] = await Promise.all([
-      supabase.from('ap_invoices').select('*, vendors(name, category, payee_name, remit_address_line1, remit_city, remit_state, remit_zip), library_documents(storage_path)').eq('id', id).maybeSingle(),
+      supabase.from('ap_invoices').select('*, vendors(name, category, payee_name, remit_address_line1, remit_city, remit_state, remit_zip)').eq('id', id).maybeSingle(),
       supabase.from('ap_invoice_lines').select('*, chart_of_accounts(account_number, account_name)').eq('invoice_id', id).order('line_number'),
       supabase.from('ap_invoice_approvals').select('*').eq('invoice_id', id).order('created_at'),
     ]);
