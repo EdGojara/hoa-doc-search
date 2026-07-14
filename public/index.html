@@ -567,7 +567,7 @@
   <div class="tab" onclick="window.location.href='/admin/payment-plans'">💳 Payment Plans</div>
   <!-- 🧾 Accounts Payable (Emma) — ADMIN ONLY. Vendor invoices in (email/upload/
        scan) -> deduped -> ap_invoices review queue. Standalone page. -->
-  <div class="tab" data-admin-only onclick="window.location.href='/admin/ap'">🧾 Payables (Emma)</div>
+  <div class="tab" data-admin-only onclick="switchTab('ap')">🧾 Payables (Emma)</div>
   <!-- 🏦 Bank Setup — ADMIN ONLY. Per-community bank account for check printing;
        account number stored encrypted. Standalone page. -->
   <div class="tab" data-admin-only onclick="window.location.href='/admin/bank-setup'">🏦 Bank Setup</div>
@@ -31439,6 +31439,19 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     forms_applications: { label: 'Forms & Applications', icon: '📑', group: 'Reference',  note: 'Form responses · status',             action: () => switchTab('forms') },
     performance:        { label: 'Performance',         icon: '📊', group: 'Reference',  note: 'KPIs · metrics',                       action: () => switchTab('perf') },
     quick:              { label: 'Quick',               icon: '⚡', group: 'Reference',  note: 'One-off tools',                        action: () => switchTab('quick') },
+    payables:           { label: 'Payables (Emma)',     icon: '🧾', group: 'Financial',  note: 'Vendor invoices · approve · pay',     action: () => switchTab('ap') },
+    collections:        { label: 'Collections',         icon: '⚖️', group: 'Financial',  note: 'Delinquency · legal · bankruptcy',    action: () => { location.href = '/admin/collections'; } },
+    payment_plans:      { label: 'Payment Plans',       icon: '💳', group: 'Financial',  note: 'Installment agreements',              action: () => { location.href = '/admin/payment-plans'; } },
+    bank_setup:         { label: 'Bank Setup',          icon: '🏦', group: 'Financial',  note: 'Accounts · routing · checks',         action: () => { location.href = '/admin/bank-setup'; } },
+    statement_tracker:  { label: 'Statement Tracker',   icon: '📑', group: 'Financial',  note: 'Monthly financials received',         action: () => { location.href = '/admin/statement-tracker'; } },
+    communications:     { label: 'AI Team Email',       icon: '📬', group: 'AI',         note: 'Inbox · triage · drafts',             action: () => { location.href = '/admin/communications'; } },
+    lookup:             { label: 'Lookup',              icon: '🔎', group: 'Reference',  note: 'Portfolio search',                    action: () => switchTab('lookup') },
+    homeowner_360:      { label: 'Homeowner 360',       icon: '👤', group: 'Reference',  note: 'Profile · recap · history',           action: () => { location.href = '/admin/homeowner'; } },
+    status:             { label: 'Team Status',         icon: '📋', group: 'Operations', note: 'Work items · SLA',                    action: () => switchTab('status') },
+    pool_access:        { label: 'Pool Access',         icon: '🏊', group: 'Operations', note: 'Amenity eligibility · cards',         action: () => { location.href = '/admin/pool-access'; } },
+    mail_scan:          { label: 'Mail Scan',           icon: '📮', group: 'Operations', note: 'Scan · classify · route',             action: () => { location.href = '/mail-scan.html'; } },
+    intake:             { label: 'Intake',              icon: '📧', group: 'Operations', note: 'Inbound email queue',                 action: () => switchTab('intake') },
+    blast:              { label: 'Email Blast',         icon: '📨', group: 'Operations', note: 'Community broadcast',                 action: () => switchTab('blast') },
   };
   const HOME_TILE_DEFAULTS = ['asked', 'inspect', 'drafts', 'manual_violation', 'community_profile', 'owner_ar'];
 

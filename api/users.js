@@ -129,7 +129,11 @@ const HOME_TILE_CATALOG = new Set([
   'builder_arc', 'acc', 'owner_ar', 'docs', 'meetings', 'events',
   'vendor', 'community_profile', 'bedrock_office', 'forms_applications',
   'financial', 'board_packets', 'calendar', 'performance', 'quick',
-  'accounting',
+  'accounting', 'home_sales',
+  // Modules added 2026-07-14 so staff can pin any tool to home.
+  'payables', 'collections', 'payment_plans', 'bank_setup', 'statement_tracker',
+  'communications', 'lookup', 'homeowner_360', 'status', 'pool_access',
+  'mail_scan', 'intake', 'blast',
 ]);
 
 router.patch('/me/preferences', express.json({ limit: '8kb' }), async (req, res) => {
