@@ -450,12 +450,15 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
 // in" option, not a new assignment workflow.)
 router.post('/:id/forward-internal', express.json(), async (req, res) => {
   try {
-    const { to_email, to_name, note } = req.body || {};
+    const { to_email, to_name, note, cc_email } = req.body || {};
     // Accept one OR several recipients (comma/semicolon-separated) so "Everyone"
     // can forward to the whole team at once. sendAs handles the list.
-    const recips = String(to_email || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+    const emailList = (v) => String(v || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+    const recips = emailList(to_email);
     if (!recips.length) return res.status(400).json({ error: 'Pick a teammate with a valid email address.' });
     const to = recips.join(', ');
+    // CC — e.g. hand an AP question to Emma and keep the staffer who asked copied.
+    const cc = emailList(cc_email).join(', ');
     const { data: m, error } = await supabase.from('email_messages')
       .select('subject, body_full, body_preview, sender_email, sender_name, classification, extracted, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
@@ -478,15 +481,15 @@ ${draft && draft.body ? `<div style="border-left:3px solid #D4AF37;padding:8px 1
 ${draft && draft.review_hint ? `<p style="margin:8px 0;color:#8a6d00;"><strong>Claire suggests:</strong> ${e(draft.review_hint)}</p>` : ''}
 <p style="margin:12px 0 0;">Reply here with what you find and we'll take it from there.</p>
 </div>`;
-    await graphSend.sendAs({ from: graphSend.ED_MAILBOX, to, subject: `For your review: ${m.subject || 'homeowner email'}`, html });
+    await graphSend.sendAs({ from: graphSend.ED_MAILBOX, to, cc: cc || undefined, subject: `For your review: ${m.subject || 'homeowner email'}`, html });
 
     // Record the hand-off on the item (no triage_status change — keeps it a
     // light annotation, not a workflow state).
     try {
-      const merged = Object.assign({}, m.extracted || {}, { forwarded: { to, name: to_name || null, at: new Date().toISOString(), note: note || null } });
+      const merged = Object.assign({}, m.extracted || {}, { forwarded: { to, cc: cc || null, name: to_name || null, at: new Date().toISOString(), note: note || null } });
       await supabase.from('email_messages').update({ extracted: merged }).eq('id', req.params.id);
     } catch (_) { /* annotation best-effort */ }
-    res.json({ ok: true, to });
+    res.json({ ok: true, to, cc: cc || null });
   } catch (err) {
     console.error('[email_triage] forward-internal failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

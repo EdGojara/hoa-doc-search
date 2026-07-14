@@ -218,7 +218,7 @@ function msgHtml(m){
         <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
           ${m.persona==='emma'?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button><button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}
           <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>
-          <button class="act" onclick="forwardPrompt('${m.id}')" title="Forward to a teammate to check before we reply">↪ Forward</button>
+          <button class="act" onclick="forwardPrompt('${m.id}','${esc(m.sender_email||'')}')" title="Forward to a teammate (or hand to an AI teammate) to check before we reply">↪ Forward</button>
           <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
           ${cls==='spam'?'':`<button class="act spam" onclick="dismiss('${m.id}','spam')">Spam</button>`}
         </div>
@@ -226,7 +226,7 @@ function msgHtml(m){
       <div class="summary">${esc(m.ai_summary||'')} <a href="#" onclick="event.preventDefault();showThread('${m.id}',this)" style="font-size:11.5px;color:#0B1D34;font-weight:600;white-space:nowrap;">🧵 Show full email + thread</a></div>
       ${m._siblings&&m._siblings.length?`<div class="note" style="background:#eef6ff;border:1px solid #bcdcff;border-radius:6px;padding:6px 9px;margin-top:6px;color:#0b4a8f;font-size:12px;">📎 ${esc((m.sender_name||'This homeowner').split(' ')[0])} sent ${m._siblings.length+1} emails close together (${esc([m.subject].concat(m._siblings.map(s=>s.subject||'(no subject)')).join(', '))}). Click <b>↻ Re-draft</b> here and ${esc((PNAME[m.persona]||'Claire').split(' ')[0])} will fold them into one reply — sending then clears all ${m._siblings.length+1}.</div>`:''}
       ${m.extracted&&m.extracted.auto_gl?`<div style="font-size:11.5px;color:#166534;font-weight:600;margin-top:4px;">🤖 Auto-recorded to GL — $${((m.extracted.auto_gl.amount_cents||0)/100).toFixed(2)}, flagged for your month-end review.</div>`:''}
-      ${m.extracted&&m.extracted.draft&&m.extracted.draft.review_hint?`<div style="font-size:12px;color:#8a6d00;background:#fbf7ec;border:1px solid #e8dcae;border-radius:6px;padding:6px 9px;margin-top:5px;">💡 <strong>Claire suggests:</strong> ${esc(m.extracted.draft.review_hint)} <a href="#" onclick="event.preventDefault();forwardPrompt('${m.id}')" style="color:#0B1D34;font-weight:600;white-space:nowrap;">↪ Loop someone in</a></div>`:''}
+      ${m.extracted&&m.extracted.draft&&m.extracted.draft.review_hint?`<div style="font-size:12px;color:#8a6d00;background:#fbf7ec;border:1px solid #e8dcae;border-radius:6px;padding:6px 9px;margin-top:5px;">💡 <strong>Claire suggests:</strong> ${esc(m.extracted.draft.review_hint)} <a href="#" onclick="event.preventDefault();forwardPrompt('${m.id}','${esc(m.sender_email||'')}')" style="color:#0B1D34;font-weight:600;white-space:nowrap;">↪ Loop someone in</a></div>`:''}
       ${m.extracted&&m.extracted.forwarded?`<div style="font-size:11.5px;color:#5b21b6;font-weight:600;margin-top:4px;">↪ Forwarded to ${esc(m.extracted.forwarded.name||m.extracted.forwarded.to)}${m.extracted.forwarded.at?' · '+new Date(m.extracted.forwarded.at).toLocaleString():''} — awaiting their review</div>`:''}
       <div id="thread-${m.id}"></div>
       <div id="fwd-${m.id}"></div>
@@ -460,18 +460,25 @@ async function loadStaff(){
     staffCache = list.filter(u => u && u.email && (u.is_active === undefined || u.is_active));
   } catch(_) { staffCache = []; }
 }
-function forwardPrompt(id){
+function forwardPrompt(id, senderEmail){
   const box = document.getElementById('fwd-'+id);
   if(!box) return;
   if(box.innerHTML){ box.innerHTML=''; return; } // toggle closed
   const opts = staffCache.map(u=>`<option value="${esc(u.email)}" data-name="${esc(u.full_name||'')}">${esc(u.full_name||u.email)}${u.role?' ('+esc(u.role)+')':''}</option>`).join('');
+  // AI teammates as forward targets — hand an item to the AI persona who owns it
+  // (Emma for AP/invoices, Annie for ACC, Miranda for DRV) and it lands in their queue.
+  const aiOpts = `<optgroup label="AI team"><option value="emma@bedrocktx.com" data-name="Emma">Emma Brooks — accounts payable</option><option value="annie@bedrocktx.com" data-name="Annie">Annie Reeves — architectural (ACC/ARC)</option><option value="miranda@bedrocktx.com" data-name="Miranda">Miranda Pierce — compliance / DRV</option></optgroup>`;
   box.innerHTML = `<div class="draftbox">
-    <div class="note">↪ Forward to a teammate to check before we reply — they get this email + Claire's draft + your note. Nothing goes to the homeowner.</div>
+    <div class="note">↪ Forward to a teammate — or hand to an AI teammate (Emma/Annie/Miranda) who owns it — to check before we reply. They get this email + Claire's draft + your note. Nothing goes to the homeowner.</div>
     <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:6px 0;">
       <select id="fwd-to-${id}" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px;min-width:200px;">
-        ${opts ? '<option value="">— pick a teammate —</option><option value="__all__">👥 Everyone (all teammates)</option>'+opts : '<option value="">(type an email below)</option>'}
+        ${opts ? '<option value="">— pick a teammate —</option><option value="__all__">👥 Everyone (all teammates)</option>'+opts+aiOpts : '<option value="">— pick —</option>'+aiOpts}
       </select>
       <input id="fwd-email-${id}" type="email" placeholder="or type an email" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px;flex:1;min-width:180px;">
+    </div>
+    <div style="display:flex; gap:6px; align-items:center; margin:0 0 6px;">
+      <label style="font-size:12px;color:var(--muted);min-width:24px;">Cc</label>
+      <input id="fwd-cc-${id}" type="text" value="${esc(senderEmail||'')}" placeholder="copy the sender or anyone (commas for multiple)" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;flex:1;">
     </div>
     <textarea id="fwd-note-${id}" placeholder="Type a few words — e.g. 'has this been paid?' — then ✍️ Write, or write the note yourself." style="width:100%;min-height:56px;"></textarea>
     <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
@@ -510,14 +517,16 @@ async function doForward(id, btn){
     to_name = typed ? '' : (sel && sel.selectedOptions[0] ? (sel.selectedOptions[0].getAttribute('data-name')||'') : '');
   }
   const note = (document.getElementById('fwd-note-'+id).value||'').trim();
+  const ccEl = document.getElementById('fwd-cc-'+id);
+  const cc_email = ccEl ? (ccEl.value||'').trim() : '';
   const st = document.getElementById('fwd-status-'+id);
   if(!to_email){ if(st){ st.style.color='#b91c1c'; st.textContent='Pick a teammate or type an email.'; } return; }
   btn.disabled=true; const prev=btn.textContent; btn.textContent='Forwarding…';
   try{
-    const r = await af(`${API}/${id}/forward-internal`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email,to_name,note})});
+    const r = await af(`${API}/${id}/forward-internal`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email,to_name,note,cc_email})});
     const j = await r.json();
     if(!r.ok){ if(st){ st.style.color='#b91c1c'; st.textContent=j.detail||j.error||'Forward failed'; } btn.disabled=false; btn.textContent=prev; return; }
-    if(st){ st.style.color='#166534'; st.textContent='✓ Forwarded to '+j.to; }
+    if(st){ st.style.color='#166534'; st.textContent='✓ Forwarded to '+j.to+(j.cc?' (cc '+j.cc+')':''); }
     setTimeout(loadList, 1100);
   }catch(e){ if(st){ st.style.color='#b91c1c'; st.textContent=e.message; } btn.disabled=false; btn.textContent=prev; }
 }
