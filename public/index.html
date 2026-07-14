@@ -43912,7 +43912,7 @@ ${questionsPage}
 
           <div style="display:flex; justify-content:space-between; align-items:center; margin-top:18px; padding-top:14px; border-top:1px solid #e2e8f0;">
             <div>
-              ${pdfUrl ? `<a href="${pdfUrl}" target="_blank" style="color:#315A87; font-size:13px; text-decoration:none; font-weight:600;">📄 View original PDF</a>` : '<span style="color:#888; font-size:12px;">No source PDF on file</span>'}
+              ${pdfUrl ? `<a href="#" onclick="apViewInvoicePdf('${inv.id}');return false;" style="color:#315A87; font-size:13px; text-decoration:none; font-weight:600;">📄 View original PDF</a>` : '<span style="color:#888; font-size:12px;">No source PDF on file</span>'}
             </div>
             <div style="display:flex; gap:8px;">
               <button class="secondary-btn" onclick="apCloseDetail()">Close</button>
@@ -43968,6 +43968,19 @@ ${questionsPage}
         if (!r.ok) throw new Error(j.detail || j.error || 'mark-paid failed');
         apOpenInvoice(id); apLoadList(); apLoadCounts();
       } catch (e) { alert('Could not record payment: ' + e.message); }
+    };
+
+    // Open the source invoice PDF. The file endpoint is admin-gated (needs the
+    // Bearer token), so we fetch the signed URL with the authed fetch and open it
+    // — a plain <a href> navigation can't carry the token. (Ed 2026-07-14.)
+    window.apViewInvoicePdf = async function (id) {
+      try {
+        const fetchFn = window._authFetch || fetch;
+        const r = await fetchFn('/api/ap-intake/' + encodeURIComponent(id) + '/invoice-file?json=1');
+        const j = await r.json();
+        if (r.ok && j.url) window.open(j.url, '_blank');
+        else alert('Could not open the invoice: ' + (j.detail || j.error || 'error'));
+      } catch (e) { alert('Could not open the invoice: ' + e.message); }
     };
 
     // Auto-load on tab activation (CLAUDE.md scar pattern)

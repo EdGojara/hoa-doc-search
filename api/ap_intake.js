@@ -113,6 +113,11 @@ router.get('/:id/invoice-file', async (req, res) => {
     if (!inv || !inv.source_storage_path) return res.status(404).json({ error: 'no_invoice_file' });
     const { data, error } = await supabase.storage.from('documents').createSignedUrl(inv.source_storage_path, 60 * 60);
     if (error || !data || !data.signedUrl) return res.status(404).json({ error: 'file_not_found' });
+    // Return the signed URL (don't redirect) — the admin gate needs the Bearer
+    // token, which a plain <a href> navigation can't carry. The frontend fetches
+    // this with the authed fetch, then opens the (public, short-lived) URL. Fall
+    // back to a redirect for a direct/authed GET. (Ed 2026-07-14.)
+    if (/application\/json/.test(req.headers.accept || '') || req.query.json) return res.json({ url: data.signedUrl });
     res.redirect(data.signedUrl);
   } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
 });
