@@ -167,7 +167,16 @@ async function checkEligibility({ communityId, renterAddress, renterEmail }) {
       return { flag: 'no_property_match', data: { renter_address: renterAddress, normalized: norm } };
     }
 
-    // Look up the most recent owner_ar_snapshot for that property
+    // Amenity access is decided by the SINGLE engine the Homeowner 360 uses, so
+    // Look Up and the 360 can never disagree. (Ed 2026-07-14 — Juan Prieto read
+    // "restricted" on the 360 but "good standing" here, because this surface used
+    // a different rule: it only flagged owners already at legal/collections,
+    // ignoring the assessment-past-due amenity rule.)
+    const { evaluateAmenityAccess } = require('../lib/ar/amenity_access');
+    let decision = null;
+    try { decision = await evaluateAmenityAccess(supabase, { propertyId: matched.id, communityId }); } catch (_) {}
+
+    // Most recent AR snapshot — kept for the displayed balance + enforcement context.
     const { data: snap } = await supabase
       .from('owner_ar_snapshots')
       .select('balance_total, enforcement_stage, at_legal, in_collections, snapshot_date')
@@ -176,29 +185,26 @@ async function checkEligibility({ communityId, renterAddress, renterEmail }) {
       .limit(1)
       .maybeSingle();
 
-    if (!snap) {
-      return {
-        flag: 'unverified',
-        data: { property_id: matched.id, reason: 'no_ar_snapshot_on_file' },
-      };
+    if (!decision && !snap) {
+      return { flag: 'unverified', data: { property_id: matched.id, reason: 'no_ar_data_on_file' } };
     }
 
-    const balanceCents = snap.balance_total != null ? Math.round(Number(snap.balance_total) * 100) : null;
-    const pastDueStages = ['certified_209', 'at_legal', 'with_attorney', 'in_collections', 'judgment', 'lien_filed'];
-    const isPastDue = (balanceCents && balanceCents > 0)
-                      && (snap.at_legal || snap.in_collections
-                          || pastDueStages.includes(String(snap.enforcement_stage || '').toLowerCase()));
+    const balanceCents = snap && snap.balance_total != null ? Math.round(Number(snap.balance_total) * 100) : null;
+    const restricted = decision ? !decision.allowed : false; // SSOT drives the decision
 
     return {
-      flag: isPastDue ? 'past_due_at_intake' : 'clean',
+      flag: restricted ? 'past_due_at_intake' : 'clean',
       data: {
         property_id: matched.id,
         property_address: matched.street_address,
         balance_cents: balanceCents,
-        enforcement_stage: snap.enforcement_stage,
-        at_legal: snap.at_legal,
-        in_collections: snap.in_collections,
-        snapshot_date: snap.snapshot_date,
+        amenity_allowed: decision ? decision.allowed : null,
+        amenity_reason: decision ? decision.reason : null,
+        assessment_past_due_cents: decision ? (decision.assessment_past_due_cents || 0) : null,
+        enforcement_stage: snap ? snap.enforcement_stage : null,
+        at_legal: snap ? snap.at_legal : null,
+        in_collections: snap ? snap.in_collections : null,
+        snapshot_date: snap ? snap.snapshot_date : null,
       },
     };
   } catch (err) {
