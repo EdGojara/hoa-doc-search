@@ -364,6 +364,66 @@ router.get('/invoices', async (req, res) => {
   }
 });
 
+// GET /manager-queue — "what is waiting on ME, across every community."
+//
+// Ed: "where is the manager review button". It was on staff screens, but the AP
+// queue is community-scoped and nothing computed the approval path outside the
+// detail modal — so a manager had to open every bill in all seven communities
+// to find the four that needed them. Nobody does that, so nothing ever got
+// approved and every bill fell through to "release anyway". A control nobody is
+// routed to isn't a control. This is the route. (Ed 2026-07-15.)
+router.get('/manager-queue', async (req, res) => {
+  try {
+    const { data: invs, error } = await supabase.from('ap_invoices')
+      .select('id, community_id, vendor_id, vendor_invoice_number, invoice_date, due_date, total_cents, approval_path, approval_path_reason, approval_path_why, coded_gl_account_id, posting_journal_entry_id, vendors(name), communities(name), ap_invoice_approvals(action, user_name, created_at)')
+      .eq('status', 'awaiting_approval')
+      .order('due_date', { ascending: true, nullsFirst: false })
+      .limit(500);
+    if (error) throw error;
+
+    // Credits are a LIVE overlay, never baked into the stored path: a credit
+    // recorded today must hold a bill that was stored as 'release' last week.
+    // One query for every open credit beats one per invoice.
+    const { data: credits } = await supabase.from('vendor_credits_expected')
+      .select('id, community_id, vendor_id, vendor_name, reason, expected_cents')
+      .eq('status', 'expected');
+    const creditFor = (inv) => (credits || []).filter((c) => c.community_id === inv.community_id
+      && (c.vendor_id ? c.vendor_id === inv.vendor_id
+        : (c.vendor_name && inv.vendors && String(inv.vendors.name || '').toLowerCase().includes(String(c.vendor_name).toLowerCase().slice(0, 12)))));
+
+    const { approvalPath } = require('../lib/ap/approval_policy');
+    const out = [];
+    for (const inv of (invs || [])) {
+      if ((inv.ap_invoice_approvals || []).some((a) => a.action === 'approved')) continue; // a manager already vouched
+      const open = creditFor(inv);
+      let path = inv.approval_path;
+      let reason = inv.approval_path_reason;
+      let why = inv.approval_path_why;
+      let creditHold = false;
+      if (open.length) {
+        // A credit outranks the stored verdict, always.
+        const p = approvalPath(null, open);
+        path = 'manager_review'; reason = p.reason; why = p.why; creditHold = true;
+      } else if (!path) {
+        // Never routed (pre-migration bill, or the intake decision failed).
+        // Unrouted fails toward MORE scrutiny, not less.
+        path = 'manager_review';
+        reason = 'This bill was never routed — no approval path was recorded for it. A manager confirms it before release.';
+        why = 'no approval path on record';
+      }
+      if (path !== 'manager_review') continue;
+      out.push({
+        id: inv.id, community_id: inv.community_id, community: inv.communities && inv.communities.name,
+        vendor: (inv.vendors && inv.vendors.name) || null, vendor_invoice_number: inv.vendor_invoice_number,
+        invoice_date: inv.invoice_date, due_date: inv.due_date, total_cents: inv.total_cents,
+        reason, why, credit_hold: creditHold,
+        coded: !!inv.coded_gl_account_id, posted: !!inv.posting_journal_entry_id,
+      });
+    }
+    res.json({ ok: true, count: out.length, invoices: out });
+  } catch (err) { console.error('[ap] manager-queue failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 router.get('/invoices/:id', async (req, res) => {
   try {
     const { id } = req.params;
