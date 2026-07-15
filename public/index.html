@@ -43823,7 +43823,8 @@ ${questionsPage}
         });
       }
       apLoadCounts();
-      apLoadManagerQueue();   // cross-community: not scoped to the picked community
+      apLoadManagerQueue();   // cross-community, filtered to the picked community
+      apLoadManagerNames();   // who holds the manager key (for the disabled-button tooltip)
     };
 
     window.apSubswitch = function (tab) {
@@ -44197,6 +44198,11 @@ ${questionsPage}
             </div>
           </div>
 
+          ${inv.status === 'awaiting_approval' && !inv.posting_journal_entry_id ? `
+            <div style="margin-top:16px; padding:8px 12px; border-radius:6px; background:#fffbeb; border:1px solid #fde047; font-size:12px; color:#92400e;">
+              <strong>Nobody can approve this bill yet</strong> — the expense account isn't coded, so there's no journal entry to approve.
+              No approval buttons show for anyone (you or a manager) until it's coded. Apply the suggested account under <em>Auto-Coding</em> above, or search for one — the journal entry posts automatically and the approval buttons appear.
+            </div>` : ''}
           ${openForApproval ? `
             <div style="margin-top:16px; padding:8px 12px; border-radius:6px; background:${mgrApproval ? '#f0fdf4' : '#f8fafc'}; border:1px solid ${mgrApproval ? '#bbf7d0' : '#e2e8f0'}; font-size:12px;">
               <strong style="color:#0B1D34;">Manager approval:</strong>
@@ -44216,8 +44222,16 @@ ${questionsPage}
               <button class="secondary-btn" onclick="apCloseDetail()">Close</button>
               ${notFinal ? `<button class="secondary-btn" onclick="apVoidInvoice('${inv.id}')" style="color:#b91c1c; border-color:#fecaca;" title="Vendor sent another copy — discard this duplicate">🗑 Delete duplicate</button>` : ''}
               ${notFinal ? `<button class="secondary-btn" onclick="apMarkPaid('${inv.id}', ${(inv.total_cents || 0) - (inv.amount_paid_cents || 0)})" title="Already paid by ACH / debit card — record the entry, no check">💳 Already paid</button>` : ''}
-              ${openForApproval && !isAdmin && !mgrApproval
-                ? `<button class="action-btn" onclick="apManagerApprove('${inv.id}')" style="background:#0B1D34; border-color:#0B1D34;" title="Manager approval — confirms this bill is legitimate. Does not pay it.">👍 Manager approval</button>` : ''}
+              ${openForApproval && !mgrApproval
+                ? (isAdmin
+                    // Ed asked three times where this button is, and "trust me,
+                    // it's on Laurie's screen" is not an answer he can verify.
+                    // Show it — disabled, naming who holds the key. He can see
+                    // the control exists without becoming both keys himself.
+                    // (Ed 2026-07-15.)
+                    ? `<button class="secondary-btn" disabled style="opacity:0.5; cursor:not-allowed;" title="This is the manager's key — ${apEsc(apManagerNames())} see it enabled on this bill. You hold the release key: one person can't be both, or it isn't two keys. You can release directly instead.">👍 Manager approval — staff only</button>`
+                    : `<button class="action-btn" onclick="apManagerApprove('${inv.id}')" style="background:#0B1D34; border-color:#0B1D34;" title="Manager approval — confirms this bill is legitimate. Does not pay it.">👍 Manager approval</button>`)
+                : ''}
               ${openForApproval && isAdmin
                 ? (mgrApproval
                     ? `<button class="action-btn" onclick="apApproveInvoice('${inv.id}')" style="background:#16a34a; border-color:#15803d;" title="Release for payment — the second key. Manager approved by ${apEsc(mgrApproval.user_name || 'staff')}.">✓ Release for payment</button>`
@@ -44370,6 +44384,28 @@ ${questionsPage}
     // manager to vouch before Ed can release it. Renders for everyone, but reads
     // differently by role: a manager sees work to do, Ed sees what he's waiting
     // on. (Ed 2026-07-15.)
+    var apMgrQueueShowAll = false;
+    window.apMgrQueueToggleAll = function () { apMgrQueueShowAll = !apMgrQueueShowAll; apLoadManagerQueue(); };
+
+    // Who actually holds the manager key. Named, not "your staff" — Ed couldn't
+    // verify the control existed because nothing ever said who could press it.
+    // Cached: the tooltip renders synchronously, and /api/users is admin-only
+    // (which is fine — only admins see the disabled button).
+    var apMgrNames = null;
+    function apManagerNames() { return apMgrNames || 'your staff'; }
+    window.apLoadManagerNames = async function () {
+      if (apMgrNames !== null) return;
+      try {
+        const fetchFn = window._authFetch || fetch;
+        const r = await fetchFn('/api/users');
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'users');
+        apMgrNames = (j.users || [])
+          .filter((u) => u.role && u.role !== 'admin' && u.is_active !== false)
+          .map((u) => String(u.full_name || u.email || '').split('@')[0].trim())
+          .filter(Boolean).join(', ');
+      } catch (_) { apMgrNames = ''; }   // fall back to the generic wording
+    };
     window.apLoadManagerQueue = async function () {
       const el = document.getElementById('ap-manager-queue');
       if (!el) return;
@@ -44378,15 +44414,30 @@ ${questionsPage}
         const r = await fetchFn('/api/ap/manager-queue');
         const j = await r.json();
         if (!r.ok) throw new Error(j.detail || j.error || 'failed');
-        const rows = j.invoices || [];
-        if (!rows.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+        const all = j.invoices || [];
+        if (!all.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+        // Respect the community picker. Showing every community's bills under a
+        // "Waterview Estates" heading reads like a bug even though it's a
+        // cross-community queue — so filter to the picked community and say
+        // plainly how many are elsewhere. (Ed 2026-07-15.)
+        const picked = (typeof apCommunityId !== 'undefined' && apCommunityId) ? apCommunityId : null;
+        const rows = (picked && !apMgrQueueShowAll) ? all.filter((i) => i.community_id === picked) : all;
+        const elsewhere = all.length - rows.length;
+        const pickedName = (document.getElementById('ap-community') || {}).selectedOptions
+          ? (document.getElementById('ap-community').selectedOptions[0] || {}).text || '' : '';
+        if (!rows.length && !elsewhere) { el.style.display = 'none'; el.innerHTML = ''; return; }
         const isAdmin = (window.currentUser || {}).role === 'admin';
         const total = rows.reduce((a, b) => a + (b.total_cents || 0), 0);
+        const scope = apMgrQueueShowAll || !picked ? 'across all communities' : `in ${apEsc(pickedName)}`;
         el.style.display = '';
         el.innerHTML = `
           <div class="panel" style="border-left:4px solid #b45309; padding:12px 14px;">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-              <div style="font-weight:700; color:#92400e;">👤 ${rows.length} bill${rows.length === 1 ? '' : 's'} need${rows.length === 1 ? 's' : ''} a manager approval · ${apFmtCents(total)}</div>
+              <div style="font-weight:700; color:#92400e;">
+                👤 ${rows.length} bill${rows.length === 1 ? '' : 's'} need${rows.length === 1 ? 's' : ''} a manager approval ${scope}${rows.length ? ' · ' + apFmtCents(total) : ''}
+                ${elsewhere > 0 ? `<button class="secondary-btn" style="font-size:11px; padding:2px 8px; margin-left:6px; font-weight:600;" onclick="apMgrQueueToggleAll()">+${elsewhere} in other communities — show all</button>` : ''}
+                ${apMgrQueueShowAll && picked ? `<button class="secondary-btn" style="font-size:11px; padding:2px 8px; margin-left:6px; font-weight:600;" onclick="apMgrQueueToggleAll()">Show only ${apEsc(pickedName)}</button>` : ''}
+              </div>
               <div style="font-size:12px; color:#5a7390;">${isAdmin
                 ? 'Waiting on a manager. You can still release any of these directly — it gets recorded as released without one.'
                 : 'These are waiting on you. Open one to approve or reject it.'}</div>
@@ -44398,6 +44449,7 @@ ${questionsPage}
                     <span style="font-weight:700; color:#0B1D34;">${apEsc(i.vendor || '(no vendor)')}</span>
                     <span style="color:#5a7390; font-size:12px;"> · ${apEsc(i.community || '')} · ${apEsc(i.vendor_invoice_number || 'no #')}</span>
                     <div style="color:#92400e; font-size:11.5px; margin-top:1px;">${i.credit_hold ? '💳 ' : ''}${apEsc(i.reason || '')}</div>
+                    ${!i.posted ? '<div style="color:#b91c1c; font-size:11.5px; font-weight:600; margin-top:1px;">⚠️ Not approvable yet — code the expense account first; no approval buttons appear until then.</div>' : ''}
                   </div>
                   <div style="text-align:right; white-space:nowrap;">
                     <div style="font-weight:700; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${apFmtCents(i.total_cents)}</div>
