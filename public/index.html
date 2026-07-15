@@ -13555,8 +13555,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:16px; margin-bottom:18px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
         <div>
-          <h3 style="margin:0; font-size:16px; color:#0B1D34;">📋 Past ACC decisions <span style="color:#94A3B8; font-weight:400; font-size:13px;">(decisions made through trustEd)</span></h3>
-          <p style="margin:4px 0 0 0; font-size:12px; color:#666;">Every letter generated through the Review tab is saved here. One-tap re-download of the homeowner letter or the complete packet (letter + application + photos + brochures).</p>
+          <h3 style="margin:0; font-size:16px; color:#0B1D34;">📋 Every ACC application <span style="color:#94A3B8; font-weight:400; font-size:13px;">(answered and still waiting)</span></h3>
+          <p style="margin:4px 0 0 0; font-size:12px; color:#666;">Every application that reached trustEd, however it arrived. <strong>⏳ Waiting on us</strong> = nobody has answered the homeowner yet — open it and decide. <strong>✓ Answered</strong> = a letter went out; re-download it or the full packet (letter + application + photos + brochures).</p>
         </div>
         <div style="display:flex; gap:6px; align-items:center;">
           <input id="accHistorySearch" placeholder="Search by address, name, or project…"
@@ -14812,6 +14812,11 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   }
   window.accSend = accSend;
   window.accOpenDetail = accOpenDetail;
+  // Exported for the History tab (a separate script block) so it renders source +
+  // decision labels from the SAME helpers as the Review tab — one source of truth
+  // for what a source badge or a decision reads like, no second copy to drift.
+  window.accSourceBadge = accSourceBadge;
+  window.accDecisionMeta = accDecisionMeta;
   window.accBackToList = accBackToList;
 
   function accEsc(s) {
@@ -32458,9 +32463,19 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           list.innerHTML = '<div style="color:#999; font-size:13px; padding:14px;">No decisions yet. Generate one above and it will appear here.</div>';
           return;
         }
+        // Every row answers three questions at a glance, because this list mixes
+        // finished decisions with applications still sitting in the queue:
+        //   WHERE did it come from (source), WHAT state is it in (answered vs
+        //   waiting on us), and WHAT can I do about it.
+        // Before: a pending application rendered under "Past ACC decisions" with
+        // a bare "—" for the decision and Letter/Packet buttons that download a
+        // letter that doesn't exist yet. (Ed 2026-07-15: "we need to know the
+        // source of these and whether a response was provided or it is sitting
+        // there — it's confusing.")
         list.innerHTML = decisions.map((d) => {
           const dt = new Date(d.created_at);
           const date = dt.toLocaleDateString();
+          const pending = d.status === 'pending_review';
           const decLabel = ({
             'approved': '✓ Approved',
             'approved_no_conditions': '✓ Approved',
@@ -32468,21 +32483,32 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             'request_more_info': '? More info requested',
             'incomplete': '? Incomplete',
             'denied': '✗ Denied',
-          })[d.decision_type] || (d.decision_type || '—');
+          })[d.decision_type] || d.decision_type || null;
+          const waitingDays = d.created_at ? Math.floor((Date.now() - dt.getTime()) / 86400000) : 0;
+          const stateBadge = pending
+            ? `<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:20px;background:${waitingDays >= 1 ? '#fee2e2' : '#fef3c7'};color:${waitingDays >= 1 ? '#b91c1c' : '#92400e'};">⏳ Waiting on us${waitingDays >= 1 ? ` · ${waitingDays}d` : ''} — no answer sent</span>`
+            : `<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:20px;background:#dcfce7;color:#166534;">✓ Answered${decLabel ? ' · ' + escapeHtml(decLabel) : ''}</span>`;
+          const aiHint = pending && d.ai_recommendation
+            ? `<span style="display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:20px;background:#eef2ff;color:#3730a3;margin-left:4px;">AI suggests: ${escapeHtml((accDecisionMeta(d.ai_recommendation) || {}).label || d.ai_recommendation)}</span>`
+            : '';
+          const srcBadge = `<span style="margin-left:4px;">${accSourceBadge(d.source)}</span>`;
           return `
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; padding:10px 14px; border-bottom:1px solid #f1f5f9; gap:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; padding:10px 14px; border-bottom:1px solid #f1f5f9; gap:12px; ${pending ? 'background:#fffdf7;' : ''}">
               <div style="flex:1; min-width:0;">
                 <div style="font-weight:600; color:#1E2761; font-size:13px;">${escapeHtml(d.homeowner_address || '—')}</div>
                 <div style="font-size:12px; color:#475569; margin-top:2px;">
                   ${escapeHtml(d.homeowner_name || '')}${d.homeowner_name && d.project_summary ? ' · ' : ''}${escapeHtml(d.project_summary || '')}
                 </div>
+                <div style="margin-top:5px;">${stateBadge}${aiHint}${srcBadge}</div>
                 <div style="font-size:11px; color:#94A3B8; margin-top:3px;">
-                  ${escapeHtml(d.community_name || '')} · ${date} · ${escapeHtml(decLabel)}
+                  ${escapeHtml(d.community_name || '')} · received ${date}${d.reference_number ? ' · ' + escapeHtml(d.reference_number) : ''}
                 </div>
               </div>
               <div style="display:flex; gap:4px; flex-shrink:0;">
-                <button class="secondary-btn" style="font-size:11px; padding:4px 8px;" onclick="accHistoryDownloadLetter('${d.id}')" title="Re-download letter">📥 Letter</button>
-                <button class="secondary-btn" style="font-size:11px; padding:4px 8px;" onclick="accHistoryDownloadPacket('${d.id}')" title="Download merged packet">📦 Packet</button>
+                ${pending
+                  ? `<button class="action-btn" style="font-size:11px; padding:4px 10px;" onclick="setAccMode('review'); accOpenDetail('${d.id}');" title="Open this application and decide">📝 Review + decide</button>`
+                  : `<button class="secondary-btn" style="font-size:11px; padding:4px 8px;" onclick="accHistoryDownloadLetter('${d.id}')" title="Re-download letter">📥 Letter</button>
+                     <button class="secondary-btn" style="font-size:11px; padding:4px 8px;" onclick="accHistoryDownloadPacket('${d.id}')" title="Download merged packet">📦 Packet</button>`}
               </div>
             </div>
           `;
