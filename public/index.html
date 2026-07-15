@@ -44068,6 +44068,7 @@ ${questionsPage}
       const rec = payload.recurrence || null;
       const pol = payload.policy || null;   // 'release' (consistent + recurring) vs 'manager_review'
       const credits = payload.open_credits || [];   // credits this vendor OWES us
+      const applied = payload.applied_credit || null;   // ...and whether the bill already carries one
       const body = document.getElementById('ap-detail-body');
       const vendorName = inv.vendors?.name || '(unknown vendor)';
       const pdfUrl = inv.source_storage_path ? '/api/ap-intake/' + encodeURIComponent(inv.id) + '/invoice-file' : null;
@@ -44080,15 +44081,29 @@ ${questionsPage}
       const openForApproval = inv.status === 'awaiting_approval' && !!inv.posting_journal_entry_id;
       const canApprove = openForApproval;   // legacy name kept for the rest of the render
       const notFinal = inv.status !== 'paid' && inv.status !== 'voided';
-      const linesHtml = lines.map((ln) => `
-        <tr style="border-bottom:1px solid #f3f4f6;">
-          <td style="padding:6px 10px;">${apEsc(ln.description)}</td>
+      // A bill coded line by line has to be CORRECTABLE line by line, or the split
+      // is a cage — the invoice-level control can only collapse it. A negative line
+      // is a credit ON the bill; show it as one. (Ed 2026-07-15.)
+      const linesHtml = lines.map((ln) => {
+        const isCredit = Number(ln.amount_cents) < 0;
+        const acctName = ln.chart_of_accounts?.account_name
+          || (ln.gl_account_id ? '(coded)' : '<span style="color:#dc2626;">⚠ no GL</span>');
+        return `
+        <tr style="border-bottom:1px solid #f3f4f6; ${isCredit ? 'background:#f0fdf4;' : ''}">
+          <td style="padding:6px 10px;">${isCredit ? '<span title="A credit on this bill — it reduces what we owe." style="color:#166534; font-weight:700;">💳 </span>' : ''}${apEsc(ln.description)}${ln.notes ? `<div style="color:#5a7390; font-size:11px; margin-top:1px;">${apEsc(ln.notes)}</div>` : ''}</td>
           <td style="padding:6px 10px; text-align:center;">${ln.quantity || 1}</td>
           <td style="padding:6px 10px; font-family:ui-monospace,monospace; font-size:11.5px;">${apEsc(ln.chart_of_accounts?.account_number || '—')}</td>
-          <td style="padding:6px 10px;">${apEsc(ln.chart_of_accounts?.account_name || (ln.gl_account_id ? '(coded)' : '<span style="color:#dc2626;">⚠ no GL</span>'))}</td>
-          <td style="padding:6px 10px; text-align:right; font-family:ui-monospace,monospace;">${apFmtCents(ln.amount_cents)}</td>
-        </tr>
-      `).join('');
+          <td style="padding:6px 10px;">
+            ${ln.chart_of_accounts?.account_name ? apEsc(acctName) : acctName}
+            <button class="secondary-btn" style="font-size:10.5px; padding:1px 7px; margin-left:6px;" onclick="apToggleLineCode('${ln.id}')">Change</button>
+            <div id="ap-linecode-${ln.id}" style="display:none; margin-top:4px;">
+              <input id="ap-linesearch-${ln.id}" type="text" placeholder="Search account…" oninput="apLineCodeSearch('${inv.id}','${ln.id}','${inv.community_id}')" style="width:100%; padding:4px 7px; border:1px solid #cbd5e1; border-radius:5px; font-size:11.5px;">
+              <div id="ap-lineresults-${ln.id}" style="margin-top:3px; max-height:120px; overflow:auto;"></div>
+            </div>
+          </td>
+          <td style="padding:6px 10px; text-align:right; font-family:ui-monospace,monospace; ${isCredit ? 'color:#166534; font-weight:700;' : ''}">${apFmtCents(ln.amount_cents)}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="5" style="padding:8px 10px; color:#888;">No line items on file for this bill — it was coded as a single lump. Re-upload or re-extract to split it.</td></tr>';
       // WHO turned each key is the record — an approval history without names
       // proves nothing. (Ed 2026-07-15.)
       const APPROVAL_LABEL = {
@@ -44156,12 +44171,22 @@ ${questionsPage}
                 <div style="margin-top:4px;">JE: ${inv.posting_journal_entry_id ? '<span style="color:#16a34a;">✓ Posted</span>' : '<span style="color:#dc2626;">⚠ Not posted — GL coding incomplete</span>'}</div>
                 ${credits.length ? `
                   <div style="margin-top:8px; padding:10px 12px; border-radius:6px; background:#fef2f2; border:2px solid #b91c1c;">
-                    <div style="font-weight:800; color:#b91c1c;">💳 THIS VENDOR OWES US A CREDIT — don't pay full</div>
+                    <div style="font-weight:800; color:#b91c1c;">💳 THIS VENDOR OWES US A CREDIT${applied && applied.applied ? '' : " — don't pay full"}</div>
                     ${credits.map((c) => `<div style="color:#334155; margin-top:4px;">
                       • ${apEsc(c.reason)}${c.expected_cents ? ` — <strong>${apFmtCents(c.expected_cents)}</strong>` : ' <em>(amount TBD)</em>'}
                       ${c.source_quote ? `<div style="color:#5a7390; font-style:italic; margin-top:2px;">"${apEsc(String(c.source_quote).slice(0, 220))}"</div>` : ''}
                       <div style="color:#5a7390; font-size:11px;">flagged by ${apEsc(c.requested_by || 'staff')}${c.created_at ? ' · ' + new Date(c.created_at).toLocaleDateString() : ''}</div>
                     </div>`).join('')}
+                    ${applied && applied.applied ? `
+                      <div style="margin-top:8px; padding:7px 9px; border-radius:5px; background:#f0fdf4; border:1px solid #bbf7d0; color:#166534;">
+                        <strong>✅ ${apEsc(applied.amount_matches === true ? 'The credit appears to be applied in full.' : 'A credit appears to be applied on this bill.')}</strong>
+                        <div style="color:#334155; margin-top:2px;">${apEsc(applied.note || '')}</div>
+                      </div>` : ''}
+                  </div>` : ''}
+                ${!credits.length && applied && applied.applied ? `
+                  <div style="margin-top:8px; padding:8px 10px; border-radius:6px; background:#f0fdf4; border:1px solid #bbf7d0;">
+                    <div style="font-weight:700; color:#166534;">💳 This bill already carries a credit</div>
+                    <div style="color:#334155; margin-top:2px;">${apEsc(applied.note || '')}</div>
                   </div>` : ''}
                 ${pol ? `
                   <div style="margin-top:8px; padding:8px 10px; border-radius:6px; background:${pol.path === 'release' ? '#f0fdf4' : '#fffbeb'}; border:1px solid ${pol.path === 'release' ? '#bbf7d0' : '#fde047'};">
@@ -44464,6 +44489,49 @@ ${questionsPage}
         console.warn('[ap] manager queue:', e.message);
         if (!el.innerHTML) el.style.display = 'none';
       }
+    };
+
+    // Per-LINE re-coding. Same rule as the invoice-level control: the server
+    // decides whether it's the exception and asks for a reason. (Ed 2026-07-15.)
+    window.apToggleLineCode = function (lineId) {
+      const el = document.getElementById('ap-linecode-' + lineId);
+      if (!el) return;
+      const showing = el.style.display !== 'none';
+      el.style.display = showing ? 'none' : '';
+      if (!showing) { const s = document.getElementById('ap-linesearch-' + lineId); if (s) s.focus(); }
+    };
+    // Same chart source + same cache as the invoice-level search — one way to
+    // find an account, not two.
+    window.apLineCodeSearch = async function (invId, lineId, communityId) {
+      const q = ((document.getElementById('ap-linesearch-' + lineId) || {}).value || '').trim().toLowerCase();
+      const res = document.getElementById('ap-lineresults-' + lineId); if (!res) return;
+      let accts = _apChart[communityId];
+      if (!accts) {
+        try { const r = await (window._authFetch || fetch)('/api/gl/' + encodeURIComponent(communityId) + '/chart-of-accounts'); const j = await r.json(); accts = j.accounts || j.chart || (Array.isArray(j) ? j : []); _apChart[communityId] = accts; }
+        catch (e) { res.innerHTML = '<div style="color:#dc2626; font-size:11px;">Could not load the chart.</div>'; return; }
+      }
+      const exp = accts.filter((a) => String(a.account_type || '') === 'expense' || /^5/.test(String(a.account_number || '')));
+      const hits = (q ? exp.filter((a) => (a.account_number + ' ' + a.account_name).toLowerCase().includes(q)) : exp).slice(0, 8);
+      res.innerHTML = hits.length
+        ? hits.map((a) => `<div style="display:flex; justify-content:space-between; gap:6px; padding:3px 5px; border-bottom:1px solid #eef2f7; align-items:center;"><span style="font-size:11.5px;">${apEsc(a.account_number)} ${apEsc(a.account_name)}</span><button class="secondary-btn" style="font-size:10.5px; padding:2px 7px;" onclick="apSetLineCode('${invId}','${lineId}','${a.id}')">Set</button></div>`).join('')
+        : '<div style="font-size:11px; color:#888; padding:3px;">No matching expense account.</div>';
+    };
+    window.apSetLineCode = async function (invId, lineId, glId) {
+      try {
+        const fetchFn = window._authFetch || fetch;
+        const post = (body) => fetchFn('/api/ap/invoices/' + encodeURIComponent(invId) + '/lines/' + encodeURIComponent(lineId) + '/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        let r = await post({ gl_account_id: glId });
+        let j = await r.json();
+        if (!r.ok && j.error === 'reason_required') {
+          const reason = prompt((j.detail || 'Changing a posted line is an exception.') + '\n\nWhy is this line being re-coded?');
+          if (!reason || !reason.trim()) return;
+          r = await post({ gl_account_id: glId, reason: reason.trim() });
+          j = await r.json();
+        }
+        if (!r.ok) throw new Error(j.detail || j.error || 'code failed');
+        if (j.warning) alert(j.warning);
+        apOpenInvoice(invId); apLoadList(); apLoadCounts();
+      } catch (e) { alert('Could not set the line\'s account: ' + e.message); }
     };
 
     // Reveal the account search on an already-coded bill. Coded bills show the
