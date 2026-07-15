@@ -541,7 +541,7 @@ function forwardPrompt(id, senderEmail){
   // (Emma for AP/invoices, Annie for ACC, Miranda for DRV) and it lands in their queue.
   const aiOpts = `<optgroup label="AI team"><option value="emma@bedrocktx.com" data-name="Emma">Emma Brooks — accounts payable</option><option value="annie@bedrocktx.com" data-name="Annie">Annie Reeves — architectural (ACC/ARC)</option><option value="miranda@bedrocktx.com" data-name="Miranda">Miranda Pierce — compliance / DRV</option></optgroup>`;
   box.innerHTML = `<div class="draftbox">
-    <div class="note">↪ Forward to a teammate — or hand to an AI teammate (Emma/Annie/Miranda) who owns it — to check before we reply. They get this email + Claire's draft + your note. Nothing goes to the homeowner.</div>
+    <div class="note">↪ Forward to a teammate — or hand to an AI teammate (Emma/Annie/Miranda) who owns it — to check before we reply. They get this email, the full conversation history, and your note. Claire's draft is not included. Nothing goes to the homeowner.</div>
     <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:6px 0;">
       <select id="fwd-to-${id}" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px;min-width:200px;">
         ${opts ? '<option value="">— pick a teammate —</option><option value="__all__">👥 Everyone (all teammates)</option>'+opts+aiOpts : '<option value="">— pick —</option>'+aiOpts}

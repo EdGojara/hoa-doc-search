@@ -444,7 +444,9 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
 });
 
 // POST /:id/forward-internal — hand this item to a teammate to verify / weigh
-// in BEFORE we reply. Sends the homeowner's message + Claire's draft + your note
+// in BEFORE we reply. Sends the homeowner's message + the whole conversation + your note.
+// Claire's DRAFT is deliberately not included: she forwards when she can't answer,
+// so the draft is a non-answer that only adds noise. (Ed 2026-07-15.)
 // from Ed's office to the teammate's inbox, and records the hand-off on the item.
 // Nothing goes to the homeowner. (Ed 2026-07-13 — the light-touch "loop someone
 // in" option, not a new assignment workflow.)
@@ -577,7 +579,9 @@ router.post('/:id/forward-note', express.json(), async (req, res) => {
     const { draftForwardNote } = require('../lib/email/compose_draft');
     const out = await draftForwardNote({
       thoughts, toName,
-      email: { subject: m.subject, sender_name: m.sender_name, ai_summary: m.ai_summary, draft_body: (m.extracted && m.extracted.draft && m.extracted.draft.body) || '' },
+      // No draft_body: forwards don't carry Claire's draft, so the note must not
+      // reference one. (Ed 2026-07-15.)
+      email: { subject: m.subject, sender_name: m.sender_name, ai_summary: m.ai_summary },
     });
     res.json({ ok: true, note: out.note, degraded: out.degraded });
   } catch (err) {
