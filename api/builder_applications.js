@@ -1836,6 +1836,25 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
     const validActions = ['approve', 'approve_with_conditions', 'deny', 'request_more_info'];
     if (!validActions.includes(action)) return res.status(400).json({ error: 'invalid action' });
     if (!decided_by) return res.status(400).json({ error: 'decided_by is required' });
+    // An approval letter goes to the builder and then to a CITY PERMIT OFFICE.
+    // Refuse to mint one from an application that isn't sound — a blank plan or
+    // a missing master-plan link means the letter asserts an approval with
+    // nothing behind it, and the renderer will happily print it. Denials and
+    // more-info requests don't assert an approved plan, so they aren't gated.
+    // (Ed 2026-07-15: "it is going to client builders and the city we have to
+    // get this right".)
+    if (action === 'approve' || action === 'approve_with_conditions') {
+      const { validateApplicationForLetterById } = require('../lib/builder_letter_validate');
+      const v = await validateApplicationForLetterById(supabase, req.params.id);
+      if (!v.ok) {
+        return res.status(422).json({
+          error: 'application_not_ready_for_approval_letter',
+          detail: 'This application isn\'t sound enough to print an approval letter a city will act on. Fix these first:',
+          problems: v.errors,
+          warnings: v.warnings,
+        });
+      }
+    }
     if (action === 'approve_with_conditions' && !conditions) {
       return res.status(400).json({ error: 'conditions are required for approve_with_conditions' });
     }
@@ -2254,6 +2273,22 @@ router.post('/:id/send', express.json({ limit: '256kb' }), async (req, res) => {
     const app = env.app;
     const response = env.response;
     if (response.email_sent_at) return res.status(400).json({ error: 'already sent', email_sent_at: response.email_sent_at });
+
+    // Last gate before it leaves the building. /finalize already checks, but a
+    // letter can be finalized and sent minutes apart, and the application can be
+    // edited in between — the check belongs at the door too, not only upstream.
+    if (String(response.response_type || '').startsWith('approve')) {
+      const { validateApplicationForLetterById } = require('../lib/builder_letter_validate');
+      const v = await validateApplicationForLetterById(supabase, req.params.id);
+      if (!v.ok) {
+        return res.status(422).json({
+          error: 'application_not_ready_for_approval_letter',
+          detail: 'Not sending — this approval letter would go to the builder and on to a permit office, and the application behind it has problems:',
+          problems: v.errors,
+          warnings: v.warnings,
+        });
+      }
+    }
 
     const toEmail = req.body.to || env.toEmail;
     const bcc = [ARCHIVE_BCC];

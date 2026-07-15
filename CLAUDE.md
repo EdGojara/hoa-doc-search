@@ -771,6 +771,66 @@ the account. Three distinct defects in `gl_classifier` branch 3:
   `✓ matched`, `✓ verified`) without naming *what* it decided is unauditable.
   Show the value, always. This bug survived only because the account was hidden.
 
+### A catastrophic-output surface needs a validator, because the renderer never throws
+
+**Scar**: 2026-07-15. 14250 Emily Bend was one click from sending the City of
+Needville an ARC approval letter citing **no approved plan at all**. DRB's own
+packet has the plan name garbled on the page ("Soufwork" for "Southfork"), so
+extraction wrote `plan_number = "UNKNOWN"` and `plan_name = "Soulfork/2380"`.
+The master-plan matcher is *correct* — it keys on `plan_number + elevation` —
+so it had nothing to match on and rightly returned `null`. **And nothing
+noticed.** Five more approved applications had `plan_name = null` and would have
+printed a letter with a blank where the plan goes. Ed: *"WTF claude this is
+important it is going to client builders and the city we have to get this
+right."*
+
+The trap: **`renderBuilderLetterHTML` never throws.** Hand it a null plan and it
+cheerfully renders a clean, professional, wrong letter. "It renders" was the
+only gate, and "it renders" is not "it's correct."
+
+**Rules**:
+- **Extraction quality is not a control.** Extraction reads what builders send,
+  and builders send contradictory documents (this same packet's form said 8122
+  while the site plan inside said 8118). You cannot fix this upstream. Gate the
+  OUTPUT: `lib/builder_letter_validate.js` blocks the letter and says exactly
+  what's wrong. `/finalize` AND `/send` both check — a letter can be finalized
+  and sent minutes apart, and the application can change in between.
+- **Validate the LINK, not just presence.** The worst failure isn't a missing
+  master plan, it's one that points at the *wrong* plan: the letter renders
+  perfectly and asserts an approval the association never gave. Assert the
+  linked plan's number AND elevation match the application, that it's approved,
+  and that it's approved *at that community* and not retired.
+- **Warnings must not block.** A control that fires on everything gets ignored.
+  Missing block/section warns; a blank plan blocks.
+- Every catastrophic-output surface in the table above needs this shape. Builder
+  ARC now has it (`tests/test_builder_letter_validate.js`, wired to `npm test`,
+  with a live check that no approved application can fail). DRV letters,
+  estoppels, and assessment statements still don't.
+
+### Never destructure `data` without `error` — a broken query looks exactly like "no results"
+
+**Scar**: 2026-07-15, hit **four times in one session** while diagnosing live
+data, each time producing a confident, false conclusion:
+
+| Query | Reported | Truth |
+|---|---|---|
+| `journal_entries(entry_date…)` | "no prior Swim Houston history" | column is `posting_date`; history existed |
+| `builder_master_plans` | "no KIMBELL plan exists" | table is `master_plans`; 6 existed |
+| `master_plan_community_approvals(status)` | "0 plans approved at August Meadows" | no `status` column; 126 were |
+| `email_messages(from_address)` | "0 rows" | column is `sender_email` |
+
+PostgREST fails the **whole** query on one unknown column or table and returns
+`{data: null, error}`. Code that writes `const { data } = await supabase...`
+then `(data || []).length` renders that as a clean, confident **zero**. It is
+indistinguishable from a true empty result, and it reads as a finding.
+
+**Rule**: in any diagnostic script, one-off probe, or endpoint, **always
+destructure `error` and fail loudly on it.** Never `const { data } = await
+supabase…`. When a query returns zero rows against expectations, the FIRST move
+is to re-run it selecting `*` and print the error — not to conclude the data
+isn't there. This is the same family as the truncation and GRANT scars: the
+failure mode is a *plausible* answer, not an exception.
+
 ### Geocoding must validate against the community cluster
 
 **Scar**: 2026-07-05, a Canyon Gate field crew hit "some houses have no pins."
