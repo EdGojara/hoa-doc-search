@@ -344,8 +344,11 @@ router.get('/invoices', async (req, res) => {
   try {
     const { community_id, vendor_id, status, due_before, limit = '100' } = req.query;
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    // Approvals ride along so the list can show WHO approved in the status —
+    // "Awaiting Approval" doesn't tell you whether it's waiting on a manager or
+    // on Ed. (Ed 2026-07-15.)
     let q = supabase.from('ap_invoices')
-      .select('*, vendors(name, category)')
+      .select('*, vendors(name, category), ap_invoice_approvals(action, user_name, created_at)')
       .eq('community_id', community_id)
       .order('due_date', { ascending: true, nullsFirst: false })
       .limit(Math.min(parseInt(limit, 10) || 100, 500));
@@ -377,16 +380,64 @@ router.get('/invoices/:id', async (req, res) => {
   }
 });
 
+// POST /invoices/:id/approve — TWO-KEY approval (Ed 2026-07-15).
+//   Key 1 (manager: staff/assistant) — attests the bill is legitimate. Records
+//     WHO and WHEN. Does NOT release money.
+//   Key 2 (admin: Ed) — releases it for payment. Requires key 1 first, so one
+//     person can never both vouch for a bill and pay it. That separation IS the
+//     control; the rest is bookkeeping.
+//
+// The approver is taken from the SESSION, never req.body. This endpoint used to
+// accept user_id/user_name from the request body, so "who approved" was whatever
+// the client claimed — a forgeable audit trail makes a two-key control theater.
 router.post('/invoices/:id/approve', express.json(), async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await approveInvoice({
-      invoice_id: id,
-      user_id: req.body?.user_id || null,
-      user_name: req.body?.user_name || null,
-      notes: req.body?.notes || null,
-    });
-    res.json(result);
+    const { resolveUserRole } = require('./users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required', detail: 'Sign in to approve invoices.' });
+    if (ctx.user && ctx.user.is_active === false) return res.status(403).json({ error: 'account_deactivated' });
+    const userId = (ctx.user && ctx.user.id) || null;
+    const userName = (ctx.user && (ctx.user.full_name || ctx.user.email)) || 'staff';
+    const isAdmin = ctx.role === 'admin';
+    const notes = (req.body || {}).notes || null;
+
+    const { data: inv } = await supabase.from('ap_invoices').select('id, status, total_cents, posting_journal_entry_id').eq('id', id).maybeSingle();
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    if (inv.status === 'voided') return res.status(400).json({ error: 'voided', detail: 'This invoice was voided.' });
+    if (!inv.posting_journal_entry_id) return res.status(400).json({ error: 'not_coded', detail: 'Code the expense account first — an uncoded bill has no journal entry to approve.' });
+
+    const { data: prior } = await supabase.from('ap_invoice_approvals')
+      .select('action, user_id, user_name, created_at').eq('invoice_id', id).order('created_at');
+    const mgr = (prior || []).find((a) => a.action === 'approved');
+
+    // ---- Key 1: manager ----
+    if (!isAdmin) {
+      if (mgr) return res.json({ ok: true, stage: 'manager_approved', already: true, manager: mgr });
+      if (String((req.body || {}).decision || '').toLowerCase() === 'no') {
+        await supabase.from('ap_invoice_approvals').insert({ invoice_id: id, action: 'rejected', user_id: userId, user_name: userName, amount_at_time_cents: inv.total_cents, notes });
+        await supabase.from('ap_invoices').update({ status: 'disputed' }).eq('id', id);
+        return res.json({ ok: true, stage: 'manager_rejected', by: userName });
+      }
+      await supabase.from('ap_invoice_approvals').insert({ invoice_id: id, action: 'approved', user_id: userId, user_name: userName, amount_at_time_cents: inv.total_cents, notes });
+      return res.json({ ok: true, stage: 'manager_approved', by: userName, at: new Date().toISOString() });
+    }
+
+    // ---- Key 2: admin release ----
+    if (!mgr) {
+      return res.status(400).json({
+        error: 'no_manager_approval',
+        detail: 'A manager approves first — that is the first of the two keys. Once a manager approves, you can release it for payment.',
+      });
+    }
+    if (userId && mgr.user_id && String(mgr.user_id) === String(userId)) {
+      return res.status(400).json({
+        error: 'same_approver',
+        detail: `You recorded the manager approval on this invoice. Two-key approval needs two people — have someone else approve it first.`,
+      });
+    }
+    const result = await approveInvoice({ invoice_id: id, user_id: userId, user_name: userName, notes, action: 'released_for_payment' });
+    return res.json({ ...result, stage: 'released_for_payment', by: userName, manager_approved_by: mgr.user_name || null });
   } catch (err) {
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'not_found') {
       return res.status(400).json({ error: err.message, code: err.code });

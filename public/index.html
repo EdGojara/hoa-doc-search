@@ -43687,6 +43687,19 @@ ${questionsPage}
       const ms = new Date(d + 'T12:00:00Z').getTime() - Date.now();
       return Math.round(ms / 86400000);
     }
+    // Two-key approval, readable at a glance: an invoice waiting on a manager
+    // and one waiting on Ed are NOT the same state, and "who vouched for this"
+    // is the whole point of the first key. (Ed 2026-07-15.)
+    function apApprovalBadge(inv) {
+      const aps = (inv && inv.ap_invoice_approvals) || [];
+      const mgr = aps.find((a) => a.action === 'approved');
+      const rejected = aps.find((a) => a.action === 'rejected');
+      const pill = (txt, bg, fg, title) => `<span title="${apEsc(title || '')}" style="display:inline-block;background:${bg};color:${fg};font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:20px;margin-left:4px;">${apEsc(txt)}</span>`;
+      if (rejected) return pill(`✗ Rejected by ${String(rejected.user_name || 'staff').split(' ')[0]}`, '#fee2e2', '#991b1b', rejected.notes || '');
+      if (!mgr) return '';
+      const when = mgr.created_at ? new Date(mgr.created_at).toLocaleDateString() : '';
+      return pill(`👍 Mgr: ${String(mgr.user_name || 'staff').split(' ')[0]}`, '#dcfce7', '#166534', `Manager approval by ${mgr.user_name || 'staff'} on ${when}`);
+    }
     function apStatusBadge(s) {
       const map = {
         awaiting_approval: { txt: '⏳ Awaiting Approval', bg: '#fef3c7', fg: '#92400e' },
@@ -43815,7 +43828,7 @@ ${questionsPage}
                     <td style="padding:8px 10px; color:${dueColor};">${apEsc(apFmtDate(inv.due_date))}${daysUntil != null && daysUntil < 0 ? ` <strong>(${Math.abs(daysUntil)}d late)</strong>` : daysUntil != null && daysUntil <= 7 ? ` <strong>(${daysUntil}d)</strong>` : ''}</td>
                     <td style="padding:8px 10px; text-align:right; font-family:ui-monospace,monospace; font-weight:600;">${apFmtCents(inv.total_cents)}</td>
                     <td style="padding:8px 10px; text-align:center;">${apConfidenceBadge(inv.auto_coding_confidence)}</td>
-                    <td style="padding:8px 10px; text-align:center;">${apStatusBadge(inv.status)}</td>
+                    <td style="padding:8px 10px; text-align:center;">${apStatusBadge(inv.status)}${apApprovalBadge(inv)}</td>
                   </tr>
                 `;
               }).join('')}
@@ -43978,7 +43991,14 @@ ${questionsPage}
       const body = document.getElementById('ap-detail-body');
       const vendorName = inv.vendors?.name || '(unknown vendor)';
       const pdfUrl = inv.source_storage_path ? '/api/ap-intake/' + encodeURIComponent(inv.id) + '/invoice-file' : null;
-      const canApprove = inv.status === 'awaiting_approval' && !!inv.posting_journal_entry_id;
+      // Two-key approval. Key 1 = a manager attests the bill is legitimate.
+      // Key 2 = Ed (admin) releases the money. One person can't do both.
+      const _me = window.currentUser || {};
+      const isAdmin = _me.role === 'admin';
+      const mgrApproval = approvals.find((a) => a.action === 'approved') || null;
+      const released = approvals.find((a) => a.action === 'released_for_payment') || null;
+      const openForApproval = inv.status === 'awaiting_approval' && !!inv.posting_journal_entry_id;
+      const canApprove = openForApproval;   // legacy name kept for the rest of the render
       const notFinal = inv.status !== 'paid' && inv.status !== 'voided';
       const linesHtml = lines.map((ln) => `
         <tr style="border-bottom:1px solid #f3f4f6;">
@@ -43989,10 +44009,21 @@ ${questionsPage}
           <td style="padding:6px 10px; text-align:right; font-family:ui-monospace,monospace;">${apFmtCents(ln.amount_cents)}</td>
         </tr>
       `).join('');
+      // WHO turned each key is the record — an approval history without names
+      // proves nothing. (Ed 2026-07-15.)
+      const APPROVAL_LABEL = {
+        approved: '👍 Manager approval',
+        released_for_payment: '✓ Released for payment (admin)',
+        rejected: '✗ Rejected',
+        submitted: 'Submitted',
+        requested_more_info: 'More info requested',
+        reassigned: 'Reassigned',
+        voided: 'Voided',
+      };
       const approvalsHtml = approvals.map((a) => `
-        <div style="padding:6px 10px; border-bottom:1px solid #eee; font-size:12px; display:flex; justify-content:space-between;">
-          <span><strong>${apEsc(a.action.replace(/_/g, ' '))}</strong>${a.notes ? ' — ' + apEsc(a.notes) : ''}</span>
-          <span style="color:#5a7390;">${new Date(a.created_at).toLocaleString()}</span>
+        <div style="padding:6px 10px; border-bottom:1px solid #eee; font-size:12px; display:flex; justify-content:space-between; gap:8px;">
+          <span><strong>${apEsc(APPROVAL_LABEL[a.action] || a.action.replace(/_/g, ' '))}</strong>${a.user_name ? ' — <strong style="color:#0B1D34;">' + apEsc(a.user_name) + '</strong>' : ''}${a.notes ? '<div style="color:#5a7390; margin-top:2px;">' + apEsc(a.notes) + '</div>' : ''}</span>
+          <span style="color:#5a7390; white-space:nowrap;">${new Date(a.created_at).toLocaleString()}</span>
         </div>
       `).join('');
       body.innerHTML = `
@@ -44066,7 +44097,13 @@ ${questionsPage}
               <button class="secondary-btn" onclick="apCloseDetail()">Close</button>
               ${notFinal ? `<button class="secondary-btn" onclick="apVoidInvoice('${inv.id}')" style="color:#b91c1c; border-color:#fecaca;" title="Vendor sent another copy — discard this duplicate">🗑 Delete duplicate</button>` : ''}
               ${notFinal ? `<button class="secondary-btn" onclick="apMarkPaid('${inv.id}', ${(inv.total_cents || 0) - (inv.amount_paid_cents || 0)})" title="Already paid by ACH / debit card — record the entry, no check">💳 Already paid</button>` : ''}
-              ${canApprove ? `<button class="action-btn" onclick="apApproveInvoice('${inv.id}')" style="background:#16a34a; border-color:#15803d;">✓ Approve Invoice</button>` : ''}
+              ${openForApproval && !isAdmin && !mgrApproval
+                ? `<button class="action-btn" onclick="apManagerApprove('${inv.id}')" style="background:#0B1D34; border-color:#0B1D34;" title="Manager approval — confirms this bill is legitimate. Does not pay it.">👍 Manager approval</button>` : ''}
+              ${openForApproval && isAdmin
+                ? (mgrApproval
+                    ? `<button class="action-btn" onclick="apApproveInvoice('${inv.id}')" style="background:#16a34a; border-color:#15803d;" title="Release for payment — the second key. Manager approved by ${apEsc(mgrApproval.user_name || 'staff')}.">✓ Release for payment</button>`
+                    : `<span style="font-size:12px; color:#92400e; background:#fef3c7; border:1px solid #fde047; border-radius:6px; padding:6px 10px;" title="Two-key approval: a manager vouches for the bill, then you release the money.">⏳ Waiting on a manager approval first</span>`)
+                : ''}
             </div>
           </div>
           <div id="ap-paidpanel-${inv.id}" style="display:none; margin-top:12px; padding:12px 14px; background:#f0f7ff; border:1px solid #bcdcff; border-radius:8px;">
@@ -44114,14 +44151,41 @@ ${questionsPage}
       } catch (_) { /* non-fatal — the manual search box is always there */ }
     };
 
-    window.apApproveInvoice = async function (id) {
-      if (!confirm('Approve this invoice for payment?')) return;
+    // KEY 1 — manager approval. Yes/no. Confirms the bill is legitimate; does
+    // NOT pay it. Ed releases the money separately. (Ed 2026-07-15.)
+    window.apManagerApprove = async function (id) {
+      const ok = confirm('MANAGER APPROVAL\n\nIs this invoice legitimate and correctly coded — OK to send to Ed for payment?\n\nOK = approve (your name is recorded on it)\nCancel = choose "no" / reject');
+      let decision = 'yes', notes = null;
+      if (!ok) {
+        notes = prompt('Rejecting — why? (this is recorded on the invoice)', '');
+        if (notes === null) return;   // backed out entirely
+        decision = 'no';
+      }
       try {
-        const r = await fetch('/api/ap/invoices/' + encodeURIComponent(id) + '/approve', {
+        const r = await (window._authFetch || fetch)('/api/ap/invoices/' + encodeURIComponent(id) + '/approve', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, notes }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || j.error || 'approval failed');
+        alert(j.stage === 'manager_rejected'
+          ? `Rejected. Recorded against your name — it won't go to Ed for payment.`
+          : `✓ Manager approved as ${j.by || 'you'}. It now needs Ed's release before it can be paid.`);
+        apOpenInvoice(id); apLoadList(); apLoadCounts();
+      } catch (e) { alert('Could not record approval: ' + e.message); }
+    };
+
+    // KEY 2 — admin release (Ed). Frees the money. Requires a manager approval.
+    window.apApproveInvoice = async function (id) {
+      if (!confirm('Release this invoice for payment?\n\nThis is the second key — it makes the bill payable and eligible for a check run.')) return;
+      try {
+        // _authFetch carries the Bearer token: the approver is now taken from the
+        // SESSION, not the request body, so a plain fetch would 401 (and used to
+        // let the client name its own approver).
+        const r = await (window._authFetch || fetch)('/api/ap/invoices/' + encodeURIComponent(id) + '/approve', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
         });
         const j = await r.json();
-        if (!r.ok) throw new Error(j.error || 'approve failed');
+        if (!r.ok) throw new Error(j.detail || j.error || 'approve failed');
         apOpenInvoice(id);  // re-render with updated state
         apLoadList();
         apLoadCounts();
