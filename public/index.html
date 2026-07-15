@@ -32504,7 +32504,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
               ? `<span style="display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:20px;background:#f1f5f9;color:#475569;margin-left:4px;" title="Receipt sent ${escapeHtml(String(d.acknowledged_at).slice(0,10))}">✉️ Receipt sent</span>`
               : `<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:20px;background:#fee2e2;color:#b91c1c;margin-left:4px;" title="${escapeHtml(d.acknowledgment_error || 'No acknowledgment recorded for this application')}">⚠️ No receipt — they never heard from us</span>`;
           return `
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; padding:10px 14px; border-bottom:1px solid #f1f5f9; gap:12px; ${pending ? 'background:#fffdf7;' : ''}">
+            <div style="border-bottom:1px solid #f1f5f9;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; padding:10px 14px; gap:12px; ${pending ? 'background:#fffdf7;' : ''}">
               <div style="flex:1; min-width:0;">
                 <div style="font-weight:600; color:#1E2761; font-size:13px;">${escapeHtml(d.homeowner_address || '—')}</div>
                 <div style="font-size:12px; color:#475569; margin-top:2px;">
@@ -32516,11 +32517,14 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                 </div>
               </div>
               <div style="display:flex; gap:4px; flex-shrink:0;">
+                ${d.source === 'email' ? `<button class="secondary-btn" style="font-size:11px; padding:4px 8px;" onclick="accHistoryEmail('${d.id}')" title="Read the email this came in on and reply as Annie">📧 Email</button>` : ''}
                 ${pending
                   ? `<button class="action-btn" style="font-size:11px; padding:4px 10px;" onclick="setAccMode('review'); accOpenDetail('${d.id}');" title="Open this application and decide">📝 Review + decide</button>`
                   : `<button class="secondary-btn" style="font-size:11px; padding:4px 8px;" onclick="accHistoryDownloadLetter('${d.id}')" title="Re-download letter">📥 Letter</button>
                      <button class="secondary-btn" style="font-size:11px; padding:4px 8px;" onclick="accHistoryDownloadPacket('${d.id}')" title="Download merged packet">📦 Packet</button>`}
               </div>
+            </div>
+            <div id="accmail-${d.id}"></div>
             </div>
           `;
         };
@@ -32555,6 +32559,68 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         list.innerHTML = '<div style="color:#b91c1c; font-size:13px; padding:14px;">Could not load: ' + (e.message || e) + '</div>';
       }
     }, 200);
+  }
+
+  // Read the email an application came in on, and answer it as Annie — without
+  // leaving the queue. (Ed 2026-07-15: "link to email from this page and respond
+  // via Annie from their email from here — again ease of use for user.")
+  async function accHistoryEmail(id) {
+    const box = document.getElementById('accmail-' + id);
+    if (!box) return;
+    if (box.innerHTML.trim()) { box.innerHTML = ''; return; }   // toggle closed
+    box.innerHTML = '<div style="padding:10px 14px; font-size:12px; color:#64748b;">Loading the email…</div>';
+    let j;
+    try {
+      const r = await fetch('/acc-review/decisions/' + id + '/email');
+      j = await r.json();
+      if (j.error) throw new Error(j.error);
+    } catch (e) {
+      box.innerHTML = '<div style="padding:10px 14px; font-size:12px; color:#b91c1c;">Could not load the email: ' + escapeHtml(e.message || String(e)) + '</div>';
+      return;
+    }
+    const m = j.email;
+    const to = j.reply_to || '';
+    const body = m ? String(m.body_full || m.body_preview || '') : '';
+    box.innerHTML = `
+      <div style="background:#f8fafc; border-top:1px solid #e5e7eb; padding:12px 14px;">
+        ${m ? `
+          <div style="font-size:11.5px; color:#64748b;">${escapeHtml(m.sender_name || '')} &lt;${escapeHtml(m.sender_email || '')}&gt; · ${m.received_at ? new Date(m.received_at).toLocaleString('en-US', { timeZone: 'America/Chicago' }) : ''}${j.linked ? '' : ' · <span style="color:#b45309;">closest match — the source link was broken</span>'}</div>
+          <div style="font-weight:600; font-size:12.5px; margin:3px 0;">${escapeHtml(m.subject || '(no subject)')}</div>
+          <div style="white-space:pre-wrap; font-size:12.5px; color:#334155; max-height:220px; overflow:auto; background:#fff; border:1px solid #e5e7eb; border-radius:6px; padding:8px;">${escapeHtml(body.slice(0, 4000)) || '<span style="color:#94a3b8;">(no body captured)</span>'}</div>
+        ` : `<div style="font-size:12px; color:#b45309;">No source email found for this application${to ? ' — you can still write to ' + escapeHtml(to) : ''}.</div>`}
+        <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <label style="font-size:11.5px; color:#64748b;">Reply to</label>
+          <input id="accmail-to-${id}" type="text" value="${escapeHtml(to)}" style="flex:1; min-width:220px; padding:6px 9px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;">
+        </div>
+        <textarea id="accmail-body-${id}" rows="4" placeholder="Write Annie's reply — she signs it. Nothing sends until you press Send." style="width:100%; margin-top:6px; padding:8px 9px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;"></textarea>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+          <button class="action-btn" style="font-size:11.5px; padding:5px 12px;" onclick="accHistoryReply('${id}')">✉️ Send as Annie</button>
+          <button class="secondary-btn" style="font-size:11.5px; padding:5px 10px;" onclick="document.getElementById('accmail-${id}').innerHTML='';">Close</button>
+          <span style="font-size:11px; color:#64748b;">Sends from annie@bedrocktx.com</span>
+          <span id="accmail-msg-${id}" style="font-size:11.5px;"></span>
+        </div>
+      </div>`;
+  }
+
+  async function accHistoryReply(id) {
+    const to = (document.getElementById('accmail-to-' + id) || {}).value || '';
+    const body = (document.getElementById('accmail-body-' + id) || {}).value || '';
+    const msg = document.getElementById('accmail-msg-' + id);
+    if (!body.trim()) { if (msg) { msg.style.color = '#b91c1c'; msg.textContent = 'Write a message first.'; } return; }
+    if (!confirm(`Send this to ${to} as Annie now?`)) return;
+    if (msg) { msg.style.color = '#64748b'; msg.textContent = 'Sending…'; }
+    try {
+      const r = await fetch('/acc-review/decisions/' + id + '/reply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: to.trim(), body: body.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || 'send failed');
+      if (msg) { msg.style.color = '#166534'; msg.textContent = '✅ Sent to ' + j.to; }
+      setTimeout(() => { const b = document.getElementById('accmail-' + id); if (b) b.innerHTML = ''; accLoadHistory(); }, 900);
+    } catch (e) {
+      if (msg) { msg.style.color = '#b91c1c'; msg.textContent = 'Could not send: ' + (e.message || e); }
+    }
   }
 
   async function accHistoryDownloadLetter(id) {

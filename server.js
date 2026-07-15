@@ -2313,6 +2313,90 @@ app.get('/acc-review/decisions', async (req, res) => {
   }
 });
 
+// GET /acc-review/decisions/:id/email — the email an emailed application arrived
+// on, so staff can read the homeowner's own words and answer WITHOUT leaving the
+// queue. (Ed 2026-07-15: "I want to be able to link to email from this page and
+// respond via Annie from their email from here — again ease of use.")
+app.get('/acc-review/decisions/:id/email', async (req, res) => {
+  try {
+    const { data: d } = await supabase.from('acc_decisions')
+      .select('id, intake_source_ref, submitter_email, homeowner_name, reference_number, community_name')
+      .eq('id', req.params.id).maybeSingle();
+    if (!d) return res.status(404).json({ error: 'not_found' });
+    const COLS = 'id, subject, sender_email, sender_name, body_full, body_preview, received_at, graph_id, mailbox';
+    const gid = String(d.intake_source_ref || '').startsWith('email:') ? d.intake_source_ref.slice(6) : null;
+    let email = null;
+    if (gid) {
+      const { data: m } = await supabase.from('email_messages').select(COLS).eq('graph_id', gid).maybeSingle();
+      email = m || null;
+    }
+    // Fallback: filing the message to a folder rewrites its Graph id, which can
+    // orphan intake_source_ref. Don't show the operator nothing — find the
+    // applicant's most recent inbound instead.
+    if (!email && d.submitter_email) {
+      const { data: m2 } = await supabase.from('email_messages').select(COLS)
+        .ilike('sender_email', d.submitter_email).eq('direction', 'inbound')
+        .order('received_at', { ascending: false }).limit(1).maybeSingle();
+      email = m2 || null;
+    }
+    // Reply target: the address that actually WROTE to us beats submitter_email,
+    // which is parsed off the form and can be misread (see WAT-ARC-2026-0003).
+    const replyTo = (email && email.sender_email) || d.submitter_email || null;
+    res.json({
+      ok: true, email, reply_to: replyTo,
+      linked: !!(gid && email && email.graph_id === gid),
+      decision: { reference_number: d.reference_number, homeowner_name: d.homeowner_name, community_name: d.community_name },
+    });
+  } catch (err) {
+    console.error('[acc-review/decisions/:id/email] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /acc-review/decisions/:id/reply — Annie answers the applicant from the
+// queue. HUMAN-RELEASED: a person typed this and pressed send, so it is NOT
+// gated by the automated-outbound kill switch — the click IS the release.
+app.post('/acc-review/decisions/:id/reply', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const to = String(b.to || '').trim();
+    const body = String(b.body || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: 'A valid recipient email is required.' });
+    if (!body) return res.status(400).json({ error: 'Write a message before sending.' });
+    const { data: d } = await supabase.from('acc_decisions')
+      .select('id, reference_number, homeowner_address, community_id, community_name, acknowledged_at').eq('id', req.params.id).maybeSingle();
+    if (!d) return res.status(404).json({ error: 'not_found' });
+    const graph = require('./lib/email/graph_send');
+    if (!graph.isConfigured()) return res.status(400).json({ error: 'Email is not connected.' });
+    const subject = String(b.subject || '').trim()
+      || `Your architectural application${d.reference_number ? ` (${d.reference_number})` : ''}`;
+    const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;white-space:pre-wrap;">${body.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</div>
+      <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a2230;margin-top:14px;">Thank you,<br>Annie Reeves<br>Architectural Review Coordinator<br>Bedrock Association Management</div>`;
+    await graph.sendAs({ from: graph.ANNIE_MAILBOX, to, subject, html });
+    // Log it so the reply shows on the team board like any other outbound.
+    try {
+      await supabase.from('email_messages').insert({
+        mailbox: graph.ANNIE_MAILBOX, direction: 'outbound', sender_email: graph.ANNIE_MAILBOX,
+        sender_name: 'Annie Reeves (Bedrock AI)', recipients: [to], subject,
+        body_preview: body.slice(0, 400), classification: 'outbound_reply', classification_confidence: 'high',
+        persona: 'annie', ai_summary: `Annie replied about the ARC application for ${d.homeowner_address || ''}`.trim(),
+        community_id: d.community_id, triage_status: 'handled', record_ownership: 'association_record',
+        reviewed_at: new Date().toISOString(),
+      });
+    } catch (e) { console.warn('[acc-review reply] log skipped:', e.message); }
+    // First contact doubles as the receipt — clear "they never heard from us".
+    try {
+      const patch = { acknowledgment_error: null };
+      if (!d.acknowledged_at) { patch.acknowledged_at = new Date().toISOString(); patch.acknowledged_to = to; }
+      await supabase.from('acc_decisions').update(patch).eq('id', d.id);
+    } catch (e) { console.warn('[acc-review reply] ack stamp skipped:', e.message); }
+    res.json({ ok: true, to, subject });
+  } catch (err) {
+    console.error('[acc-review/decisions/:id/reply] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // /acc-review/decisions/:id/full — full row for the review screen, including
 // the engine's drafted recommendation, workpaper, and letter body.
 app.get('/acc-review/decisions/:id/full', async (req, res) => {
