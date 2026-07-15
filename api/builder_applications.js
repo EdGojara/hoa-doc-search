@@ -5435,4 +5435,6 @@ router.get('/portal/my-submissions', async (req, res) => {
   }
 });
 
-module.exports = { router };
+// Exported so backfills/repairs and tests can run the SAME extraction the
+// intake runs, instead of a lookalike that drifts. (Ed 2026-07-15.)
+module.exports = { router, extractSubmissionFormFromPdfBuffer, renderBuilderLetterPdfBuffer, uploadLetterPdf, letterDateStr };

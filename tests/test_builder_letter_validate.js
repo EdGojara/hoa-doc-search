@@ -66,11 +66,26 @@ check('a blank plan name is BLOCKED (the letter would print an empty plan)',
 check('a missing elevation is BLOCKED',
   !validateApplicationForLetter({ ...GOOD_APP, elevation: '' }, GOOD_PLAN, true).ok);
 
+// The specs table IS the substance of the approval. application_data is an
+// untyped JSONB blob and easy to clobber — I overwrote 8118's with an internal
+// note and the Approved Specifications table silently vanished from the letter,
+// because the renderer just omits the section rather than complaining. Ed caught
+// it by holding two letters side by side. Warn, not block: some legitimate older
+// submissions predate the extractor.
+const noMaterials = validateApplicationForLetter({ ...GOOD_APP, application_data: { entered_correction_note: 'an internal note' } }, GOOD_PLAN, true);
+check('application_data clobbered (no materials) WARNS about an empty specs table',
+  noMaterials.warnings.some((w) => /materials/i.test(w)));
+check('  ...but does not block — older submissions predate the extractor', noMaterials.ok);
+check('flat colors count as materials',
+  validateApplicationForLetter({ ...GOOD_APP, application_data: { brick_color: 'Steel Manor' } }, GOOD_PLAN, true).warnings.length === 0);
+check('nested materials count as materials',
+  validateApplicationForLetter({ ...GOOD_APP, application_data: { materials: { brick: { type: 'Red River', color: 'Steel Manor' } } } }, GOOD_PLAN, true).warnings.length === 0);
+
 // Warnings must NOT block — a control that fires on everything gets ignored.
-const warnOnly = validateApplicationForLetter({ ...GOOD_APP, block_number: null, section_number: null }, GOOD_PLAN, true);
+const warnOnly = validateApplicationForLetter({ ...GOOD_APP, block_number: null, section_number: null, application_data: { brick_color: 'Steel Manor' } }, GOOD_PLAN, true);
 check('a missing block/section warns but does NOT block', warnOnly.ok && warnOnly.warnings.length > 0);
 check('a name with the number jammed in warns but does NOT block (when the rest is sound)',
-  validateApplicationForLetter({ ...GOOD_APP, plan_name: 'Southfork/2380' }, GOOD_PLAN, true).ok);
+  validateApplicationForLetter({ ...GOOD_APP, plan_name: 'Southfork/2380', application_data: { brick_color: 'Steel Manor' } }, GOOD_PLAN, true).ok);
 
 // ---------------------------------------------------------------------------
 (async () => {
