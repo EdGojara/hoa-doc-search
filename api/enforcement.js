@@ -2469,6 +2469,68 @@ router.post('/drafts/approve', express.json(), async (req, res) => {
   }
 });
 
+// POST /api/enforcement/drafts/unapprove — pull a letter back OUT of the Mail
+// Queue and return it to Drafts. (Ed 2026-07-15: "can you delete or go back to
+// unapprove when it is already approved" — approving is one click and mistakes
+// happen; there was no way back short of mailing it.)
+//
+// HARD LINE: only while NOTHING has left the building. Approved + not locked +
+// not printed + never sent = it's still just a draft someone marked ready, so
+// un-approving costs nothing. The moment it has a postmark (sent_at) or a print
+// (printed_at), it is a §209 RECORD of a notice we mailed — un-approving or
+// deleting it would falsify the enforcement trail, and §209 defensibility rests
+// entirely on being able to prove what was sent and when. A mailed letter is
+// undone by curing/voiding the violation, never by editing history.
+//
+// Returns it to 'draft' rather than deleting, so it lands back in the existing
+// review flow — Reject is already there if you want it gone.
+router.post('/drafts/unapprove', express.json(), async (req, res) => {
+  try {
+    const { requireActingUser } = require('./_acting_user');
+    const actor = await requireActingUser(req, res);
+    if (!actor) return;
+
+    const ids = (req.body && req.body.interaction_ids) || [];
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'interaction_ids (array) required' });
+    }
+    // Tell the operator WHICH ones can't come back, and why — never a silent partial.
+    const { data: rows } = await supabase
+      .from('interactions')
+      .select('id, status, sent_at, printed_at, subject')
+      .in('id', ids);
+    const blocked = (rows || []).filter((r) => r.sent_at || r.printed_at || r.status === 'sent');
+    const eligible = (rows || []).filter((r) => !r.sent_at && !r.printed_at && r.status === 'approved').map((r) => r.id);
+
+    let count = 0;
+    if (eligible.length) {
+      const { error: upErr, count: c } = await supabase
+        .from('interactions')
+        .update({ status: 'draft', approved_by_user_id: null }, { count: 'exact' })
+        .in('id', eligible)
+        .eq('status', 'approved')
+        .is('sent_at', null)
+        .is('printed_at', null);
+      if (upErr) return res.status(500).json({ error: upErr.message });
+      count = c || 0;
+    }
+    res.json({
+      unapproved: count,
+      requested: ids.length,
+      blocked: blocked.map((b) => ({
+        id: b.id, subject: b.subject,
+        reason: b.printed_at ? 'already printed' : (b.sent_at ? 'already postmarked/mailed' : 'already locked'),
+      })),
+      detail: blocked.length
+        ? `${count} returned to Drafts. ${blocked.length} could not be pulled back — already mailed or printed, and a sent §209 notice is a record we can't rewrite. Resolve those on the violation instead.`
+        : `${count} returned to Drafts.`,
+    });
+  } catch (err) {
+    console.error('[enforcement.drafts.unapprove]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // POST /api/enforcement/drafts/reject
 // Body: { interaction_id, reason? }
