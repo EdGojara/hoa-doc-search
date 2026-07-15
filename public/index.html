@@ -32460,7 +32460,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         const j = await r.json();
         const decisions = j.decisions || [];
         if (decisions.length === 0) {
-          list.innerHTML = '<div style="color:#999; font-size:13px; padding:14px;">No decisions yet. Generate one above and it will appear here.</div>';
+          list.innerHTML = `<div style="color:#999; font-size:13px; padding:14px;">${qRaw ? 'No applications match "' + escapeHtml(qRaw) + '". Clear the search to see every application.' : 'No ACC applications have reached trustEd yet — emailed applications land here automatically once ingested.'}</div>`;
           return;
         }
         // Every row answers three questions at a glance, because this list mixes
@@ -32472,7 +32472,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         // letter that doesn't exist yet. (Ed 2026-07-15: "we need to know the
         // source of these and whether a response was provided or it is sitting
         // there — it's confusing.")
-        list.innerHTML = decisions.map((d) => {
+        const rowHtml = (d) => {
           const dt = new Date(d.created_at);
           const date = dt.toLocaleDateString();
           const pending = d.status === 'pending_review';
@@ -32495,7 +32495,11 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           // "We sent it" and "they got it" are different facts. An email-sourced
           // application whose receipt never went out means a homeowner is sitting
           // in silence — say so loudly rather than letting the queue look healthy.
-          const ackBadge = d.source !== 'email' ? ''
+          // Only claim anything about the receipt when the server actually told
+          // us — if migration 298 isn't applied the field is absent, and showing
+          // "no receipt" on every row would be a confident lie.
+          const ackKnown = Object.prototype.hasOwnProperty.call(d, 'acknowledged_at');
+          const ackBadge = (d.source !== 'email' || !ackKnown) ? ''
             : d.acknowledged_at
               ? `<span style="display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:20px;background:#f1f5f9;color:#475569;margin-left:4px;" title="Receipt sent ${escapeHtml(String(d.acknowledged_at).slice(0,10))}">✉️ Receipt sent</span>`
               : `<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:20px;background:#fee2e2;color:#b91c1c;margin-left:4px;" title="${escapeHtml(d.acknowledgment_error || 'No acknowledgment recorded for this application')}">⚠️ No receipt — they never heard from us</span>`;
@@ -32519,7 +32523,34 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
               </div>
             </div>
           `;
-        }).join('');
+        };
+
+        // Grouped, not a flat scroll. Ed: "I don't want to search for them
+        // because I don't know what's out there — I need a list by category."
+        // Search is for when you know the answer; this list has to SHOW you the
+        // shape. Waiting-on-us first (oldest = most overdue), broken out by
+        // community so a portfolio operator sees where the work sits.
+        const waiting = decisions.filter((d) => d.status === 'pending_review')
+          .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+        const answered = decisions.filter((d) => d.status !== 'pending_review')
+          .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+        const groupHdr = (txt, bg, fg) => `<div style="position:sticky;top:0;background:${bg};color:${fg};font-size:12px;font-weight:700;padding:7px 14px;border-bottom:1px solid #e5e7eb;">${txt}</div>`;
+        const subHdr = (txt) => `<div style="background:#fbfcfe;color:#64748b;font-size:11px;font-weight:700;padding:5px 14px;border-bottom:1px solid #f1f5f9;">${escapeHtml(txt)}</div>`;
+
+        // Within "waiting", sub-group by community (the operator's real unit of work).
+        const byCommunity = {};
+        waiting.forEach((d) => { const k = d.community_name || 'Unassigned community'; (byCommunity[k] = byCommunity[k] || []).push(d); });
+        const waitingHtml = waiting.length
+          ? groupHdr(`⏳ Waiting on us — ${waiting.length} application${waiting.length === 1 ? '' : 's'} nobody has answered`, '#fef3c7', '#92400e')
+            + Object.keys(byCommunity).sort().map((c) => subHdr(`${c} · ${byCommunity[c].length}`) + byCommunity[c].map(rowHtml).join('')).join('')
+          : groupHdr('⏳ Waiting on us — nothing outstanding', '#dcfce7', '#166534');
+
+        const answeredHtml = answered.length
+          ? groupHdr(`✓ Answered — ${answered.length}`, '#f1f5f9', '#475569') + answered.map(rowHtml).join('')
+          : '';
+
+        list.innerHTML = waitingHtml + answeredHtml;
       } catch (e) {
         list.innerHTML = '<div style="color:#b91c1c; font-size:13px; padding:14px;">Could not load: ' + (e.message || e) + '</div>';
       }

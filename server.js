@@ -2275,11 +2275,20 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
 // queued (status='pending_review') or done (status='decided'). Filter by
 // status/source/community/address; free-text via q.
 app.get('/acc-review/decisions', async (req, res) => {
-  try {
+  // Selecting a column that doesn't exist yet makes PostgREST fail the WHOLE
+  // query, and the list renders as "No decisions yet" — a pending migration
+  // silently blanks the operator's queue. (Ed 2026-07-15 hit exactly this: the
+  // ACC list went empty the moment migration 298's ack columns were selected
+  // before the migration was applied.) So: try the full select, and on a
+  // missing-column error retry WITHOUT the new fields. The queue always
+  // renders; the ack badges just stay hidden until 298 lands.
+  const BASE = 'id, community_name, homeowner_name, homeowner_address, project_summary, reference_number, decision_type, status, source, ai_recommendation, submitter_email, created_at, updated_at';
+  const WITH_ACK = `${BASE}, acknowledged_at, acknowledgment_error`;
+  const run = async (cols) => {
     const { address, community, q, status, source } = req.query;
     let query = supabase
       .from('acc_decisions')
-      .select('id, community_name, homeowner_name, homeowner_address, project_summary, reference_number, decision_type, status, source, ai_recommendation, submitter_email, acknowledged_at, acknowledgment_error, created_at, updated_at')
+      .select(cols)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('created_at', { ascending: false })
       .limit(500);
@@ -2288,7 +2297,14 @@ app.get('/acc-review/decisions', async (req, res) => {
     if (address) query = query.ilike('homeowner_address', `%${address}%`);
     if (community) query = query.ilike('community_name', `%${community}%`);
     if (q) query = query.or(`homeowner_name.ilike.%${q}%,homeowner_address.ilike.%${q}%,project_summary.ilike.%${q}%,reference_number.ilike.%${q}%`);
-    const { data, error } = await query;
+    return query;
+  };
+  try {
+    let { data, error } = await run(WITH_ACK);
+    if (error && /acknowledged_at|acknowledgment_error|does not exist/i.test(error.message || '')) {
+      console.warn('[acc-review/decisions] ack columns missing (migration 298 not applied) — serving without them');
+      ({ data, error } = await run(BASE));
+    }
     if (error) throw error;
     res.json({ decisions: data || [] });
   } catch (err) {
