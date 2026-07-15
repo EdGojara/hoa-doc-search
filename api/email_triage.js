@@ -460,7 +460,7 @@ router.post('/:id/forward-internal', express.json(), async (req, res) => {
     // CC — e.g. hand an AP question to Emma and keep the staffer who asked copied.
     const cc = emailList(cc_email).join(', ');
     const { data: m, error } = await supabase.from('email_messages')
-      .select('subject, body_full, body_preview, sender_email, sender_name, classification, extracted, graph_id, mailbox, community:community_id(name)')
+      .select('id, subject, body_full, body_preview, sender_email, sender_name, classification, extracted, graph_id, mailbox, conversation_id, received_at, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
@@ -487,9 +487,40 @@ router.post('/:id/forward-internal', express.json(), async (req, res) => {
       }
     } catch (_) { /* best-effort — forward still goes without them */ }
 
-    const draft = m.extracted && m.extracted.draft;
-    const orig = (m.body_full || m.body_preview || '').slice(0, 6000);
     const e = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // FULL body, not the teaser. body_preview is Microsoft's ~255-char snippet and
+    // body_full is often empty at ingest, so a forward could carry a truncated
+    // original — a teammate can't verify anything from 255 characters. Pull the
+    // real body from Graph and backfill it. (Ed 2026-07-15.)
+    let orig = m.body_full || '';
+    if (m.graph_id && m.mailbox && orig.length < 4000) {
+      try {
+        const { fetchMessageText } = require('../lib/email/graph_attachments');
+        const t = await fetchMessageText(m.mailbox, m.graph_id);
+        if (t && t.length > orig.length) {
+          orig = t;
+          try { await supabase.from('email_messages').update({ body_full: t }).eq('id', m.id); } catch (_) { /* backfill best-effort */ }
+        }
+      } catch (_) { /* fall back to what we have */ }
+    }
+    orig = String(orig || m.body_preview || '').slice(0, 6000);
+
+    // The CONVERSATION HISTORY. Claire forwards precisely when she can't answer —
+    // so the teammate needs everything that came before, not just the last message.
+    // Martha couldn't help on a pool-card question because the forward showed only
+    // the newest email with no chain. Every forward carries the thread now.
+    // (Ed 2026-07-15.)
+    let thread = [];
+    if (m.conversation_id) {
+      try {
+        const { data: tdata } = await supabase.from('email_messages')
+          .select('id, direction, sender_name, sender_email, body_full, body_preview, received_at')
+          .eq('conversation_id', m.conversation_id).order('received_at', { ascending: true }).limit(30);
+        thread = (tdata || []).filter((x) => x.id !== m.id);
+      } catch (_) { /* forward still goes without the chain */ }
+    }
+    const fmtWhen = (d) => { try { return new Date(d).toLocaleString('en-US', { timeZone: 'America/Chicago' }); } catch (_) { return ''; } };
     const isInternal = String(m.classification || '').toLowerCase() === 'internal' || /@bedrocktx\.com$/i.test(String(m.sender_email || ''));
     const contextLine = isInternal
       ? 'Forwarding this internal Bedrock email for you to review and handle. Nothing has been sent externally.'
@@ -500,10 +531,16 @@ ${note ? `<p style="margin:0 0 12px;">${e(note).replace(/\n/g, '<br>')}</p>` : '
 <div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin:10px 0;">
   <div style="font-size:12px;color:#5a7390;">From ${e(m.sender_name || m.sender_email || '')}${m.community ? ' · ' + e(m.community.name) : ''}${m.classification ? ' · ' + e(m.classification) : ''}</div>
   <div style="font-weight:700;margin:4px 0;">${e(m.subject || '(no subject)')}</div>
+  <div style="font-size:12px;color:#5a7390;margin:4px 0 2px;">${fmtWhen(m.received_at)}</div>
   <div style="white-space:pre-wrap;">${e(orig)}</div>
 </div>
-${draft && draft.body ? `<div style="border-left:3px solid #D4AF37;padding:8px 12px;margin:10px 0;background:#fbf7ec;"><div style="font-size:12px;color:#5a7390;">Claire's draft reply (not sent):</div><div style="white-space:pre-wrap;">${e(draft.body)}</div></div>` : ''}
-${draft && draft.review_hint ? `<p style="margin:8px 0;color:#8a6d00;"><strong>Claire suggests:</strong> ${e(draft.review_hint)}</p>` : ''}
+${thread.length ? `<div style="margin:12px 0;">
+  <div style="font-size:12px;color:#5a7390;font-weight:700;margin-bottom:6px;">Earlier in this conversation (${thread.length}) — oldest first</div>
+  ${thread.map((t) => `<div style="border-left:3px solid #e5e7eb;padding:6px 10px;margin:0 0 8px;">
+    <div style="font-size:11.5px;color:#5a7390;">${t.direction === 'outbound' ? '↑ we sent' : '↓ received'} · ${e(t.sender_name || t.sender_email || '')} · ${fmtWhen(t.received_at)}</div>
+    <div style="white-space:pre-wrap;font-size:13px;">${e(String(t.body_full || t.body_preview || '').slice(0, 1500))}</div>
+  </div>`).join('')}
+</div>` : ''}
 ${fwdAttachments.length ? `<p style="margin:8px 0;color:#166534;"><strong>Attachments included:</strong> ${e(fwdAttachments.map((a) => a.name).join(', '))}</p>` : ''}
 <p style="margin:12px 0 0;">Reply here with what you find and we'll take it from there.</p>
 </div>`;
