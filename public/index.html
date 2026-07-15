@@ -43759,7 +43759,12 @@ ${questionsPage}
       const rejected = aps.find((a) => a.action === 'rejected');
       const pill = (txt, bg, fg, title) => `<span title="${apEsc(title || '')}" style="display:inline-block;background:${bg};color:${fg};font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:20px;margin-left:4px;">${apEsc(txt)}</span>`;
       if (rejected) return pill(`✗ Rejected by ${String(rejected.user_name || 'staff').split(' ')[0]}`, '#fee2e2', '#991b1b', rejected.notes || '');
-      if (!mgr) return '';
+      // Approval state has to be visible at a glance, not only once someone has
+      // approved — "nobody has vouched for this yet" is the state Ed most needs
+      // to see in a queue. (Ed 2026-07-15.)
+      if (!mgr) return (inv && inv.status === 'awaiting_approval')
+        ? pill('👤 No mgr approval yet', '#f1f5f9', '#475569', 'No manager has vouched for this bill yet. Recurring, consistent bills don\'t need one — open the bill to see which path it\'s on.')
+        : '';
       const when = mgr.created_at ? new Date(mgr.created_at).toLocaleDateString() : '';
       return pill(`👍 Mgr: ${String(mgr.user_name || 'staff').split(' ')[0]}`, '#dcfce7', '#166534', `Manager approval by ${mgr.user_name || 'staff'} on ${when}`);
     }
@@ -44085,6 +44090,7 @@ ${questionsPage}
         requested_more_info: 'More info requested',
         reassigned: 'Reassigned',
         voided: 'Voided',
+        recoded: '⚠️ Expense account changed after posting',
       };
       const approvalsHtml = approvals.map((a) => `
         <div style="padding:6px 10px; border-bottom:1px solid #eee; font-size:12px; display:flex; justify-content:space-between; gap:8px;">
@@ -44156,10 +44162,22 @@ ${questionsPage}
                     <div style="color:#334155; margin-top:2px;">${apEsc(pol.reason || '')}</div>
                   </div>` : ''}
                 <div style="margin-top:8px; padding-top:8px; border-top:1px solid #e2e8f0;">
-                  <div style="font-weight:600; margin-bottom:4px;">Expense account ${inv.coded_gl_account_id ? '<span style="color:#16a34a;">✓ coded</span>' : '<span style="color:#b45309;">— not coded</span>'}</div>
-                  <div id="ap-suggest-${inv.id}"></div>
-                  <input id="ap-gl-search-${inv.id}" type="text" placeholder="Search expense account (e.g. security, landscape, 5770)…" oninput="apCodeSearch('${inv.id}','${inv.community_id}')" style="width:100%; padding:6px 9px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;">
-                  <div id="ap-gl-results-${inv.id}" style="margin-top:4px; max-height:160px; overflow:auto;"></div>
+                  <div style="font-weight:600; margin-bottom:4px;">Expense account</div>
+                  ${inv.coded_account ? `
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:6px 9px;">
+                      <div style="min-width:0;">
+                        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-weight:700; color:#166534;">${apEsc(inv.coded_account.account_number)}</span>
+                        <span style="color:#166534; font-weight:600;"> ${apEsc(inv.coded_account.account_name)}</span>
+                        <span style="color:#64748b; font-size:11px;"> · ${inv.auto_coded ? 'auto-coded from history' : 'coded by staff'}${inv.posting_journal_entry_id ? ' · JE posted' : ' · not posted'}</span>
+                      </div>
+                      <button class="secondary-btn" style="font-size:11px; padding:3px 9px; white-space:nowrap;" onclick="apToggleRecode('${inv.id}')">Change</button>
+                    </div>` : '<div style="color:#b45309; font-weight:600; margin-bottom:4px;">— not coded</div>'}
+                  <div id="ap-recode-${inv.id}" style="${inv.coded_account ? 'display:none; ' : ''}margin-top:6px;">
+                    ${inv.coded_account && inv.posting_journal_entry_id ? `<div style="background:#fffbeb; border:1px solid #fde047; border-radius:6px; padding:6px 9px; margin-bottom:6px; color:#92400e; font-size:11.5px;">⚠️ This bill's accrual is already on the books. Changing the account reverses that journal entry and posts a replacement — an exception, recorded here with your name and reason.</div>` : ''}
+                    <div id="ap-suggest-${inv.id}"></div>
+                    <input id="ap-gl-search-${inv.id}" type="text" placeholder="Search expense account (e.g. security, landscape, 5770)…" oninput="apCodeSearch('${inv.id}','${inv.community_id}')" style="width:100%; padding:6px 9px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px;">
+                    <div id="ap-gl-results-${inv.id}" style="margin-top:4px; max-height:160px; overflow:auto;"></div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -44170,6 +44188,17 @@ ${questionsPage}
               </div>
             </div>
           </div>
+
+          ${openForApproval ? `
+            <div style="margin-top:16px; padding:8px 12px; border-radius:6px; background:${mgrApproval ? '#f0fdf4' : '#f8fafc'}; border:1px solid ${mgrApproval ? '#bbf7d0' : '#e2e8f0'}; font-size:12px;">
+              <strong style="color:#0B1D34;">Manager approval:</strong>
+              ${mgrApproval
+                ? `<span style="color:#166534; font-weight:700;">👍 ${apEsc(mgrApproval.user_name || 'staff')}</span> <span style="color:#5a7390;">· ${new Date(mgrApproval.created_at).toLocaleString()}</span>${mgrApproval.notes ? `<div style="color:#5a7390; margin-top:2px;">${apEsc(mgrApproval.notes)}</div>` : ''}`
+                : (pol && pol.path === 'release'
+                    ? '<span style="color:#5a7390;">not required — recurring and consistent with expectations.</span>'
+                    : `<span style="color:#b45309; font-weight:700;">⏳ Pending</span> <span style="color:#5a7390;">— nobody has vouched for this bill yet.${isAdmin ? ' You can still release it; it gets recorded as released without one.' : ''}</span>`)}
+              <span style="color:#5a7390;"> · <strong style="color:#0B1D34;">Release for payment:</strong> admin only${isAdmin ? ' (you)' : ' — Ed releases every bill'}.</span>
+            </div>` : ''}
 
           <div style="display:flex; justify-content:space-between; align-items:center; margin-top:18px; padding-top:14px; border-top:1px solid #e2e8f0;">
             <div>
@@ -44328,11 +44357,34 @@ ${questionsPage}
       const hits = (q ? exp.filter(a => (a.account_number + ' ' + a.account_name).toLowerCase().includes(q)) : exp).slice(0, 12);
       res.innerHTML = hits.length ? hits.map(a => `<div style="display:flex; justify-content:space-between; gap:8px; padding:4px 6px; border-bottom:1px solid #eef2f7; align-items:center;"><span style="font-size:12.5px;">${apEsc(a.account_number)} ${apEsc(a.account_name)}</span><button class="secondary-btn" style="font-size:11px; padding:3px 9px;" onclick="apSetCode('${invId}','${a.id}')">Set</button></div>`).join('') : '<div style="font-size:12px; color:#888; padding:4px;">No matching expense account.</div>';
     };
+    // Reveal the account search on an already-coded bill. Coded bills show the
+    // account, not a search box — you shouldn't have to re-pick an account just
+    // to see what it is. (Ed 2026-07-15.)
+    window.apToggleRecode = function (invId) {
+      const el = document.getElementById('ap-recode-' + invId);
+      if (!el) return;
+      const showing = el.style.display !== 'none';
+      el.style.display = showing ? 'none' : '';
+      if (!showing) { const s = document.getElementById('ap-gl-search-' + invId); if (s) s.focus(); }
+    };
+
     window.apSetCode = async function (invId, glId) {
       try {
-        const r = await fetch('/api/ap/invoices/' + encodeURIComponent(invId) + '/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gl_account_id: glId }) });
-        const j = await r.json();
+        const fetchFn = window._authFetch || fetch;
+        const post = (body) => fetchFn('/api/ap/invoices/' + encodeURIComponent(invId) + '/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        let r = await post({ gl_account_id: glId });
+        let j = await r.json();
+        // The SERVER decides whether this is the exception path (an accrual
+        // that's already posted), not the button. First coding is routine and
+        // goes straight through; changing a posted one comes back asking why.
+        if (!r.ok && j.error === 'reason_required') {
+          const reason = prompt((j.detail || 'Changing a posted account is an exception.') + '\n\nWhy is the account being changed?');
+          if (!reason || !reason.trim()) return;
+          r = await post({ gl_account_id: glId, reason: reason.trim() });
+          j = await r.json();
+        }
         if (!r.ok) throw new Error(j.detail || j.error || 'code failed');
+        if (j.warning) alert(j.warning);
         apOpenInvoice(invId); apLoadList(); apLoadCounts();
       } catch (e) { alert('Could not set the expense account: ' + e.message); }
     };

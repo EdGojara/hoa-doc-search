@@ -368,7 +368,9 @@ router.get('/invoices/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const [{ data: invoice }, { data: lines }, { data: approvals }] = await Promise.all([
-      supabase.from('ap_invoices').select('*, vendors(name, category, payee_name, remit_address_line1, remit_city, remit_state, remit_zip)').eq('id', id).maybeSingle(),
+      // coded_account: "✓ coded" without naming the account is useless — you
+      // can't confirm a coding you can't see. (Ed 2026-07-15.)
+      supabase.from('ap_invoices').select('*, vendors(name, category, payee_name, remit_address_line1, remit_city, remit_state, remit_zip), coded_account:coded_gl_account_id(account_number, account_name, account_type)').eq('id', id).maybeSingle(),
       supabase.from('ap_invoice_lines').select('*, chart_of_accounts(account_number, account_name)').eq('invoice_id', id).order('line_number'),
       supabase.from('ap_invoice_approvals').select('*').eq('invoice_id', id).order('created_at'),
     ]);
@@ -553,6 +555,7 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
   try {
     const { id } = req.params;
     const gl_account_id = (req.body || {}).gl_account_id;
+    const reason = String(((req.body || {}).reason) || '').trim();
     if (!gl_account_id) return res.status(400).json({ error: 'gl_account_id_required' });
     const { data: inv } = await supabase.from('ap_invoices').select('*, vendors(name)').eq('id', id).maybeSingle();
     if (!inv) return res.status(404).json({ error: 'not_found' });
@@ -560,11 +563,41 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
     const { data: acct } = await supabase.from('chart_of_accounts')
       .select('id, account_number, account_name').eq('id', gl_account_id).eq('community_id', inv.community_id).maybeSingle();
     if (!acct) return res.status(400).json({ error: 'invalid_account', detail: 'That account is not on this community\'s chart.' });
+    if (inv.coded_gl_account_id === gl_account_id) return res.json({ ok: true, unchanged: true, gl_account: `${acct.account_number} ${acct.account_name}`, posting_journal_entry_id: inv.posting_journal_entry_id, posted: !!inv.posting_journal_entry_id });
+
+    // FIRST coding is routine. CHANGING a coding whose accrual is already on the
+    // books is the exception (Ed 2026-07-15): it reverses a posted journal entry
+    // and posts a replacement, so it must carry a name and a reason. Without
+    // this, the one action that rewrites the ledger is the only one that leaves
+    // no trace on the invoice.
+    const isRecode = !!(inv.coded_gl_account_id && inv.posting_journal_entry_id);
+    let ctx = null;
+    if (isRecode) {
+      if (!reason) return res.status(400).json({ error: 'reason_required', detail: 'This bill\'s accrual is already posted. Changing the account reverses that entry and posts a new one — say why.' });
+      const { resolveUserRole } = require('./users');
+      ctx = await resolveUserRole(req);
+      if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required', detail: 'Sign in to change the account on a posted bill.' });
+      if (ctx.user && ctx.user.is_active === false) return res.status(403).json({ error: 'account_deactivated' });
+    }
+    const who = (ctx && ctx.user && (ctx.user.full_name || ctx.user.email)) || 'Staff';
+    const { data: prevAcct } = inv.coded_gl_account_id
+      ? await supabase.from('chart_of_accounts').select('account_number, account_name').eq('id', inv.coded_gl_account_id).maybeSingle()
+      : { data: null };
+    const prevLabel = prevAcct ? `${prevAcct.account_number} ${prevAcct.account_name}` : '(uncoded)';
 
     // Re-coding an already-posted accrual: reverse the old one first.
     let jeId = inv.posting_journal_entry_id;
-    if (jeId && inv.coded_gl_account_id !== gl_account_id) {
-      try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: jeId, void_reason: 'Re-coded expense account' }); } catch (e) { console.warn('[ap] recode reversal:', e.message); }
+    if (jeId) {
+      const voidReason = isRecode
+        ? `Re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}: ${reason}`
+        : 'Re-coded expense account';
+      try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: jeId, void_reason: voidReason }); }
+      catch (e) {
+        // A reversal we couldn't post means the OLD entry is still live on the
+        // books. Re-posting now would double-count the expense. Stop.
+        console.error('[ap] recode reversal FAILED — refusing to re-post:', e.message);
+        return res.status(500).json({ error: 'reversal_failed', detail: 'Could not reverse the existing journal entry, so the account was not changed (re-posting would double-count the expense). Nothing was modified.' });
+      }
       jeId = null;
     }
     await supabase.from('ap_invoices').update({ coded_gl_account_id: gl_account_id, auto_coded: false, needs_review: false, posting_journal_entry_id: jeId, updated_at: new Date().toISOString() }).eq('id', id);
@@ -581,7 +614,25 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
     // Teach the vendor->community->GL map so the next identical bill auto-codes.
     try { const { learnMapping } = require('../lib/ap/vendor_community'); await learnMapping({ accountNumber: inv.account_number || null, vendorId: inv.vendor_id || null, vendorName: (inv.vendors && inv.vendors.name) || inv.vendor_name || null, communityId: inv.community_id, glAccountId: gl_account_id }); } catch (e) { console.warn('[ap] learn map:', e.message); }
 
-    res.json({ ok: true, gl_account: `${acct.account_number} ${acct.account_name}`, posting_journal_entry_id: jeId, posted: !!jeId });
+    // The exception lands on the invoice's own audit trail, next to the
+    // approvals — so anyone looking at this bill sees the account was changed
+    // after posting, by whom, and why, without digging into the GL.
+    let auditWarning = null;
+    if (isRecode) {
+      const { error: audErr } = await supabase.from('ap_invoice_approvals').insert({
+        invoice_id: id, action: 'recoded', user_id: (ctx.user && ctx.user.id) || null, user_name: who,
+        amount_at_time_cents: inv.total_cents,
+        notes: `Expense account changed from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the accrual was posted. Prior entry reversed, replacement posted. Reason: ${reason}`,
+      });
+      if (audErr) {
+        // Never let this fail silently — an unrecorded exception is the whole
+        // problem this endpoint is trying to solve.
+        console.error('[ap] recode audit insert FAILED:', audErr.message);
+        auditWarning = 'The account was changed and the journal entry adjusted, but the audit note could not be saved. Tell Ed — migration 300 may not be applied yet.';
+      }
+    }
+
+    res.json({ ok: true, gl_account: `${acct.account_number} ${acct.account_name}`, gl_account_number: acct.account_number, gl_account_name: acct.account_name, posting_journal_entry_id: jeId, posted: !!jeId, recoded: isRecode, previous_gl_account: isRecode ? prevLabel : null, warning: auditWarning });
   } catch (err) { console.error('[ap] code failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
@@ -598,6 +649,9 @@ router.get('/invoices/:id/suggest-code', async (req, res) => {
     const suggestion = await suggestClassification({
       communityId: inv.community_id, vendorId: inv.vendor_id, vendorName,
       description: vendorName || inv.vendor_invoice_number || null,
+      totalCents: inv.total_cents,
+      // Don't let this bill's own accrual count as precedent for coding itself.
+      excludeJournalEntryId: inv.posting_journal_entry_id || null,
     });
     res.json({ ok: true, suggestion });
   } catch (err) { console.error('[ap] suggest-code failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
