@@ -66,6 +66,41 @@ router.use(async (req, res, next) => {
   next();
 });
 
+
+// What can this email actually DO? Computed server-side from the SAME rules the
+// endpoints enforce, and handed to the UI, so a button never appears on a row
+// where pressing it can only 400.
+//
+// Ed pressed "Record to GL" on Claire's internal forward about a Canyon Gate
+// payment and "nothing happened". The endpoint did its job — 400 ambiguous_amount,
+// "Couldn't pin a single amount" — because the email is a note saying a bill was
+// paid, with no dollar figure in it. But the button was on the row (gated only on
+// persona==='emma'), and the error rendered into a div BELOW the expanded thread,
+// far off screen. So the honest answer reached nobody.
+//
+// 28 of Emma's 54 emails could never Record to GL, and 25 have no community. More
+// than half the buttons in that queue were dead on arrival. Same disease as the
+// "Credit owed" button on 340 non-vendor rows: a control offered where it cannot
+// work teaches the operator that the system is broken. (Ed 2026-07-15.)
+function emailCapabilities(m) {
+  const { singleAmountCents } = require('../lib/accounting/record_vendor_payment');
+  const isEmma = String(m && m.persona) === 'emma';
+  const cents = singleAmountCents((m && m.extracted && m.extracted.amounts) || []);
+  const gl = [];
+  if (!m || !m.community_id) gl.push("it isn't linked to a community yet");
+  if (!cents) gl.push("there's no single dollar amount in it to post");
+  const pay = [];
+  if (!m || !m.has_attachments) pay.push('no bill is attached');
+  return {
+    can_record_gl: isEmma && gl.length === 0,
+    // WHY not — so the UI can say it instead of leaving a dead button.
+    record_gl_blocked: isEmma && gl.length ? gl.join(', and ') : null,
+    can_file_payables: isEmma && pay.length === 0,
+    file_payables_blocked: isEmma && pay.length ? pay.join(', and ') : null,
+  };
+}
+const withCapabilities = (rows) => (rows || []).map((m) => Object.assign({}, m, emailCapabilities(m)));
+
 const SELECT = 'id, mailbox, persona, direction, sender_email, sender_name, subject, body_preview, received_at, has_attachments, classification, classification_confidence, ai_summary, extracted, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, resolution_confidence, resolution_candidates, triage_status, priority, reviewed_by, reviewed_at, created_at, resolved_contact:resolved_contact_id(full_name), resolved_property:resolved_property_id(street_address), resolved_vendor:resolved_vendor_id(name), community:community_id(name)';
 
 // GET / — triage list
@@ -89,7 +124,7 @@ router.get('/', async (req, res) => {
     if (q) query = query.or(`subject.ilike.%${q}%,sender_email.ilike.%${q}%,ai_summary.ilike.%${q}%`);
     const { data, error } = await query;
     if (error) throw error;
-    res.json({ messages: data || [] });
+    res.json({ messages: withCapabilities(data) });
   } catch (err) {
     console.error('[email_triage] list failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -154,7 +189,7 @@ router.get('/for-record', async (req, res) => {
     else if (vendor_id) query = query.eq('resolved_vendor_id', vendor_id);
     const { data, error } = await query;
     if (error) throw error;
-    res.json({ messages: data || [] });
+    res.json({ messages: withCapabilities(data) });
   } catch (err) {
     console.error('[email_triage] for-record failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

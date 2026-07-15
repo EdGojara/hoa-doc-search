@@ -221,7 +221,7 @@ function msgHtml(m){
           </div>
         </div>
         <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
-          ${m.persona==='emma'?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button><button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}
+          ${m.can_file_payables?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button>`:''}${m.can_record_gl?`<button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}${m.persona==='emma'&&!m.can_record_gl&&!m.can_file_payables?`<span class="note" style="font-size:11px;color:#94a3b8;align-self:center;" title="${esc(m.record_gl_blocked||'')}">can't file this one — ${esc(m.record_gl_blocked||'nothing to post')}</span>`:''}
           ${canOweCredit(m) ? `<button class="act" style="background:#b91c1c;color:#fff;" onclick="flagCredit('${m.id}')" title="A vendor owes us money because of this. Puts a hold on their next invoice so we don't pay full.">💳 Credit owed</button>` : ''}
           <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>
           <button class="act" onclick="forwardPrompt('${m.id}','${esc(m.sender_email||'')}')" title="Forward to a teammate (or hand to an AI teammate) to check before we reply">↪ Forward</button>
@@ -477,7 +477,16 @@ async function doFile(id, action, btn){
   try{
     const r=await af(`${API}/${id}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     const j=await r.json();
-    if(!r.ok){ if(msg) msg.innerHTML='<span class="err">'+esc(j.detail||j.error||'Failed')+'</span>'; rowBtns.forEach(b=>b.disabled=false); btn.textContent=prev; _filingIds.delete(id); return; }
+    if(!r.ok){
+      const why = j.detail||j.error||'Failed';
+      if(msg){ msg.innerHTML='<span class="err">'+esc(why)+'</span>'; msg.scrollIntoView({block:'nearest',behavior:'smooth'}); }
+      // The row can be tall (an expanded thread pushes filemsg far below the
+      // fold), so scrolling isn't enough on its own — Ed pressed Record to GL,
+      // got a perfectly good 400 back, and saw "nothing happened". A refusal to
+      // touch the books has to reach the person who asked. (Ed 2026-07-15.)
+      alert(why);
+      rowBtns.forEach(b=>b.disabled=false); btn.textContent=prev; _filingIds.delete(id); return;
+    }
     // Success — the email is handled. Remove it from the inbox so it disappears
     // (and can't be clicked again). Backend is idempotent (a duplicate press
     // returns the existing entry, never a second post).
