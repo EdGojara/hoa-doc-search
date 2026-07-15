@@ -386,7 +386,12 @@ router.get('/invoices/:id', async (req, res) => {
         totalCents: invoice.total_cents,
       });
     } catch (e) { console.warn('[ap] recurrence profile skipped:', e.message); }
-    res.json({ invoice, lines: lines || [], approvals: approvals || [], recurrence });
+    // Which approval path: consistent + recurring -> Ed releases directly;
+    // anything else -> a manager vouches first. (Ed 2026-07-15.)
+    let policy = null;
+    try { policy = require('../lib/ap/approval_policy').approvalPath(recurrence); }
+    catch (e) { console.warn('[ap] approval policy skipped:', e.message); }
+    res.json({ invoice, lines: lines || [], approvals: approvals || [], recurrence, policy });
   } catch (err) {
     console.error('[ap] invoice detail failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -437,19 +442,38 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
     }
 
     // ---- Key 2: admin release ----
-    // Ed CAN release without a manager approval — he may have asked accounting
-    // out loud and read the documentation himself, or it's a known recurring
-    // bill. Blocking the owner would just teach him to route around the control.
-    // But a solo release is RECORDED as one: the note says so, so the audit
-    // trail never implies a second person vouched when nobody did. (Ed 2026-07-15.)
+    // Ed releases every payment before a check is cut or an ACH goes out. He CAN
+    // release without a manager approval — but WHY that was fine differs, and the
+    // audit note has to say which:
+    //   * recurring + consistent  -> the light path is the DESIGNED route, not a
+    //                                deviation. Record the reason it qualified.
+    //   * one-off / not consistent -> this IS a deviation from the two-key path.
+    //                                Record it plainly as one.
+    // A trail that says "released without manager approval" on a routine
+    // landscaping bill is noise; a trail that says nothing on a $11k one-off is
+    // a lie. (Ed 2026-07-15.)
     const solo = !mgr;
-    const soloNote = 'Released by admin without a separate manager approval.';
+    let policy = null;
+    if (solo) {
+      try {
+        const { getRecurrenceProfile } = require('../lib/ap/recurring');
+        const { data: full } = await supabase.from('ap_invoices').select('vendor_id, community_id, total_cents, vendors(name)').eq('id', id).maybeSingle();
+        const rec = await getRecurrenceProfile({
+          vendorId: full && full.vendor_id, vendorName: full && full.vendors && full.vendors.name,
+          communityId: full && full.community_id, totalCents: full && full.total_cents,
+        });
+        policy = require('../lib/ap/approval_policy').approvalPath(rec);
+      } catch (e) { console.warn('[ap] release policy note skipped:', e.message); }
+    }
+    const soloNote = policy && policy.path === 'release'
+      ? `Released by admin on the light path — ${policy.why}.`
+      : `Released by admin WITHOUT a manager approval${policy ? ` — ${policy.why}` : ''}.`;
     const finalNotes = solo ? [notes, soloNote].filter(Boolean).join(' — ') : notes;
     const result = await approveInvoice({ invoice_id: id, user_id: userId, user_name: userName, notes: finalNotes, action: 'released_for_payment' });
     return res.json({
       ...result, stage: 'released_for_payment', by: userName,
       manager_approved_by: mgr ? (mgr.user_name || null) : null,
-      solo_release: solo,
+      solo_release: solo, path: policy ? policy.path : null,
     });
   } catch (err) {
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'not_found') {

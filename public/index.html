@@ -43989,6 +43989,7 @@ ${questionsPage}
       const lines = payload.lines || [];
       const approvals = payload.approvals || [];
       const rec = payload.recurrence || null;
+      const pol = payload.policy || null;   // 'release' (consistent + recurring) vs 'manager_review'
       const body = document.getElementById('ap-detail-body');
       const vendorName = inv.vendors?.name || '(unknown vendor)';
       const pdfUrl = inv.source_storage_path ? '/api/ap-intake/' + encodeURIComponent(inv.id) + '/invoice-file' : null;
@@ -44074,12 +44075,12 @@ ${questionsPage}
                 <div>Confidence: ${apConfidenceBadge(inv.auto_coding_confidence)}</div>
                 <div style="margin-top:4px;">Signal: <code style="background:#fff; padding:1px 6px; border-radius:3px;">${apEsc(inv.auto_coding_signal || '—')}</code></div>
                 <div style="margin-top:4px;">JE: ${inv.posting_journal_entry_id ? '<span style="color:#16a34a;">✓ Posted</span>' : '<span style="color:#dc2626;">⚠ Not posted — GL coding incomplete</span>'}</div>
-                ${rec && rec.recurring ? `
-                  <div style="margin-top:8px; padding:8px 10px; border-radius:6px; background:${rec.amount_flag === 'high' ? '#fef2f2' : '#f0fdf4'}; border:1px solid ${rec.amount_flag === 'high' ? '#fecaca' : '#bbf7d0'};">
-                    <div style="font-weight:700; color:${rec.amount_flag === 'high' ? '#b91c1c' : '#166534'};">
-                      ${rec.amount_flag === 'high' ? '⚠️ Recurring — but NOT like the others' : '🔁 Recurring ' + apEsc(rec.cadence) + ' expense'}
+                ${pol ? `
+                  <div style="margin-top:8px; padding:8px 10px; border-radius:6px; background:${pol.path === 'release' ? '#f0fdf4' : '#fffbeb'}; border:1px solid ${pol.path === 'release' ? '#bbf7d0' : '#fde047'};">
+                    <div style="font-weight:700; color:${pol.path === 'release' ? '#166534' : '#92400e'};">
+                      ${pol.path === 'release' ? '✅ Release path — consistent + recurring' : '👤 Manager review first'}
                     </div>
-                    <div style="color:#334155; margin-top:2px;">${apEsc(rec.summary || '')}</div>
+                    <div style="color:#334155; margin-top:2px;">${apEsc(pol.reason || '')}</div>
                   </div>` : ''}
                 <div style="margin-top:8px; padding-top:8px; border-top:1px solid #e2e8f0;">
                   <div style="font-weight:600; margin-bottom:4px;">Expense account ${inv.coded_gl_account_id ? '<span style="color:#16a34a;">✓ coded</span>' : '<span style="color:#b45309;">— not coded</span>'}</div>
@@ -44110,7 +44111,9 @@ ${questionsPage}
               ${openForApproval && isAdmin
                 ? (mgrApproval
                     ? `<button class="action-btn" onclick="apApproveInvoice('${inv.id}')" style="background:#16a34a; border-color:#15803d;" title="Release for payment — the second key. Manager approved by ${apEsc(mgrApproval.user_name || 'staff')}.">✓ Release for payment</button>`
-                    : `<button class="action-btn" onclick="apApproveInvoice('${inv.id}', true)" style="background:#b45309; border-color:#92400e;" title="No manager has approved this one. You can still release it — it will be recorded as released without a manager approval.">✓ Release (no mgr approval)</button>`)
+                    : (pol && pol.path === 'release'
+                        ? `<button class="action-btn" onclick="apApproveInvoice('${inv.id}')" style="background:#16a34a; border-color:#15803d;" title="${apEsc(pol.reason || '')}">✓ Release for payment</button>`
+                        : `<button class="action-btn" onclick="apApproveInvoice('${inv.id}', true)" style="background:#b45309; border-color:#92400e;" title="${apEsc((pol && pol.reason) || 'No manager has approved this one.')} You can still release it — it will be recorded as released without a manager approval.">✓ Release anyway (no mgr approval)</button>`))
                 : ''}
             </div>
           </div>
