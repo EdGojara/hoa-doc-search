@@ -373,7 +373,20 @@ router.get('/invoices/:id', async (req, res) => {
       supabase.from('ap_invoice_approvals').select('*').eq('invoice_id', id).order('created_at'),
     ]);
     if (!invoice) return res.status(404).json({ error: 'not_found' });
-    res.json({ invoice, lines: lines || [], approvals: approvals || [] });
+    // What IS this bill, per the community's own books? A recurring landscaping
+    // charge and a first-time $11k invoice are different risks — say which this
+    // is, and flag it when a recurring bill isn't like the others. (Ed 2026-07-15.)
+    let recurrence = null;
+    try {
+      const { getRecurrenceProfile } = require('../lib/ap/recurring');
+      recurrence = await getRecurrenceProfile({
+        vendorId: invoice.vendor_id || null,
+        vendorName: (invoice.vendors && invoice.vendors.name) || invoice.vendor_name || null,
+        communityId: invoice.community_id,
+        totalCents: invoice.total_cents,
+      });
+    } catch (e) { console.warn('[ap] recurrence profile skipped:', e.message); }
+    res.json({ invoice, lines: lines || [], approvals: approvals || [], recurrence });
   } catch (err) {
     console.error('[ap] invoice detail failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -424,20 +437,20 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
     }
 
     // ---- Key 2: admin release ----
-    if (!mgr) {
-      return res.status(400).json({
-        error: 'no_manager_approval',
-        detail: 'A manager approves first — that is the first of the two keys. Once a manager approves, you can release it for payment.',
-      });
-    }
-    if (userId && mgr.user_id && String(mgr.user_id) === String(userId)) {
-      return res.status(400).json({
-        error: 'same_approver',
-        detail: `You recorded the manager approval on this invoice. Two-key approval needs two people — have someone else approve it first.`,
-      });
-    }
-    const result = await approveInvoice({ invoice_id: id, user_id: userId, user_name: userName, notes, action: 'released_for_payment' });
-    return res.json({ ...result, stage: 'released_for_payment', by: userName, manager_approved_by: mgr.user_name || null });
+    // Ed CAN release without a manager approval — he may have asked accounting
+    // out loud and read the documentation himself, or it's a known recurring
+    // bill. Blocking the owner would just teach him to route around the control.
+    // But a solo release is RECORDED as one: the note says so, so the audit
+    // trail never implies a second person vouched when nobody did. (Ed 2026-07-15.)
+    const solo = !mgr;
+    const soloNote = 'Released by admin without a separate manager approval.';
+    const finalNotes = solo ? [notes, soloNote].filter(Boolean).join(' — ') : notes;
+    const result = await approveInvoice({ invoice_id: id, user_id: userId, user_name: userName, notes: finalNotes, action: 'released_for_payment' });
+    return res.json({
+      ...result, stage: 'released_for_payment', by: userName,
+      manager_approved_by: mgr ? (mgr.user_name || null) : null,
+      solo_release: solo,
+    });
   } catch (err) {
     if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'not_found') {
       return res.status(400).json({ error: err.message, code: err.code });
