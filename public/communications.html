@@ -173,6 +173,10 @@ async function loadPersonaList(){
   const el = document.getElementById('personaList'); if(!el) return;
   try{
     const r = await af(url); const j = await r.json(); const msgs = j.messages||[];
+    // Row actions (flagCredit) need the message they were clicked on; the onclick
+    // only carries an id. Without this the lookup silently returns {} and the
+    // action fails on every row.
+    window._msgs = msgs;
     if(!msgs.length){ el.innerHTML='<div class="empty">No emails in this view. Try the “All” filter above.</div>'; return; }
     // Group back-to-back emails from the SAME homeowner (a follow-up sent because
     // they forgot something) so one reply can cover the burst. Pure client-side
@@ -218,6 +222,7 @@ function msgHtml(m){
         </div>
         <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
           ${m.persona==='emma'?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button><button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}
+          <button class="act" style="background:#b91c1c;color:#fff;" onclick="flagCredit('${m.id}')" title="A vendor owes us money because of this. Puts a hold on their next invoice so we don't pay full.">💳 Credit owed</button>
           <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>
           <button class="act" onclick="forwardPrompt('${m.id}','${esc(m.sender_email||'')}')" title="Forward to a teammate (or hand to an AI teammate) to check before we reply">↪ Forward</button>
           <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
@@ -409,6 +414,33 @@ async function viewDoc(docId){
   catch(e){ alert('Could not open the document.'); }
 }
 // Emma files a bill without replying: to Payables (queue) or straight to the GL.
+// Turn "make sure we get credit for this on the Swim Houston bill" into a HOLD
+// on that vendor's next invoice. Forwarding the email to Emma only files paper;
+// this is what stops the money. (Ed 2026-07-15 — pool closed 6/26, Swim Houston
+// agreed to credit the lifeguard time, and two of their invoices were sitting in
+// the queue with nothing connecting them to the promise.)
+async function flagCredit(id){
+  const m = (window._msgs||[]).find(x=>x.id===id) || {};
+  const vendor = prompt('Which vendor owes us the credit?\n(the hold goes on THEIR next invoice for this community)', (m.resolved_vendor && m.resolved_vendor.name) || m.sender_name || '');
+  if(!vendor) return;
+  const reason = prompt('Why do they owe us? This shows on the invoice when we go to pay them.\ne.g. "3 days of lifeguard time — pool closed 6/26–6/29 after failed inspection"', '');
+  if(!reason) return;
+  const amt = prompt('Amount if known — leave blank if TBD (e.g. 1450.00)', '');
+  const cents = amt && !isNaN(parseFloat(amt)) ? Math.round(parseFloat(amt)*100) : null;
+  if(!m.community_id){ alert('Link this email to a community first — a credit has to belong to one association\'s books.'); return; }
+  try{
+    const r = await af(`/api/ap/credits`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      community_id: m.community_id, vendor_id: m.resolved_vendor_id || null, vendor_name: vendor,
+      reason, expected_cents: cents, source_email_id: m.id, source_ref: m.graph_id?('email:'+m.graph_id):null,
+      source_quote: String(m.ai_summary||m.body_preview||'').slice(0,400),
+    })});
+    const j = await r.json();
+    if(!r.ok || j.error) throw new Error(j.detail||j.error||'failed');
+    alert(`💳 Credit hold recorded against ${vendor}.\n\nTheir next invoice for this community will show it and can't slip out on the light approval path until it's applied or waived.`);
+    loadList();
+  }catch(e){ alert('Could not record the credit: '+(e.message||e)); }
+}
+
 const _filingIds = new Set(); // in-flight guard: one filing per email at a time
 async function doFile(id, action, btn){
   if(_filingIds.has(id)) return;               // already filing this email — ignore the double-press

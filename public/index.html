@@ -43990,6 +43990,7 @@ ${questionsPage}
       const approvals = payload.approvals || [];
       const rec = payload.recurrence || null;
       const pol = payload.policy || null;   // 'release' (consistent + recurring) vs 'manager_review'
+      const credits = payload.open_credits || [];   // credits this vendor OWES us
       const body = document.getElementById('ap-detail-body');
       const vendorName = inv.vendors?.name || '(unknown vendor)';
       const pdfUrl = inv.source_storage_path ? '/api/ap-intake/' + encodeURIComponent(inv.id) + '/invoice-file' : null;
@@ -44075,6 +44076,15 @@ ${questionsPage}
                 <div>Confidence: ${apConfidenceBadge(inv.auto_coding_confidence)}</div>
                 <div style="margin-top:4px;">Signal: <code style="background:#fff; padding:1px 6px; border-radius:3px;">${apEsc(inv.auto_coding_signal || '—')}</code></div>
                 <div style="margin-top:4px;">JE: ${inv.posting_journal_entry_id ? '<span style="color:#16a34a;">✓ Posted</span>' : '<span style="color:#dc2626;">⚠ Not posted — GL coding incomplete</span>'}</div>
+                ${credits.length ? `
+                  <div style="margin-top:8px; padding:10px 12px; border-radius:6px; background:#fef2f2; border:2px solid #b91c1c;">
+                    <div style="font-weight:800; color:#b91c1c;">💳 THIS VENDOR OWES US A CREDIT — don't pay full</div>
+                    ${credits.map((c) => `<div style="color:#334155; margin-top:4px;">
+                      • ${apEsc(c.reason)}${c.expected_cents ? ` — <strong>${apFmtCents(c.expected_cents)}</strong>` : ' <em>(amount TBD)</em>'}
+                      ${c.source_quote ? `<div style="color:#5a7390; font-style:italic; margin-top:2px;">"${apEsc(String(c.source_quote).slice(0, 220))}"</div>` : ''}
+                      <div style="color:#5a7390; font-size:11px;">flagged by ${apEsc(c.requested_by || 'staff')}${c.created_at ? ' · ' + new Date(c.created_at).toLocaleDateString() : ''}</div>
+                    </div>`).join('')}
+                  </div>` : ''}
                 ${pol ? `
                   <div style="margin-top:8px; padding:8px 10px; border-radius:6px; background:${pol.path === 'release' ? '#f0fdf4' : '#fffbeb'}; border:1px solid ${pol.path === 'release' ? '#bbf7d0' : '#fde047'};">
                     <div style="font-weight:700; color:${pol.path === 'release' ? '#166534' : '#92400e'};">

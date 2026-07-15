@@ -386,12 +386,22 @@ router.get('/invoices/:id', async (req, res) => {
         totalCents: invoice.total_cents,
       });
     } catch (e) { console.warn('[ap] recurrence profile skipped:', e.message); }
+    // Does this vendor owe this community a credit? Asked HERE, at the moment of
+    // payment, because that's the only moment it can still stop the money.
+    let openCredits = [];
+    try {
+      const { openCreditsFor } = require('../lib/ap/vendor_credits');
+      openCredits = await openCreditsFor({
+        communityId: invoice.community_id, vendorId: invoice.vendor_id || null,
+        vendorName: (invoice.vendors && invoice.vendors.name) || invoice.vendor_name || null,
+      });
+    } catch (e) { console.warn('[ap] open credits lookup skipped:', e.message); }
     // Which approval path: consistent + recurring -> Ed releases directly;
-    // anything else -> a manager vouches first. (Ed 2026-07-15.)
+    // anything else (or an owed credit) -> a manager vouches first. (Ed 2026-07-15.)
     let policy = null;
-    try { policy = require('../lib/ap/approval_policy').approvalPath(recurrence); }
+    try { policy = require('../lib/ap/approval_policy').approvalPath(recurrence, openCredits); }
     catch (e) { console.warn('[ap] approval policy skipped:', e.message); }
-    res.json({ invoice, lines: lines || [], approvals: approvals || [], recurrence, policy });
+    res.json({ invoice, lines: lines || [], approvals: approvals || [], recurrence, policy, open_credits: openCredits });
   } catch (err) {
     console.error('[ap] invoice detail failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -591,6 +601,63 @@ router.get('/invoices/:id/suggest-code', async (req, res) => {
     });
     res.json({ ok: true, suggestion });
   } catch (err) { console.error('[ap] suggest-code failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /credits — record a credit a vendor OWES this community, captured from
+// wherever it was promised (usually an email thread). This is what makes "please
+// make sure we get credit for this on the Swim Houston bill" real: the promise
+// becomes a hold on that vendor's next invoice instead of a memory. (Ed 2026-07-15.)
+router.post('/credits', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const { resolveUserRole } = require('./users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required' });
+    const { createExpectedCredit } = require('../lib/ap/vendor_credits');
+    const out = await createExpectedCredit({
+      communityId: b.community_id, vendorId: b.vendor_id || null, vendorName: b.vendor_name || null,
+      reason: b.reason, expectedCents: Number.isInteger(b.expected_cents) ? b.expected_cents : null,
+      servicePeriodStart: b.service_period_start || null, servicePeriodEnd: b.service_period_end || null,
+      sourceEmailId: b.source_email_id || null, sourceRef: b.source_ref || null, sourceQuote: b.source_quote || null,
+      requestedBy: (ctx.user && (ctx.user.full_name || ctx.user.email)) || 'staff',
+    });
+    if (out.error) return res.status(400).json({ error: out.error });
+    res.json(out);
+  } catch (err) { console.error('[ap] create credit failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// GET /credits?community_id=&status= — the open-credit register: everything
+// vendors owe us that hasn't been collected yet.
+router.get('/credits', async (req, res) => {
+  try {
+    let q = supabase.from('vendor_credits_expected')
+      .select('*, vendors:vendor_id(name), communities:community_id(name)')
+      .order('created_at', { ascending: false }).limit(300);
+    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+    q = q.eq('status', req.query.status || 'expected');
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ credits: data || [] });
+  } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /credits/:id/resolve — applied to a bill / waived / disputed.
+router.post('/credits/:id/resolve', express.json(), async (req, res) => {
+  try {
+    const { resolveUserRole } = require('./users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required' });
+    const { resolveCredit } = require('../lib/ap/vendor_credits');
+    const out = await resolveCredit({
+      creditId: req.params.id, status: (req.body || {}).status,
+      appliedInvoiceId: (req.body || {}).applied_invoice_id || null,
+      appliedCents: Number.isInteger((req.body || {}).applied_cents) ? req.body.applied_cents : null,
+      appliedBy: (ctx.user && (ctx.user.full_name || ctx.user.email)) || 'staff',
+      notes: (req.body || {}).notes || null,
+    });
+    if (out.error) return res.status(400).json({ error: out.error });
+    res.json(out);
+  } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 router.post('/payments', express.json(), async (req, res) => {
