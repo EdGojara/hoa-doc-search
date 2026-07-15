@@ -641,6 +641,20 @@ async function htmlToPdfBuffer(html) {
   }
 }
 
+// A letter must be dated the day the DECISION was made, not the day the PDF
+// happened to be rendered. renderBuilderLetterHTML's `date_str` DEFAULTS TO
+// TODAY, so any regenerated letter silently re-dates itself — hand a permit
+// office a letter dated a month after the approval it describes and you have
+// handed them a different document. Central, always: decided_at is stored UTC
+// (2026-06-18T02:20Z is the evening of Jun 17 in Sugar Land), so formatting it
+// without the zone is off by a day for every evening decision. (Ed 2026-07-15:
+// "let's make sure all dates are static as of the approval date".)
+function letterDateStr(decidedAt) {
+  const d = decidedAt ? new Date(decidedAt) : new Date();
+  if (isNaN(d.getTime())) return new Date().toLocaleDateString('en-US', { timeZone: 'America/Chicago', year: 'numeric', month: 'long', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { timeZone: 'America/Chicago', year: 'numeric', month: 'long', day: 'numeric' });
+}
+
 async function renderBuilderLetterPdfBuffer(letterArgs) {
   return htmlToPdfBuffer(renderBuilderLetterHTML(letterArgs));
 }
@@ -1875,6 +1889,13 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
     if (loadErr) throw loadErr;
     if (!app) return res.status(404).json({ error: 'application not found' });
 
+    // ONE decision timestamp, taken once and used for the letter's printed date,
+    // the response row, and the application row. These were three independent
+    // `new Date()` calls, so a decision made near midnight could print one date
+    // on the letter and store another on the record — and the letter is the
+    // document a city acts on. (Ed 2026-07-15.)
+    const decidedAt = new Date().toISOString();
+
     const responseType = action === 'approve' ? 'approved'
                        : action === 'approve_with_conditions' ? 'approved_with_conditions'
                        : action === 'deny' ? 'denied'
@@ -1909,6 +1930,7 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
         // so the builder has confirmation of the charge for AP reconciliation
         // against the Bedrock invoice.
         review_fee_cents: app.community?.builder_arc_fee_cents ?? null,
+        date_str: letterDateStr(decidedAt),
       };
 
       const pdfBuffer = await renderBuilderLetterPdfBuffer(letterArgs);
@@ -1934,7 +1956,7 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
         denial_reasons: typeof denial_reasons === 'string' ? denial_reasons
                         : Array.isArray(denial_reasons) ? denial_reasons.join('\n') : null,
         decided_by,
-        decided_at: new Date().toISOString(),
+        decided_at: decidedAt,
         letter_pdf_path: letterPath,
         letter_signed_url: signedUrl,
         letter_signed_url_expires_at: signedUrlExpiresAt,
@@ -1954,7 +1976,7 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
       .from('builder_applications')
       .update({
         status: appStatus,
-        decided_at: new Date().toISOString(),
+        decided_at: decidedAt,
         decided_by,
       })
       .eq('id', app.id);
@@ -2121,6 +2143,7 @@ async function buildBuilderEmailEnvelope(applicationId, responseId, opts = {}) {
       denial_reasons: denialReasonsList.length ? denialReasonsList : (response.denial_reasons || null),
       signer_name: response.decided_by,
       review_fee_cents: app.community?.builder_arc_fee_cents ?? null,
+      date_str: letterDateStr(response.decided_at),
     };
     pdfBuffer = await renderBuilderLetterPdfBuffer(letterArgs);
     // Replace the cached storage copy too so the builder portal's download
@@ -2224,6 +2247,44 @@ function buildEmlFile({ from, to, subject, html, pdfBuffer, pdfFilename }) {
 // Send from Outlook. Nothing leaves Bedrock until staff hits send.
 // Ed 2026-06-16: "export to email with outlook so we can look at before sending."
 // ============================================================================
+// GET /api/builder-applications/:id/letter — the letter's PERMANENT address.
+//
+// Ed: "i don't want letter to disappear they should stay available"
+//
+// He's right, and two staff screens were on a clock. builder_application_responses
+// .letter_signed_url is a 30-DAY Supabase signed URL captured at decision time,
+// and builder-arc-review.html renders it straight into an href. Every letter
+// decided 6/17-6/18 had a link dying on 7/17-7/18 — two days from now. The
+// BUILDER portal never had this problem: it re-signs from letter_pdf_path on
+// every load. So the bug was invisible from the screen Ed usually looks at, and
+// would have surfaced as "the letters vanished" on a staff screen mid-permit-run.
+//
+// The PDF in storage never expires; only the URL does. So stop passing URLs
+// around and give the letter one address that re-signs on every hit. A link that
+// keeps working is the whole point — this document gets forwarded to a permit
+// office and sat on for months.
+router.get('/:id/letter', async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next();
+  try {
+    const { data: resps, error } = await supabase
+      .from('builder_application_responses')
+      .select('letter_pdf_path, decided_at, response_type')
+      .eq('application_id', req.params.id)
+      .order('decided_at', { ascending: false });
+    if (error) throw error;
+    const latest = (resps || []).find((r) => r.letter_pdf_path);
+    if (!latest) return res.status(404).json({ error: 'no_letter_on_file', detail: 'No decision letter has been generated for this application yet.' });
+    const { data: signed, error: sErr } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .createSignedUrl(latest.letter_pdf_path, 60 * 10);   // short-lived on purpose: the STABLE thing is this route, not the URL
+    if (sErr || !signed || !signed.signedUrl) throw new Error((sErr && sErr.message) || 'could not sign the letter');
+    return res.redirect(302, signed.signedUrl);
+  } catch (err) {
+    console.error('[builder_applications] letter fetch failed:', err.message);
+    return res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/:id/eml-export', async (req, res, next) => {
   if (!UUID_RE.test(req.params.id)) return next();
   try {

@@ -305,6 +305,35 @@ router.get('/', async (req, res) => {
 // ----------------------------------------------------------------------------
 // GET /:id — detail
 // ----------------------------------------------------------------------------
+// GET /api/master-plan-submissions/:id/letter — the letter's permanent address.
+//
+// Same fix, same reason as builder-applications/:id/letter. The stored
+// letter_signed_url is a 30-DAY signed URL captured at decision time, and
+// master-plan-submissions-admin.html renders it straight into an href — so the
+// link quietly dies a month after the decision while the PDF sits safely in
+// storage forever. Re-sign on every hit instead of handing out URLs with a
+// shelf life. (Ed 2026-07-15: "i don't want letter to disappear they should
+// stay available".)
+router.get('/:id/letter', async (req, res, next) => {
+  try {
+    const { data: sub, error } = await supabase
+      .from('master_plan_submissions')
+      .select('letter_pdf_path')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!sub || !sub.letter_pdf_path) return res.status(404).json({ error: 'no_letter_on_file', detail: 'No decision letter has been generated for this submission yet.' });
+    const { data: signed, error: sErr } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .createSignedUrl(sub.letter_pdf_path, 60 * 10);
+    if (sErr || !signed || !signed.signedUrl) throw new Error((sErr && sErr.message) || 'could not sign the letter');
+    return res.redirect(302, signed.signedUrl);
+  } catch (err) {
+    console.error('[master_plan_submissions] letter fetch failed:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const { data: submission, error } = await supabase

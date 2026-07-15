@@ -276,7 +276,7 @@
 
       ${s.status === 'approved' || s.status === 'approved_with_conditions' || s.status === 'denied' ? `
         <div class="letter-success">
-          <strong>Decision letter on file.</strong> ${s.letter_signed_url ? `<a href="${esc(s.letter_signed_url)}" target="_blank" rel="noopener">Download PDF</a>` : 'Letter PDF stored.'} Decided by ${esc(s.decided_by || 'BAM')} on ${fmtDate(s.decided_at)}.
+          <strong>Decision letter on file.</strong> ${s.letter_pdf_path ? `<a href="/api/master-plan-submissions/${esc(s.id)}/letter" target="_blank" rel="noopener">Download PDF</a>` : 'Letter PDF stored.'} Decided by ${esc(s.decided_by || 'BAM')} on ${fmtDate(s.decided_at)}.
         </div>
       ` : `
         <div class="approved-table-wrap">
@@ -543,7 +543,7 @@
       $('alResult').innerHTML = `
         <div class="letter-success">
           <strong>Letter generated.</strong> ${j.plan_count} plan${j.plan_count === 1 ? '' : 's'} · ${j.elevation_count} elevation${j.elevation_count === 1 ? '' : 's'} · ${esc(j.reference_number || '')}.
-          ${j.letter_signed_url ? `<a href="${esc(j.letter_signed_url)}" target="_blank" rel="noopener">Preview PDF →</a>` : ''}
+          ${j.letter_pdf_path ? `<a href="/api/master-plan-submissions/${esc(j.id || j.submission_id)}/letter" target="_blank" rel="noopener">Preview PDF →</a>` : ''}
           <div style="margin-top:8px; font-size:12.5px; color:#4a4a4a;">Recipient: <strong>${esc(recip)}</strong></div>
         </div>`;
       // Swap actions to review/send now that a letter id exists.

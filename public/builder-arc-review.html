@@ -1365,10 +1365,10 @@ function renderDetail(data) {
         <dt>Decided</dt>          <dd>${fmtDate(latestResp.decided_at)}</dd>
         ${latestResp.email_sent_at ? `<dt>Emailed</dt><dd>${fmtDate(latestResp.email_sent_at)}</dd>` : ''}
       </dl>
-      ${latestResp.letter_signed_url ? `
+      ${latestResp.letter_pdf_path ? `
         <div class="post-decision">
           <div class="heading">Letter PDF</div>
-          <a href="${escapeHtml(latestResp.letter_signed_url)}" target="_blank" rel="noopener">📄 Preview ${escapeHtml(a.reference_number)}.pdf →</a>
+          <a href="/api/builder-applications/${escapeHtml(a.id)}/letter" target="_blank" rel="noopener">📄 Preview ${escapeHtml(a.reference_number)}.pdf →</a>
         </div>` : ''}
       ${!latestResp.email_sent_at && latestResp.letter_pdf_path ? `
         <div class="button-row" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
