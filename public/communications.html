@@ -222,7 +222,7 @@ function msgHtml(m){
         </div>
         <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
           ${m.persona==='emma'?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button><button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}
-          <button class="act" style="background:#b91c1c;color:#fff;" onclick="flagCredit('${m.id}')" title="A vendor owes us money because of this. Puts a hold on their next invoice so we don't pay full.">💳 Credit owed</button>
+          ${canOweCredit(m) ? `<button class="act" style="background:#b91c1c;color:#fff;" onclick="flagCredit('${m.id}')" title="A vendor owes us money because of this. Puts a hold on their next invoice so we don't pay full.">💳 Credit owed</button>` : ''}
           <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>
           <button class="act" onclick="forwardPrompt('${m.id}','${esc(m.sender_email||'')}')" title="Forward to a teammate (or hand to an AI teammate) to check before we reply">↪ Forward</button>
           <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
@@ -419,9 +419,28 @@ async function viewDoc(docId){
 // this is what stops the money. (Ed 2026-07-15 — pool closed 6/26, Swim Houston
 // agreed to credit the lifeguard time, and two of their invoices were sitting in
 // the queue with nothing connecting them to the promise.)
+// Only a VENDOR can owe us a credit. This button shipped on every row — all 392
+// emails, including spam, homeowner requests and Amazon confirmations — when only
+// ~52 are vendor mail and exactly 1 resolves to a vendor. On a homeowner's email
+// it defaulted the vendor name to the SENDER, so it offered to record a credit
+// hold against Azalia Fuenmayor as though she were a vendor. A control that
+// appears on everything is a control nobody reads, and the loudest button in the
+// UI belongs on the rows where it means something. (Ed 2026-07-15.)
+function canOweCredit(m){
+  if(!m) return false;
+  if(m.resolved_vendor_id) return true;                       // we know who they are
+  if(/^vendor/i.test(String(m.classification||''))) return true; // vendor_financial / vendor_general
+  if(String(m.persona||'') === 'emma') return true;            // Emma owns AP
+  return false;
+}
 async function flagCredit(id){
   const m = (window._msgs||[]).find(x=>x.id===id) || {};
-  const vendor = prompt('Which vendor owes us the credit?\n(the hold goes on THEIR next invoice for this community)', (m.resolved_vendor && m.resolved_vendor.name) || m.sender_name || '');
+  if(!canOweCredit(m)){ alert('Only a vendor can owe the association a credit. This email isn\'t vendor mail, so there\'s nothing to hold against an invoice.'); return; }
+  // Never default to the sender: on non-vendor mail that's how a homeowner ends
+  // up recorded as a vendor, and openCreditsFor matches credits by vendor NAME,
+  // so a bogus one would sit unmatched against every invoice forever.
+  const suggested = (m.resolved_vendor && m.resolved_vendor.name) || '';
+  const vendor = prompt('Which vendor owes us the credit?\n(the hold goes on THEIR next invoice for this community)', suggested);
   if(!vendor) return;
   const reason = prompt('Why do they owe us? This shows on the invoice when we go to pay them.\ne.g. "3 days of lifeguard time — pool closed 6/26–6/29 after failed inspection"', '');
   if(!reason) return;
