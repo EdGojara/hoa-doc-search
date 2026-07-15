@@ -37,7 +37,19 @@ const COOKIE_TTL_DAYS = 30;
 // reaches a busy builder's inbox + they get back to their desk. 2 hours
 // covers the typical "I'll get to it after my next call" window without
 // extending the attack surface meaningfully.
-const MAGIC_LINK_TTL_HOURS = 2;
+// 24h, not 2h. (Ed 2026-07-15.)
+//
+// A 2-hour window assumes email is instant. Corporate mail isn't: DRB's filter
+// quarantines, releases on a sweep, and rewrites links — Karla's link issued
+// 16:02 was dead by 18:02, and every one of her requests since 6/16 expired
+// unused. A link that's reliably dead before the recipient reads it isn't a
+// security control, it's an outage, and the "security" it buys is spent on
+// someone hammering the request button seven times in fifty minutes.
+//
+// These stay single-use and are mailed to an address we already verified, which
+// is where the actual security lives. The admin invite path has used 7 days for
+// months with no issue.
+const MAGIC_LINK_TTL_HOURS = 24;
 
 // Mimic session — staff renders the portal as a specific portal_user with
 // audit logging. Separate cookie so a staff member's own portal session (if
@@ -569,14 +581,18 @@ router.post('/request-link', express.json({ limit: '8kb' }), async (req, res) =>
       expires_at: expiresAt,
     });
 
-    // Send the email
+    // Send the email. A builder is not a homeowner — Karla Rutan (DRB) has been
+    // getting "your community's homeowner portal" for a builder submissions
+    // portal. (Ed 2026-07-15.)
+    const isBuilder = user.role === 'builder';
+    const portalName = isBuilder ? 'Bedrock builder portal' : 'Bedrock homeowner portal';
     const url = magicLinkUrl(req, token);
-    await sendEmail({
+    const send = await sendEmail({
       to: user.email,
-      subject: 'Your sign-in link for the Bedrock homeowner portal',
+      subject: `Your sign-in link for the ${portalName}`,
       html: `
         <p>Hi${user.full_name ? ' ' + escapeHtml(user.full_name.split(' ')[0]) : ''},</p>
-        <p>Click below to sign in to your community's homeowner portal. The link is valid for ${MAGIC_LINK_TTL_HOURS} hour${MAGIC_LINK_TTL_HOURS === 1 ? '' : 's'}.</p>
+        <p>Click below to sign in to the ${escapeHtml(portalName)}${isBuilder ? ' to review your submissions and approval letters' : ''}. The link is valid for ${MAGIC_LINK_TTL_HOURS} hour${MAGIC_LINK_TTL_HOURS === 1 ? '' : 's'}.</p>
         <p style="margin: 20px 0;">
           <a href="${escapeHtml(url)}" style="display:inline-block; background:#1A3050; color:white; padding:12px 22px; border-radius:7px; text-decoration:none; font-weight:500;">
             Sign in to portal
@@ -594,7 +610,16 @@ router.post('/request-link', express.json({ limit: '8kb' }), async (req, res) =>
       ],
     });
 
-    await logAudit('magic_link_sent', { portal_user_id: user.id, ip_address: req.ip });
+    // Record what ACTUALLY happened. Logging 'magic_link_sent' on a send that
+    // failed is how Karla ended up requesting seven links in fifty minutes while
+    // our own audit trail insisted we'd sent them. The response stays {ok:true}
+    // either way — telling an unauthenticated caller "that send failed" would
+    // confirm the address exists — but staff must be able to see the failure.
+    if (send && send.ok) {
+      await logAudit('magic_link_sent', { portal_user_id: user.id, ip_address: req.ip, notes: `id=${send.vendor_message_id || '?'}` });
+    } else {
+      await logAudit('magic_link_send_failed', { portal_user_id: user.id, ip_address: req.ip, notes: `error=${(send && send.error) || 'unknown'}` });
+    }
 
     res.json({ ok: true });
   } catch (err) {

@@ -1183,7 +1183,7 @@ router.post('/users/:id/resend-invite', async (req, res) => {
     let emailSent = false;
     let emailError = null;
     try {
-      await sendEmail({
+      const send = await sendEmail({
         to: user.email,
         subject: `Your ${communityName || 'Bedrock'} homeowner portal invitation`,
         html: `
@@ -1205,10 +1205,17 @@ router.post('/users/:id/resend-invite', async (req, res) => {
           { name: 'event', value: 'invite_resent' },
         ],
       });
-      emailSent = true;
-      await logAudit('magic_link_sent', { portal_user_id: userId, notes: 'via=resend' });
+      // sendEmail RETURNS failures, it does not throw — so this catch alone was
+      // dead code and emailSent was unconditionally true. Check the result, or
+      // the operator is told the invite went out when it didn't. (Ed 2026-07-15.)
+      emailSent = !!(send && send.ok);
+      emailError = emailSent ? null : ((send && send.error) || 'send failed');
+      await logAudit(emailSent ? 'magic_link_sent' : 'magic_link_send_failed', {
+        portal_user_id: userId,
+        notes: emailSent ? `via=resend id=${send.vendor_message_id || '?'}` : `via=resend error=${emailError}`,
+      });
     } catch (e) {
-      console.warn(`[portal_admin] resend-invite email failed for ${userId}: ${e.message}`);
+      console.error(`[portal_admin] resend-invite email threw for ${userId}: ${e.message}`);
       emailError = e.message;
     }
 
