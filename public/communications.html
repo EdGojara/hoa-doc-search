@@ -211,6 +211,7 @@ function msgHtml(m){
           <div>
             <span class="badge b-${cls}">${CLASS_LABEL[cls]||cls}</span>
             <span class="conf c-${m.classification_confidence||'none'}">${m.classification_confidence||''}</span>
+            ${m.extracted && m.extracted.wants_human ? `<span style="display:inline-block;background:#b91c1c;color:#fff;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:4px;" title="They asked for a person: &quot;${esc(m.extracted.wants_human.matched||'')}&quot; — no AI reply was drafted. A human answers this one.">🙋 ASKED FOR A PERSON</span>` : ''}
             <div class="subj" style="margin-top:5px;">${esc(m.subject||'(no subject)')}</div>
             <div class="from">${esc(m.sender_email||'')} &middot; ${m.received_at?new Date(m.received_at).toLocaleString():''}</div>
           </div>
