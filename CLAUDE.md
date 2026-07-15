@@ -732,6 +732,45 @@ the source of truth that two labels are one violation; every consumer must
 honor it, not just prior-counting. Fix: `lib/enforcement/find_or_continue_violation.js`
 (commit 3a0f0e2) + re-ran `_reconcileAliasedOpenViolations` on the backlog.
 
+### Learning from history: count the votes, but weigh the magnitude — and never let a record cite itself
+
+**Scar**: 2026-07-15. Swim Houston's $11,064.87 pool-management bill for
+Waterview auto-coded to `5370 Splash Pad Repair & Maintenance` (median $525) at
+"medium" confidence with `needs_review` OFF. It was invisible because the UI
+said only "✓ coded" and never named the account — Ed found it by asking to SEE
+the account. Three distinct defects in `gl_classifier` branch 3:
+
+1. **Count-only voting ignores magnitude.** Swim Houston does frequent small
+   splash-pad repairs (18 entries, median $525) AND the big monthly management
+   contract (10 entries, median $8,190). The repairs outvote the contract 18–10,
+   so the *largest* bill lands in the *smallest-ticket* account — precisely the
+   bill where being wrong costs the most. Any vendor doing both many small jobs
+   and one big recurring one hits this.
+2. **Self-citation.** The `vendor_id` branch short-circuited the name-history
+   branch (`if (!Object.keys(counts).length)`), so the first accrual we posted —
+   the invoice's OWN — shadowed 31 entries of imported history. The bill cited
+   itself as precedent for its own coding ("1 of 1 prior entry", **high**
+   confidence). Evidence got *worse* as the system was used while confidence
+   went *up*.
+3. **n=1 scored "high".** `share = n/total` ignored sample size; one entry at
+   100% share is an anecdote.
+
+**Rules** for any surface that learns a default from historical records:
+- **Magnitude is a feature, not a tiebreak.** If the records vary by an order of
+  magnitude, ask "which of this entity's *kinds* of records does this one look
+  like," not just "who is it." Prefer the amount-consistent bucket and force
+  review when the pick disagrees with the count vote.
+- **Never let a record count itself as its own precedent.** Any "look at prior
+  X" query run on a record that has already written to X must exclude that
+  record's own rows (`excludeJournalEntryId`). Self-reference reads as
+  confirmation.
+- **Merge complementary signals; don't short-circuit on the first non-empty
+  one.** Dedupe by row id. A short-circuit silently discards the richer signal.
+- **Confidence must include sample size**, not just share.
+- Corollary for UI: a status that says a decision was made (`✓ coded`,
+  `✓ matched`, `✓ verified`) without naming *what* it decided is unauditable.
+  Show the value, always. This bug survived only because the account was hidden.
+
 ### Geocoding must validate against the community cluster
 
 **Scar**: 2026-07-05, a Canyon Gate field crew hit "some houses have no pins."
