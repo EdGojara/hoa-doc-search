@@ -4,9 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node scripts/check_constraint_values.js && node tests/test_vantaca_extraction.js",
+    "test": "node scripts/check_constraint_values.js && node tests/test_vantaca_extraction.js && node tests/test_retrieval_regression.js",
     "test:constraints": "node scripts/check_constraint_values.js",
     "test:vantaca": "node tests/test_vantaca_extraction.js",
+    "test:retrieval": "node tests/test_retrieval_regression.js",
     "postinstall": "puppeteer browsers install chrome || true"
   },
   "keywords": [],
