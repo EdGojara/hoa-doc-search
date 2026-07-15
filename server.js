@@ -2279,7 +2279,7 @@ app.get('/acc-review/decisions', async (req, res) => {
     const { address, community, q, status, source } = req.query;
     let query = supabase
       .from('acc_decisions')
-      .select('id, community_name, homeowner_name, homeowner_address, project_summary, reference_number, decision_type, status, source, ai_recommendation, submitter_email, created_at, updated_at')
+      .select('id, community_name, homeowner_name, homeowner_address, project_summary, reference_number, decision_type, status, source, ai_recommendation, submitter_email, acknowledged_at, acknowledgment_error, created_at, updated_at')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('created_at', { ascending: false })
       .limit(500);
