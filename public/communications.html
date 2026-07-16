@@ -109,8 +109,32 @@ function linkCell(m){
   }
   const cands = (m.resolution_candidates||[]).slice(0,4).map(c=>
     `<div class="cand" onclick='doLink("${m.id}", ${JSON.stringify(c).replace(/'/g,"&#39;")})'>${esc(c.label)} <span class="why">${esc(c.why||c.type)}</span></div>`).join('');
-  const hint = cands ? `<span class="lbl">Suggested${comm}:</span>` : `<span class="lbl">No match found${comm} — needs manual link</span>`;
+  // No auto-suggestion? Give a real community picker so "needs manual link"
+  // actually links — e.g. a "North Mission Glen MUD" auto-pay that names no
+  // community the resolver knows. Linking a community makes Record to GL /
+  // Send to Payables available, and teaches the alias for next time. (Ed 2026-07-16.)
+  const hint = cands ? `<span class="lbl">Suggested${comm}:</span>` : `<span class="lbl">No match found${comm} — link a community:</span> ${communityPicker(m.id)}`;
   return hint + cands;
+}
+
+let communitiesCache = null;
+async function loadCommunities(){
+  if (communitiesCache) return communitiesCache;
+  try { const r = await af('/api/gl/communities'); const j = await r.json(); communitiesCache = (j.communities||j||[]).filter(c=>c&&c.id); }
+  catch(_){ communitiesCache = []; }
+  return communitiesCache;
+}
+function communityPicker(msgId){
+  const opts = (communitiesCache||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  if(!opts) return '<span class="lbl" style="color:#94a3b8;">(loading communities…)</span>';
+  return `<select id="compick-${msgId}" style="font-size:12px;padding:2px 6px;border:1px solid var(--line);border-radius:5px;"><option value="">— pick —</option>${opts}</select> <button class="act" style="font-size:11px;padding:2px 9px;" onclick="linkCommunity('${msgId}')">Link</button>`;
+}
+async function linkCommunity(msgId){
+  const sel = document.getElementById('compick-'+msgId);
+  const cid = sel && sel.value;
+  if(!cid){ return; }
+  const r = await af(`${API}/${msgId}/link`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ community_id: cid })});
+  if(r.ok){ loadStats(); loadList(); } else { const j=await r.json().catch(()=>({})); alert('Could not link: '+(j.detail||j.error||'failed')); }
 }
 
 let coversByMsg = {};   // messageId -> [{id, subject}] other emails this reply covers
@@ -761,6 +785,7 @@ window.ncSend = async function(){
     const me = meRes.ok ? (await meRes.json()).user : null;
     if (!me || me.role !== 'admin') return showComingSoon();
     loadStats(); loadList(); loadStaff();
+    loadCommunities().then(() => { try { loadList(); } catch (_) {} });  // populate the picker cache, then re-render
   } catch (e) { showComingSoon(); }
 })();
 </script>

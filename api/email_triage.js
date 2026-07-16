@@ -301,6 +301,20 @@ router.post('/:id/link', express.json(), async (req, res) => {
     const { data, error } = await supabase.from('email_messages').update(patch).eq('id', req.params.id).select(SELECT).single();
     if (error) throw error;
 
+    // Learn the community alias: if a human just linked a community and the email
+    // carried a hint that DIDN'T match the community's own name (e.g. "North
+    // Mission Glen MUD" -> Eaglewood), remember it so the next identical bill
+    // routes itself. (Ed 2026-07-16.)
+    if (community_id) {
+      const hint = msg && msg.extracted && msg.extracted.community_hint;
+      if (hint) {
+        try {
+          const { learnCommunityAlias } = require('../lib/email/community_alias');
+          await learnCommunityAlias({ hint, communityId: community_id, createdBy: reviewed_by || 'staff' });
+        } catch (_) { /* alias table may not be applied yet */ }
+      }
+    }
+
     // Learning loop: capture the sender's email + the phone in their signature
     // onto the confirmed contact (contact_methods — the canonical store the
     // resolver reads, so the NEXT email auto-links, and we keep their number).
@@ -784,9 +798,21 @@ router.post('/:id/to-gl', express.json(), async (req, res) => {
     const { recordVendorPaymentToGL, singleAmountCents } = require('../lib/accounting/record_vendor_payment');
     let cents = (b.amount_cents && Number.isInteger(+b.amount_cents) && +b.amount_cents > 0) ? +b.amount_cents : singleAmountCents(m.extracted && m.extracted.amounts);
     if (!cents) return res.status(400).json({ error: 'ambiguous_amount', detail: 'Couldn\'t pin a single amount. Record this one in Accounting so the figure is exact.' });
+    // A utility bill under a known alias codes to that alias's account: a North
+    // Mission Glen MUD auto-pay -> Eaglewood 5120 Water, no history needed. This
+    // is why the registry carries the GL account, not just the community. The
+    // classifier can't map "First Billing Services" to water. (Ed 2026-07-16.)
+    let glAccountId = b.gl_account_id || null;
+    if (!glAccountId && m.extracted && m.extracted.community_hint) {
+      try {
+        const { resolveCommunityByAlias } = require('../lib/email/community_alias');
+        const a = await resolveCommunityByAlias(m.extracted.community_hint);
+        if (a && a.gl_account_id && a.community_id === m.community_id) glAccountId = a.gl_account_id;
+      } catch (_) { /* alias table may not be applied yet */ }
+    }
     const desc = `Emma: ${String(m.subject || m.sender_name || 'Vendor payment').slice(0, 110)}`;
     const out = await recordVendorPaymentToGL({
-      communityId: m.community_id, amountCents: cents, glAccountId: b.gl_account_id || null,
+      communityId: m.community_id, amountCents: cents, glAccountId,
       vendorId: m.resolved_vendor_id || null, vendorName: m.sender_name || null, description: desc,
       postingDate: String(m.received_at || new Date().toISOString()).slice(0, 10), sourceRef: `email:${m.graph_id || m.id}`,
       notes: `Recorded from Emma's inbox (${m.sender_name || 'vendor'}). Flagged for month-end review.`,
