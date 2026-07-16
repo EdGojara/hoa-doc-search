@@ -19801,8 +19801,13 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     // photos that didn't get auto-linked at capture time.
     window.inspProperties = propsResp.properties || [];
 
-    // Re-center if we have data (community-specific view)
-    if (propsResp.properties.length > 0) {
+    // Center on the community ONCE, then never again. This function is re-run by
+    // the 30-second live poll (and other refreshes) while an inspector is driving
+    // — and re-centering on every load yanked the map back to zoom 15 out from
+    // under them, mid-drive, every time a pin changed. The operator's pan/zoom is
+    // theirs to keep. Only auto-center the FIRST time we have real data for a
+    // community; a community switch re-centers on the new one. (Ed 2026-07-16.)
+    if (propsResp.properties.length > 0 && inspState.mapCenteredForCommunity !== inspState.communityId) {
       const lngs = propsResp.properties.map((p) => Number(p.longitude));
       const lats = propsResp.properties.map((p) => Number(p.latitude));
       const center = [
@@ -19810,6 +19815,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         lats.reduce((s, v) => s + v, 0) / lats.length,
       ];
       inspState.mapInstance.flyTo({ center, zoom: 15, duration: 1000 });
+      inspState.mapCenteredForCommunity = inspState.communityId;
     }
 
     // Stage → color map for pin coloring. Navy stays the default for "no
