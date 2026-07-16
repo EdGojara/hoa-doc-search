@@ -812,11 +812,20 @@ router.post('/:id/to-gl', express.json(), async (req, res) => {
     }
     const desc = `Emma: ${String(m.subject || m.sender_name || 'Vendor payment').slice(0, 110)}`;
     const out = await recordVendorPaymentToGL({
+      allowDuplicate: !!b.confirm_duplicate,
       communityId: m.community_id, amountCents: cents, glAccountId,
       vendorId: m.resolved_vendor_id || null, vendorName: m.sender_name || null, description: desc,
       postingDate: String(m.received_at || new Date().toISOString()).slice(0, 10), sourceRef: `email:${m.graph_id || m.id}`,
       notes: `Recorded from Emma's inbox (${m.sender_name || 'vendor'}). Flagged for month-end review.`,
     });
+    if (out.error === 'suspected_duplicate') {
+      const when = out.existing && out.existing.posting_date ? out.existing.posting_date : 'recently';
+      return res.status(409).json({
+        error: 'suspected_duplicate',
+        detail: `A payment of $${(cents / 100).toFixed(2)} to this account was already recorded on ${when}. Utility auto-pays send two notifications for one payment, so this is likely the same one. Record it again anyway?`,
+        existing: out.existing,
+      });
+    }
     if (out.error) {
       const detail = out.error === 'no_account' ? 'Couldn\'t confidently pick an expense account. Record it in Accounting so it\'s coded right.'
         : out.error === 'no_cash' ? 'No 1000 Operating Cash account on this community\'s chart.'

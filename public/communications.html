@@ -499,8 +499,20 @@ async function doFile(id, action, btn){
   rowBtns.forEach(b=>b.disabled=true);
   const prev=btn.textContent; btn.textContent='Filing…';
   try{
-    const r=await af(`${API}/${id}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    const j=await r.json();
+    let r=await af(`${API}/${id}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    let j=await r.json();
+    // Same-payment guard: the system spotted an existing entry for this amount +
+    // account within the window (a second auto-pay notification for one payment).
+    // Ask before double-posting; only record again if Ed says so. (Ed 2026-07-16.)
+    if(r.status===409 && j.error==='suspected_duplicate'){
+      if(!confirm((j.detail||'This looks like a payment already recorded.')+'\n\nOK = record it again anyway.  Cancel = skip (recommended).')){
+        if(card){ card.style.transition='opacity .25s'; card.style.opacity='0.5'; }
+        if(msg){ msg.innerHTML='<span class="note">Skipped as a duplicate notification — not recorded.</span>'; }
+        rowBtns.forEach(b=>b.disabled=false); btn.textContent=prev; _filingIds.delete(id); return;
+      }
+      r=await af(`${API}/${id}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_duplicate:true})});
+      j=await r.json();
+    }
     if(!r.ok){
       const why = j.detail||j.error||'Failed';
       if(msg){ msg.innerHTML='<span class="err">'+esc(why)+'</span>'; msg.scrollIntoView({block:'nearest',behavior:'smooth'}); }
