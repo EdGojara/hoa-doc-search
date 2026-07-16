@@ -578,7 +578,7 @@ function forwardPrompt(id, senderEmail){
     </div>
     <div style="display:flex; gap:6px; align-items:center; margin:0 0 6px;">
       <label style="font-size:12px;color:var(--muted);min-width:24px;">Cc</label>
-      <input id="fwd-cc-${id}" type="text" value="${esc(senderEmail||'')}" placeholder="copy the sender or anyone (commas for multiple)" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;flex:1;">
+      <input id="fwd-cc-${id}" type="text" value="" placeholder="copy another teammate (optional, @bedrocktx.com only)" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;flex:1;">
     </div>
     <textarea id="fwd-note-${id}" placeholder="Type a few words — e.g. 'has this been paid?' — then ✍️ Write, or write the note yourself." style="width:100%;min-height:56px;"></textarea>
     <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">

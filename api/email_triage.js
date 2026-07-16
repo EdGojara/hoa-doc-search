@@ -488,20 +488,32 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
 router.post('/:id/forward-internal', express.json(), async (req, res) => {
   try {
     const { to_email, to_name, note, cc_email } = req.body || {};
-    // Accept one OR several recipients (comma/semicolon-separated) so "Everyone"
-    // can forward to the whole team at once. sendAs handles the list.
-    const emailList = (v) => String(v || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
-    const recips = emailList(to_email);
-    if (!recips.length) return res.status(400).json({ error: 'Pick a teammate with a valid email address.' });
-    const to = recips.join(', ');
-    // CC — e.g. hand an AP question to Emma and keep the staffer who asked copied.
-    const cc = emailList(cc_email).join(', ');
     const { data: m, error } = await supabase.from('email_messages')
       .select('id, subject, body_full, body_preview, sender_email, sender_name, classification, extracted, graph_id, mailbox, conversation_id, received_at, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email_not_connected', detail: 'Graph credentials missing — internal forward needs email connected.' });
+
+    // INTERNAL means INTERNAL. This forward is "hand it to a teammate to check
+    // BEFORE we reply" — it discusses the homeowner and says nothing's gone to
+    // them yet, so it can ONLY reach Bedrock staff, never the homeowner, an
+    // outside address, or the original sender. A homeowner got Cc'd on one of
+    // these because the Cc defaulted to the sender and the server sent what it
+    // was handed. The UI is fixed too, but the UI is not the control — this is.
+    // (Ed 2026-07-16.) See lib/email/forward_hygiene.js (tested).
+    const { internalRecipients, stripQuoted } = require('../lib/email/forward_hygiene');
+    const { to: recips, cc: ccArr, dropped: droppedExternal } = internalRecipients({ toEmail: to_email, ccEmail: cc_email, senderEmail: m.sender_email });
+    if (!recips.length) {
+      return res.status(400).json({
+        error: 'no_internal_recipient',
+        detail: droppedExternal.length
+          ? `An internal review forward can only go to Bedrock teammates (@bedrocktx.com), never to the homeowner or an outside address. Removed: ${droppedExternal.join(', ')}. To answer the homeowner, use Draft reply instead.`
+          : 'Pick a Bedrock teammate to forward this to.',
+      });
+    }
+    const to = recips.join(', ');
+    const cc = ccArr.join(', ');
 
     // Carry the ORIGINAL attachments to the teammate — Emma needs the invoice PDF
     // to make the journal entry / pay it, not just the note. Skip tiny inline
@@ -541,7 +553,9 @@ router.post('/:id/forward-internal', express.json(), async (req, res) => {
         }
       } catch (_) { /* fall back to what we have */ }
     }
-    orig = String(orig || m.body_preview || '').slice(0, 6000);
+    // Show the NEW message, not the quoted wall (stripQuoted from forward_hygiene).
+    // The clean thread is attached separately below. (Ed 2026-07-16.)
+    orig = stripQuoted(String(orig || m.body_preview || '')).slice(0, 4000);
 
     // The CONVERSATION HISTORY. Claire forwards precisely when she can't answer —
     // so the teammate needs everything that came before, not just the last message.
@@ -558,28 +572,26 @@ router.post('/:id/forward-internal', express.json(), async (req, res) => {
       } catch (_) { /* forward still goes without the chain */ }
     }
     const fmtWhen = (d) => { try { return new Date(d).toLocaleString('en-US', { timeZone: 'America/Chicago' }); } catch (_) { return ''; } };
-    const isInternal = String(m.classification || '').toLowerCase() === 'internal' || /@bedrocktx\.com$/i.test(String(m.sender_email || ''));
-    const contextLine = isInternal
-      ? 'Forwarding this internal Bedrock email for you to review and handle. Nothing has been sent externally.'
-      : 'Forwarding this homeowner email for your review before we reply. Nothing has been sent to the homeowner yet.';
+    // Clean, professional internal forward. The note carries the ask; the blocks
+    // are clearly labelled. No "nothing sent to the homeowner yet" line (it read
+    // badly, and worse, a Cc'd homeowner once saw it), and no "reply here and
+    // we'll take it from there" footer. (Ed 2026-07-16.)
     const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">
-${note ? `<p style="margin:0 0 12px;">${e(note).replace(/\n/g, '<br>')}</p>` : ''}
-<p style="margin:0 0 6px;color:#5a7390;">${contextLine}</p>
-<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin:10px 0;">
-  <div style="font-size:12px;color:#5a7390;">From ${e(m.sender_name || m.sender_email || '')}${m.community ? ' · ' + e(m.community.name) : ''}${m.classification ? ' · ' + e(m.classification) : ''}</div>
+${note ? `<p style="margin:0 0 14px;">${e(note).replace(/\n/g, '<br>')}</p>` : ''}
+<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;margin:6px 0;background:#fafbfc;">
+  <div style="font-size:12px;color:#5a7390;">From ${e(m.sender_name || m.sender_email || '')}${m.community ? ' · ' + e(m.community.name) : ''}</div>
   <div style="font-weight:700;margin:4px 0;">${e(m.subject || '(no subject)')}</div>
-  <div style="font-size:12px;color:#5a7390;margin:4px 0 2px;">${fmtWhen(m.received_at)}</div>
+  <div style="font-size:12px;color:#5a7390;margin:4px 0 8px;">${fmtWhen(m.received_at)}</div>
   <div style="white-space:pre-wrap;">${e(orig)}</div>
 </div>
-${thread.length ? `<div style="margin:12px 0;">
-  <div style="font-size:12px;color:#5a7390;font-weight:700;margin-bottom:6px;">Earlier in this conversation (${thread.length}) — oldest first</div>
-  ${thread.map((t) => `<div style="border-left:3px solid #e5e7eb;padding:6px 10px;margin:0 0 8px;">
-    <div style="font-size:11.5px;color:#5a7390;">${t.direction === 'outbound' ? '↑ we sent' : '↓ received'} · ${e(t.sender_name || t.sender_email || '')} · ${fmtWhen(t.received_at)}</div>
-    <div style="white-space:pre-wrap;font-size:13px;">${e(String(t.body_full || t.body_preview || '').slice(0, 1500))}</div>
-  </div>`).join('')}
+${thread.length ? `<div style="margin:14px 0 0;">
+  <div style="font-size:12px;color:#5a7390;font-weight:700;margin-bottom:6px;">Earlier in this conversation (${thread.length}), oldest first</div>
+  ${thread.map((t) => { const body = stripQuoted(String(t.body_full || t.body_preview || '')).slice(0, 1200); return `<div style="border-left:3px solid #e5e7eb;padding:6px 10px;margin:0 0 8px;">
+    <div style="font-size:11.5px;color:#5a7390;">${t.direction === 'outbound' ? 'Bedrock' : e(t.sender_name || t.sender_email || '')} · ${fmtWhen(t.received_at)}</div>
+    <div style="white-space:pre-wrap;font-size:13px;">${e(body)}</div>
+  </div>`; }).join('')}
 </div>` : ''}
-${fwdAttachments.length ? `<p style="margin:8px 0;color:#166534;"><strong>Attachments included:</strong> ${e(fwdAttachments.map((a) => a.name).join(', '))}</p>` : ''}
-<p style="margin:12px 0 0;">Reply here with what you find and we'll take it from there.</p>
+${fwdAttachments.length ? `<p style="margin:12px 0 0;color:#166534;"><strong>Attachments included:</strong> ${e(fwdAttachments.map((a) => a.name).join(', '))}</p>` : ''}
 </div>`;
     // Send from Claire's (authorized) mailbox, not Ed's personal one — the app's
     // Azure Application Access Policy only covers the bot mailboxes, so sending as
@@ -590,10 +602,11 @@ ${fwdAttachments.length ? `<p style="margin:8px 0;color:#166534;"><strong>Attach
     // Record the hand-off on the item (no triage_status change — keeps it a
     // light annotation, not a workflow state).
     try {
-      const merged = Object.assign({}, m.extracted || {}, { forwarded: { to, cc: cc || null, name: to_name || null, at: new Date().toISOString(), note: note || null } });
+      const merged = Object.assign({}, m.extracted || {}, { forwarded: { to, cc: cc || null, name: to_name || null, at: new Date().toISOString(), note: note || null, dropped_external: droppedExternal.length ? droppedExternal : undefined } });
       await supabase.from('email_messages').update({ extracted: merged }).eq('id', req.params.id);
     } catch (_) { /* annotation best-effort */ }
-    res.json({ ok: true, to, cc: cc || null });
+    if (droppedExternal.length) console.warn(`[email_triage] internal forward stripped external recipient(s): ${droppedExternal.join(', ')}`);
+    res.json({ ok: true, to, cc: cc || null, dropped_external: droppedExternal.length ? droppedExternal : undefined });
   } catch (err) {
     console.error('[email_triage] forward-internal failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
