@@ -42,6 +42,23 @@ router.get('/payable', async (req, res) => {
   } catch (err) { handleErr(res, 'payable', err); }
 });
 
+// GET /payable/:invoiceId/document — open the supporting invoice PDF for a
+// payable, from the CHECK module's own auth (the staff cookie), so the "View"
+// link works as a plain navigation. The AP module's /api/ap-intake/:id/invoice-file
+// is Bearer-admin-gated (requireAdmin), and a navigation can't send that token —
+// so clicking "View" on the check page returned admin_only. Same doc, right gate.
+// (Ed 2026-07-16.)
+router.get('/payable/:invoiceId/document', async (req, res) => {
+  try {
+    const { data: inv } = await supabase.from('ap_invoices').select('source_storage_path').eq('id', req.params.invoiceId).maybeSingle();
+    if (!inv || !inv.source_storage_path) return res.status(404).json({ error: 'no_invoice_file', detail: 'No invoice document is on file for this bill.' });
+    const { data, error } = await supabase.storage.from('documents').createSignedUrl(inv.source_storage_path, 60 * 60);
+    if (error || !data || !data.signedUrl) return res.status(404).json({ error: 'file_not_found' });
+    if (req.query.json) return res.json({ url: data.signedUrl });
+    res.redirect(data.signedUrl);
+  } catch (err) { handleErr(res, 'payable-document', err); }
+});
+
 // GET /statement-tracker — live "which monthly bank statements are still needed"
 // across every account, straight from bank_statement_imports. Staff-accessible
 // (behind the global staff cookie, like the rest of /api/checks). Updates itself
