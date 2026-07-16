@@ -1249,9 +1249,9 @@
         <div class="field"><label class="lbl">Dual-signature threshold ($, blank = none)</label><input type="text" id="cfg-dual" value="${dollars(c.dual_sig_threshold_cents)}"></div>
       </div>
       <div class="field" style="margin-top:10px; max-width:640px;">
-        <label class="lbl">Authorized signature ${c.has_signature ? '<span class="badge ok" style="font-size:10px; vertical-align:middle;">on file</span>' : ''}</label>
+        <label class="lbl">Authorized signature ${c.has_signature ? `<span class="badge ok" style="font-size:10px; vertical-align:middle;">on file${c.signature_source === 'master' ? ' (master)' : c.signature_source === 'account' ? ' (this account)' : ''}</span>` : ''}</label>
         <input type="file" id="cfg-sig" accept="image/png,image/jpeg" onchange="chkPreviewSig()" style="font-size:13px;">
-        <div class="muted" style="font-size:11.5px; margin-top:3px;">Upload a PNG/JPG of the signer's signature — any size works, it's resized automatically. Prints on the signature line.${c.has_signature ? ' A signature is already on file — uploading replaces it.' : ''}</div>
+        <div class="muted" style="font-size:11.5px; margin-top:3px;">Upload a PNG/JPG of the signer's signature, any size works, it's resized automatically. Prints on the signature line. This is your <strong>master signature</strong> and applies to every community's checks.${c.signature_source === 'master' ? ' Your master signature is on file. Uploading replaces it everywhere.' : c.signature_source === 'account' ? ' This account has its own signature overriding the master; uploading replaces the master.' : ''}</div>
         <div id="cfg-sig-preview" style="margin-top:6px;"></div>
       </div>
       <div class="muted" style="font-size:12px; margin:8px 0;">Blank check stock: trustEd prints the full check including the MICR line. Confirm your bank accepts laser-printed MICR before the first live run.</div>
