@@ -2420,8 +2420,13 @@ router.get('/activity-report', async (req, res) => {
     // history (decided before us) and must NOT be billed. created_at is the decision
     // timestamp; compare against the day-boundary UTC bounds.
     let accDecisions = await fetchAll(() => {
+      // Only DECIDED decisions bill — a pending_review row is just an inbound
+      // application sitting in the queue, not billable work (Ed 2026-07-17).
+      // Without this, a homeowner emailing an application for a project staff
+      // already decided directly double-counts the ARC fee.
       let q = supabase.from('acc_decisions')
         .select('community_id, decision_type, created_at')
+        .eq('status', 'decided')
         .gte('created_at', start + 'T00:00:00Z')
         .lt('created_at', endEx + 'T00:00:00Z');
       if (communityId) q = q.eq('community_id', communityId);
@@ -2611,7 +2616,7 @@ router.get('/activity-detail', async (req, res) => {
       // staff issued + generated a letter for. created_at is the decision timestamp.
       fetchAll(() => supabase.from('acc_decisions')
         .select('id, homeowner_address, homeowner_name, project_summary, decision_type, created_at, letter_pdf_storage_path')
-        .eq('community_id', communityId)
+        .eq('community_id', communityId).eq('status', 'decided')
         .gte('created_at', start + 'T00:00:00Z').lt('created_at', endEx + 'T00:00:00Z')),
       // Payment plans set up in the period (Ed 2026-07-17). Keyed on start_date,
       // falling back to created_at when start_date is null — the SAME window the
