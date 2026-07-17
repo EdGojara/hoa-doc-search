@@ -4494,7 +4494,10 @@
     billingPiCatalog = [...reimb, ...owner].map(it => ({
       category: it.category, description: it.description,
       unit_price: it.unit_price != null ? Number(it.unit_price) : (it.amount != null ? Number(it.amount) : 0),
-    })).filter(it => it.category);
+    })).filter(it => it.category)
+      // Alphabetical by description (Ed asked for this on the rate-card dropdown;
+      // it regressed when the two one-off panels were consolidated onto this one).
+      .sort((a, b) => String(a.description || '').localeCompare(String(b.description || '')));
     const sel = document.getElementById('billing-pi-category');
     if (!sel) return;
     while (sel.options.length > 1) sel.remove(1);
