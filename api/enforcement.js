@@ -1893,28 +1893,37 @@ router.get('/drafts', async (req, res) => {
   try {
     const communityId = req.query.community_id;
     const inspectionId = req.query.inspection_id;
-    const limit = Math.min(200, Number(req.query.limit) || 50);
-
-    let q = supabase
-      .from('interactions')
-      .select(`
-        id, subject, content, type, delivery_method, sent_at, created_at, status,
-        community_id, property_id, violation_id, observation_id, inspection_id,
-        bundle_id, letter_fee_cents
-      `)
-      .eq('status', 'draft')
-      // Violation-letter drafts ONLY. Without this, OTHER draft-status
-      // interactions — e.g. ai_draft email replies from the responder engine —
-      // leak into this queue and render as broken letters ("no photo / cure
-      // by — / not ready") because they have no violation or observation.
-      .like('type', 'letter_%')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (communityId) q = q.eq('community_id', communityId);
-    if (inspectionId) q = q.eq('inspection_id', inspectionId);
-    const { data: drafts, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
-    if (!drafts || drafts.length === 0) return res.json({ drafts: [] });
+    // Return ALL matching drafts — never silently cap (Ed 2026-07-17 saw only
+    // 100 of Still Creek's 199). Page through so a big community isn't truncated;
+    // enrichment below is by id-set, which scales fine. Safety cap 5000.
+    const HARD_CAP = 5000;
+    const buildBase = () => {
+      let q = supabase
+        .from('interactions')
+        .select(`
+          id, subject, content, type, delivery_method, sent_at, created_at, status,
+          community_id, property_id, violation_id, observation_id, inspection_id,
+          bundle_id, letter_fee_cents
+        `)
+        .eq('status', 'draft')
+        // Violation-letter drafts ONLY. Without this, OTHER draft-status
+        // interactions — e.g. ai_draft email replies from the responder engine —
+        // leak into this queue and render as broken letters ("no photo / cure
+        // by — / not ready") because they have no violation or observation.
+        .like('type', 'letter_%')
+        .order('created_at', { ascending: false });
+      if (communityId) q = q.eq('community_id', communityId);
+      if (inspectionId) q = q.eq('inspection_id', inspectionId);
+      return q;
+    };
+    const drafts = [];
+    for (let fromIdx = 0; fromIdx < HARD_CAP; fromIdx += 1000) {
+      const { data, error } = await buildBase().range(fromIdx, fromIdx + 999);
+      if (error) return res.status(500).json({ error: error.message });
+      drafts.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    if (!drafts.length) return res.json({ drafts: [] });
 
     // Bulk-fetch violations, properties, observations, photos so we can join
     // in JS (Supabase's nested-select can't handle this many cross-table joins
