@@ -24112,14 +24112,13 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const wrap = document.getElementById('inspDraftsList');
     if (!wrap) return;
     wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:18px 0;">Loading drafts…</div>';
+    const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const qs = filterCid ? `&community_id=${encodeURIComponent(filterCid)}` : '';
     try {
-      // Auto-bundle pass first — groups multi-violation drafts at the same
-      // property into single envelopes (one PDF, shared bundle_id). Idempotent
-      // and safe to call repeatedly; bundles that already exist are skipped.
-      try { await window._authFetch('/api/enforcement/drafts/auto-bundle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch (_) {}
-
-      const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
-      const qs = filterCid ? `&community_id=${encodeURIComponent(filterCid)}` : '';
+      // Load + render the list FIRST. Drafts are already bundled, so don't make
+      // the operator wait on the auto-bundle pass — portfolio-wide it can take
+      // ~a minute (and keeps re-attempting any bundle that fails validation), so
+      // awaiting it hung the whole view on "Loading drafts…" (Ed 2026-07-17).
       const r = await window._authFetch(`/api/enforcement/drafts?limit=100${qs}`);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
@@ -24128,7 +24127,24 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       inspDraftsRender();
     } catch (e) {
       wrap.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:18px;">Couldn't load drafts: ${escapeHtml(e.message)}</div>`;
+      return;
     }
+    // Auto-bundle in the BACKGROUND — groups any loose multi-violation drafts at
+    // the same property into single envelopes. Scoped to the filtered community
+    // when set (much faster). Never blocks the initial render; only refresh the
+    // list if it actually changed the grouping.
+    (async () => {
+      try {
+        const body = filterCid ? JSON.stringify({ community_id: filterCid }) : '{}';
+        const br = await window._authFetch('/api/enforcement/drafts/auto-bundle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+        const bj = await br.json().catch(() => ({}));
+        if (bj && (bj.bundles_created || bj.drafts_bundled || bj.singletons)) {
+          const r2 = await window._authFetch(`/api/enforcement/drafts?limit=100${qs}`);
+          const j2 = await r2.json();
+          if (r2.ok) { inspDraftsData = j2.drafts || []; inspDraftsRender(); }
+        }
+      } catch (_) { /* background tidy-up; the list is already shown */ }
+    })();
   }
 
   function inspDraftsRender() {
