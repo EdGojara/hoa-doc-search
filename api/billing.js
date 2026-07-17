@@ -2772,12 +2772,11 @@ router.get('/activity-detail', async (req, res) => {
     const letterTable = letterRows.length ? `
       <p class="muted" style="margin:0 0 10px;"><strong>${summary.violations}</strong> violation${summary.violations === 1 ? '' : 's'} mailed across <strong>${summary.letters_total}</strong> letter${summary.letters_total === 1 ? '' : 's'} (${summary.certified} certified, ${summary.first_class} first-class). One row per letter; a bundle to one owner counts once.</p>
       <table class="t">
-        <thead><tr><th>Property</th><th>Date</th><th>Violation type</th><th>Stage(s)</th><th>Mail class</th><th style="text-align:center;">Violations</th></tr></thead>
+        <thead><tr><th>Property</th><th>Date</th><th>Violation category</th><th>Stage(s)</th><th style="text-align:center;">Violations</th></tr></thead>
         <tbody>${letterRows.map((r) => `<tr>
           <td><strong>${esc(r.property)}</strong></td><td>${esc(fmtUS(r.date))}</td>
           <td>${esc(r.violation_type)}</td>
           <td>${esc(r.stage)}</td>
-          <td>${r.mail_class === 'Certified' ? '<span class="cert">Certified</span>' : 'First-class'}</td>
           <td style="text-align:center;">${r.violations}${r.violations > 1 ? ' <span class="muted">(bundle)</span>' : ''}</td>
         </tr>`).join('')}</tbody>
       </table>` : '<p class="muted">No violation letters mailed in this period.</p>';
