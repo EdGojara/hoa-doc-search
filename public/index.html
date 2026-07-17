@@ -4651,7 +4651,7 @@
     document.getElementById('billing-fee-fixed').textContent = '';
     document.getElementById('billing-fee-reimbursables').textContent = '';
     document.getElementById('billing-fee-owner-charges').textContent = '';
-    document.getElementById('billing-draft-result').textContent = '';
+    ['billing-draft-result-fixed', 'billing-draft-result-activity'].forEach((id) => { const el = document.getElementById(id); if (el) el.textContent = ''; });
 
     try {
       const r = await fetch(`/api/billing/communities/${communityId}/contract`);
