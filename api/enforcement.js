@@ -1894,6 +1894,16 @@ router.get('/drafts', async (req, res) => {
     const communityId = req.query.community_id;
     const inspectionId = req.query.inspection_id;
     const limit = Math.min(200, Number(req.query.limit) || 50);
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+
+    // Total count for the same filter so the UI can page with "X of Y" and never
+    // silently cap (Ed 2026-07-17). Each page stays small — loading all 200+ at
+    // once blanked the view, so the client pages with Load more.
+    let countQ = supabase.from('interactions').select('id', { count: 'exact', head: true })
+      .eq('status', 'draft').like('type', 'letter_%');
+    if (communityId) countQ = countQ.eq('community_id', communityId);
+    if (inspectionId) countQ = countQ.eq('inspection_id', inspectionId);
+    const { count: total } = await countQ;
 
     let q = supabase
       .from('interactions')
@@ -1909,12 +1919,12 @@ router.get('/drafts', async (req, res) => {
       // by — / not ready") because they have no violation or observation.
       .like('type', 'letter_%')
       .order('created_at', { ascending: false })
-      .limit(limit);
+      .range(offset, offset + limit - 1);
     if (communityId) q = q.eq('community_id', communityId);
     if (inspectionId) q = q.eq('inspection_id', inspectionId);
     const { data: drafts, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
-    if (!drafts || drafts.length === 0) return res.json({ drafts: [] });
+    if (!drafts || drafts.length === 0) return res.json({ drafts: [], total: total || 0 });
 
     // Bulk-fetch violations, properties, observations, photos so we can join
     // in JS (Supabase's nested-select can't handle this many cross-table joins
@@ -2047,7 +2057,7 @@ router.get('/drafts', async (req, res) => {
     const hidden = enrichedAll.length - liveDrafts.length;
     if (hidden > 0) console.warn(`[enforcement.drafts] hid ${hidden} draft(s) for voided/resolved violations`);
 
-    res.json({ drafts: liveDrafts });
+    res.json({ drafts: liveDrafts, total: total || 0, offset, limit });
   } catch (err) {
     console.error('[enforcement.drafts]', err);
     res.status(500).json({ error: err.message });

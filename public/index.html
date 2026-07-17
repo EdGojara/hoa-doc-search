@@ -22673,6 +22673,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // queue is where staff approves them in bulk or rejects bad ones.
   // ============================================================
   let inspDraftsData = [];
+  let inspDraftsTotal = 0;        // total drafts for the current filter (server count)
+  let inspDraftsNextOffset = 0;   // raw offset for the next "Load more" page
+  const INSP_DRAFTS_PAGE = 100;   // page size — small pages avoid the big-response blank
   let inspDraftsSelected = new Set();
 
   // ============================================================
@@ -24115,14 +24118,17 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
     const qs = filterCid ? `&community_id=${encodeURIComponent(filterCid)}` : '';
     try {
-      // Load + render the list FIRST. Drafts are already bundled, so don't make
+      // Load + render the FIRST page. Drafts are already bundled, so don't make
       // the operator wait on the auto-bundle pass — portfolio-wide it can take
       // ~a minute (and keeps re-attempting any bundle that fails validation), so
       // awaiting it hung the whole view on "Loading drafts…" (Ed 2026-07-17).
-      const r = await window._authFetch(`/api/enforcement/drafts?limit=100${qs}`);
+      // Page in 100s — loading all 200+ at once blanked the view.
+      const r = await window._authFetch(`/api/enforcement/drafts?limit=${INSP_DRAFTS_PAGE}&offset=0${qs}`);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       inspDraftsData = j.drafts || [];
+      inspDraftsTotal = j.total != null ? j.total : inspDraftsData.length;
+      inspDraftsNextOffset = INSP_DRAFTS_PAGE;
       inspDraftsSelected = new Set();
       inspDraftsRender();
     } catch (e) {
@@ -24139,13 +24145,34 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         const br = await window._authFetch('/api/enforcement/drafts/auto-bundle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
         const bj = await br.json().catch(() => ({}));
         if (bj && (bj.bundles_created || bj.drafts_bundled || bj.singletons)) {
-          const r2 = await window._authFetch(`/api/enforcement/drafts?limit=100${qs}`);
+          const r2 = await window._authFetch(`/api/enforcement/drafts?limit=${INSP_DRAFTS_PAGE}&offset=0${qs}`);
           const j2 = await r2.json();
-          if (r2.ok) { inspDraftsData = j2.drafts || []; inspDraftsRender(); }
+          if (r2.ok) { inspDraftsData = j2.drafts || []; inspDraftsTotal = j2.total != null ? j2.total : inspDraftsData.length; inspDraftsNextOffset = INSP_DRAFTS_PAGE; inspDraftsRender(); }
         }
       } catch (_) { /* background tidy-up; the list is already shown */ }
     })();
   }
+
+  // Fetch the next page and APPEND (each page small so the view never blanks).
+  async function inspDraftsLoadMore(btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+    const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const qs = filterCid ? `&community_id=${encodeURIComponent(filterCid)}` : '';
+    try {
+      const r = await window._authFetch(`/api/enforcement/drafts?limit=${INSP_DRAFTS_PAGE}&offset=${inspDraftsNextOffset}${qs}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const seen = new Set(inspDraftsData.map((d) => d.interaction_id));
+      (j.drafts || []).forEach((d) => { if (!seen.has(d.interaction_id)) inspDraftsData.push(d); });
+      if (j.total != null) inspDraftsTotal = j.total;
+      inspDraftsNextOffset += INSP_DRAFTS_PAGE;
+      inspDraftsRender();
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Load more'; }
+      alert('Could not load more drafts: ' + e.message);
+    }
+  }
+  window.inspDraftsLoadMore = inspDraftsLoadMore;
 
   function inspDraftsRender() {
     const wrap = document.getElementById('inspDraftsList');
@@ -24271,7 +24298,13 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
     // One list, interleaved + sorted by street name then house number.
     const sortedHtml = [...bundleCards, ...looseCards].sort(_addrCmp).map((x) => x.html).join('');
-    wrap.innerHTML = summaryBar + selectionToolbar + sortedHtml;
+    // Page footer — pull the rest in 100s so the view never has to render 200+
+    // at once (which blanked it). Shows how many of the total are loaded.
+    const moreFooter = (inspDraftsNextOffset < inspDraftsTotal) ? `
+      <div style="text-align:center; padding:14px 12px;">
+        <button onclick="inspDraftsLoadMore(this)" style="background:#0B1D34; color:#fff; border:none; border-radius:6px; padding:8px 20px; font-size:13px; font-weight:600; cursor:pointer;">Load more · ${inspDraftsData.length} of ${inspDraftsTotal} shown</button>
+      </div>` : '';
+    wrap.innerHTML = summaryBar + selectionToolbar + sortedHtml + moreFooter;
     inspDraftsUpdateApproveBtn();
   }
 
