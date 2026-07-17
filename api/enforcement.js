@@ -1896,11 +1896,16 @@ router.get('/drafts', async (req, res) => {
     const limit = Math.min(200, Number(req.query.limit) || 50);
     const offset = Math.max(0, Number(req.query.offset) || 0);
 
+    // Match ONLY real violation-letter types. `letter_%` (used before) also caught
+    // `letter_other` — orphaned non-violation letters with no violation/property
+    // that render blank ("letter not ready") and sort to the top (Ed 2026-07-17).
+    const DRAFT_LETTER_TYPES = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
+
     // Total count for the same filter so the UI can page with "X of Y" and never
     // silently cap (Ed 2026-07-17). Each page stays small — loading all 200+ at
     // once blanked the view, so the client pages with Load more.
     let countQ = supabase.from('interactions').select('id', { count: 'exact', head: true })
-      .eq('status', 'draft').like('type', 'letter_%');
+      .eq('status', 'draft').in('type', DRAFT_LETTER_TYPES);
     if (communityId) countQ = countQ.eq('community_id', communityId);
     if (inspectionId) countQ = countQ.eq('inspection_id', inspectionId);
     const { count: total } = await countQ;
@@ -1913,11 +1918,9 @@ router.get('/drafts', async (req, res) => {
         bundle_id, letter_fee_cents
       `)
       .eq('status', 'draft')
-      // Violation-letter drafts ONLY. Without this, OTHER draft-status
-      // interactions — e.g. ai_draft email replies from the responder engine —
-      // leak into this queue and render as broken letters ("no photo / cure
-      // by — / not ready") because they have no violation or observation.
-      .like('type', 'letter_%')
+      // Violation-letter drafts ONLY (not letter_other / email drafts, which have
+      // no violation and render blank).
+      .in('type', DRAFT_LETTER_TYPES)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
     if (communityId) q = q.eq('community_id', communityId);
@@ -1935,7 +1938,7 @@ router.get('/drafts', async (req, res) => {
 
     const [vRes, pRes, oRes] = await Promise.all([
       supabase.from('violations')
-        .select('id, primary_category_id, current_stage, resolved_at, cure_period_ends_at, cure_days_override, board_priority_at_open, enforcement_categories(label)')
+        .select('id, primary_category_id, current_stage, resolved_at, quality_status, cure_period_ends_at, cure_days_override, board_priority_at_open, enforcement_categories(label)')
         .in('id', violationIds.length ? violationIds : ['00000000-0000-0000-0000-000000000000']),
       supabase.from('v_current_property_owners')
         .select('property_id, street_address, unit, city, owner_name, owner_mailing_address')
@@ -2052,6 +2055,9 @@ router.get('/drafts', async (req, res) => {
       if (!d.violation_id) return true;
       const v = violationById.get(d.violation_id);
       if (!v) return true;
+      // Superseded (de-duped / corrected-out) cases are closed too, even though
+      // current_stage still reads courtesy/certified — don't queue their letters.
+      if (v.quality_status === 'superseded') return false;
       return !v.resolved_at && !['voided', 'closed', 'cured'].includes(v.current_stage);
     });
     const hidden = enrichedAll.length - liveDrafts.length;
