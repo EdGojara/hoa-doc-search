@@ -133,6 +133,9 @@ function renderShell(communities){
   drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
   drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');setFiles(e.dataTransfer.files);});
   analyze.addEventListener('click',()=>{ if(!chosen.length)return; doAnalyze(document.getElementById('comm').value||'',chosen,analyze); });
+  // Honor ?community=<id> (e.g. the Activity Report "Payment plans" link) —
+  // preselect the roster filter to that community.
+  try { const _c=new URLSearchParams(location.search).get('community'); if(_c){ const rs=document.getElementById('rosterComm'); if(rs) rs.value=_c; } } catch(_){}
   loadRoster();
 }
 

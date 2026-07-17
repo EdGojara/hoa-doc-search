@@ -4278,7 +4278,7 @@
       const detailUrl = (c, extra = '') => `/api/billing/activity-detail?community_id=${encodeURIComponent(c.community_id)}&period_start=${start}&period_end=${end}${extra}`;
       // A count cell that links to its own detail view when > 0.
       const cellLink = (v, url, title, inner) => `<td style="padding:7px 10px; border-bottom:1px solid #eee; text-align:right; font-size:13px;">${(v > 0) ? `<a href="${url}" target="_blank" rel="noopener" title="${title}" style="color:#0B1D34; font-weight:600; text-decoration:none; border-bottom:1px solid #cbd5e1;">${inner != null ? inner : v}</a>` : (inner != null ? inner : v)}</td>`;
-      const body = rows.filter(c => c.violations || c.letters_sent || c.pages_printed || c.arc_approved || c.arc_denied || c.arc_conditions || c.arc_other || c.builder_arc).map(c => `
+      const body = rows.filter(c => c.violations || c.letters_sent || c.pages_printed || c.arc_approved || c.arc_denied || c.arc_conditions || c.arc_other || c.builder_arc || c.payment_plans).map(c => `
         <tr>
           <td style="padding:7px 10px; border-bottom:1px solid #eee; font-size:13px; font-weight:600;"><a href="${detailUrl(c)}" target="_blank" rel="noopener" title="Open the full board detail report — every letter + ARC decision with PDF links" style="color:#0B1D34; text-decoration:none; border-bottom:1px solid #94a3b8;">${escapeHtml(c.name)} <span style="font-size:10px; opacity:0.6;">↗ detail</span></a></td>
           ${cell(c.violations || 0)}
@@ -4290,22 +4290,23 @@
           ${cellLink(c.arc_denied, detailUrl(c, '&arc=denied#arc'), 'See the denied resident ARC decisions')}
           ${cell(c.arc_conditions + c.arc_other)}
           ${cellLink(c.builder_arc, detailUrl(c, '#arc'), 'Builder ARC — billed to the builder, not the HOA', c.builder_arc ? `<span style="color:#7c3aed;">${c.builder_arc}</span>` : 0)}
-        </tr>`).join('') || '<tr><td colspan="10" style="padding:16px; text-align:center; color:#888; font-size:13px;">No billable activity in this period.</td></tr>';
+          ${cellLink(c.payment_plans, '/admin/payment-plans?community=' + encodeURIComponent(c.community_id), 'Open the payment plan panel for this community')}
+        </tr>`).join('') || '<tr><td colspan="11" style="padding:16px; text-align:center; color:#888; font-size:13px;">No billable activity in this period.</td></tr>';
       const th = (label) => `<th style="padding:7px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#64748b; border-bottom:2px solid #e2e8f0;">${label}</th>`;
       host.innerHTML = `
         ${!j.page_tracking ? '<div style="background:#fffbeb; border:1px solid #fbbf24; border-radius:6px; padding:8px 10px; font-size:12px; color:#92400e; margin-bottom:10px;">⚠ Pages-printed is not live yet — apply migration 257 and run the page-count backfill, then re-run. Notice + ARC counts are accurate now.</div>' : ''}
         <table style="width:100%; border-collapse:collapse;">
           <thead><tr>
             <th style="padding:7px 10px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#64748b; border-bottom:2px solid #e2e8f0;">Community</th>
-            ${th('Violations')}${th('Letters sent')}${th('First-class')}${th('Certified')}${th('Pages printed')}${th('ARC approved')}${th('ARC denied')}${th('ARC other')}${th('Builder ARC')}
+            ${th('Violations')}${th('Letters sent')}${th('First-class')}${th('Certified')}${th('Pages printed')}${th('ARC approved')}${th('ARC denied')}${th('ARC other')}${th('Builder ARC')}${th('Payment plans')}
           </tr></thead>
           <tbody>${body}</tbody>
           <tfoot><tr style="font-weight:700; background:#f8fafc;">
             <td style="padding:8px 10px;">${_cid ? 'Community total' : 'Portfolio total'}</td>
-            ${cell(t.violations || 0)}${cell(t.letters_sent || 0)}${cell(t.first_class_sent || 0)}${cell(t.certified_sent || 0)}${cell(t.pages_printed || 0)}${cell(t.arc_approved || 0)}${cell(t.arc_denied || 0)}${cell((t.arc_conditions || 0) + (t.arc_other || 0))}${cell(t.builder_arc ? `<span style="color:#7c3aed;">${t.builder_arc}</span>` : 0)}
+            ${cell(t.violations || 0)}${cell(t.letters_sent || 0)}${cell(t.first_class_sent || 0)}${cell(t.certified_sent || 0)}${cell(t.pages_printed || 0)}${cell(t.arc_approved || 0)}${cell(t.arc_denied || 0)}${cell((t.arc_conditions || 0) + (t.arc_other || 0))}${cell(t.builder_arc ? `<span style="color:#7c3aed;">${t.builder_arc}</span>` : 0)}${cell(t.payment_plans || 0)}
           </tr></tfoot>
         </table>
-        <div style="font-size:11px; color:#94a3b8; margin-top:8px;">Violations = individual violation letters generated. Letters sent = physical envelopes mailed (a bundle of several violations to one owner = one letter), split by mail class (certified costs more postage). Postage + certified + pages bill per letter, not per violation. The three <strong>ARC</strong> columns are <strong>resident</strong> ARC/ACC decisions — what the association's ARC fee bills on ("ARC approved" includes approved-with-conditions; "ARC other" = pending/withdrawn). <strong>Builder ARC</strong> is broken out separately because it is billed to the builder (Lennar / DRB) on its own invoice, never to the HOA.</div>`;
+        <div style="font-size:11px; color:#94a3b8; margin-top:8px;">Violations = individual violation letters generated. Letters sent = physical envelopes mailed (a bundle of several violations to one owner = one letter), split by mail class (certified costs more postage). Postage + certified + pages bill per letter, not per violation. The three <strong>ARC</strong> columns are <strong>resident</strong> ARC/ACC decisions — what the association's ARC fee bills on ("ARC approved" includes approved-with-conditions; "ARC other" = pending/withdrawn). <strong>Builder ARC</strong> is broken out separately because it is billed to the builder (Lennar / DRB) on its own invoice, never to the HOA. <strong>Payment plans</strong> = plans set up in this period; click the count to open the payment plan panel for that community.</div>`;
     } catch (e) {
       host.innerHTML = `<div style="color:#b91c1c; font-size:13px; padding:12px;">Could not run report: ${escapeHtml(e.message)}</div>`;
     }
