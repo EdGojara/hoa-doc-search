@@ -339,6 +339,31 @@
   window.supa = null;
   window.currentUser = null;
 
+  // _authFetch — defined UNCONDITIONALLY and SYNCHRONOUSLY here, before
+  // bootAuth() runs, so it can NEVER be undefined. Attaches the Supabase
+  // session JWT when one exists (window.supa is populated by bootAuth); falls
+  // back to a plain fetch() otherwise. This is what makes the "Approve failed:
+  // authentication required" / "window._authFetch is not a function" bug class
+  // structurally impossible.
+  //
+  // SCAR (2026-07-16): this used to live INSIDE bootAuth(), after the
+  // "Supabase not configured → legacy mode" early return. In legacy mode (and
+  // during the async config-fetch window) window._authFetch was never assigned,
+  // so any direct caller with no fallback — e.g. the billing Activity Report —
+  // threw "is not a function". Same family as the "IIFE script-wrap before
+  // dependency defined" scar in CLAUDE.md: hoist the definition to the top.
+  window._authFetch = async function (url, opts) {
+    opts = opts || {};
+    const headers = Object.assign({}, opts.headers || {});
+    try {
+      const session = window.supa ? (await window.supa.auth.getSession()).data?.session : null;
+      if (session?.access_token && !headers.Authorization && !headers.authorization) {
+        headers.Authorization = 'Bearer ' + session.access_token;
+      }
+    } catch (_) { /* no session — fall through with whatever headers were given */ }
+    return fetch(url, Object.assign({}, opts, { headers }));
+  };
+
   (async function bootAuth() {
     try {
       const cfgRes = await fetch('/api/auth/config');
@@ -351,28 +376,10 @@
         return;
       }
       window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
-      // _authFetch — auth-attaching wrapper around fetch(). Same signature
-      // as fetch(); transparently attaches the current Supabase session
-      // JWT as Authorization: Bearer ... so admin-only API endpoints can
-      // recognize the staff session. If no session exists (anonymous
-      // visitor) it just calls fetch() unchanged — public endpoints
-      // still work. Always safe to use instead of bare fetch() for any
-      // call to /api/*.
-      //
-      // The recurring "Approve failed: authentication required" bugs all
-      // came from bare fetch() calls to admin endpoints. Use _authFetch
-      // by default to make that bug class structurally impossible.
-      window._authFetch = async function (url, opts) {
-        opts = opts || {};
-        const headers = Object.assign({}, opts.headers || {});
-        try {
-          const session = (await window.supa.auth.getSession()).data?.session;
-          if (session?.access_token && !headers.Authorization && !headers.authorization) {
-            headers.Authorization = 'Bearer ' + session.access_token;
-          }
-        } catch (_) { /* no session — fall through with whatever headers were given */ }
-        return fetch(url, Object.assign({}, opts, { headers }));
-      };
+      // window._authFetch is already defined synchronously at the top of this
+      // script (see the hoisted definition above). It reads window.supa lazily
+      // at call time, so once the client is created here it starts attaching
+      // the JWT automatically — no reassignment needed.
       const { data: { session } } = await window.supa.auth.getSession();
       if (!session) {
         window.location.replace('/login.html');
