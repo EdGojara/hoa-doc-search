@@ -4852,8 +4852,14 @@
       // certified §209 = the $35 certified demand line; pages = color copies
       // (almost always color — Ed 2026-07-13, override to B&W manually if not);
       // ARC decisions (all rendered) = ARC fees.
+      // Resolve the certified-demand line to the slug THIS community's rate card
+      // actually uses — they differ (Eaglewood: drv_certified_demand; others:
+      // deed_restriction_certified_demand_letter). Without this, the certified
+      // count on the activity report never maps onto a billable line.
+      const certCat = ['deed_restriction_certified_demand_letter', 'drv_certified_demand']
+        .find((cat) => (billingPiCatalog || []).some((it) => it.category === cat)) || 'deed_restriction_certified_demand_letter';
       const map = {
-        deed_restriction_certified_demand_letter: c.certified_sent || 0,
+        [certCat]: c.certified_sent || 0,
         color_copies: c.pages_printed || 0,
         arc_application_fee: arcTotal,
         payment_plan_fee: c.payment_plans || 0,
@@ -5951,8 +5957,14 @@
       // notices = the enforcement letters we mail; certified §209 = the $35
       // certified demand line; pages = color copies (Ed 2026-07-09); ARC
       // decisions = ARC fees.
+      // Resolve the certified-demand line to the slug THIS community's rate card
+      // actually uses — they differ (Eaglewood: drv_certified_demand; others:
+      // deed_restriction_certified_demand_letter). Without this, the certified
+      // count on the activity report never maps onto a billable line.
+      const certCat = ['deed_restriction_certified_demand_letter', 'drv_certified_demand']
+        .find((cat) => (billingPiCatalog || []).some((it) => it.category === cat)) || 'deed_restriction_certified_demand_letter';
       const map = {
-        deed_restriction_certified_demand_letter: c.certified_sent || 0,
+        [certCat]: c.certified_sent || 0,
         color_copies: c.pages_printed || 0,
         arc_application_fee: arcTotal,
         payment_plan_fee: c.payment_plans || 0,
