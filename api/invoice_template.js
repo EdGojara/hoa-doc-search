@@ -101,7 +101,13 @@ function fmtPeriodMonthYear(d) {
  */
 function renderInvoiceHTML({ invoice, lineItems, community, managementCo }) {
   const inv = invoice || {};
-  const items = lineItems || [];
+  // Leave $0.00 lines off the report (Ed 2026-07-17). The activity template
+  // carries every category (postage variants, ARC, copies, etc.); the ones with
+  // no activity that month sit at $0 and are just noise on the bill. Subtotal /
+  // total come from the stored invoice, so hiding these rows doesn't change the
+  // math — they contribute $0 either way. The editable invoice-detail view still
+  // shows every line so staff can fill a quantity in.
+  const items = (lineItems || []).filter((li) => Math.round(Number(li.amount || 0) * 100) !== 0);
   const comm = community || {};
   const mgmt = managementCo || {};
 
