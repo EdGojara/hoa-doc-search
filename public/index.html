@@ -5409,10 +5409,13 @@
       // Build a clickable table — each row enters the invoice detail view.
       const rowsHtml = data.invoices.map(r => {
         const isDraft = r.status === 'draft' || r.status === 'review';
+        const pdfBtn = r.status !== 'void'
+          ? actBtn('📄 PDF', 'billingOpenInvoicePdf', r.id, r.invoice_number, '#eef2ff', '#3730a3')
+          : '';
         const emailBtn = r.status !== 'void'
           ? actBtn(r.status === 'sent' ? 'Re-email' : '✉ Email', 'billingEmailInvoice', r.id, r.invoice_number, '#0B1D34', '#fff')
           : '';
-        const actions = emailBtn + (isDraft
+        const actions = pdfBtn + emailBtn + (isDraft
           ? actBtn('Sent', 'billingMarkSent', r.id, r.invoice_number, '#166534', '#fff')
             + actBtn('Delete', 'billingDeleteInvoice', r.id, r.invoice_number, '#fde7e7', '#a00')
           : (r.status === 'sent' ? '<span style="font-size:11px; color:#166534; margin-left:4px;">✓ sent</span>' : ''));
@@ -5451,6 +5454,22 @@
     const cid = billingRecentCommunityId || billingCurrentCommunityId;
     if (cid) billingLoadInvoicesForCommunity(cid);
   }
+
+  // Open the invoice PDF inline in a new tab (view → Ctrl/Cmd-P to print or save
+  // as PDF). Fetch via the auth-attaching wrapper so it works in both cookie and
+  // M365 sessions, then open the blob — a bare link wouldn't carry the token.
+  async function billingOpenInvoicePdf(id, number) {
+    try {
+      const af = window._authFetch || ((u, o) => fetch(u, o));
+      const r = await af(`/api/billing/invoices/${id}/pdf?inline=1`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const url = URL.createObjectURL(await r.blob());
+      const w = window.open(url, '_blank');
+      if (!w) { const a = document.createElement('a'); a.href = url; a.download = `invoice_${number || id}.pdf`; a.click(); }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { alert(`Could not open the PDF for ${number}: ${e.message}`); }
+  }
+  window.billingOpenInvoicePdf = billingOpenInvoicePdf;
 
   async function billingMarkSent(id, number) {
     try {
