@@ -3891,45 +3891,6 @@
       <div id="billing-rcpt-status" style="font-size:12px; margin-top:8px; color:#888;"></div>
     </div>
 
-    <!-- Pending billing items — ad-hoc charges (reimbursables, events) staged
-         by Tessa email intake or added by hand; they auto-drop onto the next
-         activity draft invoice. -->
-    <div class="panel" id="billing-pending-panel" style="margin-bottom:16px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-        <h4 style="margin:0;">🧾 Pending billing items <span style="font-weight:400; color:#888; font-size:12px;">— staged charges that drop onto the next activity invoice (from Tessa's billing inbox or added here)</span></h4>
-        <button class="secondary-btn" onclick="billingPollInbox()" style="font-size:12px; padding:5px 11px; white-space:nowrap;" title="Have Tessa read new emails in the billing inbox and stage any charges">📥 Check billing inbox</button>
-      </div>
-      <div id="billing-poll-status" style="font-size:12px; margin:6px 0 8px; color:#888;"></div>
-      <div id="billing-pending-list" style="font-size:13px; color:#888; margin-bottom:10px;">Loading…</div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; border-top:1px dashed #e5e7eb; padding-top:10px;">
-        <div style="flex:2; min-width:160px;">
-          <div class="section-label">Category <span style="color:#aaa; font-weight:400;">(optional)</span></div>
-          <select id="billing-pi-category" onchange="billingPiCategoryPick()" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;"><option value="">— pick a rate-card item —</option></select>
-        </div>
-        <div style="flex:2; min-width:160px;">
-          <div class="section-label">Description</div>
-          <input id="billing-pi-desc" type="text" placeholder="e.g. Pool event staffing" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
-        </div>
-        <div style="width:70px;">
-          <div class="section-label">Qty</div>
-          <input id="billing-pi-qty" type="number" min="0" step="0.01" value="1" oninput="billingPiRecalc()" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; text-align:right;">
-        </div>
-        <div style="width:90px;">
-          <div class="section-label">Rate</div>
-          <input id="billing-pi-rate" type="number" min="0" step="0.01" value="0" oninput="billingPiRecalc()" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; text-align:right;">
-        </div>
-        <div style="width:90px;">
-          <div class="section-label">Amount</div>
-          <input id="billing-pi-amount" type="number" min="0" step="0.01" value="0" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; text-align:right;">
-        </div>
-        <button class="action-btn" onclick="billingAddPendingItem()" style="padding:7px 16px; background:#0B1D34; color:#fff;">+ Add</button>
-      </div>
-      <div id="billing-pi-status" style="font-size:12px; margin-top:8px; color:#888;"></div>
-    </div>
-
-    <!-- Generate Draft Invoice — the primary action, first after the community.
-         Between Type and Service period sits the editable categories preview
-         (fixed = the recurring fee lines; activity = the standard template). -->
     <!-- Two-area draft builder (Ed 2026-07-16). Fixed fees bill in ADVANCE
          (current month), activity bills in ARREARS (prior, closed month).
          Both areas map to the two invoice_types that already exist and bundle
@@ -3987,23 +3948,45 @@
       </div>
     </div>
 
-    <div class="panel" id="billing-community-manual-panel" style="margin-bottom:16px;">
-      <h4 style="margin-top:0;">➕ Manual Line Items (optional)</h4>
-      <p style="font-size:12px; color:#666; margin:0 0 10px 0;">
-        Stage line items that won't come from the Vantaca file (one-off events, special services, write-in postage, etc.). They get appended when you click Generate. To add a NEW one-off description (e.g., "Back to School Bash - Admin Fee"), pick the closest category and edit the description on the invoice detail view after generating.
-      </p>
-      <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:10px;">
-        <div style="flex:1; min-width:280px;">
-          <div class="section-label">Category (with rate)</div>
-          <select id="billing-pending-category" style="padding:6px; width:100%;"></select>
-        </div>
-        <div>
-          <div class="section-label">Quantity</div>
-          <input type="number" id="billing-pending-qty" min="0" step="0.01" value="1" style="padding:6px; width:90px;">
-        </div>
-        <button class="action-btn" onclick="billingAddPendingLineItem()">+ Stage</button>
+    <!-- One-off / ad-hoc charges — the SINGLE manual-add mechanism. Consolidated
+         2026-07-16 (was split across "Pending billing items" above the builder +
+         a redundant ephemeral "Manual Line Items" panel here). Persistent
+         (billing_pending_items), Tessa-fed from billing@, and drops onto the
+         Activity invoice above. Sits directly under the builder = under activity. -->
+    <div class="panel" id="billing-pending-panel" style="margin-bottom:16px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <h4 style="margin:0;">➕ One-off charges <span style="font-weight:400; color:#888; font-size:12px;">— added to the Activity invoice above (billed in arrears)</span></h4>
+        <button class="secondary-btn" onclick="billingPollInbox()" style="font-size:12px; padding:5px 11px; white-space:nowrap;" title="Have Tessa read new emails in the billing inbox and stage any charges">📥 Check billing inbox</button>
       </div>
-      <div id="billing-pending-line-items" style="font-size:13px;"></div>
+      <p style="font-size:12px; color:#666; margin:6px 0 10px;">
+        For anything that isn't a recurring fee or standard activity — pool-event staffing, special mailings, one-time services. Charges emailed to <b>billing@bedrocktx.com</b> are read by Tessa and staged here automatically; you can also add one by hand below. Either way they ride on the next <b>Activity</b> invoice.
+      </p>
+      <div id="billing-poll-status" style="font-size:12px; margin:0 0 8px; color:#888;"></div>
+      <div id="billing-pending-list" style="font-size:13px; color:#888; margin-bottom:10px;">Loading…</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; border-top:1px dashed #e5e7eb; padding-top:10px;">
+        <div style="flex:2; min-width:160px;">
+          <div class="section-label">Category <span style="color:#aaa; font-weight:400;">(optional — or just type a description + rate)</span></div>
+          <select id="billing-pi-category" onchange="billingPiCategoryPick()" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;"><option value="">— pick a rate-card item —</option></select>
+        </div>
+        <div style="flex:2; min-width:160px;">
+          <div class="section-label">Description</div>
+          <input id="billing-pi-desc" type="text" placeholder="e.g. Pool event staffing" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+        </div>
+        <div style="width:70px;">
+          <div class="section-label">Qty</div>
+          <input id="billing-pi-qty" type="number" min="0" step="0.01" value="1" oninput="billingPiRecalc()" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; text-align:right;">
+        </div>
+        <div style="width:90px;">
+          <div class="section-label">Rate</div>
+          <input id="billing-pi-rate" type="number" min="0" step="0.01" value="0" oninput="billingPiRecalc()" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; text-align:right;">
+        </div>
+        <div style="width:90px;">
+          <div class="section-label">Amount</div>
+          <input id="billing-pi-amount" type="number" min="0" step="0.01" value="0" style="width:100%; padding:7px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; text-align:right;">
+        </div>
+        <button class="action-btn" onclick="billingAddPendingItem()" style="padding:7px 16px; background:#0B1D34; color:#fff;">+ Add</button>
+      </div>
+      <div id="billing-pi-status" style="font-size:12px; margin-top:8px; color:#888;"></div>
     </div>
 
     <div class="panel" id="billing-community-inputs-panel" style="margin-bottom:16px;">
@@ -4659,10 +4642,10 @@
     // Reset all panels to visible (in case a previous community had no contract and hid them)
     const _draft = document.getElementById('billing-draft-invoice-panel');
     const _fee = document.getElementById('billing-fee-schedule-panel');
-    const _manual = document.getElementById('billing-community-manual-panel');
+    const _pending = document.getElementById('billing-pending-panel');
     if (_draft) _draft.style.display = '';
     if (_fee) _fee.style.display = '';
-    if (_manual) _manual.style.display = '';
+    if (_pending) _pending.style.display = '';
 
     document.getElementById('billing-contract-summary').textContent = 'Loading…';
     document.getElementById('billing-fee-fixed').textContent = '';
@@ -4707,30 +4690,9 @@
         { label: 'Fee', align: 'right', render: r => billingMoney(r.amount) }
       ]);
 
-      // Populate the pending-item category dropdown from this community's rate card.
+      // Populate the ONE ad-hoc-charge category dropdown from this community's
+      // rate card (the "Add a one-off charge" form under the Activity area).
       billingSetPiCatalog(data.fee_schedule);
-
-      // Build community-detail rate card (used by Manual Line Items dropdown).
-      const reimbCC = (data.fee_schedule.reimbursables || []).map(x => ({
-        source: 'reimbursable',
-        source_ref_id: x.item_id,
-        category: x.category,
-        description: x.description,
-        unit_price: x.unit_price !== null ? Number(x.unit_price) : 0,
-        billing_method: x.billing_method
-      }));
-      const ownerCC = (data.fee_schedule.owner_charges || []).map(x => ({
-        source: 'owner_charge',
-        source_ref_id: x.item_id,
-        category: x.category,
-        description: x.description,
-        unit_price: Number(x.amount)
-      }));
-      billingCommunityRateCard = [...reimbCC, ...ownerCC]
-        .sort((a, b) => String(a.description || '').localeCompare(String(b.description || '')));
-      billingPendingLineItems = [];   // reset stale staged items when switching communities
-      billingPopulateCommunityCategoryDropdown();
-      billingRenderPendingLineItems();
 
       // Seed both areas' periods from today (fixed → this month, activity →
       // prior month) and load both worksheets.
@@ -4743,14 +4705,14 @@
       if (String(e.message).includes('404')) {
         document.getElementById('billing-contract-summary').innerHTML =
           '<div style="padding:8px; background:#fff3cd; border-left:3px solid #f5a623;">No active contract for this community yet. <strong>Use the Upload / Update Contract panel above</strong> to add one.</div>';
-        // Hide draft form + fee schedule + manual line items since there are no rates to bill against.
+        // Hide draft form + fee schedule + one-off charges since there are no rates to bill against.
         // Use stable IDs (not :nth-of-type) so adding new panels doesn't break this.
         const draftPanel = document.getElementById('billing-draft-invoice-panel');
         const feePanel = document.getElementById('billing-fee-schedule-panel');
-        const manualPanel = document.getElementById('billing-community-manual-panel');
+        const pendingPanel = document.getElementById('billing-pending-panel');
         if (draftPanel) draftPanel.style.display = 'none';
         if (feePanel) feePanel.style.display = 'none';
-        if (manualPanel) manualPanel.style.display = 'none';
+        if (pendingPanel) pendingPanel.style.display = 'none';
         // Auto-open the contract upload panel since that's clearly the next action
         const ctBody = document.getElementById('billing-contract-mgmt-body');
         const ctTog = document.getElementById('billing-contract-toggle');
@@ -5051,87 +5013,6 @@
     el.textContent = `${yy}${mm}${code}${suffix}`;
     el.style.color = '#1a1a1a';
     el.title = '';
-  }
-
-  // ----- Manual line item staging (community detail view, before Generate) -----
-  function billingPopulateCommunityCategoryDropdown() {
-    const sel = document.getElementById('billing-pending-category');
-    if (!sel) return;
-    if (!billingCommunityRateCard || billingCommunityRateCard.length === 0) {
-      sel.innerHTML = '<option value="">(no rate card available — add a contract first)</option>';
-      return;
-    }
-    sel.innerHTML = billingCommunityRateCard.map((r, idx) => {
-      const rate = r.billing_method === 'at_cost' ? 'at cost' : '$' + Number(r.unit_price || 0).toFixed(2);
-      const method = r.billing_method ? ` / ${r.billing_method}` : '';
-      return `<option value="${idx}">${r.description} — ${rate}${method}</option>`;
-    }).join('');
-  }
-
-  function billingAddPendingLineItem() {
-    const sel = document.getElementById('billing-pending-category');
-    const qtyEl = document.getElementById('billing-pending-qty');
-    const idx = sel.value;
-    if (idx === '' || idx === undefined) return;
-    const rateEntry = billingCommunityRateCard[Number(idx)];
-    const qty = Number(qtyEl.value || 0);
-    if (qty <= 0) {
-      alert('Quantity must be greater than 0.');
-      return;
-    }
-    billingPendingLineItems.push({
-      source: rateEntry.source,
-      source_ref_id: rateEntry.source_ref_id,
-      category: rateEntry.category,
-      description: rateEntry.description,
-      qty,
-      unit_price: Number(rateEntry.unit_price || 0),
-      amount: Math.round(qty * Number(rateEntry.unit_price || 0) * 100) / 100,
-      sort_order: 1000 + billingPendingLineItems.length * 10
-    });
-    qtyEl.value = '1';
-    billingRenderPendingLineItems();
-  }
-
-  function billingRemovePendingLineItem(idx) {
-    billingPendingLineItems.splice(idx, 1);
-    billingRenderPendingLineItems();
-  }
-
-  function billingRenderPendingLineItems() {
-    const container = document.getElementById('billing-pending-line-items');
-    if (!container) return;
-    if (billingPendingLineItems.length === 0) {
-      container.innerHTML = '<div style="color:#888; font-size:13px;">No staged items.</div>';
-      return;
-    }
-    const subtotal = billingPendingLineItems.reduce((s, li) => s + Number(li.amount || 0), 0);
-    const rows = billingPendingLineItems.map((li, idx) => `
-      <tr>
-        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${li.description}</td>
-        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${li.qty}</td>
-        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${billingMoney(li.unit_price)}</td>
-        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${billingMoney(li.amount)}</td>
-        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:center;"><button onclick="billingRemovePendingLineItem(${idx})" style="background:none; border:none; color:#a00; cursor:pointer; font-size:14px;" title="Remove">×</button></td>
-      </tr>
-    `).join('');
-    container.innerHTML = `
-      <table style="width:100%; border-collapse:collapse;">
-        <thead><tr>
-          <th style="text-align:left; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Description</th>
-          <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Qty</th>
-          <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Rate</th>
-          <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Amount</th>
-          <th style="text-align:center; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;"></th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-        <tfoot><tr>
-          <td colspan="3" style="text-align:right; padding:6px 8px; font-weight:600;">Staged subtotal</td>
-          <td style="text-align:right; padding:6px 8px; font-weight:600;">${billingMoney(subtotal)}</td>
-          <td></td>
-        </tr></tfoot>
-      </table>
-    `;
   }
 
   // ---------- Staged Vantaca file (held in browser state until Generate) ----------
@@ -5785,49 +5666,15 @@
         }
       }
 
-      // If staged manual line items, append them to the invoice now.
-      let manualNote = '';
-      if (billingPendingLineItems.length > 0 && data.invoice && data.invoice.id) {
-        try {
-          // Fetch current line items so we can append rather than replace.
-          const currR = await fetch(`/api/billing/invoices/${data.invoice.id}`);
-          const currData = await currR.json().catch(() => ({}));
-          const currentLines = (currData.line_items || []).map(li => ({
-            source: li.source,
-            source_ref_id: li.source_ref_id,
-            category: li.category,
-            description: li.description,
-            qty: Number(li.qty),
-            unit_price: Number(li.unit_price),
-            amount: Number(li.amount),
-            manual_override: !!li.manual_override,
-            manual_override_reason: li.manual_override_reason || null,
-            sort_order: li.sort_order
-          }));
-          const merged = [...currentLines, ...billingPendingLineItems];
-          const putR = await fetch(`/api/billing/invoices/${data.invoice.id}/line-items`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ line_items: merged })
-          });
-          const putData = await putR.json().catch(() => ({}));
-          if (!putR.ok) throw new Error(putData.error || `HTTP ${putR.status}`);
-          manualNote = `<br><small>Plus ${billingPendingLineItems.length} manually staged line item(s) appended.</small>`;
-          // Update totals from PUT response.
-          data.subtotal = putData.subtotal;
-          data.line_items_count = putData.line_items_count;
-          // Clear staged state.
-          billingPendingLineItems = [];
-          billingRenderPendingLineItems();
-        } catch (manualErr) {
-          manualNote = `<br><small style="color:#a00;">Manual line items failed to apply: ${manualErr.message}. Open the draft to add them by hand.</small>`;
-        }
-      }
+      // Ad-hoc one-off charges are handled by the persistent pending-items
+      // queue (billing_pending_items) — Tessa-fed + the "Add a one-off charge"
+      // form under the Activity area. The server drops them onto the activity
+      // draft automatically, so there's nothing to append here.
 
       result.innerHTML = `
         <div style="padding:8px; background:#e8f5e9; border-left:3px solid #4c8;">
           ✓ Draft invoice created: <b style="font-family:monospace;">${data.invoice_number}</b><br>
-          Subtotal ${billingMoney(data.subtotal)} · ${data.line_items_count} line items · status: draft${importNote}${manualNote}<br>
+          Subtotal ${billingMoney(data.subtotal)} · ${data.line_items_count} line items · status: draft${importNote}<br>
           <a href="#" onclick="event.preventDefault(); billingShowInvoice('${data.invoice.id}')" style="font-size:12px; color:#1976d2;">→ Open draft to review and edit</a>
         </div>
       `;
@@ -5844,10 +5691,6 @@
   let billingCurrentInvoiceLineItems = [];   // in-memory editable list
   let billingCurrentRateCard = [];           // dropdown options sourced from contract
   let billingCurrentRateCardContractId = null;  // contract id the rate card was loaded for (for PATCHing rates)
-
-  // ----- Community-detail-view state for pre-Generate staging -----
-  let billingCommunityRateCard = [];        // rate card on the community detail page
-  let billingPendingLineItems = [];         // manually staged before Generate
 
   async function billingShowInvoice(invoiceId) {
     document.getElementById('billing-community-detail').style.display = 'none';
