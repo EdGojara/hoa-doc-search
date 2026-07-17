@@ -2596,7 +2596,7 @@ router.get('/activity-detail', async (req, res) => {
       return out;
     }
 
-    const [{ data: community }, letters, decisions, accDecisions] = await Promise.all([
+    const [{ data: community }, letters, decisions, accDecisions, plans] = await Promise.all([
       supabase.from('communities').select('id, name, legal_name').eq('id', communityId).maybeSingle(),
       fetchAll(() => supabase.from('interactions')
         .select('id, property_id, type, delivery_method, postmark_date, content, bundle_id, page_count, violation_id')
@@ -2613,6 +2613,13 @@ router.get('/activity-detail', async (req, res) => {
         .select('id, homeowner_address, homeowner_name, project_summary, decision_type, created_at, letter_pdf_storage_path')
         .eq('community_id', communityId)
         .gte('created_at', start + 'T00:00:00Z').lt('created_at', endEx + 'T00:00:00Z')),
+      // Payment plans set up in the period (Ed 2026-07-17). Keyed on start_date,
+      // falling back to created_at when start_date is null — the SAME window the
+      // activity-report counts by, so the detail reconciles with the count.
+      fetchAll(() => supabase.from('payment_plans')
+        .select('id, property_id, contact_id, status, debtor_name, property_address, total_amount_cents, down_payment_cents, installment_amount_cents, num_installments, frequency, start_date, created_at, source_document_path')
+        .eq('community_id', communityId)
+        .or(`and(start_date.gte.${start},start_date.lte.${end}),and(start_date.is.null,created_at.gte.${start}T00:00:00Z,created_at.lt.${endEx}T00:00:00Z)`)),
     ]);
     if (!community) return res.status(404).json({ error: 'community_not_found' });
 
@@ -2717,6 +2724,27 @@ router.get('/activity-detail', async (req, res) => {
         ? /^approved/i.test(r.outcome)
         : r.outcome === 'Denied');
 
+    // 7-day signed URLs for the plan agreement PDFs (same pattern as ACC).
+    const planPaths = [...new Set(plans.map((p) => p.source_document_path).filter(Boolean))];
+    const planSignedByPath = {};
+    for (let i = 0; i < planPaths.length; i += 100) {
+      const { data: signed } = await supabase.storage.from('documents')
+        .createSignedUrls(planPaths.slice(i, i + 100), 60 * 60 * 24 * 7);
+      (signed || []).forEach((s) => { if (s && s.signedUrl && !s.error) planSignedByPath[s.path] = s.signedUrl; });
+    }
+    const PLAN_STATUS_LABEL = { active: 'Active', completed: 'Completed', defaulted: 'Defaulted', cancelled: 'Cancelled' };
+    const planRows = plans.map((p) => ({
+      property: p.property_address || '(no address)',
+      debtor: p.debtor_name || '—',
+      total_cents: p.total_amount_cents,
+      down_cents: p.down_payment_cents,
+      installment_cents: p.installment_amount_cents,
+      schedule: [p.num_installments ? `${p.num_installments}×` : null, p.frequency || null].filter(Boolean).join(' '),
+      date: (p.start_date || (p.created_at || '').slice(0, 10) || '').slice(0, 10),
+      status: PLAN_STATUS_LABEL[p.status] || p.status || '—',
+      agreement_url: p.source_document_path ? (planSignedByPath[p.source_document_path] || null) : null,
+    })).sort((a, b) => String(a.property).localeCompare(String(b.property)));
+
     const certCount = letterRows.filter((r) => r.mail_class === 'Certified').length;
     const summary = {
       violations: letters.length,
@@ -2724,10 +2752,11 @@ router.get('/activity-detail', async (req, res) => {
       certified: certCount,
       first_class: letterRows.length - certCount,
       arc_decisions: arcRows.length,
+      payment_plans: planRows.length,
     };
 
     if (format === 'json') {
-      return res.json({ community: { id: community.id, name: community.name }, period: { start, end }, arc_filter: arcFilter, summary, letters: letterRows, arc_decisions: arcRowsShown });
+      return res.json({ community: { id: community.id, name: community.name }, period: { start, end }, arc_filter: arcFilter, summary, letters: letterRows, arc_decisions: arcRowsShown, payment_plans: planRows });
     }
 
     // ---- Branded, printable HTML ----
@@ -2758,6 +2787,19 @@ router.get('/activity-detail', async (req, res) => {
           <td>${esc(fmtUS(r.date))}</td>
         </tr>`).join('')}</tbody>
       </table>` : '<p class="muted">No ARC/ACC decisions rendered in this period.</p>';
+    const money = (cents) => cents == null ? '—' : '$' + (Number(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const planTable = planRows.length ? `
+      <table class="t">
+        <thead><tr><th>Property</th><th>Homeowner</th><th style="text-align:right;">Plan total</th><th style="text-align:right;">Installment</th><th>Schedule</th><th>Start</th><th>Status</th></tr></thead>
+        <tbody>${planRows.map((r) => `<tr>
+          <td><strong>${esc(r.property)}</strong></td><td>${esc(r.debtor)}</td>
+          <td style="text-align:right;">${esc(money(r.total_cents))}</td>
+          <td style="text-align:right;">${esc(money(r.installment_cents))}</td>
+          <td>${esc(r.schedule || '—')}</td>
+          <td>${esc(fmtUS(r.date))}${r.agreement_url ? `<div style="font-size:11px; margin-top:2px;"><a href="${esc(r.agreement_url)}" target="_blank" rel="noopener">Agreement ↗</a></div>` : ''}</td>
+          <td>${esc(r.status)}</td>
+        </tr>`).join('')}</tbody>
+      </table>` : '<p class="muted">No payment plans set up in this period.</p>';
 
     res.set('Content-Type', 'text/html; charset=utf-8');
     return res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2802,11 +2844,14 @@ router.get('/activity-detail', async (req, res) => {
       <div class="stat"><div class="stat-n">${summary.first_class}</div><div class="stat-l">First-class</div></div>
       <div class="stat"><div class="stat-n">${summary.certified}</div><div class="stat-l">Certified</div></div>
       <div class="stat"><div class="stat-n">${summary.arc_decisions}</div><div class="stat-l">ARC decisions</div></div>
+      <div class="stat"><div class="stat-n">${summary.payment_plans}</div><div class="stat-l">Payment plans</div></div>
     </div>
     <h2 id="letters">Violation letters</h2>
     ${letterTable}
     <h2 id="arc">ARC / ACC decisions${arcFilter === 'all' ? '' : ` — ${arcFilter === 'approved' ? 'Approved' : 'Denied'} only`}</h2>
     ${arcTable}
+    <h2 id="plans">Payment plans</h2>
+    ${planTable}
     <div class="foot"><span>${esc(BRAND.service.name)}</span><span>${esc(community.name)} · ${esc(fmtUS(start))}–${esc(fmtUS(end))}</span></div>
   </div>
 </body></html>`);

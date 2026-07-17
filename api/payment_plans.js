@@ -10,6 +10,7 @@
 //
 //   POST  /api/payment-plans/ingest            drop PDF -> preview (no write)
 //   POST  /api/payment-plans/approve           file the reviewed rows
+//   POST  /api/payment-plans/manual            hand-enter one plan (+ optional PDF)
 //   GET   /api/payment-plans/list              roster (optional community filter)
 //   PATCH /api/payment-plans/:id               update status / terms on a plan
 // ============================================================================
@@ -311,6 +312,100 @@ router.post('/approve', express.json({ limit: '2mb' }), async (req, res) => {
     res.json({ ok: true, plans_filed: written, plans_updated: updated, rows_skipped_unmatched: skipped });
   } catch (err) {
     console.error('[payment_plans] approve failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /manual — hand-enter a single plan (Ed 2026-07-17). For when there's no
+// clean PDF to auto-extract, or the operator wants to key the terms directly.
+// Multipart form; an optional `pdf` attaches the signed agreement (stashed the
+// same way /ingest does, so the doc link works on the roster + 360 + billing
+// activity-detail report). Resolves the property + current owner in the chosen
+// community, then does the SAME one-active-per-property upsert as /approve.
+// ----------------------------------------------------------------------------
+router.post('/manual', upload.single('pdf'), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const communityId = b.community_id || null;
+    if (!communityId) return res.status(400).json({ error: 'Association is required.' });
+
+    // Resolve the property (+ current owner) within the community. A plan needs
+    // a real property so it surfaces on that homeowner's 360.
+    let propertyId = b.property_id || null;
+    let matchedAddress = null;
+    if (!propertyId && b.property_address) {
+      let prop = null;
+      try { prop = await resolveProperty(supabase, communityId, b.property_address); } catch (_) { prop = null; }
+      if (prop && prop.id) { propertyId = prop.id; matchedAddress = prop.street_address; }
+    }
+    if (!propertyId) {
+      return res.status(422).json({ error: `Couldn't match "${b.property_address || '(no address given)'}" to a property in this association. Check the address and try again.` });
+    }
+    const owner = b.contact_id ? { contact_id: b.contact_id, name: b.debtor_name || null } : await ownerOf(propertyId);
+
+    // Optional attached agreement PDF -> stash in the documents bucket (non-fatal).
+    let storagePath = null;
+    if (req.file && req.file.buffer) {
+      if (req.file.mimetype && req.file.mimetype !== 'application/pdf') {
+        return res.status(400).json({ error: 'The attached agreement must be a PDF.' });
+      }
+      try {
+        const hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
+        const safe = (req.file.originalname || 'payment_plan.pdf').replace(/[^a-zA-Z0-9._\-]/g, '_');
+        storagePath = `payment_plan_ingests/${hash}_${safe}`;
+        await supabase.storage.from('documents').upload(storagePath, req.file.buffer, { contentType: 'application/pdf', upsert: true });
+      } catch (e) { console.warn('[payment_plans] manual storage upload failed (non-fatal):', e.message); storagePath = null; }
+    }
+
+    const status = PLAN_STATUSES.includes(b.status) ? b.status : 'active';
+    // Balance remaining defaults to the total for a fresh plan when not given.
+    const balanceRaw = (b.balance_remaining != null && b.balance_remaining !== '') ? b.balance_remaining : b.total_amount;
+    const record = {
+      community_id: communityId,
+      property_id: propertyId,
+      contact_id: owner.contact_id || null,
+      status,
+      debtor_name: b.debtor_name || owner.name || null,
+      property_address: b.property_address || matchedAddress || null,
+      total_amount_cents: toCents(b.total_amount),
+      down_payment_cents: toCents(b.down_payment),
+      installment_amount_cents: toCents(b.installment_amount),
+      num_installments: (b.num_installments === '' || b.num_installments == null) ? null : parseInt(b.num_installments, 10) || null,
+      frequency: FREQUENCIES.includes(b.frequency) ? b.frequency : 'monthly',
+      start_date: cleanDate(b.start_date),
+      first_payment_date: cleanDate(b.first_payment_date),
+      next_due_date: cleanDate(b.next_due_date),
+      end_date: cleanDate(b.end_date),
+      balance_remaining_cents: toCents(balanceRaw),
+      terms_summary: b.terms_summary || null,
+      notes: b.notes || null,
+      source_filename: (req.file && req.file.originalname) || null,
+      source_document_path: storagePath,
+      extraction_model: 'manual',
+    };
+
+    // One active plan per property: update the existing active one if present
+    // (same rule as /approve — a re-entered plan corrects, never dupes).
+    let existingId = null;
+    if (status === 'active') {
+      const { data: ex } = await supabase.from('payment_plans')
+        .select('id').eq('property_id', propertyId).eq('status', 'active').limit(1);
+      existingId = ex && ex[0] ? ex[0].id : null;
+    }
+    let plan;
+    if (existingId) {
+      const { data, error } = await supabase.from('payment_plans').update(record).eq('id', existingId).select().single();
+      if (error) throw error;
+      plan = data;
+    } else {
+      const { data, error } = await supabase.from('payment_plans').insert(record).select().single();
+      if (error) throw error;
+      plan = data;
+    }
+    res.json({ ok: true, plan, updated: !!existingId, matched: { property_id: propertyId, matched_address: matchedAddress, contact_id: owner.contact_id, owner_name: owner.name } });
+  } catch (err) {
+    console.error('[payment_plans] manual create failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

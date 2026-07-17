@@ -77,6 +77,41 @@ function renderShell(communities){
     <div class="sub" style="margin-top:-6px;margin-bottom:6px;">Leave the association on <strong>Auto-detect</strong> and the system reads it from each document. Drop several files at once and it splits them apart by association. Or pick one association to force every plan to it.</div>
     <div id="result"></div>
 
+    <style>
+      #manualBox .mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+      #manualBox .mgrid > div{min-width:0;}
+      #manualBox label{display:block;font-size:11px;color:#64748b;margin-bottom:3px;font-weight:600;}
+      #manualBox input,#manualBox select{width:100%;padding:7px;font-size:13px;border:1px solid var(--line,#d0d7de);border-radius:6px;background:#fff;}
+      @media(max-width:640px){#manualBox .mgrid{grid-template-columns:1fr 1fr;}}
+    </style>
+    <details id="manualBox" style="margin:10px 0 4px;background:#fff;border:1px solid var(--line);border-radius:9px;padding:0 12px;">
+      <summary style="cursor:pointer;font-weight:600;padding:10px 0;list-style:none;">➕ Add a plan by hand <span class="sub" style="font-weight:400;">— key the dates and amounts yourself; optionally attach the signed agreement</span></summary>
+      <div style="padding:4px 0 14px;">
+        <div class="mgrid">
+          <div><label>Association *</label><select id="m_comm"><option value="">Choose…</option>${opts}</select></div>
+          <div style="grid-column:span 2;"><label>Property address *</label><input id="m_addr" placeholder="123 Main St"></div>
+          <div><label>Homeowner <span style="font-weight:400;color:#94a3b8;">(auto from property if blank)</span></label><input id="m_debtor"></div>
+          <div><label>Plan total ($)</label><input id="m_total" type="number" min="0" step="0.01"></div>
+          <div><label>Down payment ($)</label><input id="m_down" type="number" min="0" step="0.01"></div>
+          <div><label>Installment ($)</label><input id="m_install" type="number" min="0" step="0.01"></div>
+          <div><label># installments</label><input id="m_num" type="number" min="0" step="1"></div>
+          <div><label>Frequency</label><select id="m_freq"><option value="weekly">Weekly</option><option value="biweekly">Biweekly</option><option value="semimonthly">Semimonthly</option><option value="monthly" selected>Monthly</option><option value="quarterly">Quarterly</option></select></div>
+          <div><label>Start date</label><input id="m_start" type="date"></div>
+          <div><label>First payment</label><input id="m_first" type="date"></div>
+          <div><label>Next due</label><input id="m_next" type="date"></div>
+          <div><label>End date</label><input id="m_end" type="date"></div>
+          <div><label>Status</label><select id="m_status"><option value="active" selected>Active</option><option value="completed">Completed</option><option value="defaulted">Defaulted</option><option value="cancelled">Cancelled</option></select></div>
+          <div style="grid-column:span 2;"><label>Terms summary <span style="font-weight:400;color:#94a3b8;">(optional)</span></label><input id="m_terms" placeholder="e.g. $500 down, then $150/mo for 6 months"></div>
+          <div style="grid-column:span 3;"><label>Attach signed agreement <span style="font-weight:400;color:#94a3b8;">(PDF, optional — this is the plan link on the 360 &amp; reports)</span></label><input id="m_pdf" type="file" accept="application/pdf"></div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:12px;">
+          <button class="btn" id="m_save" onclick="manualSave()">Save plan</button>
+          <span id="m_status_msg" class="sub"></span>
+        </div>
+        <div class="sub" style="margin-top:8px;">Uploading a PDF above auto-extracts and files the plan for you — this form is for keying one in by hand. Either way it shows on the homeowner's 360 and, if set up this month, on the billing activity detail.</div>
+      </div>
+    </details>
+
     <h2>On a payment plan</h2>
     <div class="row" style="margin-bottom:8px;">
       <select id="rosterComm" onchange="loadRoster()"><option value="">All associations</option>${opts}</select>
@@ -222,6 +257,32 @@ async function approvePreview(){
     document.getElementById('result').innerHTML=`<div class="soon"><b>✅ Filed ${n} plan${n===1?'':'s'}</b>${j.plans_updated?j.plans_updated+' updated an existing active plan. ':''}${j.rows_skipped_unmatched?j.rows_skipped_unmatched+' row(s) skipped (no association or property match). ':''}They now show on each homeowner's 360.</div>`;
     _preview=null; loadRoster();
   }catch(e){ btn.disabled=false; btn.textContent='Approve'; alert('Could not file.'); }
+}
+
+// Hand-enter a single plan (dates/amounts) with an optional agreement PDF.
+async function manualSave(){
+  const btn=document.getElementById('m_save'), msg=document.getElementById('m_status_msg');
+  const g=id=>((document.getElementById(id)||{}).value||'').trim();
+  const cid=g('m_comm'), addr=g('m_addr');
+  if(!cid){ msg.style.color='#b91c1c'; msg.textContent='Pick an association.'; return; }
+  if(!addr){ msg.style.color='#b91c1c'; msg.textContent='Enter the property address.'; return; }
+  const old=btn.textContent; btn.disabled=true; btn.textContent='Saving…'; msg.style.color='#64748b'; msg.textContent='Matching property…';
+  try{
+    const fd=new FormData();
+    fd.append('community_id',cid); fd.append('property_address',addr);
+    [['debtor_name','m_debtor'],['total_amount','m_total'],['down_payment','m_down'],['installment_amount','m_install'],['num_installments','m_num'],['frequency','m_freq'],['start_date','m_start'],['first_payment_date','m_first'],['next_due_date','m_next'],['end_date','m_end'],['status','m_status'],['terms_summary','m_terms']]
+      .forEach(([k,id])=>{ const v=g(id); if(v!=='')fd.append(k,v); });
+    const pf=document.getElementById('m_pdf'); if(pf&&pf.files&&pf.files[0])fd.append('pdf',pf.files[0]);
+    const r=await af('/api/payment-plans/manual',{method:'POST',body:fd});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok){ msg.style.color='#b91c1c'; msg.textContent=(j.error||'Could not save the plan.'); btn.disabled=false; btn.textContent=old; return; }
+    const who=(j.matched&&j.matched.owner_name)?(' for '+j.matched.owner_name):'';
+    msg.style.color='#15803d'; msg.textContent=(j.updated?'Updated the active plan':'Plan added')+who+'. It now shows on the roster and the 360.';
+    ['m_addr','m_debtor','m_total','m_down','m_install','m_num','m_start','m_first','m_next','m_end','m_terms'].forEach(id=>{const el=document.getElementById(id); if(el)el.value='';});
+    if(pf)pf.value='';
+    btn.disabled=false; btn.textContent=old;
+    loadRoster();
+  }catch(e){ msg.style.color='#b91c1c'; msg.textContent='Could not save the plan.'; btn.disabled=false; btn.textContent=old; }
 }
 
 async function loadRoster(){
