@@ -3930,39 +3930,61 @@
     <!-- Generate Draft Invoice — the primary action, first after the community.
          Between Type and Service period sits the editable categories preview
          (fixed = the recurring fee lines; activity = the standard template). -->
+    <!-- Two-area draft builder (Ed 2026-07-16). Fixed fees bill in ADVANCE
+         (current month), activity bills in ARREARS (prior, closed month).
+         Both areas map to the two invoice_types that already exist and bundle
+         into one monthly board package. Periods default from today's date. -->
     <div class="panel" id="billing-draft-invoice-panel" style="margin-bottom:16px;">
-      <h4 style="margin-top:0;">✨ Generate Draft Invoice</h4>
-      <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px;">
-        <div>
-          <div class="section-label">Type</div>
-          <select id="billing-draft-type" style="padding:6px;" onchange="billingTypeChanged()">
-            <option value="fixed">Fixed (recurring, billed in advance)</option>
-            <option value="activity">Activity (variable, billed in arrears)</option>
-          </select>
+      <h4 style="margin-top:0;">✨ Generate Draft Invoices</h4>
+      <p style="font-size:12px; color:#666; margin:-4px 0 14px 0; line-height:1.5;">
+        Two invoices bundle into one monthly board statement: <b>fixed fees</b> billed in advance (this month) and <b>activity</b> billed in arrears (last, closed month). Periods default from today — override either if needed.
+      </p>
+
+      <!-- ① FIXED — recurring fees, billed in advance (current month) -->
+      <div id="billing-area-fixed" style="border:1px solid #e5e7eb; border-radius:8px; padding:14px; margin-bottom:14px; background:#fcfdff;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap; margin-bottom:6px;">
+          <div style="font-weight:700; font-size:14px; color:#0B1D34;">① Fixed <span style="font-weight:400; color:#6b7280; font-size:12px;">— recurring fees, billed in advance</span></div>
+          <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+            <div>
+              <div class="section-label">Service period</div>
+              <input type="month" id="billing-draft-period-fixed" style="padding:6px;" onchange="billingPeriodChanged('fixed')">
+            </div>
+            <div>
+              <div class="section-label">Will be numbered</div>
+              <div id="billing-preview-invoice-number-fixed" style="padding:6px 10px; background:#f0f4f8; border:1px solid #d0d7de; border-radius:4px; font-family:monospace; font-size:14px; min-width:90px; text-align:center;">—</div>
+            </div>
+            <div>
+              <button class="action-btn" onclick="billingGenerateDraft('fixed')">Generate fixed</button>
+            </div>
+          </div>
         </div>
+        <div id="billing-period-hint-fixed" style="font-size:11px; color:#888; margin-bottom:10px;"></div>
+        <div id="billing-draft-preview-fixed" style="margin-bottom:8px;"></div>
+        <div id="billing-draft-result-fixed" style="font-size:14px;"></div>
       </div>
 
-      <!-- Editable categories for this invoice — populated from the contract by
-           type (fixed fee lines / standard activity template). Edit quantities
-           here; add one-offs in Manual Line Items below. -->
-      <div id="billing-draft-preview" style="margin-bottom:14px;"></div>
-
-      <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
-        <div>
-          <div class="section-label">Service period</div>
-          <input type="month" id="billing-draft-period" style="padding:6px;" onchange="billingUpdatePeriodHint(); billingUpdateInvoiceNumberPreview(); billingLoadDraftPreview();">
-          <div id="billing-period-hint" style="font-size:11px; color:#888; margin-top:4px;"></div>
+      <!-- ② ACTIVITY — variable charges, billed in arrears (prior month) -->
+      <div id="billing-area-activity" style="border:1px solid #e5e7eb; border-radius:8px; padding:14px; background:#fcfdff;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap; margin-bottom:6px;">
+          <div style="font-weight:700; font-size:14px; color:#0B1D34;">② Activity <span style="font-weight:400; color:#6b7280; font-size:12px;">— letters, postage, ARC/ACC, billed in arrears</span></div>
+          <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+            <div>
+              <div class="section-label">Service period</div>
+              <input type="month" id="billing-draft-period-activity" style="padding:6px;" onchange="billingPeriodChanged('activity')">
+            </div>
+            <div>
+              <div class="section-label">Will be numbered</div>
+              <div id="billing-preview-invoice-number-activity" style="padding:6px 10px; background:#f0f4f8; border:1px solid #d0d7de; border-radius:4px; font-family:monospace; font-size:14px; min-width:90px; text-align:center;">—</div>
+            </div>
+            <div>
+              <button class="action-btn" onclick="billingGenerateDraft('activity')">Generate activity</button>
+            </div>
+          </div>
         </div>
-        <div>
-          <div class="section-label">Will be numbered</div>
-          <div id="billing-preview-invoice-number" style="padding:6px 10px; background:#f0f4f8; border:1px solid #d0d7de; border-radius:4px; font-family:monospace; font-size:14px; min-width:90px; text-align:center;">—</div>
-        </div>
-        <div>
-          <button class="action-btn" onclick="billingGenerateDraft()">Generate</button>
-          <div style="font-size:11px; color:#888; margin-top:4px; text-align:center;">Creates a draft invoice below</div>
-        </div>
+        <div id="billing-period-hint-activity" style="font-size:11px; color:#888; margin-bottom:10px;"></div>
+        <div id="billing-draft-preview-activity" style="margin-bottom:8px;"></div>
+        <div id="billing-draft-result-activity" style="font-size:14px;"></div>
       </div>
-      <div id="billing-draft-result" style="margin-top:12px; font-size:14px;"></div>
     </div>
 
     <div class="panel" id="billing-community-manual-panel" style="margin-bottom:16px;">
@@ -3984,7 +4006,7 @@
       <div id="billing-pending-line-items" style="font-size:13px;"></div>
     </div>
 
-    <div class="panel" id="billing-community-inputs-panel" style="margin-bottom:16px; display:none;">
+    <div class="panel" id="billing-community-inputs-panel" style="margin-bottom:16px;">
       <h4 style="margin-top:0;">📎 Activity Inputs (optional)</h4>
       <p style="font-size:12px; color:#666; margin:0 0 10px 0;">
         Upload a Vantaca activity report; the next Generate will create the invoice with those line items already populated. You can also generate empty and add lines manually.
@@ -4405,7 +4427,7 @@
       // Update cache so the invoice-number preview reflects it immediately.
       const c = (billingCommunitiesCache || []).find(x => x.id === id);
       if (c) c.billing_code = j.billing_code;
-      if (typeof billingUpdateInvoiceNumberPreview === 'function') billingUpdateInvoiceNumberPreview();
+      if (typeof billingUpdateAllInvoiceNumbers === 'function') billingUpdateAllInvoiceNumbers();
       if (status) { status.textContent = `Saved — invoices will number as YYMM${j.billing_code}.`; status.style.color = '#15803d'; }
     } catch (e) {
       if (status) { status.textContent = 'Save failed: ' + e.message; status.style.color = '#b91c1c'; }
@@ -4710,8 +4732,9 @@
       billingPopulateCommunityCategoryDropdown();
       billingRenderPendingLineItems();
 
-      // Default period based on current type select (Activity → prior month).
-      billingTypeChanged();
+      // Seed both areas' periods from today (fixed → this month, activity →
+      // prior month) and load both worksheets.
+      billingInitAreas();
 
       billingLoadInvoicesForCommunity(communityId);
       billingLoadBuilders(communityId);
@@ -4741,51 +4764,70 @@
     }
   }
 
-  function billingTypeChanged() {
-    const type = document.getElementById('billing-draft-type').value;
-    const today = new Date();
-    if (type === 'activity') today.setMonth(today.getMonth() - 1);
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, '0');
-    document.getElementById('billing-draft-period').value = `${yyyy}-${mm}`;
-    billingUpdatePeriodHint();
-    billingUpdateInvoiceNumberPreview();
+  // ===========================================================================
+  // Two-area draft builder (Ed 2026-07-16). Each area ('fixed' | 'activity')
+  // owns its own worksheet state, period, invoice-number preview, and Generate.
+  // Fixed defaults to the current month (billed in advance); activity defaults
+  // to the prior, closed month (billed in arrears).
+  // ===========================================================================
+  const BILLING_AREAS = ['fixed', 'activity'];
+  const billingDraftState = { fixed: { lines: [], note: '' }, activity: { lines: [], note: '' } };
 
-    // Show the Vantaca inputs panel only for activity invoices.
-    const panel = document.getElementById('billing-community-inputs-panel');
-    if (panel) panel.style.display = type === 'activity' ? 'block' : 'none';
-
-    // Refresh the editable categories preview for the new type.
-    billingLoadDraftPreview();
+  // Default service period per area, derived from TODAY.
+  //   fixed    → current month (billed in advance)
+  //   activity → prior month   (billed in arrears — the last CLOSED month)
+  function billingDefaultPeriodFor(type) {
+    const now = new Date();
+    // Anchor to the FIRST of the month before shifting, so month-end days
+    // (29-31) don't overflow when stepping back a month. Naive setMonth(-1) on
+    // Jul 31 yields "Jun 31" → Jul 1, mis-defaulting the arrears period exactly
+    // when month-end billing runs happen.
+    const d = new Date(now.getFullYear(), now.getMonth() + (type === 'activity' ? -1 : 0), 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   }
 
-  // ----- Editable categories preview (between Type and Service period) --------
-  let billingDraftPreviewLines = [];
+  // Seed both areas from today's date and load both worksheets. Called on
+  // community select (replaces the old single billingTypeChanged()).
+  function billingInitAreas() {
+    BILLING_AREAS.forEach((type) => {
+      const pEl = document.getElementById(`billing-draft-period-${type}`);
+      if (pEl) pEl.value = billingDefaultPeriodFor(type);
+      billingUpdatePeriodHint(type);
+      billingUpdateInvoiceNumberPreview(type);
+      billingLoadDraftPreview(type);
+    });
+  }
 
-  async function billingLoadDraftPreview() {
-    const el = document.getElementById('billing-draft-preview');
+  function billingPeriodChanged(type) {
+    billingUpdatePeriodHint(type);
+    billingUpdateInvoiceNumberPreview(type);
+    billingLoadDraftPreview(type);
+  }
+
+  async function billingLoadDraftPreview(type) {
+    const el = document.getElementById(`billing-draft-preview-${type}`);
     if (!el || !billingCurrentCommunityId) return;
-    const type = document.getElementById('billing-draft-type').value;
-    const period = document.getElementById('billing-draft-period').value;
-    if (!period) { el.innerHTML = '<div style="font-size:12px; color:#888;">Pick a service period to preview the categories.</div>'; billingDraftPreviewLines = []; return; }
+    const period = document.getElementById(`billing-draft-period-${type}`).value;
+    const st = billingDraftState[type];
+    if (!period) { el.innerHTML = '<div style="font-size:12px; color:#888;">Pick a service period to preview the categories.</div>'; st.lines = []; return; }
     el.innerHTML = '<div style="font-size:12px; color:#888;">Loading categories…</div>';
     try {
       const r = await fetch(`/api/billing/communities/${billingCurrentCommunityId}/draft-invoice/preview?type=${type}&period=${period}`);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      billingDraftPreviewLines = (j.line_items || []).map(l => ({ ...l }));
-      billingWorksheetAutofillNote = '';
+      st.lines = (j.line_items || []).map(l => ({ ...l }));
+      st.note = '';
       // Activity invoices bill in arrears from what actually happened — so pull
       // the quantities straight from the activity report instead of leaving them
       // at 0 for staff to re-key. Every field stays editable (manual override).
       if (type === 'activity') {
-        await billingAutofillWorksheetFromActivity(period);
+        await billingAutofillWorksheetFromActivity(type, period);
       } else {
-        billingRenderDraftPreview();
+        billingRenderDraftPreview(type);
       }
     } catch (e) {
       el.innerHTML = `<div style="font-size:12px; color:#a00;">Could not load categories: ${escapeHtml(e.message)}</div>`;
-      billingDraftPreviewLines = [];
+      st.lines = [];
     }
   }
 
@@ -4793,8 +4835,8 @@
   // Same category→metric mapping as billingPopulateFromActivity() on the invoice
   // detail view, but applied to the pre-generate worksheet so activity flows in
   // automatically. Manual overrides: every Rate/Qty/Amount cell is still editable
-  // and edits survive (this only runs on load / period change).
-  let billingWorksheetAutofillNote = '';
+  // and edits survive (this only runs on load / period change). The note now
+  // lives per-area on billingDraftState[type].note.
 
   // ONE place that prices ANY postage line date-aware, referenced by both the
   // worksheet auto-fill and the invoice-detail populate. The rate comes from the
@@ -4817,10 +4859,11 @@
     return cents != null ? cents / 100 : null;
   }
 
-  async function billingAutofillWorksheetFromActivity(period) {
+  async function billingAutofillWorksheetFromActivity(type, period) {
+    const st = billingDraftState[type];
     // period is 'YYYY-MM' from the month input; convert to a full day range.
     const [yy, mm] = String(period || '').split('-').map(Number);
-    if (!yy || !mm) { billingRenderDraftPreview(); return; }
+    if (!yy || !mm) { billingRenderDraftPreview(type); return; }
     const start = `${period}-01`;
     const end = `${period}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`; // last day of month
     // Use the auth-attaching wrapper when present (M365 sessions); fall back to
@@ -4842,7 +4885,7 @@
         payment_plan_fee: c.payment_plans || 0,
       };
       const applied = [];
-      billingDraftPreviewLines.forEach((li) => {
+      st.lines.forEach((li) => {
         if (li.source === 'adhoc') return; // staged pending charge — never auto-overwrite
         const pp = billingPostagePerPiece(li, c);
         if (pp != null) {
@@ -4864,40 +4907,41 @@
       Object.entries(map).forEach(([cat, count]) => {
         const q = Number(count) || 0;
         if (q <= 0) return;
-        if (billingDraftPreviewLines.some((l) => l.category === cat)) return;
+        if (st.lines.some((l) => l.category === cat)) return;
         const rc = (billingPiCatalog || []).find((it) => it.category === cat);
         if (!rc) return;
         const unit = Number(rc.unit_price || 0);
-        billingDraftPreviewLines.push({ source: 'owner_charge', source_ref_id: null, category: cat, description: rc.description, qty: q, unit_price: unit, amount: Math.round(q * unit * 100) / 100, sort_order: 2000 });
+        st.lines.push({ source: 'owner_charge', source_ref_id: null, category: cat, description: rc.description, qty: q, unit_price: unit, amount: Math.round(q * unit * 100) / 100, sort_order: 2000 });
         applied.push(`${rc.description} = ${q}`);
       });
       const rateStr = (c.postage_rate_cents != null ? '$' + (c.postage_rate_cents / 100).toFixed(2) : null);
-      billingWorksheetAutofillNote = applied.length
+      st.note = applied.length
         ? `⚡ Auto-filled from activity for ${period}: ${applied.join(' · ')}.${rateStr ? ` All postage priced date-aware at ${rateStr} (USPS rate for this period).` : ''} Review and override any quantity before generating. Pages = color copies by default; staffing and one-offs stay manual.`
         : `No billable activity found for ${period} — quantities left at 0.${rateStr ? ` Postage set date-aware to ${rateStr}.` : ''} Enter quantities manually or pick a different period.`;
-      billingRenderDraftPreview();
+      billingRenderDraftPreview(type);
     } catch (e) {
-      billingWorksheetAutofillNote = `Could not auto-fill from activity (${escapeHtml(e.message)}) — enter quantities manually.`;
-      billingRenderDraftPreview();
+      st.note = `Could not auto-fill from activity (${escapeHtml(e.message)}) — enter quantities manually.`;
+      billingRenderDraftPreview(type);
     }
   }
 
-  function billingRenderDraftPreview() {
-    const el = document.getElementById('billing-draft-preview');
+  function billingRenderDraftPreview(type) {
+    const el = document.getElementById(`billing-draft-preview-${type}`);
     if (!el) return;
-    const lines = billingDraftPreviewLines;
+    const st = billingDraftState[type];
+    const lines = st.lines;
     if (!lines.length) {
-      el.innerHTML = '<div style="font-size:12px; color:#888; padding:6px 0;">No standard categories for this type yet. Generate anyway, or add lines in Manual Line Items below.</div>';
+      el.innerHTML = '<div style="font-size:12px; color:#888; padding:6px 0;">No standard categories for this area yet. Generate anyway, or add lines in Manual Line Items below.</div>';
       return;
     }
     const subtotal = lines.reduce((s, l) => s + Number(l.amount || 0), 0);
     const rows = lines.map((l, i) => `
       <tr>
         <td style="padding:5px 8px; border-bottom:1px solid #eee; font-size:13px;">${escapeHtml(l.description || '')}</td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;"><input type="number" min="0" step="0.01" value="${l.unit_price}" id="billing-preview-rate-${i}" onchange="billingDraftPreviewRate(${i}, this.value)" style="width:92px; padding:3px 5px; text-align:right; font-size:13px;"></td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;"><input type="number" min="0" step="0.01" value="${l.qty}" id="billing-preview-qty-${i}" onchange="billingDraftPreviewQty(${i}, this.value)" style="width:72px; padding:3px 5px; text-align:right; font-size:13px;"></td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;"><input type="number" min="0" step="0.01" value="${l.amount}" id="billing-preview-amt-${i}" onchange="billingDraftPreviewAmount(${i}, this.value)" style="width:100px; padding:3px 5px; text-align:right; font-size:13px; font-variant-numeric:tabular-nums;"></td>
-        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:center;"><a href="#" onclick="event.preventDefault(); billingDraftPreviewRemove(${i})" title="Remove from this invoice" style="color:#a00; font-size:14px; text-decoration:none;">×</a></td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;"><input type="number" min="0" step="0.01" value="${l.unit_price}" id="billing-preview-rate-${type}-${i}" onchange="billingDraftPreviewRate('${type}', ${i}, this.value)" style="width:92px; padding:3px 5px; text-align:right; font-size:13px;"></td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;"><input type="number" min="0" step="0.01" value="${l.qty}" id="billing-preview-qty-${type}-${i}" onchange="billingDraftPreviewQty('${type}', ${i}, this.value)" style="width:72px; padding:3px 5px; text-align:right; font-size:13px;"></td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right;"><input type="number" min="0" step="0.01" value="${l.amount}" id="billing-preview-amt-${type}-${i}" onchange="billingDraftPreviewAmount('${type}', ${i}, this.value)" style="width:100px; padding:3px 5px; text-align:right; font-size:13px; font-variant-numeric:tabular-nums;"></td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:center;"><a href="#" onclick="event.preventDefault(); billingDraftPreviewRemove('${type}', ${i})" title="Remove from this invoice" style="color:#a00; font-size:14px; text-decoration:none;">×</a></td>
       </tr>`).join('');
     el.innerHTML = `
       <div class="section-label" style="margin-bottom:6px;">Categories on this invoice <span style="font-weight:400; color:#888; font-size:11px;">— edit rate, qty, or amount; remove with ×; add one-offs below</span></div>
@@ -4912,78 +4956,83 @@
         <tbody>${rows}</tbody>
         <tfoot><tr style="font-weight:700; background:#f0f4f8;">
           <td colspan="3" style="padding:6px 8px; text-align:right; font-size:12px;">Subtotal</td>
-          <td style="padding:6px 8px; text-align:right; font-size:13px;" id="billing-preview-subtotal">${billingMoney(subtotal)}</td><td></td>
+          <td style="padding:6px 8px; text-align:right; font-size:13px;" id="billing-preview-subtotal-${type}">${billingMoney(subtotal)}</td><td></td>
         </tr></tfoot>
-      </table>${billingWorksheetAutofillNote ? `
-      <div style="margin-top:8px; font-size:12px; color:#15803d; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:7px 10px; line-height:1.5;">${escapeHtml(billingWorksheetAutofillNote)}</div>` : ''}${lines.some(l => /per lot/i.test(l.description || '')) ? `
-      <div style="margin-top:8px;"><button class="secondary-btn" onclick="billingRecalcLots()" style="font-size:12px; padding:5px 11px;" title="Recount homeowners on record and update the per-lot quantity">🔄 Recalc lot count from homeowners on record</button></div>` : ''}`;
+      </table>${st.note ? `
+      <div style="margin-top:8px; font-size:12px; color:#15803d; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:7px 10px; line-height:1.5;">${escapeHtml(st.note)}</div>` : ''}${lines.some(l => /per lot/i.test(l.description || '')) ? `
+      <div style="margin-top:8px;"><button class="secondary-btn" onclick="billingRecalcLots('${type}')" style="font-size:12px; padding:5px 11px;" title="Recount homeowners on record and update the per-lot quantity">🔄 Recalc lot count from homeowners on record</button></div>` : ''}`;
   }
 
-  async function billingRecalcLots() {
+  async function billingRecalcLots(type) {
     if (!billingCurrentCommunityId) return;
-    const res = document.getElementById('billing-draft-result');
+    const res = document.getElementById(`billing-draft-result-${type}`);
     if (res) { res.style.color = '#888'; res.innerHTML = '<div style="font-size:13px; color:#888;">Recounting homeowners on record…</div>'; }
     try {
       const r = await fetch(`/api/billing/communities/${billingCurrentCommunityId}/recalc-lot-count`, { method: 'POST' });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      await billingLoadDraftPreview(); // re-render with the updated per-lot qty
+      await billingLoadDraftPreview(type); // re-render with the updated per-lot qty
       if (res) res.innerHTML = `<div style="color:#166534; font-size:13px;">✓ Lot count updated to <strong>${j.lot_count}</strong> homeowner${j.lot_count === 1 ? '' : 's'} on record (was ${j.prior_lot_count ?? '—'}). Per-lot fee = ${billingMoney(j.per_lot_amount)}.</div>`;
     } catch (e) {
       if (res) res.innerHTML = `<div style="color:#b91c1c; font-size:13px;">Could not recalc lot count: ${escapeHtml(e.message)}</div>`;
     }
   }
 
-  function billingDraftPreviewSubtotal() {
-    const sub = billingDraftPreviewLines.reduce((s, l) => s + Number(l.amount || 0), 0);
-    const subEl = document.getElementById('billing-preview-subtotal');
+  function billingDraftPreviewSubtotal(type) {
+    const sub = billingDraftState[type].lines.reduce((s, l) => s + Number(l.amount || 0), 0);
+    const subEl = document.getElementById(`billing-preview-subtotal-${type}`);
     if (subEl) subEl.textContent = billingMoney(sub);
   }
   // Rate x Qty = Amount, three-way editable: change rate or qty and amount
   // recomputes; type an amount directly and the rate back-fills (amount / qty).
-  function billingDraftPreviewQty(i, val) {
-    const line = billingDraftPreviewLines[i];
+  function billingDraftPreviewQty(type, i, val) {
+    const line = billingDraftState[type].lines[i];
     if (!line) return;
     line.qty = Number(val || 0);
     line.amount = Math.round(line.qty * Number(line.unit_price || 0) * 100) / 100;
-    const amtEl = document.getElementById('billing-preview-amt-' + i);
+    const amtEl = document.getElementById(`billing-preview-amt-${type}-${i}`);
     if (amtEl) amtEl.value = line.amount;
-    billingDraftPreviewSubtotal();
+    billingDraftPreviewSubtotal(type);
   }
-  function billingDraftPreviewRate(i, val) {
-    const line = billingDraftPreviewLines[i];
+  function billingDraftPreviewRate(type, i, val) {
+    const line = billingDraftState[type].lines[i];
     if (!line) return;
     line.unit_price = Number(val || 0);
     line.amount = Math.round(Number(line.qty || 0) * line.unit_price * 100) / 100;
-    const amtEl = document.getElementById('billing-preview-amt-' + i);
+    const amtEl = document.getElementById(`billing-preview-amt-${type}-${i}`);
     if (amtEl) amtEl.value = line.amount;
-    billingDraftPreviewSubtotal();
+    billingDraftPreviewSubtotal(type);
   }
-  function billingDraftPreviewAmount(i, val) {
-    const line = billingDraftPreviewLines[i];
+  function billingDraftPreviewAmount(type, i, val) {
+    const line = billingDraftState[type].lines[i];
     if (!line) return;
     line.amount = Math.round(Number(val || 0) * 100) / 100;
     // A line with qty 0 would zero out on save (qty x rate). If an amount is
     // typed, bump qty to 1 so the amount persists as its own line.
     if (Number(line.qty || 0) <= 0 && line.amount !== 0) {
       line.qty = 1;
-      const qtyEl = document.getElementById('billing-preview-qty-' + i);
+      const qtyEl = document.getElementById(`billing-preview-qty-${type}-${i}`);
       if (qtyEl) qtyEl.value = 1;
     }
     const q = Number(line.qty || 0);
     line.unit_price = q > 0 ? Math.round((line.amount / q) * 10000) / 10000 : line.amount;
-    const rateEl = document.getElementById('billing-preview-rate-' + i);
+    const rateEl = document.getElementById(`billing-preview-rate-${type}-${i}`);
     if (rateEl) rateEl.value = line.unit_price;
-    billingDraftPreviewSubtotal();
+    billingDraftPreviewSubtotal(type);
   }
 
-  function billingDraftPreviewRemove(i) {
-    billingDraftPreviewLines.splice(i, 1);
-    billingRenderDraftPreview();
+  function billingDraftPreviewRemove(type, i) {
+    billingDraftState[type].lines.splice(i, 1);
+    billingRenderDraftPreview(type);
   }
 
-  function billingUpdateInvoiceNumberPreview() {
-    const el = document.getElementById('billing-preview-invoice-number');
+  // Refresh both areas' invoice-number previews (e.g. after the billing code is saved).
+  function billingUpdateAllInvoiceNumbers() {
+    BILLING_AREAS.forEach((t) => billingUpdateInvoiceNumberPreview(t));
+  }
+
+  function billingUpdateInvoiceNumberPreview(type) {
+    const el = document.getElementById(`billing-preview-invoice-number-${type}`);
     if (!el) return;
     const community = (billingCommunitiesCache || []).find(c => c.id === billingCurrentCommunityId);
     if (!community) { el.textContent = '—'; el.style.color = '#888'; return; }
@@ -4994,8 +5043,7 @@
       el.title = 'Set this community\'s billing code in Proposals & Contracts to enable invoice numbering.';
       return;
     }
-    const type = document.getElementById('billing-draft-type').value;
-    const period = document.getElementById('billing-draft-period').value;
+    const period = document.getElementById(`billing-draft-period-${type}`).value;
     if (!period) { el.textContent = '—'; el.style.color = '#888'; return; }
     const [yyyy, mm] = period.split('-');
     const yy = yyyy.slice(2);
@@ -5121,15 +5169,15 @@
     if (fileInput) fileInput.value = '';
   }
 
-  function billingUpdatePeriodHint() {
-    const type = document.getElementById('billing-draft-type').value;
-    const period = document.getElementById('billing-draft-period').value;
-    const hint = document.getElementById('billing-period-hint');
+  function billingUpdatePeriodHint(type) {
+    const period = document.getElementById(`billing-draft-period-${type}`).value;
+    const hint = document.getElementById(`billing-period-hint-${type}`);
+    if (!hint) return;
     if (!period) { hint.textContent = ''; return; }
     const [y, m] = period.split('-').map(Number);
     const monthName = ['January','February','March','April','May','June','July','August','September','October','November','December'][m - 1];
     if (type === 'activity') {
-      hint.textContent = `${monthName} ${y} activity (billed in arrears, typically the following month)`;
+      hint.textContent = `${monthName} ${y} activity (billed in arrears — the last closed month)`;
     } else {
       hint.textContent = `${monthName} ${y} fees (billed in advance)`;
     }
@@ -5660,11 +5708,10 @@
     }
   }
 
-  async function billingGenerateDraft() {
+  async function billingGenerateDraft(type) {
     if (!billingCurrentCommunityId) return;
-    const type = document.getElementById('billing-draft-type').value;
-    const period = document.getElementById('billing-draft-period').value;
-    const result = document.getElementById('billing-draft-result');
+    const period = document.getElementById(`billing-draft-period-${type}`).value;
+    const result = document.getElementById(`billing-draft-result-${type}`);
 
     if (!period) {
       result.innerHTML = '<div style="color:#a00;">Service period is required.</div>';
@@ -5677,7 +5724,7 @@
       const r = await fetch(`/api/billing/communities/${billingCurrentCommunityId}/draft-invoice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, period, line_items: billingDraftPreviewLines })
+        body: JSON.stringify({ type, period, line_items: billingDraftState[type].lines })
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
