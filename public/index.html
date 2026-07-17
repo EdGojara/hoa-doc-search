@@ -5416,7 +5416,7 @@
           ? actBtn(r.status === 'sent' ? 'Re-email' : '✉ Email', 'billingEmailInvoice', r.id, r.invoice_number, '#0B1D34', '#fff')
           : '';
         const actions = pdfBtn + emailBtn + (isDraft
-          ? actBtn('Sent', 'billingMarkSent', r.id, r.invoice_number, '#166534', '#fff')
+          ? actBtn('Mark sent', 'billingMarkSent', r.id, r.invoice_number, '#166534', '#fff')
             + actBtn('Delete', 'billingDeleteInvoice', r.id, r.invoice_number, '#fde7e7', '#a00')
           : (r.status === 'sent' ? '<span style="font-size:11px; color:#166534; margin-left:4px;">✓ sent</span>' : ''));
         const statusCell = r.status === 'void' ? '<span style="color:#a00;">void</span>'
@@ -5443,7 +5443,7 @@
           </tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
-        <div style="font-size:11px; color:#888; margin-top:6px;">Click a row to view or edit line items (drafts and sent invoices are editable). <b>Sent</b> keeps the invoice; <b>Delete</b> removes a draft.</div>
+        <div style="font-size:11px; color:#888; margin-top:6px;">Click a row to view or edit line items (drafts and sent invoices are editable). <b>📄 PDF</b> views/prints it; <b>✉ Email</b> emails it and marks it sent; <b>Mark sent</b> records it as sent without emailing (for when you delivered it another way); <b>Delete</b> removes a draft.</div>
       `;
     } catch (e) {
       el.innerHTML = `<div style="color:#a00;">Failed to load invoices: ${e.message}</div>`;
