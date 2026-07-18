@@ -689,6 +689,17 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
               'AI low-confidence — recommend human review of the photo before any action.';
           }
           await supabase.from('property_observations').update(seedUpdate).eq('id', observationId);
+          // Training-signal capture (best-effort, non-fatal): preserve the AI's
+          // ORIGINAL category separately so a later human re-label doesn't erase
+          // what the AI guessed. Powers the accuracy report + few-shot learning.
+          // Silently no-ops until migration 305 adds the column.
+          if (seedUpdate.category_id) {
+            const { error: aiSugErr } = await supabase.from('property_observations')
+              .update({ ai_suggested_category_id: seedUpdate.category_id }).eq('id', observationId);
+            if (aiSugErr && !/ai_suggested_category_id|column|schema cache/i.test(aiSugErr.message || '')) {
+              console.warn('[ai_vision] ai_suggested capture (seed):', aiSugErr.message);
+            }
+          }
           console.log(`[ai_vision] photo ${req.params.id} → ${findings.length} finding(s); seed observation ${observationId} categorized as ${seedFinding.category_slug || 'no-match'} / ${seedFinding.severity}`);
 
           // INSERT additional observations for findings[1..N]
@@ -719,6 +730,14 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                 .single();
               if (error) throw error;
               extraObservationIds.push(row.id);
+              // Training-signal capture (best-effort; see seed note above).
+              if (extra.category_id) {
+                const { error: aiSugErr } = await supabase.from('property_observations')
+                  .update({ ai_suggested_category_id: extra.category_id }).eq('id', row.id);
+                if (aiSugErr && !/ai_suggested_category_id|column|schema cache/i.test(aiSugErr.message || '')) {
+                  console.warn('[ai_vision] ai_suggested capture (extra):', aiSugErr.message);
+                }
+              }
               console.log(`[ai_vision] extra observation ${row.id} (finding ${i + 1}/${findings.length}) ${f.category_slug || 'no-match'} / ${f.severity}`);
             } catch (e) {
               console.warn(`[ai_vision] extra observation insert failed (finding ${i}):`, e.message);
