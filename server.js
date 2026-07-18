@@ -2224,6 +2224,27 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
         if (aErr) console.warn('[acc-decision] application upload failed:', aErr.message);
       }
 
+      // Seal the finalized ACC decision letter + the submitted application into
+      // the immutable, hash-verified archive. These go to the homeowner; once
+      // finalized they must not change. Best-effort. (Ed 2026-07-18)
+      try {
+        const { sealFinalizedRecord } = require('./lib/record_archive');
+        const accCid = instance.community_id || null;
+        await sealFinalizedRecord(supabase, {
+          record_type: 'acc_letter', record_id: decisionId, community_id: accCid,
+          archive_path: `acc_decision/${accCid || 'unknown'}/${decisionId}-letter.pdf`,
+          buffer: pdfBuffer, sent_at: new Date().toISOString(),
+          metadata: { decision_type: instance.decision_type || body.decision_type || null },
+        });
+        if (applicationFile) {
+          await sealFinalizedRecord(supabase, {
+            record_type: 'acc_application', record_id: decisionId, community_id: accCid,
+            archive_path: `acc_decision/${accCid || 'unknown'}/${decisionId}-application.pdf`,
+            buffer: applicationFile.buffer,
+          });
+        }
+      } catch (_) {}
+
       // 5) Upload each photo (or brochure PDF — these ride in the photos
       // field but get preserved as PDFs for packet merging downstream).
       for (let i = 0; i < photoFiles.length; i++) {

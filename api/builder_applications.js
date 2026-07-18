@@ -2392,6 +2392,19 @@ router.post('/:id/send', express.json({ limit: '256kb' }), async (req, res) => {
         .eq('community_id', app.community_id)
         .eq('type', 'letter_other')
         .eq('original_external_id', app.reference_number);
+
+      // Seal the exact ARC decision letter that just went to the builder and on
+      // to the permit office — immutable, hash-verified, never changes after
+      // this. Best-effort. (Ed 2026-07-18)
+      try {
+        const { sealFinalizedRecord } = require('../lib/record_archive');
+        await sealFinalizedRecord(supabase, {
+          record_type: 'builder_letter', record_id: response.id, community_id: app.community_id,
+          archive_path: `builder_letter/${app.community_id}/${response.id}.pdf`,
+          buffer: env.pdfBuffer, sent_at: new Date().toISOString(),
+          metadata: { response_type: response.response_type, sent_to: toEmail },
+        });
+      } catch (_) {}
     }
 
     if (!send.ok) {
