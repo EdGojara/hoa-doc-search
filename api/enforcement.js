@@ -3905,6 +3905,7 @@ router.post('/violations/:id/correct', express.json(), async (req, res) => {
         review_notes: `Superseded via ${body.correction_type}: ${body.reason}`,
       })
       .eq('id', originalId);
+    await _rejectDraftLettersForViolation(originalId, `superseded via ${body.correction_type}`);
 
     // Drop a correction row
     const { data: correction, error: corrErr } = await supabase
@@ -4581,6 +4582,45 @@ function _newCureDate(decision) {
 // as a letter-inside-a-letter (Ed 2026-07-02, 19718 Norfolk Ridge). Strips
 // carriage returns (they render as "Ð" garbage) + markdown, and when the text
 // looks like a full letter, keeps only the observation sentence(s).
+// When a violation is voided or superseded (folded into another, reclassified,
+// corrected), any DRAFT letter still pointing at it is now orphaned — it would
+// sit in the Drafts queue forever and, if mailed, dun a homeowner for a case
+// that no longer stands. This shared helper rejects those drafts (removes the
+// rendered PDF, flips status='rejected') so the queue stays truthful. Call it
+// at every void/supersede site that doesn't already handle its own draft.
+// (Ed 2026-07-18 — after 4 orphaned trash drafts surfaced on superseded
+// violations during the Still Creek citation re-run.)
+const _DRAFT_LETTER_TYPES = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
+async function _rejectDraftLettersForViolation(violationId, reason) {
+  if (!violationId) return 0;
+  try {
+    const { data: drafts, error } = await supabase
+      .from('interactions')
+      .select('id, content')
+      .eq('violation_id', violationId)
+      .eq('status', 'draft')
+      .in('type', _DRAFT_LETTER_TYPES);
+    if (error) { console.warn('[enforcement] orphan-draft lookup failed:', error.message); return 0; }
+    if (!drafts || !drafts.length) return 0;
+    for (const d of drafts) {
+      if (d.content && /\.pdf$/i.test(String(d.content))) {
+        try { await supabase.storage.from('violation-letters').remove([d.content]); } catch (_) {}
+      }
+    }
+    const { error: upErr } = await supabase.from('interactions')
+      .update({ status: 'rejected' })
+      .eq('violation_id', violationId)
+      .eq('status', 'draft')
+      .in('type', _DRAFT_LETTER_TYPES);
+    if (upErr) { console.warn('[enforcement] orphan-draft reject failed:', upErr.message); return 0; }
+    console.log(`[enforcement] auto-rejected ${drafts.length} orphaned draft(s) for voided/superseded violation ${violationId} (${reason || 'no reason'})`);
+    return drafts.length;
+  } catch (e) {
+    console.warn('[enforcement] orphan-draft cleanup failed:', e.message);
+    return 0;
+  }
+}
+
 function _cleanFinding(text, categoryLabel) {
   if (!text) return null;
   let t = String(text).replace(/\r/g, '').replace(/\*\*|__|[`>#]/g, '').trim();
@@ -8267,7 +8307,7 @@ async function _reconcileAliasedOpenViolations(canonicalCategoryId) {
         current_stage: 'voided', resolved_via: 'voided', resolved_at: now,
         resolved_notes: `Folded into ${survivor.id} — same real-world issue under a confirmed category alias. Was ${l.current_stage} (${l.source}).`,
       }).eq('id', l.id).is('resolved_at', null);
-      if (!error) voided++;
+      if (!error) { voided++; await _rejectDraftLettersForViolation(l.id, 'folded into aliased survivor'); }
     }
     if (newStage !== survivor.current_stage) {
       await supabase.from('violations').update({
@@ -8884,6 +8924,7 @@ router.post('/drafts/:interactionId/fold-into', express.json(), async (req, res)
       resolved_at: new Date().toISOString(),
       resolved_notes: `Folded into open violation ${target.id} (${target.current_stage}) as continuation evidence — same continuing issue. Voided to avoid a duplicate cure clock.${note ? ' Note: ' + note : ''}`,
     }).eq('id', dup.id);
+    await _rejectDraftLettersForViolation(dup.id, 'folded into open violation');
 
     // 7) Cancel the duplicate's fresh courtesy letter so it never mails.
     await supabase.from('interactions').update({
@@ -9086,6 +9127,7 @@ router.post('/drafts/:interactionId/reclassify', express.json(), async (req, res
           current_stage: 'voided', resolved_via: 'voided', resolved_at: new Date().toISOString(),
           resolved_notes: `Reclassified to "${newCategory.label}" which already had open case ${existing.id} — folded in + voided to avoid a duplicate cure clock.`,
         }).eq('id', violation.id);
+        await _rejectDraftLettersForViolation(violation.id, 'reclassified into existing open case');
         await supabase.from('interactions').update({
           status: 'rejected', notes: `[Reclassified into existing open case ${existing.id} — letter cancelled.]`,
         }).eq('id', interactionId);
@@ -9427,6 +9469,7 @@ router.post('/violations/:violationId/demote-to-photo', express.json(), async (r
       .eq('id', spuriousId)
       .neq('current_stage', 'voided');
     if (e3) throw e3;
+    await _rejectDraftLettersForViolation(spuriousId, 'photo attached to another violation — not separate');
 
     // Audit note on the timeline.
     try {
