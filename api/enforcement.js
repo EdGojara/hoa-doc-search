@@ -9001,12 +9001,41 @@ router.post('/drafts/:interactionId/reclassify', express.json(), async (req, res
     const auditNote = `[Reclassified ${new Date().toISOString().slice(0, 10)}: ${priorCategoryLabel} → ${newCategory.label} by operator]`;
     const { data: existingObs } = await supabase
       .from('property_observations')
-      .select('reviewer_notes')
+      .select('reviewer_notes, ai_description, category_id, inspection_photo_id')
       .eq('id', obsId)
       .maybeSingle();
     const newReviewerNotes = existingObs && existingObs.reviewer_notes
       ? `${auditNote}\n${existingObs.reviewer_notes}`
       : auditNote;
+
+    // Training ledger (best-effort, non-fatal): record this correction as a
+    // structured (AI said X → human said Y) row + the photo, BEFORE we overwrite
+    // the observation. Powers the accuracy report + few-shot learning. No-ops
+    // until migration 306 is applied, so reclassify can never break on it.
+    {
+      const priorCatId = existingObs ? existingObs.category_id : violation.primary_category_id;
+      const priorDesc = existingObs ? existingObs.ai_description : null;
+      let photoPath = null;
+      if (existingObs && existingObs.inspection_photo_id) {
+        const { data: ph } = await supabase.from('inspection_photos')
+          .select('storage_path').eq('id', existingObs.inspection_photo_id).maybeSingle();
+        photoPath = ph ? ph.storage_path : null;
+      }
+      const { error: corrErr } = await supabase.from('photo_analysis_corrections').insert({
+        community_id: violation.community_id, property_id: violation.property_id,
+        observation_id: obsId, violation_id: violation.id,
+        inspection_photo_id: existingObs ? existingObs.inspection_photo_id : null,
+        photo_storage_path: photoPath,
+        ai_category_id: priorCatId || null, corrected_category_id: newCategory.id,
+        category_changed: !!(priorCatId && priorCatId !== newCategory.id),
+        ai_description: priorDesc, corrected_description: newDescription,
+        description_changed: !!(priorDesc && priorDesc !== newDescription),
+        source: 'reclassify', corrected_by_user_id: (req.body && req.body.user_id) || null,
+      });
+      if (corrErr && !/photo_analysis_corrections|relation|does not exist|schema cache|column/i.test(corrErr.message || '')) {
+        console.warn('[reclassify] training-ledger capture failed (non-fatal):', corrErr.message);
+      }
+    }
 
     const { error: oUpErr } = await supabase
       .from('property_observations')
