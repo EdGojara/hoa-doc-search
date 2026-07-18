@@ -1355,6 +1355,10 @@ app.use('/api/bedrock-connect', bedrockConnectRouter);
 const { router: boardPacketsRouter } = require('./api/board_packets');
 app.use('/api/board-packets', boardPacketsRouter);
 
+// Finalize & Archive / Reopen lifecycle (board packets, minutes, ...) — Ed 2026-07-18
+const { router: recordLifecycleRouter } = require('./api/record_lifecycle');
+app.use('/api/records', recordLifecycleRouter);
+
 const { router: minutesRouter } = require('./api/minutes');
 app.use('/api/minutes', minutesRouter);
 
