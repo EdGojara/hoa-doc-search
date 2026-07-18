@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo AI Accuracy · Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #0B1D34; --navy-soft: #142A4A; --gold: #D4AF37; --gold-bright: #e8c96e;
+    --paper: #F7F8FA; --card: #ffffff; --ink: #10151d; --ink-soft: #47515f; --ink-faint: #8a94a3;
+    --rule: #e6e9ee; --chip: #eef1f5;
+    --good: #1f7a4d; --good-bg: #e6f2ea; --warn: #9a6a12; --warn-bg: #f7efdd; --bad: #a3312b; --bad-bg: #f7e6e4;
+    --shadow: 0 1px 2px rgba(16,21,29,.04), 0 6px 22px rgba(16,21,29,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --navy: #0B1D34; --paper: #0d1017; --card: #161b24; --ink: #eef1f5; --ink-soft: #aab3c0; --ink-faint: #6b7482;
+      --rule: #232a35; --chip: #1f2632;
+      --good: #6fce9c; --good-bg: #14271d; --warn: #e0b45a; --warn-bg: #2a2413; --bad: #ef8078; --bad-bg: #2c1a18;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 26px rgba(0,0,0,.3);
+    }
+  }
+  body { margin: 0; background: var(--paper); color: var(--ink);
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; }
+  .mono { font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+
+  header.top {
+    background: var(--navy); color: #fff; padding: 22px clamp(16px,4vw,44px);
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    border-bottom: 3px solid var(--gold);
+  }
+  header.top .brand { font-weight: 800; letter-spacing: .02em; font-size: 15px; }
+  header.top .brand b { color: var(--gold); }
+  header.top h1 { font-size: clamp(18px,2.4vw,23px); font-weight: 600; margin: 0; }
+  header.top .sub { color: #9fb0c7; font-size: 12.5px; margin-top: 2px; }
+  header.top .controls { margin-left: auto; display: flex; gap: 10px; flex-wrap: wrap; }
+  header.top select {
+    background: var(--navy-soft); color: #fff; border: 1px solid #294066; border-radius: 8px;
+    padding: 8px 12px; font-size: 13px; font-family: inherit; cursor: pointer;
+  }
+
+  main { max-width: 1120px; margin: 0 auto; padding: clamp(16px,3vw,30px) clamp(14px,4vw,40px) 80px; }
+
+  .learnbar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: linear-gradient(90deg, var(--gold-bright), transparent 80%); background-color: var(--card);
+    border: 1px solid var(--rule); border-left: 4px solid var(--gold); border-radius: 12px;
+    padding: 13px 18px; margin-bottom: 20px; box-shadow: var(--shadow); font-size: 13.5px; color: var(--ink-soft);
+  }
+  .learnbar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 3px var(--good-bg); flex: none; }
+  .learnbar b { color: var(--ink); }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 14px; margin-bottom: 24px; }
+  .kpi { background: var(--card); border: 1px solid var(--rule); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow); }
+  .kpi .l { font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  .kpi .n { font-size: 30px; font-weight: 700; letter-spacing: -.02em; margin-top: 4px; }
+  .kpi .n.good { color: var(--good); } .kpi .n.warn { color: var(--warn); } .kpi .n.bad { color: var(--bad); }
+  .kpi .foot { font-size: 12px; color: var(--ink-faint); margin-top: 3px; }
+
+  section.block { background: var(--card); border: 1px solid var(--rule); border-radius: 16px; box-shadow: var(--shadow); margin-bottom: 22px; overflow: hidden; }
+  .block h2 { font-size: 15px; font-weight: 700; margin: 0; padding: 16px 20px 12px; letter-spacing: -.01em; }
+  .block h2 .hint { font-weight: 400; color: var(--ink-faint); font-size: 12.5px; margin-left: 8px; }
+  .empty { padding: 8px 20px 22px; color: var(--ink-faint); font-size: 13.5px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  thead th { text-align: left; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-faint);
+    font-weight: 600; padding: 8px 20px; border-bottom: 1px solid var(--rule); }
+  thead th.r, td.r { text-align: right; }
+  tbody td { padding: 9px 20px; border-bottom: 1px solid var(--rule); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--chip); }
+  .cat { font-weight: 600; }
+  .grp { display: inline-block; font-size: 10.5px; color: var(--ink-faint); background: var(--chip); border-radius: 5px; padding: 1px 6px; margin-left: 7px; }
+
+  .bar { display: inline-flex; align-items: center; gap: 8px; min-width: 150px; }
+  .bar .track { flex: 1; height: 7px; border-radius: 4px; background: var(--chip); overflow: hidden; min-width: 70px; }
+  .bar .fill { height: 100%; border-radius: 4px; }
+  .pct { font-weight: 600; min-width: 42px; text-align: right; }
+  .tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .tag.good { color: var(--good); background: var(--good-bg); } .tag.warn { color: var(--warn); background: var(--warn-bg); } .tag.bad { color: var(--bad); background: var(--bad-bg); }
+
+  .flow { display: flex; align-items: center; gap: 10px; }
+  .flow .from { color: var(--bad); font-weight: 600; } .flow .arw { color: var(--ink-faint); } .flow .to { color: var(--good); font-weight: 600; }
+
+  .loading, .err { padding: 40px 20px; text-align: center; color: var(--ink-faint); }
+  .err { color: var(--bad); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div>
+    <div class="brand"><b>Bedrock</b> · trustEd</div>
+    <h1>Photo AI Accuracy</h1>
+    <div class="sub">How well the inspection-photo AI reads violations — and where it still needs you</div>
+  </div>
+  <div class="controls">
+    <select id="commSel"><option value="">All communities</option></select>
+    <select id="daysSel">
+      <option value="">All time</option>
+      <option value="90">Last 90 days</option>
+      <option value="30">Last 30 days</option>
+    </select>
+  </div>
+</header>
+<main>
+  <div id="root"><div class="loading">Loading…</div></div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const pct = (x) => (x * 100).toFixed(x >= 0.995 ? 0 : 1) + '%';
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function rateClass(r) { return r < 0.08 ? 'good' : r < 0.2 ? 'warn' : 'bad'; }
+  function rateColor(r) { return r < 0.08 ? 'var(--good)' : r < 0.2 ? 'var(--warn)' : 'var(--bad)'; }
+
+  async function loadCommunities() {
+    try {
+      const r = await fetch('/api/communities');
+      const j = await r.json();
+      const list = (j.communities || j || []).filter((c) => c && c.id && c.name)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      for (const c of list) {
+        const o = document.createElement('option'); o.value = c.id; o.textContent = c.name;
+        $('commSel').appendChild(o);
+      }
+    } catch (_) {}
+  }
+
+  function fmtWhen(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
+      d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+
+  async function load() {
+    const cid = $('commSel').value, days = $('daysSel').value;
+    $('root').innerHTML = '<div class="loading">Loading…</div>';
+    let j;
+    try {
+      const qs = new URLSearchParams();
+      if (cid) qs.set('community_id', cid);
+      if (days) qs.set('days', days);
+      const r = await fetch('/api/inspections/photo-accuracy?' + qs.toString());
+      j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+    } catch (e) {
+      $('root').innerHTML = '<div class="err">Could not load: ' + esc(e.message) + '</div>';
+      return;
+    }
+    render(j);
+  }
+
+  function render(j) {
+    const s = j.summary, L = j.ledger;
+    const confirmRate = s.reviewed ? s.confirmed / s.reviewed : 0;
+
+    // learning-status bar
+    const captured = L.corrections_captured;
+    const learn = `<div class="learnbar"><span class="dot"></span>
+      <span><b>Learning is live.</b> ${captured > 0
+        ? `<b>${captured}</b> correction${captured === 1 ? '' : 's'} captured so far (<b>${L.category_changes}</b> changed the category). Each one teaches the AI.`
+        : `No corrections captured yet — every time someone reclassifies a photo during review, a training pair (AI said X → you said Y) lands here and sharpens the next read.`}</span></div>`;
+
+    // KPIs
+    const kpis = `<div class="kpis">
+      <div class="kpi"><div class="l">Photos analyzed</div><div class="n">${s.analyzed.toLocaleString()}</div><div class="foot">${s.reviewed.toLocaleString()} reviewed · ${s.pending} pending</div></div>
+      <div class="kpi"><div class="l">AI agreed with staff</div><div class="n ${confirmRate >= 0.9 ? 'good' : confirmRate >= 0.8 ? 'warn' : 'bad'}">${pct(confirmRate)}</div><div class="foot">${s.confirmed.toLocaleString()} confirmed as-is</div></div>
+      <div class="kpi"><div class="l">Override rate</div><div class="n ${rateClass(s.reject_rate)}">${pct(s.reject_rate)}</div><div class="foot">${s.rejected.toLocaleString()} rejected / re-labeled</div></div>
+      <div class="kpi"><div class="l">Training pairs captured</div><div class="n">${captured.toLocaleString()}</div><div class="foot">powers few-shot + auto-trust</div></div>
+    </div>`;
+
+    // per-category reliability
+    let catRows = '';
+    for (const c of j.per_category) {
+      if (c.reviewed < 1) continue;
+      const tagCls = rateClass(c.reject_rate);
+      const tagTxt = c.reviewed < 5 ? 'thin data' : (c.reject_rate < 0.08 ? 'reliable' : c.reject_rate < 0.2 ? 'watch' : 'needs work');
+      catRows += `<tr>
+        <td><span class="cat">${esc(c.label)}</span>${c.group ? `<span class="grp">${esc(c.group)}</span>` : ''}</td>
+        <td class="r mono">${c.n}</td>
+        <td class="r mono">${c.confirmed}</td>
+        <td class="r mono">${c.rejected}</td>
+        <td><div class="bar"><span class="pct" style="color:${rateColor(c.reject_rate)}">${pct(c.reject_rate)}</span>
+          <span class="track"><span class="fill" style="width:${Math.min(100, Math.round(c.reject_rate * 100))}%;background:${rateColor(c.reject_rate)}"></span></span></div></td>
+        <td><span class="tag ${c.reviewed < 5 ? '' : tagCls}" ${c.reviewed < 5 ? 'style="color:var(--ink-faint);background:var(--chip)"' : ''}>${tagTxt}</span></td>
+      </tr>`;
+    }
+    const catBlock = `<section class="block"><h2>Category reliability <span class="hint">how often staff override the AI, per category — lowest-trust at a glance sorts your review effort</span></h2>
+      ${catRows ? `<div style="overflow-x:auto"><table>
+        <thead><tr><th>Category</th><th class="r">Analyzed</th><th class="r">Kept</th><th class="r">Overridden</th><th>Override rate</th><th>Trust</th></tr></thead>
+        <tbody>${catRows}</tbody></table></div>` : '<div class="empty">No reviewed observations in this scope yet.</div>'}</section>`;
+
+    // confusion pairs
+    let confHtml;
+    if (j.confusion.length) {
+      confHtml = '<div style="overflow-x:auto"><table><thead><tr><th>The AI said</th><th></th><th>You corrected to</th><th class="r">Times</th></tr></thead><tbody>' +
+        j.confusion.map((p) => `<tr><td><span class="flow"><span class="from">${esc(p.ai_label)}</span></span></td>
+          <td class="arw">→</td><td><span class="to">${esc(p.human_label)}</span></td><td class="r mono">${p.count}</td></tr>`).join('') +
+        '</tbody></table></div>';
+    } else {
+      confHtml = '<div class="empty">No category corrections captured yet. As staff reclassify photos, the most common (AI said X → you said Y) swaps show here — that tells us whether a miss is a model problem or two categories that overlap and should be merged.</div>';
+    }
+    const confBlock = `<section class="block"><h2>Where the AI gets confused <span class="hint">the swaps that drive few-shot examples and taxonomy cleanup</span></h2>${confHtml}</section>`;
+
+    // recent
+    let recHtml;
+    if (j.recent.length) {
+      recHtml = '<div style="overflow-x:auto"><table><thead><tr><th>When</th><th>Change</th></tr></thead><tbody>' +
+        j.recent.map((r) => `<tr><td class="mono" style="color:var(--ink-faint)">${fmtWhen(r.when)}</td>
+          <td>${r.category_changed
+            ? `<span class="flow"><span class="from">${esc(r.ai_label)}</span><span class="arw">→</span><span class="to">${esc(r.human_label)}</span></span>`
+            : (r.description_changed ? '<span style="color:var(--ink-soft)">description edited</span>' : '<span style="color:var(--ink-faint)">reviewed</span>')}</td></tr>`).join('') +
+        '</tbody></table></div>';
+    } else {
+      recHtml = '<div class="empty">Nothing captured yet. This fills the moment someone corrects a photo\'s category during draft review.</div>';
+    }
+    const recBlock = `<section class="block"><h2>Recent corrections <span class="hint">the freshest training signal</span></h2>${recHtml}</section>`;
+
+    $('root').innerHTML = learn + kpis + catBlock + confBlock + recBlock;
+  }
+
+  $('commSel').addEventListener('change', load);
+  $('daysSel').addEventListener('change', load);
+  loadCommunities().then(load);
+</script>
+</body>
+</html>

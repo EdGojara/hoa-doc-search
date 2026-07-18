@@ -4383,4 +4383,133 @@ router.get('/inspections/offices', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/inspections/photo-accuracy?community_id=&days=
+// The photo-analysis learning dashboard. Answers "is the AI's read of
+// inspection photos getting better, and where does it still miss?"
+//   • summary       — analyzed / confirmed / rejected / pending + override rate
+//   • per_category  — reliability per category (which the AI nails vs flubs)
+//   • confusion     — (AI said X → human said Y) pairs from the training ledger
+//   • recent        — latest corrections captured
+//   • ledger        — how much training signal has accumulated (migs 305/306)
+// Portfolio-wide by default (the taxonomy is global); optional community scope.
+// ---------------------------------------------------------------------------
+router.get('/inspections/photo-accuracy', async (req, res) => {
+  try {
+    const communityId = req.query.community_id || null;
+    const days = Number(req.query.days) || null;
+    const sinceIso = days ? new Date(Date.now() - days * 864e5).toISOString() : null;
+
+    // paged fetch helper (avoid the 1000-row PostgREST cap)
+    async function pageAll(build) {
+      let all = [], from = 0;
+      for (;;) {
+        const { data, error } = await build().range(from, from + 999);
+        if (error) throw error;
+        all = all.concat(data || []);
+        if (!data || data.length < 1000) break;
+        from += 1000;
+      }
+      return all;
+    }
+
+    // category id -> label + group (307 FK)
+    const { data: cats } = await supabase
+      .from('enforcement_categories')
+      .select('id, label, slug, enforcement_category_groups(label)');
+    const catById = new Map((cats || []).map((c) => [c.id, {
+      label: c.label || c.slug || '(unknown)',
+      group: (c.enforcement_category_groups && c.enforcement_category_groups.label) || null,
+    }]));
+    const nameOf = (id) => (id && catById.get(id) && catById.get(id).label) || '(none)';
+
+    // observations (the reviewer_status signal — confirmed/rejected/pending)
+    const obs = await pageAll(() => {
+      let q = supabase.from('property_observations')
+        .select('category_id, reviewer_status, ai_suggested_category_id, created_at')
+        .order('created_at', { ascending: false });
+      if (communityId) q = q.eq('community_id', communityId);
+      if (sinceIso) q = q.gte('created_at', sinceIso);
+      return q;
+    });
+
+    const summary = { analyzed: obs.length, confirmed: 0, rejected: 0, pending: 0 };
+    const perCat = new Map();
+    for (const o of obs) {
+      if (o.reviewer_status === 'confirmed') summary.confirmed++;
+      else if (o.reviewer_status === 'rejected') summary.rejected++;
+      else if (o.reviewer_status === 'pending') summary.pending++;
+      if (!o.category_id) continue;
+      if (!perCat.has(o.category_id)) perCat.set(o.category_id, { n: 0, confirmed: 0, rejected: 0 });
+      const pc = perCat.get(o.category_id); pc.n++;
+      if (o.reviewer_status === 'confirmed') pc.confirmed++;
+      else if (o.reviewer_status === 'rejected') pc.rejected++;
+    }
+    const reviewed = summary.confirmed + summary.rejected;
+    summary.reject_rate = reviewed ? summary.rejected / reviewed : 0;
+    summary.reviewed = reviewed;
+
+    const per_category = [...perCat.entries()].map(([id, pc]) => {
+      const rev = pc.confirmed + pc.rejected;
+      const meta = catById.get(id) || {};
+      return {
+        category_id: id, label: meta.label || '(unknown)', group: meta.group || null,
+        n: pc.n, confirmed: pc.confirmed, rejected: pc.rejected,
+        reject_rate: rev ? pc.rejected / rev : 0, reviewed: rev,
+      };
+    }).sort((a, b) => b.n - a.n);
+
+    // corrections ledger (migration 306) — the (AI said X → human said Y) signal.
+    // Table may not exist pre-migration; treat any error as "no data yet".
+    let corr = [];
+    try {
+      corr = await pageAll(() => {
+        let q = supabase.from('photo_analysis_corrections')
+          .select('ai_category_id, corrected_category_id, category_changed, description_changed, corrected_at')
+          .order('corrected_at', { ascending: false });
+        if (communityId) q = q.eq('community_id', communityId);
+        if (sinceIso) q = q.gte('corrected_at', sinceIso);
+        return q;
+      });
+    } catch (_) { corr = []; }
+
+    const pairMap = new Map();
+    for (const r of corr) {
+      if (!r.category_changed) continue;
+      const key = (r.ai_category_id || '_') + '>' + (r.corrected_category_id || '_');
+      if (!pairMap.has(key)) pairMap.set(key, { ai_category_id: r.ai_category_id, corrected_category_id: r.corrected_category_id, count: 0 });
+      pairMap.get(key).count++;
+    }
+    const confusion = [...pairMap.values()]
+      .map((p) => ({ ai_label: nameOf(p.ai_category_id), human_label: nameOf(p.corrected_category_id), count: p.count }))
+      .sort((a, b) => b.count - a.count).slice(0, 25);
+
+    const recent = corr.slice(0, 20).map((r) => ({
+      when: r.corrected_at,
+      category_changed: !!r.category_changed,
+      description_changed: !!r.description_changed,
+      ai_label: nameOf(r.ai_category_id),
+      human_label: nameOf(r.corrected_category_id),
+    }));
+
+    res.json({
+      ok: true,
+      scope: { community_id: communityId, days },
+      summary,
+      per_category,
+      confusion,
+      recent,
+      ledger: {
+        corrections_captured: corr.length,
+        category_changes: corr.filter((r) => r.category_changed).length,
+        ai_signal_captured: obs.filter((o) => o.ai_suggested_category_id).length,
+        capture_live: true,
+      },
+    });
+  } catch (err) {
+    console.error('[inspections.photo-accuracy]', err.message);
+    res.status(500).json({ error: err.message || 'failed to load accuracy' });
+  }
+});
+
 module.exports = { router };

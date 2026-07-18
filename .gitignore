@@ -8,3 +8,6 @@ docs/
 # Re-download from www.fbcad.org/gis-data/ rather than committing.
 scripts/fbcad-data/
 scripts/hcad-data/
+# one-off ops/analysis scripts (session-local)
+_*.js
+_*.json
