@@ -39806,6 +39806,10 @@ ${questionsPage}
               <a class="action-btn" style="font-size:12px; padding:6px 12px; text-decoration:none; background:#0e7490;"
                  href="/api/board-packets/${packetId}/preview?audience=attendees" target="_blank" title="Homeowner handout — board-only sections (delinquencies, violations, legal) are excluded">👁️ Attendees preview</a>
               <button class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="packetsDownloadPdf('${packetId}', 'attendees', this)">⬇ Attendees PDF</button>
+              ${p.status === 'final'
+                ? `<span style="font-size:12px; padding:6px 10px; background:#dcfce7; color:#166534; border-radius:6px; font-weight:600;" title="Finalized v${p.finalized_version || 1}${p.finalized_at ? ' on ' + new Date(p.finalized_at).toLocaleString() : ''} — an immutable, hash-verified copy is archived.">🔒 Finalized v${p.finalized_version || 1}</span>
+                   <button class="secondary-btn" style="font-size:12px; padding:6px 12px; border-color:#fca5a5; color:#b91c1c;" onclick="packetsReopen('${packetId}')" title="Reopen for edits — admin only. The finalized version stays archived.">🔓 Reopen (admin)</button>`
+                : `<button class="secondary-btn" style="font-size:12px; padding:6px 12px; background:#166534; color:#fff; border:none;" onclick="packetsFinalize('${packetId}', this)" title="Lock this packet and archive an immutable, hash-verified copy. Reopening is admin-only.">🔒 Finalize &amp; Archive</button>`}
               <button class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="packetsClose()">Close</button>
             </div>
           </div>
@@ -39823,6 +39827,42 @@ ${questionsPage}
   function packetsClose() {
     packetsCurrentPacketId = null;
     document.getElementById('packets-detail-container').style.display = 'none';
+  }
+
+  // Finalize & Archive — locks the packet and seals an immutable, hash-verified
+  // copy. Reopen is admin-only (server enforces role=admin). Ed 2026-07-18.
+  async function packetsFinalize(packetId, btn) {
+    if (!confirm('Finalize & Archive this packet?\n\nThis locks it and saves a permanent, unchangeable copy of exactly what it contains now. To edit it again, an admin has to reopen it.')) return;
+    const orig = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = 'Finalizing…'; }
+    try {
+      const r = await fetch(`/api/records/board_packet/${packetId}/finalize`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      alert(`✓ Finalized (version ${j.version}). An immutable copy is archived and fingerprinted (sha ${String(j.sha256).slice(0, 12)}…).`);
+      packetsLoadDetail(packetId);
+    } catch (e) {
+      alert('Finalize failed: ' + e.message);
+      if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+    }
+  }
+  async function packetsReopen(packetId) {
+    const reason = prompt('Reopen this finalized packet for edits (admin only).\n\nReason (required — this is logged in the audit trail):');
+    if (reason === null) return;
+    if (!reason.trim()) { alert('A reason is required to reopen a finalized document.'); return; }
+    try {
+      const r = await fetch(`/api/records/board_packet/${packetId}/reopen`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: reason.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      alert('✓ Reopened for edits. The finalized version stays archived — a re-finalize saves the next version.');
+      packetsLoadDetail(packetId);
+    } catch (e) {
+      alert('Reopen failed: ' + e.message);
+    }
   }
 
   // Trigger server-side PDF render + browser download. Puppeteer needs a
