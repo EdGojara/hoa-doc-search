@@ -38,6 +38,8 @@ function personaFor(m) {
   // drv persona hint stamped at ingest — her approved reply sends from miranda@.
   if (m.extracted && m.extracted.drv && m.extracted.drv.persona === 'miranda') return 'miranda';
   const mailbox = String(m.mailbox || '').toLowerCase();
+  // Board operations: mail to paige@ is Paige's (board packages, agendas, minutes).
+  if (mailbox === String(graphSend.PAIGE_MAILBOX || '').toLowerCase()) return 'paige';
   if (mailbox === String(graphSend.EMMA_MAILBOX || '').toLowerCase()) return 'emma';
   if (m.resolved_vendor_id) return 'emma';
   if (['vendor_financial', 'vendor_general'].includes(m.classification)) return 'emma';
@@ -930,7 +932,7 @@ router.post('/pull', express.json(), async (req, res) => {
     // ALWAYS pull both info@ and claire@ (union with any env override), so a
     // single-value EMAIL_INGEST_MAILBOX on Render can't silently drop claire@.
     const extra = (process.env.EMAIL_INGEST_MAILBOX || '').split(',').map((m) => m.trim()).filter(Boolean);
-    const mailboxes = [...new Set(['info@bedrocktx.com', 'claire@bedrocktx.com', graphSend.EMMA_MAILBOX, graphSend.ANNIE_MAILBOX, graphSend.MIRANDA_MAILBOX, ...extra])];
+    const mailboxes = [...new Set(['info@bedrocktx.com', 'claire@bedrocktx.com', graphSend.EMMA_MAILBOX, graphSend.ANNIE_MAILBOX, graphSend.MIRANDA_MAILBOX, graphSend.PAIGE_MAILBOX, ...extra])];
     const days = Math.min(60, parseInt((req.body || {}).days, 10) || 14);
     const sinceISO = new Date(Date.now() - days * 864e5).toISOString();
     const results = {}; let kept = 0, drafted = 0, invoicesLoaded = 0, filed = 0;
