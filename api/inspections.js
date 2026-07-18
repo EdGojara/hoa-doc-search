@@ -2229,7 +2229,7 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
       // silent "0 violations" on the detail panel even when the property
       // clearly has violations. (Scar: 6 hours chasing this 2026-05-28.)
       supabase.from('violations')
-        .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, primary_category_id, quality_status, confidence_weight, source, reviewed_at, review_notes, enforcement_categories(id, slug, label)')
+        .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, primary_category_id, quality_status, confidence_weight, source, reviewed_at, review_notes, opened_from_observation_id, enforcement_categories(id, slug, label)')
         .eq('property_id', propertyId)
         .order('opened_at', { ascending: false }),
       // Interactions — extended 2026-06-16 to include attachments JSONB and

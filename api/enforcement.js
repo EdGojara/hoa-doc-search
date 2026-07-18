@@ -3046,6 +3046,60 @@ router.get('/violations/:id/delivery-receipts', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/interactions/:id/file
+// Serves the EXACT stored letter PDF — the immutable record of what was
+// rendered/mailed — via a short-lived signed URL redirect. It NEVER
+// regenerates: viewing a sent letter must always show what actually went out,
+// not a fresh render off today's data. (Ed 2026-07-18: "I want to see the pdf
+// we sent and never change those.") Read-only; touches no data.
+// ---------------------------------------------------------------------------
+router.get('/interactions/:id/file', async (req, res) => {
+  try {
+    const { data: it, error } = await supabase
+      .from('interactions')
+      .select('content, type, status')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!it || !it.content) return res.status(404).json({ error: 'no file on record for this letter' });
+    const { data: sd, error: sErr } = await supabase.storage
+      .from('violation-letters')
+      .createSignedUrl(it.content, 60 * 30);
+    if (sErr || !sd || !sd.signedUrl) return res.status(404).json({ error: 'file is no longer available in storage' });
+    return res.redirect(sd.signedUrl);
+  } catch (err) {
+    console.error('[enforcement.interactions.file]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/observations/:id/photo
+// Serves the inspection photo behind a violation (the shot the letter was
+// built from) via a signed URL redirect. Read-only.
+// ---------------------------------------------------------------------------
+router.get('/observations/:id/photo', async (req, res) => {
+  try {
+    const { data: o, error } = await supabase
+      .from('property_observations')
+      .select('inspection_photos(storage_path)')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    const path = o && o.inspection_photos && o.inspection_photos.storage_path;
+    if (!path) return res.status(404).json({ error: 'no photo on record' });
+    const { data: sd, error: sErr } = await supabase.storage
+      .from('documents')
+      .createSignedUrl(path, 60 * 30);
+    if (sErr || !sd || !sd.signedUrl) return res.status(404).json({ error: 'photo is no longer available in storage' });
+    return res.redirect(sd.signedUrl);
+  } catch (err) {
+    console.error('[enforcement.observations.photo]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
   try {
     const { requireActingUser } = require('./_acting_user');
