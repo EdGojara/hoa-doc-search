@@ -3685,4 +3685,60 @@ router.get('/:id/distribution', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/board-packets/readiness?community_id=&meeting_date=
+// Paige's readiness check: runs the board-package engine over live trustEd data
+// for the community's next meeting and returns the per-section verdict +
+// summary. Doesn't require an assembled packet — it reports what's available,
+// missing, or needs attention, so a manager (or Paige, from an email) sees the
+// punch-list before building. (Ed 2026-07-18)
+// ---------------------------------------------------------------------------
+router.get('/readiness', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    const { data: community, error: cErr } = await supabase.from('communities').select('*').eq('id', communityId).maybeSingle();
+    if (cErr) throw cErr;
+    if (!community) return res.status(404).json({ error: 'community not found' });
+
+    const { getProfile, financialCutoff, buildReadiness } = require('../lib/board_package/engine');
+    const { nativeContext } = require('../lib/board_package/native');
+
+    const profile = getProfile(community);
+    const meetingDate = req.query.meeting_date || new Date().toISOString().slice(0, 10);
+    const cutoff = financialCutoff(profile, meetingDate);
+
+    // immediately-prior meeting (from minutes history) for the minutes check
+    const { data: mm } = await supabase.from('meeting_minutes').select('meeting_date')
+      .eq('community_id', communityId).order('meeting_date', { ascending: false }).limit(1);
+    const priorMeetingDate = mm && mm[0] ? mm[0].meeting_date : null;
+
+    // if an assembled packet exists for this period, fold its section rows in
+    const sectionsByKey = new Map();
+    try {
+      const { data: pk } = await supabase.from('board_packets').select('id')
+        .eq('community_id', communityId).order('created_at', { ascending: false }).limit(1);
+      if (pk && pk[0]) {
+        const { data: secs } = await supabase.from('board_packet_sections')
+          .select('section_key, status, audience, input_data, rendered_html, source_document_id, extraction_confidence')
+          .eq('packet_id', pk[0].id);
+        (secs || []).forEach((s) => sectionsByKey.set(s.section_key, s));
+      }
+    } catch (_) {}
+
+    const nat = await nativeContext(supabase, community, cutoff, priorMeetingDate);
+    const { summary, items } = buildReadiness(profile, sectionsByKey, { cutoff, priorMeetingDate, native: nat });
+
+    res.json({
+      ok: true,
+      community: { id: community.id, name: community.name },
+      meeting_date: meetingDate, financial_cutoff: cutoff, prior_meeting_date: priorMeetingDate,
+      cadence: profile.meeting_cadence, summary, items,
+    });
+  } catch (err) {
+    console.error('[board_packets.readiness]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };

@@ -11881,6 +11881,19 @@
       <div data-drafts-list="board_packet" style="font-size:13px; color:#6B7280;">No saved drafts yet.</div>
     </div>
 
+    <!-- Paige — board package readiness -->
+    <div class="panel" style="margin-bottom:16px; border-left:3px solid #4f46e5;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <h3 style="margin:0;">🗂️ Paige — Package Readiness <span style="font-weight:400; font-size:12px; color:#6B7280;">what's ready to assemble vs. what needs attention</span></h3>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <select id="paige-community" style="padding:6px; font-size:13px;"><option value="">Select community…</option></select>
+          <input type="date" id="paige-meeting-date" style="padding:6px; font-size:13px;" title="Meeting date (defaults to this month)">
+          <button class="action-btn" onclick="paigeCheckReadiness()">Check readiness</button>
+        </div>
+      </div>
+      <div id="paige-readiness" style="font-size:13px; color:#888;">Pick a community and click Check readiness — Paige reads live trustEd data and flags the gaps.</div>
+    </div>
+
     <!-- Existing packets list -->
     <div class="panel" style="margin-bottom: 16px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -39471,7 +39484,7 @@ ${questionsPage}
       const r = await fetch('/api/billing/communities');
       const data = await r.json();
       packetsCommunitiesCache = (data.communities || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-      ['packets-new-community', 'packets-filter-community'].forEach(id => {
+      ['packets-new-community', 'packets-filter-community', 'paige-community'].forEach(id => {
         const sel = document.getElementById(id);
         if (!sel) return;
         const placeholder = id === 'packets-filter-community' ? 'All communities' : 'Select community…';
@@ -39479,6 +39492,53 @@ ${questionsPage}
           packetsCommunitiesCache.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
       });
     } catch (_) { /* swallow */ }
+  }
+
+  // Paige — board package readiness dashboard
+  async function paigeCheckReadiness() {
+    const cid = document.getElementById('paige-community').value;
+    const md = document.getElementById('paige-meeting-date').value;
+    const host = document.getElementById('paige-readiness');
+    if (!cid) { host.textContent = 'Pick a community first.'; return; }
+    host.innerHTML = '<div style="color:#4f46e5;">Paige is reading live data…</div>';
+    try {
+      const qs = new URLSearchParams({ community_id: cid });
+      if (md) qs.set('meeting_date', md);
+      const r = await fetch('/api/board-packets/readiness?' + qs.toString());
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      paigeRenderReadiness(j);
+    } catch (e) { host.innerHTML = '<div style="color:#b91c1c;">Failed: ' + escapeHtml(e.message) + '</div>'; }
+  }
+  window.paigeCheckReadiness = paigeCheckReadiness;
+  function paigeRenderReadiness(j) {
+    const s = j.summary; const host = document.getElementById('paige-readiness');
+    const icon = { ready: '✓', missing: '✗', wrong_period: '⚠', restricted: '🔒', needs_confirmation: '?', not_required: '·', incomplete: '⚠', duplicate: '⚠' };
+    const color = { ready: '#166534', missing: '#b91c1c', wrong_period: '#b45309', restricted: '#7c3aed', needs_confirmation: '#b45309', not_required: '#94a3b8', incomplete: '#b45309', duplicate: '#b45309' };
+    const groups = {}; j.items.forEach(it => { (groups[it.group] = groups[it.group] || []).push(it); });
+    let rows = '';
+    for (const [g, its] of Object.entries(groups)) {
+      rows += `<tr><td colspan="4" style="padding:9px 8px 3px; font-weight:700; color:#0B1D34;">${escapeHtml(g)}</td></tr>`;
+      for (const it of its) {
+        rows += `<tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:5px 8px; width:26px; color:${color[it.validation_status] || '#475569'};">${icon[it.validation_status] || '?'}</td>
+          <td style="padding:5px 8px;">${escapeHtml(it.label)}${it.required ? '' : ' <span style="color:#94a3b8; font-size:11px;">(optional)</span>'}</td>
+          <td style="padding:5px 8px; color:${color[it.validation_status] || '#475569'}; font-weight:600; white-space:nowrap;">${it.validation_status.replace(/_/g, ' ')}</td>
+          <td style="padding:5px 8px; color:#6B7280; font-size:12px;">${it.detail ? escapeHtml(it.detail) : ''}${(it.required && it.validation_status !== 'ready') ? ' <span style="color:#94a3b8;">· ' + escapeHtml(it.owner) + '</span>' : ''}</td>
+        </tr>`;
+      }
+    }
+    const bar = s.pct_ready;
+    host.innerHTML = `
+      <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+        <div style="font-size:22px; font-weight:700; color:${s.is_package_ready ? '#166534' : '#0B1D34'};">${s.ready}/${s.required_total} ready</div>
+        <div style="flex:1; min-width:120px; height:8px; background:#eef2f7; border-radius:5px; overflow:hidden;"><div style="width:${bar}%; height:100%; background:${bar >= 80 ? '#166534' : bar >= 50 ? '#b45309' : '#b91c1c'};"></div></div>
+        <div style="font-size:13px; color:#b91c1c; font-weight:600;">${s.needs_attention} need attention</div>
+        ${s.needs_confirmation ? `<div style="font-size:13px; color:#b45309;">${s.needs_confirmation} to confirm</div>` : ''}
+        <div style="font-size:12px; color:#6B7280;">Financial cutoff ${j.financial_cutoff || '—'}</div>
+      </div>
+      <div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:13px;"><tbody>${rows}</tbody></table></div>
+      <div style="margin-top:8px; font-size:12px; color:#6B7280;">Native sections auto-assemble from trustEd; ✗ / ⚠ are what Paige chases. Human review + admin approval finalize the package.</div>`;
   }
 
   async function packetsLoadTemplates() {
