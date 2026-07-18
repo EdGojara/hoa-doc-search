@@ -1059,6 +1059,31 @@ router.delete('/inspections/photos/:id', async (req, res) => {
       return res.status(409).json({ error: 'inspection is closed — cannot delete photos' });
     }
 
+    // EVIDENCE PROTECTION (Ed 2026-07-18): a photo that is the proof behind a
+    // finalized or escalated violation is part of the §209 record and must NOT
+    // be deletable — the evidence chain has to survive, especially for legal
+    // cases. Refuse if this photo opened a violation that's escalated or whose
+    // letter was mailed.
+    try {
+      const { data: obsOnPhoto } = await supabase
+        .from('property_observations').select('id').eq('inspection_photo_id', id);
+      const linkedObsIds = (obsOnPhoto || []).map((o) => o.id);
+      if (linkedObsIds.length) {
+        const { data: viosOnPhoto } = await supabase
+          .from('violations').select('id, current_stage').in('opened_from_observation_id', linkedObsIds);
+        const escalated = (viosOnPhoto || []).some((v) => ['certified_209', 'fine_assessed'].includes(v.current_stage));
+        let mailed = false;
+        if (viosOnPhoto && viosOnPhoto.length) {
+          const { data: m } = await supabase.from('interactions')
+            .select('id').in('violation_id', viosOnPhoto.map((v) => v.id)).not('printed_at', 'is', null).limit(1);
+          mailed = !!(m && m.length);
+        }
+        if (escalated || mailed) {
+          return res.status(409).json({ error: 'This photo is the evidence behind a finalized or escalated violation — it is part of the enforcement record and cannot be deleted.' });
+        }
+      }
+    } catch (_) {}
+
     // Any close-up paired to THIS photo (if this is a wide) needs the pair
     // pointer cleared so the close-up doesn't dangle.
     try {

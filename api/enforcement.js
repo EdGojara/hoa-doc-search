@@ -3407,6 +3407,21 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
           postmark_iso: postmarkIso, pdfBuffer, source_path: letterPath,
         });
 
+        // Seal the EVIDENCE photo behind this letter (the §209 proof: image +
+        // capture timestamp + GPS), so the chain photo→violation→letter is all
+        // immutable. Non-fatal.
+        if (vio.opened_from_observation_id) {
+          try {
+            const { data: evObs } = await supabase.from('property_observations')
+              .select('inspection_photo_id').eq('id', vio.opened_from_observation_id).maybeSingle();
+            if (evObs && evObs.inspection_photo_id) {
+              await _sealEvidencePhoto(evObs.inspection_photo_id, {
+                violation_id: vio.id, community_id: vio.community_id, property_id: vio.property_id, role: 'primary',
+              });
+            }
+          } catch (_) {}
+        }
+
         // Mail channel delivery receipt — records the postmark side of the
         // evidence trail. Every channel send produces a delivery_receipts
         // row so the homeowner-complaint defense ("I never got it") can
@@ -4745,6 +4760,53 @@ async function _sealSentLetter({ interaction_id, community_id, violation_id, pro
     console.log(`[seal] sealed sent letter ${interaction_id} → ${archivePath} (sha256 ${sha.slice(0, 12)}…)`);
   } catch (e) {
     console.warn('[seal] _sealSentLetter failed (non-fatal):', e.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SEAL AN EVIDENCE PHOTO — write-once archive + SHA-256 + capture timestamp
+// (Ed 2026-07-18). The proof behind a §209 case: the exact inspection photo,
+// when it was taken (captured_at) and where (GPS), sealed so it can't be lost
+// or altered — critical for anything that escalates to legal. Self-contained
+// (fetches the photo row, downloads, hashes, uploads, ledgers). Best-effort so
+// it never blocks a mailing; the backfill script reconciles any miss. Also
+// seals the paired wide-shot (the "which house" context photo).
+// ---------------------------------------------------------------------------
+const EVIDENCE_ARCHIVE_BUCKET = 'evidence-archive';
+async function _sealEvidencePhoto(photoId, ctx = {}, _isWide = false) {
+  try {
+    if (!photoId || !ctx.community_id || !ctx.violation_id) return;
+    const { data: ph } = await supabase.from('inspection_photos')
+      .select('storage_path, captured_at, gps_lat, gps_lng, gps_accuracy_m, compass_heading_deg, paired_wide_photo_id')
+      .eq('id', photoId).maybeSingle();
+    if (!ph || !ph.storage_path) return;
+    const ext = (String(ph.storage_path).match(/\.([a-z0-9]+)$/i) || [, 'jpg'])[1];
+    const archivePath = `${ctx.community_id}/${ctx.violation_id}/${photoId}.${ext}`;
+    const { data: existing } = await supabase.storage.from(EVIDENCE_ARCHIVE_BUCKET).download(archivePath);
+    if (!existing) {
+      const { data: blob } = await supabase.storage.from('documents').download(ph.storage_path);
+      if (!blob) { console.warn('[seal-evidence] source photo missing:', ph.storage_path); return; }
+      const crypto = require('crypto');
+      const buf = Buffer.from(await blob.arrayBuffer());
+      const sha = crypto.createHash('sha256').update(buf).digest('hex');
+      const { error: upErr } = await supabase.storage.from(EVIDENCE_ARCHIVE_BUCKET).upload(archivePath, buf, { contentType: blob.type || 'image/jpeg', upsert: false });
+      if (upErr && !/exists|already/i.test(upErr.message)) { console.warn('[seal-evidence] upload failed:', upErr.message); return; }
+      const { error: insErr } = await supabase.from('evidence_archive').insert({
+        violation_id: ctx.violation_id, community_id: ctx.community_id, property_id: ctx.property_id || null,
+        photo_id: photoId, role: _isWide ? 'wide' : (ctx.role || 'primary'),
+        captured_at: ph.captured_at || null, gps_lat: ph.gps_lat, gps_lng: ph.gps_lng,
+        gps_accuracy_m: ph.gps_accuracy_m, compass_heading_deg: ph.compass_heading_deg,
+        archive_path: archivePath, source_path: ph.storage_path, sha256: sha, bytes: buf.length,
+      });
+      if (insErr && !/duplicate|unique|exists/i.test(insErr.message) && !/relation .* does not exist/i.test(insErr.message)) {
+        console.warn('[seal-evidence] ledger insert failed:', insErr.message);
+      }
+      console.log(`[seal-evidence] sealed photo ${photoId} for violation ${ctx.violation_id} (sha ${sha.slice(0, 12)}…, taken ${String(ph.captured_at).slice(0, 16)})`);
+    }
+    // seal the paired wide-shot too (once — guard recursion)
+    if (!_isWide && ph.paired_wide_photo_id) await _sealEvidencePhoto(ph.paired_wide_photo_id, ctx, true);
+  } catch (e) {
+    console.warn('[seal-evidence] _sealEvidencePhoto failed (non-fatal):', e.message);
   }
 }
 
