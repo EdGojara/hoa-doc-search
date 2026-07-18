@@ -1390,8 +1390,15 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     // interaction at all — the letter disappears from BOTH Drafts queue and
     // Mail Queue and the operator can't recover. (Ed hit this on 2026-05-20:
     // regenerated a letter, render threw, letter vanished from both queues.)
+    // CRITICAL: a letter that was already SENT is a permanent, immutable record
+    // of what the homeowner received — it must NEVER be deleted or overwritten by
+    // a regenerate. (Root cause of the lost Still Creek sent PDFs, Ed 2026-07-18:
+    // regenerate grabbed the prior letter with no status filter and deleted it,
+    // sent letters included.) Only a still-unsent DRAFT may be replaced. If the
+    // prior is sent, we leave it fully intact and the new render becomes a fresh
+    // re-notice draft alongside the sealed sent record.
     let priorToDelete = null;
-    if (forceRegenerate && priorLetter) {
+    if (forceRegenerate && priorLetter && !priorLetter.sent_at) {
       priorToDelete = priorLetter;
     }
 
