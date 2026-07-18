@@ -39562,13 +39562,17 @@ ${questionsPage}
           <span style="font-size:12px; color:#6B7280;">${escapeHtml(m.community_name || '')} · ${escapeHtml(m.meeting_type)} · ${m.meeting_date || 'no date'} &nbsp;${_minBadge(m.status)}</span>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; align-items:center;">
-          <button onclick="minAiDraft('${id}')" style="background:#4f46e5; color:#fff; border:none; border-radius:6px; font-size:12px; padding:7px 13px; cursor:pointer; font-weight:600;">✨ AI draft from meeting data</button>
-          <button class="secondary-btn" onclick="minSave('${id}')" style="font-size:12px; padding:7px 13px;">💾 Save</button>
-          <a class="secondary-btn" href="/api/minutes/${id}/pdf?inline=1" target="_blank" style="font-size:12px; padding:7px 13px; text-decoration:none;">👁 Preview PDF</a>
-          <button onclick="minFinalize('${id}')" style="background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; padding:7px 13px; cursor:pointer; font-weight:600;">✓ Finalize &amp; file</button>
+          ${m.status === 'final'
+            ? `<a class="secondary-btn" href="/api/minutes/${id}/pdf?inline=1" target="_blank" style="font-size:12px; padding:7px 13px; text-decoration:none;">👁 View filed PDF</a>
+               <span style="font-size:12px; padding:7px 11px; background:#dcfce7; color:#166534; border-radius:6px; font-weight:600;" title="Finalized${m.finalized_at ? ' ' + new Date(m.finalized_at).toLocaleString() : ''} — an immutable, hash-verified copy is archived. Editing is locked until reopened.">🔒 Finalized${m.finalized_version ? ' v' + m.finalized_version : ''}</span>
+               <button onclick="minReopen('${id}')" class="secondary-btn" style="font-size:12px; padding:7px 13px; border-color:#fca5a5; color:#b91c1c;" title="Reopen for edits — admin only. The finalized version stays archived; a re-finalize saves the next version.">🔓 Reopen (admin)</button>`
+            : `<button onclick="minAiDraft('${id}')" style="background:#4f46e5; color:#fff; border:none; border-radius:6px; font-size:12px; padding:7px 13px; cursor:pointer; font-weight:600;">✨ AI draft from meeting data</button>
+               <button class="secondary-btn" onclick="minSave('${id}')" style="font-size:12px; padding:7px 13px;">💾 Save</button>
+               <a class="secondary-btn" href="/api/minutes/${id}/pdf?inline=1" target="_blank" style="font-size:12px; padding:7px 13px; text-decoration:none;">👁 Preview PDF</a>
+               <button onclick="minFinalize('${id}')" style="background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; padding:7px 13px; cursor:pointer; font-weight:600;">🔒 Finalize &amp; Archive</button>`}
           <span id="min-ed-status" style="font-size:12px; color:#475569;"></span>
         </div>
-        <textarea id="min-ed-body" placeholder="Click “AI draft” to generate a first version, or write the minutes here in Markdown…" style="width:100%; min-height:340px; padding:10px; border:1px solid #d0d7de; border-radius:6px; font-family:Consolas,monospace; font-size:12.5px; line-height:1.5; box-sizing:border-box;">${escapeHtml(m.body_markdown || '')}</textarea>
+        <textarea id="min-ed-body" ${m.status === 'final' ? 'readonly' : ''} placeholder="Click “AI draft” to generate a first version, or write the minutes here in Markdown…" style="width:100%; min-height:340px; padding:10px; border:1px solid #d0d7de; border-radius:6px; font-family:Consolas,monospace; font-size:12.5px; line-height:1.5; box-sizing:border-box; ${m.status === 'final' ? 'background:#f8fafc; color:#475569;' : ''}">${escapeHtml(m.body_markdown || '')}</textarea>
         <div style="font-size:11px; color:#94a3b8; margin-top:4px;">Markdown. <span style="color:#b45309;">[Bracketed]</span> items are placeholders to fill in. Finalize renders a Bedrock-branded PDF and files it as an association record that feeds the board packet.</div>
       </div>`;
     } catch (e) { host.innerHTML = `<div style="color:#b91c1c; padding:10px;">${escapeHtml(e.message)}</div>`; }
@@ -39610,6 +39614,21 @@ ${questionsPage}
     } catch (e) { if (st) st.textContent = 'Error: ' + e.message; }
   }
   window.minFinalize = minFinalize;
+  async function minReopen(id) {
+    const reason = prompt('Reopen these finalized minutes for edits (admin only).\n\nReason (required — this is logged in the audit trail):');
+    if (reason === null) return;
+    if (!reason.trim()) { alert('A reason is required to reopen a finalized document.'); return; }
+    try {
+      const r = await fetch('/api/records/minutes/' + id + '/reopen', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: reason.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      alert('✓ Reopened for edits. The finalized version stays archived — a re-finalize saves the next version.');
+      minOpen(id);
+    } catch (e) { alert('Reopen failed: ' + e.message); }
+  }
+  window.minReopen = minReopen;
   async function minDelete(id) {
     if (!confirm('Delete this minutes record?\n\nThis cannot be undone. (A finalized PDF already filed in the document library is not removed.)')) return;
     try {

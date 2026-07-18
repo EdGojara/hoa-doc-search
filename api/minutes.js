@@ -284,7 +284,28 @@ router.post('/:id/finalize', express.json(), async (req, res) => {
       .update({ status: 'final', finalized_at: new Date().toISOString(), finalized_by: (req.body && req.body.finalized_by) || 'staff', rendered_document_id: docId })
       .eq('id', m.id).select('*').single();
     if (uErr) throw uErr;
-    res.json({ ok: true, minutes: updated, library_document_id: docId });
+
+    // Seal an immutable, hash-verified copy of exactly what was finalized, and
+    // log it — minutes are an association record that must not change once
+    // filed. Reopen is admin-only via /api/records/minutes/:id/reopen.
+    // (Ed 2026-07-18) Non-fatal; degrades gracefully before migration 312.
+    const version = (Number(m.finalized_version) || 0) + 1;
+    try {
+      const { sealFinalizedRecord } = require('../lib/record_archive');
+      const sealed = await sealFinalizedRecord(supabase, {
+        record_type: 'minutes', record_id: m.id, community_id: m.community_id || null,
+        archive_path: `minutes/${m.community_id || 'unknown'}/${m.id}-v${version}.pdf`,
+        buffer: pdfBuffer, sent_at: new Date().toISOString(), metadata: { version, title },
+      });
+      await supabase.from('meeting_minutes').update({ finalized_version: version }).eq('id', m.id);
+      await supabase.from('record_finalization_log').insert({
+        record_type: 'minutes', record_id: m.id, community_id: m.community_id || null,
+        action: 'finalize', version, archive_path: sealed && sealed.archive_path,
+        sha256: (sealed && sealed.sha256) || sha, actor_email: (req.body && req.body.finalized_by) || 'staff',
+      });
+    } catch (sealErr) { console.warn('[minutes] seal/log failed (non-fatal):', sealErr.message); }
+
+    res.json({ ok: true, minutes: updated, library_document_id: docId, finalized_version: version });
   } catch (err) {
     if (browser) { try { await browser.close(); } catch (_) {} }
     console.error('[minutes] finalize failed:', err.message);
