@@ -3056,17 +3056,35 @@ router.get('/violations/:id/delivery-receipts', async (req, res) => {
 // ---------------------------------------------------------------------------
 router.get('/interactions/:id/file', async (req, res) => {
   try {
-    const { data: it, error } = await supabase
-      .from('interactions')
-      .select('content, type, status')
-      .eq('id', req.params.id)
-      .maybeSingle();
-    if (error) throw error;
-    if (!it || !it.content) return res.status(404).json({ error: 'no file on record for this letter' });
-    const { data: sd, error: sErr } = await supabase.storage
-      .from('violation-letters')
-      .createSignedUrl(it.content, 60 * 30);
-    if (sErr || !sd || !sd.signedUrl) return res.status(404).json({ error: 'file is no longer available in storage' });
+    // Prefer the SEALED archive copy (the locked, hash-verified record of what
+    // actually mailed) over the mutable working bucket. Only fall back to the
+    // working bucket when a letter hasn't been sealed yet (drafts, or pre-archive
+    // sends the backfill hasn't reached).
+    let bucket = null, path = null;
+    try {
+      const { data: arch } = await supabase
+        .from('sent_letter_archive')
+        .select('archive_path')
+        .eq('interaction_id', req.params.id)
+        .order('sealed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (arch && arch.archive_path) { bucket = SENT_ARCHIVE_BUCKET; path = arch.archive_path; }
+    } catch (_) { /* ledger table may not exist pre-migration — fall through */ }
+
+    if (!path) {
+      const { data: it, error } = await supabase
+        .from('interactions')
+        .select('content')
+        .eq('id', req.params.id)
+        .maybeSingle();
+      if (error) throw error;
+      if (!it || !it.content) return res.status(404).json({ error: 'no file on record for this letter' });
+      bucket = 'violation-letters'; path = it.content;
+    }
+
+    const { data: sd, error: sErr } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 30);
+    if (sErr || !sd || !sd.signedUrl) return res.status(404).json({ error: 'sealed file is no longer available in storage' });
     return res.redirect(sd.signedUrl);
   } catch (err) {
     console.error('[enforcement.interactions.file]', err.message);
@@ -3372,6 +3390,15 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
               : Number(community.letter_fee_certified_209_cents || 3500),
           })
           .eq('id', L.id);
+
+        // SEAL the exact mailed bytes into the write-once archive + hash ledger.
+        // This is the locked record of what went out (Ed 2026-07-18). Best-effort
+        // so it never blocks the mailing; the backfill script reconciles any miss.
+        await _sealSentLetter({
+          interaction_id: L.id, community_id: vio.community_id, violation_id: vio.id,
+          property_id: vio.property_id, letter_type: L.type, sent_at: nowIso,
+          postmark_iso: postmarkIso, pdfBuffer, source_path: letterPath,
+        });
 
         // Mail channel delivery receipt — records the postmark side of the
         // evidence trail. Every channel send produces a delivery_receipts
@@ -4672,6 +4699,45 @@ async function _rejectDraftLettersForViolation(violationId, reason) {
   } catch (e) {
     console.warn('[enforcement] orphan-draft cleanup failed:', e.message);
     return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SEAL A SENT LETTER — write-once archive + SHA-256 ledger (Ed 2026-07-18).
+// At the moment a letter is mailed, copy the EXACT rendered bytes into the
+// separate `sent-letters-archive` bucket (never overwritten) and record the
+// hash in sent_letter_archive. This is the locked, provable record of what went
+// out — independent of the mutable working bucket where drafts get re-rendered.
+// Best-effort + loud on failure so it never blocks a mailing; the backfill
+// script (_seal_sent_letters) is the reconcile safety net that catches any miss.
+// ---------------------------------------------------------------------------
+const SENT_ARCHIVE_BUCKET = 'sent-letters-archive';
+async function _sealSentLetter({ interaction_id, community_id, violation_id, property_id, letter_type, sent_at, postmark_iso, pdfBuffer, source_path }) {
+  try {
+    if (!pdfBuffer || !interaction_id || !community_id || !violation_id) return;
+    const crypto = require('crypto');
+    const sha = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
+    const stamp = String(postmark_iso || new Date().toISOString().slice(0, 10)).replace(/-/g, '').slice(0, 8);
+    const archivePath = `${community_id}/${violation_id}/${interaction_id}-${stamp}.pdf`;
+    const { error: upErr } = await supabase.storage
+      .from(SENT_ARCHIVE_BUCKET)
+      .upload(archivePath, pdfBuffer, { contentType: 'application/pdf', upsert: false });
+    // "already exists" is fine — write-once means the first seal stands.
+    if (upErr && !/exists|already|duplicate/i.test(upErr.message)) {
+      console.warn('[seal] archive upload failed (non-fatal):', upErr.message);
+      return;
+    }
+    const { error: insErr } = await supabase.from('sent_letter_archive').insert({
+      interaction_id, community_id, violation_id, property_id: property_id || null,
+      letter_type: letter_type || null, sent_at: sent_at || null, postmark_date: postmark_iso || null,
+      archive_path: archivePath, source_path: source_path || null, sha256: sha, bytes: pdfBuffer.length,
+    });
+    if (insErr && !/duplicate|unique|exists/i.test(insErr.message) && !/relation .* does not exist/i.test(insErr.message)) {
+      console.warn('[seal] archive ledger insert failed (non-fatal):', insErr.message);
+    }
+    console.log(`[seal] sealed sent letter ${interaction_id} → ${archivePath} (sha256 ${sha.slice(0, 12)}…)`);
+  } catch (e) {
+    console.warn('[seal] _sealSentLetter failed (non-fatal):', e.message);
   }
 }
 
