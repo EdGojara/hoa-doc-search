@@ -3153,39 +3153,44 @@ async function autoFillSection(packetId, sectionKey) {
 // packet, then auto-fills every native section it can. Returns what filled and
 // what still needs attention (owner-tagged). The report actually gets built.
 // ---------------------------------------------------------------------------
+// Find-or-create the packet for a community + period, then auto-fill every
+// section trustEd can. Exported so Paige's "go" email path can build the report
+// the same way the endpoint does. (Ed 2026-07-18)
+async function assemblePackage({ community_id, meeting_date, period_label }) {
+  const md = meeting_date || new Date().toISOString().slice(0, 10);
+  const label = period_label || new Date(md + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  let { data: packet } = await supabase.from('board_packets').select('id')
+    .eq('community_id', community_id).eq('period_label', label).maybeSingle();
+  if (!packet) {
+    const packetId = crypto.randomUUID();
+    const { data: created, error: cErr } = await supabase.from('board_packets').insert({
+      id: packetId, management_company_id: BEDROCK_MGMT_CO_ID, community_id, period_label: label,
+      meeting_date: meeting_date || null, meeting_type: 'regular', status: 'draft',
+    }).select('id').single();
+    if (cErr) throw cErr;
+    await seedSectionsForPacket(packetId, null);
+    packet = created;
+  }
+
+  const FILLABLE = ['agenda', 'prior_minutes', 'balance_sheet', 'income_statement', 'drv', 'arc_decisions'];
+  const filled = [], needs = [];
+  for (const key of FILLABLE) {
+    try {
+      const r = await autoFillSection(packet.id, key);
+      if (r.ok) filled.push({ section: key, pulled: r.pulled });
+      else needs.push({ section: key, reason: r.message || r.error });
+    } catch (e) { needs.push({ section: key, reason: e.message }); }
+  }
+  return { packet_id: packet.id, period_label: label, filled_count: filled.length, filled, needs };
+}
+
 router.post('/assemble', express.json(), async (req, res) => {
   try {
-    const { community_id, meeting_date } = req.body || {};
+    const { community_id, meeting_date, period_label } = req.body || {};
     if (!community_id) return res.status(400).json({ error: 'community_id required' });
-    const md = meeting_date || new Date().toISOString().slice(0, 10);
-    const period_label = req.body.period_label
-      || new Date(md + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-
-    // find-or-create the packet for this community + period
-    let { data: packet } = await supabase.from('board_packets').select('id')
-      .eq('community_id', community_id).eq('period_label', period_label).maybeSingle();
-    if (!packet) {
-      const packetId = crypto.randomUUID();
-      const { data: created, error: cErr } = await supabase.from('board_packets').insert({
-        id: packetId, management_company_id: BEDROCK_MGMT_CO_ID, community_id, period_label,
-        meeting_date: meeting_date || null, meeting_type: 'regular', status: 'draft',
-      }).select('id').single();
-      if (cErr) throw cErr;
-      await seedSectionsForPacket(packetId, null);
-      packet = created;
-    }
-
-    // auto-fill every section we can; collect verdicts
-    const FILLABLE = ['agenda', 'prior_minutes', 'balance_sheet', 'income_statement', 'drv', 'arc_decisions'];
-    const filled = [], needs = [];
-    for (const key of FILLABLE) {
-      try {
-        const r = await autoFillSection(packet.id, key);
-        if (r.ok) filled.push({ section: key, pulled: r.pulled });
-        else needs.push({ section: key, reason: r.message || r.error });
-      } catch (e) { needs.push({ section: key, reason: e.message }); }
-    }
-    res.json({ ok: true, packet_id: packet.id, period_label, filled_count: filled.length, filled, needs });
+    const result = await assemblePackage({ community_id, meeting_date, period_label });
+    res.json({ ok: true, ...result });
   } catch (err) {
     console.error('[board_packets] assemble failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -3776,4 +3781,4 @@ router.get('/readiness', async (req, res) => {
   }
 });
 
-module.exports = { router };
+module.exports = { router, assemblePackage };
