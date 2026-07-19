@@ -693,6 +693,14 @@ router.post('/:id/send', express.json(), async (req, res) => {
       const { buildMirandaEmail } = require('../lib/email/miranda_signature');
       ({ html, attachments } = buildMirandaEmail(String(body).trim(), commName));
       fromMailbox = graphSend.MIRANDA_MAILBOX; senderLabel = 'Miranda Pierce (Bedrock AI)';
+    } else if (persona === 'annie') {
+      const { buildAnnieEmail } = require('../lib/email/annie_signature');
+      ({ html, attachments } = buildAnnieEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.ANNIE_MAILBOX; senderLabel = 'Annie Reeves (Bedrock AI)';
+    } else if (persona === 'paige') {
+      const { buildPaigeEmail } = require('../lib/email/paige_signature');
+      ({ html, attachments } = buildPaigeEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.PAIGE_MAILBOX; senderLabel = 'Paige Chandler (Bedrock AI)';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
       ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
@@ -973,7 +981,7 @@ router.post('/compose', express.json(), async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return; // 403 already sent
     const { to, cc, subject, body, community_name, persona } = req.body || {};
-    const P = ['emma', 'annie', 'miranda'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
+    const P = ['emma', 'annie', 'miranda', 'paige'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
     const asEmma = P === 'emma';
     const toList = parseAddrs(to);
     const ccList = parseAddrs(cc);
@@ -1013,6 +1021,10 @@ router.post('/compose', express.json(), async (req, res) => {
       const { buildMirandaEmail } = require('../lib/email/miranda_signature');
       ({ html, attachments } = buildMirandaEmail(String(body).trim(), commName));
       fromMailbox = graphSend.MIRANDA_MAILBOX; senderLabel = 'Miranda Pierce (Bedrock AI)'; personaName = 'Miranda';
+    } else if (P === 'paige') {
+      const { buildPaigeEmail } = require('../lib/email/paige_signature');
+      ({ html, attachments } = buildPaigeEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.PAIGE_MAILBOX; senderLabel = 'Paige Chandler (Bedrock AI)'; personaName = 'Paige';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
       ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
@@ -1044,7 +1056,7 @@ router.post('/compose-draft', express.json(), async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return; // 403 already sent
     const { intent, to, community_name, persona } = req.body || {};
-    const draftPersona = ['emma', 'annie', 'miranda'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
+    const draftPersona = ['emma', 'annie', 'miranda', 'paige'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
     if (!intent || !String(intent).trim()) return res.status(400).json({ error: 'intent_required', detail: 'Tell the AI what you want the email to say.' });
 
     // Light recipient context so the draft can greet by name / fit the community.
