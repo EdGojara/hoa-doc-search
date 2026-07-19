@@ -396,7 +396,15 @@ function classify(num) {
   const pid = (iso) => periodId[Number(iso.slice(0, 4))][Number(iso.slice(5, 7))];
 
   const range0 = days[0], range1 = days[days.length - 1];
-  const { data: prior } = await s.from('journal_entries').select('id').eq('community_id', CID).in('source_module', ['opening_entry', 'vantaca_import', 'closing_entry']).gte('posting_date', range0).lte('posting_date', range1);
+  // Clear ALL importer-owned entries through this rebuild's end date — NOT just
+  // those on/after range0. In OPENING mode the opening entry (posted at range0)
+  // re-books every prior-year balance, so any earlier importer detail left in
+  // place double-counts it. A prior migration that loaded 2025 detail would
+  // otherwise survive under a fresh 1/1/2026 opening and double the fund
+  // balances (LOPF hit exactly this). Live/native postings (other source_modules)
+  // are untouched. No lower bound; keep the upper bound so nothing past this
+  // rebuild is disturbed.
+  const { data: prior } = await s.from('journal_entries').select('id').eq('community_id', CID).in('source_module', ['opening_entry', 'vantaca_import', 'closing_entry']).lte('posting_date', range1);
   if (prior && prior.length) { await s.from('journal_entry_lines').delete().in('journal_entry_id', prior.map((j) => j.id)); await s.from('journal_entries').delete().in('id', prior.map((j) => j.id)); console.log(`Cleared ${prior.length} prior entries.`); }
 
   // Opening (OPENING MODE only)
