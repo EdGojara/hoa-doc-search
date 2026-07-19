@@ -40,6 +40,8 @@ const Anthropic = require('@anthropic-ai/sdk');
 const multer = require('multer');
 const puppeteer = require('puppeteer');
 const BRAND = require('../lib/brand');
+const { safeErrorMessage } = require('./_safe_error');
+const { nativeSectionKeys } = require('../lib/board_package/engine');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -3199,6 +3201,13 @@ router.post('/:id/sections/:section_key/upload', upload.single('pdf'), async (re
 // which have their own financial_statements generators).
 const FINANCIAL_NATIVE = ['ar_aging', 'delinquency', 'ap_approval', 'reserve_activity', 'bank_rec'];
 
+// The native keys autoFillSection actually builds data for — 'agenda' and
+// 'prior_minutes' have dedicated branches above the NATIVE block; the rest are
+// dispatched inside it. This MUST equal engine.nativeSectionKeys(); the registry
+// test asserts it, so a native section can never be added to the profile without
+// a matching handler here (the gap that made readiness over-promise).
+const AUTO_FILL_NATIVE_KEYS = ['agenda', 'prior_minutes', 'balance_sheet', 'income_statement', 'drv', 'arc_decisions', ...FINANCIAL_NATIVE];
+
 // Build the input_data payload for a native FINANCIAL section straight from the
 // trustEd GL / bank-rec / reserve modules. Single source so the packet
 // assembler AND the renderer verifier shape identically. Returns
@@ -3386,7 +3395,11 @@ async function autoFillSection(packetId, sectionKey) {
     return { ok: true, section_key: 'agenda', pulled: { agenda_id: agenda.id } };
   }
 
-  const NATIVE = ['balance_sheet', 'income_statement', 'drv', 'arc_decisions', ...FINANCIAL_NATIVE];
+  // The native (trustEd-auto-filled) set is the engine registry's source of
+  // truth (engine.nativeSectionKeys()); agenda + prior_minutes are handled by
+  // the dedicated branches above, the remaining natives are dispatched here.
+  // The registry test asserts these branches cover every native key.
+  const NATIVE = nativeSectionKeys();
   if (NATIVE.includes(sectionKey)) {
     const md = packet.meeting_date ? new Date(packet.meeting_date + 'T12:00:00Z') : new Date();
     const cutoff = new Date(Date.UTC(md.getUTCFullYear(), md.getUTCMonth(), 0)).toISOString().slice(0, 10);
@@ -3413,6 +3426,12 @@ async function autoFillSection(packetId, sectionKey) {
       const built = await buildFinancialSectionData(cid, sectionKey, cutoff);
       if (built && built._status) return built;   // e.g. bank_rec has nothing to show
       input_data = built.input_data; pulled = built.pulled;
+    }
+    // A native section that reached here without a builder would otherwise write
+    // null input_data and falsely report "ready" — the silent-fill failure mode.
+    // Fail loud instead. (The registry test keeps this branch unreachable.)
+    if (input_data == null) {
+      return { _status: 500, error: 'native_section_unhandled', message: `No auto-fill builder is wired for native section '${sectionKey}'.`, section_key: sectionKey };
     }
     await _writeSectionData(packetId, sectionKey, input_data);
     return { ok: true, section_key: sectionKey, pulled };
@@ -3447,7 +3466,10 @@ async function assemblePackage({ community_id, meeting_date, period_label }) {
     packet = created;
   }
 
-  const FILLABLE = ['agenda', 'prior_minutes', 'balance_sheet', 'income_statement', 'bank_rec', 'ar_aging', 'delinquency', 'ap_approval', 'reserve_activity', 'drv', 'arc_decisions'];
+  // What assemble fills natively == the engine registry's native set. One
+  // source of truth so readiness (which counts source:'native' required
+  // sections) can never over-promise vs. what assemble actually pulls.
+  const FILLABLE = nativeSectionKeys();
   const filled = [], needs = [];
   for (const key of FILLABLE) {
     try {
@@ -4055,4 +4077,4 @@ router.get('/readiness', async (req, res) => {
   }
 });
 
-module.exports = { router, assemblePackage, autoFillSection, renderSectionStandaloneHtml, buildFinancialSectionData };
+module.exports = { router, assemblePackage, autoFillSection, renderSectionStandaloneHtml, buildFinancialSectionData, AUTO_FILL_NATIVE_KEYS };
