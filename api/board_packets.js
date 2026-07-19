@@ -3071,150 +3071,132 @@ router.post('/:id/sections/:section_key/upload', upload.single('pdf'), async (re
 // STUB today. Once universal askEd / module integrations ship, this calls the
 // appropriate trustEd module to pull live data (financials, vendors, etc.).
 // ----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// autoFillSection(packetId, sectionKey) — the single source for pulling one
+// section's content from trustEd. Returns { ok, section_key, pulled } on
+// success or { _status, error, message } on a handled miss. Both the auto-fill
+// route AND the assemble orchestrator call this, so they can't diverge. (Ed 2026-07-18)
+// ---------------------------------------------------------------------------
+async function autoFillSection(packetId, sectionKey) {
+  const { data: packet } = await supabase
+    .from('board_packets').select('id, community_id, meeting_date')
+    .eq('id', packetId).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+  if (!packet) return { _status: 404, error: 'packet_not_found' };
+  const cid = packet.community_id;
+
+  if (sectionKey === 'prior_minutes') {
+    let q = supabase.from('meeting_minutes')
+      .select('id, meeting_date, meeting_type, body_markdown, rendered_document_id')
+      .eq('community_id', cid).eq('status', 'final')
+      .order('meeting_date', { ascending: false, nullsFirst: false }).limit(1);
+    if (packet.meeting_date) q = q.lt('meeting_date', packet.meeting_date);
+    const { data: rows, error: mErr } = await q;
+    if (mErr && /meeting_minutes/.test(mErr.message || '')) return { _status: 503, error: 'minutes_module_not_ready', message: 'Apply migration 258 first.' };
+    const minutes = rows && rows[0];
+    if (!minutes) return { _status: 404, error: 'no_prior_minutes', message: 'No finalized minutes before this meeting date — finalize the previous meeting\'s minutes first.' };
+    await supabase.from('board_packet_sections')
+      .update({ input_data: { prior_meeting_date: minutes.meeting_date, full_text: minutes.body_markdown || '', source_minutes_id: minutes.id, source: 'minutes_module' }, status: 'ready', validation_status: 'ready' })
+      .eq('packet_id', packetId).eq('section_key', 'prior_minutes');
+    return { ok: true, section_key: 'prior_minutes', pulled: { minutes_id: minutes.id, meeting_date: minutes.meeting_date } };
+  }
+
+  if (sectionKey === 'agenda') {
+    let agenda = null;
+    if (packet.meeting_date) {
+      const { data: exact, error: aErr } = await supabase.from('meeting_agendas').select('id, meeting_date, full_text, items').eq('community_id', cid).eq('meeting_date', packet.meeting_date).order('updated_at', { ascending: false }).limit(1);
+      if (aErr && /meeting_agendas/.test(aErr.message || '')) return { _status: 503, error: 'agenda_module_not_ready', message: 'Apply migration 260 first.' };
+      agenda = exact && exact[0];
+    }
+    if (!agenda) {
+      const { data: latest } = await supabase.from('meeting_agendas').select('id, meeting_date, full_text, items').eq('community_id', cid).order('meeting_date', { ascending: false, nullsFirst: false }).limit(1);
+      agenda = latest && latest[0];
+    }
+    if (!agenda) return { _status: 404, error: 'no_saved_agenda', message: 'No saved agenda yet — create one in the Agenda Generator, then auto-fill.' };
+    await supabase.from('board_packet_sections').update({ input_data: { full_text: agenda.full_text || '', items: Array.isArray(agenda.items) ? agenda.items : [], source_agenda_id: agenda.id, source: 'agenda_module' }, status: 'ready', validation_status: 'ready' }).eq('packet_id', packetId).eq('section_key', 'agenda');
+    return { ok: true, section_key: 'agenda', pulled: { agenda_id: agenda.id } };
+  }
+
+  const NATIVE = ['balance_sheet', 'income_statement', 'drv', 'arc_decisions'];
+  if (NATIVE.includes(sectionKey)) {
+    const md = packet.meeting_date ? new Date(packet.meeting_date + 'T12:00:00Z') : new Date();
+    const cutoff = new Date(Date.UTC(md.getUTCFullYear(), md.getUTCMonth(), 0)).toISOString().slice(0, 10);
+    const periodStart = cutoff.slice(0, 8) + '01';
+    let input_data = null, pulled = {};
+    if (sectionKey === 'balance_sheet') {
+      const { balanceSheet } = require('../lib/accounting/financial_statements');
+      const stmt = await balanceSheet({ community_id: cid, as_of_date: cutoff });
+      input_data = { as_of_date: cutoff, statement: stmt, source: 'trusted_gl' }; pulled = { as_of_date: cutoff };
+    } else if (sectionKey === 'income_statement') {
+      const { budgetVsActual } = require('../lib/accounting/financial_statements');
+      const stmt = await budgetVsActual({ community_id: cid, period_end: cutoff });
+      input_data = { period_start: periodStart, period_end: cutoff, statement: stmt, source: 'trusted_gl' }; pulled = { period_end: cutoff };
+    } else if (sectionKey === 'drv') {
+      const { data: vios } = await supabase.from('violations').select('current_stage, opened_at, enforcement_categories(label)').eq('community_id', cid).not('current_stage', 'in', '(cured,closed,voided)').order('current_stage', { ascending: false }).limit(500);
+      const byStage = {}; (vios || []).forEach((v) => { byStage[v.current_stage] = (byStage[v.current_stage] || 0) + 1; });
+      input_data = { as_of: cutoff, open_total: (vios || []).length, by_stage: byStage, items: (vios || []).slice(0, 100).map((v) => ({ stage: v.current_stage, category: v.enforcement_categories && v.enforcement_categories.label, opened_at: v.opened_at })), source: 'trusted_enforcement' };
+      pulled = { open_total: (vios || []).length };
+    } else if (sectionKey === 'arc_decisions') {
+      const { data: accs } = await supabase.from('acc_decisions').select('decision_type, status, homeowner_address, project_summary, created_at').eq('community_id', cid).gte('created_at', periodStart).order('created_at', { ascending: false }).limit(200);
+      input_data = { period_start: periodStart, period_end: cutoff, count: (accs || []).length, items: (accs || []).map((a) => ({ type: a.decision_type, status: a.status, address: a.homeowner_address, summary: a.project_summary, date: a.created_at })), source: 'trusted_acc' };
+      pulled = { count: (accs || []).length };
+    }
+    await supabase.from('board_packet_sections').update({ input_data, status: 'ready', validation_status: 'ready' }).eq('packet_id', packetId).eq('section_key', sectionKey);
+    return { ok: true, section_key: sectionKey, pulled };
+  }
+
+  return { _status: 501, error: 'auto_fill_not_yet_available', message: 'This section auto-fill is being wired to its trustEd report. For now use Manual or Upload mode.', section_key: sectionKey };
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/board-packets/assemble  — Paige's one-shot assembly.
+// Body: { community_id, meeting_date?, period_label? }. Finds or creates the
+// packet, then auto-fills every native section it can. Returns what filled and
+// what still needs attention (owner-tagged). The report actually gets built.
+// ---------------------------------------------------------------------------
+router.post('/assemble', express.json(), async (req, res) => {
+  try {
+    const { community_id, meeting_date } = req.body || {};
+    if (!community_id) return res.status(400).json({ error: 'community_id required' });
+    const md = meeting_date || new Date().toISOString().slice(0, 10);
+    const period_label = req.body.period_label
+      || new Date(md + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+    // find-or-create the packet for this community + period
+    let { data: packet } = await supabase.from('board_packets').select('id')
+      .eq('community_id', community_id).eq('period_label', period_label).maybeSingle();
+    if (!packet) {
+      const packetId = crypto.randomUUID();
+      const { data: created, error: cErr } = await supabase.from('board_packets').insert({
+        id: packetId, management_company_id: BEDROCK_MGMT_CO_ID, community_id, period_label,
+        meeting_date: meeting_date || null, meeting_type: 'regular', status: 'draft',
+      }).select('id').single();
+      if (cErr) throw cErr;
+      await seedSectionsForPacket(packetId, null);
+      packet = created;
+    }
+
+    // auto-fill every section we can; collect verdicts
+    const FILLABLE = ['agenda', 'prior_minutes', 'balance_sheet', 'income_statement', 'drv', 'arc_decisions'];
+    const filled = [], needs = [];
+    for (const key of FILLABLE) {
+      try {
+        const r = await autoFillSection(packet.id, key);
+        if (r.ok) filled.push({ section: key, pulled: r.pulled });
+        else needs.push({ section: key, reason: r.message || r.error });
+      } catch (e) { needs.push({ section: key, reason: e.message }); }
+    }
+    res.json({ ok: true, packet_id: packet.id, period_label, filled_count: filled.length, filled, needs });
+  } catch (err) {
+    console.error('[board_packets] assemble failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/:id/sections/:section_key/auto-fill', async (req, res) => {
   try {
-    // Prior Minutes — pull the correct finalized minutes from the Minutes
-    // module. The rule is deterministic: the "prior minutes" for a meeting are
-    // the most recent FINALIZED minutes for that community dated BEFORE this
-    // packet's meeting date (the set the board approves at this meeting). No
-    // guessing — matched on community + meeting date.
-    if (req.params.section_key === 'prior_minutes') {
-      const { data: packet } = await supabase
-        .from('board_packets')
-        .select('id, community_id, meeting_date')
-        .eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
-      if (!packet) return res.status(404).json({ error: 'packet_not_found' });
-
-      let q = supabase.from('meeting_minutes')
-        .select('id, meeting_date, meeting_type, body_markdown, rendered_document_id')
-        .eq('community_id', packet.community_id).eq('status', 'final')
-        .order('meeting_date', { ascending: false, nullsFirst: false }).limit(1);
-      // Strictly BEFORE this meeting when we know the date.
-      if (packet.meeting_date) q = q.lt('meeting_date', packet.meeting_date);
-      let { data: rows, error: mErr } = await q;
-      if (mErr && /meeting_minutes/.test(mErr.message || '')) {
-        return res.status(503).json({ error: 'minutes_module_not_ready', message: 'Apply migration 258 (Minutes module) first.' });
-      }
-      const minutes = rows && rows[0];
-      if (!minutes) {
-        return res.status(404).json({ error: 'no_prior_minutes', message: 'No finalized minutes found for this community before this meeting date. Finalize the previous meeting’s minutes in the Minutes module, then auto-fill.' });
-      }
-
-      const input_data = {
-        prior_meeting_date: minutes.meeting_date,
-        full_text: minutes.body_markdown || '',
-        source_minutes_id: minutes.id,
-        source: 'minutes_module',
-      };
-      const { error: uErr } = await supabase.from('board_packet_sections')
-        .update({ input_data, status: 'ready' })
-        .eq('packet_id', req.params.id).eq('section_key', 'prior_minutes');
-      if (uErr) throw uErr;
-      return res.json({ ok: true, section_key: 'prior_minutes', pulled: { minutes_id: minutes.id, meeting_date: minutes.meeting_date, meeting_type: minutes.meeting_type } });
-    }
-
-    // Agenda — pull the saved agenda for THIS meeting (community + meeting date).
-    // Agendas are produced early (with the meeting notice) and saved; the packet
-    // pulls the one matching its own meeting date, else the latest for the
-    // community.
-    if (req.params.section_key === 'agenda') {
-      const { data: packet } = await supabase
-        .from('board_packets').select('id, community_id, meeting_date')
-        .eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
-      if (!packet) return res.status(404).json({ error: 'packet_not_found' });
-
-      // Prefer an exact meeting-date match; fall back to the most recent agenda.
-      let agenda = null;
-      if (packet.meeting_date) {
-        const { data: exact, error: aErr } = await supabase.from('meeting_agendas')
-          .select('id, meeting_date, full_text, items')
-          .eq('community_id', packet.community_id).eq('meeting_date', packet.meeting_date)
-          .order('updated_at', { ascending: false }).limit(1);
-        if (aErr && /meeting_agendas/.test(aErr.message || '')) {
-          return res.status(503).json({ error: 'agenda_module_not_ready', message: 'Apply migration 260 (agenda saving) first.' });
-        }
-        agenda = exact && exact[0];
-      }
-      if (!agenda) {
-        const { data: latest, error: aErr2 } = await supabase.from('meeting_agendas')
-          .select('id, meeting_date, full_text, items')
-          .eq('community_id', packet.community_id)
-          .order('meeting_date', { ascending: false, nullsFirst: false }).limit(1);
-        if (aErr2 && /meeting_agendas/.test(aErr2.message || '')) {
-          return res.status(503).json({ error: 'agenda_module_not_ready', message: 'Apply migration 260 (agenda saving) first.' });
-        }
-        agenda = latest && latest[0];
-      }
-      if (!agenda) {
-        return res.status(404).json({ error: 'no_saved_agenda', message: 'No saved agenda for this community yet. Create + save one in the Agenda Generator, then auto-fill.' });
-      }
-
-      const input_data = { full_text: agenda.full_text || '', items: Array.isArray(agenda.items) ? agenda.items : [], source_agenda_id: agenda.id, source: 'agenda_module' };
-      const { error: uErr } = await supabase.from('board_packet_sections')
-        .update({ input_data, status: 'ready' }).eq('packet_id', req.params.id).eq('section_key', 'agenda');
-      if (uErr) throw uErr;
-      return res.json({ ok: true, section_key: 'agenda', pulled: { agenda_id: agenda.id, meeting_date: agenda.meeting_date, exact_date_match: !!(packet.meeting_date && agenda.meeting_date === packet.meeting_date) } });
-    }
-
-    // Financial + compliance sections — pull live from trustEd's own ledger and
-    // enforcement so the packet actually assembles, not just reports readiness.
-    // (Ed 2026-07-18: "the process isn't complete for building the report.")
-    const NATIVE = ['balance_sheet', 'income_statement', 'drv', 'arc_decisions'];
-    if (NATIVE.includes(req.params.section_key)) {
-      const { data: packet } = await supabase
-        .from('board_packets').select('id, community_id, meeting_date')
-        .eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
-      if (!packet) return res.status(404).json({ error: 'packet_not_found' });
-      const cid = packet.community_id;
-      // financial cutoff = prior month-end relative to the meeting
-      const md = packet.meeting_date ? new Date(packet.meeting_date + 'T12:00:00Z') : new Date();
-      const cutoff = new Date(Date.UTC(md.getUTCFullYear(), md.getUTCMonth(), 0)).toISOString().slice(0, 10);
-      const periodStart = cutoff.slice(0, 8) + '01';
-      let input_data = null, pulled = {};
-
-      if (req.params.section_key === 'balance_sheet') {
-        const { balanceSheet } = require('../lib/accounting/financial_statements');
-        const stmt = await balanceSheet({ community_id: cid, as_of_date: cutoff });
-        input_data = { as_of_date: cutoff, statement: stmt, source: 'trusted_gl' };
-        pulled = { as_of_date: cutoff };
-      } else if (req.params.section_key === 'income_statement') {
-        const { budgetVsActual } = require('../lib/accounting/financial_statements');
-        const stmt = await budgetVsActual({ community_id: cid, period_end: cutoff });
-        input_data = { period_start: periodStart, period_end: cutoff, statement: stmt, source: 'trusted_gl' };
-        pulled = { period_end: cutoff };
-      } else if (req.params.section_key === 'drv') {
-        const { data: vios } = await supabase.from('violations')
-          .select('current_stage, opened_at, enforcement_categories(label)')
-          .eq('community_id', cid).not('current_stage', 'in', '(cured,closed,voided)')
-          .order('current_stage', { ascending: false }).limit(500);
-        const byStage = {}; (vios || []).forEach((v) => { byStage[v.current_stage] = (byStage[v.current_stage] || 0) + 1; });
-        input_data = { as_of: cutoff, open_total: (vios || []).length, by_stage: byStage,
-          items: (vios || []).slice(0, 100).map((v) => ({ stage: v.current_stage, category: v.enforcement_categories && v.enforcement_categories.label, opened_at: v.opened_at })), source: 'trusted_enforcement' };
-        pulled = { open_total: (vios || []).length };
-      } else if (req.params.section_key === 'arc_decisions') {
-        const { data: accs } = await supabase.from('acc_decisions')
-          .select('decision_type, status, homeowner_address, project_summary, created_at')
-          .eq('community_id', cid).gte('created_at', periodStart)
-          .order('created_at', { ascending: false }).limit(200);
-        input_data = { period_start: periodStart, period_end: cutoff, count: (accs || []).length,
-          items: (accs || []).map((a) => ({ type: a.decision_type, status: a.status, address: a.homeowner_address, summary: a.project_summary, date: a.created_at })), source: 'trusted_acc' };
-        pulled = { count: (accs || []).length };
-      }
-
-      const { error: uErr } = await supabase.from('board_packet_sections')
-        .update({ input_data, status: 'ready', validation_status: 'ready' })
-        .eq('packet_id', req.params.id).eq('section_key', req.params.section_key);
-      if (uErr) throw uErr;
-      return res.json({ ok: true, section_key: req.params.section_key, pulled });
-    }
-
-    // Remaining sections (ar_aging, ap_approval, reserve_activity, delinquency,
-    // bank_rec) — their generators exist (gl.js / books.js) and get wired next.
-    res.status(501).json({
-      error: 'auto_fill_not_yet_available',
-      message: 'This section auto-fill is being wired to its trustEd report. For now use Manual or Upload mode.',
-      section_key: req.params.section_key,
-    });
+    const r = await autoFillSection(req.params.id, req.params.section_key);
+    if (r._status) return res.status(r._status).json({ error: r.error, message: r.message, section_key: r.section_key });
+    return res.json(r);
   } catch (err) {
     console.error('[board_packets] auto-fill failed:', err.message);
     res.status(500).json({ error: err.message });
