@@ -42,6 +42,10 @@ function personaFor(m) {
   if (mailbox === String(graphSend.PAIGE_MAILBOX || '').toLowerCase()) return 'paige';
   // Resale / estoppels / closings: mail to reese@ is Reese's.
   if (mailbox === String(graphSend.REESE_MAILBOX || '').toLowerCase()) return 'reese';
+  // Accounting Manager: mail to kat@ is Kat's (close/reconciliation/financials).
+  if (mailbox === String(graphSend.KAT_MAILBOX || '').toLowerCase()) return 'kat';
+  // Senior Community Manager (escalations): mail to amanda@ is Amanda's.
+  if (mailbox === String(graphSend.AMANDA_MAILBOX || '').toLowerCase()) return 'amanda';
   if (mailbox === String(graphSend.EMMA_MAILBOX || '').toLowerCase()) return 'emma';
   if (m.resolved_vendor_id) return 'emma';
   if (['vendor_financial', 'vendor_general'].includes(m.classification)) return 'emma';
@@ -701,6 +705,14 @@ router.post('/:id/send', express.json(), async (req, res) => {
       const { buildPaigeEmail } = require('../lib/email/paige_signature');
       ({ html, attachments } = buildPaigeEmail(String(body).trim(), commName));
       fromMailbox = graphSend.PAIGE_MAILBOX; senderLabel = 'Paige Chandler (Bedrock AI)';
+    } else if (persona === 'kat') {
+      const { buildKatEmail } = require('../lib/email/kat_signature');
+      ({ html, attachments } = buildKatEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.KAT_MAILBOX; senderLabel = 'Katherine Reed (Bedrock AI)';
+    } else if (persona === 'amanda') {
+      const { buildAmandaEmail } = require('../lib/email/amanda_signature');
+      ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.AMANDA_MAILBOX; senderLabel = 'Amanda Albright (Bedrock AI)';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
       ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
@@ -942,7 +954,7 @@ router.post('/pull', express.json(), async (req, res) => {
     // ALWAYS pull both info@ and claire@ (union with any env override), so a
     // single-value EMAIL_INGEST_MAILBOX on Render can't silently drop claire@.
     const extra = (process.env.EMAIL_INGEST_MAILBOX || '').split(',').map((m) => m.trim()).filter(Boolean);
-    const mailboxes = [...new Set(['info@bedrocktx.com', 'claire@bedrocktx.com', graphSend.EMMA_MAILBOX, graphSend.ANNIE_MAILBOX, graphSend.MIRANDA_MAILBOX, graphSend.PAIGE_MAILBOX, graphSend.REESE_MAILBOX, ...extra])];
+    const mailboxes = [...new Set(['info@bedrocktx.com', 'claire@bedrocktx.com', graphSend.EMMA_MAILBOX, graphSend.ANNIE_MAILBOX, graphSend.MIRANDA_MAILBOX, graphSend.PAIGE_MAILBOX, graphSend.REESE_MAILBOX, graphSend.KAT_MAILBOX, graphSend.AMANDA_MAILBOX, ...extra])];
     const days = Math.min(60, parseInt((req.body || {}).days, 10) || 14);
     const sinceISO = new Date(Date.now() - days * 864e5).toISOString();
     const results = {}; let kept = 0, drafted = 0, invoicesLoaded = 0, filed = 0;
@@ -981,7 +993,7 @@ router.post('/compose', express.json(), async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return; // 403 already sent
     const { to, cc, subject, body, community_name, persona } = req.body || {};
-    const P = ['emma', 'annie', 'miranda', 'paige'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
+    const P = ['emma', 'annie', 'miranda', 'paige', 'kat', 'amanda'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
     const asEmma = P === 'emma';
     const toList = parseAddrs(to);
     const ccList = parseAddrs(cc);
@@ -1025,6 +1037,14 @@ router.post('/compose', express.json(), async (req, res) => {
       const { buildPaigeEmail } = require('../lib/email/paige_signature');
       ({ html, attachments } = buildPaigeEmail(String(body).trim(), commName));
       fromMailbox = graphSend.PAIGE_MAILBOX; senderLabel = 'Paige Chandler (Bedrock AI)'; personaName = 'Paige';
+    } else if (P === 'kat') {
+      const { buildKatEmail } = require('../lib/email/kat_signature');
+      ({ html, attachments } = buildKatEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.KAT_MAILBOX; senderLabel = 'Katherine Reed (Bedrock AI)'; personaName = 'Katherine';
+    } else if (P === 'amanda') {
+      const { buildAmandaEmail } = require('../lib/email/amanda_signature');
+      ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.AMANDA_MAILBOX; senderLabel = 'Amanda Albright (Bedrock AI)'; personaName = 'Amanda';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
       ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
