@@ -3156,11 +3156,64 @@ router.post('/:id/sections/:section_key/auto-fill', async (req, res) => {
       return res.json({ ok: true, section_key: 'agenda', pulled: { agenda_id: agenda.id, meeting_date: agenda.meeting_date, exact_date_match: !!(packet.meeting_date && agenda.meeting_date === packet.meeting_date) } });
     }
 
-    // Other sections: still stubbed until their module integrations ship.
+    // Financial + compliance sections — pull live from trustEd's own ledger and
+    // enforcement so the packet actually assembles, not just reports readiness.
+    // (Ed 2026-07-18: "the process isn't complete for building the report.")
+    const NATIVE = ['balance_sheet', 'income_statement', 'drv', 'arc_decisions'];
+    if (NATIVE.includes(req.params.section_key)) {
+      const { data: packet } = await supabase
+        .from('board_packets').select('id, community_id, meeting_date')
+        .eq('id', req.params.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+      if (!packet) return res.status(404).json({ error: 'packet_not_found' });
+      const cid = packet.community_id;
+      // financial cutoff = prior month-end relative to the meeting
+      const md = packet.meeting_date ? new Date(packet.meeting_date + 'T12:00:00Z') : new Date();
+      const cutoff = new Date(Date.UTC(md.getUTCFullYear(), md.getUTCMonth(), 0)).toISOString().slice(0, 10);
+      const periodStart = cutoff.slice(0, 8) + '01';
+      let input_data = null, pulled = {};
+
+      if (req.params.section_key === 'balance_sheet') {
+        const { balanceSheet } = require('../lib/accounting/financial_statements');
+        const stmt = await balanceSheet({ community_id: cid, as_of_date: cutoff });
+        input_data = { as_of_date: cutoff, statement: stmt, source: 'trusted_gl' };
+        pulled = { as_of_date: cutoff };
+      } else if (req.params.section_key === 'income_statement') {
+        const { budgetVsActual } = require('../lib/accounting/financial_statements');
+        const stmt = await budgetVsActual({ community_id: cid, period_end: cutoff });
+        input_data = { period_start: periodStart, period_end: cutoff, statement: stmt, source: 'trusted_gl' };
+        pulled = { period_end: cutoff };
+      } else if (req.params.section_key === 'drv') {
+        const { data: vios } = await supabase.from('violations')
+          .select('current_stage, opened_at, enforcement_categories(label)')
+          .eq('community_id', cid).not('current_stage', 'in', '(cured,closed,voided)')
+          .order('current_stage', { ascending: false }).limit(500);
+        const byStage = {}; (vios || []).forEach((v) => { byStage[v.current_stage] = (byStage[v.current_stage] || 0) + 1; });
+        input_data = { as_of: cutoff, open_total: (vios || []).length, by_stage: byStage,
+          items: (vios || []).slice(0, 100).map((v) => ({ stage: v.current_stage, category: v.enforcement_categories && v.enforcement_categories.label, opened_at: v.opened_at })), source: 'trusted_enforcement' };
+        pulled = { open_total: (vios || []).length };
+      } else if (req.params.section_key === 'arc_decisions') {
+        const { data: accs } = await supabase.from('acc_decisions')
+          .select('decision_type, status, homeowner_address, project_summary, created_at')
+          .eq('community_id', cid).gte('created_at', periodStart)
+          .order('created_at', { ascending: false }).limit(200);
+        input_data = { period_start: periodStart, period_end: cutoff, count: (accs || []).length,
+          items: (accs || []).map((a) => ({ type: a.decision_type, status: a.status, address: a.homeowner_address, summary: a.project_summary, date: a.created_at })), source: 'trusted_acc' };
+        pulled = { count: (accs || []).length };
+      }
+
+      const { error: uErr } = await supabase.from('board_packet_sections')
+        .update({ input_data, status: 'ready', validation_status: 'ready' })
+        .eq('packet_id', req.params.id).eq('section_key', req.params.section_key);
+      if (uErr) throw uErr;
+      return res.json({ ok: true, section_key: req.params.section_key, pulled });
+    }
+
+    // Remaining sections (ar_aging, ap_approval, reserve_activity, delinquency,
+    // bank_rec) — their generators exist (gl.js / books.js) and get wired next.
     res.status(501).json({
       error: 'auto_fill_not_yet_available',
-      message: 'Auto-fill from trustEd modules ships after the universal askEd build (next push). For now, use Manual or Upload mode.',
-      section_key: req.params.section_key
+      message: 'This section auto-fill is being wired to its trustEd report. For now use Manual or Upload mode.',
+      section_key: req.params.section_key,
     });
   } catch (err) {
     console.error('[board_packets] auto-fill failed:', err.message);
