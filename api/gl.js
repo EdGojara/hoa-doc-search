@@ -254,10 +254,8 @@ async function _openChargesFromTransactions(cid, propertyId = null) {
 // AR aging — per homeowner, broken out by charge CATEGORY (assessment, late
 // fee, interest, certified/attorney fees, etc.) and aged by due date.
 // ----------------------------------------------------------------------------
-router.get('/:communityId/ar-aging', async (req, res) => {
-  try {
-    const cid = req.params.communityId;
-    const asOf = req.query.as_of || _today();
+async function computeArAging(cid, asOf) {
+    asOf = asOf || _today();
     const charges = await _fetchAll('ar_charges',
       'property_id, charge_type_id, balance_remaining_cents, due_date, status, ar_charge_types:charge_type_id(category, display_name)',
       { community_id: cid, status: 'open' });
@@ -327,7 +325,7 @@ router.get('/:communityId/ar-aging', async (req, res) => {
       formerOwners = fo.sort((a, b) => Math.abs(Number(b.balance_cents)) - Math.abs(Number(a.balance_cents)));
     } catch (e) { console.warn('[gl] former_owner_balances not ready:', e.message); }
 
-    res.json({
+    return {
       as_of: asOf,
       ar_source,
       categories: [...categories],
@@ -337,7 +335,11 @@ router.get('/:communityId/ar-aging', async (req, res) => {
       former_owners_total_cents: formerOwners.reduce((s, f) => s + Number(f.balance_cents), 0),
       homeowners,
       homeowner_count: homeowners.length,
-    });
+    };
+}
+router.get('/:communityId/ar-aging', async (req, res) => {
+  try {
+    res.json(await computeArAging(req.params.communityId, req.query.as_of));
   } catch (err) {
     console.error('[gl] ar-aging failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -644,10 +646,8 @@ router.get('/:communityId/owners/:propertyId/statement', async (req, res) => {
 // ----------------------------------------------------------------------------
 // AP aging — open vendor invoices grouped by vendor, aged by due date.
 // ----------------------------------------------------------------------------
-router.get('/:communityId/ap-aging', async (req, res) => {
-  try {
-    const cid = req.params.communityId;
-    const asOf = req.query.as_of || _today();
+async function computeApAging(cid, asOf) {
+    asOf = asOf || _today();
     const invoices = await _fetchAll('ap_invoices',
       'vendor_id, total_cents, amount_paid_cents, due_date, status, vendors:vendor_id(name, category)',
       { community_id: cid });
@@ -667,12 +667,16 @@ router.get('/:communityId/ap-aging', async (req, res) => {
       const days = Math.max(0, Math.floor((Date.parse(asOf) - Date.parse(String(i.due_date || '').slice(0, 10))) / 86400000));
       if (days > v.oldest_days) v.oldest_days = days;
     }
-    res.json({
+    return {
       as_of: asOf,
       summary: { total_cents: grandTotal, by_bucket: totalBuckets },
       vendors: Object.values(byVendor).sort((a, b) => b.total - a.total),
       vendor_count: Object.keys(byVendor).length,
-    });
+    };
+}
+router.get('/:communityId/ap-aging', async (req, res) => {
+  try {
+    res.json(await computeApAging(req.params.communityId, req.query.as_of));
   } catch (err) {
     console.error('[gl] ap-aging failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -813,5 +817,11 @@ router.get('/:communityId/collections', async (req, res) => {
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
+
+// Expose the aging computations so other server-side modules (e.g. the board
+// packet assembler) can pull the same numbers the /ar-aging and /ap-aging
+// endpoints return — single source of truth, no duplicated aging math.
+router.computeArAging = computeArAging;
+router.computeApAging = computeApAging;
 
 module.exports = router;

@@ -380,11 +380,9 @@ router.get('/budget-vs-actual', async (req, res) => {
 // Reads the canonical reserve tables; no parallel data. Graceful when a
 // community has no study loaded yet (everything study-driven returns null).
 // ============================================================================
-router.get('/reserve-summary', async (req, res) => {
-  try {
-    const { community_id } = req.query;
-    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
-    const year = Number(req.query.year) || new Date().getUTCFullYear();
+async function computeReserveSummary(community_id, year) {
+    if (!community_id) throw new Error('community_id_required');
+    year = Number(year) || new Date().getUTCFullYear();
     const today = new Date().toISOString().slice(0, 10);
     const yearStart = `${year}-01-01`, yearEnd = `${year}-12-31`;
 
@@ -433,7 +431,7 @@ router.get('/reserve-summary', async (req, res) => {
       .select('amount_cents').eq('community_id', community_id).gte('expenditure_date', yearStart).lte('expenditure_date', yearEnd).limit(2000);
     const actual_reserve_expenses_ytd_cents = (exps || []).reduce((s, e) => s + Number(e.amount_cents || 0), 0);
 
-    res.json({
+    return {
       year,
       has_study: !!study,
       study: study ? { firm: study.study_firm, fiscal_year: study.fiscal_year, contributions_per_year: study.contributions_per_year } : null,
@@ -446,7 +444,13 @@ router.get('/reserve-summary', async (req, res) => {
       components_due,
       components_due_total_cents: components_due.reduce((s, c) => s + c.cost_cents, 0),
       actual_reserve_expenses_ytd_cents,
-    });
+    };
+}
+router.get('/reserve-summary', async (req, res) => {
+  try {
+    const { community_id } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    res.json(await computeReserveSummary(community_id, req.query.year));
   } catch (err) {
     console.error('[books] reserve-summary failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -865,4 +869,4 @@ router.post('/undeposited/deposit', express.json(), async (req, res) => {
   }
 });
 
-module.exports = { router };
+module.exports = { router, computeReserveSummary };

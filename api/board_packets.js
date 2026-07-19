@@ -218,6 +218,18 @@ function renderSectionStandaloneHtml({ packet, section, embed = false }) {
   if (section.section_key === 'ar_aging') {
     return renderArAgingStandaloneHtml({ packet, section, embed });
   }
+  if (section.section_key === 'delinquency') {
+    return renderDelinquencyStandaloneHtml({ packet, section, embed });
+  }
+  if (section.section_key === 'ap_approval') {
+    return renderApApprovalStandaloneHtml({ packet, section, embed });
+  }
+  if (section.section_key === 'reserve_activity') {
+    return renderReserveActivityStandaloneHtml({ packet, section, embed });
+  }
+  if (section.section_key === 'bank_rec') {
+    return renderBankRecStandaloneHtml({ packet, section, embed });
+  }
   // 'drv' = Deed Restriction Violations. Pre-migration-069 it was mislabeled
   // as "Doctivity Variance Report" (budget variance). Now consolidated:
   // one section, properly named, using the violations workflow.
@@ -1515,6 +1527,111 @@ function renderArAgingStandaloneHtml({ packet, section, embed = false }) {
 }
 
 // ----------------------------------------------------------------------------
+// Delinquency & collections — the board's action list on past-due accounts.
+// Native GL data (via computeArAging). Over-60 exposure + per-account rows.
+// ----------------------------------------------------------------------------
+function renderDelinquencyStandaloneHtml({ packet, section, embed = false }) {
+  const d = section.input_data || {};
+  const totalAr = Number(d.total_ar || 0);
+  const over60 = Number(d.over_60 || 0);
+  const accounts = Array.isArray(d.accounts) ? d.accounts : [];
+  const count = d.delinquent_count != null ? Number(d.delinquent_count) : accounts.length;
+  const collections = d.collections || {};
+  const asOf = d.as_of ? fmtDateShort(d.as_of) : (packet.period_label || '');
+  const collChips = Object.entries(collections).filter(([, v]) => Number(v) > 0);
+  const bodyHtml = `
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="label">Total AR outstanding</div><div class="value">${fmtMoney(totalAr, { precision: 0 })}</div>${asOf ? `<div class="delta">As of ${esc(asOf)}</div>` : ''}</div>
+      <div class="kpi-card" style="${over60 > 0 ? 'background:#fef2f2; border-color:#fecaca;' : ''}"><div class="label" style="${over60 > 0 ? 'color:#991b1b;' : ''}">Over 60 days</div><div class="value" style="${over60 > 0 ? 'color:#7f1d1d;' : ''}">${fmtMoney(over60, { precision: 0 })}</div><div class="delta ${over60 > 0 ? 'bad' : 'good'}">${over60 > 0 ? '⚠ Collection focus' : '✓ Clean'}</div></div>
+      <div class="kpi-card"><div class="label">Delinquent accounts</div><div class="value">${count}</div></div>
+    </div>
+    ${collChips.length ? `<div class="table-h2">Collection status</div><div style="display:flex; gap:8px; flex-wrap:wrap; margin:4px 0 12px;">${collChips.map(([k, v]) => `<div style="background:#f1f5f9; color:#475569; padding:6px 12px; border-radius:8px; font-size:12px; font-weight:600;"><span style="font-size:18px; font-weight:800;">${esc(String(v))}</span> · ${esc(k.replace(/_/g, ' '))}</div>`).join('')}</div>` : ''}
+    ${accounts.length ? `
+      <div class="table-h2">Delinquent accounts</div>
+      <table class="data-table"><thead><tr><th>Address</th><th>Owner</th><th class="num">Balance</th><th class="num">Oldest</th><th>Status</th></tr></thead>
+      <tbody>${accounts.map((r) => `<tr><td><strong>${esc(r.address || '—')}</strong></td><td>${esc(r.owner || '—')}</td><td class="num" style="color:${Number(r.balance) >= 1000 ? 'var(--bad)' : 'var(--ink)'}; font-weight:${Number(r.balance) >= 1000 ? '700' : '400'};">${fmtMoney(Number(r.balance) || 0)}</td><td class="num">${r.oldest_days != null ? `${r.oldest_days}d` : '—'}</td><td>${r.status ? `<span style="background:var(--rule); padding:2px 8px; border-radius:99px; font-size:11px;">${esc(r.status)}</span>` : '—'}</td></tr>`).join('')}</tbody></table>`
+      : `<p style="color:var(--ink-muted); font-size:13px;">No delinquent accounts as of ${esc(asOf)} — every homeowner is current.</p>`}
+  `;
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
+}
+
+// ----------------------------------------------------------------------------
+// AP / invoice approval — open vendor payables the board is approving to pay.
+// Native GL data (via computeApAging), aged, grouped by vendor.
+// ----------------------------------------------------------------------------
+function renderApApprovalStandaloneHtml({ packet, section, embed = false }) {
+  const d = section.input_data || {};
+  const totalAp = Number(d.total_ap || 0);
+  const buckets = d.buckets || {};
+  const over90 = Number(buckets.over_90 || 0);
+  const vendors = Array.isArray(d.vendors) ? d.vendors : [];
+  const asOf = d.as_of ? fmtDateShort(d.as_of) : (packet.period_label || '');
+  const bodyHtml = `
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="label">Open payables</div><div class="value">${fmtMoney(totalAp, { precision: 0 })}</div>${asOf ? `<div class="delta">As of ${esc(asOf)}</div>` : ''}</div>
+      <div class="kpi-card"><div class="label">Vendors with balances</div><div class="value">${d.vendor_count != null ? d.vendor_count : vendors.length}</div></div>
+      <div class="kpi-card" style="${over90 > 0 ? 'background:#fef2f2; border-color:#fecaca;' : ''}"><div class="label" style="${over90 > 0 ? 'color:#991b1b;' : ''}">Over 90 days</div><div class="value" style="${over90 > 0 ? 'color:#7f1d1d;' : ''}">${fmtMoney(over90, { precision: 0 })}</div><div class="delta ${over90 > 0 ? 'bad' : 'good'}">${over90 > 0 ? '⚠ Aged' : '✓ Current'}</div></div>
+    </div>
+    ${vendors.length ? `
+      <div class="table-h2">Open invoices by vendor</div>
+      <table class="data-table"><thead><tr><th>Vendor</th><th>Category</th><th class="num">Open</th><th class="num">Balance</th><th class="num">Oldest</th></tr></thead>
+      <tbody>${vendors.map((v) => `<tr><td><strong>${esc(v.name || '—')}</strong></td><td>${esc(v.category || '—')}</td><td class="num">${v.open_count != null ? v.open_count : '—'}</td><td class="num" style="font-weight:${Number(v.balance) >= 1000 ? '700' : '400'};">${fmtMoney(Number(v.balance) || 0)}</td><td class="num">${v.oldest_days != null ? `${v.oldest_days}d` : '—'}</td></tr>`).join('')}</tbody></table>`
+      : `<p style="color:var(--ink-muted); font-size:13px;">No open vendor invoices as of ${esc(asOf)}.</p>`}
+  `;
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
+}
+
+// ----------------------------------------------------------------------------
+// Reserve activity & cash balances — reserve cash position, study funding
+// targets, and components scheduled this year. Native GL + reserve study.
+// ----------------------------------------------------------------------------
+function renderReserveActivityStandaloneHtml({ packet, section, embed = false }) {
+  const d = section.input_data || {};
+  const bal = d.reserve_balance != null ? Number(d.reserve_balance) : null;
+  const acct = d.reserve_account || null;
+  const comps = Array.isArray(d.components_due) ? d.components_due : [];
+  const bodyHtml = `
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="label">Reserve cash balance</div><div class="value">${bal != null ? fmtMoney(bal, { precision: 0 }) : '—'}</div>${acct ? `<div class="delta">${esc(acct.nickname || acct.account_name || '')}</div>` : ''}</div>
+      ${d.recommended_contribution != null ? `<div class="kpi-card"><div class="label">Recommended funding (${esc(String(d.year || ''))})</div><div class="value">${fmtMoney(Number(d.recommended_contribution), { precision: 0 })}</div></div>` : ''}
+      ${d.projected_ending != null ? `<div class="kpi-card"><div class="label">Projected year-end</div><div class="value">${fmtMoney(Number(d.projected_ending), { precision: 0 })}</div></div>` : ''}
+    </div>
+    ${!d.has_study ? `<div style="background:#FFFBEB; border-left:4px solid #D4AF37; padding:12px 16px; border-radius:0 8px 8px 0; font-size:13px; color:var(--ink); margin:8px 0 14px;">No active reserve study on file — the balance shown is the reserve cash position from the GL. A current study is recommended to confirm funding adequacy.</div>` : ''}
+    ${(d.expected_expenses != null || d.actual_ytd != null) ? `
+      <div class="table-h2">Reserve spending (${esc(String(d.year || ''))})</div>
+      <table class="data-table"><tbody>
+        ${d.expected_expenses != null ? `<tr><td>Anticipated expenditures (study)</td><td class="num">${fmtMoney(Number(d.expected_expenses), { precision: 0 })}</td></tr>` : ''}
+        <tr><td>Actual reserve spend YTD</td><td class="num">${fmtMoney(Number(d.actual_ytd || 0), { precision: 0 })}</td></tr>
+      </tbody></table>` : ''}
+    ${comps.length ? `
+      <div class="table-h2">Components scheduled this year</div>
+      <table class="data-table"><thead><tr><th>Component</th><th class="num">Est. cost</th></tr></thead>
+      <tbody>${comps.map((x) => `<tr><td>${esc(x.name || '—')}</td><td class="num">${fmtMoney(Number(x.cost || 0), { precision: 0 })}</td></tr>`).join('')}
+      <tr><td style="font-weight:700;">Total</td><td class="num" style="font-weight:700;">${fmtMoney(Number(d.components_due_total || 0), { precision: 0 })}</td></tr></tbody></table>` : ''}
+  `;
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
+}
+
+// ----------------------------------------------------------------------------
+// Bank-reconciliation status — is each bank account reconciled through the
+// reporting period, and does bank tie to GL? Native from bank_reconciliations.
+// ----------------------------------------------------------------------------
+function renderBankRecStandaloneHtml({ packet, section, embed = false }) {
+  const d = section.input_data || {};
+  const accounts = Array.isArray(d.accounts) ? d.accounts : [];
+  const allRec = !!d.all_reconciled;
+  const bodyHtml = `
+    <div class="kpi-row">
+      <div class="kpi-card" style="${allRec ? 'background:#f0fdf4; border-color:#bbf7d0;' : 'background:#fef2f2; border-color:#fecaca;'}"><div class="label" style="${allRec ? 'color:#166534;' : 'color:#991b1b;'}">Reconciliation status</div><div class="value" style="${allRec ? 'color:#166534;' : 'color:#7f1d1d;'}">${allRec ? '✓ Reconciled' : '⚠ Review'}</div><div class="delta">${accounts.length} account${accounts.length === 1 ? '' : 's'}</div></div>
+    </div>
+    <div class="table-h2">Bank accounts</div>
+    <table class="data-table"><thead><tr><th>Account</th><th>Through</th><th class="num">Bank</th><th class="num">GL</th><th class="num">Difference</th><th>Status</th></tr></thead>
+    <tbody>${accounts.map((a) => { const diff = Number(a.difference || 0); const ok = a.reconciled; return `<tr><td><strong>${esc(a.account || '—')}</strong>${a.last4 ? ` <span style="color:var(--ink-muted); font-size:11px;">••${esc(String(a.last4))}</span>` : ''}</td><td>${a.period_end ? esc(fmtDateShort(a.period_end)) : '—'}</td><td class="num">${a.bank_ending != null ? fmtMoney(Number(a.bank_ending)) : '—'}</td><td class="num">${a.gl_ending != null ? fmtMoney(Number(a.gl_ending)) : '—'}</td><td class="num" style="color:${diff !== 0 ? 'var(--bad)' : 'var(--ink)'}; font-weight:${diff !== 0 ? '700' : '400'};">${a.difference != null ? fmtMoney(diff) : '—'}</td><td>${ok ? '<span style="background:#dcfce7; color:#166534; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:700;">reconciled</span>' : `<span style="background:#fee2e2; color:#7f1d1d; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:700;">${esc(a.status || 'open')}</span>`}</td></tr>`; }).join('')}</tbody></table>
+  `;
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
+}
+
+// ----------------------------------------------------------------------------
 // Deed Restriction Violations — polished summary of the Vantaca Violation
 // Report Detail. Distills 12 pages of per-violation rows into the board's
 // 30-second-readable picture: stage counts, top categories, certified §209
@@ -2146,7 +2263,7 @@ ${(() => {
     minutesData.prior_meeting_date
   );
   // Section keys that have polished embed-mode renderers.
-  const POLISHED_KEYS = new Set(['balance_sheet', 'income_statement', 'financials', 'ar_aging', 'drv']);
+  const POLISHED_KEYS = new Set(['balance_sheet', 'income_statement', 'financials', 'ar_aging', 'drv', 'delinquency', 'ap_approval', 'reserve_activity', 'bank_rec']);
   const hasPolished = it.hasData && POLISHED_KEYS.has(sec.section_key);
   return `<div class="page interior">
   ${pageHeader}
@@ -3077,6 +3194,159 @@ router.post('/:id/sections/:section_key/upload', upload.single('pdf'), async (re
 // success or { _status, error, message } on a handled miss. Both the auto-fill
 // route AND the assemble orchestrator call this, so they can't diverge. (Ed 2026-07-18)
 // ---------------------------------------------------------------------------
+// The five Financials-group sections that assemble natively from the trustEd
+// GL / bank-rec / reserve modules (as opposed to balance_sheet/income_statement,
+// which have their own financial_statements generators).
+const FINANCIAL_NATIVE = ['ar_aging', 'delinquency', 'ap_approval', 'reserve_activity', 'bank_rec'];
+
+// Build the input_data payload for a native FINANCIAL section straight from the
+// trustEd GL / bank-rec / reserve modules. Single source so the packet
+// assembler AND the renderer verifier shape identically. Returns
+// { input_data, pulled }, or a { _status, error, message } sentinel when the
+// section has nothing to fill (so assemble surfaces it as needs-attention).
+// All money is emitted in DOLLARS to match the polished section renderers.
+async function buildFinancialSectionData(cid, sectionKey, cutoff) {
+  const c = (v) => Math.round(Number(v || 0)) / 100;      // cents → dollars (0 for null)
+  const cNull = (v) => v == null ? null : Math.round(Number(v)) / 100;  // preserve null
+
+  if (sectionKey === 'ar_aging') {
+    // Map GL aging (cents, 6 buckets) into the shape the polished AR-aging
+    // renderer expects (dollars, 4 buckets, top_delinquent, at-legal).
+    const { computeArAging } = require('./gl');
+    const rpt = await computeArAging(cid, cutoff);
+    const bb = rpt.summary.by_bucket || {};
+    const isLegal = (st) => /attorney|legal|bankrupt/i.test(st || '');
+    const hos = rpt.homeowners || [];
+    const legal = hos.filter((h) => isLegal(h.collection_status));
+    const nonLegal = hos.filter((h) => !isLegal(h.collection_status));
+    const input_data = {
+      as_of_date: cutoff, total_ar: c(rpt.summary.total_cents),
+      buckets: {
+        '0_30': c(Number(bb.current || 0) + Number(bb.d1_30 || 0)),
+        '31_60': c(bb.d31_60), '61_90': c(bb.d61_90),
+        'over_90': c(Number(bb.d91_120 || 0) + Number(bb.d120_plus || 0)),
+      },
+      homeowner_count: { delinquent: rpt.homeowner_count },
+      top_delinquent: nonLegal.slice(0, 10).map((h) => ({ address: h.street_address, owner: h.owner_name, balance: c(h.total), oldest_charge_days: h.oldest_days, status: (h.collection_status && h.collection_status !== 'none') ? h.collection_status : null })),
+      at_legal_accounts: legal.map((h) => ({ address: h.street_address, owner: h.owner_name, balance: c(h.total), over_90: null, status: h.collection_status })),
+      ar_source: rpt.ar_source, source: 'trusted_gl',
+    };
+    return { input_data, pulled: { total_ar: input_data.total_ar, accounts: rpt.homeowner_count } };
+  }
+
+  if (sectionKey === 'delinquency') {
+    const { computeArAging } = require('./gl');
+    const rpt = await computeArAging(cid, cutoff);
+    const bb = rpt.summary.by_bucket || {};
+    const over60 = c(Number(bb.d61_90 || 0) + Number(bb.d91_120 || 0) + Number(bb.d120_plus || 0));
+    const delinquent = (rpt.homeowners || []).filter((h) => (h.oldest_days || 0) > 60 || (h.collection_status && h.collection_status !== 'none'));
+    const input_data = {
+      as_of: cutoff, total_ar: c(rpt.summary.total_cents), over_60: over60,
+      delinquent_count: delinquent.length,
+      accounts: delinquent.slice(0, 50).map((h) => ({ address: h.street_address, owner: h.owner_name, balance: c(h.total), oldest_days: h.oldest_days, status: h.collection_status && h.collection_status !== 'none' ? h.collection_status : null })),
+      collections: rpt.collection_summary || {}, source: 'trusted_gl',
+    };
+    return { input_data, pulled: { delinquent_count: delinquent.length, over_60: over60 } };
+  }
+
+  if (sectionKey === 'ap_approval') {
+    const { computeApAging } = require('./gl');
+    const rpt = await computeApAging(cid, cutoff);
+    const bb = rpt.summary.by_bucket || {};
+    const input_data = {
+      as_of: cutoff, total_ap: c(rpt.summary.total_cents),
+      buckets: {
+        '0_30': c(Number(bb.current || 0) + Number(bb.d1_30 || 0)),
+        '31_60': c(bb.d31_60), '61_90': c(bb.d61_90),
+        'over_90': c(Number(bb.d91_120 || 0) + Number(bb.d120_plus || 0)),
+      },
+      vendor_count: rpt.vendor_count,
+      vendors: (rpt.vendors || []).slice(0, 30).map((v) => ({ name: v.vendor_name, category: v.category, balance: c(v.total), open_count: v.open_count, oldest_days: v.oldest_days })),
+      source: 'trusted_gl',
+    };
+    return { input_data, pulled: { total_ap: input_data.total_ap, vendors: rpt.vendor_count } };
+  }
+
+  if (sectionKey === 'reserve_activity') {
+    const { computeReserveSummary } = require('./books');
+    const rpt = await computeReserveSummary(cid, Number(cutoff.slice(0, 4)));
+    const input_data = {
+      year: rpt.year, has_study: rpt.has_study,
+      reserve_account: rpt.reserve_account, reserve_balance: cNull(rpt.reserve_balance_cents),
+      study_firm: rpt.study ? rpt.study.firm : null,
+      recommended_contribution: cNull(rpt.recommended_contribution_cents),
+      projected_ending: cNull(rpt.projected_ending_balance_cents),
+      expected_expenses: cNull(rpt.expected_reserve_expenses_cents),
+      actual_ytd: cNull(rpt.actual_reserve_expenses_ytd_cents),
+      components_due: (rpt.components_due || []).map((x) => ({ name: x.name, cost: c(x.cost_cents) })),
+      components_due_total: c(rpt.components_due_total_cents),
+      source: 'trusted_gl',
+    };
+    return { input_data, pulled: { reserve_balance: input_data.reserve_balance, has_study: rpt.has_study } };
+  }
+
+  if (sectionKey === 'bank_rec') {
+    // Latest reconciliation per bank account, as of the reporting period.
+    // Defensive: the code can deploy before migration 169 creates the table.
+    let recs = [];
+    try {
+      const { data, error } = await supabase.from('bank_reconciliations')
+        .select('bank_account_id, period_end, status, difference_cents, bank_ending_balance_cents, gl_ending_balance_cents, bank_accounts(account_nickname, bank_name, account_last4)')
+        .eq('community_id', cid).lte('period_end', cutoff)
+        .order('period_end', { ascending: false }).limit(200);
+      if (error) throw error;
+      recs = data || [];
+    } catch (e) { console.warn('[board_packets] bank_reconciliations not ready:', e.message); }
+    const latestByAcct = {};
+    for (const r of recs) { if (!latestByAcct[r.bank_account_id]) latestByAcct[r.bank_account_id] = r; }
+    const accounts = Object.values(latestByAcct).map((r) => ({
+      account: (r.bank_accounts && (r.bank_accounts.account_nickname || r.bank_accounts.bank_name)) || '—',
+      last4: r.bank_accounts && r.bank_accounts.account_last4,
+      period_end: r.period_end, status: r.status,
+      difference: cNull(r.difference_cents),
+      bank_ending: cNull(r.bank_ending_balance_cents), gl_ending: cNull(r.gl_ending_balance_cents),
+      reconciled: r.status === 'reconciled' && Number(r.difference_cents || 0) === 0,
+    }));
+    // No reconciliations on file for this period is a real gap, not a clean
+    // "$0" — flag it for the owner rather than silently rendering "nothing".
+    if (!accounts.length) return { _status: 404, error: 'no_bank_rec', message: 'No bank reconciliations recorded through this period — complete one in the Bank Rec screen, then auto-fill.' };
+    const input_data = { as_of: cutoff, accounts, all_reconciled: accounts.every((a) => a.reconciled), source: 'trusted_bank_rec' };
+    return { input_data, pulled: { accounts: accounts.length, all_reconciled: input_data.all_reconciled } };
+  }
+
+  return null;
+}
+
+// Write a section's data, creating the section row if the packet was seeded
+// before this section's template existed. Returns true on a real write; throws
+// on a DB error. This replaces a bare .update() that silently no-op'd (matched
+// zero rows) when the section didn't exist in the packet — a silent-failure
+// path that made autoFillSection report "filled" while writing nothing.
+async function _writeSectionData(packetId, sectionKey, input_data) {
+  const { data: upd, error } = await supabase.from('board_packet_sections')
+    .update({ input_data, status: 'ready', validation_status: 'ready' })
+    .eq('packet_id', packetId).eq('section_key', sectionKey).select('id');
+  if (error) throw error;
+  if (upd && upd.length) return true;
+  // No existing row — seed it from the template (packet predates this section).
+  const { data: tmpl } = await supabase.from('board_packet_section_templates')
+    .select('default_order, supports_upload, default_audience')
+    .eq('section_key', sectionKey).maybeSingle();
+  const row = {
+    packet_id: packetId, section_key: sectionKey,
+    section_order: tmpl ? tmpl.default_order : 999,
+    input_mode: 'auto_from_trusted',
+    status: 'ready', validation_status: 'ready', input_data,
+  };
+  let ins = await supabase.from('board_packet_sections')
+    .insert({ ...row, audience: (tmpl && tmpl.default_audience) || 'both' }).select('id');
+  if (ins.error && /audience/.test(ins.error.message || '')) {
+    ins = await supabase.from('board_packet_sections').insert(row).select('id');
+  }
+  if (ins.error) throw ins.error;
+  return true;
+}
+
 async function autoFillSection(packetId, sectionKey) {
   const { data: packet } = await supabase
     .from('board_packets').select('id, community_id, meeting_date')
@@ -3116,7 +3386,7 @@ async function autoFillSection(packetId, sectionKey) {
     return { ok: true, section_key: 'agenda', pulled: { agenda_id: agenda.id } };
   }
 
-  const NATIVE = ['balance_sheet', 'income_statement', 'drv', 'arc_decisions'];
+  const NATIVE = ['balance_sheet', 'income_statement', 'drv', 'arc_decisions', ...FINANCIAL_NATIVE];
   if (NATIVE.includes(sectionKey)) {
     const md = packet.meeting_date ? new Date(packet.meeting_date + 'T12:00:00Z') : new Date();
     const cutoff = new Date(Date.UTC(md.getUTCFullYear(), md.getUTCMonth(), 0)).toISOString().slice(0, 10);
@@ -3139,8 +3409,12 @@ async function autoFillSection(packetId, sectionKey) {
       const { data: accs } = await supabase.from('acc_decisions').select('decision_type, status, homeowner_address, project_summary, created_at').eq('community_id', cid).gte('created_at', periodStart).order('created_at', { ascending: false }).limit(200);
       input_data = { period_start: periodStart, period_end: cutoff, count: (accs || []).length, items: (accs || []).map((a) => ({ type: a.decision_type, status: a.status, address: a.homeowner_address, summary: a.project_summary, date: a.created_at })), source: 'trusted_acc' };
       pulled = { count: (accs || []).length };
+    } else if (FINANCIAL_NATIVE.includes(sectionKey)) {
+      const built = await buildFinancialSectionData(cid, sectionKey, cutoff);
+      if (built && built._status) return built;   // e.g. bank_rec has nothing to show
+      input_data = built.input_data; pulled = built.pulled;
     }
-    await supabase.from('board_packet_sections').update({ input_data, status: 'ready', validation_status: 'ready' }).eq('packet_id', packetId).eq('section_key', sectionKey);
+    await _writeSectionData(packetId, sectionKey, input_data);
     return { ok: true, section_key: sectionKey, pulled };
   }
 
@@ -3173,7 +3447,7 @@ async function assemblePackage({ community_id, meeting_date, period_label }) {
     packet = created;
   }
 
-  const FILLABLE = ['agenda', 'prior_minutes', 'balance_sheet', 'income_statement', 'drv', 'arc_decisions'];
+  const FILLABLE = ['agenda', 'prior_minutes', 'balance_sheet', 'income_statement', 'bank_rec', 'ar_aging', 'delinquency', 'ap_approval', 'reserve_activity', 'drv', 'arc_decisions'];
   const filled = [], needs = [];
   for (const key of FILLABLE) {
     try {
@@ -3781,4 +4055,4 @@ router.get('/readiness', async (req, res) => {
   }
 });
 
-module.exports = { router, assemblePackage };
+module.exports = { router, assemblePackage, autoFillSection, renderSectionStandaloneHtml, buildFinancialSectionData };
