@@ -975,9 +975,11 @@ router.get('/manager/properties', async (req, res) => {
       propQuery = propQuery.in('community_id', allowedCommunityIds);
     }
     if (q) {
-      // Search across address + vantaca_account_id (owner name search would
-      // require a separate query; address + account is enough for v1)
-      propQuery = propQuery.or(`street_address.ilike.%${q}%,vantaca_account_id.ilike.%${q}%`);
+      // Match by address OR EITHER account number — the trustEd number (mig 252)
+      // and the Vantaca number both resolve the same property until the
+      // statement cutover (Ed 2026-07-19). Owner name search would need a
+      // separate query; address + both account numbers is enough here.
+      propQuery = propQuery.or(`street_address.ilike.%${q}%,vantaca_account_id.ilike.%${q}%,trusted_account_number.ilike.%${q}%`);
     }
 
     const { data: rows, error } = await propQuery;

@@ -484,7 +484,7 @@ router.get('/:communityId/owners/search', async (req, res) => {
     const cid = req.params.communityId;
     const q = (req.query.q || '').trim().toLowerCase();
     const owners = await _fetchAll('v_current_property_owners',
-      'property_id, street_address, owner_name, owner_email, owner_phone, vantaca_account_id', { community_id: cid });
+      'property_id, street_address, owner_name, owner_email, owner_phone, vantaca_account_id, trusted_account_number', { community_id: cid });
     const charges = await _fetchAll('ar_charges', 'property_id, balance_remaining_cents', { community_id: cid, status: 'open' });
     const balByProp = {};
     if (charges.length) {
@@ -498,7 +498,8 @@ router.get('/:communityId/owners/search', async (req, res) => {
     const coll = await _fetchAll('ar_account_collections', 'property_id, collection_status', { community_id: cid });
     const collByProp = Object.fromEntries(coll.map((c) => [c.property_id, c.collection_status]));
     const matched = (q
-      ? owners.filter((o) => (o.owner_name || '').toLowerCase().includes(q) || (o.street_address || '').toLowerCase().includes(q))
+      ? owners.filter((o) => (o.owner_name || '').toLowerCase().includes(q) || (o.street_address || '').toLowerCase().includes(q)
+          || (o.vantaca_account_id || '').toLowerCase().includes(q) || (o.trusted_account_number || '').toLowerCase().includes(q))
       : owners)
       .map((o) => ({ ...o, balance_cents: balByProp[o.property_id] || 0, collection_status: collByProp[o.property_id] || 'none' }))
       .sort((a, b) => (a.street_address || '').localeCompare(b.street_address || ''))
