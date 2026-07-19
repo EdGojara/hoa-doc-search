@@ -150,19 +150,26 @@ router.get('/property/:property_id/snapshot', async (req, res) => {
 router.get('/property/:property_id/history', async (req, res) => {
   try {
     const { property_id } = req.params;
-    const [ownRes, saleRes] = await Promise.all([
+    const [ownRes, saleRes, propRes] = await Promise.all([
       supabase.from('property_ownerships')
-        .select('id, contact_id, start_date, end_date, vesting, is_primary, source, contacts(full_name, primary_email)')
+        .select('id, contact_id, start_date, end_date, vesting, is_primary, source, notes, contacts(full_name, primary_email, vantaca_account_id)')
         .eq('property_id', property_id)
         .order('start_date', { ascending: false }),
       supabase.from('home_sales')
         .select('*')
         .eq('property_id', property_id)
         .order('closing_date', { ascending: false, nullsFirst: false }),
+      // The transfer audit trail — who proposed each ownership change, its
+      // source (vantaca_import / title_company / manual), and who approved it.
+      supabase.from('ownership_change_proposals')
+        .select('id, current_owner_name, proposed_owner_name, source, source_filename, vantaca_account_id, status, effective_start_date, reviewed_at, reviewed_by, decision_notes, created_at')
+        .eq('property_id', property_id)
+        .order('created_at', { ascending: false }),
     ]);
     if (ownRes.error) throw ownRes.error;
     if (saleRes.error) throw saleRes.error;
-    res.json({ ownerships: ownRes.data || [], sales: saleRes.data || [] });
+    if (propRes.error) throw propRes.error;
+    res.json({ ownerships: ownRes.data || [], sales: saleRes.data || [], transfers: propRes.data || [] });
   } catch (err) {
     console.error('[home-sales] history failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
