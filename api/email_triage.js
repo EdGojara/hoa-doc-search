@@ -523,7 +523,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     const notes = (req.body && req.body.notes) ? String(req.body.notes).slice(0, 3000) : null;
     const currentDraft = (req.body && req.body.current_draft) ? String(req.body.current_draft).slice(0, 4000) : null;
     const { data: m, error } = await supabase.from('email_messages')
-      .select('subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, graph_id, mailbox, has_attachments, received_at, direction, resolved_contact:resolved_contact_id(full_name), resolved_vendor:resolved_vendor_id(name), community:community_id(name)')
+      .select('persona, subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, graph_id, mailbox, has_attachments, received_at, direction, resolved_contact:resolved_contact_id(full_name), resolved_property:resolved_property_id(street_address), resolved_vendor:resolved_vendor_id(name), community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
@@ -536,11 +536,33 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     // a vendor, or is vendor-financial) is Emma's — she grounds the reply in the
     // AP subledger. Everything else is Claire's (homeowner/front-office).
     const covers = siblings.map((s) => ({ id: s.id, subject: s.subject }));
-    if (personaFor(m) === 'emma') {
+    // Trust the STORED persona first — it reflects the content-based routing
+    // (an escrow inquiry that came to info@ but belongs to Kat). Fall back to the
+    // mailbox/vendor picker only when it isn't stamped yet.
+    const persona = m.persona || personaFor(m);
+    if (persona === 'emma') {
       const { draftEmmaReply } = require('../lib/email/emma_reply');
       const draft = await draftEmmaReply({
         email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full },
         vendorId: m.resolved_vendor_id, vendorName: m.resolved_vendor ? m.resolved_vendor.name : (m.sender_name || null),
+        notes, currentDraft,
+      });
+      return res.json({ ...draft, covers });
+    }
+    // Every other specialist (Kat, Amanda, Reese, Paige) replies in-voice to
+    // ANYTHING in their queue via the general persona drafter. (Ed 2026-07-20:
+    // "make Kat and all of them be able to reply to any emails in their que.")
+    if (['kat', 'amanda', 'reese', 'paige'].includes(persona)) {
+      const { draftPersonaReply } = require('../lib/email/persona_reply');
+      const draft = await draftPersonaReply({
+        persona,
+        email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, sender_name: m.sender_name, sender_email: m.sender_email },
+        context: {
+          communityName: m.community ? m.community.name : null,
+          contactName: (m.resolved_contact && m.resolved_contact.full_name) || m.sender_name || null,
+          propertyAddress: m.resolved_property ? m.resolved_property.street_address : null,
+          vendorName: m.resolved_vendor ? m.resolved_vendor.name : null,
+        },
         notes, currentDraft,
       });
       return res.json({ ...draft, covers });
@@ -771,11 +793,13 @@ router.post('/:id/send', express.json(), async (req, res) => {
     const ccList = String((req.body || {}).cc || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).join(', ');
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
     const { data: m, error } = await supabase.from('email_messages')
-      .select('sender_email, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, extracted, community:community_id(name)')
+      .select('persona, sender_email, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, extracted, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
-    const persona = personaFor(m);
+    // Stored persona (content routing) wins over the mailbox picker, so a Kat /
+    // Amanda / Reese reply sends from the right address in the right voice.
+    const persona = req.body.persona || m.persona || personaFor(m);
     // No classification block on send: Ed reviews and approves every outgoing
     // reply himself (admin-only), and explicitly wants to reply to any email,
     // including internal/staff mail (the staff-interaction loop). The human gate
@@ -814,6 +838,10 @@ router.post('/:id/send', express.json(), async (req, res) => {
       const { buildAmandaEmail } = require('../lib/email/amanda_signature');
       ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName));
       fromMailbox = graphSend.AMANDA_MAILBOX; senderLabel = 'Amanda Albright (Bedrock AI)';
+    } else if (persona === 'reese') {
+      const { buildReeseEmail } = require('../lib/email/reese_signature');
+      ({ html, attachments } = buildReeseEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.REESE_MAILBOX; senderLabel = 'Reese Calloway (Bedrock AI)';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
       ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
