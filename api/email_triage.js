@@ -963,7 +963,7 @@ router.post('/:id/add-to-payables', express.json(), async (req, res) => {
 router.post('/:id/to-gl', express.json(), async (req, res) => {
   try {
     const { data: m } = await supabase.from('email_messages')
-      .select('id, graph_id, subject, sender_name, community_id, resolved_vendor_id, extracted, received_at')
+      .select('id, graph_id, subject, sender_name, ai_summary, body_full, body_preview, community_id, resolved_vendor_id, extracted, received_at')
       .eq('id', req.params.id).maybeSingle();
     if (!m) return res.status(404).json({ error: 'not_found' });
     if (!m.community_id) return res.status(400).json({ error: 'no_community', detail: 'Link this email to a community first — the entry has to post to the right association books.' });
@@ -977,11 +977,17 @@ router.post('/:id/to-gl', express.json(), async (req, res) => {
     // is why the registry carries the GL account, not just the community. The
     // classifier can't map "First Billing Services" to water. (Ed 2026-07-16.)
     let glAccountId = b.gl_account_id || null;
-    if (!glAccountId && m.extracted && m.extracted.community_hint) {
+    if (!glAccountId) {
       try {
-        const { resolveCommunityByAlias } = require('../lib/email/community_alias');
-        const a = await resolveCommunityByAlias(m.extracted.community_hint);
-        if (a && a.gl_account_id && a.community_id === m.community_id) glAccountId = a.gl_account_id;
+        const { resolveCommunityByAlias, detectUtilityDistrict } = require('../lib/email/community_alias');
+        // Try the community_hint first, then the DISTRICT named in the body —
+        // these confirmations often carry an empty hint but say "BARKER CYPRESS
+        // M.U.D." in the body, which is what maps to the water account.
+        const district = detectUtilityDistrict(`${m.subject || ''}\n${m.ai_summary || ''}\n${m.body_full || m.body_preview || ''}`);
+        for (const hint of [m.extracted && m.extracted.community_hint, district].filter(Boolean)) {
+          const a = await resolveCommunityByAlias(hint);
+          if (a && a.gl_account_id && a.community_id === m.community_id) { glAccountId = a.gl_account_id; break; }
+        }
       } catch (_) { /* alias table may not be applied yet */ }
     }
     const desc = `Emma: ${String(m.subject || m.sender_name || 'Vendor payment').slice(0, 110)}`;
