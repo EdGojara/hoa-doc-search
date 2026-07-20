@@ -158,6 +158,9 @@ router.get('/:communityId/rolling-income-statement', async (req, res) => {
     const th = data.months.map((m) => `<th class="${zero.has(m) ? 'z' : ''}">${mLabel(m)}</th>`).join('');
     const rowHtml = (r) => `<tr><td class="acct">${esc(r.account_number)} ${esc(r.account_name)}</td>${data.months.map((m) => `<td class="${zero.has(m) ? 'z' : ''}">${r.by_month[m] ? fmt(r.by_month[m]) : '·'}</td>`).join('')}<td class="tot">${fmt(r.total_cents)}</td></tr>`;
     const totRow = (label, key, cls) => `<tr class="${cls}"><td class="acct">${label}</td>${data.monthly.map((m) => `<td class="${zero.has(m.month) ? 'z' : ''}">${fmt(m[key])}</td>`).join('')}<td class="tot">${fmt(data.monthly.reduce((s, m) => s + m[key], 0))}</td></tr>`;
+    const groupHtml = (grp) => `<tr class="grp"><td class="acct">${esc(grp.group)}</td>${data.months.map(() => '<td></td>').join('')}<td></td></tr>`
+      + grp.accounts.map(rowHtml).join('')
+      + `<tr class="sub"><td class="acct">Total ${esc(grp.group)}</td>${data.months.map((m) => `<td class="${zero.has(m) ? 'z' : ''}">${fmt(grp.subtotal_by_month[m] || 0)}</td>`).join('')}<td class="tot">${fmt(grp.subtotal_total)}</td></tr>`;
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(comm ? comm.name : '')} — Rolling ${months}-Month Income Statement</title>
 <style>body{font:13px -apple-system,Arial,sans-serif;color:#0B1D34;margin:24px;}h1{font-size:18px;margin:0 0 2px;}.sub{color:#6b7a8d;margin:0 0 16px;}
 .wrap{overflow-x:auto;border:1px solid #e3e8ef;border-radius:8px;}table{border-collapse:collapse;white-space:nowrap;}
@@ -165,16 +168,17 @@ th,td{padding:6px 10px;text-align:right;border-bottom:1px solid #eef2f6;font-var
 th{background:#0B1D34;color:#fff;position:sticky;top:0;font-weight:600;}td.acct,th:first-child{text-align:left;position:sticky;left:0;background:#fff;min-width:230px;}
 th:first-child{background:#0B1D34;}.tot{font-weight:700;background:#f7f9fc;}.z{background:#fdecec;color:#b42318;}
 tr.section td{background:#eef2f6;font-weight:700;} tr.net td{border-top:2px solid #0B1D34;font-weight:700;background:#f0f6ff;}
+tr.grp td.acct{font-weight:700;padding-top:12px;color:#0B1D34;} tr.sub td{font-weight:600;border-top:1px solid #cbd5e1;background:#f7f9fc;} td.acct{padding-left:18px;} tr.grp td.acct,tr.sub td.acct,tr.section td.acct{padding-left:10px;}
 .flag{margin:14px 0;padding:10px 14px;border-radius:8px;background:#fdecec;color:#b42318;font-weight:600;} .ok{background:#eaf7ee;color:#1a7f37;}</style></head>
 <body><h1>${esc(comm ? comm.name : '')} — Rolling ${months}-Month Income Statement</h1>
 <p class="sub">Through ${esc(data.to_date)} · each column a month · red = no activity posted</p>
 <div class="${data.zero_months.length ? 'flag' : 'flag ok'}">${data.zero_months.length ? `${data.zero_months.length} month(s) with zero activity: ${data.zero_months.map(mLabel).join(', ')} — pre-cutover boundary if before the community's migration, otherwise a data gap to investigate.` : 'Every month has activity — no gaps.'}</div>
 <div class="wrap"><table><thead><tr><th>Account</th>${th}<th class="tot">Total</th></tr></thead><tbody>
 <tr class="section"><td class="acct">REVENUE</td>${data.months.map(() => '<td></td>').join('')}<td></td></tr>
-${data.revenue.map(rowHtml).join('')}
+${data.revenue_groups.map(groupHtml).join('')}
 ${totRow('Total Revenue', 'revenue_cents', 'section')}
 <tr class="section"><td class="acct">EXPENSE</td>${data.months.map(() => '<td></td>').join('')}<td></td></tr>
-${data.expense.map(rowHtml).join('')}
+${data.expense_groups.map(groupHtml).join('')}
 ${totRow('Total Expense', 'expense_cents', 'section')}
 ${totRow('NET INCOME', 'net_cents', 'net')}
 </tbody></table></div></body></html>`;
