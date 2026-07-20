@@ -206,9 +206,9 @@ function normalizeMonths(monthly, annual) {
 
   const { data: existing } = await sb.from('community_budgets').select('id').eq('community_id', comm.id).eq('fiscal_year', fiscalYear).maybeSingle();
   let budgetId = existing && existing.id;
-  if (budgetId) { await sb.from('budget_line_items').delete().eq('budget_id', budgetId); await sb.from('community_budgets').update({ status: 'draft', source_filename: path.basename(FILE) }).eq('id', budgetId); }
+  if (budgetId) { await sb.from('budget_line_items').delete().eq('budget_id', budgetId); await sb.from('community_budgets').update({ status: 'approved', source_filename: path.basename(FILE) }).eq('id', budgetId); }
   else {
-    const { data: b, error } = await sb.from('community_budgets').insert({ community_id: comm.id, fiscal_year: fiscalYear, status: 'draft', source_filename: path.basename(FILE) }).select('id').single();
+    const { data: b, error } = await sb.from('community_budgets').insert({ community_id: comm.id, fiscal_year: fiscalYear, status: 'approved', source_filename: path.basename(FILE) }).select('id').single();
     if (error) { console.error('budget insert failed:', error.message); process.exit(1); }
     budgetId = b.id;
   }
