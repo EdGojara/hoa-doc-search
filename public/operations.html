@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operations — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width:1180px; margin:0 auto; padding:20px 18px 60px; }
+  .head { display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; border-bottom:3px solid var(--gold); padding-bottom:12px; margin-bottom:16px; }
+  h1 { margin:0; color:var(--navy); font-size:22px; }
+  .sub { color:var(--muted); font-size:12.5px; margin-top:4px; }
+  .stats { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+  .stat { background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px 14px; min-width:104px; }
+  .stat b { display:block; font-size:20px; color:var(--navy); }
+  .stat span { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .stat.alert b { color:#b91c1c; }
+  .controls { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; }
+  .chip { border:1px solid var(--line); background:#fff; border-radius:20px; padding:6px 14px; font-size:12.5px; cursor:pointer; color:var(--muted); }
+  .chip.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+  select, input[type=text] { padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; background:#fff; }
+  .btn { border:none; border-radius:9px; padding:9px 16px; font-size:13.5px; font-weight:700; cursor:pointer; white-space:nowrap; }
+  .btn.gold { background:var(--gold); color:var(--navy); }
+  .btn.ghost { background:#fff; color:var(--navy); border:1px solid var(--line); }
+  .btn.sm { padding:5px 11px; font-size:12px; border-radius:6px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:13px 15px; margin-bottom:10px; }
+  .card.stalled { border-left:4px solid #b91c1c; }
+  .card.act { border-left:4px solid var(--gold); }
+  .ctop { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+  .title { font-weight:700; color:var(--navy); font-size:15px; cursor:pointer; }
+  .title:hover { text-decoration:underline; }
+  .meta { color:var(--muted); font-size:12px; margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .badge { display:inline-block; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; padding:2px 8px; border-radius:20px; white-space:nowrap; }
+  .stage { background:#e0f2fe; color:#075985; }
+  .stage.board_deciding { background:#fef3c7; color:#92400e; } .stage.approved,.stage.contract_signed { background:#ede9fe; color:#5b21b6; }
+  .stage.work_started { background:#dcfce7; color:#166534; } .stage.work_complete,.stage.closed { background:#f1f5f9; color:#475569; }
+  .stage.on_hold,.stage.cancelled { background:#fee2e2; color:#991b1b; }
+  .cat { background:#f1f5f9; color:#334155; }
+  .prio-urgent { background:#fee2e2; color:#991b1b; } .prio-high { background:#ffedd5; color:#9a3412; }
+  .days { font-size:12px; font-weight:700; }
+  .days.red { color:#b91c1c; } .days.amber { color:#b45309; } .days.ok { color:var(--muted); }
+  .action { margin-top:9px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .actpill { background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:20px; padding:4px 11px; font-size:12px; font-weight:600; }
+  .note { font-size:12.5px; color:#33414f; margin-top:8px; background:#f8fafc; border:1px solid var(--line); border-radius:7px; padding:7px 10px; }
+  .rowbtns { display:flex; gap:6px; flex-wrap:wrap; }
+  .empty { text-align:center; color:var(--muted); padding:44px; }
+  .modal { display:none; position:fixed; inset:0; background:rgba(11,29,52,0.5); z-index:2000; align-items:flex-start; justify-content:center; padding:36px 16px; overflow:auto; }
+  .sheet { background:#fff; border-radius:14px; max-width:640px; width:100%; padding:20px 22px; }
+  .sheet h2 { margin:0 0 4px; color:var(--navy); font-size:19px; }
+  .field { margin-top:12px; } .field label { display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:4px; text-transform:uppercase; letter-spacing:.03em; }
+  .field input, .field select, .field textarea { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:14px; font-family:inherit; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .tl { margin-top:6px; } .tl-item { border-left:2px solid var(--line); padding:4px 0 10px 12px; margin-left:4px; position:relative; }
+  .tl-item:before { content:''; position:absolute; left:-5px; top:7px; width:8px; height:8px; border-radius:50%; background:var(--gold); }
+  .tl-when { font-size:11px; color:var(--muted); } .tl-note { font-size:13px; margin-top:2px; }
+  .x { float:right; cursor:pointer; color:var(--muted); font-size:22px; line-height:1; border:none; background:none; }
+  @media (max-width:560px){ .grid2 { grid-template-columns:1fr; } }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="wrap">
+  <a href="/" onclick="if(document.referrer&&history.length>1){history.back();return false;}" style="display:inline-flex;align-items:center;gap:6px;color:#5a7390;text-decoration:none;font-size:13px;font-weight:600;margin-bottom:12px;">&larr; Back to trustEd</a>
+  <div class="head">
+    <div>
+      <h1>Operations</h1>
+      <div class="sub">Every community project through its lifecycle — bid &rarr; board &rarr; contract &rarr; work &rarr; done — and the actions waiting on you. <strong>Nothing sits.</strong></div>
+    </div>
+    <button class="btn gold" onclick="openNew()">&#43; New project</button>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="controls">
+    <select id="communitySel" onchange="reload()"><option value="">All communities</option></select>
+    <div class="chips" id="views">
+      <div class="chip active" data-view="attention" onclick="setView('attention')">&#9873; Needs action</div>
+      <div class="chip" data-view="open" onclick="setView('open')">Open projects</div>
+      <div class="chip" data-view="all" onclick="setView('all')">Everything</div>
+    </div>
+    <input type="text" id="q" placeholder="Search title / vendor / asset" oninput="debounced()" style="flex:1;min-width:160px;">
+  </div>
+  <div id="list"><div class="empty">Loading&hellip;</div></div>
+</div>
+
+<!-- New / edit project -->
+<div class="modal" id="editModal">
+  <div class="sheet">
+    <button class="x" onclick="closeModal('editModal')">&times;</button>
+    <h2 id="editTitle">New project</h2>
+    <input type="hidden" id="f_id">
+    <div class="field"><label>Community</label><select id="f_community"></select></div>
+    <div class="field"><label>Title</label><input type="text" id="f_title" placeholder="e.g. Soccer Field Irrigation Repair"></div>
+    <div class="grid2">
+      <div class="field"><label>Category</label><select id="f_category"></select></div>
+      <div class="field"><label>Priority</label><select id="f_priority"></select></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Vendor</label><input type="text" id="f_vendor" placeholder="Vendor name"></div>
+      <div class="field"><label>Asset / location</label><input type="text" id="f_asset" placeholder="e.g. clubhouse pool pump"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Stage</label><select id="f_stage"></select></div>
+      <div class="field"><label>Next action</label><select id="f_action"></select></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Estimated cost ($)</label><input type="text" id="f_est" placeholder="0.00"></div>
+      <div class="field"><label>Funding</label><select id="f_funding"></select></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Target completion</label><input type="text" id="f_target" placeholder="YYYY-MM-DD"></div>
+      <div class="field"><label>Action owner</label><input type="text" id="f_owner" placeholder="manager / board / staff"></div>
+    </div>
+    <div class="field"><label>Description / scope</label><textarea id="f_desc" rows="3"></textarea></div>
+    <div class="field"><label>Status note</label><textarea id="f_note" rows="2" placeholder="Latest update — shows on the card"></textarea></div>
+    <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn ghost" onclick="closeModal('editModal')">Cancel</button>
+      <button class="btn gold" id="saveBtn" onclick="saveProject()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Detail + timeline -->
+<div class="modal" id="detailModal">
+  <div class="sheet">
+    <button class="x" onclick="closeModal('detailModal')">&times;</button>
+    <div id="detailBody"></div>
+  </div>
+</div>
+
+<script>
+const API = '/api/operations';
+let _supa = null, af = null, VIEW = 'attention', COMMS = [];
+const CATS = ['irrigation','landscaping','pool','electrical','fencing','roofing','concrete','tree','painting','gate_access','signage','amenity','general'];
+const STAGES = ['requested','bid_requested','bid_received','board_deciding','approved','contract_signed','work_started','work_complete','closed','on_hold','cancelled'];
+const STAGE_LABEL = {requested:'Requested',bid_requested:'Bid requested',bid_received:'Bid received',board_deciding:'Board deciding',approved:'Approved',contract_signed:'Contract signed',work_started:'Work started',work_complete:'Work complete',closed:'Closed',on_hold:'On hold',cancelled:'Cancelled'};
+const ACTIONS = ['none','request_bid','follow_up_bid','approve_scope','board_vote','sign_contract','schedule_work','approve_invoice','pay_vendor','follow_up_vendor'];
+const ACTION_LABEL = {none:'— none —',request_bid:'Request a bid',follow_up_bid:'Follow up on bid',approve_scope:'Approve scope',board_vote:'Board vote needed',sign_contract:'Sign contract',schedule_work:'Schedule work',approve_invoice:'Approve invoice',pay_vendor:'Pay vendor',follow_up_vendor:'Follow up with vendor'};
+const esc = (s) => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = (c) => c==null?'':'$'+(Number(c)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const dollarsToCents = (s) => { const n=parseFloat(String(s||'').replace(/[^0-9.]/g,'')); return Number.isFinite(n)&&n>0?Math.round(n*100):null; };
+
+function daysLabel(d, stalled){ if(d==null) return ''; const cls = stalled?'red':(d>=5?'amber':'ok'); return '<span class="days '+cls+'">'+d+'d in stage'+(stalled?' &#9888;':'')+'</span>'; }
+function showComingSoon(){ document.querySelector('.wrap').innerHTML='<div class="empty" style="margin-top:60px;"><h1 style="color:var(--navy);">Operations</h1><p>This workspace is in beta and limited to the account owner for now.</p></div>'; }
+
+let _t=null; function debounced(){ clearTimeout(_t); _t=setTimeout(reload,280); }
+function setView(v){ VIEW=v; document.querySelectorAll('#views .chip').forEach(c=>c.classList.toggle('active',c.dataset.view===v)); reload(); }
+
+async function loadSummary(){
+  const cid=document.getElementById('communitySel').value;
+  try{
+    const r=await af(API+'/summary'+(cid?'?community_id='+cid:'')); const j=await r.json();
+    document.getElementById('stats').innerHTML =
+      '<div class="stat alert"><b>'+(j.attention||0)+'</b><span>Needs action</span></div>'+
+      '<div class="stat"><b>'+(j.open||0)+'</b><span>Open projects</span></div>'+
+      '<div class="stat alert"><b>'+(j.stalled||0)+'</b><span>Stalled</span></div>'+
+      '<div class="stat"><b>'+(j.pipeline_cents?money(j.pipeline_cents):'$0')+'</b><span>Pipeline value</span></div>';
+  }catch(_){}
+}
+
+async function reload(){
+  await loadSummary();
+  const cid=document.getElementById('communitySel').value, q=document.getElementById('q').value.trim();
+  const params=new URLSearchParams({view:VIEW}); if(cid)params.set('community_id',cid); if(q)params.set('q',q);
+  const list=document.getElementById('list');
+  try{
+    const r=await af(API+'?'+params.toString()); const j=await r.json();
+    const rows=j.projects||[];
+    if(!rows.length){ list.innerHTML='<div class="empty">'+(VIEW==='attention'?'&#127881; Nothing waiting on you. Every open project is moving.':'No projects here yet. Click <b>+ New project</b> to add one.')+'</div>'; return; }
+    list.innerHTML=rows.map(cardHtml).join('');
+  }catch(e){ list.innerHTML='<div class="empty">Couldn’t load projects.</div>'; }
+}
+
+function cardHtml(p){
+  const cls=p.stalled?'stalled':(p.needs_action?'act':'');
+  const prio=(p.priority==='urgent'||p.priority==='high')?'<span class="badge prio-'+p.priority+'">'+p.priority+'</span>':'';
+  const cost=p.approved_cost_cents?('Approved '+money(p.approved_cost_cents)):(p.estimated_cost_cents?('Est. '+money(p.estimated_cost_cents)):'');
+  return '<div class="card '+cls+'">'+
+    '<div class="ctop"><div style="min-width:0;">'+
+      '<div class="title" onclick="openDetail(\''+p.id+'\')">'+esc(p.title)+'</div>'+
+      '<div class="meta">'+
+        '<span class="badge stage '+p.stage+'">'+esc(p.stage_label)+'</span>'+
+        '<span class="badge cat">'+esc(p.category)+'</span>'+ prio +
+        (p.community_name?'<span>&#127968; '+esc(p.community_name)+'</span>':'')+
+        (p.vendor_display?'<span>&#128736; '+esc(p.vendor_display)+'</span>':'')+
+        (cost?'<span>&#128176; '+esc(cost)+'</span>':'')+
+        (p.target_date?'<span>&#127937; due '+esc(p.target_date)+'</span>':'')+
+        daysLabel(p.days_in_stage,p.stalled)+
+      '</div>'+
+    '</div>'+
+    '<div class="rowbtns">'+
+      (p.stage!=='closed'&&p.stage!=='cancelled'?'<button class="btn ghost sm" onclick="advance(\''+p.id+'\')">Advance &rarr;</button>':'')+
+      '<button class="btn ghost sm" onclick="openEdit(\''+p.id+'\')">Edit</button>'+
+    '</div></div>'+
+    (p.needs_action&&p.next_action_label?'<div class="action"><span class="actpill">&#9873; '+esc(p.next_action_label)+(p.next_action_owner?' &middot; '+esc(p.next_action_owner):'')+'</span>'+(p.next_action_note?'<span style="font-size:12px;color:var(--muted);">'+esc(p.next_action_note)+'</span>':'')+'</div>':'')+
+    (p.status_note?'<div class="note">'+esc(p.status_note)+'</div>':'')+
+  '</div>';
+}
+
+async function advance(id){
+  if(!confirm('Advance this project to the next stage?')) return;
+  try{ const r=await af(API+'/'+id+'/advance',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); if(!r.ok){const j=await r.json();alert(j.detail||j.error||'Failed');return;} reload(); }catch(_){ alert('Failed to advance.'); }
+}
+
+// ---- New / edit ----
+function fillSelect(el,opts,labels){ el.innerHTML=opts.map(o=>'<option value="'+o+'">'+esc(labels?labels[o]:o)+'</option>').join(''); }
+function openNew(){
+  document.getElementById('editTitle').textContent='New project';
+  document.getElementById('f_id').value='';
+  fillSelect(document.getElementById('f_community'),COMMS.map(c=>c.id),Object.fromEntries(COMMS.map(c=>[c.id,c.name])));
+  fillSelect(document.getElementById('f_category'),CATS);
+  fillSelect(document.getElementById('f_priority'),['low','normal','high','urgent']);
+  fillSelect(document.getElementById('f_stage'),STAGES,STAGE_LABEL);
+  fillSelect(document.getElementById('f_action'),ACTIONS,ACTION_LABEL);
+  fillSelect(document.getElementById('f_funding'),['','operating','reserve','special_assessment','unknown'],{'':'—',operating:'Operating',reserve:'Reserve',special_assessment:'Special assessment',unknown:'Unknown'});
+  ['f_title','f_vendor','f_asset','f_est','f_target','f_owner','f_desc','f_note'].forEach(i=>document.getElementById(i).value='');
+  document.getElementById('f_category').value='general'; document.getElementById('f_priority').value='normal'; document.getElementById('f_stage').value='requested'; document.getElementById('f_action').value='request_bid';
+  document.getElementById('editModal').style.display='flex';
+}
+async function openEdit(id){
+  const r=await af(API+'/'+id); const {project:p}=await r.json();
+  openNew(); document.getElementById('editTitle').textContent='Edit project'; document.getElementById('f_id').value=p.id;
+  document.getElementById('f_community').value=p.community_id;
+  document.getElementById('f_title').value=p.title||''; document.getElementById('f_category').value=p.category||'general';
+  document.getElementById('f_priority').value=p.priority||'normal'; document.getElementById('f_vendor').value=p.vendor_display||p.vendor_name||'';
+  document.getElementById('f_asset').value=p.asset||''; document.getElementById('f_stage').value=p.stage;
+  document.getElementById('f_action').value=(p.next_action||'none'); document.getElementById('f_funding').value=p.funding_source||'';
+  document.getElementById('f_est').value=p.estimated_cost_cents?(p.estimated_cost_cents/100).toFixed(2):'';
+  document.getElementById('f_target').value=p.target_date||''; document.getElementById('f_owner').value=p.next_action_owner||'';
+  document.getElementById('f_desc').value=p.description||''; document.getElementById('f_note').value='';
+}
+async function saveProject(){
+  const id=document.getElementById('f_id').value;
+  const body={
+    community_id:document.getElementById('f_community').value,
+    title:document.getElementById('f_title').value.trim(),
+    category:document.getElementById('f_category').value,
+    priority:document.getElementById('f_priority').value,
+    vendor_name:document.getElementById('f_vendor').value.trim()||null,
+    asset:document.getElementById('f_asset').value.trim()||null,
+    stage:document.getElementById('f_stage').value,
+    next_action:document.getElementById('f_action').value,
+    funding_source:document.getElementById('f_funding').value||null,
+    estimated_cost_cents:dollarsToCents(document.getElementById('f_est').value),
+    target_date:document.getElementById('f_target').value.trim()||null,
+    next_action_owner:document.getElementById('f_owner').value.trim()||null,
+    description:document.getElementById('f_desc').value.trim()||null,
+  };
+  const noteVal=document.getElementById('f_note').value.trim(); if(noteVal) body.status_note=noteVal;
+  if(!body.title){ alert('Give the project a title.'); return; }
+  if(!body.community_id){ alert('Pick a community.'); return; }
+  const btn=document.getElementById('saveBtn'); btn.disabled=true; btn.textContent='Saving…';
+  try{
+    const url=id?(API+'/'+id):API; const method=id?'PATCH':'POST';
+    if(id&&noteVal) body.note=noteVal;
+    const r=await af(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok){ const j=await r.json(); alert(j.detail||j.error||'Save failed'); btn.disabled=false; btn.textContent='Save'; return; }
+    closeModal('editModal'); reload();
+  }catch(_){ alert('Save failed.'); } finally { btn.disabled=false; btn.textContent='Save'; }
+}
+
+// ---- Detail + timeline ----
+async function openDetail(id){
+  const r=await af(API+'/'+id); const {project:p,events}=await r.json();
+  const cost=p.approved_cost_cents?('Approved '+money(p.approved_cost_cents)):(p.estimated_cost_cents?('Estimated '+money(p.estimated_cost_cents)):'—');
+  document.getElementById('detailBody').innerHTML=
+    '<button class="x" onclick="closeModal(\'detailModal\')">&times;</button>'+
+    '<h2>'+esc(p.title)+'</h2>'+
+    '<div class="meta" style="margin-bottom:10px;">'+
+      '<span class="badge stage '+p.stage+'">'+esc(p.stage_label)+'</span>'+
+      '<span class="badge cat">'+esc(p.category)+'</span>'+
+      (p.community_name?'<span>&#127968; '+esc(p.community_name)+'</span>':'')+
+      (p.vendor_display?'<span>&#128736; '+esc(p.vendor_display)+'</span>':'')+
+      daysLabel(p.days_in_stage,p.stalled)+'</div>'+
+    (p.needs_action&&p.next_action_label?'<div class="action" style="margin-bottom:10px;"><span class="actpill">&#9873; Next: '+esc(p.next_action_label)+(p.next_action_owner?' &middot; '+esc(p.next_action_owner):'')+'</span></div>':'')+
+    '<div style="font-size:13px;color:#33414f;line-height:1.5;">'+
+      (p.description?esc(p.description)+'<br>':'')+
+      '<b>Cost:</b> '+esc(cost)+(p.funding_source?' ('+esc(p.funding_source)+')':'')+'<br>'+
+      (p.asset?'<b>Asset:</b> '+esc(p.asset)+'<br>':'')+
+      (p.target_date?'<b>Target completion:</b> '+esc(p.target_date)+'<br>':'')+
+    '</div>'+
+    '<div style="margin:14px 0;display:flex;gap:8px;flex-wrap:wrap;">'+
+      (p.stage!=='closed'&&p.stage!=='cancelled'?'<button class="btn gold sm" onclick="advance(\''+p.id+'\');closeModal(\'detailModal\')">Advance to next stage &rarr;</button>':'')+
+      '<button class="btn ghost sm" onclick="closeModal(\'detailModal\');openEdit(\''+p.id+'\')">Edit details</button>'+
+    '</div>'+
+    '<div class="field"><label>Add an update</label><div style="display:flex;gap:8px;"><input type="text" id="d_note" placeholder="e.g. Board approved at 7/22 meeting" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:8px;"><button class="btn ghost sm" onclick="addNote(\''+p.id+'\')">Add</button></div></div>'+
+    '<h3 style="font-size:14px;color:var(--navy);margin:16px 0 6px;">Timeline</h3>'+
+    '<div class="tl">'+((events||[]).map(e=>
+      '<div class="tl-item"><div class="tl-when">'+new Date(e.created_at).toLocaleString()+(e.by_user?' &middot; '+esc(e.by_user):'')+'</div>'+
+      '<div class="tl-note">'+(e.event_type==='stage_change'?('&#128257; '+esc(STAGE_LABEL[e.from_stage]||e.from_stage||'')+' &rarr; <b>'+esc(STAGE_LABEL[e.to_stage]||e.to_stage||'')+'</b>. '):'')+esc(e.note||'')+'</div></div>'
+    ).join('')||'<div style="color:var(--muted);font-size:12px;">No history yet.</div>')+'</div>';
+  document.getElementById('detailModal').style.display='flex';
+}
+async function addNote(id){
+  const el=document.getElementById('d_note'); const note=el.value.trim(); if(!note) return;
+  try{ const r=await af(API+'/'+id+'/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note})}); if(r.ok){ openDetail(id); reload(); } }catch(_){}
+}
+function closeModal(id){ document.getElementById(id).style.display='none'; }
+[ 'editModal','detailModal' ].forEach(id=>document.getElementById(id).addEventListener('click',e=>{ if(e.target.id===id) closeModal(id); }));
+
+(async function boot(){
+  try{
+    const cfg=await (await fetch('/api/auth/config')).json();
+    if(!cfg||!cfg.enabled||!window.supabase) return showComingSoon();
+    _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    const {data:{session}}=await _supa.auth.getSession();
+    if(!session||!session.access_token) return showComingSoon();
+    af=async(u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{ const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token)h.Authorization='Bearer '+s.access_token; }catch(_){ } return fetch(u,Object.assign({},o,{headers:h})); };
+    const meRes=await fetch('/api/me',{headers:{Authorization:'Bearer '+session.access_token}});
+    const me=meRes.ok?(await meRes.json()).user:null;
+    if(!me||me.role!=='admin') return showComingSoon();
+    try{ const r=await af(API+'/communities'); COMMS=(await r.json()).communities||[]; const sel=document.getElementById('communitySel'); COMMS.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.name; sel.appendChild(o); }); }catch(_){}
+    reload();
+  }catch(e){ showComingSoon(); }
+})();
+</script>
+</body>
+</html>
