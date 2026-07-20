@@ -3227,9 +3227,39 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         const community = await getCommunity(vio.community_id);
         if (!community) { skipped.push({ id: L.id, reason: 'community not found' }); continue; }
 
+        // Render the letter at ITS OWN stage (from the interaction TYPE), not the
+        // violation's possibly-advanced current_stage: an approved courtesy_1
+        // letter must print AS a courtesy_1 even if the case later moved on.
+        // (Ed 2026-07-20 — Still Creek letters wouldn't print.)
+        const LETTER_STAGE = { letter_courtesy_1: 'courtesy_1', letter_courtesy_2: 'courtesy_2', letter_209: 'certified_209' };
+        const renderStage = LETTER_STAGE[L.type] || vio.current_stage;
+
+        // §209 "documented prior contact" for a courtesy_2 / certified letter is
+        // the prior NOTICES sent for THIS CASE — the same PROPERTY under the
+        // category's confirmed ALIAS GROUP, because one enforcement case can span
+        // more than one violation ROW: a re-observation under a sibling category
+        // continues the case (the alias-aware "one case per property+category"
+        // model). Looking only at this exact violation_id missed the courtesy_1
+        // mailed on the predecessor row, so every legitimately-escalated
+        // courtesy_2 failed to print. (Ed 2026-07-20 — Still Creek + Eaglewood.)
+        let catGroup = [vio.primary_category_id];
+        try {
+          const { expandCategoryToAliases } = require('../lib/enforcement/category_aliases');
+          const g = await expandCategoryToAliases(vio.primary_category_id);
+          if (g && g.length) catGroup = g;
+        } catch (_) { /* alias table optional — fall back to the exact category */ }
+        const { data: priorSent } = await supabase.from('interactions')
+          .select('type, sent_at, postmark_date, delivery_method, violations:violation_id(primary_category_id)')
+          .eq('property_id', vio.property_id).in('type', letterTypes)
+          .not('sent_at', 'is', null).neq('id', L.id)
+          .order('sent_at', { ascending: true });
+        const priorNoticeRows = (priorSent || [])
+          .filter((p) => p.violations && catGroup.includes(p.violations.primary_category_id))
+          .map((p) => ({ opened_at: p.postmark_date || p.sent_at, current_stage: LETTER_STAGE[p.type], mail_type: p.delivery_method }));
+
         // Cure-by date anchored to the postmark date + per-community cure days
-        const cureDays = vio.current_stage === 'courtesy_1' ? Number(community.letter_cure_days_courtesy_1 || 20)
-                       : vio.current_stage === 'courtesy_2' ? Number(community.letter_cure_days_courtesy_2 || 20)
+        const cureDays = renderStage === 'courtesy_1' ? Number(community.letter_cure_days_courtesy_1 || 20)
+                       : renderStage === 'courtesy_2' ? Number(community.letter_cure_days_courtesy_2 || 20)
                        : Number(community.letter_cure_days_certified_209 || 30);
         const cureBy = new Date(postmarkDate.getTime() + cureDays * 24 * 60 * 60 * 1000).toISOString();
 
@@ -3334,7 +3364,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         const pdfBuffer = await renderViolationLetterPdf({
           violation: {
             id: vio.id,
-            current_stage: vio.current_stage,
+            current_stage: renderStage,
             cure_period_ends_at: cureBy,
             opened_at: vio.opened_at,
             category_label: catRow && catRow.label,
@@ -3349,7 +3379,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
           community,
           observation,
           governing_doc: govDoc,
-          prior_violations: priors || [],
+          prior_violations: priorNoticeRows,
           wide_photo_buffer: wideBuffer,
           photo_buffer: closeUpBuffer,
           community_logo_buffer: communityLogoBuffer,
@@ -3392,8 +3422,8 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             status: 'sent',
             page_count: letterPageCount,
             letter_fee_cents:
-              vio.current_stage === 'courtesy_1' ? Number(community.letter_fee_courtesy_1_cents || 0)
-              : vio.current_stage === 'courtesy_2' ? Number(community.letter_fee_courtesy_2_cents || 2500)
+              renderStage === 'courtesy_1' ? Number(community.letter_fee_courtesy_1_cents || 0)
+              : renderStage === 'courtesy_2' ? Number(community.letter_fee_courtesy_2_cents || 2500)
               : Number(community.letter_fee_certified_209_cents || 3500),
           })
           .eq('id', L.id);
