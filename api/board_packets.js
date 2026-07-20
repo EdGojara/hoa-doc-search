@@ -85,8 +85,9 @@ function getCommunityAssets(communityName) {
 function resolveCommunityAssets(community) {
   const fromMap = getCommunityAssets(community && community.name);
   const uploadedLogo = community && community.logo_signed_url ? community.logo_signed_url : null;
+  const uploadedHero = community && community.hero_signed_url ? community.hero_signed_url : null;
   return {
-    hero: fromMap.hero,
+    hero: uploadedHero || fromMap.hero,
     logo: uploadedLogo || fromMap.logo,
     legal_suffix: fromMap.legal_suffix,
     has_custom_logo: !!uploadedLogo,
@@ -3755,6 +3756,22 @@ router.get('/:id/preview', async (req, res) => {
       } catch (e) {
         console.warn('[board_packets] logo enrichment skipped:', e.message);
       }
+      // Hero cover photo — prefer an uploaded role='hero' photo (📸 Photos tab)
+      // over the hard-coded COMMUNITY_ASSETS map, so any association sets its own
+      // cover from the UI without a code change. (Ed 2026-07-20.)
+      try {
+        const { data: heroRow } = await supabase
+          .from('community_photos')
+          .select('storage_bucket, storage_path')
+          .eq('community_id', packet.community.id).eq('role', 'hero').eq('active', true)
+          .order('sort_order', { ascending: true }).order('uploaded_at', { ascending: false })
+          .limit(1).maybeSingle();
+        if (heroRow && heroRow.storage_path) {
+          const { data: signed } = await supabase.storage
+            .from(heroRow.storage_bucket || 'documents').createSignedUrl(heroRow.storage_path, 60 * 60 * 24);
+          if (signed) packet.community.hero_signed_url = signed.signedUrl;
+        }
+      } catch (e) { console.warn('[board_packets] hero enrichment skipped:', e.message); }
     }
 
     const { data: sections } = await supabase
