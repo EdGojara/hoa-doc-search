@@ -305,7 +305,7 @@ router.post('/:id/link', express.json(), async (req, res) => {
     if (vendor_id !== undefined) patch.resolved_vendor_id = vendor_id;
     if (community_id !== undefined) patch.community_id = community_id;
 
-    const { data: msg } = await supabase.from('email_messages').select('sender_email, extracted').eq('id', req.params.id).maybeSingle();
+    const { data: msg } = await supabase.from('email_messages').select('sender_email, sender_name, extracted').eq('id', req.params.id).maybeSingle();
     const { data, error } = await supabase.from('email_messages').update(patch).eq('id', req.params.id).select(SELECT).single();
     if (error) throw error;
 
@@ -323,6 +323,32 @@ router.post('/:id/link', express.json(), async (req, res) => {
       }
     }
 
+    // Learn the ACCOUNT-NUMBER -> community map + CASCADE to sibling emails from
+    // the same account, so linking ONE Inframark/Starnik water-district
+    // confirmation links all of them, and every future one auto-links on ingest
+    // via resolveMapping. Precise (exact account #), never a broad sender sweep.
+    // (Ed 2026-07-20.)
+    let cascaded = 0;
+    const acct = msg && msg.extracted && msg.extracted.account_number;
+    if (community_id && acct) {
+      try {
+        const { learnMapping } = require('../lib/ap/vendor_community');
+        await learnMapping({
+          accountNumber: acct, vendorId: vendor_id || (data && data.resolved_vendor_id) || null,
+          vendorName: (msg && msg.sender_name) || null, communityId: community_id, glAccountId: null,
+          taughtByUserId: req.admin && req.admin.user ? req.admin.user.id : null,
+          taughtByName: req.admin ? req.admin.full_name : null,
+        });
+      } catch (e) { console.warn('[email_triage] learn account map skipped:', e.message); }
+      try {
+        const { data: sibs } = await supabase.from('email_messages')
+          .update({ community_id, resolution_confidence: 'high' })
+          .eq('extracted->>account_number', String(acct)).is('community_id', null).neq('id', req.params.id)
+          .select('id');
+        cascaded = (sibs || []).length;
+      } catch (e) { console.warn('[email_triage] cascade link skipped:', e.message); }
+    }
+
     // Learning loop: capture the sender's email + the phone in their signature
     // onto the confirmed contact (contact_methods — the canonical store the
     // resolver reads, so the NEXT email auto-links, and we keep their number).
@@ -334,7 +360,7 @@ router.post('/:id/link', express.json(), async (req, res) => {
         learned = added.length > 0;
       } catch (e) { console.warn('[email_triage] enrich on link failed:', e.message); }
     }
-    res.json({ message: data, learned });
+    res.json({ message: data, learned, cascaded });
   } catch (err) {
     console.error('[email_triage] link failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

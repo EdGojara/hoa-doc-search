@@ -134,7 +134,7 @@ async function linkCommunity(msgId){
   const cid = sel && sel.value;
   if(!cid){ return; }
   const r = await af(`${API}/${msgId}/link`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ community_id: cid })});
-  if(r.ok){ loadStats(); loadList(); } else { const j=await r.json().catch(()=>({})); alert('Could not link: '+(j.detail||j.error||'failed')); }
+  if(r.ok){ const j=await r.json().catch(()=>({})); if(j.cascaded>0){ alert(`Linked. Also matched ${j.cascaded} other email${j.cascaded===1?'':'s'} from the same account — they're ready to record now too.`); } loadStats(); loadList(); } else { const j=await r.json().catch(()=>({})); alert('Could not link: '+(j.detail||j.error||'failed')); }
 }
 
 let coversByMsg = {};   // messageId -> [{id, subject}] other emails this reply covers
