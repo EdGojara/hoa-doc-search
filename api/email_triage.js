@@ -321,7 +321,7 @@ router.post('/:id/link', express.json(), async (req, res) => {
     if (vendor_id !== undefined) patch.resolved_vendor_id = vendor_id;
     if (community_id !== undefined) patch.community_id = community_id;
 
-    const { data: msg } = await supabase.from('email_messages').select('sender_email, sender_name, extracted').eq('id', req.params.id).maybeSingle();
+    const { data: msg } = await supabase.from('email_messages').select('sender_email, sender_name, subject, ai_summary, body_full, body_preview, extracted').eq('id', req.params.id).maybeSingle();
     const { data, error } = await supabase.from('email_messages').update(patch).eq('id', req.params.id).select(SELECT).single();
     if (error) throw error;
 
@@ -363,6 +363,39 @@ router.post('/:id/link', express.json(), async (req, res) => {
           .select('id');
         cascaded = (sibs || []).length;
       } catch (e) { console.warn('[email_triage] cascade link skipped:', e.message); }
+    }
+
+    // Utility-DISTRICT learning: a water/MUD bill names its district in the body
+    // ("BARKER CYPRESS M.U.D."), and that district maps to ONE community even
+    // though each meter has its own account number. Learn the district->community
+    // alias, and cascade to unlinked siblings that either name the same district
+    // OR share a service (meter) address — so linking one Barker Cypress bill
+    // links them all and routes every future one. (Ed 2026-07-20: "Barker Cypress
+    // MUD is Lakes of Pine Forest ... have emma learn from this.")
+    if (community_id) {
+      try {
+        const { detectUtilityDistrict, learnCommunityAlias: learnAlias, normalizeServiceStreet } = require('../lib/email/community_alias');
+        const selfText = `${(msg && msg.subject) || ''}\n${(msg && msg.ai_summary) || ''}\n${(msg && msg.body_full) || (msg && msg.body_preview) || ''}\n${(msg && msg.extracted && msg.extracted.community_hint) || ''}`;
+        const district = detectUtilityDistrict(selfText);
+        const selfStreets = new Set(((msg && msg.extracted && msg.extracted.addresses) || []).map(normalizeServiceStreet).filter(Boolean));
+        if (district) { try { await learnAlias({ hint: district, communityId: community_id, aliasType: 'billing_entity', createdBy: reviewed_by || 'staff' }); } catch (_) {} }
+        if (district || selfStreets.size) {
+          const key = district ? district.toLowerCase().replace(/\s*mud$/, '').replace(/[^a-z0-9]+/g, ' ').trim() : null;
+          const { data: pool } = await supabase.from('email_messages')
+            .select('id, subject, ai_summary, body_full, body_preview, extracted')
+            .is('community_id', null).neq('id', req.params.id).limit(300);
+          const toLink = (pool || []).filter((s) => {
+            const txt = `${s.subject || ''} ${s.ai_summary || ''} ${s.body_full || s.body_preview || ''} ${(s.extracted && s.extracted.community_hint) || ''}`.toLowerCase();
+            if (key && txt.includes(key)) return true;
+            const streets = ((s.extracted && s.extracted.addresses) || []).map(normalizeServiceStreet);
+            return streets.some((st) => st && selfStreets.has(st));
+          }).map((s) => s.id);
+          if (toLink.length) {
+            await supabase.from('email_messages').update({ community_id, resolution_confidence: 'high' }).in('id', toLink);
+            cascaded += toLink.length;
+          }
+        }
+      } catch (e) { console.warn('[email_triage] district cascade skipped:', e.message); }
     }
 
     // Learning loop: capture the sender's email + the phone in their signature
