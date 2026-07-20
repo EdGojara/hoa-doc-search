@@ -1035,20 +1035,32 @@ router.post('/vendor-process', express.json(), async (req, res) => {
           results.push({ id: m.id, label, action: 'recorded_paid', method: cls.method, amount_cents: cents });
         } else if (cls.disposition === 'payable') {
           if (!m.has_attachments || !m.graph_id) { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'reads as a payable but has no attached bill to load' }); continue; }
-          const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
-          const pdfs = (await fetchAllAttachmentBuffers(m.mailbox, m.graph_id)).filter((f) => f.isPdf);
-          if (!pdfs.length) { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'no PDF found in the attachments' }); continue; }
-          let loaded = 0, dup = 0;
-          for (const pdf of pdfs) {
-            const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '' });
-            if (out && out.outcome === 'loaded') loaded += 1;
-            else if (out && out.outcome === 'held_suspected_duplicate') dup += 1;
-          }
-          if (loaded || dup) {
+          // Pick the ONE invoice PDF (metadata-first: don't download 24 jobsite
+          // photos; skip the W9/ACH forms attached alongside the bill).
+          const { fetchInvoicePdf } = require('../lib/email/graph_attachments');
+          const picked = await fetchInvoicePdf(m.mailbox, m.graph_id, { hintNumber: (m.extracted && m.extracted.account_number) || null });
+          if (picked.status === 'stale') { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'the email was filed since it arrived — click Pull inbox, then try again' }); continue; }
+          if (picked.status !== 'ok') { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'no invoice PDF found in the attachments (bill may be in the email body)' }); continue; }
+          const out = await autoIntake({ buffer: picked.buffer, filename: picked.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '' });
+          const oc = out && out.outcome;
+          if (oc === 'loaded' || oc === 'held_suspected_duplicate') {
             await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: b.reviewed_by || 'emma-bulk', reviewed_at: now }).eq('id', m.id);
-            results.push({ id: m.id, label, action: 'loaded_payable', loaded, duplicates: dup });
+            results.push({ id: m.id, label, action: 'loaded_payable', loaded: oc === 'loaded' ? 1 : 0, duplicates: oc === 'held_suspected_duplicate' ? 1 : 0 });
+          } else if (oc === 'blocked_duplicate') {
+            await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: b.reviewed_by || 'emma-bulk', reviewed_at: now }).eq('id', m.id);
+            results.push({ id: m.id, label, action: 'loaded_payable', loaded: 0, duplicates: 1, note: 'already in Payables' });
           } else {
-            results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'couldn\'t auto-load — vendor/community/amount not resolvable from the bill' });
+            // Surface the SPECIFIC blocker autoIntake reported, not a catch-all.
+            const rmap = {
+              not_an_invoice: 'the attached PDF doesn\'t read as an invoice (photo, W9, or the bill is in the email body)',
+              'no invoice total': 'couldn\'t read a dollar total on the invoice PDF',
+              'no invoice date': 'no invoice date on the bill',
+              'vendor not matched': 'vendor isn\'t in your directory yet',
+              'association not matched': 'couldn\'t tell which community this bill is for',
+              'missing vendor or community': 'missing a vendor or community match',
+            };
+            const why = rmap[out && out.reason] || rmap[oc] || (out && out.reason) || 'couldn\'t auto-load from the bill';
+            results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: why });
           }
         } else {
           results.push({ id: m.id, label, action: 'skipped_review', reason: cls.reason });
