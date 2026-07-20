@@ -220,6 +220,9 @@ function renderSectionStandaloneHtml({ packet, section, embed = false }) {
   if (section.section_key === 'ar_aging') {
     return renderArAgingStandaloneHtml({ packet, section, embed });
   }
+  if (section.section_key === 'legal_referral') {
+    return renderLegalReferralStandaloneHtml({ packet, section, embed });
+  }
   if (section.section_key === 'delinquency') {
     return renderDelinquencyStandaloneHtml({ packet, section, embed });
   }
@@ -1558,6 +1561,31 @@ function renderDelinquencyStandaloneHtml({ packet, section, embed = false }) {
 }
 
 // ----------------------------------------------------------------------------
+// Accounts recommended for legal referral — the board votes which to send to
+// counsel. Board-ONLY. Native from the AR subledger: seriously delinquent, aged,
+// not already with an attorney.
+// ----------------------------------------------------------------------------
+function renderLegalReferralStandaloneHtml({ packet, section, embed = false }) {
+  const d = section.input_data || {};
+  const accounts = Array.isArray(d.accounts) ? d.accounts : [];
+  const total = Number(d.total || 0);
+  const asOf = d.as_of ? fmtDateShort(d.as_of) : (packet.period_label || '');
+  const bodyHtml = `
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="label">Recommended for referral</div><div class="value">${accounts.length}</div>${asOf ? `<div class="delta">As of ${esc(asOf)}</div>` : ''}</div>
+      <div class="kpi-card"><div class="label">Total balance</div><div class="value">${fmtMoney(total, { precision: 0 })}</div></div>
+      <div class="kpi-card"><div class="label">Threshold</div><div class="value" style="font-size:20px;">${fmtMoney(Number(d.threshold || 0), { precision: 0 })}+ · 90d+</div></div>
+    </div>
+    <p style="color:var(--ink-muted); font-size:12.5px; margin:6px 0 10px;">Seriously delinquent, aged accounts <strong>not yet with counsel</strong>. The board votes on which to refer to the attorney.</p>
+    ${accounts.length ? `
+      <table class="data-table"><thead><tr><th>Address</th><th>Owner</th><th class="num">Balance</th><th class="num">Oldest</th><th>Current status</th><th style="text-align:center;">Refer?</th></tr></thead>
+      <tbody>${accounts.map((r) => `<tr><td><strong>${esc(r.address || '—')}</strong></td><td>${esc(r.owner || '—')}</td><td class="num" style="color:var(--bad); font-weight:700;">${fmtMoney(Number(r.balance) || 0)}</td><td class="num">${r.oldest_days != null ? `${r.oldest_days}d` : '—'}</td><td>${r.status ? `<span style="background:var(--rule); padding:2px 8px; border-radius:99px; font-size:11px;">${esc(r.status)}</span>` : '<span style="color:var(--ink-muted);">not in collections</span>'}</td><td style="text-align:center; color:var(--ink-muted); font-size:16px;">☐</td></tr>`).join('')}</tbody></table>`
+      : `<p style="color:var(--ink-muted); font-size:13px;">No accounts meet the referral threshold as of ${esc(asOf)}.</p>`}
+  `;
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
+}
+
+// ----------------------------------------------------------------------------
 // AP / invoice approval — open vendor payables the board is approving to pay.
 // Native GL data (via computeApAging), aged, grouped by vendor.
 // ----------------------------------------------------------------------------
@@ -2265,7 +2293,7 @@ ${(() => {
     minutesData.prior_meeting_date
   );
   // Section keys that have polished embed-mode renderers.
-  const POLISHED_KEYS = new Set(['balance_sheet', 'income_statement', 'financials', 'ar_aging', 'drv', 'delinquency', 'ap_approval', 'reserve_activity', 'bank_rec']);
+  const POLISHED_KEYS = new Set(['balance_sheet', 'income_statement', 'financials', 'ar_aging', 'drv', 'delinquency', 'ap_approval', 'reserve_activity', 'bank_rec', 'legal_referral']);
   const hasPolished = it.hasData && POLISHED_KEYS.has(sec.section_key);
   return `<div class="page interior">
   ${pageHeader}
@@ -3206,7 +3234,7 @@ const FINANCIAL_NATIVE = ['ar_aging', 'delinquency', 'ap_approval', 'reserve_act
 // dispatched inside it. This MUST equal engine.nativeSectionKeys(); the registry
 // test asserts it, so a native section can never be added to the profile without
 // a matching handler here (the gap that made readiness over-promise).
-const AUTO_FILL_NATIVE_KEYS = ['agenda', 'prior_minutes', 'balance_sheet', 'income_statement', 'drv', 'arc_decisions', ...FINANCIAL_NATIVE];
+const AUTO_FILL_NATIVE_KEYS = ['agenda', 'prior_minutes', 'balance_sheet', 'income_statement', 'drv', 'arc_decisions', 'legal_referral', ...FINANCIAL_NATIVE];
 
 // Build the input_data payload for a native FINANCIAL section straight from the
 // trustEd GL / bank-rec / reserve modules. Single source so the packet
@@ -3422,6 +3450,19 @@ async function autoFillSection(packetId, sectionKey) {
       const { data: accs } = await supabase.from('acc_decisions').select('decision_type, status, homeowner_address, project_summary, created_at').eq('community_id', cid).gte('created_at', periodStart).order('created_at', { ascending: false }).limit(200);
       input_data = { period_start: periodStart, period_end: cutoff, count: (accs || []).length, items: (accs || []).map((a) => ({ type: a.decision_type, status: a.status, address: a.homeowner_address, summary: a.project_summary, date: a.created_at })), source: 'trusted_acc' };
       pulled = { count: (accs || []).length };
+    } else if (sectionKey === 'legal_referral') {
+      // Accounts the board should VOTE to send to counsel: seriously delinquent,
+      // aged, and NOT already with an attorney. Board-only section.
+      const { computeArAging } = require('./gl');
+      const rpt = await computeArAging(cid, cutoff);
+      const isLegal = (st) => /attorney|legal|bankrupt|counsel/i.test(st || '');
+      const THRESH_CENTS = 50000;   // $500 — a sensible default; board-tunable later
+      const candidates = (rpt.homeowners || [])
+        .filter((h) => !isLegal(h.collection_status) && Number(h.total) >= THRESH_CENTS && (h.oldest_days || 0) > 90)
+        .sort((a, b) => b.total - a.total).slice(0, 50)
+        .map((h) => ({ address: h.street_address, owner: h.owner_name, balance: Math.round(Number(h.total)) / 100, oldest_days: h.oldest_days, status: (h.collection_status && h.collection_status !== 'none') ? h.collection_status : null }));
+      input_data = { as_of: cutoff, threshold: THRESH_CENTS / 100, count: candidates.length, total: candidates.reduce((s, a) => s + a.balance, 0), accounts: candidates, source: 'trusted_gl' };
+      pulled = { count: candidates.length };
     } else if (FINANCIAL_NATIVE.includes(sectionKey)) {
       const built = await buildFinancialSectionData(cid, sectionKey, cutoff);
       if (built && built._status) return built;   // e.g. bank_rec has nothing to show
