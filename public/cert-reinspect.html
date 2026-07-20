@@ -93,7 +93,7 @@
 <div class="summary" id="summary">
   <span class="chip"><span class="dot open"></span>Needs check <b id="c-open">–</b></span>
   <span class="chip"><span class="dot nc"></span>Not cured <b id="c-nc">–</b></span>
-  <span class="chip"><span class="dot cu"></span>Cured <b id="c-cu">–</b></span>
+  <span class="chip"><span class="dot cu"></span>Looks resolved <b id="c-cu">–</b></span>
   <span class="chip warn hide" id="c-geo-chip">⚠ No location <b id="c-geo">0</b></span>
 </div>
 
@@ -118,7 +118,7 @@
   <img class="preview" id="s-preview" alt="Captured photo">
   <div class="actions">
     <button class="btn nc" id="btn-nc">Not cured<small>Take updated photo</small></button>
-    <button class="btn cu" id="btn-cu">Cured<small>Close the case</small></button>
+    <button class="btn cu" id="btn-cu">Looks resolved<small>Flag for review · stays open</small></button>
   </div>
 </div>
 
@@ -232,7 +232,8 @@ $('camera').onchange = (e) => {
   submitCheck('not_cured', f);
 };
 $('btn-cu').onclick = () => {
-  if (!confirm('Mark this violation CURED and close the case? This removes it from the board list.')) return;
+  // Non-destructive: flags the case as looking resolved for later review.
+  // Does NOT close the violation — we're still figuring out what's real.
   submitCheck('cured', null);
 };
 
@@ -247,17 +248,13 @@ async function submitCheck(result, photo){
     const r = await fetch('/api/enforcement/cert-reinspect/' + encodeURIComponent(current.violation_id) + '/check', { method:'POST', body: fd });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'save failed');
-    // update local state + pin
+    // update local state + pin. Nothing is closed — 'looks resolved' just
+    // recolors the dot green (flagged for review) and keeps it on the map.
     const it = items.find(x => x.violation_id === current.violation_id);
     if (it){ it.last_check = { result, checked_at: data.checked_at, has_photo: data.has_photo, notes: $('s-notes').value.trim() || null }; }
-    if (result === 'cured' && it){ // closed — drop it from the working set
-      if (markers[it.violation_id]){ map.removeLayer(markers[it.violation_id]); delete markers[it.violation_id]; }
-      items = items.filter(x => x.violation_id !== it.violation_id);
-    } else if (markers[current.violation_id] && it){
-      markers[current.violation_id].setIcon(icon(it));
-    }
+    if (markers[current.violation_id] && it){ markers[current.violation_id].setIcon(icon(it)); }
     recount();
-    toast(result === 'cured' ? 'Marked cured & closed ✓' : 'Logged not cured ✓');
+    toast(result === 'cured' ? 'Flagged for review ✓ (case stays open)' : 'Logged not cured ✓');
     closeSheet();
   } catch (e) { toast(e.message, true); $('btn-nc').disabled = false; $('btn-cu').disabled = false; }
 }

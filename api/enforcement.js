@@ -9923,22 +9923,13 @@ router.post('/cert-reinspect/:violationId/check', upload.single('photo'), async 
       return res.status(500).json({ error: safeErrorMessage(iErr) });
     }
 
-    // Cured → close the case. Not-cured leaves it at certified_209 for the board list.
-    let closed = false;
-    if (result === 'cured') {
-      const { error: uErr } = await supabase
-        .from('violations')
-        .update({
-          current_stage: 'cured',
-          current_stage_started_at: new Date().toISOString(),
-          resolved_at: new Date().toISOString(),
-        })
-        .eq('id', violationId);
-      if (uErr) return res.status(500).json({ error: safeErrorMessage(uErr) });
-      closed = true;
-    }
-
-    res.json({ ok: true, check_id: inserted.id, result, checked_at: inserted.checked_at, has_photo: !!photoPath, closed });
+    // NON-DESTRUCTIVE by design (Ed 2026-07-20: "let's not mark them cured yet,
+    // we need to figure out what's going on"). A 'cured' field observation is
+    // LOGGED for review but does NOT close the violation — a drive-by "looks
+    // resolved" can't yet distinguish a fixed issue from a case that was never
+    // valid, and closing would destroy the state we're trying to reconstruct.
+    // The case stays open; the check drops it off the board "not cured" list only.
+    res.json({ ok: true, check_id: inserted.id, result, checked_at: inserted.checked_at, has_photo: !!photoPath, closed: false });
   } catch (err) {
     console.error('[enforcement.cert-reinspect check]', err);
     res.status(500).json({ error: safeErrorMessage(err) });

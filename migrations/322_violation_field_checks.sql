@@ -5,8 +5,11 @@
 -- certified list carried over from Vantaca was never re-inspected, so nobody
 -- knew which were still real. This records a drive-by check per violation:
 -- "still not cured as of <date>" (with an updated photo as evidence) or
--- "cured" (which closes the case). The not-cured checks feed a BOARD-ONLY
--- "not cured as of" letter — never sent to the homeowner. (Ed 2026-07-20.)
+-- "looks resolved" (result='cured' — a field observation flagged for review;
+-- it does NOT close the violation, because a drive-by can't yet tell a fixed
+-- issue from a case that was never valid, and we're still reconstructing state).
+-- The not-cured checks feed a BOARD-ONLY "not cured as of" letter — never sent
+-- to the homeowner. (Ed 2026-07-20.)
 --
 -- Record ownership: association_record — it's evidence of the association's
 -- enforcement, part of the §209 file.
