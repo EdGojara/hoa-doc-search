@@ -24,6 +24,10 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // describe WHAT it does rather than invent a menu.
 const FEATURES = [
   {
+    situation: 'How do I get prior meeting minutes or an agenda into the platform, or into a board packet? Can I just email them to Paige?',
+    response: 'Yes — email Paige at paige@bedrocktx.com like you would a person: attach the minutes or agenda as a PDF (or paste the full text into the email body) and say what it is and which community, e.g. "please add this to Lakes of Pine Forest minutes." Paige reads the file, files it into the platform as a DRAFT record — minutes go to the Minutes module, agendas to the Agenda module — and replies confirming what she filed. It is a real association record from then on: searchable, exportable on takeover, and it flows into the board packet\'s Prior Minutes / Agenda section automatically for this meeting and every future one. A person still opens the Minutes/Agenda module to review and finalize it (drafts are never auto-finalized). If a file is a Word doc or a scan Paige can\'t read, she\'ll ask you to resend it as a PDF. You can also do it by hand in the Board Packets screen by dropping the PDF on the Prior Minutes or Agenda section card — but emailing Paige is the easy path.',
+  },
+  {
     situation: 'Where is Homeowner 360, how do I look up a homeowner or pull up a single address to see its violations in detail, the inspection photos, the letters we sent, the balance, and the history?',
     response: 'Homeowner 360 is a tab in the TOP navigation bar (labeled 360 with a person icon), or go to /admin/homeowner. It is NOT inside a property record. Search by name, address, email, or phone and one screen shows: open violations (each with the specific detail of what was seen, a Photo link to the inspection photo, and a Letter link to the exact letter that was mailed for that violation), balance + recent payments, ARC, pool access, all correspondence and calls, an AI recap, and a box at the bottom to add notes or upload emails to the record.',
   },
