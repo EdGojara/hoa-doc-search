@@ -107,6 +107,14 @@ function linkCell(m){
   if (m.triage_status==='linked' || (name && m.resolution_confidence==='high')){
     return `<span class="linked">✓ Linked to ${esc(name||'record')}</span><span class="lbl">${comm}</span>`;
   }
+  // A vendor / utility bill whose COMMUNITY is already resolved (e.g. North
+  // Mission Glen MUD -> Eaglewood via the alias registry) is correctly filed —
+  // there's no homeowner to match, so "No match found - link a community" was
+  // both wrong and confusing. Show it linked to the community, with a quiet
+  // re-map option in case the alias ever points at the wrong one. (Ed 2026-07-20)
+  if (m.community && !name && (m.persona==='emma' || String(m.classification||'').startsWith('vendor'))) {
+    return `<span class="linked">✓ ${esc(m.community.name)}</span> <span class="lbl">— wrong community? re-map:</span> ${communityPicker(m.id)}`;
+  }
   const cands = (m.resolution_candidates||[]).slice(0,4).map(c=>
     `<div class="cand" onclick='doLink("${m.id}", ${JSON.stringify(c).replace(/'/g,"&#39;")})'>${esc(c.label)} <span class="why">${esc(c.why||c.type)}</span></div>`).join('');
   // No auto-suggestion? Give a real community picker so "needs manual link"
