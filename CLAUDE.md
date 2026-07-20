@@ -656,6 +656,28 @@ Fixes landed in bedrock-vote commit `bc27f1b` and hoa-doc-search
 commit `dd1cb30`. The pagination helper is the canonical pattern; any
 new endpoint in either repo MUST use it.
 
+**NOW ENFORCED (2026-07-19).** This scar kept recurring (a trustEd-number
+backfill silently missed 123 Waterview rows the same day it was being
+re-documented) because it lived as prose, not a control — the exact
+meta-scar pattern. Two enforcements now:
+- **`lib/db/fetch_all.js`** — the ONE sanctioned "read all rows" helper
+  (`fetchAll` / `fetchAllQuery`). It ALWAYS paginates AND ALWAYS orders
+  (stable sort), so it's correct at any community size. Use it for every
+  "all rows for community/election/property X" read instead of a
+  hand-rolled `.range()` loop.
+- **`scripts/check_pagination.js`** (wired into `npm test`, run
+  `npm run test:pagination`) — **fails the build** on any `.range()` read
+  with no `.order()` in its chain (unordered pagination = pages drift =
+  rows duplicated AND skipped). A per-file baseline
+  (`scripts/pagination_baseline.json`) grandfathers the known legacy sites
+  and ratchets down; a NEW or regressed unordered `.range()` fails the
+  build. Deliberate single-page exception: `// paginate-ok` on the line.
+
+Note: PostgREST's cap is the DB's `db-max-rows` setting (default 1,000), not
+something a client `.limit()` can raise — `.limit(5000)` still returns 1,000.
+Raising `db-max-rows` in the Supabase dashboard adds margin but only pagination
+is size-independent, so the helper + check are the real fix.
+
 **Encode-Ed lens**: same shape as the Preview cross-check rule above —
 the system has to catch the truncation, not the operator's domain
 knowledge. Ed knew Waterview had 1171 voters; the franchise operator

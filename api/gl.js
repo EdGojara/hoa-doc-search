@@ -76,6 +76,7 @@ router.get('/:communityId/homeowner-ledgers', async (req, res) => {
         .from('v_owner_ar_balance')
         .select('property_id, open_charge_count, total_balance_cents, bucket_current_cents, bucket_1_30_cents, bucket_31_60_cents, bucket_61_90_cents, bucket_91_120_cents, bucket_over_120_cents, max_days_past_due')
         .eq('community_id', cid)
+        .order('property_id')
         .range(from, from + 999);
       if (error) throw error;
       bals.push(...(data || []));
@@ -90,6 +91,7 @@ router.get('/:communityId/homeowner-ledgers', async (req, res) => {
         .from('v_current_property_owners')
         .select('property_id, street_address, owner_name')
         .eq('community_id', cid)
+        .order('property_id')
         .range(pf, pf + 999);
       if (error) throw error;
       props.push(...(data || []));
@@ -158,7 +160,7 @@ async function _fetchAll(table, cols, filters) {
   const out = [];
   let from = 0;
   while (true) {
-    let q = supabase.from(table).select(cols).range(from, from + 999);
+    let q = supabase.from(table).select(cols).order(String(cols).split(',')[0].trim().split(" ")[0] || 'id').range(from, from + 999);
     for (const [k, v] of Object.entries(filters || {})) q = q.eq(k, v);
     const { data, error } = await q;
     if (error) throw error;
