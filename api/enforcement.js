@@ -3249,9 +3249,10 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
           if (g && g.length) catGroup = g;
         } catch (_) { /* alias table optional — fall back to the exact category */ }
         const { data: priorSent } = await supabase.from('interactions')
-          .select('type, sent_at, postmark_date, delivery_method, violations:violation_id(primary_category_id)')
+          .select('type, sent_at, postmark_date, delivery_method, quality_status, violations:violation_id(primary_category_id)')
           .eq('property_id', vio.property_id).in('type', letterTypes)
           .not('sent_at', 'is', null).neq('id', L.id)
+          .neq('quality_status', 'flagged')  // a wrong-address / flagged letter is NOT valid notice
           .order('sent_at', { ascending: true });
         const priorNoticeRows = (priorSent || [])
           .filter((p) => p.violations && catGroup.includes(p.violations.primary_category_id))
