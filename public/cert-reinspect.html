@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>§209 Field Re-Verification — Bedrock</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  :root{
+    --navy:#0B1D34; --gold:#C99A2E; --ink:#141b26; --muted:#5c6b7e; --line:#e4e2db;
+    --bg:#f6f4ee; --card:#fffefb; --crit:#B3261E; --critbg:#f7e2e0; --good:#2f6f4f; --goodbg:#e6f0ea;
+    --amber:#B7791F; --shadow:0 1px 2px rgba(11,29,52,.06),0 10px 30px rgba(11,29,52,.10);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --navy:#e8ecf3; --gold:#D9B24A; --ink:#e7ebf1; --muted:#96a3b5; --line:#26303e;
+      --bg:#0c1220; --card:#141c2b; --crit:#e06a5f; --critbg:#2c1414; --good:#7fc0a0; --goodbg:#132420; --amber:#e0b35e;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.4); }
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;margin:0;}
+  body{background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;display:flex;flex-direction:column;overflow:hidden;}
+
+  header{background:var(--navy);color:#fff;padding:10px 14px calc(10px + env(safe-area-inset-top)) 14px;padding-top:calc(10px + env(safe-area-inset-top));display:flex;align-items:center;gap:12px;flex-wrap:wrap;z-index:1200;}
+  @media (prefers-color-scheme:dark){ header{background:#0a1220;border-bottom:1px solid var(--line);} }
+  .brand{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);font-weight:700;}
+  .title{font-size:16px;font-weight:600;color:#fff;}
+  @media (prefers-color-scheme:dark){ .title{color:var(--ink);} }
+  select#comm{margin-left:auto;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:9px;padding:8px 10px;font-size:14px;max-width:52vw;}
+  @media (prefers-color-scheme:dark){ select#comm{background:#111a29;color:var(--ink);border-color:var(--line);} }
+  select#comm option{color:#000;}
+
+  .summary{display:flex;gap:8px;padding:8px 12px;background:var(--card);border-bottom:1px solid var(--line);overflow-x:auto;flex:0 0 auto;z-index:1100;}
+  .chip{flex:0 0 auto;background:var(--bg);border:1px solid var(--line);border-radius:20px;padding:6px 12px;font-size:12.5px;color:var(--muted);white-space:nowrap;font-weight:600;display:flex;align-items:center;gap:6px;}
+  .chip b{color:var(--ink);font-variant-numeric:tabular-nums;font-size:14px;}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block;}
+  .dot.open{background:var(--crit);} .dot.nc{background:#7a1610;border:2px solid var(--crit);} .dot.cu{background:var(--good);}
+  @media (prefers-color-scheme:dark){ .dot.nc{background:#3a0f0b;} }
+  .chip.warn{background:var(--critbg);border-color:transparent;color:var(--crit);}
+
+  #map{flex:1 1 auto;width:100%;background:var(--bg);}
+  .leaflet-container{background:var(--bg);font:inherit;}
+
+  /* red pins */
+  .pin{border-radius:50%;box-shadow:0 0 0 2px #fff,0 2px 6px rgba(0,0,0,.4);}
+  .pin.open{background:var(--crit);width:18px;height:18px;box-shadow:0 0 0 2px #fff,0 0 6px 2px rgba(179,38,30,.55),0 2px 6px rgba(0,0,0,.4);}
+  .pin.nc{background:#7a1610;width:20px;height:20px;border:3px solid #fff;}
+  .pin.cu{background:var(--good);width:14px;height:14px;opacity:.65;}
+
+  /* layer toggle */
+  .layers{position:absolute;top:10px;right:10px;z-index:1000;display:flex;flex-direction:column;gap:4px;}
+  .layers button{background:var(--card);border:1px solid var(--line);border-radius:8px;width:40px;height:40px;font-size:18px;cursor:pointer;box-shadow:var(--shadow);}
+  .layers button.on{background:var(--navy);color:#fff;border-color:var(--navy);}
+  @media (prefers-color-scheme:dark){ .layers button.on{background:var(--gold);color:#0c1220;} }
+
+  .fab{position:absolute;left:12px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:1000;background:var(--navy);color:#fff;border:0;border-radius:12px;padding:13px 16px;font-size:14px;font-weight:600;box-shadow:var(--shadow);cursor:pointer;display:flex;align-items:center;gap:8px;}
+  @media (prefers-color-scheme:dark){ .fab{background:var(--gold);color:#0c1220;} }
+  .fab:disabled{opacity:.5;}
+
+  /* bottom sheet */
+  .sheet{position:fixed;left:0;right:0;bottom:0;z-index:1400;background:var(--card);border-radius:18px 18px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.25);padding:14px 16px calc(18px + env(safe-area-inset-bottom));transform:translateY(110%);transition:transform .22s cubic-bezier(.2,.8,.2,1);max-height:76vh;overflow-y:auto;}
+  .sheet.open{transform:translateY(0);}
+  .grab{width:38px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 12px;}
+  .s-addr{font-size:19px;font-weight:700;color:var(--navy);} @media (prefers-color-scheme:dark){.s-addr{color:var(--ink);}}
+  .s-meta{font-size:13px;color:var(--muted);margin-top:3px;}
+  .s-badges{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 4px;}
+  .badge{font-size:12px;font-weight:700;padding:5px 10px;border-radius:8px;letter-spacing:.02em;}
+  .badge.days{background:var(--critbg);color:var(--crit);} .badge.cat{background:var(--bg);color:var(--ink);border:1px solid var(--line);}
+  .laststat{margin:12px 0;padding:10px 12px;border-radius:10px;font-size:13.5px;}
+  .laststat.nc{background:var(--critbg);color:var(--crit);} .laststat.cu{background:var(--goodbg);color:var(--good);}
+  .actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;}
+  .btn{border:0;border-radius:12px;padding:16px 12px;font-size:15px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;line-height:1.2;}
+  .btn small{font-weight:500;font-size:11.5px;opacity:.85;}
+  .btn.nc{background:var(--crit);color:#fff;} .btn.cu{background:var(--good);color:#fff;}
+  .btn:active{transform:scale(.98);} .btn:disabled{opacity:.55;}
+  .notes-in{width:100%;margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;background:var(--bg);color:var(--ink);resize:vertical;min-height:44px;}
+  .preview{margin-top:12px;width:100%;border-radius:10px;border:1px solid var(--line);display:none;}
+
+  .toast{position:fixed;left:50%;bottom:calc(26px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:1600;background:var(--navy);color:#fff;padding:11px 18px;border-radius:24px;font-size:13.5px;font-weight:600;box-shadow:var(--shadow);opacity:0;transition:opacity .2s;pointer-events:none;}
+  .toast.show{opacity:1;} .toast.err{background:var(--crit);}
+  @media (prefers-color-scheme:dark){ .toast{background:var(--gold);color:#0c1220;} }
+  .hide{display:none !important;}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="brand">Bedrock · Board Meeting Prep</div>
+    <div class="title">§209 Field Re-Verification</div>
+  </div>
+  <select id="comm"><option value="">Loading communities…</option></select>
+</header>
+
+<div class="summary" id="summary">
+  <span class="chip"><span class="dot open"></span>Needs check <b id="c-open">–</b></span>
+  <span class="chip"><span class="dot nc"></span>Not cured <b id="c-nc">–</b></span>
+  <span class="chip"><span class="dot cu"></span>Cured <b id="c-cu">–</b></span>
+  <span class="chip warn hide" id="c-geo-chip">⚠ No location <b id="c-geo">0</b></span>
+</div>
+
+<div style="position:relative;flex:1 1 auto;min-height:0;">
+  <div id="map"></div>
+  <div class="layers">
+    <button id="ly-hybrid" class="on" title="Hybrid">🛰️</button>
+    <button id="ly-sat" title="Satellite">📷</button>
+    <button id="ly-street" title="Street">🗺️</button>
+  </div>
+  <button class="fab" id="reportBtn" disabled>📋 Board report</button>
+</div>
+
+<!-- bottom sheet -->
+<div class="sheet" id="sheet">
+  <div class="grab"></div>
+  <div class="s-addr" id="s-addr">—</div>
+  <div class="s-meta" id="s-meta"></div>
+  <div class="s-badges" id="s-badges"></div>
+  <div id="s-last"></div>
+  <textarea class="notes-in" id="s-notes" placeholder="Optional note for the board (what you saw)…"></textarea>
+  <img class="preview" id="s-preview" alt="Captured photo">
+  <div class="actions">
+    <button class="btn nc" id="btn-nc">Not cured<small>Take updated photo</small></button>
+    <button class="btn cu" id="btn-cu">Cured<small>Close the case</small></button>
+  </div>
+</div>
+
+<input type="file" id="camera" accept="image/*" capture="environment" class="hide">
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let map, markers = {}, current = null, items = [], communityId = '';
+
+// ---- map + layers ----
+function initMap(){
+  map = L.map('map', { zoomControl:true, attributionControl:false }).setView([29.67,-95.67], 13);
+  const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom:20 });
+  const labels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom:20 });
+  const roads = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', { maxZoom:20 });
+  const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 });
+  const layers = {
+    hybrid: L.layerGroup([sat, roads, labels]),
+    sat: L.layerGroup([sat]),
+    street: L.layerGroup([street]),
+  };
+  layers.hybrid.addTo(map);
+  let activeLayer = 'hybrid';
+  const setLayer = (k) => {
+    if (k === activeLayer) return;
+    map.removeLayer(layers[activeLayer]); layers[k].addTo(map); activeLayer = k;
+    ['hybrid','sat','street'].forEach(x => $('ly-'+x).classList.toggle('on', x===k));
+  };
+  $('ly-hybrid').onclick = () => setLayer('hybrid');
+  $('ly-sat').onclick = () => setLayer('sat');
+  $('ly-street').onclick = () => setLayer('street');
+}
+
+function pinClass(it){
+  if (it.last_check && it.last_check.result === 'cured') return 'cu';
+  if (it.last_check && it.last_check.result === 'not_cured') return 'nc';
+  return 'open';
+}
+function icon(it){
+  const c = pinClass(it);
+  return L.divIcon({ className:'', html:`<div class="pin ${c}"></div>`, iconSize:[20,20], iconAnchor:[10,10] });
+}
+
+function renderPins(){
+  Object.values(markers).forEach(m => map.removeLayer(m)); markers = {};
+  const pts = [];
+  items.forEach(it => {
+    if (it.lat == null || it.lng == null) return;
+    const m = L.marker([it.lat, it.lng], { icon: icon(it) }).addTo(map);
+    m.on('click', () => openSheet(it));
+    markers[it.violation_id] = m;
+    pts.push([it.lat, it.lng]);
+  });
+  if (pts.length) map.fitBounds(pts, { padding:[40,40], maxZoom:17 });
+}
+
+function refreshCounts(data){
+  $('c-open').textContent = data.unchecked;
+  $('c-nc').textContent = data.not_cured;
+  $('c-cu').textContent = data.cured;
+  if (data.missing_geo > 0){ $('c-geo-chip').classList.remove('hide'); $('c-geo').textContent = data.missing_geo; }
+  else $('c-geo-chip').classList.add('hide');
+  $('reportBtn').disabled = data.not_cured === 0;
+}
+
+async function load(){
+  if (!communityId) return;
+  try {
+    const r = await fetch('/api/enforcement/cert-reinspect?community_id=' + encodeURIComponent(communityId));
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'load failed');
+    items = data.items || [];
+    renderPins(); refreshCounts(data);
+    if (!items.length) toast('No certified §209 cases for this community.');
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---- bottom sheet ----
+function openSheet(it){
+  current = it;
+  $('s-addr').textContent = it.address || 'Address on file';
+  $('s-meta').textContent = [it.owner_name, it.city].filter(Boolean).join(' · ') || '';
+  const badges = [];
+  if (it.days_at_certified != null) badges.push(`<span class="badge days">${it.days_at_certified} days at certified</span>`);
+  if (it.category) badges.push(`<span class="badge cat">${escapeHtml(it.category)}</span>`);
+  $('s-badges').innerHTML = badges.join('');
+  const lc = it.last_check;
+  $('s-last').innerHTML = lc
+    ? `<div class="laststat ${lc.result==='cured'?'cu':'nc'}">Last check: <b>${lc.result==='cured'?'Cured':'Not cured'}</b> on ${fmtDate(lc.checked_at)}${lc.has_photo?' · photo on file':''}. You can re-check to update it.</div>`
+    : '';
+  $('s-notes').value = (lc && lc.notes) || '';
+  $('s-preview').style.display = 'none'; $('s-preview').src = '';
+  pendingPhoto = null;
+  $('btn-nc').disabled = false; $('btn-cu').disabled = false;
+  $('sheet').classList.add('open');
+}
+function closeSheet(){ $('sheet').classList.remove('open'); current = null; }
+
+// ---- checks ----
+let pendingPhoto = null;
+$('btn-nc').onclick = () => { $('camera').click(); };   // capture photo first, then submit not_cured
+$('camera').onchange = (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  pendingPhoto = f;
+  const url = URL.createObjectURL(f);
+  $('s-preview').src = url; $('s-preview').style.display = 'block';
+  submitCheck('not_cured', f);
+};
+$('btn-cu').onclick = () => {
+  if (!confirm('Mark this violation CURED and close the case? This removes it from the board list.')) return;
+  submitCheck('cured', null);
+};
+
+async function submitCheck(result, photo){
+  if (!current) return;
+  $('btn-nc').disabled = true; $('btn-cu').disabled = true;
+  const fd = new FormData();
+  fd.append('result', result);
+  if ($('s-notes').value.trim()) fd.append('notes', $('s-notes').value.trim());
+  if (photo) fd.append('photo', photo, photo.name || 'photo.jpg');
+  try {
+    const r = await fetch('/api/enforcement/cert-reinspect/' + encodeURIComponent(current.violation_id) + '/check', { method:'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'save failed');
+    // update local state + pin
+    const it = items.find(x => x.violation_id === current.violation_id);
+    if (it){ it.last_check = { result, checked_at: data.checked_at, has_photo: data.has_photo, notes: $('s-notes').value.trim() || null }; }
+    if (result === 'cured' && it){ // closed — drop it from the working set
+      if (markers[it.violation_id]){ map.removeLayer(markers[it.violation_id]); delete markers[it.violation_id]; }
+      items = items.filter(x => x.violation_id !== it.violation_id);
+    } else if (markers[current.violation_id] && it){
+      markers[current.violation_id].setIcon(icon(it));
+    }
+    recount();
+    toast(result === 'cured' ? 'Marked cured & closed ✓' : 'Logged not cured ✓');
+    closeSheet();
+  } catch (e) { toast(e.message, true); $('btn-nc').disabled = false; $('btn-cu').disabled = false; }
+}
+
+function recount(){
+  const nc = items.filter(i => i.last_check && i.last_check.result==='not_cured').length;
+  const cu = items.filter(i => i.last_check && i.last_check.result==='cured').length;
+  const un = items.filter(i => !i.last_check).length;
+  $('c-open').textContent = un; $('c-nc').textContent = nc; $('c-cu').textContent = cu;
+  $('reportBtn').disabled = nc === 0;
+}
+
+$('reportBtn').onclick = () => {
+  if (!communityId) return;
+  window.open('/api/enforcement/cert-reinspect/board-letter?community_id=' + encodeURIComponent(communityId), '_blank');
+};
+
+// tap outside sheet closes it
+document.addEventListener('click', (e) => {
+  const sheet = $('sheet');
+  if (sheet.classList.contains('open') && !sheet.contains(e.target) && !e.target.closest('.leaflet-marker-icon')) closeSheet();
+}, true);
+
+// ---- helpers ----
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+function fmtDate(d){ if(!d) return ''; try{ return new Date(String(d).length<=10 ? d+'T12:00:00' : d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }catch(_){ return String(d);} }
+let toastT;
+function toast(msg, err){ const t=$('toast'); t.textContent=msg; t.classList.toggle('err',!!err); t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), err?4000:2200); }
+
+// ---- boot ----
+async function boot(){
+  initMap();
+  try {
+    const r = await fetch('/api/billing/communities');
+    const data = await r.json();
+    const sel = $('comm');
+    sel.innerHTML = '<option value="">Select community…</option>' +
+      (data.communities || []).map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    const last = localStorage.getItem('certReinspectCommunity');
+    if (last && (data.communities||[]).some(c=>c.id===last)){ sel.value = last; communityId = last; load(); }
+    sel.onchange = () => { communityId = sel.value; localStorage.setItem('certReinspectCommunity', communityId); load(); };
+  } catch (e) { toast('Could not load communities', true); }
+}
+boot();
+</script>
+</body>
+</html>

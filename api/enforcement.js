@@ -9749,4 +9749,338 @@ router.post('/violations/:violationId/cure-days', express.json(), async (req, re
   }
 });
 
-module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations, _draftLetterForBumpedViolation };
+// ===========================================================================
+// §209 CERTIFIED FIELD RE-VERIFICATION  (Ed 2026-07-20)
+// ---------------------------------------------------------------------------
+// The certified / pending-hearing list carried over from Vantaca was never
+// re-inspected in trustEd, so nobody knows which are still real. These
+// endpoints back a map (red dots) where staff drive by each certified case
+// and either VALIDATE (still not cured — snap an updated photo, stamp the
+// date) or DISMISS (cured — close the case). The not-cured checks feed a
+// BOARD-ONLY "not cured as of <date>" letter — never sent to the homeowner.
+// See migration 322 (violation_field_checks). Photos → 'documents' bucket.
+// ===========================================================================
+
+// A missing violation_field_checks table (migration 322 not applied yet) must
+// not blank the map — treat "table not found" as "no checks yet" on read paths.
+function _isMissingTable(err) {
+  const m = (err && (err.message || err.code || '')) + '';
+  return /could not find the table|does not exist|42P01|PGRST205/i.test(m);
+}
+
+// Paginated read of field checks (avoids the 1000-row PostgREST cap as checks
+// accumulate across inspection cycles). buildQuery() must return a FRESH query
+// with no order/range. Returns [] if the table isn't there yet (migration 322).
+async function _fetchAllFieldChecks(buildQuery) {
+  const out = [];
+  const PAGE = 1000;
+  for (let from = 0; from < 200000; from += PAGE) {
+    const { data, error } = await buildQuery().order('created_at', { ascending: false }).order('id', { ascending: false }).range(from, from + PAGE - 1);
+    if (error) {
+      if (_isMissingTable(error)) return [];
+      throw error;
+    }
+    out.push(...(data || []));
+    if (!data || data.length < PAGE) return out;
+  }
+  return out;
+}
+
+// GET /cert-reinspect?community_id=... — the certified set for the map.
+// Returns one pin per open certified §209 violation with coords, owner,
+// category, days at certified, and its latest field-check status.
+router.get('/cert-reinspect', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
+
+    // Open certified cases only (courtesy/cured/closed excluded by stage filter).
+    const { data: vios, error: vErr } = await supabase
+      .from('violations')
+      .select('id, property_id, current_stage, current_stage_started_at, opened_at, primary_category_id, enforcement_categories(label), property:property_id(street_address, unit, city, latitude, longitude)')
+      .eq('community_id', communityId)
+      .eq('current_stage', 'certified_209')
+      .limit(2000);
+    if (vErr) return res.status(500).json({ error: safeErrorMessage(vErr) });
+
+    const rows = vios || [];
+    const vioIds = rows.map((v) => v.id);
+    const propIds = [...new Set(rows.map((v) => v.property_id).filter(Boolean))];
+
+    // Latest field check per violation (most recent by created_at).
+    const latestCheck = {};
+    if (vioIds.length) {
+      const checks = await _fetchAllFieldChecks(() => supabase
+        .from('violation_field_checks')
+        .select('id, violation_id, result, checked_at, photo_storage_path, notes, created_at')
+        .in('violation_id', vioIds));
+      for (const c of checks) {
+        if (!latestCheck[c.violation_id]) latestCheck[c.violation_id] = c;
+      }
+    }
+
+    // Owner names (property → current owner) via the canonical view.
+    const ownerByProp = {};
+    if (propIds.length) {
+      const { data: owners, error: oErr } = await supabase
+        .from('v_current_property_owners')
+        .select('property_id, owner_name')
+        .in('property_id', propIds);
+      if (oErr) return res.status(500).json({ error: safeErrorMessage(oErr) });
+      for (const o of (owners || [])) {
+        if (o.property_id && !ownerByProp[o.property_id]) ownerByProp[o.property_id] = o.owner_name;
+      }
+    }
+
+    const today = new Date();
+    const items = rows.map((v) => {
+      const p = v.property || {};
+      const started = v.current_stage_started_at ? new Date(v.current_stage_started_at) : null;
+      const daysAtCertified = started ? Math.max(0, Math.round((today - started) / 86400000)) : null;
+      const lc = latestCheck[v.id] || null;
+      return {
+        violation_id: v.id,
+        property_id: v.property_id,
+        address: [p.street_address, p.unit].filter(Boolean).join(' '),
+        city: p.city || null,
+        lat: p.latitude != null ? Number(p.latitude) : null,
+        lng: p.longitude != null ? Number(p.longitude) : null,
+        owner_name: ownerByProp[v.property_id] || null,
+        category: (v.enforcement_categories && v.enforcement_categories.label) || null,
+        certified_since: v.current_stage_started_at || null,
+        days_at_certified: daysAtCertified,
+        last_check: lc ? { result: lc.result, checked_at: lc.checked_at, has_photo: !!lc.photo_storage_path, notes: lc.notes || null } : null,
+      };
+    });
+
+    const withGeo = items.filter((i) => i.lat != null && i.lng != null);
+    res.json({
+      community_id: communityId,
+      total: items.length,
+      placed: withGeo.length,
+      missing_geo: items.length - withGeo.length, // surfaced, never silently dropped
+      not_cured: items.filter((i) => i.last_check && i.last_check.result === 'not_cured').length,
+      cured: items.filter((i) => i.last_check && i.last_check.result === 'cured').length,
+      unchecked: items.filter((i) => !i.last_check).length,
+      items,
+    });
+  } catch (err) {
+    console.error('[enforcement.cert-reinspect list]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /cert-reinspect/:violationId/check — record a drive-by field check.
+// multipart: result ('not_cured'|'cured'), notes?, checked_by?, photo? (file).
+// not_cured  → stamps date + stores the updated photo as evidence.
+// cured      → also closes the violation (stage 'cured').
+router.post('/cert-reinspect/:violationId/check', upload.single('photo'), async (req, res) => {
+  try {
+    const violationId = req.params.violationId;
+    const result = (req.body.result || '').trim();
+    if (!['not_cured', 'cured'].includes(result)) {
+      return res.status(400).json({ error: "result must be 'not_cured' or 'cured'" });
+    }
+
+    const { data: v, error: vErr } = await supabase
+      .from('violations')
+      .select('id, community_id, property_id, current_stage')
+      .eq('id', violationId)
+      .maybeSingle();
+    if (vErr) return res.status(500).json({ error: safeErrorMessage(vErr) });
+    if (!v) return res.status(404).json({ error: 'violation_not_found' });
+
+    // Store the updated photo (evidence) if one was captured.
+    let photoPath = null;
+    if (req.file && req.file.buffer && req.file.buffer.length) {
+      const safeName = (req.file.originalname || 'photo.jpg')
+        .replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80) || 'photo.jpg';
+      photoPath = `field-checks/${violationId}/${Date.now()}_${safeName}`;
+      const { error: stErr } = await supabase.storage
+        .from('documents')
+        .upload(photoPath, req.file.buffer, { contentType: req.file.mimetype || 'image/jpeg', upsert: false });
+      if (stErr) {
+        console.error('[enforcement.cert-reinspect check] photo upload failed:', stErr.message);
+        return res.status(500).json({ error: `photo upload: ${safeErrorMessage(stErr)}` });
+      }
+    }
+
+    const { data: inserted, error: iErr } = await supabase
+      .from('violation_field_checks')
+      .insert({
+        violation_id: violationId,
+        community_id: v.community_id,
+        property_id: v.property_id,
+        result,
+        photo_storage_path: photoPath,
+        notes: req.body.notes || null,
+        checked_by: req.body.checked_by || 'staff',
+      })
+      .select('id, checked_at')
+      .single();
+    if (iErr) {
+      if (_isMissingTable(iErr)) return res.status(503).json({ error: 'Field-check storage not ready yet — apply migration 322 (violation_field_checks) in the Supabase SQL editor, then try again.' });
+      return res.status(500).json({ error: safeErrorMessage(iErr) });
+    }
+
+    // Cured → close the case. Not-cured leaves it at certified_209 for the board list.
+    let closed = false;
+    if (result === 'cured') {
+      const { error: uErr } = await supabase
+        .from('violations')
+        .update({
+          current_stage: 'cured',
+          current_stage_started_at: new Date().toISOString(),
+          resolved_at: new Date().toISOString(),
+        })
+        .eq('id', violationId);
+      if (uErr) return res.status(500).json({ error: safeErrorMessage(uErr) });
+      closed = true;
+    }
+
+    res.json({ ok: true, check_id: inserted.id, result, checked_at: inserted.checked_at, has_photo: !!photoPath, closed });
+  } catch (err) {
+    console.error('[enforcement.cert-reinspect check]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /cert-reinspect/board-letter?community_id=...&format=html — BOARD-ONLY
+// "not cured as of <date>" follow-up. Lists every certified case field-verified
+// still-not-cured, with the updated drive-by photo. NOT a homeowner letter.
+router.get('/cert-reinspect/board-letter', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
+
+    const { data: community } = await supabase
+      .from('communities').select('name').eq('id', communityId).maybeSingle();
+
+    // Latest not-cured check per violation still open at certified.
+    const checks = await _fetchAllFieldChecks(() => supabase
+      .from('violation_field_checks')
+      .select('id, violation_id, result, checked_at, photo_storage_path, notes, created_at, property_id')
+      .eq('community_id', communityId));
+
+    const latest = {};
+    for (const c of (checks || [])) { if (!latest[c.violation_id]) latest[c.violation_id] = c; }
+    const notCured = Object.values(latest).filter((c) => c.result === 'not_cured');
+
+    // Enrich with violation + property + owner.
+    const vioIds = notCured.map((c) => c.violation_id);
+    let byVio = {};
+    if (vioIds.length) {
+      const { data: vios } = await supabase
+        .from('violations')
+        .select('id, property_id, current_stage, enforcement_categories(label), property:property_id(street_address, unit, city)')
+        .in('id', vioIds)
+        .eq('current_stage', 'certified_209');
+      for (const v of (vios || [])) byVio[v.id] = v;
+    }
+    const propIds = [...new Set(notCured.map((c) => c.property_id).filter(Boolean))];
+    const ownerByProp = {};
+    if (propIds.length) {
+      const { data: owners } = await supabase
+        .from('v_current_property_owners').select('property_id, owner_name').in('property_id', propIds);
+      for (const o of (owners || [])) { if (o.property_id && !ownerByProp[o.property_id]) ownerByProp[o.property_id] = o.owner_name; }
+    }
+
+    const rows = [];
+    for (const c of notCured) {
+      const v = byVio[c.violation_id];
+      if (!v) continue; // case was closed/re-staged since the check — drop from the board list
+      const p = v.property || {};
+      let photoUrl = null;
+      if (c.photo_storage_path) {
+        const { data: signed } = await supabase.storage.from('documents').createSignedUrl(c.photo_storage_path, 3600);
+        photoUrl = signed && signed.signedUrl;
+      }
+      rows.push({
+        address: [p.street_address, p.unit].filter(Boolean).join(' '),
+        city: p.city || null,
+        owner_name: ownerByProp[c.property_id] || null,
+        category: (v.enforcement_categories && v.enforcement_categories.label) || 'Deed restriction violation',
+        checked_at: c.checked_at,
+        notes: c.notes || null,
+        photo_url: photoUrl,
+      });
+    }
+    rows.sort((a, b) => (a.address || '').localeCompare(b.address || ''));
+
+    if ((req.query.format || 'html') !== 'html') {
+      return res.json({ community: community && community.name, count: rows.length, rows });
+    }
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderNotCuredBoardLetter({ community: (community && community.name) || 'the Association', rows }));
+  } catch (err) {
+    console.error('[enforcement.cert-reinspect board-letter]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+function _fmtLongDate(d) {
+  if (!d) return '';
+  try {
+    return new Date(d + (String(d).length <= 10 ? 'T12:00:00' : '')).toLocaleDateString('en-US',
+      { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Chicago' });
+  } catch (_) { return String(d); }
+}
+
+function renderNotCuredBoardLetter({ community, rows }) {
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Chicago' });
+  const cards = rows.map((r, i) => `
+    <div class="case">
+      <div class="case-h">
+        <div class="idx">${i + 1}</div>
+        <div>
+          <div class="addr">${esc(r.address) || 'Address on file'}</div>
+          <div class="meta">${esc(r.category)}${r.owner_name ? ' · ' + esc(r.owner_name) : ''}${r.city ? ' · ' + esc(r.city) : ''}</div>
+        </div>
+        <div class="stamp">Not cured as of<br><b>${esc(_fmtLongDate(r.checked_at))}</b></div>
+      </div>
+      ${r.photo_url ? `<img class="photo" src="${esc(r.photo_url)}" alt="Drive-by photo — ${esc(r.address)}">`
+        : `<div class="nophoto">No updated photo captured on this drive-by.</div>`}
+      ${r.notes ? `<div class="notes">${esc(r.notes)}</div>` : ''}
+    </div>`).join('');
+
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(community)} — Not Cured Report</title>
+<style>
+  :root{--navy:#0B1D34;--gold:#C99A2E;--ink:#141b26;--muted:#5c6b7e;--line:#e4e2db;--bg:#f6f4ee;--card:#fffefb;--crit:#9B2C2C;--critbg:#f7e2e0;--serif:Georgia,'Times New Roman',serif;}
+  *{box-sizing:border-box;} body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  .page{max-width:900px;margin:0 auto;padding:38px 26px 60px;}
+  .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:700;}
+  h1{font-family:var(--serif);font-weight:600;color:var(--navy);font-size:30px;line-height:1.1;margin:8px 0 4px;}
+  .sub{color:var(--muted);font-size:13.5px;}
+  .rule{height:3px;background:linear-gradient(90deg,var(--gold),transparent);border:0;margin:16px 0 20px;border-radius:2px;}
+  .lock{background:var(--critbg);border:1px solid color-mix(in srgb,var(--crit) 35%,transparent);border-left:4px solid var(--crit);border-radius:10px;padding:12px 16px;margin-bottom:22px;font-size:13px;color:var(--ink);}
+  .lock b{color:var(--crit);}
+  .count{font-family:var(--serif);font-size:15px;color:var(--navy);margin:0 0 16px;}
+  .case{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 1px 2px rgba(11,29,52,.05),0 8px 20px rgba(11,29,52,.05);page-break-inside:avoid;}
+  .case-h{display:flex;align-items:flex-start;gap:12px;}
+  .idx{flex:0 0 28px;height:28px;border-radius:8px;background:var(--navy);color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums;}
+  .addr{font-weight:700;color:var(--navy);font-size:16px;}
+  .meta{font-size:12.5px;color:var(--muted);margin-top:2px;}
+  .stamp{margin-left:auto;text-align:right;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);white-space:nowrap;}
+  .stamp b{display:inline-block;margin-top:2px;font-size:13px;color:var(--crit);text-transform:none;letter-spacing:0;}
+  .photo{display:block;width:100%;max-height:420px;object-fit:cover;border-radius:9px;margin-top:12px;border:1px solid var(--line);}
+  .nophoto{margin-top:12px;padding:14px;border:1px dashed var(--line);border-radius:9px;color:var(--muted);font-size:13px;text-align:center;}
+  .notes{margin-top:10px;font-size:13.5px;color:var(--ink);background:#faf8f2;border-radius:8px;padding:10px 12px;}
+  .empty{background:var(--card);border:1px dashed var(--line);border-radius:12px;padding:28px;text-align:center;color:var(--muted);}
+  .foot{margin-top:28px;padding-top:14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);}
+  @media print{ body{background:#fff;} .case{box-shadow:none;} }
+</style></head><body>
+<div class="page">
+  <div class="eyebrow">Bedrock Association Management · Board Meeting Use Only</div>
+  <h1>Not Cured — Field Verification Report</h1>
+  <div class="sub">${esc(community)} &nbsp;·&nbsp; ${esc(today)}</div>
+  <hr class="rule">
+  <div class="lock"><b>● Board-confidential.</b> This is an internal field-verification summary for the board meeting. It is <b>not</b> a homeowner notice and must not be mailed to residents. Each case below was driven by staff and confirmed still not cured on the date stamped, with the updated photo as evidence.</div>
+  <p class="count">${rows.length} certified §209 ${rows.length === 1 ? 'case' : 'cases'} confirmed still not cured.</p>
+  ${rows.length ? cards : `<div class="empty">No cases have been field-verified as not cured yet. Drive the certified list on the re-verification map, mark each still-open case "Not cured," and this report will populate.</div>`}
+  <div class="foot">Source: trustEd enforcement · field re-verification · generated ${esc(today)}. Board-confidential workpaper — excluded from any homeowner copy.</div>
+</div></body></html>`;
+}
+
+module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations, _draftLetterForBumpedViolation, renderNotCuredBoardLetter };
