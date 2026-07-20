@@ -127,6 +127,24 @@ async function withCapabilities(rows) {
 
 const SELECT = 'id, mailbox, persona, direction, sender_email, sender_name, subject, body_preview, received_at, has_attachments, classification, classification_confidence, ai_summary, extracted, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, resolution_confidence, resolution_candidates, triage_status, priority, reviewed_by, reviewed_at, created_at, resolved_contact:resolved_contact_id(full_name), resolved_property:resolved_property_id(street_address), resolved_vendor:resolved_vendor_id(name), community:community_id(name)';
 
+// The GL expense account a utility bill should code to, from the community-alias
+// registry — resolved by the community_hint OR the DISTRICT named in the body
+// ("BARKER CYPRESS M.U.D." -> Lakes of Pine Forest 5120 Water). ONE resolver so
+// the single "Record to GL" button and the bulk auto-sort code identically.
+// Returns an account id or null (fall back to the classifier). m needs subject,
+// ai_summary, body_full/body_preview, community_id, extracted.
+async function aliasGlAccount(m) {
+  try {
+    const { resolveCommunityByAlias, detectUtilityDistrict } = require('../lib/email/community_alias');
+    const district = detectUtilityDistrict(`${m.subject || ''}\n${m.ai_summary || ''}\n${m.body_full || m.body_preview || ''}`);
+    for (const hint of [m.extracted && m.extracted.community_hint, district].filter(Boolean)) {
+      const a = await resolveCommunityByAlias(hint);
+      if (a && a.gl_account_id && a.community_id === m.community_id) return a.gl_account_id;
+    }
+  } catch (_) { /* alias table may not be applied yet */ }
+  return null;
+}
+
 // GET / — triage list
 router.get('/', async (req, res) => {
   try {
@@ -976,20 +994,7 @@ router.post('/:id/to-gl', express.json(), async (req, res) => {
     // Mission Glen MUD auto-pay -> Eaglewood 5120 Water, no history needed. This
     // is why the registry carries the GL account, not just the community. The
     // classifier can't map "First Billing Services" to water. (Ed 2026-07-16.)
-    let glAccountId = b.gl_account_id || null;
-    if (!glAccountId) {
-      try {
-        const { resolveCommunityByAlias, detectUtilityDistrict } = require('../lib/email/community_alias');
-        // Try the community_hint first, then the DISTRICT named in the body —
-        // these confirmations often carry an empty hint but say "BARKER CYPRESS
-        // M.U.D." in the body, which is what maps to the water account.
-        const district = detectUtilityDistrict(`${m.subject || ''}\n${m.ai_summary || ''}\n${m.body_full || m.body_preview || ''}`);
-        for (const hint of [m.extracted && m.extracted.community_hint, district].filter(Boolean)) {
-          const a = await resolveCommunityByAlias(hint);
-          if (a && a.gl_account_id && a.community_id === m.community_id) { glAccountId = a.gl_account_id; break; }
-        }
-      } catch (_) { /* alias table may not be applied yet */ }
-    }
+    let glAccountId = b.gl_account_id || (await aliasGlAccount(m));
     const desc = `Emma: ${String(m.subject || m.sender_name || 'Vendor payment').slice(0, 110)}`;
     const out = await recordVendorPaymentToGL({
       allowDuplicate: !!b.confirm_duplicate,
@@ -1039,7 +1044,7 @@ router.post('/vendor-process', express.json(), async (req, res) => {
     const b = req.body || {};
     const ids = Array.isArray(b.ids) ? b.ids.filter(Boolean) : null;
     let q = supabase.from('email_messages')
-      .select('id, mailbox, graph_id, subject, ai_summary, community_id, resolved_vendor_id, sender_name, sender_email, has_attachments, extracted, classification, triage_status, received_at')
+      .select('id, mailbox, graph_id, subject, ai_summary, body_full, body_preview, community_id, resolved_vendor_id, sender_name, sender_email, has_attachments, extracted, classification, triage_status, received_at')
       .eq('persona', 'emma');
     if (ids && ids.length) q = q.in('id', ids);
     else q = q.in('triage_status', ['new', 'needs_review']).in('classification', ['vendor_financial', 'vendor_general']);
@@ -1062,8 +1067,9 @@ router.post('/vendor-process', express.json(), async (req, res) => {
           if (!m.community_id) { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'autopay confirmation — no community linked yet' }); continue; }
           const cents = singleAmountCents(m.extracted && m.extracted.amounts);
           if (!cents) { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'autopay confirmation — amount is ambiguous' }); continue; }
+          const glAccountId = await aliasGlAccount(m); // water/utility district -> its GL account, same as the single button
           const out = await recordVendorPaymentToGL({
-            communityId: m.community_id, amountCents: cents, glAccountId: null,
+            communityId: m.community_id, amountCents: cents, glAccountId,
             vendorId: m.resolved_vendor_id || null, vendorName: m.sender_name || null,
             description: `Emma: ${label}`, postingDate: String(m.received_at || now).slice(0, 10),
             sourceRef: `email:${m.graph_id || m.id}`, notes: `Autopay (${cls.method}) recorded from Emma's inbox. Flagged for month-end review.`,

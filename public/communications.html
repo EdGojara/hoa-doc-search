@@ -321,7 +321,7 @@ function renderBulkBar(){
   if(!n){ bar.style.display='none'; return; }
   bar.style.display='flex';
   bar.innerHTML = `<b style="margin-right:2px;">${n} selected</b>
-    <button class="act" style="background:#16a34a;color:#fff;" onclick="bulkProcessVendor()" title="Auto-sort vendor emails: autopay confirmations post as already-paid, invoices load to payables">🧾 Post to Payables ${n}</button>
+    <button class="act" style="background:#16a34a;color:#fff;" onclick="bulkProcessVendor()" title="Auto-sorts each: payment confirmations are recorded to the GL (Dr expense / Cr cash), actual invoices load to Payables for approval. Nothing posts on a guess.">🧾 Process ${n} → GL / Payables</button>
     <button class="act" style="background:#e2e8f0;color:#0f172a;" onclick="bulkDismiss('dismissed')">Dismiss ${n}</button>
     <button class="act" style="background:#fee2e2;color:#b91c1c;" onclick="bulkDismiss('spam')">Spam ${n}</button>
     <button class="act" style="background:transparent;color:#cbd5e1;" onclick="clearSelection()">Clear</button>`;
@@ -331,6 +331,7 @@ function renderBulkBar(){
 // genuine exceptions with a reason. (Ed 2026-07-14.)
 async function bulkProcessVendor(){
   const ids=[...selectedIds]; if(!ids.length) return;
+  if(!confirm(`Process ${ids.length} selected email(s)? Emma reads each and auto-sorts:\n  • payment confirmations → recorded to the GL (Dr expense / Cr cash, flagged for month-end review)\n  • actual invoices → loaded to Payables for approval\nAnything she can't place is left with a reason. No email is sent.`)) return;
   const bar=document.getElementById('bulkbar'); if(bar) bar.innerHTML='<b>Processing… reading each email + posting</b>';
   try{
     const r=await af(`${API}/vendor-process`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
