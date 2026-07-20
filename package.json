@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node scripts/check_constraint_values.js && node tests/test_vantaca_extraction.js && node tests/test_retrieval_regression.js && node tests/test_builder_letter_validate.js && node tests/test_forward_note_voice.js && node tests/test_persona_knows_team.js && node tests/test_vendor_master.js && node tests/test_forward_hygiene.js && node tests/test_payment_dedup.js && node tests/test_community_jurisdiction.js && node tests/test_board_package_registry.js && node scripts/check_pagination.js",
+    "test": "node scripts/check_constraint_values.js && node tests/test_vantaca_extraction.js && node tests/test_retrieval_regression.js && node tests/test_builder_letter_validate.js && node tests/test_forward_note_voice.js && node tests/test_persona_knows_team.js && node tests/test_vendor_master.js && node tests/test_forward_hygiene.js && node tests/test_payment_dedup.js && node tests/test_community_jurisdiction.js && node tests/test_board_package_registry.js && node tests/test_bill_classifier.js && node scripts/check_pagination.js",
     "test:constraints": "node scripts/check_constraint_values.js",
     "test:vantaca": "node tests/test_vantaca_extraction.js",
     "test:retrieval": "node tests/test_retrieval_regression.js",

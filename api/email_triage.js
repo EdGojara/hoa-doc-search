@@ -1061,7 +1061,7 @@ router.post('/vendor-process', express.json(), async (req, res) => {
 
     for (const m of (msgs || [])) {
       const label = String(m.subject || m.sender_name || '(no subject)').slice(0, 70);
-      const cls = classifyBill({ subject: m.subject || '', bodyText: m.ai_summary || '', hasPdf: !!m.has_attachments, extracted: m.extracted });
+      const cls = classifyBill({ subject: m.subject || '', bodyText: m.body_full || m.ai_summary || '', hasPdf: !!m.has_attachments, extracted: m.extracted });
       try {
         if (cls.disposition === 'already_paid') {
           if (!m.community_id) { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'autopay confirmation — no community linked yet' }); continue; }

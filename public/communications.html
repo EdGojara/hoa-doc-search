@@ -348,6 +348,7 @@ async function bulkProcessVendor(){
     const stuck=(j.results||[]).filter(x=>x.action==='needs_manual').slice(0,12).map(x=>`   • ${x.label} — ${x.reason}`).join('\n');
     alert(`Processed ${j.processed}:\n${lines}${stuck?'\n\nStill need you:\n'+stuck:''}`);
     selectedIds.clear();
+    renderBulkBar();   // hide the "Processing…" bar now that the batch is done
     loadStats(); loadList();
   }catch(e){ alert('Failed: '+(e.message||'network')); renderBulkBar(); }
 }
