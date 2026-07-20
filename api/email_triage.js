@@ -1041,7 +1041,8 @@ router.post('/vendor-process', express.json(), async (req, res) => {
           const picked = await fetchInvoicePdf(m.mailbox, m.graph_id, { hintNumber: (m.extracted && m.extracted.account_number) || null });
           if (picked.status === 'stale') { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'the email was filed since it arrived — click Pull inbox, then try again' }); continue; }
           if (picked.status !== 'ok') { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'no invoice PDF found in the attachments (bill may be in the email body)' }); continue; }
-          const out = await autoIntake({ buffer: picked.buffer, filename: picked.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '' });
+          const emailCommunityHint = [m.subject || '', (m.extracted && m.extracted.community_hint) || '', ((m.extracted && m.extracted.addresses) || []).join(' ')].join(' ').trim();
+          const out = await autoIntake({ buffer: picked.buffer, filename: picked.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '', communityHint: emailCommunityHint });
           const oc = out && out.outcome;
           if (oc === 'loaded' || oc === 'held_suspected_duplicate') {
             await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: b.reviewed_by || 'emma-bulk', reviewed_at: now }).eq('id', m.id);
