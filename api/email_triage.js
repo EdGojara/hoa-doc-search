@@ -107,7 +107,23 @@ function emailCapabilities(m) {
     file_payables_blocked: isEmma && pay.length ? pay.join(', and ') : null,
   };
 }
-const withCapabilities = (rows) => (rows || []).map((m) => Object.assign({}, m, emailCapabilities(m)));
+// Compute per-row capabilities, and for Emma's vendor mail also the live
+// "invoice standing" (is it in Payables, how overdue, escalate?) — computed
+// fresh against current AP state so it's right on old emails too, not stamped
+// once at ingest. Gated to Emma rows with a money/chase signal so it's a small
+// number of indexed lookups (owner-only beta today; move to a batched/stamped
+// path if the queue grows large).
+async function withCapabilities(rows) {
+  const { invoiceStanding } = require('../lib/ap/followup');
+  return Promise.all((rows || []).map(async (m) => {
+    const caps = emailCapabilities(m);
+    let standing = null;
+    if (String(m && m.persona) === 'emma') {
+      try { standing = await invoiceStanding(supabase, m); } catch (_) { standing = null; }
+    }
+    return Object.assign({}, m, caps, { standing });
+  }));
+}
 
 const SELECT = 'id, mailbox, persona, direction, sender_email, sender_name, subject, body_preview, received_at, has_attachments, classification, classification_confidence, ai_summary, extracted, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, resolution_confidence, resolution_candidates, triage_status, priority, reviewed_by, reviewed_at, created_at, resolved_contact:resolved_contact_id(full_name), resolved_property:resolved_property_id(street_address), resolved_vendor:resolved_vendor_id(name), community:community_id(name)';
 
@@ -132,7 +148,7 @@ router.get('/', async (req, res) => {
     if (q) query = query.or(`subject.ilike.%${q}%,sender_email.ilike.%${q}%,ai_summary.ilike.%${q}%`);
     const { data, error } = await query;
     if (error) throw error;
-    res.json({ messages: withCapabilities(data) });
+    res.json({ messages: await withCapabilities(data) });
   } catch (err) {
     console.error('[email_triage] list failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -197,7 +213,7 @@ router.get('/for-record', async (req, res) => {
     else if (vendor_id) query = query.eq('resolved_vendor_id', vendor_id);
     const { data, error } = await query;
     if (error) throw error;
-    res.json({ messages: withCapabilities(data) });
+    res.json({ messages: await withCapabilities(data) });
   } catch (err) {
     console.error('[email_triage] for-record failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -829,6 +845,81 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
     res.json({ ok: true, loaded, duplicates: dup });
   } catch (err) { console.error('[email_triage] to-payables failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /:id/add-to-payables — create an AP invoice STUB from a vendor's past-due
+// notice that has NO PDF attached (the Aegis case: "invoice #9330, $204.59, 14
+// days past due"). We don't have the invoice document, so this is a placeholder
+// that lands in the Payables queue flagged needs_review + urgent, so the bill
+// isn't missed and can be escalated — the approver attaches/verifies the real
+// invoice before it's ever paid. For an email WITH a PDF bill, use to-payables.
+router.post('/:id/add-to-payables', express.json(), async (req, res) => {
+  try {
+    const { data: m } = await supabase.from('email_messages')
+      .select('id, graph_id, subject, ai_summary, body_preview, sender_name, community_id, resolved_vendor_id, extracted, received_at')
+      .eq('id', req.params.id).maybeSingle();
+    if (!m) return res.status(404).json({ error: 'not_found' });
+    if (!m.community_id) return res.status(400).json({ error: 'no_community', detail: 'Link this email to a community first — a payable has to belong to the right association.' });
+
+    const ex = m.extracted || {};
+    const { singleAmountCents } = require('../lib/accounting/record_vendor_payment');
+    const cents = (req.body && +req.body.amount_cents > 0) ? Math.round(+req.body.amount_cents) : singleAmountCents(ex.amounts || []);
+    if (!cents) return res.status(400).json({ error: 'no_amount', detail: 'Couldn\'t read a single amount from the notice — add it in Payables directly.' });
+
+    // Resolve the vendor: the email's resolved vendor, else by name in this
+    // community, else by name anywhere. Never guess — a payable needs a real vendor.
+    let vendorId = m.resolved_vendor_id || null;
+    if (!vendorId) {
+      const name = ex.vendor_name || m.sender_name || '';
+      if (name) {
+        let { data: v } = await supabase.from('vendors').select('id').eq('community_id', m.community_id).ilike('name', `%${name}%`).limit(1);
+        if (!v || !v.length) ({ data: v } = await supabase.from('vendors').select('id').ilike('name', `%${name}%`).limit(1));
+        vendorId = v && v.length ? v[0].id : null;
+      }
+    }
+    if (!vendorId) return res.status(400).json({ error: 'no_vendor', detail: 'Couldn\'t match this to a vendor on file — add the vendor first, then file the bill.' });
+
+    // invoice_date is NOT NULL. Best available: back-date by the stated days-past-
+    // due if the notice gives it, else the email date.
+    const { parseDaysPastDue, recordFollowUpOutcome } = require('../lib/ap/followup');
+    const days = parseDaysPastDue(`${m.subject || ''}\n${m.ai_summary || ''}\n${m.body_preview || ''}`);
+    const recv = String(m.received_at || new Date().toISOString()).slice(0, 10);
+    const invDate = days != null ? new Date(Date.now() - days * 86400000).toISOString().slice(0, 10) : recv;
+    const invNo = ex.account_number ? String(ex.account_number).slice(0, 60) : null;
+
+    const row = {
+      community_id: m.community_id, vendor_id: vendorId,
+      vendor_invoice_number: invNo, invoice_date: invDate,
+      subtotal_cents: cents, total_cents: cents, status: 'awaiting_approval',
+      source_filename: `Emma inbox — ${String(m.sender_name || ex.vendor_name || 'vendor').slice(0, 60)} past-due notice`,
+      needs_review: true, account_number: invNo,
+      notes: `Created from Emma's inbox from a vendor past-due notice${days != null ? ` (${days} days past due)` : ''}. NO invoice document on file — verify the amount and attach the real invoice before approval.`,
+    };
+    let { data, error } = await supabase.from('ap_invoices').insert(row).select('id').single();
+    // Graceful degrade if newer columns (needs_review / account_number) aren't applied.
+    if (error && /needs_review|account_number|column .* does not exist/i.test(String(error.message || ''))) {
+      delete row.needs_review; delete row.account_number;
+      ({ data, error } = await supabase.from('ap_invoices').insert(row).select('id').single());
+    }
+    if (error) {
+      if (String(error.message || '').toLowerCase().includes('duplicate') || error.code === '23505') {
+        // Already in Payables — mark the email handled and say so, don't error.
+        await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
+        return res.json({ ok: true, already_in_payables: true });
+      }
+      throw error;
+    }
+
+    // Learn the account/vendor -> community map + log the follow-up outcome.
+    try {
+      const { learnMapping } = require('../lib/ap/vendor_community');
+      await learnMapping({ accountNumber: invNo, vendorId, vendorName: ex.vendor_name || m.sender_name || null, communityId: m.community_id });
+    } catch (e) { console.warn('[email_triage] learn (add-payable) skipped:', e.message); }
+    try { await recordFollowUpOutcome(supabase, { emailId: m.id, communityId: m.community_id, vendorId, accountNumber: invNo, invoiceId: data.id, status: 'not_on_file', action: 'added_to_payables' }); } catch (_) {}
+
+    await supabase.from('email_messages').update({ triage_status: 'handled', priority: 'high', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
+    res.json({ ok: true, invoice_id: data.id, urgent: true });
+  } catch (err) { console.error('[email_triage] add-to-payables failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // POST /:id/to-gl — Emma records an already-handled payment (e.g. an auto-pay
