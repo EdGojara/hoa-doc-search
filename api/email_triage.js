@@ -1139,6 +1139,21 @@ router.post('/:id/dismiss', express.json(), async (req, res) => {
       .update({ triage_status: as, reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() })
       .eq('id', req.params.id).select(SELECT).single();
     if (error) throw error;
+    // Learning loop: a handled vendor follow-up logs how it resolved (matched
+    // bill + status + action), so chase patterns and the account/invoice link
+    // strengthen over time. Best-effort — never fails the dismiss.
+    try {
+      const fu = data && data.extracted && data.extracted.follow_up;
+      if (fu) {
+        const { recordFollowUpOutcome } = require('../lib/ap/followup');
+        await recordFollowUpOutcome(supabase, {
+          emailId: data.id, communityId: data.community_id, vendorId: data.resolved_vendor_id,
+          accountNumber: data.extracted.account_number, invoiceId: fu.chased && fu.chased.invoice_id,
+          status: fu.chased && fu.chased.status, action: as,
+          byUserId: req.admin && req.admin.user ? req.admin.user.id : null,
+        });
+      }
+    } catch (_) { /* learning best-effort */ }
     res.json({ message: data });
   } catch (err) {
     console.error('[email_triage] dismiss failed:', err.message);
