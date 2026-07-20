@@ -1161,6 +1161,23 @@ router.post('/:id/dismiss', express.json(), async (req, res) => {
   }
 });
 
+// POST /:id/hold — park a vendor bill the operator can't determine the community
+// for yet. Keeps it visible (needs_review) + flags it "needs coding" so it doesn't
+// get lost in the new pile; codes NOTHING (no phantom community). (Ed 2026-07-20.)
+router.post('/:id/hold', express.json(), async (req, res) => {
+  try {
+    const { data: m } = await supabase.from('email_messages').select('extracted').eq('id', req.params.id).maybeSingle();
+    if (!m) return res.status(404).json({ error: 'not_found' });
+    const ex = m.extracted || {};
+    ex.held_for_coding = { at: new Date().toISOString(), by: (req.body || {}).reviewed_by || 'staff' };
+    const { data, error } = await supabase.from('email_messages')
+      .update({ extracted: ex, triage_status: 'needs_review', reviewed_at: new Date().toISOString() })
+      .eq('id', req.params.id).select(SELECT).single();
+    if (error) throw error;
+    res.json({ message: data });
+  } catch (err) { console.error('[email_triage] hold failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // POST /dismiss-bulk — dismiss/spam MANY emails at once (checkbox multi-select),
 // so staff aren't clicking one by one. Status-only, same as /:id/dismiss — the
 // homeowner link (resolved_contact_id/property) is preserved, so dismissed mail

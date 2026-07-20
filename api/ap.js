@@ -620,6 +620,34 @@ router.post('/invoices/:id/mark-paid', express.json(), async (req, res) => {
 // auto-coding didn't (no learned vendor mapping). Posts the accrual (Dr expense /
 // Cr AP) so the bill is real, re-coding voids the prior accrual first, and teaches
 // the vendor->GL map so it auto-codes next time. (Ed 2026-07-14.)
+// POST /invoices/:id/change-community — move a bill to the right association
+// when the platform (or the operator) put it on the wrong one. Clears the GL
+// coding (it was on the old community's chart) so it re-codes, and LEARNS the
+// account/vendor -> community map so the next one self-resolves. Blocks if the
+// bill already posted a JE (void + re-enter instead). (Ed 2026-07-20.)
+router.post('/invoices/:id/change-community', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const community_id = (req.body || {}).community_id;
+    const reviewed_by = (req.body || {}).reviewed_by || 'staff';
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { data: inv } = await supabase.from('ap_invoices')
+      .select('id, community_id, vendor_id, account_number, posting_journal_entry_id').eq('id', id).maybeSingle();
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    if (inv.posting_journal_entry_id) return res.status(409).json({ error: 'already_posted', detail: 'This bill already posted to the GL under the current association. Void it, then re-enter under the right one.' });
+    if (inv.community_id === community_id) return res.json({ ok: true, unchanged: true });
+    const { data, error } = await supabase.from('ap_invoices')
+      .update({ community_id, coded_gl_account_id: null, updated_at: new Date().toISOString() })
+      .eq('id', id).select('id, community_id').maybeSingle();
+    if (error) throw error;
+    try {
+      const { learnMapping } = require('../lib/ap/vendor_community');
+      await learnMapping({ accountNumber: inv.account_number, vendorId: inv.vendor_id, communityId: community_id, taughtByName: reviewed_by });
+    } catch (e) { console.warn('[ap] learn on change-community skipped:', e.message); }
+    res.json({ ok: true, invoice: data });
+  } catch (err) { console.error('[ap] change-community failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 router.post('/invoices/:id/code', express.json(), async (req, res) => {
   try {
     const { id } = req.params;

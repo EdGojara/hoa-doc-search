@@ -72,7 +72,7 @@ function shell(){
     <div id="preview"></div>
     <h2>Review queue</h2>
     <div id="queue"><div class="empty">Loading&hellip;</div></div>`;
-  af('/api/ap-intake/communities').then(r=>r.json()).then(j=>{ const sel=document.getElementById('comm'); (j.communities||[]).forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;sel.appendChild(o);}); });
+  af('/api/ap-intake/communities').then(r=>r.json()).then(j=>{ window._comms=(j.communities||[]); const sel=document.getElementById('comm'); (j.communities||[]).forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;sel.appendChild(o);}); });
   const fileInput=document.getElementById('file'), drop=document.getElementById('drop'), analyze=document.getElementById('analyze'), dropText=document.getElementById('dropText');
   let chosen=null;
   const setFile=f=>{ chosen=f; dropText.textContent=f?('📄 '+f.name):'Drop an invoice PDF, or click to choose'; analyze.disabled=!f; };
@@ -181,12 +181,25 @@ async function loadQueue(){
     h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Due</th><th>Amount</th><th>Invoice</th><th>Source</th></tr></thead><tbody>';
     for(const r0 of (j.queue||[])){
       const link = r0.source_storage_path?`<a class="view" href="javascript:void(0)" onclick="openInvoice('${r0.id}')">📄 View</a>`:'—';
-      h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')}</td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td>${d10(r0.due_date)}</td><td class="m">${money(r0.total_cents)}</td><td>${link}</td><td><span class="badge b-ok">${esc(r0.intake_method||'—')}</span></td></tr>`;
+      h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')} <a href="javascript:void(0)" onclick="changeAssoc('${r0.id}',this)" title="Wrong association? Move it — the platform learns for next time." style="font-size:11px;color:#64748b;text-decoration:none;">✎</a></td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td>${d10(r0.due_date)}</td><td class="m">${money(r0.total_cents)}</td><td>${link}</td><td><span class="badge b-ok">${esc(r0.intake_method||'—')}</span></td></tr>`;
     }
     h+='</tbody></table>';
     if(!(j.queue||[]).length && !(j.suspected||[]).length) h='<div class="empty">No invoices awaiting approval.</div>';
     el.innerHTML=h;
   }catch(e){ el.innerHTML='<div class="empty">Could not load queue.</div>'; }
+}
+
+// Move a bill to the right association (the platform learns the map for next time).
+function changeAssoc(invId, a){
+  const td=a&&a.closest('td'); if(!td) return;
+  const opts=(window._comms||[]).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  td.innerHTML=`<select id="ca-${invId}" style="font-size:11.5px;padding:2px 5px;"><option value="">— move to —</option>${opts}</select> <button class="btn ghost" style="padding:3px 8px;font-size:11px;" onclick="saveAssoc('${invId}')">Move</button> <a href="javascript:void(0)" onclick="loadQueue()" style="font-size:11px;color:#94a3b8;">cancel</a>`;
+}
+async function saveAssoc(invId){
+  const sel=document.getElementById('ca-'+invId); const cid=sel&&sel.value; if(!cid) return;
+  const r=await af('/api/ap/invoices/'+invId+'/change-community',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid})});
+  const j=await r.json().catch(()=>({}));
+  if(r.ok){ loadQueue(); } else { alert('Could not move: '+(j.detail||j.error||'failed')); }
 }
 
 window.resolveDup = async function(id,which){
