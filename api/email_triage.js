@@ -397,8 +397,16 @@ router.post('/:id/link', express.json(), async (req, res) => {
         const district = detectUtilityDistrict(selfText);
         const selfStreets = new Set(((msg && msg.extracted && msg.extracted.addresses) || []).map(normalizeServiceStreet).filter(Boolean));
         if (district) { try { await learnAlias({ hint: district, communityId: community_id, aliasType: 'billing_entity', createdBy: reviewed_by || 'staff' }); } catch (_) {} }
-        if (district || selfStreets.size) {
-          const key = district ? district.toLowerCase().replace(/\s*mud$/, '').replace(/[^a-z0-9]+/g, ' ').trim() : null;
+        // Cascade ONLY for utility/MUD bills (a district was detected). The
+        // shared-address match is meant for water METERS whose service address
+        // is inside the community — NOT for a general vendor invoice, where the
+        // only address is the bill-to (Bedrock's remit address "12808 W Airport
+        // Blvd" appears on every Superior LawnCare invoice, Waterview AND Quail
+        // Ridge). Cascading on that would sweep one community's bills onto
+        // another. A multi-community vendor's invoices resolve per-invoice from
+        // the PDF, never by a shared remit address. (Ed 2026-07-20.)
+        if (district) {
+          const key = district.toLowerCase().replace(/\s*mud$/, '').replace(/[^a-z0-9]+/g, ' ').trim();
           const { data: pool } = await supabase.from('email_messages')
             .select('id, subject, ai_summary, body_full, body_preview, extracted')
             .is('community_id', null).neq('id', req.params.id).limit(300);
