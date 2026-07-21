@@ -1320,6 +1320,12 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
 });
 
 router.post('/generate-letter', express.json(), async (req, res) => {
+  // Hoisted so the catch block can name the stage in its friendly error. Was a
+  // block-scoped const inside try → the catch's `letterType` reference threw
+  // "ReferenceError: letterType is not defined", turning every validation
+  // failure into a raw 500 crash instead of the actionable 400 message.
+  // (Ed 2026-07-21 — Waterview certified letters "wouldn't download/print".)
+  let letterType = null;
   try {
     const body = req.body || {};
     const violationId = body.violation_id;
@@ -1359,7 +1365,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       certified_209: 'letter_209',
       fine_assessed: 'letter_209',  // fines piggyback on §209 letter shell
     };
-    const letterType = stageToType[violation.current_stage];
+    letterType = stageToType[violation.current_stage];
     if (!letterType) {
       return res.status(400).json({ error: `violation is in stage '${violation.current_stage}' — no letter applies` });
     }
@@ -1479,6 +1485,19 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       } catch (e) {
         console.warn('[letter] photo download failed:', e.message);
       }
+    }
+
+    // Final description guarantee. Imported/carryover violations (e.g. 68 of
+    // Waterview's 70 certified §209 cases came over from Vantaca) have NO trustEd
+    // observation, so `observation` is still null here and the letter validator
+    // rejects it ("ai_description required"). The category label IS the violation
+    // for these, so fall back to a category-based finding — same wording as the
+    // has-observation fallback above. Uses the label ONLY (never the category's
+    // internal `description`, which holds staff/enforcement notes). This lets
+    // staff produce the letter when they choose to; it does not auto-send.
+    if (!observation || !observation.ai_description || String(observation.ai_description).trim().length < 10) {
+      const catLabel = (violation.enforcement_categories && violation.enforcement_categories.label) || 'the noted deed restriction';
+      observation = { ...(observation || {}), ai_description: `Condition observed at the property consistent with ${catLabel}.` };
     }
 
     // Phase 7 — enrich context for the new template
@@ -3363,6 +3382,15 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
 
         // Fetch the community logo for co-branded letterhead (cached per batch)
         const communityLogoBuffer = await getCommunityLogo(community);
+
+        // Same description guarantee as /generate-letter: imported/carryover
+        // violations have no trustEd observation, so without this the batch
+        // re-render fails validation ("ai_description required") and the letter
+        // silently drops out of the printed batch. Category label = the violation.
+        if (!observation || !observation.ai_description || String(observation.ai_description).trim().length < 10) {
+          const catLabel = (catRow && catRow.label) || 'the noted deed restriction';
+          observation = { ...(observation || {}), ai_description: `Condition observed at the property consistent with ${catLabel}.` };
+        }
 
         // Self-help 10-day certified letters (force-mow / cleanup) are a DIFFERENT
         // letter from a §209 covenant notice — §202.018 / Declaration self-help
