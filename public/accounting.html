@@ -171,21 +171,18 @@
   function printStmtBtn(kind){
     return `<button onclick="acctPrintStatement('${kind}')" title="Open a clean letterhead version to print or Save as PDF" style="padding:7px 12px; border-radius:8px; border:1px solid var(--rule); background:#fff; color:var(--navy); font-weight:600; cursor:pointer; font-size:12.5px;">🖨 Print / Save PDF</button>`;
   }
-  async function acctPrintStatement(kind){
-    const map = {
-      bs: { out:'bs-out', title:'Balance Sheet',        sub:()=> 'As of ' + (($('bs-asof') && fmtDate($('bs-asof').value)) || '') },
-      is: { out:'is-out', title:'Income Statement',     sub:()=> (($('is-start') && fmtDate($('is-start').value)) || '') + ' — ' + (($('is-end') && fmtDate($('is-end').value)) || '') },
-      eq: { out:'eq-out', title:'Statement of Equity',  sub:()=> (($('eq-start') && fmtDate($('eq-start').value)) || '') + ' — ' + (($('eq-end') && fmtDate($('eq-end').value)) || '') },
-    };
-    const cfg = map[kind]; if (!cfg) return;
-    const el = $(cfg.out);
-    const body = el ? el.innerHTML : '';
-    if (!body || /Loading|Pick a|Couldn.t load/.test(body)) { alert('Load the statement first (click Go), then Print.'); return; }
+  function printBtnHTML(onclick, label){
+    return `<button onclick="${onclick}" title="Open a clean letterhead version to print or Save as PDF" style="padding:7px 12px; border-radius:8px; border:1px solid var(--rule); background:#fff; color:var(--navy); font-weight:600; cursor:pointer; font-size:12.5px;">🖨 ${esc(label)}</button>`;
+  }
+  // Shared print-window writer: Bedrock letterhead + statement body → print dialog.
+  // Single source of truth for the printed look (plain statements AND budget vs
+  // actual both flow through here so they can't drift).
+  async function _acctPrintWindow(title, sub, bodyHTML){
     const comm = await acctCommunityName();
     const today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
     const w = window.open('', '_blank');
     if (!w) { alert('Allow pop-ups for this site to print.'); return; }
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(cfg.title)} — ${esc(comm)}</title>
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} — ${esc(comm)}</title>
       <style>
         @page { size: Letter; margin: 0.7in 0.75in; }
         * { box-sizing:border-box; }
@@ -199,23 +196,122 @@
         th,td { padding:3px 6px; font-size:11.5px; border-bottom:1px solid #e5e7eb; text-align:left; vertical-align:top; }
         th { color:#0B1D34; border-bottom:1.5px solid #0B1D34; }
         .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .mono { font-family:ui-monospace,'SF Mono',Menlo,monospace; color:#555; }
         .total td { font-weight:700; border-top:1.5px solid #0B1D34; border-bottom:none; color:#0B1D34; }
         h3, .sec { color:#0B1D34; font-weight:700; }
         h3 { font-size:13px; margin:14px 0 4px; }
         .muted { color:#777; }
+        /* Budget-vs-actual extras */
+        .grp { text-align:center; font-size:9.5px; letter-spacing:.05em; text-transform:uppercase; color:#0B1D34; border-bottom:1px solid #0B1D34; }
+        .fav { color:#166534; } .unfav { color:#991b1b; }
+        .subtot td { font-weight:700; border-top:1px solid #0B1D34; }
+        .grouphdr td { font-weight:700; color:#0B1D34; background:#f4f7fb; text-transform:uppercase; font-size:10.5px; letter-spacing:.04em; }
+        .fundsec { font-size:14px; font-weight:700; color:#0B1D34; margin:18px 0 4px; border-bottom:2px solid #D4AF37; padding-bottom:3px; page-break-after:avoid; }
+        .netrow td { font-weight:700; border-top:1.5px solid #0B1D34; border-bottom:1.5px double #0B1D34; }
         .foot { margin-top:22px; padding-top:8px; border-top:1px solid #ddd; font-size:9.5px; color:#888; font-style:italic; }
       </style></head><body>
       <div class="lh">
         <div class="co">${esc(comm || 'Association')}</div>
-        <div class="ttl">${esc(cfg.title)}</div>
-        <div class="sub">${esc(cfg.sub())}</div>
+        <div class="ttl">${esc(title)}</div>
+        <div class="sub">${esc(sub||'')}</div>
         <div class="mgr">Prepared by Bedrock Association Management from the Association's records · ${esc(today)}</div>
       </div>
-      <div class="stmt">${body}</div>
+      <div class="stmt">${bodyHTML}</div>
       <div class="foot">Reflects the Association's financial records maintained by Bedrock Association Management on behalf of the Board of Directors. Figures are current as of the date(s) shown.</div>
       <script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script>
     </body></html>`);
     w.document.close();
+  }
+  // Plain statements (BS / IS / Equity) — print the exact on-screen HTML.
+  async function acctPrintStatement(kind){
+    const map = {
+      bs: { out:'bs-out', title:'Balance Sheet',        sub:()=> 'As of ' + (($('bs-asof') && fmtDate($('bs-asof').value)) || '') },
+      is: { out:'is-out', title:'Income Statement',     sub:()=> (($('is-start') && fmtDate($('is-start').value)) || '') + ' — ' + (($('is-end') && fmtDate($('is-end').value)) || '') },
+      eq: { out:'eq-out', title:'Statement of Equity',  sub:()=> (($('eq-start') && fmtDate($('eq-start').value)) || '') + ' — ' + (($('eq-end') && fmtDate($('eq-end').value)) || '') },
+    };
+    const cfg = map[kind]; if (!cfg) return;
+    const el = $(cfg.out);
+    const body = el ? el.innerHTML : '';
+    if (!body || /Loading|Pick a|Couldn.t load/.test(body)) { alert('Load the statement first (click Go), then Print.'); return; }
+    await _acctPrintWindow(cfg.title, cfg.sub(), body);
+  }
+
+  // ── Income Statement vs Budget (Ed 2026-07-21) ────────────────────────────
+  // Vantaca "Statement of Revenues and Expenses vs Budget" shape: a SEPARATE
+  // section per fund (Operating / Reserve / Savings), because budget-vs-actual +
+  // variance can't be read across funds in one row. Each section shows Month
+  // (Actual / Budget / Variance) then Year to Date (Actual / Budget / Variance).
+  const _FUND_TITLES = { OPR:'Operating Fund', RES:'Reserve Fund', SAV:'Savings Fund' };
+  function _bvaVarCell(actualC, budgetC, type){
+    const v = (Number(actualC)||0) - (Number(budgetC)||0);      // Actual − Budget (over/under)
+    const fav = type === 'revenue' ? v >= 0 : v <= 0;           // revenue over = good; expense under = good
+    return `<td class="num ${fav?'fav':'unfav'}">${fmt(v)}</td>`;
+  }
+  function _bvaSum(list, field){ return (list||[]).reduce((s,r)=>s+(Number(r[field])||0),0); }
+  function _budgetISBody(rows, fiscalYear, hasBudget){
+    if (!hasBudget) {
+      return `<div class="muted" style="padding:14px 0;">No approved budget is on file for ${esc(String(fiscalYear||''))}. Load the annual budget in the <strong>Budget</strong> tab, then this statement will show budget vs actual.</div>`;
+    }
+    if (!rows || !rows.length) return `<div class="muted" style="padding:14px 0;">No revenue or expense activity in this period.</div>`;
+    const byFund = {};
+    rows.forEach((r)=>{ const k = r.fund_code || '—'; (byFund[k] = byFund[k] || []).push(r); });
+    const order = ['OPR','RES','SAV'];
+    const codes = Object.keys(byFund).sort((a,b)=>{ const ia=order.indexOf(a), ib=order.indexOf(b); return (ia<0?99:ia)-(ib<0?99:ib) || a.localeCompare(b); });
+    const numW = 74;
+    const col = `<colgroup><col style="width:44px"><col>${Array(6).fill(`<col style="width:${numW}px">`).join('')}</colgroup>`;
+    const head = `<thead>
+      <tr><th rowspan="2" style="vertical-align:bottom;">Acct</th><th rowspan="2" style="vertical-align:bottom;">Account</th>
+        <th class="grp" colspan="3">Month</th><th class="grp" colspan="3">Year to Date</th></tr>
+      <tr><th class="num">Actual</th><th class="num">Budget</th><th class="num">Variance</th>
+          <th class="num">Actual</th><th class="num">Budget</th><th class="num">Variance</th></tr></thead>`;
+    const dataRow = (r)=>`<tr><td class="mono">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}</td>
+      <td class="num">${fmt(r.mtd_actual_cents)}</td><td class="num">${fmt(r.mtd_budget_cents)}</td>${_bvaVarCell(r.mtd_actual_cents,r.mtd_budget_cents,r.account_type)}
+      <td class="num">${fmt(r.ytd_actual_cents)}</td><td class="num">${fmt(r.ytd_budget_cents)}</td>${_bvaVarCell(r.ytd_actual_cents,r.ytd_budget_cents,r.account_type)}</tr>`;
+    const subtot = (label, list, type)=>{
+      const ma=_bvaSum(list,'mtd_actual_cents'), mb=_bvaSum(list,'mtd_budget_cents'), ya=_bvaSum(list,'ytd_actual_cents'), yb=_bvaSum(list,'ytd_budget_cents');
+      return `<tr class="subtot"><td></td><td>${esc(label)}</td>
+        <td class="num">${fmt(ma)}</td><td class="num">${fmt(mb)}</td>${_bvaVarCell(ma,mb,type)}
+        <td class="num">${fmt(ya)}</td><td class="num">${fmt(yb)}</td>${_bvaVarCell(ya,yb,type)}</tr>`;
+    };
+    let html = '';
+    for (const code of codes){
+      const fr = byFund[code];
+      const rev = fr.filter((r)=>r.account_type==='revenue');
+      const exp = fr.filter((r)=>r.account_type==='expense');
+      const title = _FUND_TITLES[code] || code;
+      // Net income = revenue − expenses, per column
+      const nMa=_bvaSum(rev,'mtd_actual_cents')-_bvaSum(exp,'mtd_actual_cents');
+      const nMb=_bvaSum(rev,'mtd_budget_cents')-_bvaSum(exp,'mtd_budget_cents');
+      const nYa=_bvaSum(rev,'ytd_actual_cents')-_bvaSum(exp,'ytd_actual_cents');
+      const nYb=_bvaSum(rev,'ytd_budget_cents')-_bvaSum(exp,'ytd_budget_cents');
+      const netVar = (a,b)=>{ const v=a-b; return `<td class="num ${v>=0?'fav':'unfav'}">${fmt(v)}</td>`; };
+      html += `<div class="fundsec">${esc(title)}</div>
+        <table style="table-layout:fixed;">${col}${head}<tbody>
+          <tr class="grouphdr"><td colspan="8">Revenue</td></tr>
+          ${rev.length ? rev.map(dataRow).join('') : `<tr><td colspan="8" class="muted">— none —</td></tr>`}
+          ${subtot('Total Revenue', rev, 'revenue')}
+          <tr class="grouphdr"><td colspan="8">Expenses</td></tr>
+          ${exp.length ? exp.map(dataRow).join('') : `<tr><td colspan="8" class="muted">— none —</td></tr>`}
+          ${subtot('Total Expenses', exp, 'expense')}
+          <tr class="netrow"><td></td><td>Net Income — ${esc(title)}</td>
+            <td class="num">${fmt(nMa)}</td><td class="num">${fmt(nMb)}</td>${netVar(nMa,nMb)}
+            <td class="num">${fmt(nYa)}</td><td class="num">${fmt(nYb)}</td>${netVar(nYa,nYb)}</tr>
+        </tbody></table>`;
+    }
+    return html;
+  }
+  async function acctPrintBudgetIS(){
+    const end = $('is-end') && $('is-end').value;
+    if (!end) { alert('Pick the "to" date first, then print.'); return; }
+    let data;
+    try {
+      data = await (await fetch(`/api/books/budget-vs-actual?community_id=${CID}&period_end=${end}`)).json();
+      if (data.error) throw new Error(data.error);
+    } catch (e) { alert("Couldn't load budget vs actual: " + e.message); return; }
+    const monthName = new Date(end + 'T12:00:00').toLocaleDateString('en-US', { month:'long', year:'numeric' });
+    const sub = `Month of ${monthName} and Year to Date · through ${fmtDate(end)}`;
+    const body = _budgetISBody(data.rows || [], data.fiscal_year, data.has_budget);
+    await _acctPrintWindow('Income Statement vs Budget', sub, body);
   }
 
   function bsHTML(j) {
@@ -229,9 +325,11 @@
       else if (r.fund_code === f.fund_code) v = fmt(r.balance_cents);
       return `<td class="num">${v}</td>`;
     }).join('');
-    const head = `<thead><tr><th style="width:64px;">Acct</th><th>Account</th>${funds.map((f)=>`<th class="num" title="${esc(f.fund_name||f.fund_code)}">${esc(f.fund_code)}</th>`).join('')}<th class="num">Total</th></tr></thead>`;
+    const NUMW = 104;
+    const colgroup = `<colgroup><col style="width:56px"><col>${funds.map(()=>`<col style="width:${NUMW}px">`).join('')}<col style="width:${NUMW+8}px"></colgroup>`;
+    const head = `<thead><tr><th>Acct</th><th>Account</th>${funds.map((f)=>`<th class="num" title="${esc(f.fund_name||f.fund_code)}">${esc(f.fund_code)}</th>`).join('')}<th class="num">Total</th></tr></thead>`;
     const sec = (title,rows,totalKey,grand) => `<h3 class="sec" style="font-size:14px; margin:16px 0 6px;">${esc(title)}</h3>
-      <table>${head}<tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}${r.is_computed?' <em class="muted" style="font-size:11px;">(computed)</em>':''}</td>${rowCells(r)}<td class="num">${fmt(r.balance_cents)}</td></tr>`).join('') : `<tr><td colspan="${ncol}" class="muted">— none —</td></tr>`}
+      <table style="table-layout:fixed;">${colgroup}${head}<tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}${r.is_computed?' <em class="muted" style="font-size:11px;">(computed)</em>':''}</td>${rowCells(r)}<td class="num">${fmt(r.balance_cents)}</td></tr>`).join('') : `<tr><td colspan="${ncol}" class="muted">— none —</td></tr>`}
         <tr class="total"><td colspan="2">Total ${esc(title)}</td>${funds.map((f)=>`<td class="num">${fmt((j.fund_totals[f.fund_code]||{})[totalKey]||0)}</td>`).join('')}<td class="num">${fmt(grand)}</td></tr></tbody></table>`;
     const t = j.totals;
     return `<div class="muted" style="margin-bottom:8px;">As of ${fmtDate(j.as_of_date)} · fund columns</div>
@@ -246,7 +344,7 @@
     $('body').innerHTML = `<div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
         <h2 class="sec">Income Statement</h2>
-        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">From</span>${dateInput('is-start',dMonthStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('is-end',dToday())}${goBtn('is-go')}${printStmtBtn('is')}</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><span class="muted" style="font-size:12px;">From</span>${dateInput('is-start',dMonthStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('is-end',dToday())}${goBtn('is-go')}${printBtnHTML('acctPrintStatement(\'is\')','Income Statement')}${printBtnHTML('acctPrintBudgetIS()','Income Statement vs Budget')}</div>
       </div><div id="is-out" class="muted">Loading…</div></div>`;
     const run = async () => {
       const s=$('is-start').value, e=$('is-end').value; if (!s||!e) { $('is-out').innerHTML='Pick a period.'; return; }
@@ -260,10 +358,15 @@
   function isHTML(j) {
     const funds = j.funds || [];
     const ncol = funds.length + 3;
+    // Fixed layout + a colgroup so every numeric column is an exact, uniform
+    // width — headers line up over their data (auto-layout was spreading the
+    // fund columns and drifting the amounts off the OPR/RES/SAV headers).
+    const NUMW = 104;
+    const colgroup = `<colgroup><col style="width:56px"><col>${funds.map(()=>`<col style="width:${NUMW}px">`).join('')}<col style="width:${NUMW+8}px"></colgroup>`;
     const rowCells = (r) => funds.map((f)=>`<td class="num">${r.fund_code===f.fund_code?fmt(r.ytd_amount_cents):''}</td>`).join('');
-    const head = `<thead><tr><th style="width:64px;">Acct</th><th>Account</th>${funds.map((f)=>`<th class="num" title="${esc(f.fund_name||f.fund_code)}">${esc(f.fund_code)}</th>`).join('')}<th class="num">Total YTD</th></tr></thead>`;
+    const head = `<thead><tr><th>Acct</th><th>Account</th>${funds.map((f)=>`<th class="num" title="${esc(f.fund_name||f.fund_code)}">${esc(f.fund_code)}</th>`).join('')}<th class="num">Total YTD</th></tr></thead>`;
     const sec = (title,rows,subKey,grand) => `<h3 class="sec" style="font-size:14px; margin:16px 0 6px;">${esc(title)}</h3>
-      <table>${head}<tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}</td>${rowCells(r)}<td class="num">${fmt(r.ytd_amount_cents)}</td></tr>`).join('') : `<tr><td colspan="${ncol}" class="muted">— none —</td></tr>`}
+      <table style="table-layout:fixed;">${colgroup}${head}<tbody>${(rows||[]).length ? rows.map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}</td>${rowCells(r)}<td class="num">${fmt(r.ytd_amount_cents)}</td></tr>`).join('') : `<tr><td colspan="${ncol}" class="muted">— none —</td></tr>`}
         <tr class="total"><td colspan="2">Total ${esc(title)}</td>${funds.map((f)=>`<td class="num">${fmt((j.fund_totals[f.fund_code]||{}).ytd?.[subKey]||0)}</td>`).join('')}<td class="num">${fmt(grand)}</td></tr></tbody></table>`;
     const ni = j.totals.period.net_income_cents, col = ni>=0?'#166534':'#991b1b';
     const niCells = funds.map((f)=>`<td class="num" style="font-weight:700; color:${col};">${fmt((j.fund_totals[f.fund_code]||{}).ytd?.net_income_cents||0)}</td>`).join('');
