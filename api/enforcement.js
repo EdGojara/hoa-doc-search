@@ -1700,6 +1700,9 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         admin_fee_amount:        feeFormatted,
         include_hearing_rights:  includeHearingRights,
         remedy_mode:             selfHelpRemedy,
+        // Evidence photo of the condition (downloaded above as photoBuffer)
+        photo_buffer:            photoBuffer || null,
+        photo_captured_at:       (observation && observation.captured_at) || null,
       };
 
       try {
@@ -3406,6 +3409,9 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             admin_fee_amount:        `$${(adminFeeCents / 100).toFixed(2)}`,
             include_hearing_rights:  priorCertified === 0,
             remedy_mode:             remedyMode,
+            // Evidence photo of the condition (already fetched + downloaded above)
+            photo_buffer:            closeUpBuffer || null,
+            photo_captured_at:       (observation && observation.captured_at) || null,
           });
         } else {
           // Regenerate the §209 / courtesy letter PDF anchored at the postmark date
@@ -7011,12 +7017,50 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
       .from('violations')
       .select(`
         id, property_id, community_id, primary_category_id, opened_at,
-        current_stage
+        current_stage, opened_from_observation_id
       `)
       .eq('id', violationId)
       .maybeSingle();
     if (vErr) throw vErr;
     if (!violation) return res.status(404).json({ error: 'violation_not_found' });
+
+    // Evidence photo of the condition — the inspection close-up, so the certified
+    // notice shows what was documented on site (same as the §209 letter). Try the
+    // opening observation first, then the most recent confirmed close-up at this
+    // property. Photo-less cases (Vantaca carryovers) simply render without one.
+    let photoBuffer = null;
+    let photoCapturedAt = null;
+    try {
+      let photoStoragePath = null;
+      if (violation.opened_from_observation_id) {
+        const { data: obs } = await supabase
+          .from('property_observations')
+          .select('inspection_photos(captured_at, storage_path)')
+          .eq('id', violation.opened_from_observation_id)
+          .maybeSingle();
+        if (obs && obs.inspection_photos && obs.inspection_photos.storage_path) {
+          photoStoragePath = obs.inspection_photos.storage_path;
+          photoCapturedAt = obs.inspection_photos.captured_at || null;
+        }
+      }
+      if (!photoStoragePath) {
+        const { data: latest } = await supabase
+          .from('inspection_photos')
+          .select('storage_path, captured_at')
+          .eq('reviewer_confirmed_property_id', violation.property_id)
+          .in('photo_role', ['close_up', 'single'])
+          .order('captured_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (latest && latest.storage_path) { photoStoragePath = latest.storage_path; photoCapturedAt = latest.captured_at || null; }
+      }
+      if (photoStoragePath) {
+        const { data: dl } = await supabase.storage.from('documents').download(photoStoragePath);
+        if (dl) photoBuffer = Buffer.from(await dl.arrayBuffer());
+      }
+    } catch (e) {
+      console.warn('[draft-force-mow-letter] photo fetch failed (rendering without it):', e.message);
+    }
 
     const [propRes, commRes, ownerRes] = await Promise.all([
       supabase
@@ -7112,6 +7156,8 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
       admin_fee_amount: adminFeeAmount,
       include_hearing_rights: includeHearingRights,
       remedy_mode: remedyMode,
+      photo_buffer: photoBuffer || null,
+      photo_captured_at: photoCapturedAt || null,
     };
 
     // Render
