@@ -314,6 +314,28 @@
     await _acctPrintWindow('Income Statement vs Budget', sub, body);
   }
 
+  // Toolbar button (non-print actions) — same look as the print buttons.
+  function acctBarBtn(onclick, label, title){
+    return `<button onclick="${onclick}"${title?` title="${esc(title)}"`:''} style="padding:7px 12px; border-radius:8px; border:1px solid var(--rule); background:#fff; color:var(--navy); font-weight:600; cursor:pointer; font-size:12.5px;">${esc(label)}</button>`;
+  }
+  // Set the income-statement range to the previous full calendar month + view.
+  function acctSetPriorMonth(){
+    const now = new Date();
+    const y = now.getFullYear(), m = now.getMonth();      // m = current month (0-based)
+    const first = new Date(y, m - 1, 1);                  // first day of prior month (Date rolls Jan→Dec)
+    const last  = new Date(y, m, 0);                      // day 0 of this month = last day of prior month
+    const iso = (d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if ($('is-start')) $('is-start').value = iso(first);
+    if ($('is-end'))   $('is-end').value   = iso(last);
+    if ($('is-go'))    $('is-go').click();
+  }
+  // Rolling 12-month income statement — opens the standalone monthly-columns page.
+  function acctOpenRolling12(){
+    if (!CID) { alert('Pick a community first.'); return; }
+    const end = ($('is-end') && $('is-end').value) || new Date().toISOString().slice(0,10);
+    window.open(`/api/gl/${CID}/rolling-income-statement?end=${encodeURIComponent(end)}&months=12&format=html`, '_blank');
+  }
+
   function bsHTML(j) {
     const funds = j.funds || [];
     const ncol = funds.length + 3; // acct, name, [funds], total
@@ -344,7 +366,7 @@
     $('body').innerHTML = `<div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
         <h2 class="sec">Income Statement</h2>
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><span class="muted" style="font-size:12px;">From</span>${dateInput('is-start',dMonthStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('is-end',dToday())}${goBtn('is-go')}${printBtnHTML('acctPrintStatement(\'is\')','Income Statement')}${printBtnHTML('acctPrintBudgetIS()','Income Statement vs Budget')}</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><span class="muted" style="font-size:12px;">From</span>${dateInput('is-start',dMonthStart())}<span class="muted" style="font-size:12px;">to</span>${dateInput('is-end',dToday())}${goBtn('is-go')}${acctBarBtn('acctSetPriorMonth()','◀ Prior Month','Set the range to the previous full calendar month')}${acctBarBtn('acctOpenRolling12()','📅 Rolling 12-Month','Open the 12-month monthly-columns income statement')}${printBtnHTML('acctPrintStatement(\'is\')','Income Statement')}${printBtnHTML('acctPrintBudgetIS()','Income Statement vs Budget')}</div>
       </div><div id="is-out" class="muted">Loading…</div></div>`;
     const run = async () => {
       const s=$('is-start').value, e=$('is-end').value; if (!s||!e) { $('is-out').innerHTML='Pick a period.'; return; }
