@@ -9885,9 +9885,12 @@ router.post('/violations/:violationId/cure-days', express.json(), async (req, re
 
 // A missing violation_field_checks table (migration 322 not applied yet) must
 // not blank the map — treat "table not found" as "no checks yet" on read paths.
+// True when a table OR column isn't there yet (migration not applied). PostgREST
+// phrases these differently: a SELECT on a missing column → "…does not exist";
+// an UPDATE → "Could not find the '<col>' column … in the schema cache" (PGRST204).
 function _isMissingTable(err) {
   const m = (err && (err.message || err.code || '')) + '';
-  return /could not find the table|does not exist|42P01|PGRST205/i.test(m);
+  return /could not find|does not exist|42P01|42703|PGRST20[45]/i.test(m);
 }
 
 // Paginated read of field checks (avoids the 1000-row PostgREST cap as checks
@@ -9917,12 +9920,16 @@ router.get('/cert-reinspect', async (req, res) => {
     if (!communityId) return res.status(400).json({ error: 'community_id_required' });
 
     // Open certified cases only (courtesy/cured/closed excluded by stage filter).
-    const { data: vios, error: vErr } = await supabase
-      .from('violations')
-      .select('id, property_id, current_stage, current_stage_started_at, opened_at, primary_category_id, enforcement_categories(label), property:property_id(street_address, unit, city, latitude, longitude)')
-      .eq('community_id', communityId)
-      .eq('current_stage', 'certified_209')
-      .limit(2000);
+    const CERT_COLS = 'id, property_id, current_stage, current_stage_started_at, opened_at, primary_category_id, certified_notice_date, enforcement_categories(label), property:property_id(street_address, unit, city, latitude, longitude)';
+    let vios, vErr;
+    ({ data: vios, error: vErr } = await supabase
+      .from('violations').select(CERT_COLS)
+      .eq('community_id', communityId).eq('current_stage', 'certified_209').limit(2000));
+    if (vErr && _isMissingTable(vErr)) { // certified_notice_date column not there yet (migration 323) — degrade
+      ({ data: vios, error: vErr } = await supabase
+        .from('violations').select(CERT_COLS.replace(', certified_notice_date', ''))
+        .eq('community_id', communityId).eq('current_stage', 'certified_209').limit(2000));
+    }
     if (vErr) return res.status(500).json({ error: safeErrorMessage(vErr) });
 
     const rows = vios || [];
@@ -9955,10 +9962,21 @@ router.get('/cert-reinspect', async (req, res) => {
     }
 
     const today = new Date();
+    const CERT_WINDOW_DAYS = 180; // a certified §209 notice is good ~6 months; observe until then, else recertify / refer
     const items = rows.map((v) => {
       const p = v.property || {};
       const started = v.current_stage_started_at ? new Date(v.current_stage_started_at) : null;
       const daysAtCertified = started ? Math.max(0, Math.round((today - started) / 86400000)) : null;
+      // 180-day window off the ACTUAL certified-notice date (null for undated carryovers).
+      const certDate = v.certified_notice_date || null;
+      let daysRemaining = null, expiresOn = null, expired = null;
+      if (certDate) {
+        const cd = new Date(certDate + 'T12:00:00Z');
+        const exp = new Date(cd.getTime() + CERT_WINDOW_DAYS * 86400000);
+        expiresOn = exp.toISOString().slice(0, 10);
+        daysRemaining = Math.round((exp - today) / 86400000);
+        expired = daysRemaining < 0;
+      }
       const lc = latestCheck[v.id] || null;
       return {
         violation_id: v.id,
@@ -9971,6 +9989,10 @@ router.get('/cert-reinspect', async (req, res) => {
         category: (v.enforcement_categories && v.enforcement_categories.label) || null,
         certified_since: v.current_stage_started_at || null,
         days_at_certified: daysAtCertified,
+        certified_notice_date: certDate,       // the real cert date (null = needs dating)
+        days_remaining: daysRemaining,          // days left in the 180-day window (negative = expired)
+        expires_on: expiresOn,
+        expired: expired,
         last_check: lc ? { result: lc.result, checked_at: lc.checked_at, has_photo: !!lc.photo_storage_path, notes: lc.notes || null } : null,
       };
     });
@@ -9984,10 +10006,47 @@ router.get('/cert-reinspect', async (req, res) => {
       not_cured: items.filter((i) => i.last_check && i.last_check.result === 'not_cured').length,
       cured: items.filter((i) => i.last_check && i.last_check.result === 'cured').length,
       unchecked: items.filter((i) => !i.last_check).length,
+      needs_date: items.filter((i) => !i.certified_notice_date).length,        // no certified date on file yet
+      expired: items.filter((i) => i.expired === true).length,                  // past 180 days → recertify / refer
+      expiring_soon: items.filter((i) => i.days_remaining != null && i.days_remaining >= 0 && i.days_remaining <= 30).length,
+      window_days: 180,
       items,
     });
   } catch (err) {
     console.error('[enforcement.cert-reinspect list]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /cert-reinspect/:violationId/certified-date — set/clear the certified
+// notice date (staff dating the Vantaca carryovers). Body: { date: 'YYYY-MM-DD' | null }.
+router.post('/cert-reinspect/:violationId/certified-date', express.json(), async (req, res) => {
+  try {
+    const violationId = req.params.violationId;
+    const raw = req.body && req.body.date;
+    let date = null;
+    if (raw != null && String(raw).trim() !== '') {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(raw).trim());
+      if (!m) return res.status(400).json({ error: 'date must be YYYY-MM-DD (or null to clear)' });
+      date = String(raw).trim();
+    }
+    const { error } = await supabase.from('violations')
+      .update({ certified_notice_date: date }).eq('id', violationId);
+    if (error) {
+      if (_isMissingTable(error)) return res.status(503).json({ error: 'Certified-date storage not ready — apply migration 323 in the Supabase SQL editor, then try again.' });
+      return res.status(500).json({ error: safeErrorMessage(error) });
+    }
+    // Recompute the 180-day window for the response so the UI can update in place.
+    let days_remaining = null, expires_on = null, expired = null;
+    if (date) {
+      const exp = new Date(new Date(date + 'T12:00:00Z').getTime() + 180 * 86400000);
+      expires_on = exp.toISOString().slice(0, 10);
+      days_remaining = Math.round((exp - new Date()) / 86400000);
+      expired = days_remaining < 0;
+    }
+    res.json({ ok: true, violation_id: violationId, certified_notice_date: date, days_remaining, expires_on, expired });
+  } catch (err) {
+    console.error('[enforcement.cert-reinspect certified-date]', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

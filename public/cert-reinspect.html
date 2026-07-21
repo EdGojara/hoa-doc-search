@@ -79,6 +79,32 @@
   .toast.show{opacity:1;} .toast.err{background:var(--crit);}
   @media (prefers-color-scheme:dark){ .toast{background:var(--gold);color:#0c1220;} }
   .hide{display:none !important;}
+
+  /* view toggle */
+  .viewtog{display:flex;gap:0;border:1px solid rgba(255,255,255,.25);border-radius:9px;overflow:hidden;}
+  .viewtog button{background:transparent;color:#fff;border:0;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;}
+  .viewtog button.on{background:var(--gold);color:#0c1220;}
+  @media (prefers-color-scheme:dark){ .viewtog{border-color:var(--line);} .viewtog button{color:var(--ink);} }
+
+  /* list view */
+  #listView{flex:1 1 auto;min-height:0;overflow-y:auto;background:var(--bg);padding:10px 12px calc(20px + env(safe-area-inset-bottom));}
+  .lrow{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:9px;box-shadow:var(--shadow);}
+  .lrow .lr-top{display:flex;align-items:flex-start;gap:10px;}
+  .lr-status{flex:0 0 auto;width:11px;height:11px;border-radius:50%;margin-top:5px;}
+  .lr-status.open{background:var(--crit);} .lr-status.nc{background:#7a1610;border:2px solid var(--crit);} .lr-status.cu{background:var(--good);}
+  .lr-addr{font-weight:700;color:var(--navy);font-size:15px;} @media (prefers-color-scheme:dark){.lr-addr{color:var(--ink);}}
+  .lr-meta{font-size:12.5px;color:var(--muted);margin-top:2px;}
+  .lr-badge{margin-left:auto;flex:0 0 auto;font-size:11px;font-weight:700;padding:4px 9px;border-radius:7px;white-space:nowrap;}
+  .lr-badge.nc{background:var(--critbg);color:var(--crit);} .lr-badge.cu{background:var(--goodbg);color:var(--good);} .lr-badge.open{background:var(--bg);color:var(--muted);border:1px solid var(--line);}
+  .lr-clock{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:1px solid color-mix(in srgb,var(--line) 60%,transparent);font-size:12.5px;color:var(--muted);}
+  .lr-clock label{font-weight:600;color:var(--ink);}
+  .lr-clock input[type=date]{border:1px solid var(--line);border-radius:7px;padding:5px 7px;font:inherit;font-size:12.5px;background:var(--bg);color:var(--ink);}
+  .lr-days{font-weight:700;padding:3px 8px;border-radius:6px;font-variant-numeric:tabular-nums;}
+  .lr-days.ok{background:var(--goodbg);color:var(--good);} .lr-days.soon{background:var(--critbg);color:var(--amber);} .lr-days.exp{background:var(--critbg);color:var(--crit);} .lr-days.none{background:var(--bg);color:var(--muted);border:1px dashed var(--line);}
+  .lr-last{margin-left:auto;font-size:12px;color:var(--muted);}
+  .lr-act{background:var(--navy);color:#fff;border:0;border-radius:8px;padding:6px 11px;font-size:12.5px;font-weight:600;cursor:pointer;}
+  @media (prefers-color-scheme:dark){ .lr-act{background:var(--gold);color:#0c1220;} }
+  .lempty{text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;}
 </style>
 </head>
 <body>
@@ -87,6 +113,10 @@
     <div class="brand">Bedrock · Board Meeting Prep</div>
     <div class="title">§209 Field Re-Verification</div>
   </div>
+  <div class="viewtog" id="viewtog">
+    <button id="v-map" class="on">🗺 Map</button>
+    <button id="v-list">☰ List</button>
+  </div>
   <select id="comm"><option value="">Loading communities…</option></select>
 </header>
 
@@ -94,10 +124,12 @@
   <span class="chip"><span class="dot open"></span>Needs check <b id="c-open">–</b></span>
   <span class="chip"><span class="dot nc"></span>Not cured <b id="c-nc">–</b></span>
   <span class="chip"><span class="dot cu"></span>Looks resolved <b id="c-cu">–</b></span>
+  <span class="chip warn hide" id="c-exp-chip">⏳ Over 180 days <b id="c-exp">0</b></span>
+  <span class="chip hide" id="c-date-chip">📅 Needs date <b id="c-date">0</b></span>
   <span class="chip warn hide" id="c-geo-chip">⚠ No location <b id="c-geo">0</b></span>
 </div>
 
-<div style="position:relative;flex:1 1 auto;min-height:0;">
+<div style="position:relative;flex:1 1 auto;min-height:0;" id="mapWrap">
   <div id="map"></div>
   <div class="layers">
     <button id="ly-hybrid" class="on" title="Hybrid">🛰️</button>
@@ -106,6 +138,8 @@
   </div>
   <button class="fab" id="reportBtn" disabled>📋 Board report</button>
 </div>
+
+<div id="listView" class="hide"></div>
 
 <!-- bottom sheet -->
 <div class="sheet" id="sheet">
@@ -181,6 +215,9 @@ function refreshCounts(data){
   $('c-open').textContent = data.unchecked;
   $('c-nc').textContent = data.not_cured;
   $('c-cu').textContent = data.cured;
+  const exp = data.expired || 0, needsDate = data.needs_date || 0;
+  $('c-exp-chip').classList.toggle('hide', exp === 0); $('c-exp').textContent = exp;
+  $('c-date-chip').classList.toggle('hide', needsDate === 0); $('c-date').textContent = needsDate;
   if (data.missing_geo > 0){ $('c-geo-chip').classList.remove('hide'); $('c-geo').textContent = data.missing_geo; }
   else $('c-geo-chip').classList.add('hide');
   $('reportBtn').disabled = data.not_cured === 0;
@@ -193,9 +230,79 @@ async function load(){
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'load failed');
     items = data.items || [];
-    renderPins(); refreshCounts(data);
+    renderPins(); refreshCounts(data); renderList();
     if (!items.length) toast('No certified §209 cases for this community.');
   } catch (e) { toast(e.message, true); }
+}
+
+// ---- list / status view ----
+let listView = 'map';
+function statusOf(it){
+  if (it.last_check && it.last_check.result === 'cured') return { cls:'cu', label:'Looks resolved' };
+  if (it.last_check && it.last_check.result === 'not_cured') return { cls:'nc', label:'Not cured' };
+  return { cls:'open', label:'Not verified' };
+}
+function daysCell(it){
+  if (!it.certified_notice_date) return `<span class="lr-days none">no date</span>`;
+  const d = it.days_remaining;
+  if (d == null) return `<span class="lr-days none">—</span>`;
+  if (d < 0) return `<span class="lr-days exp">${Math.abs(d)}d over · recertify</span>`;
+  if (d <= 30) return `<span class="lr-days soon">${d}d left</span>`;
+  return `<span class="lr-days ok">${d}d left</span>`;
+}
+function renderList(){
+  const el = $('listView');
+  if (!items.length){ el.innerHTML = `<div class="lempty">No certified §209 cases for this community.</div>`; return; }
+  // sort: not-cured first, then unverified, then resolved; within, soonest-expiring first
+  const rank = (it)=>{ const s=statusOf(it).cls; return s==='nc'?0:s==='open'?1:2; };
+  const sorted = [...items].sort((a,b)=> rank(a)-rank(b) || ((a.days_remaining==null?9999:a.days_remaining)-(b.days_remaining==null?9999:b.days_remaining)) || (a.address||'').localeCompare(b.address||''));
+  el.innerHTML = sorted.map((it)=>{
+    const st = statusOf(it);
+    const last = it.last_check ? `Last drive: ${fmtDate(it.last_check.checked_at)}` : 'Not yet driven';
+    return `<div class="lrow" data-vid="${it.violation_id}">
+      <div class="lr-top">
+        <span class="lr-status ${st.cls}"></span>
+        <div style="min-width:0;">
+          <div class="lr-addr">${escapeHtml(it.address||'Address on file')}</div>
+          <div class="lr-meta">${escapeHtml([it.category, it.owner_name].filter(Boolean).join(' · '))}</div>
+        </div>
+        <span class="lr-badge ${st.cls}">${st.label}</span>
+      </div>
+      <div class="lr-clock">
+        <label>Certified:</label>
+        <input type="date" value="${it.certified_notice_date||''}" onchange="setCertDate('${it.violation_id}', this.value)">
+        ${daysCell(it)}
+        <span class="lr-last">${last}</span>
+        <button class="lr-act" onclick="openSheetById('${it.violation_id}')">Verify</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function openSheetById(vid){ const it = items.find(x=>x.violation_id===vid); if (it) openSheet(it); }
+async function setCertDate(vid, value){
+  try {
+    const r = await fetch('/api/enforcement/cert-reinspect/' + encodeURIComponent(vid) + '/certified-date', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: value || null })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'save failed');
+    const it = items.find(x=>x.violation_id===vid);
+    if (it){ it.certified_notice_date = data.certified_notice_date; it.days_remaining = data.days_remaining; it.expires_on = data.expires_on; it.expired = data.expired; }
+    // recompute chip counts + re-render list
+    const exp = items.filter(i=>i.expired===true).length, nd = items.filter(i=>!i.certified_notice_date).length;
+    $('c-exp-chip').classList.toggle('hide', exp===0); $('c-exp').textContent = exp;
+    $('c-date-chip').classList.toggle('hide', nd===0); $('c-date').textContent = nd;
+    renderList();
+    toast(value ? 'Certified date saved ✓' : 'Date cleared');
+  } catch (e) { toast(e.message, true); }
+}
+function setView(v){
+  listView = v;
+  $('mapWrap').classList.toggle('hide', v!=='map');
+  $('listView').classList.toggle('hide', v!=='list');
+  $('v-map').classList.toggle('on', v==='map');
+  $('v-list').classList.toggle('on', v==='list');
+  if (v==='map' && map){ setTimeout(()=>map.invalidateSize(), 50); }
 }
 
 // ---- bottom sheet ----
@@ -265,7 +372,11 @@ function recount(){
   const un = items.filter(i => !i.last_check).length;
   $('c-open').textContent = un; $('c-nc').textContent = nc; $('c-cu').textContent = cu;
   $('reportBtn').disabled = nc === 0;
+  renderList();
 }
+
+$('v-map').onclick = () => setView('map');
+$('v-list').onclick = () => setView('list');
 
 $('reportBtn').onclick = () => {
   if (!communityId) return;
