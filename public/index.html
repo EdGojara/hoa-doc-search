@@ -14544,7 +14544,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const wrap = document.getElementById('acc-stats-pills');
     if (!wrap) return;
     const all = accCurrentList;
-    const queued = all.filter(a => a.status === 'pending_review');
+    const queued = all.filter(a => a.status === 'pending_review' || a.status === 'awaiting_info');
     const done = all.filter(a => a.status === 'decided');
     const overdue = queued.filter(a => {
       if (!a.created_at) return false;
@@ -14573,19 +14573,25 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     }
     empty.style.display = 'none';
     // Queue first (oldest first = most urgent), then done (newest first).
-    const queued = accCurrentList.filter(a => a.status === 'pending_review')
+    // "Open" = still being worked: pending_review OR awaiting_info (started, waiting
+    // on the homeowner for more documents — a multi-email application). Ed 2026-07-22.
+    const _isOpen = (a) => a.status === 'pending_review' || a.status === 'awaiting_info';
+    const queued = accCurrentList.filter(_isOpen)
       .sort((a,b) => new Date(a.created_at||0) - new Date(b.created_at||0));
-    const done = accCurrentList.filter(a => a.status !== 'pending_review')
+    const done = accCurrentList.filter(a => !_isOpen(a))
       .sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
 
     function rowHtml(a) {
       const created = a.created_at ? new Date(a.created_at) : null;
       const ageHours = created ? (Date.now() - created.getTime()) / 3600000 : null;
-      const isQueue = a.status === 'pending_review';
+      const isQueue = a.status === 'pending_review' || a.status === 'awaiting_info';
+      const awaitingInfo = a.status === 'awaiting_info';
       const ageClass = ageHours == null ? '' : (isQueue && ageHours > 48 ? 'danger' : isQueue && ageHours > 24 ? 'warn' : '');
       const ageTxt = ageHours == null ? '—' : (ageHours < 1 ? `${Math.round(ageHours*60)}m ago` : ageHours < 24 ? `${Math.round(ageHours)}h ago` : `${Math.round(ageHours/24)}d ago`);
       const urgent = isQueue && ageHours != null && ageHours > 24;
-      const statusCell = isQueue
+      const statusCell = awaitingInfo
+        ? '<span class="acc-pill acc-pill-pending">📎 Awaiting documents</span>'
+        : isQueue
         ? (a.ai_recommendation ? accDecisionBadge(a.ai_recommendation, '🤖') : '<span class="acc-pill acc-pill-pending">⏳ Drafted</span>')
         : accDecisionBadge(a.decision_type) || '<span class="acc-pill acc-pill-approved">✓ Done</span>';
       return `
