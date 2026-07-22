@@ -595,6 +595,26 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       } catch (_) { /* best-effort — Claire will ask for the address if we can't derive it */ }
     }
 
+    // READ THE APPLICATION THEY ATTACHED before drafting anything. If this is an
+    // ACC email with a form/photo attached, extract the form (name, address,
+    // community, project) and use it to fill in what we couldn't resolve from
+    // metadata — so Annie confirms their details instead of asking for an
+    // address that's on page one of the form they sent. (Ed 2026-07-22.)
+    let accFormCtx = null;
+    if (m.classification === 'acc_request' && m.has_attachments && m.graph_id) {
+      try {
+        const { readAccApplicationContext } = require('../lib/applications/email_intake');
+        accFormCtx = await readAccApplicationContext({ graph_id: m.graph_id, mailbox: m.mailbox });
+        if (accFormCtx) {
+          if (!communityId && accFormCtx.community_id) communityId = accFormCtx.community_id;
+          if (!propertyId && accFormCtx.property_id) propertyId = accFormCtx.property_id;
+          if (!communityName && accFormCtx.community_name) communityName = accFormCtx.community_name;
+          // Persist the resolution we just derived from the form.
+          if (communityId || propertyId) { try { await supabase.from('email_messages').update({ community_id: communityId, resolved_property_id: propertyId }).eq('id', req.params.id); } catch (_) {} }
+        }
+      } catch (e) { console.warn('[email_triage] ACC form read skipped:', e.message); }
+    }
+
     // Architectural request: if the community has a blank ARC application form,
     // Claire tells them it's attached (the form itself is attached on send).
     let arcFormTitle = null, autoAttachments = [];
@@ -615,6 +635,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       force: true, // Ed clicked "Draft reply" explicitly — always produce a reply, even internal/spam
       notes, currentDraft, // reviewer steering (Rewrite with my notes)
       siblings, // cover the homeowner's other recent emails in one reply
+      applicationOnFile: accFormCtx, // what they attached (address/project) — confirm, don't re-ask
     });
     res.json({ ...draft, covers, auto_attachments: autoAttachments, community_id: communityId });
   } catch (err) {
