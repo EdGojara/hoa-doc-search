@@ -142,6 +142,29 @@ router.post('/:id/send', async (req, res) => {
   }
 });
 
+// POST /api/email-drafts/:id/redraft — add comments and let the persona rewrite
+// the message body. Returns the revised body for review; does NOT save or send.
+router.post('/:id/redraft', async (req, res) => {
+  try {
+    const notes = String(req.body && req.body.notes || '').trim();
+    const currentBody = String(req.body && req.body.body_text || '').trim();
+    if (!notes) return res.status(400).json({ error: 'add a note describing what to change' });
+    const { data: d, error } = await supabase.from('outbound_email_drafts').select('persona, community_name, to_name').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!d) return res.status(404).json({ error: 'not_found' });
+    const { revisePersonaDraft } = require('../lib/email/compose_draft');
+    const out = await revisePersonaDraft({
+      persona: d.persona, currentBody, notes,
+      ctx: { recipientName: d.to_name, community: d.community_name },
+    });
+    if (out.degraded) return res.status(503).json({ error: 'the draft assistant is unavailable right now — edit the text directly' });
+    res.json({ ok: true, body_text: out.body });
+  } catch (err) {
+    console.error('[email_drafts] redraft failed:', err.message);
+    res.status(500).json({ error: safe(err) });
+  }
+});
+
 // POST /api/email-drafts/:id/forward — loop a HUMAN teammate in to help. Sends
 // the draft PLUS the homeowner's inbound thread to an internal @bedrocktx.com
 // address. Internal only (never the homeowner); the click is the release.

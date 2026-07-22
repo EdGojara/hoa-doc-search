@@ -46,6 +46,8 @@
   .fwd-panel{border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-top:12px;background:#faf9f5;}
   .fwd-panel label{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:7px;}
   .fwd-panel textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit;background:#fff;color:var(--ink);min-height:70px;margin-top:8px;resize:vertical;}
+  .redraft{background:#faf9f5;border:1px solid var(--line);border-radius:10px;padding:12px 14px;}
+  .redraft textarea{min-height:64px;}
   .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap;}
   .btn{border:0;border-radius:8px;padding:9px 16px;font-size:13.5px;font-weight:600;cursor:pointer;}
   .btn.primary{background:var(--good);color:#fff;} .btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line);} .btn.danger{background:#fff;color:var(--red);border:1px solid var(--redbg);}
@@ -145,6 +147,13 @@ function renderView(){
     </div>
     <div class="field"><label>Subject</label><input id="f-subject" value="${esc(d.subject)}" ${editable?'':'disabled'}></div>
     <div class="field"><label>Message</label><textarea id="f-body" spellcheck="true" ${editable?'':'disabled'}>${esc(d.body_text||d.body_html||'')}</textarea></div>
+    ${editable?`<div class="field redraft">
+      <label>Add comments and redraft</label>
+      <textarea id="f-notes" placeholder="Tell ${d.persona==='annie'?'Annie':'the team'} what to change — e.g. 'make it warmer', 'shorten it', 'mention they can call us'"></textarea>
+      <div style="display:flex;justify-content:flex-end;margin-top:7px;">
+        <button class="btn ghost" id="redraftBtn" onclick="redraftDraft()">✍️ Redraft with my notes</button>
+      </div>
+    </div>`:''}
     ${atts.length?`<div class="field"><label>Attachments</label><div class="atts">${atts.map(a=>`<span class="att">📎 ${esc(a.name||'file')}</span>`).join('')}</div></div>`:''}
     ${editable?`<div class="actions">
       <button class="btn ghost" onclick="toggleForward()">↪ Forward for help</button>
@@ -248,6 +257,19 @@ async function sendDraft(){
     const j = await r.json(); if(!r.ok) throw new Error(j.error||'send failed');
     toast('Sent ✓'); current=null; await loadList();
   }catch(e){ toast(e.message,true); const b=$('sendBtn'); if(b) b.disabled=false; }
+}
+async function redraftDraft(){
+  const notes = ($('f-notes') && $('f-notes').value.trim()) || '';
+  if(!notes){ toast('Add a note describing what to change',true); return; }
+  const btn=$('redraftBtn'); const orig=btn?btn.textContent:''; if(btn){ btn.disabled=true; btn.textContent='Redrafting…'; }
+  try{
+    const r = await af('/api/email-drafts/'+current.id+'/redraft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes, body_text:$('f-body').value})});
+    const j = await r.json(); if(!r.ok) throw new Error(j.error||'redraft failed');
+    $('f-body').value = j.body_text;   // show the revision — not saved until you Save or Send
+    $('f-notes').value = '';
+    toast('Redrafted — review, then Save or Send');
+  }catch(e){ toast(e.message,true); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent=orig; } }
 }
 function toggleForward(){
   const p = $('fwd-panel'); if(!p) return;
