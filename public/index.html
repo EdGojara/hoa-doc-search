@@ -25423,10 +25423,15 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           const dColor = isCert ? '#7f1d1d' : '#0B1D34';
           const when = b.printed_at ? new Date(b.printed_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
           const pm = b.postmark_date ? ' · postmark ' + b.postmark_date : '';
-          return `<div style="display:flex; gap:8px; align-items:center; margin-bottom:7px; flex-wrap:wrap; padding:8px 9px; background:#fff; border:1px solid #fde68a; border-radius:7px;">
+          const batchKey = (b.delivery_method + '|' + b.printed_at).replace(/[^a-zA-Z0-9]/g, '');
+          return `<div style="margin-bottom:7px; padding:8px 9px; background:#fff; border:1px solid #fde68a; border-radius:7px;">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
             <span style="font-size:12.5px; font-weight:600; color:${dColor}; min-width:160px; line-height:1.35;">${dLabel}: ${b.count} letter${b.count === 1 ? '' : 's'}<br><span style="font-weight:400; color:#92400e; font-size:11px;">printed ${when}${pm}</span></span>
-            <button onclick="inspMailQueueRedownload('${b.delivery_method}','${b.printed_at}')" style="flex:1; min-width:130px; padding:7px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⬇ Re-download this batch</button>
-            <button onclick="inspMailQueueConfirmMailed('${b.delivery_method}','${b.printed_at}')" style="flex:1; min-width:130px; padding:7px; background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✓ Confirm this batch mailed</button>
+            <button onclick="inspMailQueueRedownload('${b.delivery_method}','${b.printed_at}')" style="flex:1; min-width:120px; padding:7px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⬇ Re-download this batch</button>
+            <button onclick="inspMailQueueConfirmMailed('${b.delivery_method}','${b.printed_at}')" style="flex:1; min-width:120px; padding:7px; background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✓ Confirm this batch mailed</button>
+            </div>
+            <div style="margin-top:6px;"><button onclick="inspMailQueueBatchManifest('${b.delivery_method}','${b.printed_at}','${batchKey}')" id="mfbtn-${batchKey}" style="background:none; border:1px solid #cbd5e1; color:#0B1D34; padding:4px 11px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">👁 Show these ${b.count} letters</button></div>
+            <div id="mf-${batchKey}" style="display:none; margin-top:8px;"></div>
           </div>`;
         }).join('') : `
         ${lfc ? `<div style="display:flex; gap:8px; align-items:center; margin-bottom:7px; flex-wrap:wrap;">
@@ -25457,6 +25462,38 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // Re-download a LOCKED batch (printed + postmarked but not yet confirmed
   // mailed). Re-merges the stored PDFs without changing any state, so a
   // missed/failed download can always be recovered.
+  // Line-item manifest of one locked batch — so it's auditable, not a black box.
+  async function inspMailQueueBatchManifest(deliveryMethod, printedAt, batchKey) {
+    const box = document.getElementById('mf-' + batchKey);
+    const btn = document.getElementById('mfbtn-' + batchKey);
+    if (!box) return;
+    if (box.style.display === 'block' && box.innerHTML) { box.style.display = 'none'; if (btn) btn.textContent = btn.textContent.replace('Hide', 'Show'); return; }
+    box.style.display = 'block';
+    box.innerHTML = '<div style="font-size:12px;color:#64748b;padding:6px;">Loading…</div>';
+    const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, (m) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[m]));
+    try {
+      const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+      const params = new URLSearchParams({ delivery_method: deliveryMethod, printed_at: printedAt });
+      if (filterCid) params.set('community_id', filterCid);
+      const r = await window._authFetch('/api/enforcement/mail-queue/batch-manifest?' + params.toString());
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'load failed');
+      const warn = j.missing_pdf > 0 ? `<div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:6px;padding:6px 9px;font-size:11.5px;margin-bottom:6px;">⚠ ${j.missing_pdf} letter(s) have no stored PDF and would be MISSING from the merged download. Flag this to Ed.</div>` : '';
+      const summary = `<div style="font-size:11.5px;color:#475569;margin-bottom:6px;">${j.count} letters · ${j.distinct_properties} properties${j.properties_with_multiple ? ' · ' + j.properties_with_multiple + ' with multiple violations (each a separate notice)' : ''}${j.missing_pdf ? '' : ' · every letter has its PDF ✓'}</div>`;
+      const rows = (j.items || []).map((it, i) => `<tr style="border-top:1px solid #f1f5f9;">
+        <td style="padding:3px 8px;color:#94a3b8;font-size:11px;">${i + 1}</td>
+        <td style="padding:3px 8px;font-size:12px;">${esc(it.address) || '(no address)'}</td>
+        <td style="padding:3px 8px;font-size:11.5px;color:#475569;">${esc(it.category)}</td>
+        <td style="padding:3px 8px;font-size:11.5px;color:#475569;">${esc(it.letter_type)}</td>
+        <td style="padding:3px 8px;">${it.has_pdf ? '<a href="/api/enforcement/mail-queue/letter-pdf/' + it.id + '" target="_blank" style="color:#0B1D34;font-weight:600;text-decoration:none;font-size:11.5px;">📄 View</a>' : '<span style="color:#991b1b;font-size:11px;">no PDF</span>'}</td>
+      </tr>`).join('');
+      box.innerHTML = warn + summary + '<div style="max-height:340px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;background:#fff;"><table style="width:100%;border-collapse:collapse;"><thead><tr style="background:#f8fafc;"><th style="padding:4px 8px;text-align:left;font-size:10.5px;color:#64748b;">#</th><th style="padding:4px 8px;text-align:left;font-size:10.5px;color:#64748b;">Property</th><th style="padding:4px 8px;text-align:left;font-size:10.5px;color:#64748b;">Category</th><th style="padding:4px 8px;text-align:left;font-size:10.5px;color:#64748b;">Letter</th><th style="padding:4px 8px;text-align:left;font-size:10.5px;color:#64748b;">PDF</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      if (btn) btn.textContent = btn.textContent.replace('Show', 'Hide');
+    } catch (e) {
+      box.innerHTML = '<div style="color:#991b1b;font-size:12px;padding:6px;">' + (e.message || 'error') + '</div>';
+    }
+  }
+
   async function inspMailQueueRedownload(deliveryMethod, printedAt) {
     const label = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
     const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';

@@ -2778,6 +2778,80 @@ router.post('/mail-queue/redownload', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/enforcement/mail-queue/batch-manifest
+//   The line-item list of exactly which letters are in one locked print batch,
+//   so a batch is auditable instead of a black box: address, what the letter is
+//   about, its stage, and a link to that specific letter's PDF. Cross-checks
+//   whether any letter is missing its stored PDF (it would be absent from the
+//   merged download) and how many properties got more than one letter (normal
+//   when a house has multiple distinct violations). (Ed 2026-07-23.)
+// ---------------------------------------------------------------------------
+const _MAIL_TYPE_LABEL = { letter_courtesy_1: 'Courtesy 1', letter_courtesy_2: 'Courtesy 2', letter_209: 'Certified §209', letter_postcard_reminder: 'Reminder postcard' };
+router.get('/mail-queue/batch-manifest', async (req, res) => {
+  try {
+    const deliveryMethod = req.query.delivery_method || 'first_class_mail';
+    const printedAt = req.query.printed_at;
+    const communityId = req.query.community_id;
+    if (!printedAt) return res.status(400).json({ error: 'printed_at is required' });
+    // Page through so a large community batch (>1000) is never silently truncated.
+    let letters = [], fromRow = 0;
+    for (;;) {
+      let q = supabase.from('interactions')
+        .select('id, type, content, postmark_date, property_id, properties(street_address), violations(enforcement_categories(label))')
+        .in('type', _MAIL_LETTER_TYPES)
+        .eq('delivery_method', deliveryMethod)
+        .eq('printed_at', printedAt)
+        .is('mailed_at', null)
+        .order('id', { ascending: true }).range(fromRow, fromRow + 999);
+      if (communityId) q = q.eq('community_id', communityId);
+      const { data, error } = await q;
+      if (error) return res.status(500).json({ error: error.message });
+      letters = letters.concat(data || []);
+      if (!data || data.length < 1000) break;
+      fromRow += 1000;
+    }
+    const propsSeen = {};
+    const items = (letters || []).map((L) => {
+      propsSeen[L.property_id] = (propsSeen[L.property_id] || 0) + 1;
+      return {
+        id: L.id,
+        address: L.properties ? L.properties.street_address : null,
+        category: (L.violations && L.violations.enforcement_categories && L.violations.enforcement_categories.label) || null,
+        letter_type: _MAIL_TYPE_LABEL[L.type] || L.type,
+        has_pdf: !!L.content,
+      };
+    });
+    items.sort((a, b) => String(a.address || '').localeCompare(String(b.address || ''), undefined, { numeric: true }));
+    res.json({
+      count: items.length,
+      distinct_properties: Object.keys(propsSeen).length,
+      properties_with_multiple: Object.values(propsSeen).filter((n) => n > 1).length,
+      missing_pdf: items.filter((i) => !i.has_pdf).length,
+      items,
+    });
+  } catch (err) {
+    console.error('[mail-queue.batch-manifest]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/enforcement/mail-queue/letter-pdf/:id — open ONE letter's stored PDF
+// (signs + redirects on click, so the manifest doesn't sign every URL on load).
+router.get('/mail-queue/letter-pdf/:id', async (req, res) => {
+  try {
+    const { data: row, error } = await supabase.from('interactions').select('content').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!row || !row.content) return res.status(404).json({ error: 'no PDF on file for this letter' });
+    const { data: su, error: sErr } = await supabase.storage.from('violation-letters').createSignedUrl(row.content, 3600);
+    if (sErr || !su || !su.signedUrl) return res.status(404).json({ error: 'letter PDF not found in storage' });
+    res.redirect(su.signedUrl);
+  } catch (err) {
+    console.error('[mail-queue.letter-pdf]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/enforcement/mail-queue/confirm-mailed
 //   Second step of the two-step flow: after the locked batch is printed and
 //   physically mailed, the operator confirms it. Sets mailed_at on every LOCKED
