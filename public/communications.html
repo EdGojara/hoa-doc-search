@@ -89,7 +89,7 @@ async function loadStats(){
      <div class="stat"><b>${s.spam||0}</b><span>spam/noise</span></div>`;
   // "Inbox" = everything not yet responded-to or dismissed (new + needs_review + linked).
   // Nothing leaves the inbox unless we reply (-> handled) or dismiss (-> dismissed/spam).
-  const chips=[['needs_review','Inbox'],['new','New'],['linked','Linked'],['spam','Dismissed'],['','All']];
+  const chips=[['needs_review','Inbox'],['new','New'],['linked','Linked'],['handled','Handled'],['spam','Dismissed'],['','All']];
   document.getElementById('chips').innerHTML = chips.map(([v,l])=>
     `<div class="chip ${v===filter?'active':''}" onclick="setFilter('${v}')">${l}</div>`).join('');
 }

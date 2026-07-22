@@ -744,11 +744,21 @@ ${fwdAttachments.length ? `<p style="margin:12px 0 0;color:#166534;"><strong>Att
     // right sender. (Ed 2026-07-14.)
     await graphSend.sendAs({ from: graphSend.CLAIRE_MAILBOX, to, cc: cc || undefined, subject: `For your review: ${m.subject || 'homeowner email'}`, html, attachments: fwdAttachments.length ? fwdAttachments : undefined });
 
-    // Record the hand-off on the item (no triage_status change — keeps it a
-    // light annotation, not a workflow state).
+    // Record the hand-off AND clear it from Claire's active inbox. Forwarding to
+    // a teammate IS addressing it — she's handed it off, so it should leave the
+    // "needs review" view (new/needs_review/linked) instead of sitting there
+    // looking unhandled. It moves to 'handled', and the forwarded stamp keeps the
+    // "↪ Forwarded to X — awaiting their review" badge so it's findable under the
+    // Handed-off/All filters, not lost. (Ed 2026-07-21 — "clear it out so we know
+    // she's addressed them.")
     try {
       const merged = Object.assign({}, m.extracted || {}, { forwarded: { to, cc: cc || null, name: to_name || null, at: new Date().toISOString(), note: note || null, dropped_external: droppedExternal.length ? droppedExternal : undefined } });
-      await supabase.from('email_messages').update({ extracted: merged }).eq('id', req.params.id);
+      await supabase.from('email_messages').update({
+        extracted: merged,
+        triage_status: 'handled',
+        reviewed_by: (await getAuthedUser(req).catch(() => null))?.email || 'staff',
+        reviewed_at: new Date().toISOString(),
+      }).eq('id', req.params.id);
     } catch (_) { /* annotation best-effort */ }
     if (droppedExternal.length) console.warn(`[email_triage] internal forward stripped external recipient(s): ${droppedExternal.join(', ')}`);
     res.json({ ok: true, to, cc: cc || null, dropped_external: droppedExternal.length ? droppedExternal : undefined });
