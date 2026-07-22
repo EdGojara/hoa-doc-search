@@ -183,11 +183,18 @@ router.post('/:id/forward', async (req, res) => {
     if (!d) return res.status(404).json({ error: 'not_found' });
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email not connected (Graph credentials missing)' });
 
-    // The homeowner's inbound messages, oldest first — the chain the teammate needs.
+    // The homeowner's inbound messages, oldest first — the chain the teammate
+    // needs — AND their PHOTOS/attachments, so the teammate can actually see the
+    // issue (a boundary photo, a site sketch), not just read about it. Photos
+    // are re-fetched from Graph and attached to the forward. (Ed 2026-07-22 —
+    // "how does a team member see the photos Andrea sent?")
     let chainHtml = '';
+    const fwdAttachments = [];
+    let attachTotal = 0, photosSkipped = 0;
+    const MAX_ATTACH_BYTES = 22 * 1024 * 1024; // Graph message ceiling headroom
     try {
       const { data: msgs } = await supabase.from('email_messages')
-        .select('subject, received_at, body_full, body_preview, sender_name, direction')
+        .select('subject, received_at, body_full, body_preview, sender_name, direction, has_attachments, graph_id, mailbox')
         .ilike('sender_email', d.to_email).eq('direction', 'inbound')
         .order('received_at', { ascending: true }).limit(12);
       if (msgs && msgs.length) {
@@ -196,8 +203,27 @@ router.post('/:id/forward', async (req, res) => {
             const body = String(m.body_full || m.body_preview || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1600);
             return `<div style="border-left:3px solid #e4e2db;padding-left:12px;margin:10px 0;"><b>${esc(m.subject || '(no subject)')}</b> <span style="color:#6b7a8d;font-size:12px;">${esc(fmtWhen(m.received_at))}</span><br><span style="white-space:pre-wrap;">${esc(body)}</span></div>`;
           }).join('');
+        // Re-fetch attachments from every message that carried one. Best-effort:
+        // a filed message whose Graph id went stale just gets skipped + noted.
+        const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
+        for (const m of msgs) {
+          if (!m.has_attachments || !m.graph_id || !m.mailbox) continue;
+          try {
+            const atts = await fetchAllAttachmentBuffers(m.mailbox, m.graph_id);
+            for (const a of atts || []) {
+              if (!a.buffer || !a.buffer.length) continue;
+              if (attachTotal + a.buffer.length > MAX_ATTACH_BYTES) { photosSkipped++; continue; }
+              attachTotal += a.buffer.length;
+              fwdAttachments.push({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.filename || 'attachment', contentType: a.contentType || 'application/octet-stream', contentBytes: a.buffer.toString('base64') });
+            }
+          } catch (e) { photosSkipped++; console.warn('[email_drafts] forward attach re-fetch failed:', e.message); }
+        }
       }
     } catch (e) { console.warn('[email_drafts] forward chain load skipped:', e.message); }
+
+    const attachNote = fwdAttachments.length
+      ? `<p style="margin:0 0 12px;color:#2f6f4f;">📎 ${fwdAttachments.length} photo/attachment${fwdAttachments.length === 1 ? '' : 's'} the homeowner sent ${fwdAttachments.length === 1 ? 'is' : 'are'} attached below.${photosSkipped ? ` (${photosSkipped} could not be retrieved — open the original in Outlook.)` : ''}</p>`
+      : (photosSkipped ? `<p style="margin:0 0 12px;color:#B7791F;">The homeowner sent attachments, but they couldn't be retrieved automatically — please open the original email in Outlook to view them.</p>` : '');
 
     const noteHtml = note ? `<p style="margin:0 0 12px;">${esc(note).replace(/\n/g, '<br>')}</p>` : '';
     const draftHtml = `<div style="background:#f7f5ef;border:1px solid #e4e2db;border-radius:8px;padding:12px 14px;margin:6px 0;">
@@ -207,14 +233,14 @@ router.post('/:id/forward', async (req, res) => {
     const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">
       ${noteHtml}
       <p style="margin:0 0 12px;">Can you take a look and help with this one? This did not go to the homeowner — reply here and we'll fold it into the response.</p>
-      ${draftHtml}${chainHtml}
+      ${attachNote}${draftHtml}${chainHtml}
       <p style="color:#6b7a8d;font-size:12px;margin-top:14px;">Forwarded from the Bedrock Draft Queue.</p></div>`;
 
     const from = personaMailbox(d.persona, d.from_mailbox);
     const subject = `For your help: ${d.subject}`;
-    try { await graphSend.sendAs({ from, to: to_email, subject, html }); }
+    try { await graphSend.sendAs({ from, to: to_email, subject, html, attachments: fwdAttachments.length ? fwdAttachments : undefined }); }
     catch (e) { return res.status(502).json({ error: `forward failed: ${e.message}` }); }
-    res.json({ ok: true, forwarded_to: to_email, from });
+    res.json({ ok: true, forwarded_to: to_email, from, attachments: fwdAttachments.length });
   } catch (err) {
     console.error('[email_drafts] forward failed:', err.message);
     res.status(500).json({ error: safe(err) });
