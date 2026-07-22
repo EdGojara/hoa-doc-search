@@ -971,6 +971,9 @@ app.get('/admin/accounting', (req, res) => {
 app.get('/admin/communications', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'communications.html'));
 });
+app.get('/admin/legal', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'legal-disclosures.html'));
+});
 
 app.use('/api/operations', require('./api/operations'));
 app.get('/admin/operations', (req, res) => {
@@ -1372,6 +1375,9 @@ app.use('/api/agendas', agendasRouter);
 
 const { router: emailTriageRouter } = require('./api/email_triage');
 app.use('/api/email-triage', emailTriageRouter);
+
+const { router: legalRouter } = require('./api/legal');
+app.use('/api/legal', legalRouter);
 
 const { router: systemErrorsRouter } = require('./api/system_errors');
 app.use('/api/system-errors', systemErrorsRouter);

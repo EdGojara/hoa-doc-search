@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Legal Disclosures — Bedrock Office</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root{ --navy:#0B1D34; --gold:#C99A2E; --ink:#141b26; --muted:#5c6b7e; --line:#e4e2db; --bg:#f6f4ee; --card:#fffefb; --good:#2f6f4f; --goodbg:#e6f0ea; --amber:#B7791F; --amberbg:#fbf1dd; --shadow:0 1px 2px rgba(11,29,52,.05),0 8px 24px rgba(11,29,52,.06); --serif:Georgia,'Times New Roman',serif; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1100px;margin:0 auto;padding:26px 22px 60px;}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:2px solid var(--gold);padding-bottom:12px;margin-bottom:20px;}
+  .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:700;}
+  h1{font-family:var(--serif);font-weight:600;color:var(--navy);font-size:26px;margin:4px 0 0;}
+  a.back{font-size:12.5px;color:var(--muted);text-decoration:none;}
+  .layout{display:grid;grid-template-columns:290px 1fr;gap:22px;align-items:start;}
+  @media (max-width:760px){ .layout{grid-template-columns:1fr;} }
+  .list .doc{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin-bottom:9px;cursor:pointer;box-shadow:var(--shadow);}
+  .list .doc.sel{border-color:var(--navy);box-shadow:0 0 0 1px var(--navy),var(--shadow);}
+  .list .doc .t{font-weight:700;color:var(--navy);font-size:14.5px;}
+  .list .doc .m{font-size:11.5px;color:var(--muted);margin-top:3px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  .pill{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.02em;text-transform:uppercase;}
+  .pill.draft{background:var(--amberbg);color:var(--amber);} .pill.published{background:var(--goodbg);color:var(--good);} .pill.archived{background:#eef0f3;color:var(--muted);}
+  .newbtn{width:100%;border:1px dashed var(--line);background:transparent;color:var(--navy);border-radius:11px;padding:11px;font-weight:600;font-size:13px;cursor:pointer;margin-top:4px;}
+  .newbtn:hover{border-color:var(--navy);}
+  .doc-view{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 30px;box-shadow:var(--shadow);min-height:300px;}
+  .doc-view .bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--line);}
+  .doc-view .bar .meta{font-size:12px;color:var(--muted);}
+  .btn{border:0;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;}
+  .btn.primary{background:var(--navy);color:#fff;} .btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line);} .btn.good{background:var(--good);color:#fff;}
+  .btn:disabled{opacity:.5;cursor:default;}
+  .md h1{font-family:var(--serif);font-size:24px;color:var(--navy);margin:0 0 6px;}
+  .md h2{font-family:var(--serif);font-size:18px;color:var(--navy);margin:20px 0 6px;border-bottom:1px solid var(--line);padding-bottom:3px;}
+  .md h3{font-size:15px;color:var(--navy);margin:14px 0 4px;}
+  .md p{margin:8px 0;} .md ul{margin:8px 0 8px 4px;padding-left:20px;} .md li{margin:4px 0;}
+  .md hr{border:0;border-top:1px solid var(--line);margin:18px 0;} .md strong{color:var(--ink);} .md em{color:var(--muted);}
+  .md code{background:#f0ede4;padding:1px 5px;border-radius:4px;font-size:13px;}
+  .editor{display:none;}
+  .editor.on{display:block;} .doc-render.off{display:none;}
+  .editor input, .editor select, .editor textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit;background:#fff;color:var(--ink);margin-bottom:10px;}
+  .editor textarea{min-height:460px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;line-height:1.5;resize:vertical;}
+  .editor .row{display:flex;gap:10px;flex-wrap:wrap;} .editor .row > *{flex:1;min-width:140px;}
+  .empty{color:var(--muted);text-align:center;padding:60px 20px;}
+  .flag{background:var(--amberbg);border:1px solid color-mix(in srgb,var(--amber) 35%,transparent);border-left:4px solid var(--amber);border-radius:9px;padding:11px 14px;font-size:13px;margin-bottom:16px;}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 18px;border-radius:22px;font-size:13.5px;font-weight:600;box-shadow:var(--shadow);opacity:0;transition:opacity .2s;pointer-events:none;}
+  .toast.show{opacity:1;} .toast.err{background:#9B2C2C;}
+  .hide{display:none!important;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <div class="eyebrow">Bedrock Office</div>
+      <h1>Legal Disclosures</h1>
+    </div>
+    <a class="back" href="/">← trustEd Home</a>
+  </div>
+
+  <div id="notReady" class="flag hide">Legal storage isn't set up yet. Apply <strong>migration 324</strong> in the Supabase SQL editor and refresh; the privacy policy seeds automatically.</div>
+
+  <div class="layout">
+    <div>
+      <div class="list" id="list"><div class="empty" style="padding:24px;">Loading…</div></div>
+      <button class="newbtn hide" id="newBtn" onclick="startNew()">+ New document</button>
+    </div>
+    <div class="doc-view" id="view"><div class="empty">Select a document on the left to read it.</div></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let docs = [], current = null, isAdmin = false, af = (u,o)=>fetch(u,o), editing = false;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+function fmtDate(d){ if(!d) return '—'; try{ return new Date(String(d).length<=10?d+'T12:00:00':d).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}); }catch(_){ return String(d);} }
+let toastT; function toast(m,err){ const t=$('toast'); t.textContent=m; t.classList.toggle('err',!!err); t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), err?4000:2200); }
+
+// --- minimal, safe markdown -> HTML (escape first, then format) ---
+function mdToHtml(md){
+  const lines = String(md||'').replace(/\r\n/g,'\n').split('\n');
+  let html='', inList=false;
+  const inline = (s)=> esc(s)
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<em>$2</em>')
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const closeList = ()=>{ if(inList){ html+='</ul>'; inList=false; } };
+  for(let raw of lines){
+    const line = raw.replace(/\s+$/,'');
+    if(/^\s*---\s*$/.test(line)){ closeList(); html+='<hr>'; continue; }
+    let m;
+    if((m=line.match(/^###\s+(.*)/))){ closeList(); html+='<h3>'+inline(m[1])+'</h3>'; continue; }
+    if((m=line.match(/^##\s+(.*)/))){ closeList(); html+='<h2>'+inline(m[1])+'</h2>'; continue; }
+    if((m=line.match(/^#\s+(.*)/))){ closeList(); html+='<h1>'+inline(m[1])+'</h1>'; continue; }
+    if((m=line.match(/^\s*[-*]\s+(.*)/))){ if(!inList){ html+='<ul>'; inList=true; } html+='<li>'+inline(m[1])+'</li>'; continue; }
+    if(line.trim()===''){ closeList(); continue; }
+    closeList(); html+='<p>'+inline(line)+'</p>';
+  }
+  closeList();
+  return html;
+}
+
+async function loadList(){
+  try{
+    const r = await fetch('/api/legal'); const j = await r.json();
+    if(!r.ok) throw new Error(j.error||'load failed');
+    if(j.not_ready){ $('notReady').classList.remove('hide'); }
+    docs = j.documents || [];
+    renderList();
+    if(docs.length && !current) openDoc(docs[0].slug);
+  }catch(e){ $('list').innerHTML='<div class="empty" style="color:#9B2C2C;">'+esc(e.message)+'</div>'; }
+}
+function renderList(){
+  if(!docs.length){ $('list').innerHTML='<div class="empty" style="padding:24px;">No documents yet.</div>'; return; }
+  $('list').innerHTML = docs.map(d=>`<button class="doc ${current&&current.slug===d.slug?'sel':''}" onclick="openDoc('${d.slug}')">
+    <div class="t">${esc(d.title)}</div>
+    <div class="m"><span class="pill ${d.status}">${d.status}</span> v${d.version} · ${esc(d.category)} · ${fmtDate(d.updated_at)}</div>
+  </button>`).join('');
+}
+
+async function openDoc(slug){
+  if(editing && !confirm('Discard unsaved changes?')) return;
+  editing = false;
+  try{
+    const r = await fetch('/api/legal/'+encodeURIComponent(slug)); const j = await r.json();
+    if(!r.ok) throw new Error(j.error||'not found');
+    current = j.document; renderList(); renderView();
+  }catch(e){ toast(e.message,true); }
+}
+function renderView(){
+  const d = current; if(!d){ $('view').innerHTML='<div class="empty">Select a document.</div>'; return; }
+  $('view').innerHTML = `
+    <div class="bar">
+      <div class="meta"><span class="pill ${d.status}">${d.status}</span> &nbsp;Version ${d.version} · Effective ${fmtDate(d.effective_date)} · Updated ${fmtDate(d.updated_at)}${d.updated_by?' by '+esc(d.updated_by):''}</div>
+      <div>${isAdmin?`<button class="btn ghost" onclick="startEdit()">✎ Edit</button>`:''}</div>
+    </div>
+    <div class="doc-render md">${mdToHtml(d.body_markdown)}</div>
+    <div class="editor" id="editor">
+      <div class="row">
+        <input id="e-title" placeholder="Title" value="${esc(d.title)}">
+        <input id="e-category" placeholder="Category (policy / disclosure / notice)" value="${esc(d.category)}">
+      </div>
+      <div class="row">
+        <input id="e-effective" type="date" value="${d.effective_date||''}">
+        <select id="e-status">
+          <option value="draft"${d.status==='draft'?' selected':''}>Draft</option>
+          <option value="published"${d.status==='published'?' selected':''}>Published</option>
+          <option value="archived"${d.status==='archived'?' selected':''}>Archived</option>
+        </select>
+      </div>
+      <textarea id="e-body" spellcheck="false">${esc(d.body_markdown)}</textarea>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button class="btn ghost" onclick="cancelEdit()">Cancel</button>
+        <button class="btn good" id="saveBtn" onclick="saveDoc()">Save</button>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:8px;">Markdown. Editing the body creates a new version. Set status to Published when counsel approves.</div>
+    </div>`;
+}
+function startEdit(){ editing=true; $('editor').classList.add('on'); document.querySelector('.doc-render').classList.add('off'); }
+function cancelEdit(){ editing=false; renderView(); }
+function startNew(){
+  current = { slug:'', title:'', category:'policy', body_markdown:'# New document\n\n', version:1, effective_date:null, status:'draft', updated_at:null };
+  renderView(); startEdit();
+  // add a slug field for new docs
+  const ed = $('editor');
+  const slugRow = document.createElement('div'); slugRow.innerHTML = `<input id="e-slug" placeholder="URL slug (e.g. terms-of-service)">`;
+  ed.insertBefore(slugRow.firstChild, ed.firstChild);
+}
+async function saveDoc(){
+  const body = {
+    title: $('e-title').value.trim(),
+    category: $('e-category').value.trim()||'policy',
+    effective_date: $('e-effective').value||null,
+    status: $('e-status').value,
+    body_markdown: $('e-body').value,
+  };
+  const slugField = $('e-slug');
+  const slug = slugField ? slugField.value.trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') : current.slug;
+  if(!slug){ toast('A URL slug is required',true); return; }
+  if(!body.title){ toast('Title is required',true); return; }
+  $('saveBtn').disabled=true;
+  try{
+    const r = await af('/api/legal/'+encodeURIComponent(slug),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error||'save failed');
+    editing=false; current=j.document; toast('Saved ✓'); await loadList(); await openDoc(current.slug);
+  }catch(e){ toast(e.message,true); $('saveBtn').disabled=false; }
+}
+
+// Admin session (for editing). View works for any gated staff without it.
+(async function boot(){
+  try{
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if(cfg && cfg.enabled && window.supabase){
+      const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      const { data:{ session } } = await supa.auth.getSession();
+      if(session && session.access_token){
+        af = async (u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
+        const me = await (await fetch('/api/me',{headers:{Authorization:'Bearer '+session.access_token}})).json().catch(()=>null);
+        isAdmin = !!(me && me.user && me.user.role==='admin');
+      }
+    }
+  }catch(_){ /* view-only */ }
+  if(isAdmin) $('newBtn').classList.remove('hide');
+  loadList();
+})();
+</script>
+</body>
+</html>
