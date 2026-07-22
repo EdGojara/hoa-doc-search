@@ -285,7 +285,7 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/thread', async (req, res) => {
   try {
     const { data: m, error } = await supabase.from('email_messages')
-      .select('conversation_id, body_full, body_preview, subject, graph_id, mailbox').eq('id', req.params.id).maybeSingle();
+      .select('conversation_id, body_full, body_preview, subject, graph_id, mailbox, has_attachments, sender_email, community_id, resolved_property_id, resolved_contact_id').eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
     let thread = [];
@@ -300,12 +300,32 @@ router.get('/:id/thread', async (req, res) => {
     // Graph by id. Staff need to SEE the evidence Claire read, not just her word
     // for it. (Ed 2026-07-14 — a violation report's photo wasn't visible.)
     let attachments = [];
+    // Prefer the DURABLE archive (migration 328) — it survives the message being
+    // filed, which rotates the Graph id and makes a live fetch come back empty.
     try {
-      const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
-      const files = await fetchAllAttachmentBuffers(m.mailbox, m.graph_id);
-      attachments = files.filter((f) => f.buffer && f.buffer.length <= 8 * 1024 * 1024).slice(0, 8)
-        .map((f) => ({ name: f.filename, is_pdf: !!f.isPdf, data_uri: `data:${f.contentType};base64,${f.buffer.toString('base64')}` }));
-    } catch (_) { /* best-effort — thread still renders without them */ }
+      const { data: arch, error: aErr } = await supabase.from('email_attachments')
+        .select('filename, mime, is_image, storage_path').eq('email_message_id', req.params.id).limit(12);
+      if (!aErr && arch && arch.length) {
+        for (const a of arch) {
+          let url = null;
+          try { const { data: su } = await supabase.storage.from('documents').createSignedUrl(a.storage_path, 3600); url = su ? su.signedUrl : null; } catch (_) {}
+          if (url) attachments.push({ name: a.filename, is_pdf: !a.is_image && /pdf/i.test(a.mime || ''), data_uri: url });
+        }
+      }
+    } catch (_) { /* table may not exist yet — fall through to live fetch */ }
+    // Fallback: not archived yet -> live Graph fetch, then archive it so next
+    // time it's durable (and viewable after the message is filed).
+    if (!attachments.length && m.has_attachments && m.graph_id) {
+      try {
+        const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
+        const files = await fetchAllAttachmentBuffers(m.mailbox, m.graph_id);
+        attachments = files.filter((f) => f.buffer && f.buffer.length <= 8 * 1024 * 1024).slice(0, 8)
+          .map((f) => ({ name: f.filename, is_pdf: !!f.isPdf, data_uri: `data:${f.contentType};base64,${f.buffer.toString('base64')}` }));
+        if (files && files.length) {
+          try { const { archiveInboundAttachments } = require('../lib/email/archive_attachments'); await archiveInboundAttachments({ id: req.params.id, mailbox: m.mailbox, graph_id: m.graph_id, has_attachments: true, community_id: m.community_id, resolved_property_id: m.resolved_property_id, resolved_contact_id: m.resolved_contact_id, sender_email: m.sender_email }); } catch (_) {}
+        }
+      } catch (_) { /* best-effort — thread still renders without them */ }
+    }
     // Full body: body_preview is Microsoft's ~255-char teaser, and body_full is
     // often empty (not captured at ingest), so "see the original" gets cut off.
     // Pull the real body from Graph when what we have looks like a preview, and
