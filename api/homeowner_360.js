@@ -190,6 +190,20 @@ async function assemble(contactId) {
     .select('id, kind, file_path, mime_type, original_name, caption, captured_by, captured_at, property_id')
     .in('property_id', propIds).order('captured_at', { ascending: false }).limit(100)) : [];
 
+  // What the homeowner has SENT US by email — the photos, sketches, PDFs they
+  // attached (migration 328). Matched by resolved contact OR any owned property
+  // (mirrors the emails query), so a boundary photo emailed in shows on their
+  // 360 even when the email resolved by property. Signed URLs (1h) so the
+  // browser can render them. Degrades to [] before migration 328.
+  const emailAttachments = (await safe(() => supabase.from('email_attachments')
+    .select('id, filename, mime, size_bytes, storage_path, is_image, sender_email, created_at, email_message_id')
+    .or(`resolved_contact_id.eq.${contactId}${propIds.length ? ',resolved_property_id.in.(' + propIds.join(',') + ')' : ''}`)
+    .order('created_at', { ascending: false }).limit(60))) || [];
+  await Promise.all(emailAttachments.map(async (a) => {
+    try { const { data: su } = await supabase.storage.from('documents').createSignedUrl(a.storage_path, 3600); a.url = su ? su.signedUrl : null; }
+    catch (_) { a.url = null; }
+  }));
+
   // Map each violation to the letter PDF that was actually sent for it (from the
   // interactions ledger), so the 360 can link the real letter right on the
   // violation row — next to the photo.
@@ -210,7 +224,7 @@ async function assemble(contactId) {
     try { amenity = await evaluateAmenityAccess(supabase, { propertyId: primaryProp.property_id, communityId: primaryProp.community_id }); } catch (_) {}
   }
 
-  return { contact, properties, ar: { balance_cents, transactions: txns }, amenity, flags, collections, violations, arc, interactions, emails, calls, poolAccess, paymentPlans, attachments };
+  return { contact, properties, ar: { balance_cents, transactions: txns }, amenity, flags, collections, violations, arc, interactions, emails, calls, poolAccess, paymentPlans, attachments, emailAttachments };
 }
 
 // GET /profile/:contactId — the assembled 360 (fast, no AI)

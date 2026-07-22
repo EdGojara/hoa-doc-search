@@ -232,6 +232,18 @@ async function openProfile(cid){
         </div>
       </div>
       <div class="card">
+        <div class="sec-title">📥 Sent by homeowner (email) (${(d.emailAttachments||[]).length})</div>
+        <div style="font-size:12px;color:#5a7390;margin-bottom:8px;">Photos and files they attached to emails, captured automatically.</div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;">
+        ${(d.emailAttachments||[]).map(a=>{
+          const meta=`${d10(a.created_at)}${a.sender_email?' · '+esc(a.sender_email):''}`;
+          return a.is_image
+            ? `<div style="width:128px;"><a href="${a.url||'#'}" target="_blank"><img src="${a.url||''}" loading="lazy" style="width:128px;height:128px;object-fit:cover;border-radius:8px;border:1px solid var(--line);"></a><div class="t" style="margin-top:3px;">${esc((a.filename||'').slice(0,24))}</div><div class="t">${meta}</div></div>`
+            : `<div style="width:180px;padding:10px;border:1px solid var(--line);border-radius:8px;"><a href="${a.url||'#'}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;font-size:12.5px;">📄 ${esc((a.filename||'file').slice(0,34))}</a><div class="t" style="margin-top:4px;">${meta}</div></div>`;
+        }).join('')||'<div class="empty">Nothing emailed in yet.</div>'}
+        </div>
+      </div>
+      <div class="card">
         <div class="sec-title">✉️ Correspondence &amp; notes (${tl.length})</div>
         <div class="notebox"><input id="noteInput" placeholder="Add a note to this account…" onkeydown="if(event.key==='Enter')addNote('${cid}')"><button onclick="addNote('${cid}')">Add note</button></div>
         <div class="timeline">${tl.map(x=>`<div class="li ${x.dir==='inbound'?'tl-in':(x.note?'tl-note':'tl-out')}"><span class="t">${d10(x.t)} · ${esc(x.kind)} ${x.dir==='inbound'?'↓':x.dir==='internal'?'•':'↑'}</span>${x.note?`<span onclick="deleteNote('${x.id}','${cid}')" title="Delete note" style="float:right;cursor:pointer;color:#b91c1c;font-weight:700;">✕</span>`:''}<br>${esc(String(x.label).slice(0,110))}${x.letterPath?` <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(x.letterPath)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:4px;">📄 View letter</a>`:''}</div>`).join('')||'<div class="empty">No correspondence on file yet.</div>'}</div>
