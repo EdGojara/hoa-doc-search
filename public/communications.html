@@ -58,6 +58,7 @@
       <div class="sub">Your AI team's inbox &middot; click a name to review their emails &middot; every reply is drafted for you, <strong>nothing sends until you approve</strong></div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;">
+      <a href="/admin/draft-queue" style="background:#fff;color:var(--navy);border:1px solid var(--line);padding:10px 16px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">&#9993;&#65039; Draft Queue<span id="dqCount" style="display:none;background:var(--gold);color:var(--navy);border-radius:10px;padding:0 7px;font-size:12px;"></span></a>
       <button id="pullBtn" onclick="pullNow()" style="background:#fff;color:var(--navy);border:1px solid var(--line);padding:10px 16px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;">&#128260; Pull inbox</button>
       <button onclick="openCompose()" style="background:var(--gold);color:var(--navy);border:none;padding:10px 18px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;">&#9993;&#65039; New email</button>
     </div>
@@ -814,10 +815,18 @@ window.ncSend = async function(){
     const meRes = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + session.access_token } });
     const me = meRes.ok ? (await meRes.json()).user : null;
     if (!me || me.role !== 'admin') return showComingSoon();
-    loadStats(); loadList(); loadStaff();
+    loadStats(); loadList(); loadStaff(); loadDraftCount();
     loadCommunities().then(() => { try { loadList(); } catch (_) {} });  // populate the picker cache, then re-render
   } catch (e) { showComingSoon(); }
 })();
+// Badge the Draft Queue link with how many homeowner replies are awaiting release.
+async function loadDraftCount(){
+  try{
+    const r = await af('/api/email-drafts?status=draft'); const j = await r.json();
+    const n = (j.drafts||[]).length; const el = document.getElementById('dqCount');
+    if(el && n>0){ el.textContent = n; el.style.display='inline-block'; }
+  }catch(_){}
+}
 </script>
 
 <div id="composeModal" style="display:none; position:fixed; inset:0; background:rgba(11,29,52,0.5); z-index:2000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow:auto;">

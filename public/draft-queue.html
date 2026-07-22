@@ -36,6 +36,13 @@
   .ctx b{color:var(--navy);}
   .atts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
   .att{font-size:11.5px;background:#eef2f7;color:var(--navy);border-radius:6px;padding:3px 8px;}
+  .ccrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:20px;}
+  .ccchip{display:inline-flex;align-items:center;gap:4px;background:#eef2f7;color:var(--navy);border-radius:14px;padding:3px 6px 3px 11px;font-size:12.5px;}
+  .ccchip button{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 2px;}
+  .ccchip button:hover{color:var(--red);}
+  .ccadd{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;}
+  .ccadd select,.ccadd input{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;background:#fff;color:var(--ink);}
+  .ccadd select{min-width:200px;} .ccadd input{flex:1;min-width:150px;}
   .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap;}
   .btn{border:0;border-radius:8px;padding:9px 16px;font-size:13.5px;font-weight:600;cursor:pointer;}
   .btn.primary{background:var(--good);color:#fff;} .btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line);} .btn.danger{background:#fff;color:var(--red);border:1px solid var(--redbg);}
@@ -56,7 +63,7 @@
       <div class="eyebrow">Bedrock Office</div>
       <h1>Draft Queue</h1>
     </div>
-    <a class="back" href="/">← trustEd Home</a>
+    <a class="back" href="/admin/communications">← Communications</a>
   </div>
   <p class="sub">Homeowner-facing mail waits here for your review. Nothing sends until you click <b>Send</b>.</p>
 
@@ -79,6 +86,7 @@
 <script>
 const $ = (id) => document.getElementById(id);
 let drafts = [], current = null, tab = 'draft', af = (u,o)=>fetch(u,o);
+let roster = [], ccList = [];
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
 function fmtDate(d){ if(!d) return '—'; try{ return new Date(d).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }catch(_){ return String(d);} }
 let toastT; function toast(m,err){ const t=$('toast'); t.textContent=m; t.classList.toggle('err',!!err); t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), err?4200:2200); }
@@ -114,6 +122,7 @@ async function openDraft(id){
 function renderView(){
   const d = current; if(!d){ return; }
   const editable = d.status==='draft';
+  ccList = String(d.cc||'').split(',').map(x=>x.trim()).filter(Boolean).map(e=>({email:e,name:ccNameFor(e)}));
   const atts = Array.isArray(d.attachments)?d.attachments:[];
   const ctxBits = [];
   if(d.related_type) ctxBits.push(`Re: <b>${esc(d.related_type)}</b>${d.related_id?' '+esc(String(d.related_id).slice(0,8)):''}`);
@@ -124,7 +133,13 @@ function renderView(){
     ${d.send_error?`<div class="errnote">Last send attempt failed: ${esc(d.send_error)}</div>`:''}
     ${ctxBits.length?`<div class="ctx">${ctxBits.join(' &nbsp;·&nbsp; ')}${d.persona?` &nbsp;·&nbsp; from <b>${esc(d.persona)}</b>`:''}</div>`:''}
     <div class="field"><label>To</label><input id="f-to" value="${esc(d.to_email)}" ${editable?'':'disabled'}>${d.to_name?`<div style="font-size:11.5px;color:var(--muted);margin-top:3px;">${esc(d.to_name)}</div>`:''}</div>
-    ${d.cc?`<div class="field"><label>Cc</label><input id="f-cc" value="${esc(d.cc)}" ${editable?'':'disabled'}></div>`:''}
+    <div class="field"><label>Cc — copy a teammate</label>
+      <div class="ccrow" id="cc-chips"></div>
+      ${editable?`<div class="ccadd">
+        <select id="cc-picker" onchange="ccAddPicked()"><option value="">+ Add teammate…</option>${ccRosterOptions()}</select>
+        <input id="cc-typed" placeholder="or type an email, press Enter" onkeydown="if(event.key==='Enter'){event.preventDefault();ccAddTyped();}">
+      </div>`:''}
+    </div>
     <div class="field"><label>Subject</label><input id="f-subject" value="${esc(d.subject)}" ${editable?'':'disabled'}></div>
     <div class="field"><label>Message</label><textarea id="f-body" spellcheck="true" ${editable?'':'disabled'}>${esc(d.body_text||d.body_html||'')}</textarea></div>
     ${atts.length?`<div class="field"><label>Attachments</label><div class="atts">${atts.map(a=>`<span class="att">📎 ${esc(a.name||'file')}</span>`).join('')}</div></div>`:''}
@@ -134,11 +149,69 @@ function renderView(){
       <button class="btn primary" id="sendBtn" onclick="sendDraft()">Send ✓</button>
     </div>
     <div style="font-size:11.5px;color:var(--muted);margin-top:8px;text-align:right;">Annie's signature and logo are added automatically when you send.</div>`:''}`;
+  renderCcChips();
+}
+
+// --- Cc: copy one or more teammates -----------------------------------------
+function ccRosterOptions(){
+  const grp = (label, arr) => arr.length ? `<optgroup label="${label}">`+arr
+    .slice().sort((a,b)=>String(a.name||a.email).localeCompare(String(b.name||b.email)))
+    .map(r=>`<option value="${esc(r.email)}">${esc(r.label||r.name||r.email)}</option>`).join('')+`</optgroup>` : '';
+  return grp('Team', roster.filter(r=>r.kind==='staff')) + grp('AI team', roster.filter(r=>r.kind==='ai'));
+}
+function ccNameFor(email){ const r = roster.find(x=>x.email.toLowerCase()===String(email).toLowerCase()); return r ? (r.name||r.email) : email; }
+function renderCcChips(){
+  const box = $('cc-chips'); if(!box) return;
+  const editable = current && current.status==='draft';
+  box.innerHTML = ccList.length
+    ? ccList.map((c,i)=>`<span class="ccchip">${esc(c.name||c.email)}${editable?`<button title="remove" onclick="ccRemove(${i})">×</button>`:''}</span>`).join('')
+    : '<span style="font-size:12px;color:var(--muted);">No one copied.</span>';
+}
+function ccAddPicked(){ const s=$('cc-picker'); if(!s||!s.value) return; ccAdd(s.value); s.value=''; }
+function ccAddTyped(){ const i=$('cc-typed'); if(!i) return; const v=(i.value||'').trim(); if(!v) return; if(ccAdd(v)) i.value=''; }
+function ccAdd(email){
+  email = String(email).trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ toast('That doesn\'t look like an email',true); return false; }
+  if(ccList.some(c=>c.email.toLowerCase()===email.toLowerCase())){ return true; }
+  ccList.push({email, name: ccNameFor(email)}); renderCcChips(); saveCc(); return true;
+}
+function ccRemove(i){ ccList.splice(i,1); renderCcChips(); saveCc(); }
+function ccSerialize(){ return ccList.map(c=>c.email).join(', '); }
+let _ccSaveTimer = null;
+function saveCc(){ // persist so a copied teammate isn't lost; debounced + value/id
+  // captured at schedule time so rapid add/remove can't race a stale write in,
+  // and a save can't land on the wrong draft after switching.
+  if(!current) return;
+  const id = current.id, cc = ccSerialize();
+  clearTimeout(_ccSaveTimer);
+  _ccSaveTimer = setTimeout(async()=>{
+    try{ await af('/api/email-drafts/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({cc})}); }catch(_){}
+  }, 350);
+}
+async function loadRoster(){
+  const ai = [
+    {email:'annie@bedrocktx.com',   name:'Annie Reeves',    label:'Annie Reeves — architectural (ACC/ARC)', kind:'ai'},
+    {email:'claire@bedrocktx.com',  name:'Claire',          label:'Claire — front office',                 kind:'ai'},
+    {email:'emma@bedrocktx.com',    name:'Emma Brooks',     label:'Emma Brooks — accounts payable',        kind:'ai'},
+    {email:'miranda@bedrocktx.com', name:'Miranda Pierce',  label:'Miranda Pierce — compliance / DRV',     kind:'ai'},
+    {email:'kat@bedrocktx.com',     name:'Kat Reed',        label:'Kat Reed — accounting manager',         kind:'ai'},
+    {email:'amanda@bedrocktx.com',  name:'Amanda Albright', label:'Amanda Albright — senior community mgr',kind:'ai'},
+    {email:'reese@bedrocktx.com',   name:'Reese Calloway',  label:'Reese Calloway — resale & closings',    kind:'ai'},
+    {email:'paige@bedrocktx.com',   name:'Paige Chandler',  label:'Paige Chandler — board operations',     kind:'ai'},
+  ];
+  let staff = [];
+  try{
+    const r = await af('/api/users'); const j = await r.json();
+    const list = Array.isArray(j) ? j : (j.users||[]);
+    staff = list.filter(u=>u&&u.email&&(u.is_active===undefined||u.is_active))
+      .map(u=>({email:u.email, name:u.full_name||u.email, label:(u.full_name||u.email)+(u.role?' ('+u.role+')':''), kind:'staff'}));
+  }catch(_){}
+  const seen=new Set(); roster=[];
+  for(const p of [...staff, ...ai]){ const k=p.email.toLowerCase(); if(seen.has(k)) continue; seen.add(k); roster.push(p); }
 }
 
 async function saveDraft(){
-  const body = { to_email:$('f-to').value.trim(), subject:$('f-subject').value.trim(), body_text:$('f-body').value };
-  if($('f-cc')) body.cc=$('f-cc').value.trim();
+  const body = { to_email:$('f-to').value.trim(), subject:$('f-subject').value.trim(), body_text:$('f-body').value, cc:ccSerialize() };
   if(!body.to_email||!body.subject){ toast('To and Subject are required',true); return; }
   $('saveBtn').disabled=true;
   try{
@@ -153,7 +226,7 @@ async function sendDraft(){
   // save any edits first, then send
   $('sendBtn').disabled=true;
   try{
-    await af('/api/email-drafts/'+current.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email:to,subject:$('f-subject').value.trim(),body_text:$('f-body').value,cc:$('f-cc')?$('f-cc').value.trim():undefined})});
+    await af('/api/email-drafts/'+current.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email:to,subject:$('f-subject').value.trim(),body_text:$('f-body').value,cc:ccSerialize()})});
     const r = await af('/api/email-drafts/'+current.id+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
     const j = await r.json(); if(!r.ok) throw new Error(j.error||'send failed');
     toast('Sent ✓'); current=null; await loadList();
@@ -176,6 +249,7 @@ async function discardDraft(){
       af = async (u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
     }
   }catch(_){ }
+  await loadRoster();
   loadList();
 })();
 </script>
