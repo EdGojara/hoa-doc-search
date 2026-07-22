@@ -32,6 +32,8 @@ const PERSONA = {
 function personaMailbox(p, fallback) {
   return (PERSONA[p] && PERSONA[p].mailbox) || fallback || graphSend.CLAIRE_MAILBOX;
 }
+const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const fmtWhen = (d) => { try { return new Date(d).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (_) { return String(d || ''); } }
 
 // GET /api/email-drafts?status=draft&community_id=...
 router.get('/', async (req, res) => {
@@ -136,6 +138,62 @@ router.post('/:id/send', async (req, res) => {
     res.json({ ok: true, sent_from: from, to: d.to_email });
   } catch (err) {
     console.error('[email_drafts] send failed:', err.message);
+    res.status(500).json({ error: safe(err) });
+  }
+});
+
+// POST /api/email-drafts/:id/forward — loop a HUMAN teammate in to help. Sends
+// the draft PLUS the homeowner's inbound thread to an internal @bedrocktx.com
+// address. Internal only (never the homeowner); the click is the release.
+router.post('/:id/forward', async (req, res) => {
+  try {
+    const to_email = String(req.body && req.body.to_email || '').trim();
+    const to_name = String(req.body && req.body.to_name || '').trim();
+    const note = String(req.body && req.body.note || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to_email)) return res.status(400).json({ error: 'a teammate email is required' });
+    // Privacy: only forward internally — homeowner correspondence must not leave
+    // the company to an arbitrary outside address from here.
+    if (!/@bedrocktx(ai)?\.com$/i.test(to_email)) return res.status(400).json({ error: 'forward is for the internal team only (@bedrocktx.com)' });
+
+    const { data: d, error } = await supabase.from('outbound_email_drafts').select('*').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!d) return res.status(404).json({ error: 'not_found' });
+    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email not connected (Graph credentials missing)' });
+
+    // The homeowner's inbound messages, oldest first — the chain the teammate needs.
+    let chainHtml = '';
+    try {
+      const { data: msgs } = await supabase.from('email_messages')
+        .select('subject, received_at, body_full, body_preview, sender_name, direction')
+        .ilike('sender_email', d.to_email).eq('direction', 'inbound')
+        .order('received_at', { ascending: true }).limit(12);
+      if (msgs && msgs.length) {
+        chainHtml = '<hr style="border:0;border-top:1px solid #e4e2db;margin:16px 0;"><p style="color:#6b7a8d;font-size:12px;margin:0 0 6px;">Homeowner\'s messages (for context):</p>' +
+          msgs.map((m) => {
+            const body = String(m.body_full || m.body_preview || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1600);
+            return `<div style="border-left:3px solid #e4e2db;padding-left:12px;margin:10px 0;"><b>${esc(m.subject || '(no subject)')}</b> <span style="color:#6b7a8d;font-size:12px;">${esc(fmtWhen(m.received_at))}</span><br><span style="white-space:pre-wrap;">${esc(body)}</span></div>`;
+          }).join('');
+      }
+    } catch (e) { console.warn('[email_drafts] forward chain load skipped:', e.message); }
+
+    const noteHtml = note ? `<p style="margin:0 0 12px;">${esc(note).replace(/\n/g, '<br>')}</p>` : '';
+    const draftHtml = `<div style="background:#f7f5ef;border:1px solid #e4e2db;border-radius:8px;padding:12px 14px;margin:6px 0;">
+      <p style="color:#6b7a8d;font-size:12px;margin:0 0 6px;">Draft prepared for ${esc(d.to_name || d.to_email)} &lt;${esc(d.to_email)}&gt; — <b>not yet sent</b>:</p>
+      <p style="margin:0 0 6px;"><b>Subject:</b> ${esc(d.subject)}</p>
+      <div style="white-space:pre-wrap;">${esc(d.body_text || '')}</div></div>`;
+    const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">
+      ${noteHtml}
+      <p style="margin:0 0 12px;">Can you take a look and help with this one? This did not go to the homeowner — reply here and we'll fold it into the response.</p>
+      ${draftHtml}${chainHtml}
+      <p style="color:#6b7a8d;font-size:12px;margin-top:14px;">Forwarded from the Bedrock Draft Queue.</p></div>`;
+
+    const from = personaMailbox(d.persona, d.from_mailbox);
+    const subject = `For your help: ${d.subject}`;
+    try { await graphSend.sendAs({ from, to: to_email, subject, html }); }
+    catch (e) { return res.status(502).json({ error: `forward failed: ${e.message}` }); }
+    res.json({ ok: true, forwarded_to: to_email, from });
+  } catch (err) {
+    console.error('[email_drafts] forward failed:', err.message);
     res.status(500).json({ error: safe(err) });
   }
 });
