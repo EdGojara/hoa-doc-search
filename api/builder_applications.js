@@ -1835,21 +1835,15 @@ router.get('/:id/recommendation', async (req, res, next) => {
 // 8) Log to interactions (so the universal memory sink captures this letter)
 // 9) Return application + response + signed URL
 // ============================================================================
-router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) => {
-  try {
-    const {
-      action,
-      conditions,
-      denial_reasons,
-      message_to_builder,
-      decided_by,
-      promote_to_precedent,
-    } = req.body || {};
-
-    if (!action) return res.status(400).json({ error: 'action is required' });
+// Core finalize logic, extracted so a SINGLE code path renders + validates every
+// builder decision letter — the per-application POST /:id/finalize route and the
+// batch approve-and-send-one-email both call this. (Ed 2026-07-23.) Throws
+// Object.assign(Error, {statusCode, problems, warnings}) on validation failure.
+async function finalizeApplicationCore({ applicationId, action, conditions = null, denial_reasons = null, message_to_builder = null, decided_by, promote_to_precedent }) {
+    if (!action) throw Object.assign(new Error('action is required'), { statusCode: 400 });
     const validActions = ['approve', 'approve_with_conditions', 'deny', 'request_more_info'];
-    if (!validActions.includes(action)) return res.status(400).json({ error: 'invalid action' });
-    if (!decided_by) return res.status(400).json({ error: 'decided_by is required' });
+    if (!validActions.includes(action)) throw Object.assign(new Error('invalid action'), { statusCode: 400 });
+    if (!decided_by) throw Object.assign(new Error('decided_by is required'), { statusCode: 400 });
     // An approval letter goes to the builder and then to a CITY PERMIT OFFICE.
     // Refuse to mint one from an application that isn't sound — a blank plan or
     // a missing master-plan link means the letter asserts an approval with
@@ -1859,21 +1853,16 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
     // get this right".)
     if (action === 'approve' || action === 'approve_with_conditions') {
       const { validateApplicationForLetterById } = require('../lib/builder_letter_validate');
-      const v = await validateApplicationForLetterById(supabase, req.params.id);
+      const v = await validateApplicationForLetterById(supabase, applicationId);
       if (!v.ok) {
-        return res.status(422).json({
-          error: 'application_not_ready_for_approval_letter',
-          detail: 'This application isn\'t sound enough to print an approval letter a city will act on. Fix these first:',
-          problems: v.errors,
-          warnings: v.warnings,
-        });
+        throw Object.assign(new Error('This application isn\'t sound enough to print an approval letter a city will act on. Fix these first:'), { statusCode: 422, problems: v.errors, warnings: v.warnings });
       }
     }
     if (action === 'approve_with_conditions' && !conditions) {
-      return res.status(400).json({ error: 'conditions are required for approve_with_conditions' });
+      throw Object.assign(new Error('conditions are required for approve_with_conditions'), { statusCode: 400 });
     }
     if (action === 'deny' && !denial_reasons) {
-      return res.status(400).json({ error: 'denial_reasons are required for deny' });
+      throw Object.assign(new Error('denial_reasons are required for deny'), { statusCode: 400 });
     }
 
     // Load application + community + builder
@@ -1884,10 +1873,10 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
         community:communities(id, name, slug, enforcement_authority_citation),
         builder_company:builder_companies(id, company_name, primary_contact_name, primary_contact_email, mailing_address)
       `)
-      .eq('id', req.params.id)
+      .eq('id', applicationId)
       .single();
     if (loadErr) throw loadErr;
-    if (!app) return res.status(404).json({ error: 'application not found' });
+    if (!app) throw Object.assign(new Error('application not found'), { statusCode: 404 });
 
     // ONE decision timestamp, taken once and used for the letter's printed date,
     // the response row, and the application row. These were three independent
@@ -2056,15 +2045,156 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
       console.warn('[builder_applications] interactions insert failed:', err.message);
     }
 
-    res.json({
+    return {
       ok: true,
       application: { id: app.id, status: appStatus, reference_number: app.reference_number },
       response,
+      status: appStatus,
+      app,
+      letterPath,
       letter_signed_url: signedUrl,
       precedent_id: precedentId,
-    });
+    };
+}
+
+// Thin route wrapper — POST /:id/finalize. Batch approve reuses finalizeApplicationCore.
+router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const { action, conditions, denial_reasons, message_to_builder, decided_by, promote_to_precedent } = req.body || {};
+    const out = await finalizeApplicationCore({ applicationId: req.params.id, action, conditions, denial_reasons, message_to_builder, decided_by, promote_to_precedent });
+    res.json({ ok: true, application: out.application, response: out.response, letter_signed_url: out.letter_signed_url, precedent_id: out.precedent_id });
   } catch (err) {
+    if (err.statusCode === 422) return res.status(422).json({ error: 'application_not_ready_for_approval_letter', detail: err.message, problems: err.problems, warnings: err.warnings });
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     console.error('[builder_applications] finalize failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Batch approve + ONE email per builder.
+// ---------------------------------------------------------------------------
+function builderEmailOf(a) { return (a.builder_company && a.builder_company.primary_contact_email) || a.submitter_email || ''; }
+function builderNameOf(a) { return (a.builder_company && a.builder_company.primary_contact_name) || a.submitter_name || ''; }
+function groupAppsByBuilder(apps) {
+  const m = new Map();
+  for (const a of apps) {
+    const to = builderEmailOf(a);
+    if (!to) continue;
+    const key = to.toLowerCase();
+    if (!m.has(key)) m.set(key, { to, name: builderNameOf(a), apps: [] });
+    m.get(key).apps.push(a);
+  }
+  return [...m.values()];
+}
+const _ageDays = (a) => {
+  const t = a.submitted_at || a.created_at;
+  if (!t) return null;
+  return Math.floor((Date.now() - new Date(t).getTime()) / 86400000);
+};
+
+// POST /api/builder-applications/batch-approve-send
+// Approve several applications at once and send each builder ONE email with all
+// of their approval letters attached, instead of one email per lot. Each letter
+// is still generated and validated individually (it goes to a city permit
+// office). Body: { application_ids:[...], decided_by, message_to_builder?,
+// dry_run? }. dry_run=true validates only — no decisions, no letters, no email —
+// so the manager can review which lots are ready vs. skipped before committing.
+// (Ed 2026-07-23: "approve all of these and send one email, not a bunch.")
+router.post('/batch-approve-send', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body.application_ids) ? [...new Set(req.body.application_ids.filter(Boolean))] : [];
+    const decided_by = req.body.decided_by;
+    const message_to_builder = req.body.message_to_builder || null;
+    const dryRun = !!req.body.dry_run;
+    if (!ids.length) return res.status(400).json({ error: 'application_ids is required' });
+    if (ids.length > 200) return res.status(400).json({ error: 'too many at once (max 200)' });
+    if (!dryRun && !decided_by) return res.status(400).json({ error: 'decided_by is required' });
+
+    const { data: apps, error: laErr } = await supabase.from('builder_applications')
+      .select('id, reference_number, status, street_address, lot_number, submitter_name, submitter_email, submitted_at, created_at, builder_company:builder_companies(id, company_name, primary_contact_email, primary_contact_name), community:communities(name)')
+      .in('id', ids).limit(200);
+    if (laErr) throw laErr;
+    const byId = new Map((apps || []).map((a) => [a.id, a]));
+
+    const { validateApplicationForLetterById } = require('../lib/builder_letter_validate');
+
+    // Gate every selected lot through the city-letter validator. Split ready vs.
+    // skipped; a skip never blocks the rest of the batch.
+    const ready = [], skipped = [];
+    for (const id of ids) {
+      const a = byId.get(id);
+      if (!a) { skipped.push({ id, reference_number: id, reason: 'not found' }); continue; }
+      if (String(a.status || '').startsWith('approved') || a.status === 'denied') { skipped.push({ id, reference_number: a.reference_number, address: a.street_address, reason: `already ${a.status}` }); continue; }
+      if (!builderEmailOf(a)) { skipped.push({ id, reference_number: a.reference_number, address: a.street_address, reason: 'no builder email on file' }); continue; }
+      const v = await validateApplicationForLetterById(supabase, id);
+      if (!v.ok) { skipped.push({ id, reference_number: a.reference_number, address: a.street_address, reason: (v.errors || []).join('; ') || 'not ready for an approval letter', problems: v.errors }); continue; }
+      ready.push(a);
+    }
+
+    if (dryRun) {
+      const groups = groupAppsByBuilder(ready);
+      return res.json({
+        ok: true, dry_run: true,
+        ready: ready.map((a) => ({ id: a.id, reference_number: a.reference_number, address: a.street_address, age_days: _ageDays(a), builder: builderEmailOf(a) })),
+        skipped,
+        builder_groups: groups.map((g) => ({ to: g.to, name: g.name, count: g.apps.length })),
+      });
+    }
+
+    // Finalize each ready lot (approve → validate → render letter → response).
+    const finalized = [];
+    for (const a of ready) {
+      try {
+        const out = await finalizeApplicationCore({ applicationId: a.id, action: 'approve', message_to_builder, decided_by, promote_to_precedent: true });
+        finalized.push({ app: a, response: out.response });
+      } catch (e) {
+        skipped.push({ id: a.id, reference_number: a.reference_number, address: a.street_address, reason: 'approval failed: ' + (e.message || 'unknown'), problems: e.problems });
+      }
+    }
+
+    // One email per builder, all their letters attached, BCC the archive.
+    const groups = groupAppsByBuilder(finalized.map((f) => f.app));
+    const emails_sent = [];
+    for (const g of groups) {
+      const envelopes = [];
+      for (const a of g.apps) {
+        const f = finalized.find((x) => x.app.id === a.id);
+        try { const env = await buildBuilderEmailEnvelope(a.id, f.response.id); envelopes.push({ a, env }); }
+        catch (e) { skipped.push({ id: a.id, reference_number: a.reference_number, address: a.street_address, reason: 'letter build failed: ' + e.message }); }
+      }
+      if (!envelopes.length) continue;
+      const commName = envelopes[0].env.app.community.name;
+      const greeting = envelopes[0].env.app.builder_company?.primary_contact_name || g.name || 'Team';
+      const lotLines = envelopes.map((e) => `&bull; ${(e.a.street_address || '').split(',')[0]} (${e.a.reference_number})`).join('<br>');
+      const n = envelopes.length;
+      const html = `<p>${greeting},</p>
+        <p>Please find attached the approval letter${n === 1 ? '' : 's'} for the following ${n} lot${n === 1 ? '' : 's'} in ${commName}:</p>
+        <p>${lotLines}</p>
+        ${message_to_builder ? `<p>${String(message_to_builder).replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>` : ''}
+        <p>Questions or revised submissions: reply to this email, write to <a href="mailto:builders@bedrocktx.com">builders@bedrocktx.com</a>, or use the portal at <a href="https://builders.bedrocktxai.com">builders.bedrocktxai.com</a>.</p>
+        <p style="color:#555; font-size:11px; margin-top:24px;">Sent on behalf of the ${commName} Architectural Control Committee by Bedrock Association Management.</p>`;
+      const subject = n === 1
+        ? envelopes[0].env.subject
+        : `${commName} — ${n} lot approvals (${envelopes.map((e) => e.a.reference_number).join(', ').slice(0, 140)})`;
+      const attachments = envelopes.map((e) => ({ filename: e.env.filename, content: e.env.pdfBuffer.toString('base64') }));
+      const send = await sendEmail({
+        to: g.to, bcc: [ARCHIVE_BCC], subject, html, text: plaintextFromHtml(html),
+        attachments, replyTo: 'builders@bedrocktx.com',
+        tags: [{ name: 'module', value: 'arc_builder_batch' }, { name: 'community', value: envelopes[0].env.app.community.slug || 'unknown' }],
+      });
+      const sentAt = new Date().toISOString();
+      for (const e of envelopes) {
+        const f = finalized.find((x) => x.app.id === e.a.id);
+        try { await supabase.from('builder_application_responses').update({ email_sent_at: send.ok ? sentAt : null, email_message_id: send.vendor_message_id || null }).eq('id', f.response.id); } catch (_) {}
+        if (send.ok) { try { await supabase.from('interactions').update({ status: 'sent', sent_at: sentAt }).eq('original_external_id', e.a.reference_number).eq('type', 'letter_other'); } catch (_) {} }
+      }
+      emails_sent.push({ to: g.to, count: envelopes.length, ok: !!send.ok, error: send.ok ? null : (send.error || 'send failed') });
+    }
+
+    res.json({ ok: true, approved: finalized.length, skipped, emails_sent });
+  } catch (err) {
+    console.error('[builder_applications] batch-approve-send failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

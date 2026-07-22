@@ -1052,6 +1052,7 @@ window._isAdmin = false;  // gated by /api/me check after Supabase bootstrap
     try {
       const me = await api('GET', '/api/me');
       window._isAdmin = me?.user?.role === 'admin';
+      window._currentUser = me?.user || null;
     } catch (_) { /* non-admin / unauth: leave _isAdmin = false */ }
   } catch (e) {
     console.warn('[builder-arc] supabase bootstrap failed:', e.message);
@@ -1121,8 +1122,10 @@ function rowHtml(item) {
               style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; letter-spacing: 0.02em;">Review &amp; decide →</button>`
     : `<button class="row-action-btn" data-id="${item.application_id}" title="View the decision letter + history"
               style="background: #fff; color: #475569; border: 1px solid #cbd5e1; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap;">View</button>`;
+  const canBatch = needsAction && item.master_plan_status === 'approved';
   return `
     <tr data-id="${item.application_id}" class="${state.selectedId === item.application_id ? 'active' : ''}">
+      <td style="width:34px;text-align:center;">${canBatch ? `<input type="checkbox" class="batch-cb" data-id="${item.application_id}" data-age="${item.age_days != null ? item.age_days : ''}" onchange="updateBatchCount()" style="width:16px;height:16px;cursor:pointer;">` : ''}</td>
       <td class="num">${escapeHtml(item.reference_number || '—')}</td>
       <td>
         <strong>${escapeHtml(item.street_address || '—')}</strong>
@@ -1147,6 +1150,53 @@ function rowHtml(item) {
       </td>
     </tr>
   `;
+}
+
+// ---- Batch approve + ONE email per builder ----
+function updateBatchCount() {
+  const n = document.querySelectorAll('.batch-cb:checked').length;
+  const el = document.getElementById('batchCount'); if (el) el.textContent = n + ' selected';
+  const btn = document.getElementById('batchApproveSend');
+  if (btn) { btn.disabled = n === 0; btn.style.opacity = n === 0 ? '.5' : '1'; }
+}
+function batchSelectAged() {
+  document.querySelectorAll('.batch-cb').forEach((cb) => {
+    const age = parseInt(cb.dataset.age, 10);
+    cb.checked = Number.isFinite(age) && age >= 14;
+  });
+  updateBatchCount();
+}
+function batchClearSel() {
+  document.querySelectorAll('.batch-cb:checked').forEach((cb) => { cb.checked = false; });
+  updateBatchCount();
+}
+async function batchApproveSend() {
+  const ids = [...document.querySelectorAll('.batch-cb:checked')].map((cb) => cb.dataset.id);
+  if (!ids.length) return;
+  const who = (window._currentUser && (window._currentUser.full_name || window._currentUser.email)) || '';
+  const decided_by = prompt('Name to sign these approval letters (prints on the letter that goes to the builder and the city):', who);
+  if (!decided_by || !decided_by.trim()) return;
+  const btn = document.getElementById('batchApproveSend'); if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  try {
+    // 1) Dry run — validate + group, no decisions and no email yet.
+    const dry = await api('POST', '/api/builder-applications/batch-approve-send', { application_ids: ids, dry_run: true });
+    const ready = dry.ready || [], groups = dry.builder_groups || [], skipped = dry.skipped || [];
+    if (!ready.length) { alert('None of the selected lots are ready to approve.\n\n' + skipped.map((s) => `• ${s.reference_number}: ${s.reason}`).join('\n')); return; }
+    const groupLines = groups.map((g) => `• ${g.name || g.to} <${g.to}> — ${g.count} letter${g.count === 1 ? '' : 's'} in ONE email`).join('\n');
+    const skipLines = skipped.length ? `\n\nSkipped (${skipped.length}):\n` + skipped.map((s) => `• ${s.reference_number}: ${s.reason}`).join('\n') : '';
+    if (!confirm(`Approve ${ready.length} lot${ready.length === 1 ? '' : 's'} and send:\n\n${groupLines}${skipLines}\n\nProceed?`)) return;
+    // 2) Real run.
+    if (btn) btn.textContent = 'Approving + sending…';
+    const out = await api('POST', '/api/builder-applications/batch-approve-send', { application_ids: ids, decided_by: decided_by.trim() });
+    const sent = (out.emails_sent || []).map((e) => `• ${e.to}: ${e.count} letter${e.count === 1 ? '' : 's'} ${e.ok ? 'sent ✓' : 'FAILED — ' + (e.error || '')}`).join('\n');
+    const skip2 = (out.skipped || []).length ? `\n\nSkipped ${out.skipped.length}:\n` + out.skipped.map((s) => `• ${s.reference_number}: ${s.reason}`).join('\n') : '';
+    alert(`Approved ${out.approved} lot${out.approved === 1 ? '' : 's'}.\n\n${sent || '(no email sent)'}${skip2}`);
+    loadQueue();
+  } catch (e) {
+    alert('Batch failed: ' + e.message);
+  } finally {
+    const b = document.getElementById('batchApproveSend'); if (b) { b.textContent = 'Approve selected & send one email'; updateBatchCount(); }
+  }
 }
 
 async function loadQueue() {
@@ -1191,6 +1241,7 @@ async function loadQueue() {
     const tableFor = (items) => `
       <table class="queue">
         <thead><tr>
+          <th style="width:34px;"></th>
           <th>Reference</th>
           <th>Property</th>
           <th>Builder · Submitter</th>
@@ -1217,9 +1268,18 @@ async function loadQueue() {
         <button id="ctaUploadSubmissionBtn" style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; flex-shrink: 0;">📥 Upload submission PDF</button>
       </div>`;
 
+    const batchToolbar = `
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:2px 4px 10px;padding:9px 12px;background:#f0f6ff;border:1px solid #cfe0f5;border-radius:8px;">
+        <span style="font-size:12px;color:#334155;font-weight:700;">Batch approve</span>
+        <button onclick="batchSelectAged()" style="background:#fff;color:#0B1D34;border:1px solid #cbd5e1;padding:5px 11px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">☑ Select 2+ weeks old</button>
+        <button onclick="batchClearSel()" style="background:#fff;color:#64748b;border:1px solid #e2e8f0;padding:5px 11px;border-radius:6px;font-size:12px;cursor:pointer;">Clear</button>
+        <span id="batchCount" style="font-size:12px;color:#64748b;">0 selected</span>
+        <button id="batchApproveSend" onclick="batchApproveSend()" disabled style="margin-left:auto;background:#15803d;color:#fff;border:none;padding:7px 15px;border-radius:7px;font-size:12.5px;font-weight:700;cursor:pointer;opacity:.5;">Approve selected &amp; send one email</button>
+      </div>
+      <div style="font-size:11.5px;color:#94a3b8;margin:0 4px 8px;">Only master-matched lots can be batch-approved. Each still gets its own validated letter; the builder gets one email with all of them attached.</div>`;
     const needsHtml = needs.length === 0
       ? `<div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px; text-align: center; color: #15803d; font-size: 13px;">✓ Nothing waiting on you right now.</div>`
-      : tableFor(needs);
+      : batchToolbar + tableFor(needs);
 
     const decidedHtml = decided.length === 0
       ? `<div style="color: #94a3b8; font-size: 13px; padding: 10px;">No decided submissions yet.</div>`
