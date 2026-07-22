@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Draft Queue — Bedrock Office</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root{ --navy:#0B1D34; --gold:#C99A2E; --ink:#141b26; --muted:#5c6b7e; --line:#e4e2db; --bg:#f6f4ee; --card:#fffefb; --good:#2f6f4f; --goodbg:#e6f0ea; --amber:#B7791F; --amberbg:#fbf1dd; --red:#9B2C2C; --redbg:#f7e8e6; --shadow:0 1px 2px rgba(11,29,52,.05),0 8px 24px rgba(11,29,52,.06); --serif:Georgia,'Times New Roman',serif; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 22px 60px;}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:2px solid var(--gold);padding-bottom:12px;margin-bottom:8px;}
+  .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:700;}
+  h1{font-family:var(--serif);font-weight:600;color:var(--navy);font-size:26px;margin:4px 0 0;}
+  a.back{font-size:12.5px;color:var(--muted);text-decoration:none;}
+  .sub{font-size:12.5px;color:var(--muted);margin:0 0 18px;}
+  .tabs{display:flex;gap:8px;margin-bottom:16px;}
+  .tab{border:1px solid var(--line);background:var(--card);color:var(--navy);border-radius:20px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;}
+  .tab.on{background:var(--navy);color:#fff;border-color:var(--navy);}
+  .layout{display:grid;grid-template-columns:340px 1fr;gap:22px;align-items:start;}
+  @media (max-width:820px){ .layout{grid-template-columns:1fr;} }
+  .list .d{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin-bottom:9px;cursor:pointer;box-shadow:var(--shadow);}
+  .list .d.sel{border-color:var(--navy);box-shadow:0 0 0 1px var(--navy),var(--shadow);}
+  .list .d .t{font-weight:700;color:var(--navy);font-size:14px;}
+  .list .d .m{font-size:11.5px;color:var(--muted);margin-top:3px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  .pill{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.02em;text-transform:uppercase;}
+  .pill.draft{background:var(--amberbg);color:var(--amber);} .pill.sent{background:var(--goodbg);color:var(--good);} .pill.discarded{background:#eef0f3;color:var(--muted);}
+  .pill.persona{background:#eef2f7;color:var(--navy);text-transform:none;}
+  .view{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px 28px;box-shadow:var(--shadow);min-height:320px;}
+  .view .field{margin-bottom:12px;}
+  .view label{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:4px;}
+  .view input, .view textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit;background:#fff;color:var(--ink);}
+  .view textarea{min-height:280px;line-height:1.55;resize:vertical;}
+  .ctx{background:#f7f5ef;border:1px solid var(--line);border-radius:10px;padding:10px 13px;font-size:12.5px;color:var(--muted);margin-bottom:16px;}
+  .ctx b{color:var(--navy);}
+  .atts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+  .att{font-size:11.5px;background:#eef2f7;color:var(--navy);border-radius:6px;padding:3px 8px;}
+  .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap;}
+  .btn{border:0;border-radius:8px;padding:9px 16px;font-size:13.5px;font-weight:600;cursor:pointer;}
+  .btn.primary{background:var(--good);color:#fff;} .btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line);} .btn.danger{background:#fff;color:var(--red);border:1px solid var(--redbg);}
+  .btn:disabled{opacity:.5;cursor:default;}
+  .empty{color:var(--muted);text-align:center;padding:60px 20px;}
+  .flag{background:var(--amberbg);border:1px solid color-mix(in srgb,var(--amber) 35%,transparent);border-left:4px solid var(--amber);border-radius:9px;padding:11px 14px;font-size:13px;margin-bottom:16px;}
+  .sentnote{background:var(--goodbg);border-left:4px solid var(--good);border-radius:9px;padding:10px 13px;font-size:12.5px;color:var(--good);margin-bottom:14px;}
+  .errnote{background:var(--redbg);border-left:4px solid var(--red);border-radius:9px;padding:10px 13px;font-size:12.5px;color:var(--red);margin-bottom:14px;}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 18px;border-radius:22px;font-size:13.5px;font-weight:600;box-shadow:var(--shadow);opacity:0;transition:opacity .2s;pointer-events:none;}
+  .toast.show{opacity:1;} .toast.err{background:var(--red);}
+  .hide{display:none!important;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <div class="eyebrow">Bedrock Office</div>
+      <h1>Draft Queue</h1>
+    </div>
+    <a class="back" href="/">← trustEd Home</a>
+  </div>
+  <p class="sub">Homeowner-facing mail waits here for your review. Nothing sends until you click <b>Send</b>.</p>
+
+  <div id="notReady" class="flag hide">The draft queue isn't set up yet. Apply <strong>migration 327</strong> in the Supabase SQL editor and refresh.</div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-s="draft" onclick="setTab('draft')">Awaiting review</button>
+    <button class="tab" data-s="sent" onclick="setTab('sent')">Sent</button>
+    <button class="tab" data-s="all" onclick="setTab('all')">All</button>
+  </div>
+
+  <div class="layout">
+    <div class="list" id="list"><div class="empty" style="padding:24px;">Loading…</div></div>
+    <div class="view" id="view"><div class="empty">Select a draft on the left to review it.</div></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let drafts = [], current = null, tab = 'draft', af = (u,o)=>fetch(u,o);
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+function fmtDate(d){ if(!d) return '—'; try{ return new Date(d).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }catch(_){ return String(d);} }
+let toastT; function toast(m,err){ const t=$('toast'); t.textContent=m; t.classList.toggle('err',!!err); t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), err?4200:2200); }
+
+function setTab(s){ tab=s; [...document.querySelectorAll('.tab')].forEach(t=>t.classList.toggle('on',t.dataset.s===s)); current=null; loadList(); }
+
+async function loadList(){
+  try{
+    const r = await fetch('/api/email-drafts?status='+tab); const j = await r.json();
+    if(!r.ok) throw new Error(j.error||'load failed');
+    if(j.migration_pending){ $('notReady').classList.remove('hide'); }
+    drafts = j.drafts||[]; renderList();
+    if(drafts.length && !current) openDraft(drafts[0].id);
+    else if(!drafts.length){ $('view').innerHTML='<div class="empty">Nothing '+(tab==='draft'?'awaiting review':tab)+'.</div>'; }
+  }catch(e){ $('list').innerHTML='<div class="empty" style="color:#9B2C2C;">'+esc(e.message)+'</div>'; }
+}
+function renderList(){
+  if(!drafts.length){ $('list').innerHTML='<div class="empty" style="padding:24px;">No drafts.</div>'; return; }
+  $('list').innerHTML = drafts.map(d=>`<button class="d ${current&&current.id===d.id?'sel':''}" onclick="openDraft('${d.id}')">
+    <div class="t">${esc(d.subject||'(no subject)')}</div>
+    <div class="m"><span class="pill ${d.status}">${d.status}</span>${d.persona?`<span class="pill persona">${esc(d.persona)}</span>`:''} ${esc(d.to_name||d.to_email||'')} · ${fmtDate(d.created_at)}</div>
+    ${d.community_name?`<div class="m">${esc(d.community_name)}</div>`:''}
+  </button>`).join('');
+}
+
+async function openDraft(id){
+  try{
+    const r = await fetch('/api/email-drafts/'+id); const j = await r.json();
+    if(!r.ok) throw new Error(j.error||'not found');
+    current = j.draft; renderList(); renderView();
+  }catch(e){ toast(e.message,true); }
+}
+function renderView(){
+  const d = current; if(!d){ return; }
+  const editable = d.status==='draft';
+  const atts = Array.isArray(d.attachments)?d.attachments:[];
+  const ctxBits = [];
+  if(d.related_type) ctxBits.push(`Re: <b>${esc(d.related_type)}</b>${d.related_id?' '+esc(String(d.related_id).slice(0,8)):''}`);
+  if(d.draft_kind) ctxBits.push(esc(d.draft_kind));
+  if(d.draft_reason) ctxBits.push(esc(d.draft_reason));
+  $('view').innerHTML = `
+    ${d.status==='sent'?`<div class="sentnote">Sent ${fmtDate(d.sent_at)}${d.sent_from?' from '+esc(d.sent_from):''}.</div>`:''}
+    ${d.send_error?`<div class="errnote">Last send attempt failed: ${esc(d.send_error)}</div>`:''}
+    ${ctxBits.length?`<div class="ctx">${ctxBits.join(' &nbsp;·&nbsp; ')}${d.persona?` &nbsp;·&nbsp; from <b>${esc(d.persona)}</b>`:''}</div>`:''}
+    <div class="field"><label>To</label><input id="f-to" value="${esc(d.to_email)}" ${editable?'':'disabled'}>${d.to_name?`<div style="font-size:11.5px;color:var(--muted);margin-top:3px;">${esc(d.to_name)}</div>`:''}</div>
+    ${d.cc?`<div class="field"><label>Cc</label><input id="f-cc" value="${esc(d.cc)}" ${editable?'':'disabled'}></div>`:''}
+    <div class="field"><label>Subject</label><input id="f-subject" value="${esc(d.subject)}" ${editable?'':'disabled'}></div>
+    <div class="field"><label>Message</label><textarea id="f-body" spellcheck="true" ${editable?'':'disabled'}>${esc(d.body_text||d.body_html||'')}</textarea></div>
+    ${atts.length?`<div class="field"><label>Attachments</label><div class="atts">${atts.map(a=>`<span class="att">📎 ${esc(a.name||'file')}</span>`).join('')}</div></div>`:''}
+    ${editable?`<div class="actions">
+      <button class="btn danger" onclick="discardDraft()">Discard</button>
+      <button class="btn ghost" id="saveBtn" onclick="saveDraft()">Save edits</button>
+      <button class="btn primary" id="sendBtn" onclick="sendDraft()">Send ✓</button>
+    </div>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:8px;text-align:right;">Annie's signature and logo are added automatically when you send.</div>`:''}`;
+}
+
+async function saveDraft(){
+  const body = { to_email:$('f-to').value.trim(), subject:$('f-subject').value.trim(), body_text:$('f-body').value };
+  if($('f-cc')) body.cc=$('f-cc').value.trim();
+  if(!body.to_email||!body.subject){ toast('To and Subject are required',true); return; }
+  $('saveBtn').disabled=true;
+  try{
+    const r = await af('/api/email-drafts/'+current.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j = await r.json(); if(!r.ok) throw new Error(j.error||'save failed');
+    toast('Saved ✓'); await openDraft(current.id);
+  }catch(e){ toast(e.message,true); const b=$('saveBtn'); if(b) b.disabled=false; }
+}
+async function sendDraft(){
+  const to = $('f-to').value.trim();
+  if(!confirm('Send this email to '+to+' now?')) return;
+  // save any edits first, then send
+  $('sendBtn').disabled=true;
+  try{
+    await af('/api/email-drafts/'+current.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email:to,subject:$('f-subject').value.trim(),body_text:$('f-body').value,cc:$('f-cc')?$('f-cc').value.trim():undefined})});
+    const r = await af('/api/email-drafts/'+current.id+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+    const j = await r.json(); if(!r.ok) throw new Error(j.error||'send failed');
+    toast('Sent ✓'); current=null; await loadList();
+  }catch(e){ toast(e.message,true); const b=$('sendBtn'); if(b) b.disabled=false; }
+}
+async function discardDraft(){
+  if(!confirm('Discard this draft? It will not be sent.')) return;
+  try{
+    const r = await af('/api/email-drafts/'+current.id+'/discard',{method:'POST'});
+    const j = await r.json(); if(!r.ok) throw new Error(j.error||'discard failed');
+    toast('Discarded'); current=null; await loadList();
+  }catch(e){ toast(e.message,true); }
+}
+
+(async function boot(){
+  try{
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if(cfg && cfg.enabled && window.supabase){
+      const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      af = async (u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
+    }
+  }catch(_){ }
+  loadList();
+})();
+</script>
+</body>
+</html>

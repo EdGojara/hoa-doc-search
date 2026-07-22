@@ -1714,44 +1714,31 @@ router.post('/:id/send-decision', express.json({ limit: '2mb' }), async (req, re
       return res.status(500).json({ error: 'pdf_upload_failed', message: e.message });
     }
 
-    // Send the decision to the homeowner AS Annie — the ACC coordinator — so the
-    // applicant hears from one person start to finish, the SAME face that
-    // acknowledged the submission, and replies land back in Annie's inbox.
-    // Falls back to Claire's mailbox, then to Resend, so a decision never fails
-    // to reach the homeowner. (Ed 2026-07-22: "make Annie own it end to end.")
-    let emailOk = false;
+    // Ed's standing rule (2026-07-22): "I don't want approval letters going out
+    // until I approve them." The decision LETTER does not send from here — it is
+    // queued (with its PDF) into the Draft Queue as Annie, and Ed releases it
+    // from /admin/draft-queue. That release is the only thing that sends.
+    let emailOk = false;       // never sent directly from this endpoint anymore
     let emailError = null;
-    let sentVia = null;
+    let queued = false;
     const plainBody = `Dear ${app.submitter_name},\n\nAttached is the Architectural Control Committee's decision regarding your application (reference ${app.reference_number}). Please open the attached PDF for the full letter.\n\nIf you have any questions about this decision, please reply to this email or contact us at annie@bedrocktx.com or (832) 588-2485.\n\nThank you,\nAnnie Reeves\nArchitectural Review Coordinator\nBedrock Association Management — on behalf of ${app.community?.name || 'your association'}`;
     try {
-      const graphSend = require('../lib/email/graph_send');
-      if (graphSend.isConfigured() && app.submitter_email) {
-        const gAtt = [{ '@odata.type': '#microsoft.graph.fileAttachment', name: `decision-${app.reference_number}.pdf`, contentType: 'application/pdf', contentBytes: pdfBuffer.toString('base64') }];
-        for (const from of [graphSend.ANNIE_MAILBOX, graphSend.CLAIRE_MAILBOX].filter(Boolean)) {
-          try {
-            await graphSend.sendAs({ from, to: app.submitter_email, subject: letterSubject, html: letterHtml, attachments: gAtt });
-            emailOk = true; sentVia = from; break;
-          } catch (e) { emailError = e.message; console.warn(`[applications] decision send as ${from} failed:`, e.message); }
-        }
-      }
-      if (!emailOk) {
-        // Fallback: Resend, so the letter still goes out if Graph isn't available.
-        const { sendEmail, isConfigured } = require('../lib/notifications/email');
-        if (isConfigured()) {
-          const result = await sendEmail({
-            to: app.submitter_email,
-            subject: letterSubject,
-            html: letterHtml,
-            text: plainBody,
-            attachments: [{ filename: `decision-${app.reference_number}.pdf`, content: pdfBuffer.toString('base64') }],
-          });
-          emailOk = !!(result && result.ok !== false); sentVia = 'resend';
-          if (!emailOk) emailError = result?.error || 'unknown';
-        } else if (!emailError) { emailError = 'no send transport configured (Graph + Resend both unavailable)'; }
-      }
+      const { queueDraft } = require('../lib/email/outbound_drafts');
+      const q = await queueDraft({
+        communityId: app.community?.id || null, communityName: app.community?.name || null,
+        persona: 'annie', fromMailbox: require('../lib/email/graph_send').ANNIE_MAILBOX,
+        toEmail: app.submitter_email, toName: app.submitter_name,
+        subject: letterSubject, bodyText: plainBody,
+        attachments: [{ name: `decision-${app.reference_number}.pdf`, storage_path: pdfPath, mime: 'application/pdf' }],
+        relatedType: 'application', relatedId: app.id, sourceEmailRef: `acc_decision:${app.id}:${final_status}`,
+        draftKind: 'acc_decision', draftReason: `ACC decision (${final_status}) — review before sending`,
+        createdBy: actorDisplayName(actor),
+      });
+      queued = (q.status === 'queued' || q.status === 'exists');
+      if (!queued) emailError = q.reason === 'no_table' ? 'Draft Queue not set up yet (apply migration 327)' : (q.error || 'could not queue letter for review');
     } catch (e) {
       emailError = e.message;
-      console.error('[applications] decision email send failed:', e.message);
+      console.error('[applications] decision queue failed:', e.message);
     }
 
     // Stamp the row
@@ -1772,16 +1759,17 @@ router.post('/:id/send-decision', express.json({ limit: '2mb' }), async (req, re
     try {
       await supabase.from('application_responses').insert({
         application_id: app.id,
-        response_type: emailOk ? 'email_sent' : 'send_failed',
+        response_type: 'note',
         email_to: app.submitter_email,
         email_subject: letterSubject,
-        message_to_owner: 'See attached decision letter.',
+        message_to_owner: queued ? 'Decision letter drafted — awaiting release from the Draft Queue.' : 'See attached decision letter.',
         acted_by_user_id: actor.id,
         action_by_name: actorDisplayName(actor),
         action_at: now,
         metadata: {
           final_status,
           pdf_path: pdfPath,
+          queued_for_review: queued,
           email_error: emailError,
         },
       });
@@ -1796,14 +1784,16 @@ router.post('/:id/send-decision', express.json({ limit: '2mb' }), async (req, re
       actor_kind: 'staff',
       actor_id: actor.email,
       actor_display_name: actorDisplayName(actor),
-      reason: emailOk ? 'decision_letter_sent' : 'decision_letter_send_failed',
-      metadata: { recipient: app.submitter_email, pdf_path: pdfPath, email_error: emailError },
+      reason: queued ? 'decision_letter_queued_for_review' : 'decision_letter_queue_failed',
+      metadata: { recipient: app.submitter_email, pdf_path: pdfPath, queued_for_review: queued, email_error: emailError },
     });
 
     res.json({
-      ok: emailOk,
+      ok: queued,
+      queued,
+      message: queued ? 'Decision letter drafted and placed in the Draft Queue for your review. It will not send until you release it.' : (emailError || 'Could not queue the decision letter.'),
       sent_to: app.submitter_email,
-      sent_at: emailOk ? now : null,
+      sent_at: null,
       pdf_path: pdfPath,
       final_status,
       email_error: emailError,

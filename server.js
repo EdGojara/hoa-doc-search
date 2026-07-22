@@ -974,6 +974,10 @@ app.get('/admin/communications', (req, res) => {
 app.get('/admin/legal', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'legal-disclosures.html'));
 });
+app.use('/api/email-drafts', require('./api/email_drafts'));
+app.get('/admin/draft-queue', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'draft-queue.html'));
+});
 
 app.use('/api/operations', require('./api/operations'));
 app.get('/admin/operations', (req, res) => {
