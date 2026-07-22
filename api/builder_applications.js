@@ -2486,6 +2486,7 @@ router.post('/:id/send', express.json({ limit: '256kb' }), async (req, res) => {
 
     const send = await sendEmail({
       to: toEmail,
+      bcc,
       subject: env.subject,
       html: env.html,
       text: env.text,
