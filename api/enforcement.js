@@ -2137,6 +2137,147 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// _assembleBundlePdf — READ-ONLY assembly + render of ONE consolidated letter
+// PDF for a group of letter interactions at the same property + stage. No DB
+// writes. Used by BOTH the draft auto-bundler (letter_date = now, placeholder)
+// AND the Mail Queue lock-and-batch postmark step (letter_date = postmark), so
+// the letter a homeowner receives is rendered by the exact same code that
+// produced the draft the operator reviewed — the only difference is the date.
+// (Ed 2026-07-23: lock-and-batch was re-rendering per violation and undoing the
+// bundle, so 217 bundles printed as 267 envelopes.)
+// Returns { ok:true, pdfBuffer, stage, community, pRow, orderedGroup, propertyId }
+// or { ok:false, reason }.
+// ---------------------------------------------------------------------------
+async function _assembleBundlePdf({ group, letterDate }) {
+  const { renderViolationLetterBundlePdf } = require('../lib/enforcement/violation_letter');
+  const first = group[0];
+  const propertyId = first.property_id;
+  const communityIdForGroup = first.community_id;
+  let stage = first.type === 'letter_courtesy_1' ? 'courtesy_1'
+            : first.type === 'letter_courtesy_2' ? 'courtesy_2'
+            : 'certified_209';
+
+  const violationIds = group.map((g) => g.violation_id).filter(Boolean);
+  const observationIds = group.map((g) => g.observation_id).filter(Boolean);
+  const [vRes, oRes, pRes, cRes] = await Promise.all([
+    supabase.from('violations')
+      .select('id, primary_category_id, current_stage, cure_period_ends_at, cure_days_override, opened_at, board_priority_at_open, opened_from_observation_id, enforcement_categories(slug, label, description)')
+      .in('id', violationIds.length ? violationIds : ['00000000-0000-0000-0000-000000000000']),
+    supabase.from('property_observations')
+      .select('id, ai_description, reviewer_notes, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
+      .in('id', observationIds.length ? observationIds : ['00000000-0000-0000-0000-000000000000']),
+    supabase.from('v_current_property_owners')
+      .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
+      .eq('property_id', propertyId).maybeSingle(),
+    supabase.from('communities')
+      .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, enforcement_authority_citation')
+      .eq('id', communityIdForGroup).maybeSingle(),
+  ]);
+
+  const vById = new Map((vRes.data || []).map((v) => [v.id, v]));
+  const oById = new Map((oRes.data || []).map((o) => [o.id, o]));
+  const _memberStages = group.map((g) => vById.get(g.violation_id)).filter(Boolean).map((v) => v.current_stage);
+  if (_memberStages.length) {
+    const _rank = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
+    const _top = _memberStages.reduce((a, b) => ((_rank[b] ?? -1) > (_rank[a] ?? -1) ? b : a));
+    if (_rank[_top] != null) stage = _top === 'fine_assessed' ? 'certified_209' : _top;
+  }
+  const pRow = pRes.data;
+  const community = cRes.data;
+  if (!pRow || !community) return { ok: false, reason: 'property or community missing' };
+
+  const orderedGroup = [...group].sort((a, b) => {
+    const va = vById.get(a.violation_id);
+    const vb = vById.get(b.violation_id);
+    return new Date((va && va.opened_at) || 0) - new Date((vb && vb.opened_at) || 0);
+  });
+
+  let widePhotoBuffer = null;
+  for (const d of orderedGroup) {
+    const obs = oById.get(d.observation_id);
+    const photo = obs && obs.inspection_photos;
+    if (photo && photo.paired_wide_photo_id) {
+      try {
+        const { data: wide } = await supabase.from('inspection_photos').select('storage_path').eq('id', photo.paired_wide_photo_id).maybeSingle();
+        if (wide && wide.storage_path) {
+          const { data: blob } = await supabase.storage.from('documents').download(wide.storage_path);
+          if (blob) widePhotoBuffer = Buffer.from(await blob.arrayBuffer());
+          break;
+        }
+      } catch (_) {}
+    }
+  }
+
+  const violationsCtx = [];
+  for (const d of orderedGroup) {
+    const v = vById.get(d.violation_id);
+    const o = oById.get(d.observation_id);
+    if (!v) continue;
+    let govDoc = null;
+    try {
+      const { data: prioRow } = await supabase.from('community_enforcement_priorities')
+        .select('governing_doc_reference, governing_doc_section_title, governing_doc_quote, governing_doc_page')
+        .eq('community_id', communityIdForGroup).eq('category_id', v.primary_category_id).is('end_date', null).maybeSingle();
+      if (prioRow && (prioRow.governing_doc_reference || prioRow.governing_doc_section_title || prioRow.governing_doc_quote)) {
+        govDoc = { reference: prioRow.governing_doc_reference, section_title: prioRow.governing_doc_section_title, quote: prioRow.governing_doc_quote, page: prioRow.governing_doc_page };
+      }
+    } catch (_) {}
+    if (!govDoc) {
+      try {
+        const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
+        const auto = await lookupGoverningDoc({
+          communityId: communityIdForGroup,
+          categorySlug: v.enforcement_categories && v.enforcement_categories.slug,
+          categoryLabel: v.enforcement_categories && v.enforcement_categories.label,
+          categoryDescription: v.enforcement_categories && v.enforcement_categories.description,
+          aiDescription: o && o.ai_description,
+        });
+        if (auto) govDoc = { reference: auto.reference, section_title: auto.section_title, quote: auto.quote, page: auto.page, document_title: auto.document_title };
+      } catch (_) {}
+    }
+    const yearAgo = new Date(); yearAgo.setMonth(yearAgo.getMonth() - 12);
+    const { data: priors } = await supabase.from('violations')
+      .select('opened_at, current_stage').eq('property_id', propertyId).eq('primary_category_id', v.primary_category_id)
+      .neq('id', v.id).gte('opened_at', yearAgo.toISOString()).neq('quality_status', 'superseded')
+      .order('opened_at', { ascending: false }).limit(5);
+    let closeUpBuf = null;
+    const photo = o && o.inspection_photos;
+    if (photo && photo.storage_path) {
+      try { const { data: blob } = await supabase.storage.from('documents').download(photo.storage_path); if (blob) closeUpBuf = Buffer.from(await blob.arrayBuffer()); } catch (_) {}
+    }
+    const bundleFinding = (o && o.ai_description && o.ai_description.trim().length >= 10)
+      ? o.ai_description
+      : _cleanFinding((o && o.reviewer_notes) || '', v.enforcement_categories && v.enforcement_categories.label);
+    violationsCtx.push({
+      violation_id: v.id,
+      category_label: v.enforcement_categories && v.enforcement_categories.label,
+      ai_description: bundleFinding,
+      observation_captured_at: (photo && photo.captured_at) || (o && o.created_at),
+      governing_doc: govDoc,
+      prior_notices: (priors || []).map((pv) => ({ date: pv.opened_at, stage: pv.current_stage })),
+      close_up_photo_buffer: closeUpBuf,
+    });
+  }
+
+  const { loadOverrides: _loadCopyOverrides } = require('../lib/enforcement/letter_copy');
+  const _bundleCopyOverrides = await _loadCopyOverrides(supabase, communityIdForGroup, stage);
+  const _bundleCureOverride = orderedGroup
+    .map((d) => Number((vById.get(d.violation_id) || {}).cure_days_override) || 0)
+    .reduce((a, b) => Math.max(a, b), 0) || null;
+  const pdfBuffer = await renderViolationLetterBundlePdf({
+    property: { street_address: pRow.street_address, unit: pRow.unit, city: pRow.city, state: pRow.state, zip: pRow.zip, lot_number: pRow.lot_number },
+    owner: { full_name: pRow.owner_name, mailing_address: pRow.owner_mailing_address },
+    community, stage, cure_days_override: _bundleCureOverride,
+    letter_date: letterDate,
+    wide_photo_buffer: widePhotoBuffer,
+    violations: violationsCtx,
+    copy_overrides: _bundleCopyOverrides,
+    options: { sender_name: community.letter_sender_name, sender_title: community.letter_sender_title },
+  });
+  return { ok: true, pdfBuffer, stage, community, pRow, orderedGroup, propertyId };
+}
+
 // Auto-bundle / regenerate draft letters. Groups draft letters by property+type
 // into single-envelope bundles. force=true re-renders groups that are ALREADY
 // correctly bundled (to pick up a letter-template / address-format change or a
@@ -2249,195 +2390,12 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
         const allShareOne = distinctBundleIds.size === 1 && group.every((g) => g.bundle_id);
         if (allShareOne && !force) continue; // force re-renders an already-bundled group
 
-        // Multi-violation bundle: regenerate one consolidated PDF
-        const first = group[0];
-        const propertyId = first.property_id;
-        const communityIdForGroup = first.community_id;
-        let stage = first.type === 'letter_courtesy_1' ? 'courtesy_1'
-                  : first.type === 'letter_courtesy_2' ? 'courtesy_2'
-                  : 'certified_209'; // letter_209 → could be certified or fine_assessed; treat as certified for bundling
-        // ↑ fallback only. The authoritative stage is each violation's CURRENT
-        //   stage (overridden below once violations are loaded) — so a draft
-        //   whose violation was re-staged (e.g. courtesy_2 → courtesy_1) renders
-        //   at the corrected stage instead of the stale draft type.
-
-        // Pull violations + observations + photos for each member
-        const violationIds = group.map((g) => g.violation_id).filter(Boolean);
-        const observationIds = group.map((g) => g.observation_id).filter(Boolean);
-
-        const [vRes, oRes, pRes, cRes] = await Promise.all([
-          supabase.from('violations')
-            .select('id, primary_category_id, current_stage, cure_period_ends_at, cure_days_override, opened_at, board_priority_at_open, opened_from_observation_id, enforcement_categories(slug, label, description)')
-            .in('id', violationIds.length ? violationIds : ['00000000-0000-0000-0000-000000000000']),
-          supabase.from('property_observations')
-            .select('id, ai_description, reviewer_notes, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
-            .in('id', observationIds.length ? observationIds : ['00000000-0000-0000-0000-000000000000']),
-          supabase.from('v_current_property_owners')
-            .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
-            .eq('property_id', propertyId).maybeSingle(),
-          supabase.from('communities')
-            .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, enforcement_authority_citation')
-            .eq('id', communityIdForGroup).maybeSingle(),
-        ]);
-
-        const vById = new Map((vRes.data || []).map((v) => [v.id, v]));
-        const oById = new Map((oRes.data || []).map((o) => [o.id, o]));
-        // Override the fallback stage with the violations' CURRENT stage (the
-        // source of truth). If a bundle spans mixed stages, take the most severe
-        // so we never under-state. fine_assessed renders under the §209 path.
-        const _memberStages = group.map((g) => vById.get(g.violation_id)).filter(Boolean).map((v) => v.current_stage);
-        if (_memberStages.length) {
-          const _rank = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
-          const _top = _memberStages.reduce((a, b) => ((_rank[b] ?? -1) > (_rank[a] ?? -1) ? b : a));
-          if (_rank[_top] != null) stage = _top === 'fine_assessed' ? 'certified_209' : _top;
-        }
-        const pRow = pRes.data;
-        const community = cRes.data;
-        if (!pRow || !community) {
-          skipped.push({ key: group.map((g) => g.id).join(','), reason: 'property or community missing' });
-          continue;
-        }
-
-        // Build the per-violation array — order by violation.opened_at asc
-        const orderedGroup = [...group].sort((a, b) => {
-          const va = vById.get(a.violation_id);
-          const vb = vById.get(b.violation_id);
-          return new Date((va && va.opened_at) || 0) - new Date((vb && vb.opened_at) || 0);
-        });
-
-        // Wide photo — take the first paired wide we find across the group
-        let widePhotoBuffer = null;
-        for (const d of orderedGroup) {
-          const obs = oById.get(d.observation_id);
-          const photo = obs && obs.inspection_photos;
-          if (photo && photo.paired_wide_photo_id) {
-            try {
-              const { data: wide } = await supabase
-                .from('inspection_photos').select('storage_path')
-                .eq('id', photo.paired_wide_photo_id).maybeSingle();
-              if (wide && wide.storage_path) {
-                const { data: blob } = await supabase.storage.from('documents').download(wide.storage_path);
-                if (blob) widePhotoBuffer = Buffer.from(await blob.arrayBuffer());
-                break; // one wide shot per bundle is enough
-              }
-            } catch (_) {}
-          }
-        }
-
-        // Per-violation contexts
-        const violationsCtx = [];
-        for (const d of orderedGroup) {
-          const v = vById.get(d.violation_id);
-          const o = oById.get(d.observation_id);
-          if (!v) continue;
-
-          // Governing doc + priors
-          let govDoc = null;
-          try {
-            const { data: prioRow } = await supabase
-              .from('community_enforcement_priorities')
-              .select('governing_doc_reference, governing_doc_section_title, governing_doc_quote, governing_doc_page')
-              .eq('community_id', communityIdForGroup)
-              .eq('category_id', v.primary_category_id)
-              .is('end_date', null).maybeSingle();
-            if (prioRow && (prioRow.governing_doc_reference || prioRow.governing_doc_section_title || prioRow.governing_doc_quote)) {
-              govDoc = {
-                reference: prioRow.governing_doc_reference,
-                section_title: prioRow.governing_doc_section_title,
-                quote: prioRow.governing_doc_quote,
-                page: prioRow.governing_doc_page,
-              };
-            }
-          } catch (_) {}
-          // Auto-lookup fallback — substrate semantic search
-          if (!govDoc) {
-            try {
-              const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
-              const auto = await lookupGoverningDoc({
-                communityId:         communityIdForGroup,
-                categorySlug:        v.enforcement_categories && v.enforcement_categories.slug,
-                categoryLabel:       v.enforcement_categories && v.enforcement_categories.label,
-                categoryDescription: v.enforcement_categories && v.enforcement_categories.description,
-                aiDescription:       o && o.ai_description,
-              });
-              if (auto) {
-                govDoc = {
-                  reference:      auto.reference,
-                  section_title:  auto.section_title,
-                  quote:          auto.quote,
-                  page:           auto.page,
-                  document_title: auto.document_title,
-                };
-              }
-            } catch (_) {}
-          }
-
-          const yearAgo = new Date(); yearAgo.setMonth(yearAgo.getMonth() - 12);
-          const { data: priors } = await supabase
-            .from('violations')
-            .select('opened_at, current_stage')
-            .eq('property_id', propertyId)
-            .eq('primary_category_id', v.primary_category_id)
-            .neq('id', v.id)
-            .gte('opened_at', yearAgo.toISOString())
-            .neq('quality_status', 'superseded')
-            .order('opened_at', { ascending: false })
-            .limit(5);
-
-          let closeUpBuf = null;
-          const photo = o && o.inspection_photos;
-          if (photo && photo.storage_path) {
-            try {
-              const { data: blob } = await supabase.storage.from('documents').download(photo.storage_path);
-              if (blob) closeUpBuf = Buffer.from(await blob.arrayBuffer());
-            } catch (_) {}
-          }
-
-          // Manual entries have no AI-generated ai_description — fall back to the
-          // cleaned reviewer_notes (staff's typed finding), same as lock-and-batch
-          // and the draft path. Without this, a bundle containing a manual
-          // violation fails the letter validator. Ed 2026-07-02.
-          const bundleFinding = (o && o.ai_description && o.ai_description.trim().length >= 10)
-            ? o.ai_description
-            : _cleanFinding((o && o.reviewer_notes) || '', v.enforcement_categories && v.enforcement_categories.label);
-          violationsCtx.push({
-            violation_id: v.id,
-            category_label: v.enforcement_categories && v.enforcement_categories.label,
-            ai_description: bundleFinding,
-            observation_captured_at: (photo && photo.captured_at) || (o && o.created_at),
-            governing_doc: govDoc,
-            prior_notices: (priors || []).map((pv) => ({ date: pv.opened_at, stage: pv.current_stage })),
-            close_up_photo_buffer: closeUpBuf,
-          });
-        }
-
-        // Generate the bundle PDF — pull per-community editable copy
-        // overrides (title, opening, closing) so the rendered letter
-        // reflects whatever the operator saved for this stage.
-        const { loadOverrides: _loadCopyOverrides } = require('../lib/enforcement/letter_copy');
-        const _bundleCopyOverrides = await _loadCopyOverrides(supabase, communityIdForGroup, stage);
-        // Operator cure-days override (migration 247) — most grace wins for a bundle.
-        const _bundleCureOverride = orderedGroup
-          .map((d) => Number((vById.get(d.violation_id) || {}).cure_days_override) || 0)
-          .reduce((a, b) => Math.max(a, b), 0) || null;
-        const pdfBuffer = await renderViolationLetterBundlePdf({
-          property: {
-            street_address: pRow.street_address, unit: pRow.unit,
-            city: pRow.city, state: pRow.state, zip: pRow.zip, lot_number: pRow.lot_number,
-          },
-          owner: { full_name: pRow.owner_name, mailing_address: pRow.owner_mailing_address },
-          community,
-          stage,
-          cure_days_override: _bundleCureOverride,
-          letter_date: new Date(), // placeholder — Mail Queue lock-and-batch re-stamps with postmark
-          wide_photo_buffer: widePhotoBuffer,
-          violations: violationsCtx,
-          copy_overrides: _bundleCopyOverrides,
-          options: {
-            sender_name:  community.letter_sender_name,
-            sender_title: community.letter_sender_title,
-          },
-        });
+        // Multi-violation bundle: render one consolidated PDF via the shared
+        // helper (identical to the Mail Queue postmark render, see
+        // _assembleBundlePdf). Placeholder date; lock-and-batch re-stamps it.
+        const _rb = await _assembleBundlePdf({ group, letterDate: new Date() });
+        if (!_rb.ok) { skipped.push({ key: group.map((g) => g.id).join(`,`), reason: _rb.reason }); continue; }
+        const { pdfBuffer, stage, community, orderedGroup, propertyId } = _rb;
 
         // Upload bundle PDF
         const bundleId = cryptoMod.randomUUID();
@@ -3310,6 +3268,39 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
     const included = [];
     const skipped = [];
 
+    // Bundle-aware postmark (Ed 2026-07-23): letters that share a bundle_id are
+    // ONE physical envelope covering all that property's violations at a stage.
+    // Auto-bundle already grouped them; lock-and-batch used to re-render each
+    // interaction alone, undoing the bundle (217 bundles printed as 267). Now we
+    // pre-render each multi-member bundle ONCE, with the postmark date, via the
+    // SAME helper that produced the draft — so the mailed letter matches the
+    // reviewed draft. Singletons are untouched (rendered per-interaction below).
+    const _bundleGroups = new Map();
+    for (const L of letters) {
+      if (!L.bundle_id) continue;
+      if (!_bundleGroups.has(L.bundle_id)) _bundleGroups.set(L.bundle_id, []);
+      _bundleGroups.get(L.bundle_id).push(L);
+    }
+    const _bundleRender = new Map(); // bundle_id -> { pdfBuffer, letterPath }
+    for (const [bid, members] of _bundleGroups) {
+      if (members.length < 2) continue; // singleton bundle → normal per-interaction path
+      try {
+        const rr = await _assembleBundlePdf({ group: members, letterDate: postmarkDate });
+        if (!rr.ok) continue; // fall back to per-interaction rendering (never blocks the batch)
+        const stamp = postmarkIso.replace(/-/g, '');
+        const bundlePath = `${members[0].property_id}/bundle-${rr.stage}-postmark-${stamp}.pdf`;
+        const { error: upErr } = await supabase.storage.from('violation-letters')
+          .upload(bundlePath, rr.pdfBuffer, { contentType: 'application/pdf', upsert: true });
+        if (upErr) { console.warn('[lock-and-batch] bundle upload failed', bid, upErr.message); continue; }
+        _bundleRender.set(bid, { pdfBuffer: rr.pdfBuffer, letterPath: bundlePath });
+      } catch (e) { console.warn('[lock-and-batch] bundle pre-render failed', bid, e.message); /* per-interaction fallback */ }
+    }
+    // Each once-per-envelope action (add to printout, admin fee, supplemental
+    // email/SMS) fires on the FIRST bundle member that actually succeeds — never
+    // a pre-designated one — so a member hitting a data error can't drop the
+    // whole bundle from the mailing.
+    const _bundleAppended = new Set(), _bundleFeeCharged = new Set(), _bundleNotified = new Set();
+
     for (const L of letters) {
       try {
         // Fetch violation + joined data needed for regeneration
@@ -3477,8 +3468,12 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         const selfHelpSlug = catRow && catRow.slug;
         const isSelfHelp10Day = selfHelpSlug === 'lawn_force_mow_10day' || selfHelpSlug === 'trash_cleanup_10day';
 
-        let pdfBuffer;
-        if (isSelfHelp10Day) {
+        // If this letter is part of a pre-rendered multi-violation bundle, use
+        // the ONE consolidated PDF instead of rendering this violation alone.
+        const _br = L.bundle_id ? _bundleRender.get(L.bundle_id) : null;
+        let pdfBuffer, letterPath;
+        if (_br) { pdfBuffer = _br.pdfBuffer; letterPath = _br.letterPath; }
+        if (!_br && isSelfHelp10Day) {
           const remedyMode = selfHelpSlug === 'trash_cleanup_10day' ? 'cleanup' : 'lawn';
           const authorizingSection = remedyMode === 'cleanup' ? community.cleanup_section_full : community.force_mow_section_full;
           // No fallback between cleanup/force-mow articles — citing the wrong
@@ -3547,16 +3542,19 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
           });
         }
 
-        // Upload regenerated PDF — new path with postmark stamp
-        const LETTERS_BUCKET = 'violation-letters';
-        const stamp = postmarkIso.replace(/-/g, '');
-        const letterPath = `${vio.id}/${vio.current_stage}-postmark-${stamp}.pdf`;
-        const { error: upErr } = await supabase.storage
-          .from(LETTERS_BUCKET)
-          .upload(letterPath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
-        if (upErr) {
-          skipped.push({ id: L.id, reason: 'upload failed: ' + upErr.message });
-          continue;
+        // Upload the per-violation PDF (bundle members are already uploaded once
+        // in the pre-pass — skip re-upload and reuse the shared bundle path).
+        if (!_br) {
+          const LETTERS_BUCKET = 'violation-letters';
+          const stamp = postmarkIso.replace(/-/g, '');
+          letterPath = `${vio.id}/${vio.current_stage}-postmark-${stamp}.pdf`;
+          const { error: upErr } = await supabase.storage
+            .from(LETTERS_BUCKET)
+            .upload(letterPath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+          if (upErr) {
+            skipped.push({ id: L.id, reason: 'upload failed: ' + upErr.message });
+            continue;
+          }
         }
 
         // Load the finalized letter PDF once — its page count is recorded on the
@@ -3564,6 +3562,16 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         // merged batch PDF below, so we parse it a single time.
         const src = await PDFDocument.load(pdfBuffer);
         const letterPageCount = src.getPageIndices().length;
+
+        // One admin fee per envelope. For a bundle, the first member to reach
+        // here carries the full stage fee; the rest are 0.
+        let _letterFeeCents = renderStage === 'courtesy_1' ? Number(community.letter_fee_courtesy_1_cents || 0)
+          : renderStage === 'courtesy_2' ? Number(community.letter_fee_courtesy_2_cents || 2500)
+          : Number(community.letter_fee_certified_209_cents || 3500);
+        if (_br) {
+          if (_bundleFeeCharged.has(L.bundle_id)) _letterFeeCents = 0;
+          else _bundleFeeCharged.add(L.bundle_id);
+        }
 
         // Update violation's cure_period_ends_at + the interaction's
         // content path + postmark_date + sent_at
@@ -3578,10 +3586,9 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             sent_at: nowIso,
             status: 'sent',
             page_count: letterPageCount,
-            letter_fee_cents:
-              renderStage === 'courtesy_1' ? Number(community.letter_fee_courtesy_1_cents || 0)
-              : renderStage === 'courtesy_2' ? Number(community.letter_fee_courtesy_2_cents || 2500)
-              : Number(community.letter_fee_certified_209_cents || 3500),
+            // One admin fee per physical envelope: the first bundle member to
+            // reach here carries it, the rest are 0 (matches draft auto-bundle).
+            letter_fee_cents: _letterFeeCents,
           })
           .eq('id', L.id);
 
@@ -3634,29 +3641,39 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         // (related to an existing customer relationship under the CC&Rs), so
         // email goes by default; SMS requires explicit sms_opt_in. Each send
         // logs a delivery_receipts row regardless of vendor success.
-        try {
-          await _fireSupplementalNotices({
-            interactionId: L.id,
-            communityId:   vio.community_id,
-            community,
-            propertyId:    vio.property_id,
-            property:      pRow,
-            violationId:   vio.id,
-            violation:     vio,
-            categoryLabel: catRow && catRow.label,
-            postmarkIso,
-            cureBy,
-            pdfBuffer,
-            letterPath,
-          });
-        } catch (notifErr) {
-          console.warn('[lock-and-batch] supplemental notices failed:', notifErr.message);
+        // Fire once per physical envelope: for a bundle only on the first member
+        // to succeed (the notice carries the consolidated PDF covering every
+        // violation), so the homeowner gets one supplemental email/SMS.
+        if (!_br || !_bundleNotified.has(L.bundle_id)) {
+          if (_br) _bundleNotified.add(L.bundle_id);
+          try {
+            await _fireSupplementalNotices({
+              interactionId: L.id,
+              communityId:   vio.community_id,
+              community,
+              propertyId:    vio.property_id,
+              property:      pRow,
+              violationId:   vio.id,
+              violation:     vio,
+              categoryLabel: catRow && catRow.label,
+              postmarkIso,
+              cureBy,
+              pdfBuffer,
+              letterPath,
+            });
+          } catch (notifErr) {
+            console.warn('[lock-and-batch] supplemental notices failed:', notifErr.message);
+          }
         }
 
-        // Append to merged batch PDF
-        // src + letterPageCount computed above (single parse per letter).
-        const copied = await out.copyPages(src, src.getPageIndices());
-        copied.forEach((page) => out.addPage(page));
+        // Append to merged batch PDF — for a bundle, only ONCE (first member to
+        // succeed). The shared consolidated PDF already covers every violation in
+        // the bundle, so the other members must not add a duplicate page set.
+        if (!_br || !_bundleAppended.has(L.bundle_id)) {
+          const copied = await out.copyPages(src, src.getPageIndices());
+          copied.forEach((page) => out.addPage(page));
+          if (_br) _bundleAppended.add(L.bundle_id);
+        }
         included.push(L.id);
       } catch (e) {
         skipped.push({ id: L.id, reason: e.message });
