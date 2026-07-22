@@ -1714,25 +1714,44 @@ router.post('/:id/send-decision', express.json({ limit: '2mb' }), async (req, re
       return res.status(500).json({ error: 'pdf_upload_failed', message: e.message });
     }
 
-    // Send email with PDF attached
+    // Send the decision to the homeowner AS Annie — the ACC coordinator — so the
+    // applicant hears from one person start to finish, the SAME face that
+    // acknowledged the submission, and replies land back in Annie's inbox.
+    // Falls back to Claire's mailbox, then to Resend, so a decision never fails
+    // to reach the homeowner. (Ed 2026-07-22: "make Annie own it end to end.")
     let emailOk = false;
     let emailError = null;
+    let sentVia = null;
+    const plainBody = `Dear ${app.submitter_name},\n\nAttached is the Architectural Control Committee's decision regarding your application (reference ${app.reference_number}). Please open the attached PDF for the full letter.\n\nIf you have any questions about this decision, please reply to this email or contact us at annie@bedrocktx.com or (832) 588-2485.\n\nThank you,\nAnnie Reeves\nArchitectural Review Coordinator\nBedrock Association Management — on behalf of ${app.community?.name || 'your association'}`;
     try {
-      const { sendEmail, isConfigured } = require('../lib/notifications/email');
-      if (!isConfigured()) throw new Error('Resend not configured');
-      const plainBody = `Dear ${app.submitter_name},\n\nAttached is the Architectural Control Committee's decision regarding your application (reference ${app.reference_number}). Please open the attached PDF for the full letter.\n\nIf you have any questions about this decision, please contact Bedrock Association Management at info@bedrocktx.com or (832) 588-2485.\n\nThank you,\nBedrock Association Management — on behalf of ${app.community?.name || 'your association'}`;
-      const result = await sendEmail({
-        to: app.submitter_email,
-        subject: letterSubject,
-        html: letterHtml,
-        text: plainBody,
-        attachments: [{ filename: `decision-${app.reference_number}.pdf`, content: pdfBuffer.toString('base64') }],
-      });
-      emailOk = !!(result && result.ok !== false);
-      if (!emailOk) emailError = result?.error || 'unknown';
+      const graphSend = require('../lib/email/graph_send');
+      if (graphSend.isConfigured() && app.submitter_email) {
+        const gAtt = [{ '@odata.type': '#microsoft.graph.fileAttachment', name: `decision-${app.reference_number}.pdf`, contentType: 'application/pdf', contentBytes: pdfBuffer.toString('base64') }];
+        for (const from of [graphSend.ANNIE_MAILBOX, graphSend.CLAIRE_MAILBOX].filter(Boolean)) {
+          try {
+            await graphSend.sendAs({ from, to: app.submitter_email, subject: letterSubject, html: letterHtml, attachments: gAtt });
+            emailOk = true; sentVia = from; break;
+          } catch (e) { emailError = e.message; console.warn(`[applications] decision send as ${from} failed:`, e.message); }
+        }
+      }
+      if (!emailOk) {
+        // Fallback: Resend, so the letter still goes out if Graph isn't available.
+        const { sendEmail, isConfigured } = require('../lib/notifications/email');
+        if (isConfigured()) {
+          const result = await sendEmail({
+            to: app.submitter_email,
+            subject: letterSubject,
+            html: letterHtml,
+            text: plainBody,
+            attachments: [{ filename: `decision-${app.reference_number}.pdf`, content: pdfBuffer.toString('base64') }],
+          });
+          emailOk = !!(result && result.ok !== false); sentVia = 'resend';
+          if (!emailOk) emailError = result?.error || 'unknown';
+        } else if (!emailError) { emailError = 'no send transport configured (Graph + Resend both unavailable)'; }
+      }
     } catch (e) {
       emailError = e.message;
-      console.error('[applications] email send failed:', e.message);
+      console.error('[applications] decision email send failed:', e.message);
     }
 
     // Stamp the row
