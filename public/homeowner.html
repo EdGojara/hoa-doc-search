@@ -165,6 +165,7 @@ async function openProfile(cid){
           </div>
         </div>
         <div class="ct">${ps.map(p=>esc(p.address)+(p.community?' · '+esc(p.community):'')).join('<br>')||'no property on file'}</div>
+        ${c.mailing_address?`<div class="ct" style="color:#64748b;">✉️ Mailing: ${esc(c.mailing_address)}</div>`:''}
         <div class="chips">${balChip}${amenChip}${openChip}${legalChip}${flagChips}</div>
       </div>
     </div></div>
