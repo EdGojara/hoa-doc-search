@@ -18674,6 +18674,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                      ${showQualityActions ? `<button onclick="inspViolationVerify('${v.id}')" title="Mark as verified (full weight)" style="background:#fff; border:1px solid #bbf7d0; color:#166534; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Verify</button>` : ''}
                      ${(v.quality_status !== 'superseded' && !['voided','cured','closed'].includes(stage)) ? `<button onclick="inspViolationChangeCategory('${v.id}')" title="Fix the category on this case — changes it in place and keeps the case, stage, and cure clock. Does NOT delete or supersede it." style="background:#fff; border:1px solid #c7d2fe; color:#4338ca; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✎ Category</button>` : ''}
                      ${v.quality_status === 'superseded' ? `<button onclick="inspViolationUndoCorrection('${v.id}')" title="Undo the last correction and restore this record to its prior state (category, stage, and quality)." style="background:#fff; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↩ Undo</button>` : ''}
+                     ${stage === 'voided' ? `<button onclick="inspViolationUnvoid('${v.id}')" title="Bring this voided case back to an open Courtesy 1 so you can work it." style="background:#fff; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↩ Unvoid</button>` : ''}
                      ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record (wrong house, duplicate, or void). To fix a wrong CATEGORY use ✎ Category instead." style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
                      ${['courtesy_1','courtesy_2','certified_209'].includes(v.current_stage) ? `<button onclick="inspAdvanceStage('${v.id}','${v.current_stage}')" title="Advance to the next enforcement stage (Courtesy 2 → Certified §209, etc.). Deliberate staff action — you still generate + mail the certified notice; the cure clock starts when it goes out." style="background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↑ Advance</button>` : ''}
                      ${['courtesy_2','certified_209','fine_assessed'].includes(v.current_stage) ? `<button onclick="inspReduceStage('${v.id}','${v.current_stage}')" title="Reduce to the previous stage (Courtesy 2 → Courtesy 1, Certified → Courtesy 2). Use when a case was over-escalated — e.g. a deduped duplicate bumped a first occurrence up a level. Clears the cure clock; regenerate the lower-stage letter." style="background:#eff6ff; border:1px solid #93c5fd; color:#1e40af; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↓ Reduce</button>` : ''}
@@ -19234,6 +19235,25 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     }
   }
   window.inspViolationUndoCorrection = inspViolationUndoCorrection;
+
+  // Bring a voided case back to open. For folds/merges that left no correction
+  // row (so ↩ Undo can't help), and any other void staff want to reopen.
+  async function inspViolationUnvoid(violationId) {
+    if (!confirm('Bring this voided case back to an open Courtesy 1 so you can work it?')) return;
+    try {
+      const r = await fetch(`/api/enforcement/violations/${encodeURIComponent(violationId)}/unvoid`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_name: (window.currentUser || {}).full_name || null }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
+      alert(`✓ Un-voided — "${j.category_label || 'case'}" is open at Courtesy 1 again.`);
+      if (inspPDCurrentPropertyId) await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+    } catch (e) {
+      alert('Could not un-void: ' + e.message);
+    }
+  }
+  window.inspViolationUnvoid = inspViolationUnvoid;
 
   async function inspViolationAddPrior(propertyId) {
     // Need to know the available categories first. Cache them globally.

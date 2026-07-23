@@ -4335,6 +4335,45 @@ router.post('/violations/:id/reverse-correction', express.json(), async (req, re
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:id/unvoid
+// Bring a VOIDED violation back to an open case. Staff self-serve for the
+// merge-void trap: reclassifying into an already-open category used to fold the
+// record in and VOID it, and those folds leave no correction row (so
+// reverse-correction can't touch them). This restores the record to an open
+// courtesy_1 case so staff can work it. (Laurie 2026-07-23, 4706 Lakes of Pine
+// Forest — "can we unvoid those so she can work with them.")
+// ---------------------------------------------------------------------------
+router.post('/violations/:id/unvoid', express.json(), async (req, res) => {
+  try {
+    const violationId = req.params.id;
+    const { data: v, error: vErr } = await supabase.from('violations')
+      .select('id, opened_at, current_stage, resolved_notes, enforcement_categories(label)')
+      .eq('id', violationId).maybeSingle();
+    if (vErr) return res.status(500).json({ error: vErr.message });
+    if (!v) return res.status(404).json({ error: 'violation not found' });
+    if (v.current_stage !== 'voided') {
+      return res.status(409).json({ error: 'not_voided', detail: 'This case isn\'t voided — nothing to un-void.' });
+    }
+    const who = (() => { try { return (req.body && req.body.user_name) || null; } catch (_) { return null; } })();
+    const note = `Un-voided ${new Date().toISOString().slice(0, 10)}${who ? ' by ' + who : ''} — restored to an open courtesy_1 case to work it.`
+      + (v.resolved_notes ? ` (Was: ${String(v.resolved_notes).slice(0, 160)})` : '');
+    const { error: uErr } = await supabase.from('violations').update({
+      current_stage: 'courtesy_1',
+      current_stage_started_at: v.opened_at || new Date().toISOString(),
+      resolved_via: null,
+      resolved_at: null,
+      resolved_notes: null,
+      review_notes: note,
+    }).eq('id', violationId);
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    res.json({ ok: true, violation_id: violationId, new_stage: 'courtesy_1', category_label: (v.enforcement_categories && v.enforcement_categories.label) || null });
+  } catch (err) {
+    console.error('[violations.unvoid]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/enforcement/violations/:id/change-category
 // Body: { category_id, description?, user_id? }
 // Change a violation's category IN PLACE — keep the same case, stage, cure
