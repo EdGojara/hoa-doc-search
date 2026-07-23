@@ -17925,6 +17925,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <!-- What happens info -->
         <div style="background:#f0f9ff; border:1px solid #93c5fd; border-radius:6px; padding:10px 12px; font-size:12px; color:#1e40af; margin-bottom:14px;">
           On Save: the violation reclassifies, the observation updates with an audit-trail note ("Reclassified by operator on [date]"), and the letter PDF regenerates with the new category + description. Cure period stays the same — only the category and copy change.
+          <div style="margin-top:6px; padding-top:6px; border-top:1px solid #bfdbfe;">If this property <strong>already has an open case</strong> in the category you pick, this observation merges into that case instead of starting a second notice (one issue, one cure clock). The row then shows <strong>“merged into open case”</strong> — that's expected, not a deletion.</div>
         </div>
 
         <div id="inspReclassifyError" style="display:none; color:#b91c1c; font-size:12.5px; margin-bottom:10px;"></div>
@@ -18626,10 +18627,19 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
            <tbody>
              ${d.violations.map((v) => {
                const stage = v.current_stage || '';
+               // A "voided" row that was actually MERGED into another open case
+               // (reclassified into a category this property already had open) is
+               // NOT data loss — it's correct dedup. Showing a bare "voided" made
+               // staff think the system destroyed their correction. Label it as a
+               // merge so the record reads truthfully. (Ed 2026-07-23, Laurie.)
+               const isMerged = stage === 'voided' && /folded in|already had (an )?open case/i.test(v.resolved_notes || '');
                const stageColor = stage === 'cured' || stage === 'closed' ? '#15803d'
                                 : stage === 'certified_209' ? '#b45309'
                                 : stage === 'fine_assessed' ? '#b91c1c'
+                                : isMerged ? '#7c3aed'
                                 : stage === 'voided' || stage === 'superseded' ? '#94a3b8' : '#0B1D34';
+               const stageLabel = isMerged ? '🔗 merged into open case' : escapeHtml(stage.replace(/_/g, ' '));
+               const stageTitle = isMerged ? escapeHtml(v.resolved_notes || '') : '';
                const showLetterBtn = isOpenStage(stage) && v.quality_status !== 'superseded';
                const showQualityActions = v.quality_status !== 'superseded' && v.quality_status !== 'verified';
                // Show review notes inline under the row when this violation
@@ -18649,7 +18659,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                  <tr style="border-bottom:${showReviewNotes ? 'none' : '1px solid #f1f5f9'};">
                    <td style="padding:6px 8px;">${v.opened_at ? new Date(v.opened_at).toLocaleDateString() : '—'}</td>
                    <td style="padding:6px 8px;">${escapeHtml(v.category_label || v.category_code || '—')}</td>
-                   <td style="padding:6px 8px; color:${stageColor}; font-weight:600;">${escapeHtml(stage.replace(/_/g, ' '))}</td>
+                   <td style="padding:6px 8px; color:${stageColor}; font-weight:600;"${stageTitle ? ` title="${stageTitle}"` : ''}>${stageLabel}</td>
                    <td style="padding:6px 8px;">${qBadge(v)}${sourceBadge(v.source)}</td>
                    <td style="padding:6px 8px; text-align:right; white-space:nowrap;">
                      ${(() => {
