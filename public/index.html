@@ -18672,7 +18672,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                        return letterLinks + photoLink;
                      })()}
                      ${showQualityActions ? `<button onclick="inspViolationVerify('${v.id}')" title="Mark as verified (full weight)" style="background:#fff; border:1px solid #bbf7d0; color:#166534; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Verify</button>` : ''}
-                     ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record" style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
+                     ${(v.quality_status !== 'superseded' && !['voided','cured','closed'].includes(stage)) ? `<button onclick="inspViolationChangeCategory('${v.id}')" title="Fix the category on this case — changes it in place and keeps the case, stage, and cure clock. Does NOT delete or supersede it." style="background:#fff; border:1px solid #c7d2fe; color:#4338ca; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✎ Category</button>` : ''}
+                     ${v.quality_status === 'superseded' ? `<button onclick="inspViolationUndoCorrection('${v.id}')" title="Undo the last correction and restore this record to its prior state (category, stage, and quality)." style="background:#fff; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↩ Undo</button>` : ''}
+                     ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record (wrong house, duplicate, or void). To fix a wrong CATEGORY use ✎ Category instead." style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
                      ${['courtesy_1','courtesy_2','certified_209'].includes(v.current_stage) ? `<button onclick="inspAdvanceStage('${v.id}','${v.current_stage}')" title="Advance to the next enforcement stage (Courtesy 2 → Certified §209, etc.). Deliberate staff action — you still generate + mail the certified notice; the cure clock starts when it goes out." style="background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↑ Advance</button>` : ''}
                      ${['courtesy_2','certified_209','fine_assessed'].includes(v.current_stage) ? `<button onclick="inspReduceStage('${v.id}','${v.current_stage}')" title="Reduce to the previous stage (Courtesy 2 → Courtesy 1, Certified → Courtesy 2). Use when a case was over-escalated — e.g. a deduped duplicate bumped a first occurrence up a level. Clears the cure clock; regenerate the lower-stage letter." style="background:#eff6ff; border:1px solid #93c5fd; color:#1e40af; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↓ Reduce</button>` : ''}
                      ${!['cured','closed','voided'].includes(v.current_stage) ? `<button onclick="inspMarkCured('${v.id}')" title="Close this violation (homeowner-confirmed cure, drive-by spot check, or board dismissal). Auto-resets any open repeat in this category back to Courtesy 1." style="background:#dcfce7; border:1px solid #86efac; color:#15803d; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Cure</button>` : ''}
@@ -19128,15 +19130,20 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
   async function inspViolationCorrect(violationId) {
     // Pick the correction type
+    // NOTE: "Reclassified" is deliberately NOT here. This menu SUPERSEDES the
+    // record (kills it), and reclassify-via-supersede changed no category and
+    // created no replacement — it just silently destroyed live cases (Laurie
+    // 2026-07-23, 4919 Harbor Glen: a certified §209 case superseded, nothing
+    // reclassified). To change a category, use "✎ Category" on the row instead —
+    // it changes the category in place and keeps the case alive.
     const choices = {
       '1': { type: 'wrong_property',          label: 'Wrong property (attributed to the wrong house)' },
       '2': { type: 'duplicate',                label: 'Duplicate (already on file)' },
       '3': { type: 'resolved_at_inspection',   label: 'Resolved at inspection (owner had cured before letter)' },
       '4': { type: 'voided',                   label: 'Void entirely (record was wrong)' },
-      '5': { type: 'reclassified',             label: 'Reclassified (wrong category)' },
     };
     const menu = Object.entries(choices).map(([k, v]) => `  ${k}. ${v.label}`).join('\n');
-    const pick = prompt(`Correct this violation — pick a type:\n\n${menu}\n\nEnter 1-5:`);
+    const pick = prompt(`Correct this violation — pick a type:\n\n${menu}\n\n(To fix a wrong CATEGORY, cancel and use "✎ Category" on the row — that keeps the case alive.)\n\nEnter 1-4:`);
     if (!pick || !choices[pick.trim()]) return;
     const correction = choices[pick.trim()];
     const reason = prompt(`Reason for correction (required — recorded on the audit trail):\n\nType: ${correction.label}`);
@@ -19158,6 +19165,75 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       alert('Correction failed: ' + e.message);
     }
   }
+
+  // Change a violation's category IN PLACE — keeps the case alive (unlike the
+  // old "Correct → Reclassified" trap, which superseded the record and changed
+  // nothing). (Ed 2026-07-23, Laurie.)
+  async function inspViolationChangeCategory(violationId) {
+    if (!window._inspCategoriesCache) {
+      try {
+        const r = await window._authFetch('/api/enforcement/categories');
+        if (r.ok) { const j = await r.json(); window._inspCategoriesCache = j.categories || []; }
+      } catch (_) {}
+    }
+    const cats = (window._inspCategoriesCache || []).filter((c) => c && c.id && c.label);
+    if (!cats.length) { alert('Could not load the category list — try again in a moment.'); return; }
+    const term = prompt('Change the category to — type part of the correct category name:');
+    if (term === null) return;
+    const q = term.trim().toLowerCase();
+    if (!q) return;
+    const matches = cats.filter((c) => String(c.label).toLowerCase().includes(q))
+      .sort((a, b) => String(a.label).localeCompare(String(b.label)));
+    if (!matches.length) { alert(`No category matches "${term}".`); return; }
+    let chosen;
+    if (matches.length === 1) {
+      chosen = matches[0];
+    } else {
+      const menu = matches.slice(0, 20).map((c, i) => `  ${i + 1}. ${c.label}`).join('\n');
+      const pick = prompt(`Multiple matches — pick one:\n\n${menu}\n\nEnter 1-${Math.min(matches.length, 20)}:`);
+      if (!pick) return;
+      const idx = parseInt(pick.trim(), 10) - 1;
+      if (!(idx >= 0 && idx < Math.min(matches.length, 20))) { alert('Invalid choice.'); return; }
+      chosen = matches[idx];
+    }
+    if (!confirm(`Change this case's category to "${chosen.label}"?\n\nThe case stays open at its current stage and cure clock — only the category changes.`)) return;
+    try {
+      const r = await fetch(`/api/enforcement/violations/${encodeURIComponent(violationId)}/change-category`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category_id: chosen.id, user_id: (window.currentUser || {}).id || null }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
+      let msg = `✓ Category changed to "${j.category_label}". The case stays open — undo any time with ↩ Undo.`;
+      if (j.duplicate_open_case) {
+        msg += `\n\nHeads up: this property ALREADY has an open "${j.category_label}" case (${String(j.duplicate_open_case.current_stage || '').replace(/_/g, ' ')}). You now have two — if they're the same issue, cure or void one so there aren't two cure clocks.`;
+      }
+      alert(msg);
+      if (inspPDCurrentPropertyId) await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+    } catch (e) {
+      alert('Could not change the category: ' + e.message);
+    }
+  }
+  window.inspViolationChangeCategory = inspViolationChangeCategory;
+
+  // Undo the last correction on a superseded record — restores prior category,
+  // stage, and quality from the snapshot the correction saved.
+  async function inspViolationUndoCorrection(violationId) {
+    if (!confirm('Undo the last correction and restore this record to its prior state?')) return;
+    try {
+      const r = await fetch(`/api/enforcement/violations/${encodeURIComponent(violationId)}/reverse-correction`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: (window.currentUser || {}).id || null }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
+      alert('✓ Restored. The record is active again.');
+      if (inspPDCurrentPropertyId) await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+    } catch (e) {
+      alert('Could not undo: ' + e.message);
+    }
+  }
+  window.inspViolationUndoCorrection = inspViolationUndoCorrection;
 
   async function inspViolationAddPrior(propertyId) {
     // Need to know the available categories first. Cache them globally.

@@ -4265,6 +4265,165 @@ router.post('/violations/:id/correct', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:id/reverse-correction
+// Undo the most recent correction on a violation, restoring it from the
+// snapshot the correction saved. Staff hit "⚠ Correct → Reclassified" expecting
+// to CHANGE a category, but that path supersedes the record without reclassifying
+// — so a mis-click silently kills a live case (Laurie 2026-07-23, 4919 Harbor
+// Glen: a certified §209 case superseded, nothing reclassified). This is the
+// one-click recovery: it restores the exact prior state, no data archaeology.
+// ---------------------------------------------------------------------------
+router.post('/violations/:id/reverse-correction', express.json(), async (req, res) => {
+  try {
+    const violationId = req.params.id;
+    // Most recent correction whose ORIGINAL is this violation and that we haven't
+    // already reversed.
+    const { data: corrs, error: cErr } = await supabase
+      .from('violation_corrections')
+      .select('id, correction_type, replacement_violation_id, original_state, reason, notes, created_at')
+      .eq('original_violation_id', violationId)
+      .order('created_at', { ascending: false })
+      .limit(5);
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    const corr = (corrs || []).find((c) => !/^REVERSED/i.test(String(c.notes || '')));
+    if (!corr) return res.status(404).json({ error: 'no_reversible_correction', detail: 'This record has no correction left to undo.' });
+    const snap = corr.original_state || {};
+    if (!snap || typeof snap !== 'object' || !snap.id) {
+      return res.status(422).json({ error: 'no_snapshot', detail: 'This correction did not save a prior-state snapshot, so it can\'t be auto-reversed.' });
+    }
+
+    // Restore the fields the correction overwrote. Only the columns the /correct
+    // path touches — never blindly re-write the whole row from an old snapshot
+    // (other fields may have legitimately changed since).
+    const restore = {
+      quality_status: snap.quality_status ?? 'unreviewed',
+      confidence_weight: (typeof snap.confidence_weight === 'number') ? snap.confidence_weight : 1.0,
+      review_notes: snap.review_notes ?? null,
+      reviewed_at: snap.reviewed_at ?? null,
+      reviewed_by_user_id: snap.reviewed_by_user_id ?? null,
+    };
+    // If the correction was an in-place category change, put the category back too.
+    if (snap.primary_category_id) restore.primary_category_id = snap.primary_category_id;
+    const { error: uErr } = await supabase.from('violations').update(restore).eq('id', violationId);
+    if (uErr) return res.status(500).json({ error: uErr.message });
+
+    // Best-effort: if this correction CREATED a fresh replacement violation (not a
+    // fold into a pre-existing case), void that orphan so the reversal is clean.
+    // We only void one that names this correction's original as its parent, so we
+    // never touch a case that already existed. Folds leave the existing case alone.
+    if (corr.replacement_violation_id) {
+      const { data: repl } = await supabase.from('violations')
+        .select('id, review_notes, current_stage').eq('id', corr.replacement_violation_id).maybeSingle();
+      const createdByThis = repl && /Replacement for corrected violation/i.test(String(repl.review_notes || ''));
+      if (createdByThis && !['voided', 'cured', 'closed'].includes(repl.current_stage)) {
+        await supabase.from('violations').update({
+          current_stage: 'voided', resolved_via: 'voided', resolved_at: new Date().toISOString(),
+          resolved_notes: `Voided — the correction that created it (${corr.id}) was reversed.`,
+        }).eq('id', repl.id);
+      }
+    }
+
+    await supabase.from('violation_corrections').update({
+      notes: `REVERSED ${new Date().toISOString().slice(0, 10)} by staff — restored prior state.${corr.notes ? ' | ' + corr.notes : ''}`,
+    }).eq('id', corr.id);
+
+    res.json({ ok: true, reversed_correction_id: corr.id, correction_type: corr.correction_type, restored: restore });
+  } catch (err) {
+    console.error('[violations.reverse-correction]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:id/change-category
+// Body: { category_id, description?, user_id? }
+// Change a violation's category IN PLACE — keep the same case, stage, cure
+// clock, and history. This is what staff mean by "fix the category" (Laurie
+// 2026-07-23). It is deliberately NON-destructive: it never supersedes or voids
+// the record. If the property already has ANOTHER open case in the target
+// category, it does NOT auto-merge — it returns a `duplicate_open_case` warning
+// and lets the operator decide (merging a case, especially a certified one, is a
+// §209 judgment, not an automatic side effect of a typo fix).
+// ---------------------------------------------------------------------------
+router.post('/violations/:id/change-category', express.json(), async (req, res) => {
+  try {
+    const violationId = req.params.id;
+    const newCategoryId = (req.body || {}).category_id;
+    const newDescription = ((req.body || {}).description || '').trim();
+    if (!newCategoryId) return res.status(400).json({ error: 'category_id required' });
+
+    const { data: v, error: vErr } = await supabase.from('violations')
+      .select('*, enforcement_categories(label)').eq('id', violationId).maybeSingle();
+    if (vErr) return res.status(500).json({ error: vErr.message });
+    if (!v) return res.status(404).json({ error: 'violation not found' });
+    if (['voided', 'cured', 'closed'].includes(v.current_stage) || v.quality_status === 'superseded') {
+      return res.status(409).json({ error: 'not_active', detail: 'This record is closed/superseded — undo that first, then change the category.' });
+    }
+    const { data: newCat, error: ncErr } = await supabase.from('enforcement_categories')
+      .select('id, label').eq('id', newCategoryId).maybeSingle();
+    if (ncErr) return res.status(500).json({ error: ncErr.message });
+    if (!newCat) return res.status(400).json({ error: 'invalid category_id' });
+
+    const priorLabel = (v.enforcement_categories && v.enforcement_categories.label) || '(unknown)';
+    if (v.primary_category_id === newCategoryId) {
+      return res.json({ ok: true, unchanged: true, category_label: newCat.label });
+    }
+
+    // Snapshot BEFORE the change so "↩ Undo" can restore the old category + state.
+    const snapshot = { ...v };
+    delete snapshot.enforcement_categories;
+
+    // Change the category in place.
+    const { error: uErr } = await supabase.from('violations')
+      .update({ primary_category_id: newCategoryId }).eq('id', violationId);
+    if (uErr) return res.status(500).json({ error: uErr.message });
+
+    // Best-effort: move the linked observation to the new category + description
+    // so any future letter renders consistently.
+    const obsId = v.opened_from_observation_id;
+    if (obsId) {
+      const auditNote = `[Category changed ${new Date().toISOString().slice(0, 10)}: ${priorLabel} → ${newCat.label} by operator]`;
+      const { data: obs } = await supabase.from('property_observations')
+        .select('reviewer_notes').eq('id', obsId).maybeSingle();
+      const patch = { category_id: newCategoryId, reviewer_notes: obs && obs.reviewer_notes ? `${auditNote}\n${obs.reviewer_notes}` : auditNote };
+      if (newDescription) patch.ai_description = newDescription;
+      await supabase.from('property_observations').update(patch).eq('id', obsId);
+    }
+
+    // Audit-trail correction row (keeps the case ACTIVE; enables undo).
+    await supabase.from('violation_corrections').insert({
+      original_violation_id: violationId,
+      correction_type: 'reclassified',
+      replacement_violation_id: null,
+      reason: `Category changed in place: ${priorLabel} → ${newCat.label}`,
+      corrected_by_user_id: (req.body || {}).user_id || null,
+      original_state: snapshot,
+      notes: 'In-place category change (record kept active).',
+    });
+
+    // Does the property already have ANOTHER open case in the new category? Warn,
+    // don't merge. (Alias-aware would be better; category-id match is the floor.)
+    let duplicate_open_case = null;
+    const { data: dup } = await supabase.from('violations')
+      .select('id, current_stage, opened_at')
+      .eq('property_id', v.property_id)
+      .eq('primary_category_id', newCategoryId)
+      .neq('id', violationId)
+      .not('current_stage', 'in', '(cured,closed,voided)')
+      .is('resolved_at', null)
+      .neq('quality_status', 'superseded')
+      .order('opened_at', { ascending: true })
+      .limit(1).maybeSingle();
+    if (dup) duplicate_open_case = { id: dup.id, current_stage: dup.current_stage, opened_at: dup.opened_at };
+
+    res.json({ ok: true, category_label: newCat.label, prior_label: priorLabel, duplicate_open_case });
+  } catch (err) {
+    console.error('[violations.change-category]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/enforcement/violations/manual
 // Body: { property_id, category_id, opened_at, current_stage, source?,
 //         confidence_weight?, notes?, user_id? }
