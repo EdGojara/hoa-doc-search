@@ -262,9 +262,16 @@ router.get('/:vendorId', async (req, res) => {
 router.patch('/:vendorId', async (req, res) => {
   const { vendorId } = req.params;
   const allowed = ['name','dba','ein','address','phone','email','category','status','w9_on_file','notes',
-                   'is_1099_vendor','tax_classification','tax_id','w9_received_date'];
+                   'is_1099_vendor','tax_classification','tax_id','w9_received_date',
+                   'is_mud','convenience_fee_cents'];
   const update = {};
   for (const k of allowed) if (k in (req.body || {})) update[k] = req.body[k];
+  // A MUD vendor carries the standard $1 convenience fee unless a specific
+  // amount was set alongside the flag. Turning the flag off clears the fee.
+  if ('is_mud' in (req.body || {})) {
+    if (req.body.is_mud === true && !('convenience_fee_cents' in (req.body || {}))) update.convenience_fee_cents = 100;
+    if (req.body.is_mud === false && !('convenience_fee_cents' in (req.body || {}))) update.convenience_fee_cents = 0;
+  }
   if (req.body && req.body.w9_on_file === true) update.w9_uploaded_at = new Date().toISOString();
   if (Object.keys(update).length === 0) return res.status(400).json({ error: 'no updatable fields supplied' });
   try {

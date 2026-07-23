@@ -40978,6 +40978,22 @@ ${questionsPage}
     }
   }
 
+  async function vendorsSetMud(vendorId, checked) {
+    try {
+      const res = await fetch(`/api/vendors/${vendorId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_mud: checked }),
+      });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'save failed'); }
+      // Reload the detail so the "currently adding $X" line reflects the change.
+      if (typeof vendorsShowVendor === 'function') vendorsShowVendor(vendorId);
+    } catch (e) {
+      alert('Could not save the MUD setting: ' + e.message);
+      const cb = document.getElementById('vendor-mud-toggle'); if (cb) cb.checked = !checked;
+    }
+  }
+  window.vendorsSetMud = vendorsSetMud;
+
   async function vendorsUploadW9(vendorId, file) {
     const status = document.getElementById('vendor-w9-status');
     if (file && file.type !== 'application/pdf') { if (status) { status.style.color = '#a00'; status.textContent = 'W-9 must be a PDF.'; } return; }
@@ -41260,6 +41276,18 @@ ${questionsPage}
             <div><strong>W-9:</strong> ${v.w9_on_file ? '✓ on file' : 'not on file'}</div>
             <div style="grid-column: 1 / -1;"><strong>Address:</strong> ${escapeHtml(v.address || '—')}</div>
             ${v.notes ? `<div style="grid-column: 1 / -1;"><strong>Notes:</strong> ${escapeHtml(v.notes)}</div>` : ''}
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:16px;">
+          <h4 style="margin-top:0;">💧 Billing</h4>
+          <label style="display:inline-flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="checkbox" id="vendor-mud-toggle" ${v.is_mud ? 'checked' : ''} onchange="vendorsSetMud('${v.id}', this.checked)">
+            <strong>MUD vendor — add $1 convenience fee to every invoice</strong>
+          </label>
+          <div style="font-size:11px; color:#888; margin-top:2px;">
+            MUD (water district) bills carry a $1 convenience fee per invoice. When this is on, Emma adds a "$1.00 MUD convenience fee" line to every bill from this vendor automatically, so the recorded total matches the auto-draft.
+            ${(Number(v.convenience_fee_cents) > 0) ? `<span style="color:#166534; font-weight:600;"> Currently adding $${(Number(v.convenience_fee_cents) / 100).toFixed(2)} per invoice.</span>` : ''}
           </div>
         </div>
 
