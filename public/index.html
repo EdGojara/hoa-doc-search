@@ -44246,6 +44246,50 @@ ${questionsPage}
     };
     window.apCloseDetail = function () { document.getElementById('ap-detail-modal').style.display = 'none'; };
 
+    // Attach a source PDF to an EXISTING bill and re-run extraction + coding.
+    // For invoices whose PDF never arrived on the email (it sat behind a
+    // "click to download" link), so the header was created but there are no
+    // line items and it can't be coded. This fills in the existing bill — it
+    // does NOT create a duplicate.
+    window.apAttachPdf = async function (id, input) {
+      const file = input && input.files && input.files[0];
+      if (!file) return;
+      const status = document.getElementById('ap-attach-status-' + id);
+      if (file.type !== 'application/pdf') {
+        if (status) { status.style.color = '#dc2626'; status.textContent = 'Please choose a PDF file.'; }
+        input.value = '';
+        return;
+      }
+      if (status) { status.style.color = '#5a7390'; status.textContent = 'Uploading and reading the invoice…'; }
+      try {
+        const fd = new FormData();
+        fd.append('pdf', file);
+        const me = window.currentUser || {};
+        if (me.id) fd.append('posted_by_user_id', me.id);
+        const r = await fetch('/api/ap/invoices/' + encodeURIComponent(id) + '/attach-pdf', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || j.error || 'upload failed');
+        if (status) {
+          if (j.total_mismatch) {
+            status.style.color = '#b45309';
+            status.textContent = 'Attached, but the line items don\'t add up to the bill total — check the coding below.';
+          } else if (j.posted) {
+            status.style.color = '#166534';
+            status.textContent = 'Attached, coded, and posted. Reloading…';
+          } else {
+            status.style.color = '#b45309';
+            status.textContent = 'Attached. GL coding still needed. Reloading…';
+          }
+        }
+        // Reload the detail so lines, PDF link, and approval buttons refresh.
+        setTimeout(() => window.apOpenInvoice(id), 700);
+      } catch (e) {
+        if (status) { status.style.color = '#dc2626'; status.textContent = 'Failed: ' + e.message; }
+      } finally {
+        input.value = '';
+      }
+    };
+
     function apRenderDetail(payload) {
       const inv = payload.invoice;
       const lines = payload.lines || [];
@@ -44426,7 +44470,14 @@ ${questionsPage}
 
           <div style="display:flex; justify-content:space-between; align-items:center; margin-top:18px; padding-top:14px; border-top:1px solid #e2e8f0;">
             <div>
-              ${pdfUrl ? `<a href="#" onclick="apViewInvoicePdf('${inv.id}');return false;" style="color:#315A87; font-size:13px; text-decoration:none; font-weight:600;">📄 View original PDF</a>` : '<span style="color:#888; font-size:12px;">No source PDF on file</span>'}
+              ${pdfUrl
+                ? `<a href="#" onclick="apViewInvoicePdf('${inv.id}');return false;" style="color:#315A87; font-size:13px; text-decoration:none; font-weight:600;">📄 View original PDF</a>`
+                : (notFinal && !inv.posting_journal_entry_id
+                    ? `<span style="color:#888; font-size:12px;">No source PDF on file.</span>
+                       <input type="file" id="ap-attach-file-${inv.id}" accept="application/pdf" style="display:none;" onchange="apAttachPdf('${inv.id}', this)">
+                       <button class="secondary-btn" style="font-size:12px; padding:4px 10px; margin-left:8px;" onclick="document.getElementById('ap-attach-file-${inv.id}').click()" title="The invoice PDF didn't come through on the email (it was behind a download link). Upload it here and we'll read the line items and code the bill.">📎 Upload invoice PDF &amp; re-run</button>
+                       <span id="ap-attach-status-${inv.id}" style="font-size:12px; color:#5a7390; margin-left:8px;"></span>`
+                    : '<span style="color:#888; font-size:12px;">No source PDF on file</span>')}
             </div>
             <div style="display:flex; gap:8px;">
               <button class="secondary-btn" onclick="apCloseDetail()">Close</button>

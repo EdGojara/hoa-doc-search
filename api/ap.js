@@ -24,7 +24,7 @@ const multer = require('multer');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
-const { createInvoice, approveInvoice, recordPayment, autoCodeGlAccount } = require('../lib/accounting/ap_engine');
+const { createInvoice, attachSourceAndRecode, approveInvoice, recordPayment, autoCodeGlAccount } = require('../lib/accounting/ap_engine');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -317,6 +317,108 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
     }
   } catch (err) {
     console.error('[ap] invoice upload failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/ap/invoices/:id/attach-pdf — attach a source PDF to an EXISTING bill
+// and re-run extraction + coding. For bills whose invoice arrived without the
+// attachment (email "click to download" link), so intake made the header but no
+// lines. This does NOT create a new invoice — it fills in the one that exists.
+// ---------------------------------------------------------------------------
+router.post('/invoices/:id/attach-pdf', upload.single('pdf'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!req.file) return res.status(400).json({ error: 'pdf_required' });
+    if (req.file.mimetype !== 'application/pdf') return res.status(400).json({ error: 'must_be_pdf' });
+
+    const { data: inv } = await supabase.from('ap_invoices')
+      .select('*, vendors(name), communities(id, name, management_company_id)')
+      .eq('id', id).maybeSingle();
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    if (inv.status === 'voided') return res.status(400).json({ error: 'voided' });
+    if (inv.posting_journal_entry_id) {
+      return res.status(409).json({
+        error: 'already_posted',
+        detail: 'This bill\'s accrual is already on the books. Re-attaching and replacing its lines would desync the ledger — change the coding from the invoice detail instead.',
+      });
+    }
+
+    const fileBuffer = req.file.buffer;
+    const postedByUserId = req.body?.posted_by_user_id || null;
+
+    // 1. Store PDF in storage + library_documents (same retention path as upload)
+    const sha = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    const safeName = (req.file.originalname || 'invoice.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `ap-invoices/${sha.slice(0, 12)}-${safeName}`;
+    try {
+      await supabase.storage.from('documents').upload(storagePath, fileBuffer, {
+        contentType: 'application/pdf', upsert: false,
+      });
+    } catch (_) { /* non-fatal — may already exist */ }
+
+    // 2. Extract via Claude
+    const extracted = await extractInvoice(fileBuffer);
+    if (!extracted || !Array.isArray(extracted.lines) || extracted.lines.length === 0) {
+      return res.status(422).json({
+        error: 'no_lines_extracted',
+        detail: 'Could not read any line items from that PDF. Confirm it is the actual invoice (not a cover page or remittance stub).',
+        extraction: extracted || null,
+      });
+    }
+
+    // 3. Retention row — links the PDF to the bill via source_document_id
+    const commMgmt = inv.communities ? inv.communities.management_company_id : null;
+    const { data: libDoc, error: libErr } = await supabase.from('library_documents').insert({
+      management_company_id: commMgmt,
+      community_id: inv.community_id,
+      category: 'vendor_invoice',
+      title: `AP Invoice — ${(inv.vendors && inv.vendors.name) || inv.vendor_name} #${inv.vendor_invoice_number || ''}`.trim(),
+      file_name_original: req.file.originalname || null,
+      file_name_normalized: `${((inv.communities && inv.communities.name) || '').trim()} - Vendor Invoice - ${(inv.vendors && inv.vendors.name) || inv.vendor_name} - ${inv.vendor_invoice_number || inv.invoice_date || ''}.pdf`.replace(/\s+/g, ' '),
+      file_path: storagePath,
+      file_hash: sha,
+      file_size_bytes: req.file.size,
+      created_by_mgmt_company: 'Bedrock',
+    }).select('id').single();
+    if (libErr) console.warn('[ap] attach-pdf library_documents insert failed:', libErr.message);
+
+    // 4. Attach lines to the existing bill + code + post (engine enforces
+    //    not-already-posted and total reconciliation).
+    const result = await attachSourceAndRecode({
+      invoice_id: id,
+      source_document_id: libDoc?.id || null,
+      source_filename: req.file.originalname || null,
+      source_storage_path: storagePath,
+      posted_by_user_id: postedByUserId,
+      lines: extracted.lines.map((ln) => ({
+        description: ln.description,
+        quantity: ln.quantity,
+        unit_price_cents: ln.unit_price_cents,
+        amount_cents: ln.amount_cents,
+        is_taxable: ln.is_taxable,
+        tax_amount_cents: 0,
+      })),
+    });
+
+    res.json({
+      status: 'ok',
+      invoice: result.invoice,
+      lines: result.lines,
+      auto_coded: result.auto_coded,
+      coding_confidence: result.coding_confidence,
+      posted: !!result.posting_journal_entry_id,
+      total_mismatch: result.total_mismatch,
+      warning: result.warning,
+      extraction_warnings: extracted.warnings || [],
+      source_document_id: libDoc?.id || null,
+    });
+  } catch (err) {
+    if (err.code === 'invalid_input' || err.code === 'invalid_state') {
+      return res.status(400).json({ error: err.message, code: err.code });
+    }
+    console.error('[ap] attach-pdf failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
