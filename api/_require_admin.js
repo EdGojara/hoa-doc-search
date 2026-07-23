@@ -44,6 +44,19 @@ async function requireAdmin(req, res) {
   return u;
 }
 
+// Gate helper for reads any active staffer needs (viewing a source document,
+// a queue, etc.) — authenticated + active, ANY role. Money-movement and config
+// stay on requireAdmin; seeing the bill you're working does not. (Ed 2026-07-23:
+// staff hit an admin gate just trying to open an invoice PDF.)
+async function requireStaff(req, res) {
+  const u = await getAuthedUser(req);
+  if (!u) {
+    res.status(403).json({ error: 'sign_in_required', detail: 'Sign in to view this.' });
+    return null;
+  }
+  return u;
+}
+
 // Stricter gate: OWNER only (Ed), not merely "an admin". For personal surfaces
 // like Tessa (Ed's EA) that must never be visible to anyone else, even a future
 // second admin. Matches the authed user's email to OWNER_EMAIL (Ed 2026-07-11).
@@ -58,4 +71,4 @@ async function requireOwner(req, res) {
   return u;
 }
 
-module.exports = { getAuthedUser, requireAdmin, requireOwner, OWNER_EMAIL };
+module.exports = { getAuthedUser, requireAdmin, requireStaff, requireOwner, OWNER_EMAIL };

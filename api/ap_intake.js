@@ -18,7 +18,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { stageInvoice, resolveVendor, resolveCommunity, commitInvoice } = require('../lib/ap/intake');
 const { findDuplicates } = require('../lib/ap/dedup');
-const { requireAdmin } = require('./_require_admin');
+const { requireAdmin, requireStaff } = require('./_require_admin');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -107,7 +107,8 @@ router.get('/queue', async (req, res) => {
 // to a short-lived signed URL from the 'documents' bucket. This is how you get
 // from a vendor payable back to the actual bill.
 router.get('/:id/invoice-file', async (req, res) => {
-  const admin = await requireAdmin(req, res); if (!admin) return;
+  // Viewing the source bill is a read every AP staffer needs — not admin-only.
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const { data: inv } = await supabase.from('ap_invoices').select('source_storage_path').eq('id', req.params.id).maybeSingle();
     if (!inv || !inv.source_storage_path) return res.status(404).json({ error: 'no_invoice_file' });
