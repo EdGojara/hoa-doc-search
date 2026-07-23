@@ -25310,15 +25310,6 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const j1 = await r1.json();
       if (!r1.ok) throw new Error(j1.error || `reclassify HTTP ${r1.status}`);
 
-      // If the new category already had an open case here, the backend folded
-      // this one in + voided it — no letter to regenerate, just refresh.
-      if (j1.folded_into_existing) {
-        await inspDraftsLoad();
-        inspDraftsReclassifyClose();
-        setTimeout(() => alert(`✓ Reclassified to "${j1.new_category_label}" — that category already had an open case at this property, so this was folded into it (one case, no duplicate). Escalate it from the property view if it's a repeat.`), 50);
-        return;
-      }
-
       // 2. Regenerate the letter PDF — best-effort. A failure here becomes a
       //    soft note, not a thrown error.
       btn.innerHTML = '⏳ Regenerating letter…';
@@ -25340,8 +25331,15 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       // 3. The save succeeded — always refresh the queue + close the modal.
       await inspDraftsLoad();
       inspDraftsReclassifyClose();
+      // Warn (don't merge) if the property already has an open case in the new
+      // category — the operator decides whether to consolidate. The reclassified
+      // draft stays active either way; it is never auto-voided. (Ed 2026-07-23.)
+      let dupWarn = '';
+      if (j1.duplicate_open_case) {
+        dupWarn = `\n\nHeads up: this property ALREADY has an open "${j1.new_category_label}" case (${String(j1.duplicate_open_case.current_stage || '').replace(/_/g, ' ')}). You now have two. If it's the same issue, cure or void one from the property view so there aren't two cure clocks — nothing was merged automatically.`;
+      }
       setTimeout(() => {
-        alert(`✓ Saved — reclassified to "${j1.new_category_label}"${letterWarn || ' and letter regenerated.'} It now appears under "${j1.new_category_label}" in the queue.`);
+        alert(`✓ Saved — reclassified to "${j1.new_category_label}"${letterWarn || ' and letter regenerated.'} It now appears under "${j1.new_category_label}" in the queue.${dupWarn}`);
       }, 50);
     } catch (e) {
       errEl.textContent = e.message || 'Save failed';
