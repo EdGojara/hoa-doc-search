@@ -15,6 +15,13 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const graphSend = require('../lib/email/graph_send');
 const { buildAnnieEmail } = require('../lib/email/annie_signature');
+const { buildClaireEmail } = require('../lib/email/claire_signature');
+const { buildEmmaEmail } = require('../lib/email/emma_signature');
+const { buildMirandaEmail } = require('../lib/email/miranda_signature');
+const { buildKatEmail } = require('../lib/email/kat_signature');
+const { buildAmandaEmail } = require('../lib/email/amanda_signature');
+const { buildReeseEmail } = require('../lib/email/reese_signature');
+const { buildPaigeEmail } = require('../lib/email/paige_signature');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -26,8 +33,18 @@ function _isMissingTable(err) {
 }
 
 // persona -> { mailbox, build(bodyText, communityName) -> {html, attachments} }
+// Every AI team member who can send a homeowner-facing reply. Changing a draft's
+// persona changes both the FROM mailbox and the branded signature applied at
+// send. (Ed 2026-07-23: "I want an AI team member to send it ... adjust who sends.")
 const PERSONA = {
-  annie: { mailbox: graphSend.ANNIE_MAILBOX, build: buildAnnieEmail },
+  claire:  { mailbox: graphSend.CLAIRE_MAILBOX,  build: buildClaireEmail,   label: 'Claire (front office)' },
+  annie:   { mailbox: graphSend.ANNIE_MAILBOX,   build: buildAnnieEmail,    label: 'Annie Reeves (architectural / ACC)' },
+  emma:    { mailbox: graphSend.EMMA_MAILBOX,    build: buildEmmaEmail,     label: 'Emma Brooks (accounts payable)' },
+  miranda: { mailbox: graphSend.MIRANDA_MAILBOX, build: buildMirandaEmail,  label: 'Miranda Pierce (compliance / DRV)' },
+  kat:     { mailbox: graphSend.KAT_MAILBOX,     build: buildKatEmail,      label: 'Kat Reed (accounting manager)' },
+  amanda:  { mailbox: graphSend.AMANDA_MAILBOX,  build: buildAmandaEmail,   label: 'Amanda Albright (senior community manager)' },
+  reese:   { mailbox: graphSend.REESE_MAILBOX,   build: buildReeseEmail,    label: 'Reese Calloway (resale / closings)' },
+  paige:   { mailbox: graphSend.PAIGE_MAILBOX,   build: buildPaigeEmail,    label: 'Paige Chandler (board operations)' },
 };
 function personaMailbox(p, fallback) {
   return (PERSONA[p] && PERSONA[p].mailbox) || fallback || graphSend.CLAIRE_MAILBOX;
@@ -56,6 +73,11 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/email-drafts/personas — the AI team members that can send a draft.
+router.get('/personas', (req, res) => {
+  res.json({ personas: Object.keys(PERSONA).map((id) => ({ id, label: PERSONA[id].label, mailbox: PERSONA[id].mailbox })) });
+});
+
 // GET /api/email-drafts/:id
 router.get('/:id', async (req, res) => {
   try {
@@ -73,8 +95,11 @@ router.get('/:id', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const patch = {};
-    for (const f of ['to_email', 'to_name', 'cc', 'subject', 'body_text', 'body_html']) {
+    for (const f of ['to_email', 'to_name', 'cc', 'subject', 'body_text', 'body_html', 'persona']) {
       if (req.body[f] !== undefined) patch[f] = req.body[f];
+    }
+    if (patch.persona !== undefined && patch.persona !== null && !PERSONA[patch.persona]) {
+      return res.status(400).json({ error: 'unknown sender' });
     }
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'no_fields' });
     const { data, error } = await supabase.from('outbound_email_drafts')

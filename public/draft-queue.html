@@ -91,7 +91,22 @@
 <script>
 const $ = (id) => document.getElementById(id);
 let drafts = [], current = null, tab = 'draft', af = (u,o)=>fetch(u,o);
-let roster = [], ccList = [];
+let roster = [], ccList = [], personas = [];
+function personaOptions(current){
+  return personas.map(p=>`<option value="${esc(p.id)}"${p.id===current?' selected':''}>${esc(p.label)}</option>`).join('') || `<option value="${esc(current||'')}">${esc(current||'(default)')}</option>`;
+}
+function personaLabelFor(id){ const p=personas.find(x=>x.id===id); return p?p.label:(id||'(default)'); }
+function personaMailboxFor(id){ const p=personas.find(x=>x.id===id); return p?p.mailbox:''; }
+async function changePersona(){
+  const sel=$('f-persona'); if(!sel||!current) return;
+  const id=sel.value;
+  const mail=$('f-persona-mail'); if(mail) mail.textContent=personaMailboxFor(id);
+  try{
+    const r=await af('/api/email-drafts/'+current.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({persona:id})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'could not change sender');
+    current.persona=id; toast('Sender set to '+personaLabelFor(id));
+  }catch(e){ toast(e.message,true); }
+}
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
 function fmtDate(d){ if(!d) return '—'; try{ return new Date(d).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }catch(_){ return String(d);} }
 let toastT; function toast(m,err){ const t=$('toast'); t.textContent=m; t.classList.toggle('err',!!err); t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), err?4200:2200); }
@@ -136,7 +151,12 @@ function renderView(){
   $('view').innerHTML = `
     ${d.status==='sent'?`<div class="sentnote">Sent ${fmtDate(d.sent_at)}${d.sent_from?' from '+esc(d.sent_from):''}.</div>`:''}
     ${d.send_error?`<div class="errnote">Last send attempt failed: ${esc(d.send_error)}</div>`:''}
-    ${ctxBits.length?`<div class="ctx">${ctxBits.join(' &nbsp;·&nbsp; ')}${d.persona?` &nbsp;·&nbsp; from <b>${esc(d.persona)}</b>`:''}</div>`:''}
+    ${ctxBits.length?`<div class="ctx">${ctxBits.join(' &nbsp;·&nbsp; ')}</div>`:''}
+    <div class="field"><label>From (who sends it)</label>
+      ${editable
+        ? `<select id="f-persona" onchange="changePersona()">${personaOptions(d.persona)}</select><div id="f-persona-mail" style="font-size:11.5px;color:var(--muted);margin-top:3px;">${esc(personaMailboxFor(d.persona))}</div>`
+        : `<div>${esc(personaLabelFor(d.persona))} <span style="color:var(--muted);">&lt;${esc(d.sent_from||personaMailboxFor(d.persona))}&gt;</span></div>`}
+    </div>
     <div class="field"><label>To</label><input id="f-to" value="${esc(d.to_email)}" ${editable?'':'disabled'}>${d.to_name?`<div style="font-size:11.5px;color:var(--muted);margin-top:3px;">${esc(d.to_name)}</div>`:''}</div>
     <div class="field"><label>Cc — copy a teammate</label>
       <div class="ccrow" id="cc-chips"></div>
@@ -305,6 +325,7 @@ async function discardDraft(){
       af = async (u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
     }
   }catch(_){ }
+  try{ const pr=await fetch('/api/email-drafts/personas'); const pj=await pr.json(); personas=pj.personas||[]; }catch(_){}
   await loadRoster();
   loadList();
 })();
