@@ -118,7 +118,7 @@ async function assemble(contactId) {
 
   // Violations (+ category label), newest first
   let violations = propIds.length ? await safe(() => supabase.from('violations')
-    .select('id, current_stage, opened_at, resolved_at, resolved_via, primary_category_id, property_id, opened_from_observation_id')
+    .select('id, current_stage, opened_at, resolved_at, resolved_via, quality_status, primary_category_id, property_id, opened_from_observation_id')
     .in('property_id', propIds).order('opened_at', { ascending: false }).limit(50)) : [];
   const catIds = [...new Set(violations.map((v) => v.primary_category_id).filter(Boolean))];
   const cats = catIds.length ? await safe(() => supabase.from('enforcement_categories').select('id, label').in('id', catIds)) : [];
@@ -140,10 +140,22 @@ async function assemble(contactId) {
   violations = violations.map((v) => {
     const o = obsById[v.opened_from_observation_id];
     const ph = o && o.inspection_photo_id ? photoById[o.inspection_photo_id] : null;
+    // A superseded record (deduped) or a terminal stage is NOT open — it just
+    // never got a resolved_at stamp. Counting it as open made a caught duplicate
+    // show as a second live "certified 209" case. (Ed 2026-07-23, 4710 Lakes of
+    // Pine Forest — the double RV/trailer.)
+    const terminal = ['cured', 'closed', 'voided'].includes(v.current_stage);
+    const superseded = v.quality_status === 'superseded';
+    const open = !v.resolved_at && !terminal && !superseded;
+    const status_label = open ? null
+      : superseded ? 'duplicate'
+      : v.current_stage === 'voided' ? 'voided'
+      : 'resolved';
     return {
       ...v,
       category: catLabel[v.primary_category_id] || 'Violation',
-      open: !v.resolved_at,
+      open,
+      status_label,
       detail: o ? o.ai_description : null,
       photo_path: ph ? ph.storage_path : null,
       photo_captured_at: ph ? ph.captured_at : null,

@@ -4463,6 +4463,92 @@ router.post('/violations/:id/change-category', express.json(), async (req, res) 
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/enforcement/interactions/:id/record-mailing
+// Body: { mailed_date: 'YYYY-MM-DD', delivery_method?, certified_tracking_number?,
+//         reason?, user_name? }
+// Record that a letter was physically mailed — with its TRUE date, method, and
+// proof. Built because a manually-mailed certified §209 letter (mailed by hand
+// on 7/15, outside the mail-queue lock-and-batch) got the wrong date: the record
+// only got a printed/sent stamp when it was belatedly locked days later, so it
+// read as mailed on the lock date, not the real mail date. This lets staff stamp
+// the actual mail date + certified tracking number at the moment they mail it, so
+// every piece of mail carries a correct, provable history (Ed 2026-07-23: "all
+// mail needs proper history and records"). The cure clock recomputes from the
+// TRUE mail date — the deadline that governs is the one on the letter the owner
+// actually received.
+// ---------------------------------------------------------------------------
+router.post('/interactions/:id/record-mailing', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const body = req.body || {};
+    const mailedDate = String(body.mailed_date || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(mailedDate)) {
+      return res.status(400).json({ error: 'mailed_date_required', detail: 'Provide the actual mail date as YYYY-MM-DD.' });
+    }
+    // Noon UTC keeps the calendar date stable across the Central offset (no
+    // midnight date-shift). postmark_date is a plain date column.
+    const stampIso = `${mailedDate}T12:00:00+00:00`;
+
+    const { data: ix, error: iErr } = await supabase.from('interactions')
+      .select('id, type, status, violation_id, community_id, postmark_date, sent_at, printed_at, delivery_method, certified_tracking_number, notes')
+      .eq('id', id).maybeSingle();
+    if (iErr) return res.status(500).json({ error: iErr.message });
+    if (!ix) return res.status(404).json({ error: 'interaction_not_found' });
+    if (!/^letter/.test(String(ix.type || ''))) {
+      return res.status(400).json({ error: 'not_a_letter', detail: 'Mailing can only be recorded on a letter.' });
+    }
+
+    const method = body.delivery_method || ix.delivery_method || 'certified_mail';
+    const tracking = (body.certified_tracking_number || '').trim() || ix.certified_tracking_number || null;
+    const wasSent = ix.status === 'sent';
+    const auditParts = [`[Mailing recorded ${new Date().toISOString().slice(0, 10)}${body.user_name ? ' by ' + body.user_name : ''}: physically mailed ${mailedDate} via ${method}${tracking ? ', tracking ' + tracking : ''}.`];
+    if (wasSent) auditParts.push(` Corrected prior stamp (postmark ${ix.postmark_date || '-'}, sent ${(ix.sent_at || '-').slice(0, 10)}).`);
+    if (body.reason) auditParts.push(` Reason: ${body.reason}.`);
+    auditParts.push(']');
+    const audit = auditParts.join('');
+
+    const { error: uErr } = await supabase.from('interactions').update({
+      status: 'sent',
+      delivery_method: method,
+      certified_tracking_number: tracking,
+      postmark_date: mailedDate,
+      sent_at: stampIso,
+      printed_at: stampIso,
+      mailed_at: stampIso,
+      notes: ix.notes ? `${audit}\n${ix.notes}` : audit,
+    }).eq('id', id);
+    if (uErr) return res.status(500).json({ error: uErr.message });
+
+    // Recompute the cure clock on the linked violation from the TRUE mail date.
+    let cureInfo = null;
+    if (ix.violation_id) {
+      const { data: v } = await supabase.from('violations')
+        .select('id, current_stage, community_id, cure_days_override').eq('id', ix.violation_id).maybeSingle();
+      if (v && ['courtesy_1', 'courtesy_2', 'certified_209'].includes(v.current_stage)) {
+        const { data: comm } = await supabase.from('communities')
+          .select('letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209')
+          .eq('id', v.community_id).maybeSingle();
+        const cureDays = Number(v.cure_days_override)
+          || (v.current_stage === 'courtesy_1' ? Number(comm && comm.letter_cure_days_courtesy_1) || 20
+            : v.current_stage === 'courtesy_2' ? Number(comm && comm.letter_cure_days_courtesy_2) || 20
+            : Number(comm && comm.letter_cure_days_certified_209) || 30);
+        const cureEnds = new Date(Date.parse(stampIso) + cureDays * 86400000).toISOString();
+        await supabase.from('violations').update({
+          current_stage_started_at: stampIso,
+          cure_period_ends_at: cureEnds,
+        }).eq('id', ix.violation_id);
+        cureInfo = { cure_days: cureDays, cure_period_ends_at: cureEnds.slice(0, 10) };
+      }
+    }
+
+    res.json({ ok: true, interaction_id: id, mailed_date: mailedDate, delivery_method: method, certified_tracking_number: tracking, was_correction: wasSent, cure: cureInfo });
+  } catch (err) {
+    console.error('[enforcement.record-mailing]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/enforcement/violations/manual
 // Body: { property_id, category_id, opened_at, current_stage, source?,
 //         confidence_weight?, notes?, user_id? }
