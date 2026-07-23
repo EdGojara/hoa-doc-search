@@ -10617,4 +10617,4 @@ function renderNotCuredBoardLetter({ community, rows }) {
 </div></body></html>`;
 }
 
-module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations, _draftLetterForBumpedViolation, renderNotCuredBoardLetter };
+module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations, _draftLetterForBumpedViolation, renderNotCuredBoardLetter, _assembleBundlePdf };
