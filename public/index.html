@@ -18667,7 +18667,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                        // These open the stored file (never regenerate) so the sent
                        // letter can be seen without ever changing it.
                        const sent = (d.interactions || []).filter((x) => x.violation_id === v.id && x.sent_at && /^letter_/.test(x.type || ''));
-                       const letterLinks = sent.map((x) => `<a href="/api/enforcement/interactions/${x.id}/file" target="_blank" rel="noopener" title="View the exact letter we mailed on ${new Date(x.sent_at).toLocaleDateString()} — this is the sealed record and is never regenerated" style="display:inline-block; background:#eef2f7; border:1px solid #cbd5e1; color:#0B1D34; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; text-decoration:none; margin-right:3px;">📄 Sent ${new Date(x.sent_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</a><button onclick="inspRecordMailing('${x.id}','${escapeHtml(v.enforcement_categories?.label || v.category_label || 'letter')}')" title="Record or correct the real mail date, method, and certified tracking number for this letter — use when it was mailed by hand outside the system." style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">📮 Mailing</button>`).join('');
+                       const letterLinks = sent.map((x) => `<a href="/api/enforcement/interactions/${x.id}/file" target="_blank" rel="noopener" title="View the exact letter we mailed on ${new Date(x.sent_at).toLocaleDateString()} — this is the sealed record and is never regenerated" style="display:inline-block; background:#eef2f7; border:1px solid #cbd5e1; color:#0B1D34; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; text-decoration:none; margin-right:3px;">📄 Sent ${new Date(x.sent_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</a>${(window.currentUser && window.currentUser.role === 'admin') ? `<button onclick="inspRecordMailing('${x.id}','${escapeHtml(v.enforcement_categories?.label || v.category_label || 'letter')}')" title="Admin only: record or correct the real mail date, method, and certified tracking number — re-renders the letter to that date. Use when it was mailed by hand outside the system." style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">📮 Mailing</button>` : ''}`).join('');
                        const photoLink = v.opened_from_observation_id ? `<a href="/api/enforcement/observations/${v.opened_from_observation_id}/photo" target="_blank" rel="noopener" title="The inspection photo this violation was opened from" style="display:inline-block; background:#eef2f7; border:1px solid #cbd5e1; color:#0B1D34; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; text-decoration:none; margin-right:3px;">📷 Photo</a>` : '';
                        return letterLinks + photoLink;
                      })()}
@@ -19272,14 +19272,15 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       tracking = prompt('Certified tracking number (from the green receipt) — leave blank if not handy:') || '';
     }
     try {
-      const r = await fetch(`/api/enforcement/interactions/${encodeURIComponent(interactionId)}/record-mailing`, {
+      const r = await (window._authFetch || fetch)(`/api/enforcement/interactions/${encodeURIComponent(interactionId)}/record-mailing`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mailed_date: date, delivery_method, certified_tracking_number: tracking.trim() || undefined, user_name: (window.currentUser || {}).full_name || null }),
+        body: JSON.stringify({ mailed_date: date, delivery_method, certified_tracking_number: tracking.trim() || undefined }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
       let msg = `✓ Recorded: mailed ${j.mailed_date} via ${String(j.delivery_method).replace(/_/g, ' ')}${j.certified_tracking_number ? ', tracking ' + j.certified_tracking_number : ''}.`;
       if (j.cure) msg += `\nCure deadline recomputed to ${j.cure.cure_period_ends_at} (${j.cure.cure_days} days from mailing).`;
+      msg += j.pdf_regenerated ? '\nThe letter PDF was re-rendered to that date.' : '\n(Note: the PDF was not re-rendered — dates on the record are corrected.)';
       msg += '\n\nTip: attach the receipt/scan of the mailed letter via "Add photo / document" so the proof is on file.';
       alert(msg);
       if (inspPDCurrentPropertyId) await inspOpenPropertyDetail(inspPDCurrentPropertyId);

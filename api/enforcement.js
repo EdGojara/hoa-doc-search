@@ -4479,6 +4479,13 @@ router.post('/violations/:id/change-category', express.json(), async (req, res) 
 // ---------------------------------------------------------------------------
 router.post('/interactions/:id/record-mailing', express.json(), async (req, res) => {
   try {
+    // ADMIN ONLY. This rewrites a §209 letter's mail date + cure clock, re-renders
+    // the PDF, and appends a corrected seal. While the platform is still
+    // stabilizing, that power stays with the owner — a general staffer must not
+    // be able to alter a sealed enforcement record. (Ed 2026-07-23.)
+    const { requireAdmin } = require('./_require_admin');
+    const admin = await requireAdmin(req, res); if (!admin) return;
+
     const { id } = req.params;
     const body = req.body || {};
     const mailedDate = String(body.mailed_date || '').trim();
@@ -4488,9 +4495,10 @@ router.post('/interactions/:id/record-mailing', express.json(), async (req, res)
     // Noon UTC keeps the calendar date stable across the Central offset (no
     // midnight date-shift). postmark_date is a plain date column.
     const stampIso = `${mailedDate}T12:00:00+00:00`;
+    const whoName = (admin.full_name || admin.email || body.user_name || 'Admin');
 
     const { data: ix, error: iErr } = await supabase.from('interactions')
-      .select('id, type, status, violation_id, community_id, postmark_date, sent_at, printed_at, delivery_method, certified_tracking_number, notes')
+      .select('id, type, status, violation_id, community_id, property_id, observation_id, postmark_date, sent_at, printed_at, delivery_method, certified_tracking_number, notes')
       .eq('id', id).maybeSingle();
     if (iErr) return res.status(500).json({ error: iErr.message });
     if (!ix) return res.status(404).json({ error: 'interaction_not_found' });
@@ -4501,7 +4509,7 @@ router.post('/interactions/:id/record-mailing', express.json(), async (req, res)
     const method = body.delivery_method || ix.delivery_method || 'certified_mail';
     const tracking = (body.certified_tracking_number || '').trim() || ix.certified_tracking_number || null;
     const wasSent = ix.status === 'sent';
-    const auditParts = [`[Mailing recorded ${new Date().toISOString().slice(0, 10)}${body.user_name ? ' by ' + body.user_name : ''}: physically mailed ${mailedDate} via ${method}${tracking ? ', tracking ' + tracking : ''}.`];
+    const auditParts = [`[Mailing recorded ${new Date().toISOString().slice(0, 10)} by ${whoName}: physically mailed ${mailedDate} via ${method}${tracking ? ', tracking ' + tracking : ''}.`];
     if (wasSent) auditParts.push(` Corrected prior stamp (postmark ${ix.postmark_date || '-'}, sent ${(ix.sent_at || '-').slice(0, 10)}).`);
     if (body.reason) auditParts.push(` Reason: ${body.reason}.`);
     auditParts.push(']');
@@ -4541,7 +4549,41 @@ router.post('/interactions/:id/record-mailing', express.json(), async (req, res)
       }
     }
 
-    res.json({ ok: true, interaction_id: id, mailed_date: mailedDate, delivery_method: method, certified_tracking_number: tracking, was_correction: wasSent, cure: cureInfo });
+    // Re-render the letter PDF at the TRUE mail date (cure clock is already
+    // corrected above, so the rendered deadline matches), then APPEND a corrected
+    // seal. The sealed archive is write-once + immutable by design, so we never
+    // edit the old seal — we add a new one, and the viewer serves the most recent.
+    // This keeps the document + the immutable record consistent with the dates,
+    // through the exact same render engine every letter uses. (Ed 2026-07-23.)
+    let pdfRegenerated = false;
+    if (ix.violation_id && /^letter/.test(String(ix.type || ''))) {
+      try {
+        const group = [{ id: ix.id, violation_id: ix.violation_id, observation_id: ix.observation_id, community_id: ix.community_id, property_id: ix.property_id, type: ix.type }];
+        const rr = await _assembleBundlePdf({ group, letterDate: new Date(stampIso) });
+        if (rr && rr.ok && rr.pdfBuffer) {
+          const stamp = mailedDate.replace(/-/g, '');
+          const contentPath = `${ix.violation_id}/${rr.stage}-postmark-${stamp}.pdf`;
+          const { error: upErr } = await supabase.storage.from('violation-letters')
+            .upload(contentPath, rr.pdfBuffer, { contentType: 'application/pdf', upsert: true });
+          if (upErr) throw new Error('working-copy upload: ' + upErr.message);
+          let pageCount = null;
+          try { const { PDFDocument } = require('pdf-lib'); const doc = await PDFDocument.load(rr.pdfBuffer); pageCount = doc.getPageIndices().length; } catch (_) { /* page count best-effort */ }
+          await supabase.from('interactions').update({ content: contentPath, page_count: pageCount }).eq('id', id);
+          // Append the corrected seal (never overwrite the original).
+          await _sealSentLetter({
+            interaction_id: id, community_id: ix.community_id, violation_id: ix.violation_id,
+            property_id: ix.property_id, letter_type: ix.type, sent_at: stampIso,
+            postmark_iso: mailedDate, pdfBuffer: rr.pdfBuffer, source_path: contentPath,
+          });
+          pdfRegenerated = true;
+        }
+      } catch (e) {
+        // Never lose the date/cure correction over a render hiccup — surface it.
+        console.warn('[record-mailing] PDF re-render/reseal skipped:', e.message);
+      }
+    }
+
+    res.json({ ok: true, interaction_id: id, mailed_date: mailedDate, delivery_method: method, certified_tracking_number: tracking, was_correction: wasSent, cure: cureInfo, pdf_regenerated: pdfRegenerated });
   } catch (err) {
     console.error('[enforcement.record-mailing]', err);
     res.status(500).json({ error: err.message });
