@@ -129,8 +129,11 @@ router.get('/search', async (req, res) => {
 // check short-circuits to this result. (Ed 2026-07-25.)
 router.post('/verify-identity', express.json(), async (req, res) => {
   try {
-    const { requireStaff } = require('./_require_admin');
-    const staff = await requireStaff(req, res); if (!staff) return;
+    // The 360 is a staff-cookie-gated surface (like /note). Capture WHO verified
+    // when a Supabase token is present; otherwise record the decision without a
+    // name rather than 403 a legitimate staff action.
+    const { getAuthedUser } = require('./_require_admin');
+    const actor = await getAuthedUser(req);
     const { contact_id_1, contact_id_2, result, notes } = req.body || {};
     if (!contact_id_1 || !contact_id_2 || contact_id_1 === contact_id_2) {
       return res.status(400).json({ error: 'two distinct contact ids required' });
@@ -145,16 +148,16 @@ router.post('/verify-identity', express.json(), async (req, res) => {
     let row;
     if (existing) {
       const { data, error } = await supabase.from('identity_verifications')
-        .update({ result, verified_by: staff.id, verified_at: new Date().toISOString(), notes: notes || null })
+        .update({ result, verified_by: actor?.id || null, verified_at: new Date().toISOString(), notes: notes || null })
         .eq('id', existing.id).select().single();
       if (error) throw error; row = data;
     } else {
       const { data, error } = await supabase.from('identity_verifications')
-        .insert({ contact_id_1, contact_id_2, result, verified_by: staff.id, notes: notes || null })
+        .insert({ contact_id_1, contact_id_2, result, verified_by: actor?.id || null, notes: notes || null })
         .select().single();
       if (error) throw error; row = data;
     }
-    res.json({ ok: true, verification: row, verified_by_name: staff.full_name || staff.email });
+    res.json({ ok: true, verification: row, verified_by_name: (actor && (actor.full_name || actor.email)) || 'Staff' });
   } catch (err) {
     console.error('[homeowner360] verify-identity failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

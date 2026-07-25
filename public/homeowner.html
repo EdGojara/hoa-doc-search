@@ -104,14 +104,54 @@ async function doSearch(){
   document.getElementById('results').innerHTML='<div class="spin">Searching…</div>';
   document.getElementById('profile').innerHTML='';
   const r=await fetch(API+'/search?q='+encodeURIComponent(q)); const j=await r.json();
-  const rs=j.results||[];
+  const rs=j.results||[]; const conflicts=(j.name_conflicts||[]);
   if(!rs.length){ document.getElementById('results').innerHTML='<div class="empty">No homeowner found.</div>'; return; }
-  document.getElementById('results').innerHTML='<div class="results">'+rs.map(x=>
-    `<div class="rrow" onclick="openProfile('${x.contact_id}')">
-      <div><div class="nm">${esc(x.name)}</div><div class="meta">${esc((x.properties||[]).join(' · ')||'—')}</div></div>
+
+  // Same-name conflict handling: rows inside an UNRESOLVED "block" conflict are
+  // gated until staff verifies same/different — "same name" must never silently
+  // become "same person". (Ed 2026-07-25.)
+  const blockedIds=new Set();
+  conflicts.filter(c=>c.action==='block').forEach(c=>c.contacts.forEach(x=>blockedIds.add(x.contact_id)));
+
+  const ctbl=(cs)=>`<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin:8px 0;"><thead><tr style="color:#64748b;text-align:left;"><th style="padding:4px 6px;">Name</th><th style="padding:4px 6px;">Address</th><th style="padding:4px 6px;">Email</th><th style="padding:4px 6px;">Phone</th></tr></thead><tbody>${cs.map(x=>`<tr style="border-top:1px solid #eef2f7;"><td style="padding:4px 6px;">${esc(x.name)}</td><td style="padding:4px 6px;">${esc((x.properties||[]).join(', ')||'—')}</td><td style="padding:4px 6px;">${esc(x.email||'—')}</td><td style="padding:4px 6px;">${esc(x.phone||'—')}</td></tr>`).join('')}</tbody></table>`;
+  const conflictHtml=conflicts.map(c=>{
+    if(c.action==='verified_same'||c.action==='verified_different'){
+      const same=c.action==='verified_same';
+      return `<div style="border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;padding:12px 14px;margin-bottom:12px;"><div style="font-weight:700;color:#166534;">✅ Identity verified — ${same?'same person':'confirmed separate owners'}</div>${ctbl(c.contacts)}</div>`;
+    }
+    const two=c.contacts.length===2;
+    const isBlock=c.action==='block';
+    const btns=two
+      ? `<div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;"><button onclick="verifyIdentity('${c.contacts[0].contact_id}','${c.contacts[1].contact_id}','same_person')" style="background:#0B1D34;color:#fff;border:none;padding:8px 14px;border-radius:8px;font-weight:600;cursor:pointer;">Same Person — Link</button><button onclick="verifyIdentity('${c.contacts[0].contact_id}','${c.contacts[1].contact_id}','different_people')" style="background:#fff;color:#334155;border:1px solid #cbd5e1;padding:8px 14px;border-radius:8px;font-weight:600;cursor:pointer;">Different People — Keep Separate</button></div>`
+      : `<div style="font-size:12px;color:#64748b;margin-top:4px;">More than two same-name records — review each individually.</div>`;
+    return `<div style="border:1px solid ${isBlock?'#fecaca':'#fde68a'};background:${isBlock?'#fef2f2':'#fffbeb'};border-radius:10px;padding:12px 14px;margin-bottom:12px;">
+      <div style="font-weight:700;color:${isBlock?'#991b1b':'#92400e'};">${isBlock?'⚠️ Identity Conflict Detected':'⚠️ Same name — please verify'}</div>
+      <div style="font-size:12.5px;color:#5a7390;margin-top:2px;">${isBlock?'Contact details do not match across these records. Verify before opening either.':'These share a name and one contact detail. Confirm whether they are the same person.'}</div>
+      ${ctbl(c.contacts)}${btns}
+    </div>`;
+  }).join('');
+
+  const rowsHtml=rs.map(x=>{
+    const blocked=blockedIds.has(x.contact_id);
+    return `<div class="rrow" ${blocked?'style="opacity:0.55;cursor:not-allowed;" title="Resolve the identity conflict above first"':`onclick="openProfile('${x.contact_id}')"`}>
+      <div><div class="nm">${esc(x.name)}${blocked?' <span style="font-size:10px;background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:99px;">verify identity</span>':''}</div><div class="meta">${esc((x.properties||[]).join(' · ')||'—')}</div></div>
       <div class="meta" style="text-align:right;">${esc(x.email||'')}<br>${esc(x.phone||'')}</div>
-    </div>`).join('')+'</div>';
+    </div>`;
+  }).join('');
+
+  document.getElementById('results').innerHTML=conflictHtml+'<div class="results">'+rowsHtml+'</div>';
 }
+
+async function verifyIdentity(id1,id2,result){
+  if(result==='same_person' && !confirm('Confirm these two records are the SAME person and should be treated as one owner?')) return;
+  try{
+    const r=await fetch(API+'/verify-identity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact_id_1:id1,contact_id_2:id2,result})});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'save failed');
+    doSearch(); // re-run: the conflict now shows as a verified badge and rows unblock
+  }catch(e){ alert('Could not save the verification: '+e.message); }
+}
+window.verifyIdentity=verifyIdentity;
 
 async function openProfile(cid){
   document.getElementById('results').innerHTML='';
