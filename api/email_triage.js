@@ -1418,6 +1418,10 @@ router.post('/compose', express.json(), async (req, res) => {
       const { buildAmandaEmail } = require('../lib/email/amanda_signature');
       ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName));
       fromMailbox = graphSend.AMANDA_MAILBOX; senderLabel = 'Amanda Albright (Bedrock AI)'; personaName = 'Amanda';
+    } else if (P === 'reese') {
+      const { buildReeseEmail } = require('../lib/email/reese_signature');
+      ({ html, attachments } = buildReeseEmail(String(body).trim(), commName));
+      fromMailbox = graphSend.REESE_MAILBOX; senderLabel = 'Reese Calloway (Bedrock AI)'; personaName = 'Reese';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
       ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));

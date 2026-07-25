@@ -466,7 +466,7 @@ async function forwardFromSent(id){
     const r = await af(`${API}/${id}`); const j = await r.json();
     const m = j.message || {};
     openCompose();
-    const p = ['claire','emma','annie','miranda'].includes(m.persona) ? m.persona : 'claire';
+    const p = COMPOSE_PERSONAS[m.persona] ? m.persona : 'claire';
     document.getElementById('nmPersona').value = p; ncPersonaChange();
     document.getElementById('nmSubject').value = /^fwd:/i.test(m.subject||'') ? m.subject : ('Fwd: ' + (m.subject||''));
     const to = Array.isArray(m.recipients) ? m.recipients.join(', ') : (m.recipients||'');
@@ -793,10 +793,14 @@ window.pullNow = async function(){
 
 // ---- New email (compose as Claire) — same endpoints as the main-app tab ----
 const COMPOSE_PERSONAS = {
-  claire:  {name:'Claire',         first:'Claire',  mail:'claire@bedrocktx.com'},
-  emma:    {name:'Emma Brooks',    first:'Emma',    mail:'emma@bedrocktx.com'},
-  annie:   {name:'Annie Reeves',   first:'Annie',   mail:'annie@bedrocktx.com'},
-  miranda: {name:'Miranda Pierce', first:'Miranda', mail:'miranda@bedrocktx.com'},
+  claire:  {name:'Claire',            first:'Claire',  mail:'claire@bedrocktx.com'},
+  emma:    {name:'Emma Brooks',       first:'Emma',    mail:'emma@bedrocktx.com'},
+  annie:   {name:'Annie Reeves',      first:'Annie',   mail:'annie@bedrocktx.com'},
+  miranda: {name:'Miranda Pierce',    first:'Miranda', mail:'miranda@bedrocktx.com'},
+  paige:   {name:'Paige Chandler',    first:'Paige',   mail:'paige@bedrocktx.com'},
+  kat:     {name:'Katherine "Kat" Reed', first:'Kat',  mail:'kat@bedrocktx.com'},
+  amanda:  {name:'Amanda Albright',   first:'Amanda',  mail:'amanda@bedrocktx.com'},
+  reese:   {name:'Reese Calloway',    first:'Reese',   mail:'reese@bedrocktx.com'},
 };
 function ncP(){ return document.getElementById('nmPersona').value || 'claire'; }
 window.ncPersonaChange = function(){
@@ -923,6 +927,10 @@ async function loadDraftCount(){
         <option value="emma">Emma Brooks — accounts payable (vendors)</option>
         <option value="annie">Annie Reeves — architectural review (ACC/ARC)</option>
         <option value="miranda">Miranda Pierce — compliance / DRV</option>
+        <option value="paige">Paige Chandler — board operations</option>
+        <option value="kat">Katherine &quot;Kat&quot; Reed — accounting manager</option>
+        <option value="amanda">Amanda Albright — senior community manager</option>
+        <option value="reese">Reese Calloway — resale &amp; estoppels</option>
       </select>
       <div id="nmFromHint" style="font-size:12px; color:var(--muted); margin-bottom:12px;">Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + honest-AI signature. Logged on the homeowner's record when the address matches one on file.</div>
       <div style="display:flex; gap:11px; margin-bottom:11px;">
