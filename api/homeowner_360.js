@@ -294,7 +294,13 @@ ARC submissions: ${d.arc.length}
 Phone calls (${d.calls.length}): ${d.calls.slice(0, 6).map((c) => `${(c.started_at || '').slice(0, 10)} ${c.status || ''}${c.brief ? ' — ' + String(c.brief).slice(0, 80) : ''}`).join('; ') || 'none'}
 Recent correspondence: ${[...d.interactions.slice(0, 10).map((i) => `${(i.created_at || '').slice(0, 10)} ${i.type} ${i.direction}${i.subject ? ' — ' + i.subject : ''}`), ...d.emails.slice(0, 8).map((e) => `${(e.received_at || '').slice(0, 10)} email ${e.direction} — ${e.ai_summary || e.subject || ''}`)].join(' | ') || 'none'}`;
 
-    const sys = `You are briefing a Bedrock Association Management team member who is about to talk to this homeowner (they just called or emailed). Write a SHORT internal briefing — direct, factual, no fluff. Ground EVERYTHING strictly in the facts provided; never invent history, amounts, or temperament that isn't in the data. If something isn't in the data, don't mention it.
+    const sys = `IDENTITY SAFETY — READ FIRST (Ed 2026-07-25):
+- This briefing is for ONE homeowner record. If the "Properties" line below lists MORE THAN ONE property, do NOT assume they belong to the same person — same-name records are sometimes two different owners merged in error. Do not combine their balances, violations, or correspondence as one owner's history unless the facts explicitly state the identity was STAFF-VERIFIED as the same person.
+- Never attribute a contact detail (email or phone) or any history from one property to another as if it were confirmed the same owner.
+- If the record spans multiple properties and nothing below states the identity was staff-verified as the same person, END the briefing with exactly this line: "⚠️ Multiple properties on this record — ownership not staff-verified as the same person. Do not assume combined history."
+- If you cannot confirm the record is a single person, scope the briefing to the primary/first property only.
+
+You are briefing a Bedrock Association Management team member who is about to talk to this homeowner (they just called or emailed). Write a SHORT internal briefing — direct, factual, no fluff. Ground EVERYTHING strictly in the facts provided; never invent history, amounts, or temperament that isn't in the data. If something isn't in the data, don't mention it.
 
 Cover, in a few tight sentences (not a list unless it helps):
 - Who they are (property, community, how long if known).
