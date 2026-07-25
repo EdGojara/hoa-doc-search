@@ -2462,7 +2462,7 @@ app.get('/acc-review/decisions/:id/letter', async (req, res) => {
     const { id } = req.params;
     const { data: dec, error: qErr } = await supabase
       .from('acc_decisions')
-      .select('id, letter_pdf_storage_path, letter_body, homeowner_address, homeowner_name, community_name, project_summary, reference_number, decision_type, created_at')
+      .select('id, letter_pdf_storage_path, letter_body, ai_letter_body, homeowner_address, homeowner_name, community_name, project_summary, reference_number, decision_type, created_at')
       .eq('id', id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .single();
@@ -2475,8 +2475,12 @@ app.get('/acc-review/decisions/:id/letter', async (req, res) => {
         .download(dec.letter_pdf_storage_path);
       if (!dErr && blob) pdfBuffer = Buffer.from(await blob.arrayBuffer());
     }
-    // Fallback: regenerate from stored letter_body if the cached PDF is missing
-    if (!pdfBuffer && dec.letter_body) {
+    // Fallback: regenerate from the letter text. A queue item that hasn't been
+    // finalized yet has its draft in ai_letter_body (letter_body is only set at
+    // save), so fall back to that — otherwise a not-yet-sent decision reports
+    // "Letter content unavailable" on Download. (Ed 2026-07-25.)
+    const letterText = dec.letter_body || dec.ai_letter_body;
+    if (!pdfBuffer && letterText) {
       pdfBuffer = await renderLetterPdfBuffer({
         community: dec.community_name,
         homeowner_name: dec.homeowner_name,
@@ -2484,7 +2488,7 @@ app.get('/acc-review/decisions/:id/letter', async (req, res) => {
         project_summary: dec.project_summary,
         reference_number: dec.reference_number,
         decision_type: dec.decision_type,
-        body_text: dec.letter_body,
+        body_text: letterText,
       });
     }
     if (!pdfBuffer) return res.status(404).json({ error: 'Letter content unavailable' });
@@ -2860,6 +2864,39 @@ app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), a
     res.json({ ok: true, decision_type: decisionType, body_text: screen.text });
   } catch (err) {
     console.error('[acc-review/decisions/:id/redraft] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /acc-review/render-letter — render a decision-letter PDF from the CURRENT
+// editor text WITHOUT saving. So "Download letter PDF" gives you the letter you
+// are looking at — including a fresh redraft that hasn't been sent yet — instead
+// of the stale saved copy (or "unavailable" for a not-yet-saved queue item).
+// (Ed 2026-07-25.)
+app.post('/acc-review/render-letter', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.body_text || !b.body_text.trim()) return res.status(400).json({ error: 'letter body is empty' });
+    const screen = screenForLeaks(b.body_text, { audience: 'customer', autoRewrite: true });
+    if (screen.blocks.length > 0) {
+      return res.status(400).json({ error: 'Letter contains internal-only phrases that cannot go to a homeowner — edit them first. Blocked: ' + screen.blocks.map((x) => `"${x.matches.join('", "')}"`).join(', ') });
+    }
+    const pdfBuffer = await renderLetterPdfBuffer({
+      community: b.community || b.community_name,
+      homeowner_name: b.homeowner_name,
+      homeowner_address: b.homeowner_address,
+      project_summary: b.project_summary,
+      reference_number: b.reference_number,
+      decision_type: b.decision_type,
+      body_text: screen.text,
+    });
+    const stem = (b.homeowner_address || b.homeowner_name || b.community || 'decision').toString().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'decision';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${stem}_ACC_decision.pdf"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('[acc-review/render-letter] failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

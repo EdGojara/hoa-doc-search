@@ -14746,7 +14746,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <div class="acc-ai-actions">
           <button class="acc-action-btn approve" onclick="accSend('${a.id}', true)">✉ Send to homeowner (as Annie)</button>
           <button class="acc-action-btn modify" onclick="accSend('${a.id}', false)">💾 Mark done without emailing</button>
-          <a class="secondary-btn" href="/acc-review/decisions/${a.id}/letter" target="_blank" rel="noopener" style="align-self:center; text-decoration:none;">⬇ Download letter PDF</a>
+          <button class="secondary-btn" onclick="accDownloadCurrent()" style="align-self:center;">⬇ Download letter PDF</button>
           <a class="secondary-btn" href="/acc-review/decisions/${a.id}/packet" target="_blank" rel="noopener" style="align-self:center; text-decoration:none;">⬇ Packet</a>
         </div>
         <p id="acc-action-status" style="margin-top:10px; font-size:12px; text-align:right;"></p>
@@ -14822,6 +14822,27 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     } catch (e) { status.textContent = '✗ ' + e.message; status.style.color = '#b91c1c'; }
   }
   window.accRedraft = accRedraft;
+
+  // Download the letter you're LOOKING AT — renders the current editor text (incl.
+  // a fresh redraft) rather than the stale saved copy. (Ed 2026-07-25.)
+  async function accDownloadCurrent() {
+    const a = accCurrent || {};
+    const body_text = document.getElementById('acc-letter-edit').value;
+    const decision = document.getElementById('acc-decision-select').value;
+    const status = document.getElementById('acc-action-status');
+    if (!body_text.trim()) { if (status) { status.textContent = 'Nothing to download — the letter is empty. Redraft first.'; status.style.color = '#b91c1c'; } return; }
+    try {
+      const r = await fetch('/acc-review/render-letter', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body_text, decision_type: decision, homeowner_name: a.homeowner_name, homeowner_address: a.homeowner_address, community: a.community_name, project_summary: a.project_summary, reference_number: a.reference_number }),
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'render failed'); }
+      const url = URL.createObjectURL(await r.blob());
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (e) { if (status) { status.textContent = '✗ ' + e.message; status.style.color = '#b91c1c'; } }
+  }
+  window.accDownloadCurrent = accDownloadCurrent;
   window.accSend = accSend;
   window.accOpenDetail = accOpenDetail;
   // Exported for the History tab (a separate script block) so it renders source +
