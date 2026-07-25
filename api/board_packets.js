@@ -3937,12 +3937,12 @@ router.get('/:id/pdf', async (req, res) => {
     // Belt: 500ms of slack for any remaining font / image paints.
     await new Promise((r) => setTimeout(r, 500));
 
-    const pdfBuffer = await page.pdf({
+    const pdfBuffer = Buffer.from(await page.pdf({
       format: 'Letter',
       printBackground: true,
       margin: { top: 0, right: 0, bottom: 0, left: 0 },
       preferCSSPageSize: false,
-    });
+    }));
     await browser.close();
     browser = null;
 

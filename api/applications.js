@@ -1754,12 +1754,12 @@ router.post('/:id/send-decision', express.json({ limit: '2mb' }), async (req, re
       try {
         const page = await browser.newPage();
         await page.setContent(letterHtml, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        pdfBuffer = await page.pdf({
+        pdfBuffer = Buffer.from(await page.pdf({
           format: 'Letter',
           printBackground: true,
           margin: { top: 0, right: 0, bottom: 0, left: 0 },
           preferCSSPageSize: true,
-        });
+        }));
       } finally {
         try { await browser.close(); } catch (_) {}
       }

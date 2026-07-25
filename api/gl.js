@@ -774,7 +774,7 @@ router.get('/:communityId/owners/:propertyId/statement', async (req, res) => {
     try {
       const page = await browser.newPage();
       await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
-      const pdf = await page.pdf({ format: 'Letter', printBackground: true, margin: { top: 0, right: 0, bottom: 0, left: 0 }, preferCSSPageSize: true });
+      const pdf = Buffer.from(await page.pdf({ format: 'Letter', printBackground: true, margin: { top: 0, right: 0, bottom: 0, left: 0 }, preferCSSPageSize: true }));
       const safe = (owner.street_address || 'statement').replace(/[^a-zA-Z0-9]+/g, '-');
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `${req.query.inline === '1' ? 'inline' : 'attachment'}; filename="Statement-${safe}-${asOf}.pdf"`);

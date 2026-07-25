@@ -2137,12 +2137,12 @@ async function renderLetterPdfBuffer(body) {
     try {
       await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
     } catch (_) { /* swallow — render anyway */ }
-    return await page.pdf({
+    return Buffer.from(await page.pdf({
       format: 'Letter',
       printBackground: true,
       margin: { top: 0, right: 0, bottom: 0, left: 0 },
       preferCSSPageSize: true,
-    });
+    }));
   } finally {
     try { await browser.close(); } catch (_) {}
   }
@@ -6721,12 +6721,12 @@ async function renderFinancialPdfBuffer(html) {
     const page = await browser.newPage();
     try { await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 }); }
     catch (_) { /* swallow — render anyway */ }
-    return await page.pdf({
+    return Buffer.from(await page.pdf({
       format: 'Letter',
       printBackground: true,
       margin: { top: 0, right: 0, bottom: 0, left: 0 },
       preferCSSPageSize: true,
-    });
+    }));
   } finally {
     try { await browser.close(); } catch (_) {}
   }
@@ -7006,7 +7006,7 @@ async function _renderHtmlToPdf(html, opts = {}) {
           <div>Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>
         </div>`;
     }
-    return await page.pdf(pdfOpts);
+    return Buffer.from(await page.pdf(pdfOpts));
   } finally { try { await browser.close(); } catch (_) {} }
 }
 
