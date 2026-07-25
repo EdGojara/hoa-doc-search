@@ -78,9 +78,85 @@ router.get('/search', async (req, res) => {
       });
     }
     results.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
-    res.json({ results });
+
+    // SAME-NAME CONFLICT DETECTION (Ed 2026-07-25). Two owners can share a name
+    // but be different people (different email/phone). Group results by normalized
+    // name; for any group of 2+, report whether contact details match and whether
+    // staff already verified the pair — so the UI can force a "same person /
+    // different people" decision before the two are ever treated as one.
+    const _norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const _digits = (s) => String(s || '').replace(/\D+/g, '');
+    const nameGroups = {};
+    results.forEach((r) => { const k = _norm(r.name); if (k) (nameGroups[k] = nameGroups[k] || []).push(r); });
+    const nameConflicts = [];
+    for (const [k, members] of Object.entries(nameGroups)) {
+      if (members.length < 2) continue;
+      const emails = members.map((m) => _norm(m.email)).filter(Boolean);
+      const phones = members.map((m) => _digits(m.phone)).filter(Boolean);
+      const emailMatch = emails.length >= 2 && new Set(emails).size === 1;
+      const phoneMatch = phones.length >= 2 && new Set(phones).size === 1;
+      const matchCount = 1 /* name */ + (emailMatch ? 1 : 0) + (phoneMatch ? 1 : 0);
+      // Already-verified pair? (degrades to none if the table isn't there yet.)
+      let verification = null;
+      try {
+        const ids = members.map((m) => m.contact_id);
+        const { data: vs } = await supabase.from('identity_verifications')
+          .select('contact_id_1, contact_id_2, result')
+          .or(`contact_id_1.in.(${ids.join(',')}),contact_id_2.in.(${ids.join(',')})`);
+        verification = (vs || []).find((v) => ids.includes(v.contact_id_1) && ids.includes(v.contact_id_2)) || null;
+      } catch (_) { /* pre-migration: no verification table */ }
+      const action = verification
+        ? (verification.result === 'same_person' ? 'verified_same' : 'verified_different')
+        : (matchCount >= 2 ? 'warn' : 'block'); // name-only match (email+phone both differ) => block
+      nameConflicts.push({
+        normalized_name: k,
+        contacts: members.map((m) => ({ contact_id: m.contact_id, name: m.name, email: m.email, phone: m.phone, properties: m.properties, community: m.community })),
+        match_count: matchCount, email_match: emailMatch, phone_match: phoneMatch,
+        verified: !!verification, verification_result: verification ? verification.result : null, action,
+      });
+    }
+
+    res.json({ results, name_conflicts: nameConflicts });
   } catch (err) {
     console.error('[homeowner360] search failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /verify-identity — staff records that two same-name contacts are the SAME
+// person or DIFFERENT people (Prompt 2/3). Staff-gated; verified_by = the acting
+// user. Idempotent on the unordered pair. Once recorded, the search-time conflict
+// check short-circuits to this result. (Ed 2026-07-25.)
+router.post('/verify-identity', express.json(), async (req, res) => {
+  try {
+    const { requireStaff } = require('./_require_admin');
+    const staff = await requireStaff(req, res); if (!staff) return;
+    const { contact_id_1, contact_id_2, result, notes } = req.body || {};
+    if (!contact_id_1 || !contact_id_2 || contact_id_1 === contact_id_2) {
+      return res.status(400).json({ error: 'two distinct contact ids required' });
+    }
+    if (!['same_person', 'different_people'].includes(result)) {
+      return res.status(400).json({ error: 'result must be same_person or different_people' });
+    }
+    const { data: existing } = await supabase.from('identity_verifications')
+      .select('id')
+      .or(`and(contact_id_1.eq.${contact_id_1},contact_id_2.eq.${contact_id_2}),and(contact_id_1.eq.${contact_id_2},contact_id_2.eq.${contact_id_1})`)
+      .maybeSingle();
+    let row;
+    if (existing) {
+      const { data, error } = await supabase.from('identity_verifications')
+        .update({ result, verified_by: staff.id, verified_at: new Date().toISOString(), notes: notes || null })
+        .eq('id', existing.id).select().single();
+      if (error) throw error; row = data;
+    } else {
+      const { data, error } = await supabase.from('identity_verifications')
+        .insert({ contact_id_1, contact_id_2, result, verified_by: staff.id, notes: notes || null })
+        .select().single();
+      if (error) throw error; row = data;
+    }
+    res.json({ ok: true, verification: row, verified_by_name: staff.full_name || staff.email });
+  } catch (err) {
+    console.error('[homeowner360] verify-identity failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
