@@ -569,12 +569,23 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     // (an escrow inquiry that came to info@ but belongs to Kat). Fall back to the
     // mailbox/vendor picker only when it isn't stamped yet.
     const persona = m.persona || personaFor(m);
+
+    // Encode-Ed: pull how Ed edited THIS teammate's past replies of this kind and
+    // feed them back as few-shot examples — EVERY agent learns from his edits, not
+    // just Claire. Owner-only (single-teacher); best-effort (empty pre-migration).
+    const loadExamples = async (pers) => {
+      try {
+        const { getReplyExamples } = require('../lib/email/reply_learning');
+        return await getReplyExamples(supabase, { persona: pers, classification: m.classification, communityId: m.community_id, ownerEmail: OWNER_EMAIL });
+      } catch (_) { return []; }
+    };
+
     if (persona === 'emma') {
       const { draftEmmaReply } = require('../lib/email/emma_reply');
       const draft = await draftEmmaReply({
         email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full },
         vendorId: m.resolved_vendor_id, vendorName: m.resolved_vendor ? m.resolved_vendor.name : (m.sender_name || null),
-        notes, currentDraft,
+        notes, currentDraft, examples: await loadExamples('emma'),
       });
       return res.json({ ...draft, covers, ...recipientOut });
     }
@@ -592,7 +603,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
           propertyAddress: m.resolved_property ? m.resolved_property.street_address : null,
           vendorName: m.resolved_vendor ? m.resolved_vendor.name : null,
         },
-        notes, currentDraft,
+        notes, currentDraft, examples: await loadExamples(persona),
       });
       return res.json({ ...draft, covers, ...recipientOut });
     }
@@ -651,14 +662,10 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       try { const { getArcApplicationForm } = require('../lib/email/arc_application'); const f = await getArcApplicationForm(communityId); if (f) { arcFormTitle = f.title; autoAttachments.push({ id: f.id, title: f.title, auto: true }); } } catch (_) {}
     }
 
-    // Encode-Ed: pull how Ed edited past Claire replies of this kind, feed them
-    // in as few-shot examples so this draft moves toward his voice. Owner-only
-    // (single-teacher); best-effort (empty until migration 335 + some sends).
-    let replyExamples = [];
-    try {
-      const { getReplyExamples } = require('../lib/email/reply_learning');
-      replyExamples = await getReplyExamples(supabase, { persona: 'claire', classification: m.classification, communityId, ownerEmail: OWNER_EMAIL });
-    } catch (_) {}
+    // Encode-Ed: pull how Ed edited this persona's past replies of this kind (this
+    // path also serves Annie/Miranda, not only Claire), feed them in as few-shot
+    // examples so the draft moves toward his voice. Owner-only (single-teacher).
+    const replyExamples = await loadExamples(persona);
 
     const draft = await draftReply({
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, conversation_id: m.conversation_id, sender_email: m.sender_email, graph_id: m.graph_id, mailbox: m.mailbox, has_attachments: m.has_attachments },
