@@ -34,6 +34,7 @@ const { requireActingUser, actorDisplayName } = require('./_acting_user');
 const { getRelevantChunks } = require('../lib/hybrid_retrieval');
 const { checkCompleteness } = require('../lib/applications/completeness');
 const { renderDecisionLetterHTML } = require('../lib/decision_letter');
+const { createPendingAccDecision, formatPortalAppForEngine } = require('../lib/acc/pending_intake');
 
 // Best-effort audit logger. Never blocks the calling flow on failure.
 async function logApplicationState({ application_id, from_status, to_status, actor_kind, actor_id, actor_display_name, reason, metadata }) {
@@ -964,17 +965,42 @@ router.post('/public/:slug/submit', upload.any(), async (req, res) => {
     });
 
     // ========================================================================
-    // STAGE 2 — internal AI assessment (staff-facing, never sent to homeowner)
-    // Only runs when completeness passes; otherwise we wait for the homeowner
-    // to add missing items.
+    // STAGE 2 — ONE-BRAIN unification (Ed 2026-07-25).
+    // The portal used to run its OWN assessment engine here (runAssessment) and
+    // keep the decision inside community_applications. That was a second AI brain:
+    // the same application could get a different answer than the email/staff
+    // doors, and portal decisions skipped the fee + sealing + billing.
+    //
+    // Now the portal feeds the SAME system engine (assessAndDraftAcc, via
+    // createPendingAccDecision) that the other two doors use, landing a linked
+    // pending_review in acc_decisions. Staff review + decide + send from the one
+    // ACC queue; the decision syncs back onto this row for the portal to show.
+    //
+    // This runs in the BACKGROUND — AFTER the homeowner already has their receipt
+    // — because it's a vision/LLM pass and the receipt must be instant. The
+    // homeowner never waited on the assessment anyway (the receipt didn't use it).
     // ========================================================================
-    let assessmentResult = { ok: false, assessment: null, held_for_review: false };
     if (completeness.passed) {
-      try {
-        assessmentResult = await runAssessment(app, { triggerSource: 'public_submit' });
-      } catch (e) {
-        console.warn('[applications] internal assessment failed (non-fatal):', e.message);
-      }
+      const capturedFiles = req.files || [];
+      const engineDetails = formatPortalAppForEngine(applicationData, {
+        submitterName: b.submitter_name, propertyAddress: b.property_address,
+      });
+      // Detached — do not block the response already sent below.
+      Promise.resolve().then(async () => {
+        try {
+          const pend = await createPendingAccDecision({
+            community: comm.name, communityId: comm.id,
+            files: capturedFiles,
+            submitterEmail: b.submitter_email, submitterName: b.submitter_name,
+            source: 'portal', intakeSourceRef: `portal:${app.id}`,
+            propertyAddress: b.property_address, reference,
+            communityApplicationId: app.id, typedDetails: engineDetails,
+          });
+          if (pend.status === 'error') console.error('[applications] portal ACC intake error:', pend.error);
+        } catch (e) {
+          console.error('[applications] portal ACC intake failed:', e.message);
+        }
+      });
     }
 
     // ========================================================================
@@ -1303,6 +1329,17 @@ router.post('/:id/assess', async (req, res) => {
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .single();
     if (error) throw error;
+    // ONE-BRAIN guard (Ed 2026-07-25): ARC now assesses through the system
+    // engine in the ACC Review queue. Re-running the old portal brain here would
+    // produce a second, possibly-different answer for the same application — the
+    // exact inconsistency we're removing. runAssessment stays for non-ARC + the
+    // eval harness only.
+    if (app.service_type === 'arc') {
+      return res.status(409).json({
+        error: 'ARC applications are assessed in the ACC Review queue now. Open this one under ACC Review to see the current AI assessment and decide.',
+        redirect: 'acc_review',
+      });
+    }
     const result = await runAssessment(app);
     if (!result.ok) return res.status(500).json({ error: result.error });
     res.json({ ok: true, assessment: result.assessment, duration_ms: result.duration_ms });
@@ -1333,6 +1370,26 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
 
     const validActions = ['approve', 'deny', 'approve_with_conditions', 'request_more_info'];
     if (!validActions.includes(action)) return res.status(400).json({ error: 'invalid action' });
+
+    // ONE-BRAIN guard (Ed 2026-07-25). ARC applications are now DECIDED in the
+    // unified ACC queue (acc_decisions / the "ACC Review" screen), not here — so
+    // one application can't be decided twice or double-emailed. This handler stays
+    // live for non-ARC service types (key fobs, etc.). Refuse ARC with a clear
+    // redirect instead of silently running the retired parallel path.
+    {
+      const { data: svc } = await supabase
+        .from('community_applications')
+        .select('service_type')
+        .eq('id', req.params.id)
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .maybeSingle();
+      if (svc && svc.service_type === 'arc') {
+        return res.status(409).json({
+          error: 'ARC applications are now decided in the ACC Review queue, not here. Open this application under ACC Review to approve, deny, or request more info — the decision and letter flow back to the portal automatically.',
+          redirect: 'acc_review',
+        });
+      }
+    }
 
     // Display name for the response record + downstream artifacts.
     // Prefer the body field (lets the operator override for legibility,
@@ -1567,6 +1624,15 @@ router.post('/:id/send-decision', express.json({ limit: '2mb' }), async (req, re
       .maybeSingle();
     if (appErr) throw appErr;
     if (!app) return res.status(404).json({ error: 'application_not_found' });
+    // ONE-BRAIN guard (Ed 2026-07-25): ARC letters go out from the ACC Review
+    // queue (acc_decisions finalize), which also posts the fee, seals the letter,
+    // and syncs status back here. Refuse the retired parallel send for ARC.
+    if (app.service_type === 'arc') {
+      return res.status(409).json({
+        error: 'ARC decision letters are now sent from the ACC Review queue, which also handles the fee, sealing, and portal status. Send this one from ACC Review.',
+        redirect: 'acc_review',
+      });
+    }
     if (!['pending_send', 'approved', 'denied'].includes(app.final_status)) {
       return res.status(409).json({
         error: 'invalid_state',

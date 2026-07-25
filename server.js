@@ -2725,6 +2725,24 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
     const { error: upErr } = await supabase.from('acc_decisions').update(patch).eq('id', id);
     if (upErr) { console.error('[acc-finalize] update failed:', upErr.message); throw upErr; }
 
+    // ONE-BRAIN sync-out (Ed 2026-07-25). If this decision came IN through the
+    // portal, push the outcome back onto its community_applications row so the
+    // homeowner sees the status (and, for finals, the letter) in the portal.
+    // This is the "output back through the portal" half of 3-doors-1-engine.
+    if (dec.community_application_id) {
+      const portalStatus = decisionType === 'denied' ? 'denied'
+        : decisionType.startsWith('approved') ? 'approved'
+        : 'incomplete'; // request_more_info -> homeowner needs to add items
+      try {
+        await supabase.from('community_applications').update({
+          final_status: portalStatus,
+          final_decided_at: isFinal ? new Date().toISOString() : null,
+          decision_letter_html: isFinal ? bodyText : null,
+          updated_at: new Date().toISOString(),
+        }).eq('id', dec.community_application_id);
+      } catch (e) { console.warn('[acc-finalize] portal sync-back failed:', e.message); }
+    }
+
     // Record the outbound communication on the timeline (best-effort).
     if (emailResult.sent) {
       try {
