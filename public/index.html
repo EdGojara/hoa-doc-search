@@ -14720,7 +14720,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
           <div class="fld">
             <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Decision</label>
-            <select id="acc-decision-select" class="draft-type-select" style="width:100%;">
+            <select id="acc-decision-select" class="draft-type-select" style="width:100%;" onchange="accDecisionChanged()">
               ${decisionOptions.map(([v,l]) => `<option value="${v}" ${v===selectedDecision?'selected':''}>${l}</option>`).join('')}
             </select>
           </div>
@@ -14801,14 +14801,14 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // conditions typed in plain words. Powers "Approve with conditions" giving a
   // real conditional-approval draft (approval + numbered conditions + survey
   // waiver) even when the AI first recommended something else. (Ed 2026-07-25.)
-  async function accRedraft(id, withConditions) {
+  async function accRedraft(id, withConditions, skipConfirm) {
     const decision = document.getElementById('acc-decision-select').value;
     const ta = document.getElementById('acc-letter-edit');
     const condEl = document.getElementById('acc-conditions-input');
     const status = document.getElementById('acc-action-status');
     const instructions = withConditions && condEl ? condEl.value.trim() : '';
     if (withConditions && !instructions) { alert('Type the conditions to fold in first (e.g. "shed max 9 ft, 3 ft off lot lines, survey waived").'); return; }
-    if (ta.value.trim() && !confirm('Replace the current letter with a fresh draft for "' + decision.replace(/_/g, ' ') + '"?')) return;
+    if (!skipConfirm && ta.value.trim() && !confirm('Replace the current letter with a fresh draft for "' + decision.replace(/_/g, ' ') + '"?')) return;
     status.textContent = 'Drafting…'; status.style.color = '#a16207';
     try {
       const headers = { 'Content-Type': 'application/json' };
@@ -14822,6 +14822,19 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     } catch (e) { status.textContent = '✗ ' + e.message; status.style.color = '#b91c1c'; }
   }
   window.accRedraft = accRedraft;
+
+  // Decision changed in the dropdown -> auto-redraft the letter to match (Ed
+  // 2026-07-25). Skips the replace-confirm since changing the decision IS the
+  // explicit intent to get a matching letter. Any extra conditions you typed in
+  // the conditions box are added separately via "Draft with conditions".
+  async function accDecisionChanged() {
+    const a = accCurrent || {};
+    if (!a.id) return;
+    const status = document.getElementById('acc-action-status');
+    if (status) { status.textContent = 'Drafting letter for the new decision…'; status.style.color = '#a16207'; }
+    await accRedraft(a.id, false, true);
+  }
+  window.accDecisionChanged = accDecisionChanged;
 
   // Download the letter you're LOOKING AT — renders the current editor text (incl.
   // a fresh redraft) rather than the stale saved copy. (Ed 2026-07-25.)
