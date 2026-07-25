@@ -1722,7 +1722,14 @@ async function renderActivityDetailPdfBuffer(communityId, start, end) {
   async function fetchAll(build) { const out = []; for (let f = 0; ; f += 1000) { const { data, error } = await build().range(f, f + 999); if (error) break; out.push(...(data || [])); if (!data || data.length < 1000) break; } return out; }
   const { data: community } = await supabase.from('communities').select('id, name').eq('id', communityId).maybeSingle();
   const letters = await fetchAll(() => supabase.from('interactions').select('id, property_id, type, delivery_method, postmark_date, content, bundle_id').eq('community_id', communityId).in('type', LETTER_TYPES).not('printed_at', 'is', null).gte('postmark_date', start).lt('postmark_date', endEx));
-  const accDecisions = await fetchAll(() => supabase.from('acc_decisions').select('homeowner_address, homeowner_name, project_summary, decision_type, created_at').eq('community_id', communityId).gte('created_at', start + 'T00:00:00Z').lt('created_at', endEx + 'T00:00:00Z'));
+  // Resident ACC decisions billed by DECISION date (decided_at, mig 330) — the
+  // date staff issued the decision, not the date the application arrived. Only
+  // status='decided' is billable. (Ed 2026-07-24.)
+  const accDecisions = await fetchAll(() => supabase.from('acc_decisions').select('homeowner_address, homeowner_name, project_summary, decision_type, decided_at').eq('community_id', communityId).eq('status', 'decided').gte('decided_at', start + 'T00:00:00Z').lt('decided_at', endEx + 'T00:00:00Z'));
+  // Resident ACC decided through the public portal (community_applications) —
+  // same billable work, counted by its decision date. 0 rows until the portal
+  // goes live; additive, never double-counts acc_decisions. (Ed 2026-07-24.)
+  const portalDecisions = await fetchAll(() => supabase.from('community_applications').select('property_address, submitter_name, service_type, final_status, final_decided_at').eq('community_id', communityId).not('final_decided_at', 'is', null).gte('final_decided_at', start + 'T00:00:00Z').lt('final_decided_at', endEx + 'T00:00:00Z'));
   const propIds = [...new Set(letters.map((l) => l.property_id).filter(Boolean))];
   const addrById = {};
   for (let i = 0; i < propIds.length; i += 500) { const { data: props } = await supabase.from('properties').select('id, street_address').in('id', propIds.slice(i, i + 500)); (props || []).forEach((p) => { addrById[p.id] = p.street_address; }); }
@@ -1731,7 +1738,10 @@ async function renderActivityDetailPdfBuffer(communityId, start, end) {
   const letterRows = [...groups.values()].map((g) => ({ property: g.property, date: g.dates.sort()[0] || null, stage: [...g.stages].join(', '), mail_class: g.delivery_method === 'certified_mail' ? 'Certified' : 'First-class', violations: g.violations })).sort((a, b) => a.property.localeCompare(b.property));
   const certCount = letterRows.filter((r) => r.mail_class === 'Certified').length;
   const outcomeOf = (s) => { s = (s || '').toLowerCase(); return s.includes('condition') ? 'Approved w/ conditions' : /approved/.test(s) ? 'Approved' : (s.includes('deni') || s.includes('reject')) ? 'Denied' : (s ? s[0].toUpperCase() + s.slice(1) : '—'); };
-  const arcRows = accDecisions.map((d) => ({ property: d.homeowner_address || '(no address)', applicant: d.homeowner_name || '—', project: d.project_summary || '—', outcome: outcomeOf(d.decision_type), date: (d.created_at || '').slice(0, 10) })).sort((a, b) => a.property.localeCompare(b.property));
+  const arcRows = [
+    ...accDecisions.map((d) => ({ property: d.homeowner_address || '(no address)', applicant: d.homeowner_name || '—', project: d.project_summary || '—', outcome: outcomeOf(d.decision_type), date: (d.decided_at || '').slice(0, 10) })),
+    ...portalDecisions.map((d) => ({ property: d.property_address || '(no address)', applicant: d.submitter_name || '—', project: d.service_type || '—', outcome: outcomeOf(d.final_status), date: (d.final_decided_at || '').slice(0, 10) })),
+  ].sort((a, b) => a.property.localeCompare(b.property));
 
   const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const fmtUS = (s) => { if (!s) return ''; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? s + 'T12:00:00' : s); return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Chicago' }); };
@@ -2422,13 +2432,25 @@ router.get('/activity-report', async (req, res) => {
     let accDecisions = await fetchAll(() => {
       // Only DECIDED decisions bill — a pending_review row is just an inbound
       // application sitting in the queue, not billable work (Ed 2026-07-17).
-      // Without this, a homeowner emailing an application for a project staff
-      // already decided directly double-counts the ARC fee.
+      // Billed by DECISION date (decided_at, mig 330), not arrival, so a slow
+      // approval isn't missed or billed to the wrong month (Ed 2026-07-24).
       let q = supabase.from('acc_decisions')
-        .select('community_id, decision_type, created_at')
+        .select('community_id, decision_type, decided_at')
         .eq('status', 'decided')
-        .gte('created_at', start + 'T00:00:00Z')
-        .lt('created_at', endEx + 'T00:00:00Z');
+        .gte('decided_at', start + 'T00:00:00Z')
+        .lt('decided_at', endEx + 'T00:00:00Z');
+      if (communityId) q = q.eq('community_id', communityId);
+      return q;
+    });
+    // Resident ACC decided through the public portal (community_applications) —
+    // same HOA ARC fee, counted by final_decided_at. 0 rows until the portal goes
+    // live; additive to acc_decisions, no double-count (different channel). (Ed 2026-07-24.)
+    let portalDecisions = await fetchAll(() => {
+      let q = supabase.from('community_applications')
+        .select('community_id, final_status, final_decided_at')
+        .not('final_decided_at', 'is', null)
+        .gte('final_decided_at', start + 'T00:00:00Z')
+        .lt('final_decided_at', endEx + 'T00:00:00Z');
       if (communityId) q = q.eq('community_id', communityId);
       return q;
     });
@@ -2500,6 +2522,7 @@ router.get('/activity-report', async (req, res) => {
     // it is billed to the builder on a separate builder invoice, so it is only
     // counted for the break-out (Ed 2026-07-10: separate homeowner vs builder ARC).
     accDecisions.forEach((d) => tallyArc(d.community_id, d.decision_type));
+    portalDecisions.forEach((d) => tallyArc(d.community_id, d.final_status));
     decisions.forEach((d) => { row(d.community_id).builder_arc += 1; });
     paymentPlans.forEach((p) => { if (p.community_id) row(p.community_id).payment_plans += 1; });
 
@@ -2613,11 +2636,12 @@ router.get('/activity-detail', async (req, res) => {
         .not('decided_at', 'is', null)
         .gte('decided_at', start + 'T00:00:00Z').lt('decided_at', endEx + 'T00:00:00Z')),
       // Resident ACC decisions we ran through trustEd (acc_decisions) — the ones
-      // staff issued + generated a letter for. created_at is the decision timestamp.
+      // staff issued + generated a letter for. Billed by DECISION date
+      // (decided_at, mig 330), not arrival. (Ed 2026-07-24.)
       fetchAll(() => supabase.from('acc_decisions')
-        .select('id, homeowner_address, homeowner_name, project_summary, decision_type, created_at, letter_pdf_storage_path')
+        .select('id, homeowner_address, homeowner_name, project_summary, decision_type, decided_at, letter_pdf_storage_path')
         .eq('community_id', communityId).eq('status', 'decided')
-        .gte('created_at', start + 'T00:00:00Z').lt('created_at', endEx + 'T00:00:00Z')),
+        .gte('decided_at', start + 'T00:00:00Z').lt('decided_at', endEx + 'T00:00:00Z')),
       // Payment plans set up in the period (Ed 2026-07-17). Keyed on start_date,
       // falling back to created_at when start_date is null — the SAME window the
       // activity-report counts by, so the detail reconciles with the count.
@@ -2627,6 +2651,14 @@ router.get('/activity-detail', async (req, res) => {
         .or(`and(start_date.gte.${start},start_date.lte.${end}),and(start_date.is.null,created_at.gte.${start}T00:00:00Z,created_at.lt.${endEx}T00:00:00Z)`)),
     ]);
     if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+    // Resident ACC decided through the public portal (community_applications) —
+    // same billable work, by final_decided_at. 0 rows until the portal goes live;
+    // additive to acc_decisions, no double-count. (Ed 2026-07-24.)
+    const portalDecisions = await fetchAll(() => supabase.from('community_applications')
+      .select('property_address, submitter_name, service_type, final_status, final_decided_at, decision_letter_pdf_path')
+      .eq('community_id', communityId).not('final_decided_at', 'is', null)
+      .gte('final_decided_at', start + 'T00:00:00Z').lt('final_decided_at', endEx + 'T00:00:00Z'));
 
     // Violation type (category) for each letter — this is what the board wants to
     // see, not a PDF link (Ed 2026-07-10). letter interaction -> violation ->
@@ -2718,8 +2750,15 @@ router.get('/activity-detail', async (req, res) => {
       ...accDecisions.map((d) => ({
         property: d.homeowner_address || '(no address)', applicant: d.homeowner_name || '—',
         project: d.project_summary || null, conditions: null, kind: 'Resident ACC',
-        outcome: outcomeOf(d.decision_type), date: (d.created_at || '').slice(0, 10),
+        outcome: outcomeOf(d.decision_type), date: (d.decided_at || '').slice(0, 10),
         letter_url: d.letter_pdf_storage_path ? (accSignedByPath[d.letter_pdf_storage_path] || null) : null,
+      })),
+      // Resident ACC via the public portal (0 until portal live).
+      ...portalDecisions.map((d) => ({
+        property: d.property_address || '(no address)', applicant: d.submitter_name || '—',
+        project: d.service_type || null, conditions: null, kind: 'Resident ACC',
+        outcome: outcomeOf(d.final_status), date: (d.final_decided_at || '').slice(0, 10),
+        letter_url: null,
       })),
     ].sort((a, b) => a.property.localeCompare(b.property));
 

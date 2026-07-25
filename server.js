@@ -2714,7 +2714,10 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       decided_by_user_id: actor?.id || null,
       updated_at: new Date().toISOString(),
     };
-    if (isFinal) patch.status = 'decided';
+    // Stamp the decision date so billing counts it in the month it was DECIDED,
+    // not the month the application arrived (mig 330; Ed 2026-07-24). Only on a
+    // final decision — request_more_info keeps it in the queue, not yet decided.
+    if (isFinal) { patch.status = 'decided'; patch.decided_at = new Date().toISOString(); }
     const { error: upErr } = await supabase.from('acc_decisions').update(patch).eq('id', id);
     if (upErr) { console.error('[acc-finalize] update failed:', upErr.message); throw upErr; }
 
