@@ -544,7 +544,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     const notes = (req.body && req.body.notes) ? String(req.body.notes).slice(0, 3000) : null;
     const currentDraft = (req.body && req.body.current_draft) ? String(req.body.current_draft).slice(0, 4000) : null;
     const { data: m, error } = await supabase.from('email_messages')
-      .select('persona, subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, graph_id, mailbox, has_attachments, received_at, direction, resolved_contact:resolved_contact_id(full_name), resolved_property:resolved_property_id(street_address), resolved_vendor:resolved_vendor_id(name), community:community_id(name)')
+      .select('persona, subject, body_preview, body_full, conversation_id, sender_email, sender_name, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, resolution_candidates, graph_id, mailbox, has_attachments, received_at, direction, resolved_contact:resolved_contact_id(full_name), resolved_property:resolved_property_id(street_address), resolved_vendor:resolved_vendor_id(name), community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
@@ -610,15 +610,31 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
 
     // Homeowner linked but community/property didn't come across (e.g. matched by
     // name from a NEW email address) — derive their current property + community so
-    // Claire pulls THAT community's rules and confirms the address, instead of
-    // asking "what's your address?". (Ed 2026-07-14, the Bishen Calloo shed thread.)
+    // Claire pulls THAT community's rules and answers, instead of asking "what's
+    // your address / which HOA are you in?". WE are the manager; we don't punt the
+    // homeowner's own community back to them. (Ed 2026-07-14 Bishen Calloo shed;
+    // 2026-07-25 the Kelle Hatcher pool-guests draft that asked her which HOA.)
     let communityId = m.community_id, propertyId = m.resolved_property_id;
     let communityName = m.community ? m.community.name : null;
-    if (m.resolved_contact_id && (!communityId || !propertyId)) {
+
+    // Whom to ground on: the confirmed contact, or — if none is linked yet — the
+    // best contact CANDIDATE (name/address match). Using a strong candidate to
+    // ground the DRAFT is safe: Ed reviews before send, and a grounded draft beats
+    // one that asks the homeowner to identify their own association.
+    let deriveContactId = m.resolved_contact_id;
+    let fromCandidate = false;
+    if (!deriveContactId && Array.isArray(m.resolution_candidates)) {
+      const top = m.resolution_candidates
+        .filter((c) => c && c.type === 'contact' && c.id)
+        .sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+      if (top && (top.score || 0) >= 0.7) { deriveContactId = top.id; fromCandidate = true; }
+    }
+
+    if (deriveContactId && (!communityId || !propertyId)) {
       try {
         const { data: po } = await supabase.from('property_ownerships')
           .select('property:property_id(id, street_address, community_id)')
-          .eq('contact_id', m.resolved_contact_id).is('end_date', null)
+          .eq('contact_id', deriveContactId).is('end_date', null)
           .order('is_primary', { ascending: false }).limit(1);
         const prop = po && po[0] && po[0].property;
         if (prop) {
@@ -629,10 +645,13 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
             communityName = cm ? cm.name : null;
           }
           // Persist the derived link so the send path, the 360, and everything
-          // else have it too — not just this draft.
-          try { await supabase.from('email_messages').update({ community_id: communityId, resolved_property_id: propertyId }).eq('id', req.params.id); } catch (_) {}
+          // else have it too — not just this draft. Also adopt the candidate as
+          // the resolved contact when we grounded off it (score >= 0.7).
+          const patch = { community_id: communityId, resolved_property_id: propertyId };
+          if (fromCandidate) patch.resolved_contact_id = deriveContactId;
+          try { await supabase.from('email_messages').update(patch).eq('id', req.params.id); } catch (_) {}
         }
-      } catch (_) { /* best-effort — Claire will ask for the address if we can't derive it */ }
+      } catch (_) { /* best-effort — the drafter's manager-posture rules keep Claire from punting to the homeowner */ }
     }
 
     // READ THE APPLICATION THEY ATTACHED before drafting anything. If this is an
