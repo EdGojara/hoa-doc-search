@@ -19,6 +19,7 @@ const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const multer = require('multer');
+const { findDuplicates } = require('../lib/ap/dedup');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -170,6 +171,44 @@ Rules:
   return { parsed, usage: response.usage };
 }
 
+// ----------------------------------------------------------------------------
+// SSOT bridge: the vendor page's "historical invoice" tool now writes/reads the
+// canonical ap_invoices/ap_payments rail (migration 334). The frontend still
+// speaks the old invoices_received field names, so every read maps an
+// ap_invoices row back to that shape. One place to keep the two vocabularies in
+// sync — do NOT scatter this mapping across handlers.
+//   invoice_number        <- vendor_invoice_number
+//   total_amount (dollars) <- total_cents / 100
+//   gl_match_status        <- posting_journal_entry_id ? 'matched' : 'unmatched'
+//   service_period_*, invoice_date, due_date, status, notes, community: pass-through
+// ----------------------------------------------------------------------------
+function apInvoiceToLegacy(row) {
+  if (!row) return row;
+  const centsToDollars = (c) => (c === null || c === undefined ? null : Number(c) / 100);
+  const out = {
+    id: row.id,
+    community_id: row.community_id,
+    vendor_id: row.vendor_id,
+    invoice_number: row.vendor_invoice_number || null,
+    invoice_date: row.invoice_date || null,
+    due_date: row.due_date || null,
+    service_period_start: row.service_period_start || null,
+    service_period_end: row.service_period_end || null,
+    total_amount: centsToDollars(row.total_cents),
+    status: row.status || null,
+    // gl_match_status is honest here: these historical uploads carry NO posting
+    // journal entry (no accrual), so they read 'unmatched' — same as the old
+    // invoices_received default. A future reconciliation that links a JE flips it.
+    gl_match_status: row.posting_journal_entry_id ? 'matched' : 'unmatched',
+    file_name: row.source_filename || null,
+    notes: row.notes || null,
+    created_at: row.created_at || null,
+  };
+  if (row.vendor) out.vendor = row.vendor;
+  if (row.community) out.community = row.community;
+  return out;
+}
+
 // ============================================================================
 // Endpoints
 // ============================================================================
@@ -194,15 +233,17 @@ router.get('/', async (req, res) => {
 
     let vendors = data || [];
 
-    // Optional community filter: keep only vendors that have at least one invoice for this community.
+    // Optional community filter: keep only vendors that have at least one invoice
+    // for this community (canonical rail — ap_invoices).
     if (community_id) {
       const ids = vendors.map(v => v.id);
       if (ids.length > 0) {
-        const { data: invByCommunity } = await supabase
-          .from('invoices_received')
+        const { data: invByCommunity, error: filtErr } = await supabase
+          .from('ap_invoices')
           .select('vendor_id')
           .eq('community_id', community_id)
           .in('vendor_id', ids);
+        if (filtErr) throw filtErr;
         const allowed = new Set((invByCommunity || []).map(r => r.vendor_id));
         vendors = vendors.filter(v => allowed.has(v.id));
       } else {
@@ -238,12 +279,13 @@ router.get('/:vendorId', async (req, res) => {
       .single();
     if (vErr || !vendor) return res.status(404).json({ error: 'Vendor not found' });
 
-    const { data: invoices } = await supabase
-      .from('invoices_received')
-      .select('id, community_id, invoice_number, invoice_date, service_period_start, service_period_end, total_amount, status, gl_match_status, created_at, community:communities(name, vantaca_code)')
+    const { data: invoices, error: invErr } = await supabase
+      .from('ap_invoices')
+      .select('id, community_id, vendor_invoice_number, invoice_date, due_date, service_period_start, service_period_end, total_cents, status, posting_journal_entry_id, source_filename, notes, created_at, community:communities(name, vantaca_code)')
       .eq('vendor_id', vendorId)
       .order('invoice_date', { ascending: false, nullsFirst: false })
       .limit(50);
+    if (invErr) throw invErr;
 
     const { data: documents } = await supabase
       .from('vendor_documents')
@@ -251,7 +293,7 @@ router.get('/:vendorId', async (req, res) => {
       .eq('vendor_id', vendorId)
       .order('uploaded_at', { ascending: false });
 
-    res.json({ vendor, invoices: invoices || [], documents: documents || [] });
+    res.json({ vendor, invoices: (invoices || []).map(apInvoiceToLegacy), documents: documents || [] });
   } catch (err) {
     console.error('[vendors] detail failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -289,21 +331,28 @@ router.patch('/:vendorId', async (req, res) => {
   }
 });
 
-// POST /api/vendors/invoices/upload  — drop invoice PDF -> AI parse -> match/create vendor -> save invoice
+// POST /api/vendors/invoices/upload  — drop a HISTORICAL (already-paid) vendor
+// invoice PDF -> AI parse -> match/create vendor -> record on the CANONICAL rail.
 //
-// Dedup defense (real AP workflow gotcha — same invoice shouldn't get filed twice):
-//   1. byte-level: if the EXACT same PDF bytes already exist for this mgmt co,
-//      short-circuit before paying for a the AI call. Returns 409 with existing
-//      invoice info; client can choose to force_insert (rare — only legit if
-//      the same PDF is the source for two communities, which is unusual).
-//   2. semantic: after parse, if (vendor_id, invoice_number) already exists,
-//      return 409. Client can force_insert (rare — vendor reused a number).
-//   3. soft signal (no invoice_number): same vendor + same total + same date
-//      within 60 days -> warn. Returns 409 with warning level.
+// SSOT (migration 334): this is the vendor-page "build annual spend + 1099"
+// tool. A historical bill is recorded as:
+//   - one ap_invoice   (status='paid', fully paid) — the record the vendor page shows
+//   - one ap_payment   (status='completed', cash-basis) — what the 1099 view sums
+// NO GL accrual. These are already-paid history, not a new payable, so we do
+// NOT route through lib/ap/intake.js autoIntake (which posts an accrual JE and
+// queues for approval). We write the two rows directly.
 //
-// force_insert=true in body bypasses checks. The DB-level partial unique
-// index on (mgmt_co, vendor_id, invoice_number) is the final safety net for
-// race conditions.
+// Dedup uses the ONE canonical detector (lib/ap/dedup findDuplicates), which
+// reads ap_invoices — so this path and Emma's live AP path can finally see each
+// other's bills (the whole point of the merge). Layers:
+//   1. byte-level: exact same PDF for this community -> skip the AI call, 409.
+//   2. vendor + normalized invoice # -> certain, 409.
+//   3. vendor + amount + same/near date -> suspected, 409.
+// force_insert=true bypasses the detector. The DB UNIQUE
+// (community, vendor, vendor_invoice_number) is the final race-condition net.
+//
+// community_id is REQUIRED (ap_invoices.community_id is NOT NULL, and 1099 spend
+// is per filer/community anyway) — 400 if missing.
 router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
   const t0 = Date.now();
   if (!req.file) return res.status(400).json({ error: 'No PDF uploaded (expected field "pdf")' });
@@ -312,24 +361,38 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
   }
   const { community_id, finding_id, category_hint, force_insert } = req.body || {};
   const forceInsert = force_insert === 'true' || force_insert === true;
+  if (!community_id) {
+    return res.status(400).json({ error: 'Pick a community before uploading — a historical invoice is recorded per community (1099 spend is filed per community).' });
+  }
+
+  // Shape an ap_invoices dup row back into what the vendor-page frontend expects.
+  const dupExisting = (inv, vendorName) => ({
+    id: inv.id,
+    invoice_number: inv.vendor_invoice_number || null,
+    invoice_date: inv.invoice_date || null,
+    total_amount: inv.total_cents != null ? Number(inv.total_cents) / 100 : null,
+    vendor: vendorName ? { name: vendorName } : undefined,
+  });
 
   try {
-    // ---- Layer 1: file-hash check (skip if force_insert) ----
+    // ---- Layer 1: byte-identical file already on the canonical rail (skip AI) ----
     const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
     if (!forceInsert) {
-      const { data: hashHit } = await supabase
-        .from('invoices_received')
-        .select('id, invoice_number, invoice_date, total_amount, file_name, vendor_id, vendor:vendors(name)')
-        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-        .eq('file_hash', fileHash)
+      const { data: hashHit, error: hashErr } = await supabase
+        .from('ap_invoices')
+        .select('id, vendor_invoice_number, invoice_date, total_cents, vendor:vendors(name)')
+        .eq('community_id', community_id)
+        .eq('file_sha256', fileHash)
+        .neq('status', 'voided')
         .limit(1)
         .maybeSingle();
+      if (hashErr) throw hashErr;
       if (hashHit) {
         return res.status(409).json({
           duplicate: true,
           dup_reason: 'file_hash',
           message: 'Exact same PDF file is already on file. Skipping the AI parse — confirm if you really want a second copy.',
-          existing_invoice: hashHit,
+          existing_invoice: dupExisting(hashHit, hashHit.vendor?.name),
           new_file_name: req.file.originalname
         });
       }
@@ -354,22 +417,53 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       category: parsed.vendor_category_guess || category_hint || null
     });
 
-    // ---- Layer 2: semantic dup check on (vendor_id, invoice_number) ----
-    if (!forceInsert && parsed.invoice_number) {
-      const { data: numHit } = await supabase
-        .from('invoices_received')
-        .select('id, invoice_number, invoice_date, total_amount, file_name, vendor:vendors(name)')
-        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-        .eq('vendor_id', matchResult.vendor.id)
-        .eq('invoice_number', parsed.invoice_number)
-        .limit(1)
-        .maybeSingle();
-      if (numHit) {
+    // ---- Validate before persisting (extract -> validate -> render) ----
+    // total must be a positive amount (ap_invoices.total_cents CHECK > 0).
+    const totalCents = (parsed.total_amount !== null && parsed.total_amount !== undefined)
+      ? Math.round(Number(parsed.total_amount) * 100) : null;
+    if (!totalCents || totalCents <= 0) {
+      return res.status(400).json({
+        error: 'Could not read a positive invoice total from this PDF. Re-check the file or enter the invoice manually.',
+        diagnostic: { extracted_total: parsed.total_amount ?? null, parse_confidence: parsed.parse_confidence || null }
+      });
+    }
+    // invoice_date is NOT NULL on ap_invoices. Fall back to the paid date, then reject.
+    const paidDateInput = (req.body && req.body.paid_date) || parsed.paid_date || null;
+    const invoiceDate = parsed.invoice_date || paidDateInput || null;
+    if (!invoiceDate) {
+      return res.status(400).json({
+        error: 'Could not read an invoice date (or a paid date) from this PDF. Enter a paid date in the Historical Invoices box and retry.',
+        diagnostic: { extracted_invoice_date: parsed.invoice_date ?? null, paid_date: paidDateInput }
+      });
+    }
+    // Cash-basis payment date drives the 1099 year. Prefer the explicit paid date;
+    // fall back to the invoice date and flag it estimated (matches migration 334).
+    const paymentDate = paidDateInput || invoiceDate;
+    const dateEstimated = !paidDateInput;
+
+    // ---- Dedup on the canonical rail (unless force) ----
+    if (!forceInsert) {
+      const dup = await findDuplicates(supabase, {
+        communityId: community_id,
+        vendorId: matchResult.vendor.id,
+        invoiceNumber: parsed.invoice_number || null,
+        totalCents,
+        invoiceDate,
+        fileSha256: fileHash,
+        accountNumber: null,
+        servicePeriodStart: parsed.service_period_start || null,
+        servicePeriodEnd: parsed.service_period_end || null,
+      });
+      if (dup.verdict !== 'unique' && dup.matches.length) {
+        const top = dup.matches[0];
+        const dupReason = /same file/i.test(top.reason) ? 'file_hash'
+          : /invoice #|account/i.test(top.reason) ? 'vendor_invoice_number'
+          : 'soft_amount_date';
         return res.status(409).json({
           duplicate: true,
-          dup_reason: 'vendor_invoice_number',
-          message: `Invoice #${parsed.invoice_number} from ${matchResult.vendor.name} is already on file. Confirm if this is a legitimate second copy.`,
-          existing_invoice: numHit,
+          dup_reason: dupReason,
+          message: `${top.reason}. ${top.confidence === 'certain' ? 'This looks like the same bill.' : 'Likely a duplicate.'} Confirm if it is a legitimate second copy.`,
+          existing_invoice: dupExisting(top.invoice, matchResult.vendor.name),
           parsed,
           vendor: matchResult.vendor,
           vendor_was_created: matchResult.was_created,
@@ -379,69 +473,36 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       }
     }
 
-    // ---- Layer 3: soft dup signal (no invoice number, but same vendor+date+amount nearby) ----
-    if (!forceInsert && !parsed.invoice_number && parsed.invoice_date && parsed.total_amount != null) {
-      const dayLo = new Date(parsed.invoice_date); dayLo.setDate(dayLo.getDate() - 60);
-      const dayHi = new Date(parsed.invoice_date); dayHi.setDate(dayHi.getDate() + 60);
-      const { data: softHits } = await supabase
-        .from('invoices_received')
-        .select('id, invoice_number, invoice_date, total_amount, file_name')
-        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-        .eq('vendor_id', matchResult.vendor.id)
-        .eq('total_amount', Number(parsed.total_amount))
-        .gte('invoice_date', dayLo.toISOString().slice(0, 10))
-        .lte('invoice_date', dayHi.toISOString().slice(0, 10))
-        .limit(1);
-      if (softHits && softHits.length > 0) {
-        return res.status(409).json({
-          duplicate: true,
-          dup_reason: 'soft_amount_date',
-          message: `Same vendor + same amount ($${Number(parsed.total_amount).toLocaleString()}) within 60 days of this date already exists. Likely duplicate.`,
-          existing_invoice: softHits[0],
-          parsed,
-          vendor: matchResult.vendor,
-          vendor_was_created: matchResult.was_created,
-          vendor_match_method: matchResult.match_method,
-          vendor_match_score: matchResult.match_score
-        });
-      }
-    }
-
-    // ---- Insert the invoice ----
+    // ---- Insert the canonical ap_invoice (status='paid', fully settled) ----
     const { data: invoice, error: insErr } = await supabase
-      .from('invoices_received')
+      .from('ap_invoices')
       .insert({
-        management_company_id: BEDROCK_MGMT_CO_ID,
-        community_id: community_id || null,
+        community_id,
         vendor_id: matchResult.vendor.id,
-        invoice_number: parsed.invoice_number || null,
-        invoice_date: parsed.invoice_date || null,
-        // Cash-basis paid date (drives the 1099/spend year). Batch value from the
-        // Historical Invoices box; the AI's read is the fallback. NULL -> the
-        // spend view falls back to invoice_date (flagged estimated).
-        paid_date: (req.body && req.body.paid_date) || parsed.paid_date || null,
+        vendor_invoice_number: parsed.invoice_number || null,
+        invoice_date: invoiceDate,
+        due_date: parsed.due_date || null,
         service_period_start: parsed.service_period_start || null,
         service_period_end: parsed.service_period_end || null,
-        due_date: parsed.due_date || null,
-        total_amount: parsed.total_amount !== null && parsed.total_amount !== undefined ? Number(parsed.total_amount) : null,
-        currency: parsed.currency || 'USD',
-        line_items: parsed.line_items || [],
-        raw_text: null,
-        file_name: req.file.originalname,
-        file_hash: fileHash,
-        file_url: null,
-        source: 'manual_upload',
-        parsed_at: new Date().toISOString(),
-        parser_model: 'claude-sonnet-4-6',
-        parse_confidence: ['high','medium','low'].includes(parsed.parse_confidence) ? parsed.parse_confidence : 'medium',
-        status: 'received',
-        gl_match_status: 'unmatched',
+        subtotal_cents: totalCents,
+        tax_cents: 0,
+        total_cents: totalCents,
+        amount_paid_cents: totalCents,     // historical = already fully paid
+        status: 'paid',
+        paid_at: paymentDate,
+        // NO posting_journal_entry_id — historical paid record, not a new accrual.
+        source_filename: req.file.originalname,
+        file_sha256: fileHash,
+        intake_method: 'manual_upload',
+        intake_source_ref: finding_id || null,
+        dedup_status: 'unique',
+        auto_coded: false,
         notes: parsed.notes || null
       })
       .select()
       .single();
     if (insErr) {
-      // Catch unique-index violation gracefully (race condition between dup check and insert).
+      // Unique-index violation (community, vendor, invoice#) — race with the dup check.
       if (insErr.code === '23505') {
         return res.status(409).json({
           duplicate: true,
@@ -453,24 +514,51 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       throw insErr;
     }
 
+    // ---- Insert the matching cash-basis ap_payment (what 1099 sums) ----
+    // notes prefix 'hist-import:' makes v_vendor_annual_spend count it as
+    // historical spend; the '(date estimated...)' marker matches migration 334
+    // so the spend view flags estimated dates the same way.
+    const paymentNotes = 'hist-import:vendor_upload:' + invoice.id
+      + (dateEstimated ? ' (date estimated from invoice_date)' : '')
+      + (parsed.invoice_number ? ' inv#' + parsed.invoice_number : '');
+    const { data: payment, error: payErr } = await supabase
+      .from('ap_payments')
+      .insert({
+        community_id,
+        vendor_id: matchResult.vendor.id,
+        payment_date: paymentDate,
+        amount_cents: totalCents,
+        payment_method: 'other',
+        status: 'completed',
+        notes: paymentNotes
+      })
+      .select('id')
+      .single();
+    if (payErr) {
+      // Compensating delete — never leave a paid ap_invoice with no payment (it
+      // would show as a bill but never count toward 1099 spend).
+      await supabase.from('ap_invoices').delete().eq('id', invoice.id);
+      throw payErr;
+    }
+
     // Trade-tape entry.
     await supabase.from('agent_runs').insert({
       management_company_id: BEDROCK_MGMT_CO_ID,
-      community_id: community_id || null,
+      community_id,
       module: 'vendors',
       endpoint: 'POST /api/vendors/invoices/upload',
       request_input: { file_name: req.file.originalname, file_size: req.file.size, file_hash: fileHash, finding_id: finding_id || null, force_insert: forceInsert },
       retrieved_context: { vendor_id: matchResult.vendor.id, was_new_vendor: matchResult.was_created },
       prompt: 'parseVendorInvoicePDF',
       model: 'claude-sonnet-4-6',
-      response: { extracted: parsed, match_method: matchResult.match_method, match_score: matchResult.match_score, invoice_id: invoice.id },
+      response: { extracted: parsed, match_method: matchResult.match_method, match_score: matchResult.match_score, ap_invoice_id: invoice.id, ap_payment_id: payment.id },
       input_tokens: usage ? usage.input_tokens : null,
       output_tokens: usage ? usage.output_tokens : null,
       duration_ms: Date.now() - t0
     });
 
     res.json({
-      invoice,
+      invoice: apInvoiceToLegacy(invoice),
       vendor: matchResult.vendor,
       vendor_was_created: matchResult.was_created,
       vendor_match_method: matchResult.match_method,
@@ -484,42 +572,54 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
   }
 });
 
-// DELETE /api/vendors/invoices/:invoiceId  — remove an invoice (e.g. duplicate)
-// Vendor rollups recompute via the trusted_vendor_invoice_rollup trigger.
+// DELETE /api/vendors/invoices/:invoiceId  — remove a historical invoice (e.g.
+// a duplicate). Deletes the canonical ap_invoice AND its linked cash-basis
+// ap_payment (the 'hist-import:vendor_upload:<id>' row) so the 1099/spend total
+// drops by the same amount — never orphan a payment when its invoice is gone.
 router.delete('/invoices/:invoiceId', async (req, res) => {
   const { invoiceId } = req.params;
   try {
     // Pull the row first so we can log what was deleted.
-    const { data: existing } = await supabase
-      .from('invoices_received')
-      .select('id, vendor_id, invoice_number, invoice_date, total_amount, file_name')
+    const { data: existing, error: exErr } = await supabase
+      .from('ap_invoices')
+      .select('id, vendor_id, community_id, vendor_invoice_number, invoice_date, total_cents, source_filename')
       .eq('id', invoiceId)
-      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
-
+    if (exErr) throw exErr;
     if (!existing) return res.status(404).json({ error: 'Invoice not found' });
 
-    const { error: delErr } = await supabase
-      .from('invoices_received')
+    // Remove the paired historical payment first (spend view reads ap_payments).
+    // Keyed on the exact marker this upload path writes.
+    const { data: paysDeleted, error: payDelErr } = await supabase
+      .from('ap_payments')
       .delete()
-      .eq('id', invoiceId)
-      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+      .eq('community_id', existing.community_id)
+      .eq('vendor_id', existing.vendor_id)
+      .like('notes', 'hist-import:vendor_upload:' + invoiceId + '%')
+      .select('id');
+    if (payDelErr) throw payDelErr;
+
+    const { error: delErr } = await supabase
+      .from('ap_invoices')
+      .delete()
+      .eq('id', invoiceId);
     if (delErr) throw delErr;
 
     // Audit: every delete goes on the trade tape.
     await supabase.from('agent_runs').insert({
       management_company_id: BEDROCK_MGMT_CO_ID,
+      community_id: existing.community_id,
       module: 'vendors',
       endpoint: 'DELETE /api/vendors/invoices/:id',
       request_input: { invoice_id: invoiceId, reason: req.body?.reason || null },
-      retrieved_context: { deleted_record: existing },
+      retrieved_context: { deleted_record: existing, deleted_payment_ids: (paysDeleted || []).map(p => p.id) },
       prompt: null,
       model: null,
       response: { ok: true },
       duration_ms: 0
     });
 
-    res.json({ ok: true, deleted: existing });
+    res.json({ ok: true, deleted: apInvoiceToLegacy(existing), deleted_payment_count: (paysDeleted || []).length });
   } catch (err) {
     console.error('[vendors] invoice delete failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -531,18 +631,20 @@ router.get('/invoices/list', async (req, res) => {
   try {
     const { community_id, vendor_id, status, gl_match_status, limit } = req.query;
     let q = supabase
-      .from('invoices_received')
-      .select('*, vendor:vendors(name, category), community:communities(name, vantaca_code)')
-      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .from('ap_invoices')
+      .select('id, community_id, vendor_id, vendor_invoice_number, invoice_date, due_date, service_period_start, service_period_end, total_cents, status, posting_journal_entry_id, source_filename, notes, created_at, vendor:vendors(name, category), community:communities(name, vantaca_code)')
       .order('invoice_date', { ascending: false, nullsFirst: false })
       .limit(Number(limit) || 100);
     if (community_id) q = q.eq('community_id', community_id);
     if (vendor_id) q = q.eq('vendor_id', vendor_id);
     if (status) q = q.eq('status', status);
-    if (gl_match_status) q = q.eq('gl_match_status', gl_match_status);
+    // gl_match_status is a derived (not stored) field on ap_invoices — 'matched'
+    // means a posting JE is linked. Translate the filter to the underlying column.
+    if (gl_match_status === 'matched') q = q.not('posting_journal_entry_id', 'is', null);
+    else if (gl_match_status === 'unmatched') q = q.is('posting_journal_entry_id', null);
     const { data, error } = await q;
     if (error) throw error;
-    res.json({ invoices: data || [] });
+    res.json({ invoices: (data || []).map(apInvoiceToLegacy) });
   } catch (err) {
     console.error('[vendors] invoices list failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -554,12 +656,12 @@ router.get('/invoices/:invoiceId', async (req, res) => {
   const { invoiceId } = req.params;
   try {
     const { data: invoice, error: iErr } = await supabase
-      .from('invoices_received')
-      .select('*, vendor:vendors(*), community:communities(name, vantaca_code, legal_name)')
+      .from('ap_invoices')
+      .select('id, community_id, vendor_id, vendor_invoice_number, invoice_date, due_date, service_period_start, service_period_end, total_cents, status, posting_journal_entry_id, source_filename, notes, created_at, vendor:vendors(*), community:communities(name, vantaca_code, legal_name)')
       .eq('id', invoiceId)
       .single();
     if (iErr || !invoice) return res.status(404).json({ error: 'Invoice not found' });
-    res.json({ invoice });
+    res.json({ invoice: apInvoiceToLegacy(invoice) });
   } catch (err) {
     console.error('[vendors] invoice detail failed:', err.message);
     res.status(500).json({ error: err.message });
