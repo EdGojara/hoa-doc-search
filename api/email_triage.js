@@ -651,10 +651,20 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       try { const { getArcApplicationForm } = require('../lib/email/arc_application'); const f = await getArcApplicationForm(communityId); if (f) { arcFormTitle = f.title; autoAttachments.push({ id: f.id, title: f.title, auto: true }); } } catch (_) {}
     }
 
+    // Encode-Ed: pull how Ed edited past Claire replies of this kind, feed them
+    // in as few-shot examples so this draft moves toward his voice. Owner-only
+    // (single-teacher); best-effort (empty until migration 335 + some sends).
+    let replyExamples = [];
+    try {
+      const { getReplyExamples } = require('../lib/email/reply_learning');
+      replyExamples = await getReplyExamples(supabase, { persona: 'claire', classification: m.classification, communityId, ownerEmail: OWNER_EMAIL });
+    } catch (_) {}
+
     const draft = await draftReply({
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, conversation_id: m.conversation_id, sender_email: m.sender_email, graph_id: m.graph_id, mailbox: m.mailbox, has_attachments: m.has_attachments },
       classification: m.classification,
       contactId: m.resolved_contact_id, propertyId, communityId,
+      examples: replyExamples,
       // Greet whoever actually wrote in (the sender), not the household account
       // name — so a joint "Julie McKay & James Storm" record still gets "Hi James"
       // when James emailed. Account DATA still comes from contactId/propertyId.
@@ -848,7 +858,7 @@ router.post('/:id/forward-note', express.json(), async (req, res) => {
 // depth: refuse to send for non-draftable (compliance) classes even if asked.
 router.post('/:id/send', express.json(), async (req, res) => {
   try {
-    const { body, to, subject, reviewed_by } = req.body || {};
+    const { body, to, subject, reviewed_by, original_draft } = req.body || {};
     // Optional Cc — copy a teammate, the board, another owner on the reply.
     const ccList = String((req.body || {}).cc || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).join(', ');
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
@@ -947,13 +957,30 @@ router.post('/:id/send', express.json(), async (req, res) => {
     if (alsoHandle.length) {
       try { await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: `${reviewed_by || 'staff'} (covered by one reply)`, reviewed_at: new Date().toISOString() }).in('id', alsoHandle); } catch (_) {}
     }
-    await supabase.from('email_messages').insert({
+    const { data: outRow } = await supabase.from('email_messages').insert({
       mailbox: fromMailbox, direction: 'outbound', sender_email: fromMailbox,
       sender_name: senderLabel, recipients: [recipient], subject: subj, body_preview: String(body).trim().slice(0, 2000),
       classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `${senderLabel.split(' ')[0]} replied to ${recipient}`, persona,
       community_id: m.community_id, resolved_contact_id: m.resolved_contact_id, resolved_property_id: m.resolved_property_id, resolved_vendor_id: m.resolved_vendor_id,
       resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'association_record', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString(),
-    });
+    }).select('id').maybeSingle();
+
+    // Encode-Ed: capture Claire's original draft next to what was actually sent,
+    // so her future drafts of this kind learn from the edit. Best-effort — never
+    // affects the send. Single-teacher filtering happens at retrieval (edited_by).
+    try {
+      const { captureReplyEdit } = require('../lib/email/reply_learning');
+      const authed = await getAuthedUser(req).catch(() => null);
+      await captureReplyEdit(supabase, {
+        inboundId: req.params.id,
+        outboundId: outRow ? outRow.id : null,
+        communityId: m.community_id,
+        persona, classification: m.classification, subject: subj,
+        originalDraft: original_draft || null,
+        finalSent: String(body).trim(),
+        editedBy: (authed && authed.email) || reviewed_by || null,
+      });
+    } catch (_) { /* learning capture must never break a send */ }
     // DRV: log Miranda's sent reply onto the enforcement case history.
     if (persona === 'miranda' && m.extracted && m.extracted.drv && m.extracted.drv.violation_id) {
       try {

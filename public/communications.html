@@ -152,6 +152,7 @@ let selectedIds = new Set();   // checkbox multi-select for bulk dismiss
 let attachByMsg = {};   // messageId -> [{id, title, auto}] documents attached to the reply
 let communityByMsg = {};// messageId -> community_id (scopes the document search)
 let recipientByMsg = {};// messageId -> {to, source} suggested reply recipient (body email vs envelope sender)
+let originalDraftByMsg = {};// messageId -> Claire's FIRST autonomous draft (the encode-Ed learning baseline vs what Ed actually sends)
 const PNAME = { claire:'Claire', emma:'Emma Brooks', kat:'Kat Reed', annie:'Annie Reeves', miranda:'Miranda Pierce', amanda:'Amanda Albright', reese:'Reese Calloway', paige:'Paige Chandler', general:'General inbox' };
 const PMAIL = { claire:'claire@bedrocktx.com', emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com', miranda:'miranda@bedrocktx.com' };
 let openPersona = null;   // which teammate's emails are expanded
@@ -585,6 +586,9 @@ async function doDraft(id, persona){
   coversByMsg[id] = j.covers || [];
   attachByMsg[id] = j.auto_attachments || []; communityByMsg[id] = j.community_id || '';
   recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender' };
+  // Baseline for encode-Ed: this fresh draft is what Claire produced on her own.
+  // A regenerate resets it; a Rewrite-with-notes deliberately keeps the FIRST one.
+  originalDraftByMsg[id] = j.body || '';
   box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id]);
 }
 // Rewrite the open draft incorporating the reviewer's notes (Ed's thoughts).
@@ -604,6 +608,9 @@ async function doRewrite(id, persona){
   if(j.draftable===false){ box.innerHTML = prevHtml; alert('No draft — '+(j.reason||'')); return; }
   coversByMsg[id] = j.covers || [];
   recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender' };
+  // Keep the FIRST autonomous draft as the learning baseline — a rewrite folds in
+  // Ed's notes, and the draft->sent delta should reflect his teaching, not reset.
+  if (!originalDraftByMsg[id]) originalDraftByMsg[id] = j.body || '';
   // Keep any documents the operator manually attached; refresh the auto ones.
   const manual = (attachByMsg[id]||[]).filter(a=>!a.auto);
   attachByMsg[id] = [...(j.auto_attachments||[]), ...manual];
@@ -623,7 +630,8 @@ async function doSend(id, btn, careful, persona){
   const ccEl = document.getElementById('cc-'+id); const cc = ccEl ? (ccEl.value||'').trim() : '';
   const toEl = document.getElementById('to-'+id); const to = toEl ? (toEl.value||'').trim() : '';
   if(toEl && !to){ btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert('Enter a recipient in the To field before sending.'); toEl.focus(); return; }
-  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, to, also_handle, attach_doc_ids, cc})});
+  const original_draft = originalDraftByMsg[id] || '';
+  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, to, also_handle, attach_doc_ids, cc, original_draft})});
   const j = await r.json();
   if(r.ok){ document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}${j.also_handled?` — cleared ${j.also_handled+1} emails`:''}.</div></div>`; delete coversByMsg[id]; loadStats(); setTimeout(loadList, 800); }
   else { btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert(j.detail || j.error || 'Send failed'); }
