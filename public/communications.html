@@ -151,6 +151,7 @@ let coversByMsg = {};   // messageId -> [{id, subject}] other emails this reply 
 let selectedIds = new Set();   // checkbox multi-select for bulk dismiss
 let attachByMsg = {};   // messageId -> [{id, title, auto}] documents attached to the reply
 let communityByMsg = {};// messageId -> community_id (scopes the document search)
+let recipientByMsg = {};// messageId -> {to, source} suggested reply recipient (body email vs envelope sender)
 const PNAME = { claire:'Claire', emma:'Emma Brooks', kat:'Kat Reed', annie:'Annie Reeves', miranda:'Miranda Pierce', amanda:'Amanda Albright', reese:'Reese Calloway', paige:'Paige Chandler', general:'General inbox' };
 const PMAIL = { claire:'claire@bedrocktx.com', emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com', miranda:'miranda@bedrocktx.com' };
 let openPersona = null;   // which teammate's emails are expanded
@@ -391,6 +392,7 @@ function draftBoxHtml(id, subject, body, careful, persona, covers){
     <div class="note">${esc(whoFirst)}'s draft${subject?' ('+esc(subject)+')':''} — review / edit, then approve. Nothing sends until you click.</div>
     <textarea id="dt-${id}">${esc(body||'')}</textarea>
     <div class="note" style="margin-top:5px;">Sends from <strong>${esc(mail)}</strong> with ${esc(whoFirst)}'s AI signature appended.</div>
+    ${toRowHtml(id)}
     <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
       <label style="font-size:12px;color:var(--muted);min-width:24px;">Cc</label>
       <input id="cc-${id}" type="text" placeholder="copy anyone — a teammate, the board, another owner (commas for multiple)" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;flex:1;">
@@ -405,6 +407,22 @@ function draftBoxHtml(id, subject, body, careful, persona, covers){
       <button class="act draft" onclick="navigator.clipboard.writeText(document.getElementById('dt-${id}').value); this.textContent='Copied ✓';">Copy</button>
       <button class="act dismiss" onclick="document.getElementById('draft-${id}').innerHTML='';">Close</button>
     </div></div>`;
+}
+// The reply recipient. Prefilled with the suggested address — the homeowner's
+// real email from the body when the message came through a website contact form
+// (which relays from a fixed address), otherwise the envelope sender. Always
+// editable, and flagged when it was pulled from the form so the operator knows
+// the reply is going to the person, not the website. (Ed 2026-07-25 — Bich Pham.)
+function toRowHtml(id){
+  const r = recipientByMsg[id] || { to:'', source:'sender' };
+  const fromForm = r.source === 'form_body';
+  const hint = fromForm
+    ? `<div class="note" style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:5px 9px;color:#9a3412;margin-top:4px;font-size:12px;">↩ This came through a website contact form. Replying here reaches <strong>${esc(r.to||'')}</strong> — the person who wrote in — not the form's address. Edit if needed.</div>`
+    : '';
+  return `<div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
+      <label style="font-size:12px;color:var(--muted);min-width:24px;">To</label>
+      <input id="to-${id}" type="text" value="${esc(r.to||'')}" placeholder="recipient email" style="padding:6px 8px;border:1px solid ${fromForm?'#f59e0b':'var(--line)'};border-radius:6px;font-size:12.5px;flex:1;">
+    </div>${hint}`;
 }
 // ---- Attach documents to a reply -----------------------------------------
 function chipsHtml(id){
@@ -566,6 +584,7 @@ async function doDraft(id, persona){
   if(j.draftable===false){ box.innerHTML = `<div class="draftbox"><div class="refuse">No draft — ${esc(j.reason)}.</div></div>`; return; }
   coversByMsg[id] = j.covers || [];
   attachByMsg[id] = j.auto_attachments || []; communityByMsg[id] = j.community_id || '';
+  recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender' };
   box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id]);
 }
 // Rewrite the open draft incorporating the reviewer's notes (Ed's thoughts).
@@ -584,6 +603,7 @@ async function doRewrite(id, persona){
   if(!r.ok){ box.innerHTML = prevHtml; alert('Couldn’t rewrite: '+(j.error||'error')+'. Your draft is unchanged.'); return; }
   if(j.draftable===false){ box.innerHTML = prevHtml; alert('No draft — '+(j.reason||'')); return; }
   coversByMsg[id] = j.covers || [];
+  recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender' };
   // Keep any documents the operator manually attached; refresh the auto ones.
   const manual = (attachByMsg[id]||[]).filter(a=>!a.auto);
   attachByMsg[id] = [...(j.auto_attachments||[]), ...manual];
@@ -601,7 +621,9 @@ async function doSend(id, btn, careful, persona){
   // documents the operator picked manually.
   const attach_doc_ids = (attachByMsg[id]||[]).filter(a=>!a.auto).map(a=>a.id);
   const ccEl = document.getElementById('cc-'+id); const cc = ccEl ? (ccEl.value||'').trim() : '';
-  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, also_handle, attach_doc_ids, cc})});
+  const toEl = document.getElementById('to-'+id); const to = toEl ? (toEl.value||'').trim() : '';
+  if(toEl && !to){ btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert('Enter a recipient in the To field before sending.'); toEl.focus(); return; }
+  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, to, also_handle, attach_doc_ids, cc})});
   const j = await r.json();
   if(r.ok){ document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}${j.also_handled?` — cleared ${j.also_handled+1} emails`:''}.</div></div>`; delete coversByMsg[id]; loadStats(); setTimeout(loadList, 800); }
   else { btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert(j.detail || j.error || 'Send failed'); }

@@ -18,6 +18,7 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { draftReply } = require('../lib/email/draft_reply');
+const { suggestReplyTo } = require('../lib/email/reply_recipient');
 const graphSend = require('../lib/email/graph_send');
 const graphIngest = require('../lib/email/graph_ingest');
 const { requireAdmin, getAuthedUser, OWNER_EMAIL } = require('./_require_admin');
@@ -552,6 +553,14 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     // "forgot something / sent more info." Reply once, cover them all.
     const siblings = await findSiblingEmails({ id: req.params.id, ...m });
 
+    // Who should the reply actually go to? A website contact form relays every
+    // submission from a fixed address (Eaglewood's sends as mkessler@bedrocktx.com)
+    // with the real person's email in the BODY. Suggest THAT so the reply reaches
+    // the homeowner, not the website. The UI shows it as an editable To.
+    // (Ed 2026-07-25 — the Bich Pham thread.)
+    const suggested = suggestReplyTo({ senderEmail: m.sender_email, senderName: m.sender_name, bodyText: m.body_full || m.body_preview });
+    const recipientOut = { suggested_recipient: suggested.email, recipient_source: suggested.source, sender_email: m.sender_email };
+
     // Persona routing: a vendor / AP conversation (came to emma@, or resolves to
     // a vendor, or is vendor-financial) is Emma's — she grounds the reply in the
     // AP subledger. Everything else is Claire's (homeowner/front-office).
@@ -567,7 +576,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
         vendorId: m.resolved_vendor_id, vendorName: m.resolved_vendor ? m.resolved_vendor.name : (m.sender_name || null),
         notes, currentDraft,
       });
-      return res.json({ ...draft, covers });
+      return res.json({ ...draft, covers, ...recipientOut });
     }
     // Every other specialist (Kat, Amanda, Reese, Paige) replies in-voice to
     // ANYTHING in their queue via the general persona drafter. (Ed 2026-07-20:
@@ -585,7 +594,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
         },
         notes, currentDraft,
       });
-      return res.json({ ...draft, covers });
+      return res.json({ ...draft, covers, ...recipientOut });
     }
 
     // Homeowner linked but community/property didn't come across (e.g. matched by
@@ -657,7 +666,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       siblings, // cover the homeowner's other recent emails in one reply
       applicationOnFile: accFormCtx, // what they attached (address/project) — confirm, don't re-ask
     });
-    res.json({ ...draft, covers, auto_attachments: autoAttachments, community_id: communityId });
+    res.json({ ...draft, covers, auto_attachments: autoAttachments, community_id: communityId, ...recipientOut });
   } catch (err) {
     console.error('[email_triage] draft-reply failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -844,7 +853,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
     const ccList = String((req.body || {}).cc || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).join(', ');
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
     const { data: m, error } = await supabase.from('email_messages')
-      .select('persona, sender_email, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, extracted, community:community_id(name)')
+      .select('persona, sender_email, sender_name, body_preview, body_full, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, extracted, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
@@ -857,7 +866,13 @@ router.post('/:id/send', express.json(), async (req, res) => {
     // is the control, not the classifier.
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'claire@bedrocktx.com send is not wired yet — create the mailbox + Azure app (Mail.Send) and set GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET.' });
 
-    const recipient = to || m.sender_email;
+    // Recipient: an explicit To from the operator wins. Otherwise DON'T blindly
+    // reply to the envelope sender — a website contact form relays from a fixed
+    // address (mkessler@bedrocktx.com) with the homeowner's real email in the
+    // body, so falling back to sender_email sends the answer to the website, not
+    // the person. Suggest the body email when present. (Ed 2026-07-25.)
+    const recipient = (to && String(to).trim())
+      || suggestReplyTo({ senderEmail: m.sender_email, senderName: m.sender_name, bodyText: m.body_full || m.body_preview }).email;
     if (!recipient) return res.status(400).json({ error: 'no_recipient' });
     const commName = m.community ? m.community.name : '';
     const subj = subject || (/^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || 'your message'}`);
