@@ -285,7 +285,7 @@ async function assemble(contactId) {
 
   // Correspondence: interactions (letters/calls/notes) + emails from the hub
   const interactions = await safe(() => supabase.from('interactions')
-    .select('id, type, direction, subject, content, delivery_method, sent_at, created_at, violation_id')
+    .select('id, type, direction, subject, content, delivery_method, status, sent_at, mailed_at, printed_at, created_at, violation_id')
     .or(`contact_id.eq.${contactId}${propIds.length ? ',property_id.in.(' + propIds.join(',') + ')' : ''}`)
     .order('created_at', { ascending: false }).limit(60));
   // Match emails by resolved contact OR by any owned property — mirrors the
@@ -336,10 +336,18 @@ async function assemble(contactId) {
 
   // Map each violation to the letter PDF that was actually sent for it (from the
   // interactions ledger), so the 360 can link the real letter right on the
-  // violation row — next to the photo.
+  // violation row — next to the photo. ONLY letters that actually went out: a
+  // rejected/draft/never-sent letter has no stored PDF, so linking it 404s
+  // (file_not_found) — Ed hit exactly that on 5506 Hickory Harvest's RV letter,
+  // which was status=rejected, sent_at=null. Require a dispatched state.
+  const BAD_LETTER_STATUS = new Set(['rejected', 'failed', 'draft', 'pending', 'cancelled', 'error', 'superseded', 'unreviewed']);
+  const letterWentOut = (it) => {
+    if (it.status && BAD_LETTER_STATUS.has(String(it.status))) return false;
+    return !!(it.sent_at || it.mailed_at || it.printed_at);
+  };
   const letterByViolation = {};
   for (const it of (interactions || [])) {
-    if (it.violation_id && it.content && /\.pdf$/i.test(it.content) && /letter/i.test(it.type || '')) {
+    if (it.violation_id && it.content && /\.pdf$/i.test(it.content) && /letter/i.test(it.type || '') && letterWentOut(it)) {
       if (!letterByViolation[it.violation_id]) letterByViolation[it.violation_id] = it.content;
     }
   }
