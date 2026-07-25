@@ -241,8 +241,47 @@ async function assemble(contactId) {
     };
   });
 
-  // ARC (defensive — table may be empty / shape unknown)
-  const arc = propIds.length ? await safe(() => supabase.from('arc_applications').select('*').in('property_id', propIds).limit(25)) : [];
+  // ARC / ACC decisions for THIS owner's properties. The old code queried a
+  // NON-EXISTENT `arc_applications` table, so this panel was always empty and
+  // ACC history/conditions never surfaced at the property (Ed 2026-07-25). Real
+  // sources: acc_decisions (Annie's queue, matched by community + address key)
+  // and community_applications (portal, linked by property_address_id). Conditions
+  // ride along so enforcement can check compliance against what was approved.
+  const _arcAddrKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').slice(0, 3).join(' ');
+  const _propKeys = new Set(properties.map((p) => _arcAddrKey(p.address)).filter(Boolean));
+  const _arcCommIds = [...new Set(properties.map((p) => p.community_id).filter(Boolean))];
+  let arc = [];
+  if (_arcCommIds.length) {
+    const accRows = await safe(() => supabase.from('acc_decisions')
+      .select('id, reference_number, project_summary, decision_type, status, letter_body, homeowner_address, created_at, decided_at')
+      .in('community_id', _arcCommIds).order('created_at', { ascending: false }).limit(60));
+    accRows.filter((d) => _propKeys.has(_arcAddrKey(d.homeowner_address))).forEach((d) => {
+      const decided = d.status === 'decided';
+      arc.push({
+        source: 'acc', id: d.id, reference: d.reference_number, project: d.project_summary || null,
+        status: decided ? 'decided' : 'pending', decision: d.decision_type || null,
+        submitted_at: d.created_at, decided_at: d.decided_at || (decided ? d.created_at : null),
+        // For a conditional approval the conditions live in the sent letter body —
+        // carry it so enforcement can see exactly what was approved.
+        conditions: (decided && /condition/i.test(String(d.decision_type || ''))) ? (d.letter_body || null) : null,
+      });
+    });
+  }
+  if (propIds.length) {
+    const portalRows = await safe(() => supabase.from('community_applications')
+      .select('id, reference_number, service_type, final_status, final_decided_at, submitted_at, final_decision_reasoning, property_address_id')
+      .in('property_address_id', propIds).order('submitted_at', { ascending: false }).limit(25));
+    portalRows.forEach((d) => {
+      const decided = !!d.final_decided_at;
+      arc.push({
+        source: 'portal', id: d.id, reference: d.reference_number, project: d.service_type || null,
+        status: decided ? 'decided' : 'pending', decision: d.final_status || null,
+        submitted_at: d.submitted_at, decided_at: d.final_decided_at,
+        conditions: (decided && /condition/i.test(String(d.final_status || ''))) ? (d.final_decision_reasoning || null) : null,
+      });
+    });
+  }
+  arc.sort((a, b) => String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')));
 
   // Correspondence: interactions (letters/calls/notes) + emails from the hub
   const interactions = await safe(() => supabase.from('interactions')
@@ -369,7 +408,14 @@ Payment plan: ${(d.paymentPlans || []).filter((p) => p.status === 'active').map(
 Open violations (${openV.length}): ${openV.map((v) => `${v.category} @ ${v.current_stage}, opened ${(v.opened_at || '').slice(0, 10)}`).join('; ') || 'none'}
 Violation history (${d.violations.length} total): ${d.violations.slice(0, 12).map((v) => `${v.category} [${v.open ? 'open ' + v.current_stage : 'resolved'}]`).join('; ')}
 Recent payments/charges: ${d.ar.transactions.slice(0, 8).map((t) => `${(t.transaction_date || '').slice(0, 10)} ${t.txn_type || ''} ${money(Number(t.amount_cents) || 0)}`).join('; ') || 'none'}
-ARC submissions: ${d.arc.length}
+ARC/ACC (${d.arc.length} on file): ${(() => {
+  const pend = (d.arc || []).filter((a) => a.status === 'pending');
+  const cond = (d.arc || []).filter((a) => a.status === 'decided' && a.conditions);
+  const parts = [];
+  if (pend.length) parts.push('PENDING — ' + pend.map((a) => `${a.project || 'application'} submitted ${(a.submitted_at || '').slice(0, 10)} (${Math.max(0, Math.round((Date.parse(new Date().toISOString().slice(0, 10)) - Date.parse(String(a.submitted_at || '').slice(0, 10))) / 864e5))} days, no decision yet)`).join('; '));
+  if (cond.length) parts.push('APPROVED WITH CONDITIONS on file (check compliance if a violation relates to it) — ' + cond.map((a) => a.project || a.reference || 'application').join(', '));
+  return parts.join(' | ') || 'none';
+})()}
 Phone calls (${d.calls.length}): ${d.calls.slice(0, 6).map((c) => `${(c.started_at || '').slice(0, 10)} ${c.status || ''}${c.brief ? ' — ' + String(c.brief).slice(0, 80) : ''}`).join('; ') || 'none'}
 Recent correspondence: ${[...d.interactions.slice(0, 10).map((i) => `${(i.created_at || '').slice(0, 10)} ${i.type} ${i.direction}${i.subject ? ' — ' + i.subject : ''}`), ...d.emails.slice(0, 8).map((e) => `${(e.received_at || '').slice(0, 10)} email ${e.direction} — ${e.ai_summary || e.subject || ''}`)].join(' | ') || 'none'}`;
 

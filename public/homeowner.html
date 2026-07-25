@@ -243,8 +243,17 @@ async function openProfile(cid){
         ${(d.violations||[]).slice(0,10).map(v=>`<div class="li">${esc(v.category)} <span class="badge ${v.open?'b-open':'b-res'}">${v.open?esc(String(v.current_stage).replace(/_/g,' ')):esc(v.status_label||'resolved')}</span>${v.detail?`<div style="font-size:12.5px;color:#33414f;margin-top:3px;">${esc(v.detail)}</div>`:''}<div class="t">opened ${d10(v.opened_at)}${v.resolved_at?' · resolved '+d10(v.resolved_at):''}${v.photo_path?` · <a href="/api/homeowner/file?kind=photo&path=${encodeURIComponent(v.photo_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📷 Photo</a>`:''}${v.letter_path?` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(v.letter_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter</a>`:''}</div></div>`).join('')||'<div class="empty">No violations.</div>'}
       </div>
       <div class="card">
-        <div class="sec-title">🏠 ARC / architectural (${(d.arc||[]).length})</div>
-        ${(d.arc||[]).length?(d.arc||[]).slice(0,8).map(a=>`<div class="li">${esc(a.request_type||a.type||a.description||'ARC request')} <span class="t">${d10(a.created_at||a.submitted_at)}</span></div>`).join(''):'<div class="empty">No ARC submissions.</div>'}
+        ${(()=>{
+          const arc=(d.arc||[]);
+          const pend=arc.filter(a=>a.status==='pending');
+          const done=arc.filter(a=>a.status!=='pending');
+          const daysAgo=(s)=>{ if(!s)return ''; const dd=Math.max(0,Math.round((Date.now()-new Date(s))/864e5)); return dd+'d'; };
+          const outcome=(a)=>{ const s=(a.decision||'').toLowerCase(); return /condition/.test(s)?'Approved w/ conditions':/approv/.test(s)?'Approved':(/den|reject/.test(s)?'Denied':(a.decision||'—')); };
+          const pendHtml=pend.length?pend.map(a=>`<div class="li"><div><strong>${esc(a.project||'Application')}</strong> <span style="font-size:11px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:99px;">pending ${daysAgo(a.submitted_at)}</span></div><div class="t">${esc(a.reference||'')} · submitted ${d10(a.submitted_at)}</div></div>`).join(''):'';
+          const doneHtml=done.slice(0,3).map(a=>`<div class="li"><div>${esc(a.project||'Application')} — <strong>${esc(outcome(a))}</strong></div><div class="t">${esc(a.reference||'')} · ${d10(a.submitted_at)}${a.decided_at?' → '+d10(a.decided_at):''}</div>${a.conditions?`<details style="margin-top:4px;"><summary style="cursor:pointer;font-size:11.5px;color:#0B1D34;font-weight:600;">📋 Approved conditions (check compliance)</summary><div style="font-size:12px;white-space:pre-wrap;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;margin-top:4px;max-height:180px;overflow:auto;">${esc(a.conditions)}</div></details>`:''}</div>`).join('');
+          return `<div class="sec-title">🏠 ARC / architectural (${arc.length}${pend.length?` · ${pend.length} pending`:''})</div>`
+            + (arc.length? (pendHtml+doneHtml) : '<div class="empty">No ARC submissions on file.</div>');
+        })()}
       </div>
       <div class="card">
         <div class="sec-title">🏊 Pool access (${(d.poolAccess||[]).filter(p=>p.status==='active').length} active)</div>
