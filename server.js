@@ -2411,9 +2411,12 @@ app.post('/acc-review/decisions/:id/reply', express.json({ limit: '256kb' }), as
     if (!graph.isConfigured()) return res.status(400).json({ error: 'Email is not connected.' });
     const subject = String(b.subject || '').trim()
       || `Your architectural application${d.reference_number ? ` (${d.reference_number})` : ''}`;
-    const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;white-space:pre-wrap;">${body.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</div>
-      <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a2230;margin-top:14px;">Thank you,<br>Annie Reeves<br>Architectural Review Coordinator<br>Bedrock Association Management</div>`;
-    await graph.sendAs({ from: graph.ANNIE_MAILBOX, to, subject, html });
+    // One shared Annie signature everywhere (Ed 2026-07-25) — same builder the
+    // decision email uses, so every Annie email carries the identical sign-off +
+    // inline logo instead of a hand-rolled variant.
+    const { buildAnnieEmail } = require('./lib/email/annie_signature');
+    const built = buildAnnieEmail(body, d.community_name);
+    await graph.sendAs({ from: graph.ANNIE_MAILBOX, to, subject, html: built.html, attachments: built.attachments || [] });
     // Log it so the reply shows on the team board like any other outbound.
     try {
       await supabase.from('email_messages').insert({
@@ -2679,18 +2682,26 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
                    : decisionType === 'request_more_info' ? 'More information needed'
                    : 'Decision';
         const subject = `${dec.community_name} architectural request — ${verb}${dec.reference_number ? ' (' + dec.reference_number + ')' : ''}`;
-        const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#1a2332;white-space:pre-wrap;">${bodyText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</div>`;
+        // Use the shared Annie signature builder so the decision email carries her
+        // sign-off, same as every other Annie email (Ed 2026-07-25: every outbound
+        // email must have a signature). Returns { html, attachments } — the
+        // attachments include her inline logo, which we merge with the letter PDF.
+        const { buildAnnieEmail } = require('./lib/email/annie_signature');
+        const built = buildAnnieEmail(bodyText, dec.community_name);
         await graph.sendAs({
           from: graph.ANNIE_MAILBOX,
           to: toEmail,
           subject,
-          html,
-          attachments: [{
-            '@odata.type': '#microsoft.graph.fileAttachment',
-            name: `${(dec.reference_number || 'ACC_decision').replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`,
-            contentType: 'application/pdf',
-            contentBytes: pdfBuffer.toString('base64'),
-          }],
+          html: built.html,
+          attachments: [
+            ...(built.attachments || []),
+            {
+              '@odata.type': '#microsoft.graph.fileAttachment',
+              name: `${(dec.reference_number || 'ACC_decision').replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`,
+              contentType: 'application/pdf',
+              contentBytes: pdfBuffer.toString('base64'),
+            },
+          ],
         });
         emailResult.sent = true;
       } catch (e) {
