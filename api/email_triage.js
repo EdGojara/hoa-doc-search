@@ -126,7 +126,7 @@ async function withCapabilities(rows) {
   }));
 }
 
-const SELECT = 'id, mailbox, persona, direction, sender_email, sender_name, subject, body_preview, received_at, has_attachments, classification, classification_confidence, ai_summary, extracted, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, resolution_confidence, resolution_candidates, triage_status, priority, reviewed_by, reviewed_at, created_at, resolved_contact:resolved_contact_id(full_name), resolved_property:resolved_property_id(street_address), resolved_vendor:resolved_vendor_id(name), community:community_id(name)';
+const SELECT = 'id, mailbox, persona, direction, sender_email, sender_name, recipients, subject, body_preview, received_at, has_attachments, classification, classification_confidence, ai_summary, extracted, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, resolution_confidence, resolution_candidates, triage_status, priority, reviewed_by, reviewed_at, created_at, resolved_contact:resolved_contact_id(full_name), resolved_property:resolved_property_id(street_address), resolved_vendor:resolved_vendor_id(name), community:community_id(name)';
 
 // The GL expense account a utility bill should code to, from the community-alias
 // registry — resolved by the community_hint OR the DISTRICT named in the body
@@ -149,7 +149,7 @@ async function aliasGlAccount(m) {
 // GET / — triage list
 router.get('/', async (req, res) => {
   try {
-    const { status, classification, community_id, persona, q } = req.query;
+    const { status, classification, community_id, persona, q, direction } = req.query;
     const limit = Math.min(200, parseInt(req.query.limit, 10) || 100);
     const offset = parseInt(req.query.offset, 10) || 0;
     const owner = await isOwner(req);
@@ -162,6 +162,8 @@ router.get('/', async (req, res) => {
     if (status) query = query.in('triage_status', String(status).split(','));
     if (classification) query = query.in('classification', String(classification).split(','));
     if (persona) query = query.in('persona', String(persona).split(','));
+    // Sent view: browse Claire's (and the team's) outbound replies. (Ed 2026-07-25.)
+    if (direction) query = query.eq('direction', String(direction));
     if (!owner) query = query.neq('persona', 'tessa');
     if (community_id) query = query.eq('community_id', community_id);
     if (q) query = query.or(`subject.ilike.%${q}%,sender_email.ilike.%${q}%,ai_summary.ilike.%${q}%`);
@@ -889,7 +891,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
     const ccList = String((req.body || {}).cc || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).join(', ');
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
     const { data: m, error } = await supabase.from('email_messages')
-      .select('persona, sender_email, sender_name, body_preview, body_full, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, extracted, community:community_id(name)')
+      .select('persona, sender_email, sender_name, body_preview, body_full, subject, classification, community_id, resolved_contact_id, resolved_property_id, resolved_vendor_id, mailbox, graph_id, conversation_id, received_at, extracted, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
@@ -973,6 +975,40 @@ router.post('/:id/send', express.json(), async (req, res) => {
       } catch (_) { /* best-effort */ }
     }
 
+    // Quote the ORIGINAL message (and the prior thread) beneath the reply, so the
+    // recipient — and anyone Cc'd (e.g. the community manager) — can see what this
+    // is responding to. Shared send path, so every persona gets it. Best-effort:
+    // quoting must never block a send. (Ed 2026-07-25.)
+    let quotedHtml = '';
+    try {
+      const eq = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const fmtWhen = (d) => { try { return new Date(d).toLocaleString('en-US', { timeZone: 'America/Chicago' }); } catch (_) { return ''; } };
+      const { stripQuoted } = require('../lib/email/forward_hygiene');
+      // Full body of the message being replied to (Graph fetch if we only have the preview).
+      let origBody = m.body_full || '';
+      if (m.graph_id && m.mailbox && origBody.length < 4000) {
+        try { const { fetchMessageText } = require('../lib/email/graph_attachments'); const t = await fetchMessageText(m.mailbox, m.graph_id); if (t && t.length > origBody.length) origBody = t; } catch (_) {}
+      }
+      origBody = stripQuoted(String(origBody || m.body_preview || '')).slice(0, 6000);
+      // Earlier messages in the same conversation (context), newest first.
+      let priorHtml = '';
+      if (m.conversation_id) {
+        try {
+          const { data: td } = await supabase.from('email_messages')
+            .select('direction, sender_name, sender_email, body_full, body_preview, received_at')
+            .eq('conversation_id', m.conversation_id).neq('id', req.params.id)
+            .order('received_at', { ascending: false }).limit(8);
+          priorHtml = (td || []).map((x) => {
+            const who = x.direction === 'outbound' ? 'Bedrock' : (x.sender_name || x.sender_email || '');
+            const b = stripQuoted(String(x.body_full || x.body_preview || '')).slice(0, 1500);
+            return `<div style="border-left:2px solid #e5e7eb;padding:2px 0 2px 12px;margin:10px 0 0;color:#666;font-size:12.5px;"><div style="color:#999;">On ${fmtWhen(x.received_at)}, ${eq(who)} wrote:</div><div style="white-space:pre-wrap;">${eq(b)}</div></div>`;
+          }).join('');
+        } catch (_) {}
+      }
+      quotedHtml = `<div style="border-top:1px solid #e5e7eb;margin-top:22px;padding-top:12px;"><div style="color:#999;font-size:12.5px;">On ${fmtWhen(m.received_at)}, ${eq(m.sender_name || m.sender_email || '')} wrote:</div><blockquote style="border-left:3px solid #e5e7eb;margin:8px 0 0;padding:2px 0 2px 12px;color:#555;font-size:13px;white-space:pre-wrap;">${eq(origBody)}</blockquote>${priorHtml}</div>`;
+      html = html + quotedHtml;
+    } catch (_) { /* quoting best-effort — never block a send */ }
+
     await graphSend.sendAs({ from: fromMailbox, to: recipient, cc: ccList || undefined, subject: subj, html, attachments });
 
     // Mark the inbound handled + log the outbound reply on the record.
@@ -985,7 +1021,14 @@ router.post('/:id/send', express.json(), async (req, res) => {
     }
     const { data: outRow } = await supabase.from('email_messages').insert({
       mailbox: fromMailbox, direction: 'outbound', sender_email: fromMailbox,
-      sender_name: senderLabel, recipients: [recipient], subject: subj, body_preview: String(body).trim().slice(0, 2000),
+      sender_name: senderLabel, recipients: [recipient, ...(ccList ? ccList.split(',').map((s) => s.trim()).filter(Boolean) : [])],
+      subject: subj, body_preview: String(body).trim().slice(0, 2000),
+      // Store the FULL sent text + thread it with the original + timestamp it, so
+      // Claire's sent replies are visible and complete in trustEd — the entire
+      // correspondence history lives here, not just in Outlook. (Ed 2026-07-25.)
+      body_full: String(body).trim(),
+      conversation_id: m.conversation_id || null,
+      received_at: new Date().toISOString(),
       classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `${senderLabel.split(' ')[0]} replied to ${recipient}`, persona,
       community_id: m.community_id, resolved_contact_id: m.resolved_contact_id, resolved_property_id: m.resolved_property_id, resolved_vendor_id: m.resolved_vendor_id,
       resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'association_record', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString(),

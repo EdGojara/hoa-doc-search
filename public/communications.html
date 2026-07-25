@@ -90,7 +90,7 @@ async function loadStats(){
      <div class="stat"><b>${s.spam||0}</b><span>spam/noise</span></div>`;
   // "Inbox" = everything not yet responded-to or dismissed (new + needs_review + linked).
   // Nothing leaves the inbox unless we reply (-> handled) or dismiss (-> dismissed/spam).
-  const chips=[['needs_review','Inbox'],['new','New'],['linked','Linked'],['handled','Handled'],['spam','Dismissed'],['','All']];
+  const chips=[['needs_review','Inbox'],['new','New'],['linked','Linked'],['handled','Handled'],['__sent__','Sent'],['spam','Dismissed'],['','All']];
   document.getElementById('chips').innerHTML = chips.map(([v,l])=>
     `<div class="chip ${v===filter?'active':''}" onclick="setFilter('${v}')">${l}</div>`).join('');
 }
@@ -201,6 +201,20 @@ function renderBoard(){
 }
 function togglePersona(p){ openPersona = (openPersona===p ? null : p); renderBoard(); }
 async function loadPersonaList(){
+  // Sent view: browse the team's OUTBOUND replies (they're filtered out of every
+  // other view) and forward any of them from trustEd, so the whole history stays
+  // here. (Ed 2026-07-25.)
+  if (filter === '__sent__') {
+    const sel = document.getElementById('personaList'); if(!sel) return;
+    try {
+      const r = await af(API + `?persona=${openPersona}&direction=outbound&status=handled&limit=200`);
+      const j = await r.json(); const msgs = j.messages||[]; window._msgs = msgs;
+      sel.innerHTML = msgs.length
+        ? '<div class="note" style="margin:4px 0 8px;color:var(--muted);">Emails your AI team has sent. Open the thread to see the full exchange, or forward any of them from here so the whole history stays in trustEd.</div>' + msgs.map(sentMsgHtml).join('')
+        : '<div class="empty">No sent emails here yet.</div>';
+    } catch(e){ sel.innerHTML='<div class="empty">Could not load.</div>'; }
+    return;
+  }
   // Default "Needs review" view = everything that still needs a reply: new,
   // needs_review, AND linked (an email confidently linked to a homeowner but not
   // yet answered still needs a response — it was dropping out of view here).
@@ -424,6 +438,43 @@ function toRowHtml(id){
       <label style="font-size:12px;color:var(--muted);min-width:24px;">To</label>
       <input id="to-${id}" type="text" value="${esc(r.to||'')}" placeholder="recipient email" style="padding:6px 8px;border:1px solid ${fromForm?'#f59e0b':'var(--line)'};border-radius:6px;font-size:12.5px;flex:1;">
     </div>${hint}`;
+}
+// A sent (outbound) email — read-only, with a Forward button so the whole
+// history can be forwarded from trustEd (e.g. to the board) instead of Outlook.
+function sentMsgHtml(m){
+  const to = Array.isArray(m.recipients) ? m.recipients.join(', ') : (m.recipients||'');
+  const when = m.received_at ? new Date(m.received_at).toLocaleString() : '';
+  const who = PNAME[m.persona] || m.sender_name || 'Claire';
+  return `<div class="msg" id="msg-${m.id}">
+      <div class="msg-top">
+        <div>
+          <span class="badge b-linked">Sent</span>
+          <div class="subj" style="margin-top:5px;">${esc(m.subject||'(no subject)')}</div>
+          <div class="from">${esc(who)} &rarr; ${esc(to||'(recipient on file)')} &middot; ${when}${m.community&&m.community.name?' &middot; '+esc(m.community.name):''}</div>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button class="act" onclick="forwardFromSent('${m.id}')" title="Forward this email to anyone (e.g. the board) from trustEd — sent from Claire and logged here, so the whole history stays in trustEd.">&#8618; Forward</button>
+        </div>
+      </div>
+      <div class="summary">${esc(m.ai_summary||m.body_preview||'')} <a href="#" onclick="event.preventDefault();showThread('${m.id}',this)" style="font-size:11.5px;color:#0B1D34;font-weight:600;white-space:nowrap;">&#129525; Show full email + thread</a></div>
+      <div id="thread-${m.id}"></div>
+    </div>`;
+}
+// Open the composer prefilled to forward a sent email to a new recipient.
+async function forwardFromSent(id){
+  try {
+    const r = await af(`${API}/${id}`); const j = await r.json();
+    const m = j.message || {};
+    openCompose();
+    const p = ['claire','emma','annie','miranda'].includes(m.persona) ? m.persona : 'claire';
+    document.getElementById('nmPersona').value = p; ncPersonaChange();
+    document.getElementById('nmSubject').value = /^fwd:/i.test(m.subject||'') ? m.subject : ('Fwd: ' + (m.subject||''));
+    const to = Array.isArray(m.recipients) ? m.recipients.join(', ') : (m.recipients||'');
+    const when = m.received_at ? new Date(m.received_at).toLocaleString() : '';
+    const orig = m.body_full || m.body_preview || '';
+    document.getElementById('nmBody').value = `\n\n----- Forwarded message -----\nFrom: ${m.sender_name||m.sender_email||''}\nDate: ${when}\nTo: ${to}\nSubject: ${m.subject||''}\n\n${orig}`;
+    document.getElementById('nmStatus').textContent = 'Add who to forward to in the To field, then send.';
+  } catch(e){ alert('Could not open forward: '+(e.message||'error')); }
 }
 // ---- Attach documents to a reply -----------------------------------------
 function chipsHtml(id){
