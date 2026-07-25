@@ -14733,6 +14733,16 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Letter to homeowner</label>
           <textarea id="acc-letter-edit" rows="16" style="padding:12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px; line-height:1.55; width:100%;">${accEsc(letterBody)}</textarea>
         </div>
+        <div style="margin:8px 0 12px; padding:10px 12px; background:#f5f8fc; border:1px solid #dce6f2; border-radius:8px;">
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <button class="secondary-btn" style="font-size:12px;" onclick="accRedraft('${a.id}', false)">🔄 Redraft for the decision above</button>
+            <span style="font-size:11px; color:#5a7390;">Pick the decision, then redraft — e.g. "Approve with conditions" writes an approval + numbered conditions.</span>
+          </div>
+          <div style="display:flex; gap:8px; margin-top:8px; align-items:flex-start;">
+            <textarea id="acc-conditions-input" rows="2" placeholder="Add conditions in plain words — e.g. 'shed max 9 ft, 3 ft off lot lines, survey waived' — and I'll write them into the letter as numbered conditions." style="flex:1; padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:12.5px; line-height:1.4;"></textarea>
+            <button class="acc-action-btn modify" style="white-space:nowrap;" onclick="accRedraft('${a.id}', true)">✨ Draft with conditions</button>
+          </div>
+        </div>
         <div class="acc-ai-actions">
           <button class="acc-action-btn approve" onclick="accSend('${a.id}', true)">✉ Send to homeowner (as Annie)</button>
           <button class="acc-action-btn modify" onclick="accSend('${a.id}', false)">💾 Mark done without emailing</button>
@@ -14787,6 +14797,31 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       status.style.color = '#b91c1c';
     }
   }
+  // Redraft the letter for the chosen decision, optionally folding in staff
+  // conditions typed in plain words. Powers "Approve with conditions" giving a
+  // real conditional-approval draft (approval + numbered conditions + survey
+  // waiver) even when the AI first recommended something else. (Ed 2026-07-25.)
+  async function accRedraft(id, withConditions) {
+    const decision = document.getElementById('acc-decision-select').value;
+    const ta = document.getElementById('acc-letter-edit');
+    const condEl = document.getElementById('acc-conditions-input');
+    const status = document.getElementById('acc-action-status');
+    const instructions = withConditions && condEl ? condEl.value.trim() : '';
+    if (withConditions && !instructions) { alert('Type the conditions to fold in first (e.g. "shed max 9 ft, 3 ft off lot lines, survey waived").'); return; }
+    if (ta.value.trim() && !confirm('Replace the current letter with a fresh draft for "' + decision.replace(/_/g, ' ') + '"?')) return;
+    status.textContent = 'Drafting…'; status.style.color = '#a16207';
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      try { const { data: { session } } = await window.supa.auth.getSession(); if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token; } catch (_) {}
+      const r = await fetch('/acc-review/decisions/' + id + '/redraft', { method: 'POST', headers, body: JSON.stringify({ decision_type: decision, instructions }) });
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.detail || j.error || 'draft failed');
+      ta.value = j.body_text;
+      if (withConditions && condEl) condEl.value = '';
+      status.textContent = '✓ Letter redrafted — review and edit before sending.'; status.style.color = '#15803d';
+    } catch (e) { status.textContent = '✗ ' + e.message; status.style.color = '#b91c1c'; }
+  }
+  window.accRedraft = accRedraft;
   window.accSend = accSend;
   window.accOpenDetail = accOpenDetail;
   // Exported for the History tab (a separate script block) so it renders source +

@@ -2796,6 +2796,74 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// POST /acc-review/decisions/:id/redraft — draft the decision letter for a
+// CHOSEN decision (not just whatever the AI first recommended), optionally
+// folding in staff conditions. Built so switching to "Approve with conditions"
+// gives a real conditional-approval draft — approval + survey waiver + numbered
+// conditions — that the operator edits by hand or refines with a quick note.
+// (Ed 2026-07-25.) Body: { decision_type, instructions? }
+// ----------------------------------------------------------------------------
+app.post('/acc-review/decisions/:id/redraft', express.json({ limit: '64kb' }), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const decisionType = String((req.body || {}).decision_type || '').trim();
+    const instructions = String((req.body || {}).instructions || '').trim();
+    const { data: dec } = await supabase.from('acc_decisions').select('*')
+      .eq('id', id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+    if (!dec) return res.status(404).json({ error: 'Decision not found' });
+
+    const DIRECTIVE = {
+      approved_with_conditions: 'STAFF DECISION: APPROVED WITH CONDITIONS. Write a complete conditional-approval letter. First a short paragraph granting the approval. Then a numbered list of the specific conditions/limitations (e.g. maximum height, minimum setback/distance from lot lines, materials, placement). Then, if a survey was waived, one sentence: the survey requirement is waived and this approval is limited strictly to the dimensions and placement stated, and any work beyond those limits is not approved. Then the standard permit disclaimer.',
+      approved_no_conditions: 'STAFF DECISION: APPROVED — NO CONDITIONS. Write a clean, warm, brief approval letter confirming the approval with only the standard permit disclaimer.',
+      request_more_info: 'STAFF DECISION: REQUEST MORE INFORMATION. Write a warm, helpful letter requesting the specific missing items — encouraging and specific, never makes the homeowner feel rejected.',
+      denied: 'STAFF DECISION: DENIED. Write a professional, warm denial letter citing the specific governing-document provision that cannot be met, and leaving the door open for a revised application.',
+    };
+    const directive = DIRECTIVE[decisionType] || DIRECTIVE.approved_with_conditions;
+
+    let letterResp;
+    try {
+      letterResp = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 2000,
+        system:
+          `You write CLEAN homeowner-facing decision letters for HOA architectural reviews. Output ONLY the prose body of the letter. The letterhead template adds the salutation, signature, and address blocks.\n\n` +
+          'STRICT RULES:\n' +
+          '- Start with "Dear [Name]," — use the homeowner\'s name; courtesy titles where clear.\n' +
+          '- Short opening paragraph(s) stating the decision.\n' +
+          '- Conditions/reasons as a numbered list: "1. ...", "2. ..." — plain numbers, no markdown.\n' +
+          `- End with EXACTLY: "Please retain a copy of this letter for your records. If you have any questions please contact our office at ${BRAND.service.phone} or ${BRAND.service.email}."\n` +
+          '- NO markdown (#, **, *, _, ---). NO internal section labels. NO letterhead/return/recipient/signature blocks. NO "Re:", "Sincerely,", company name — all template-rendered.\n' +
+          '- Warm professional voice; paragraphs separated by blank lines.\n\n' +
+          'Output ONLY the letter body. Do not preface or explain.',
+        messages: [{
+          role: 'user',
+          content:
+            `Community: ${dec.community_name || ''}\nHomeowner: ${dec.homeowner_name || '(name not on file)'}\nProperty: ${dec.homeowner_address || ''}\nProject: ${dec.project_summary || ''}\n\n${directive}\n\n` +
+            (instructions ? `STAFF CONDITIONS / INSTRUCTIONS (authoritative — fold these in as numbered conditions, in substance):\n${instructions}\n\n` : '') +
+            (dec.ai_review_text ? `Internal review analysis (source for content; do NOT include labels/analysis in the letter):\n${dec.ai_review_text}\n\n` : '') +
+            `Write the clean homeowner letter body now. Start with "Dear" and end with the contact-our-office sentence.`,
+        }],
+      });
+    } catch (e) {
+      return res.status(502).json({ error: 'The draft service is unavailable — try again in a moment.' });
+    }
+    let bodyText = (letterResp.content?.[0]?.text || '').trim()
+      .replace(/^#{1,6}\s+.*$/gm, '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/^-{3,}\s*$/gm, '').trim();
+    if (letterResp.stop_reason === 'max_tokens' || !/contact our office at .{4,200}\.?\s*$/i.test(bodyText)) {
+      return res.status(502).json({ error: 'The draft came back incomplete — try again.' });
+    }
+    const screen = screenForLeaks(bodyText, { audience: 'customer', autoRewrite: true });
+    if (screen.blocks.length > 0) {
+      return res.status(400).json({ error: 'The draft contained internal-only phrasing — try again or edit by hand.', blocked_phrases: screen.blocks });
+    }
+    res.json({ ok: true, decision_type: decisionType, body_text: screen.text });
+  } catch (err) {
+    console.error('[acc-review/decisions/:id/redraft] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================================================
 // Voice askEd v2 — OpenAI Whisper (STT) + Onyx (TTS) endpoints
 // ----------------------------------------------------------------------------
