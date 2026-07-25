@@ -2740,6 +2740,47 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       } catch (_) { /* timeline logging is best-effort */ }
     }
 
+    // Homeowner-pays ACC fee (Ed 2026-07-25). Communities whose management
+    // agreement bills the ARC fee to the OWNER (Canyon Gate: $25) get a
+    // per-decision AR charge — Dr A/R / Cr Accrued Liability (owed to Bedrock,
+    // cleared at month-end). Only on a FINAL decision (approve or deny). The
+    // decision is already recorded above, so a fee failure never undoes it —
+    // FAIL LOUD: if the address can't resolve to a property we DON'T post and we
+    // flag it, never silently drop the fee.
+    let feeCharge = { attempted: false };
+    if (isFinal) {
+      try {
+        const { data: comm } = await supabase.from('communities')
+          .select('acc_fee_payer, acc_fee_cents').eq('id', dec.community_id).maybeSingle();
+        const feeCents = comm ? Number(comm.acc_fee_cents) || 0 : 0;
+        if (comm && comm.acc_fee_payer === 'homeowner' && feeCents > 0) {
+          feeCharge.attempted = true;
+          const { resolveProperty } = require('./lib/entity_resolution');
+          const prop = await resolveProperty(supabase, dec.community_id, dec.homeowner_address);
+          if (!prop || !prop.id) {
+            feeCharge.posted = false; feeCharge.reason = 'property_unresolved';
+            console.error(`[acc-finalize] ACC fee NOT posted — could not resolve "${dec.homeowner_address}" to a property (decision ${id}). Flag for manual charge.`);
+          } else {
+            const { createCharge } = require('./lib/accounting/ar_engine');
+            const today = new Date().toISOString().slice(0, 10);
+            const r = await createCharge({
+              community_id: dec.community_id, property_id: prop.id,
+              charge_type_code: 'acc_fee', amount_cents: feeCents,
+              due_date: today, charge_date: today,
+              description: `ACC decision ${dec.reference_number || ''} — ${String(decisionType).replace(/_/g, ' ')}`.replace(/\s+/g, ' ').trim(),
+              source_module: 'acc_decision', source_reference: id,
+              posted_by_user_id: actor?.id || null,
+            });
+            feeCharge.posted = true; feeCharge.charge_id = r.charge.id;
+            feeCharge.amount_cents = feeCents; feeCharge.property_id = prop.id;
+          }
+        }
+      } catch (e) {
+        feeCharge.posted = false; feeCharge.reason = e.message;
+        console.error('[acc-finalize] ACC fee charge failed (decision recorded; flag for manual):', e.message);
+      }
+    }
+
     res.json({
       status: 'ok',
       id,
@@ -2747,6 +2788,7 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       final: isFinal,
       new_status: isFinal ? 'decided' : 'pending_review',
       email: emailResult,
+      fee_charge: feeCharge,
     });
   } catch (err) {
     console.error('[acc-review/decisions/:id/finalize] failed:', err.message);
