@@ -2682,12 +2682,20 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
                    : decisionType === 'request_more_info' ? 'More information needed'
                    : 'Decision';
         const subject = `${dec.community_name} architectural request — ${verb}${dec.reference_number ? ' (' + dec.reference_number + ')' : ''}`;
-        // Use the shared Annie signature builder so the decision email carries her
-        // sign-off, same as every other Annie email (Ed 2026-07-25: every outbound
-        // email must have a signature). Returns { html, attachments } — the
-        // attachments include her inline logo, which we merge with the letter PDF.
+        // The EMAIL body is a short, warm cover note from Annie (decision-aware),
+        // NOT a restatement of the formal letter — the full letter with all
+        // conditions is the attached PDF + the sealed record (Ed 2026-07-25).
+        // For request-more-info the cover note surfaces the actual items, since
+        // the homeowner has to act.
+        const { composeAccCoverNote } = require('./lib/email/acc_cover_note');
+        const coverNote = composeAccCoverNote({
+          decisionType, homeownerName: dec.homeowner_name,
+          projectSummary: dec.project_summary, letterBody: bodyText,
+        });
+        // Shared Annie signature builder — every Annie email carries her sign-off
+        // + inline logo. Returns { html, attachments }; merge the logo with the PDF.
         const { buildAnnieEmail } = require('./lib/email/annie_signature');
-        const built = buildAnnieEmail(bodyText, dec.community_name);
+        const built = buildAnnieEmail(coverNote, dec.community_name);
         await graph.sendAs({
           from: graph.ANNIE_MAILBOX,
           to: toEmail,
