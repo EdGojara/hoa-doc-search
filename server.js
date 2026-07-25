@@ -2743,6 +2743,52 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       } catch (e) { console.warn('[acc-finalize] portal sync-back failed:', e.message); }
     }
 
+    // DURABLE RECORD + MAILING HISTORY (Ed 2026-07-25). A decided ACC decision
+    // must be a permanent, auditable record — the same treatment as an
+    // enforcement letter: (1) SEAL the sent letter into the immutable,
+    // hash-verified archive so it can never silently change, and (2) log the
+    // mailing on the homeowner's timeline (`interactions` is what Homeowner 360
+    // reads), so "when it was mailed, to whom, and the letter itself" is on the
+    // 360. Only on a FINAL decision. Both best-effort — the decision is already
+    // saved above, so a failure here never undoes it, but we log loudly.
+    if (isFinal) {
+      try {
+        const { sealFinalizedRecord } = require('./lib/record_archive');
+        await sealFinalizedRecord(supabase, {
+          record_type: 'acc_letter', record_id: id, community_id: dec.community_id || null,
+          archive_path: `acc_decision/${dec.community_id || 'unknown'}/${id}-letter.pdf`,
+          buffer: pdfBuffer, sent_at: new Date().toISOString(),
+          metadata: { decision_type: decisionType, reference_number: dec.reference_number || null },
+        });
+      } catch (e) { console.warn('[acc-finalize] letter seal failed:', e.message); }
+
+      // Mailing history on the homeowner timeline. community_id is NOT NULL on
+      // interactions, so only log when we can scope it.
+      if (dec.community_id) {
+        try {
+          const { resolveProperty } = require('./lib/entity_resolution');
+          const prop = await resolveProperty(supabase, dec.community_id, dec.homeowner_address).catch(() => null);
+          const mailed = emailResult.sent;
+          await supabase.from('interactions').insert({
+            community_id: dec.community_id,
+            property_id: (prop && prop.id) || null,
+            type: 'letter_other',
+            direction: 'outbound',
+            delivery_method: mailed ? 'email' : 'portal',
+            subject: `ACC decision — ${String(decisionType).replace(/_/g, ' ')}${dec.reference_number ? ' (' + dec.reference_number + ')' : ''}`,
+            content: bodyText.slice(0, 4000),
+            attachments: [{ type: 'acc_letter', storage_path: letterStoragePath, label: 'ACC decision letter' }],
+            source: 'forward',
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+            sent_by_user_id: actor?.id || null,
+            ai_drafted: true,
+            ai_model: 'claude-haiku-4-5-20251001',
+          });
+        } catch (e) { console.warn('[acc-finalize] mailing-history log failed:', e.message); }
+      }
+    }
+
     // Record the outbound communication on the timeline (best-effort).
     if (emailResult.sent) {
       try {
@@ -2908,6 +2954,19 @@ app.post('/acc-review/render-letter', express.json({ limit: '256kb' }), async (r
       decision_type: b.decision_type,
       body_text: screen.text,
     });
+    // Persist what was rendered as a DRAFT on the decision (best-effort) so
+    // downloaded work isn't lost on reload — the trap Ed hit (Download used to
+    // save nothing). Draft only: status stays pending_review; the decision is
+    // NOT recorded until Send/Mark-done. GET .../letter falls back to letter_body,
+    // so on reload the operator sees exactly the draft they downloaded.
+    if (b.id) {
+      try {
+        const draftPatch = { letter_body: screen.text, updated_at: new Date().toISOString() };
+        if (b.decision_type) draftPatch.decision_type = String(b.decision_type).trim();
+        await supabase.from('acc_decisions').update(draftPatch)
+          .eq('id', b.id).eq('management_company_id', BEDROCK_MGMT_CO_ID).eq('status', 'pending_review');
+      } catch (e) { console.warn('[acc-render-letter] draft save skipped:', e.message); }
+    }
     const stem = (b.homeowner_address || b.homeowner_name || b.community || 'decision').toString().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'decision';
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${stem}_ACC_decision.pdf"`);

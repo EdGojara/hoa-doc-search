@@ -14847,12 +14847,15 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     try {
       const r = await fetch('/acc-review/render-letter', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body_text, decision_type: decision, homeowner_name: a.homeowner_name, homeowner_address: a.homeowner_address, community: a.community_name, project_summary: a.project_summary, reference_number: a.reference_number }),
+        body: JSON.stringify({ id: a.id, body_text, decision_type: decision, homeowner_name: a.homeowner_name, homeowner_address: a.homeowner_address, community: a.community_name, project_summary: a.project_summary, reference_number: a.reference_number }),
       });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'render failed'); }
       const url = URL.createObjectURL(await r.blob());
       window.open(url, '_blank');
       setTimeout(() => URL.revokeObjectURL(url), 30000);
+      // The download saved the current letter as a DRAFT on the decision (not
+      // final). Tell the operator so "I downloaded it" doesn't read as "done."
+      if (status) { status.textContent = 'Draft saved. This is NOT sent yet — click "Send to homeowner" to record the decision and mail it.'; status.style.color = '#a16207'; }
     } catch (e) { if (status) { status.textContent = '✗ ' + e.message; status.style.color = '#b91c1c'; } }
   }
   window.accDownloadCurrent = accDownloadCurrent;
