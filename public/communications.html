@@ -491,8 +491,11 @@ async function forwardFromSent(id){
     const to = Array.isArray(m.recipients) ? m.recipients.join(', ') : (m.recipients||'');
     const when = (m.created_at||m.received_at) ? new Date(m.created_at||m.received_at).toLocaleString() : '';
     const orig = m.body_full || m.body_preview || '';
-    document.getElementById('nmBody').value = `\n\n----- Forwarded message -----\nFrom: ${m.sender_name||m.sender_email||''}\nDate: ${when}\nTo: ${to}\nSubject: ${m.subject||''}\n\n${orig}${historyTxt}`;
-    document.getElementById('nmStatus').textContent = historyTxt ? 'Conversation history included below. Add who to forward to, then send.' : 'Add who to forward to in the To field, then send.';
+    // Keep the whole forwarded block in forwardHistory so it survives a redraft
+    // and is always appended on send.
+    forwardHistory = `${FWD_MARKER}\nFrom: ${m.sender_name||m.sender_email||''}\nDate: ${when}\nTo: ${to}\nSubject: ${m.subject||''}\n\n${orig}${historyTxt}`;
+    document.getElementById('nmBody').value = `\n\n${forwardHistory}`;
+    document.getElementById('nmStatus').textContent = 'The full conversation is included below and will stay attached even if you have Claire write a note. Add who to forward to, then send.';
   } catch(e){ alert('Could not open forward: '+(e.message||'error')); }
 }
 // ---- Attach documents to a reply -----------------------------------------
@@ -837,6 +840,11 @@ const COMPOSE_PERSONAS = {
   amanda:  {name:'Amanda Albright',   first:'Amanda',  mail:'amanda@bedrocktx.com'},
   reese:   {name:'Reese Calloway',    first:'Reese',   mail:'reese@bedrocktx.com'},
 };
+// When forwarding, the quoted history is kept here so it survives a "Have Claire
+// write it" redraft and is ALWAYS included on send — the board needs it. (Ed
+// 2026-07-26: a forward went out with "(see below)" but no history below.)
+let forwardHistory = '';
+const FWD_MARKER = '----- Forwarded message -----';
 function ncP(){ return document.getElementById('nmPersona').value || 'claire'; }
 window.ncPersonaChange = function(){
   const p = COMPOSE_PERSONAS[ncP()] || COMPOSE_PERSONAS.claire;
@@ -875,6 +883,7 @@ function ncAddRecip(fieldId, sel){
   field.value = existing.join(', ');
 }
 window.openCompose = function(){
+  forwardHistory='';
   document.getElementById('nmStatus').textContent='';
   ['nmTo','nmCc','nmSubject','nmCommunity','nmIntent','nmBody'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('nmPersona').value='claire'; ncPersonaChange();
@@ -896,15 +905,19 @@ window.ncDraft = async function(){
     const j=await r.json();
     if(!r.ok||!j.ok){ st.style.color='#b91c1c'; st.textContent=j.detail||j.error||'Could not draft.'; return; }
     if(j.subject && !document.getElementById('nmSubject').value.trim()) document.getElementById('nmSubject').value=j.subject;
-    document.getElementById('nmBody').value=j.body||'';
-    st.style.color='#166534'; st.textContent='✓ '+who+' drafted it. Edit anything below, then send.';
+    // Put the cover note on top; re-attach the forwarded history below so a
+    // redraft never wipes it.
+    document.getElementById('nmBody').value = (j.body||'') + (forwardHistory ? `\n\n${forwardHistory}` : '');
+    st.style.color='#166534'; st.textContent='✓ '+who+' drafted it'+(forwardHistory?' — the forwarded conversation is kept below.':'.')+' Edit anything, then send.';
   }catch(e){ st.style.color='#b91c1c'; st.textContent='Draft failed: '+(e.message||'network'); }
   finally{ btn.disabled=false; btn.textContent=o; }
 };
 window.ncSend = async function(){
   const to=document.getElementById('nmTo').value.trim(), cc=document.getElementById('nmCc').value.trim();
   const subject=document.getElementById('nmSubject').value.trim(), community_name=document.getElementById('nmCommunity').value.trim();
-  const body=document.getElementById('nmBody').value.trim();
+  let body=document.getElementById('nmBody').value.trim();
+  // Guarantee the forwarded history is included even if it was edited out.
+  if(forwardHistory && !body.includes(FWD_MARKER)) body = (body?body+'\n\n':'') + forwardHistory;
   const st=document.getElementById('nmStatus'); const btn=document.getElementById('nmSendBtn');
   const who=(COMPOSE_PERSONAS[ncP()]||COMPOSE_PERSONAS.claire).first;
   if(!to){ st.style.color='#b91c1c'; st.textContent='Enter at least one recipient email.'; return; }
