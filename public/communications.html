@@ -309,7 +309,7 @@ async function showThread(id, link){
     const chain = (j.thread||[]).slice().sort((a,b)=>String(b.received_at||'').localeCompare(String(a.received_at||''))).map(t=>`
       <div style="border-top:1px dashed var(--line);padding:7px 0;">
         <div style="font-size:11px;color:var(--muted);font-weight:600;">${t.direction==='outbound'?'Claire':esc(t.sender_name||t.sender_email||'Them')} &middot; ${t.received_at?new Date(t.received_at).toLocaleString():''}</div>
-        <div style="font-size:12.5px;white-space:pre-wrap;color:#33414f;">${esc((t.body_preview||'').slice(0,1500))}</div>
+        <div style="font-size:12.5px;white-space:pre-wrap;color:#33414f;">${esc((t.body_full||t.body_preview||'').slice(0,6000))}</div>
       </div>`).join('');
     const atts = j.attachments||[];
     const attHtml = atts.length ? `<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 4px;">Attachments (${atts.length})</div><div style="display:flex;flex-wrap:wrap;gap:8px;">${atts.map(a=>a.is_pdf
@@ -480,7 +480,8 @@ async function forwardFromSent(id){
         historyTxt = '\n\n----- Conversation history -----\n' + chain.map(t=>{
           const who = t.direction==='outbound' ? 'Bedrock' : (t.sender_name||t.sender_email||'');
           const when = t.received_at ? new Date(t.received_at).toLocaleString() : '';
-          return `On ${when}, ${who} wrote:\n${String(t.body_preview||'').trim()}`;
+          // FULL body so the reader gets the whole original, not a 255-char teaser.
+          return `On ${when}, ${who} wrote:\n${String(t.body_full||t.body_preview||'').trim()}`;
         }).join('\n\n');
       }
     } catch(_){}

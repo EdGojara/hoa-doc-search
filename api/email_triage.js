@@ -337,7 +337,7 @@ router.get('/:id/thread', async (req, res) => {
     let thread = [];
     if (m.conversation_id) {
       const { data } = await supabase.from('email_messages')
-        .select('id, direction, sender_name, sender_email, subject, body_preview, received_at')
+        .select('id, direction, sender_name, sender_email, subject, body_full, body_preview, received_at')
         .eq('conversation_id', m.conversation_id).order('received_at', { ascending: true }).limit(30);
       thread = data || [];
     }
