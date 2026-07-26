@@ -3168,6 +3168,10 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
     // We log a continuation row instead (audit-trail proof that the violation
     // persists post-§209 cure period). See lib/enforcement/find_or_continue_violation.js
     // for the full rationale + caller list. Added 2026-06-13 per Ed.
+    // Captured from the continuation check below, used at open time: a
+    // within-6-month recurrence of a cured movable violation (§209.006(d)) opens
+    // straight at certified §209. Null for everything else.
+    let recurrenceSignal = null;
     try {
       const { findOrContinueViolation } = require('../lib/enforcement/find_or_continue_violation');
       const cont = await findOrContinueViolation({
@@ -3180,6 +3184,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         source:            'inspection',
         notes:             reviewerNotes,
       });
+      if (cont.type === 'new') recurrenceSignal = cont.recurrence || null;
       if (cont.type === 'continuation') {
         // Mark observation confirmed-as-continuation. Skip letter draft.
         await supabase
@@ -3251,22 +3256,35 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       return res.json({ ok: true, opened: false, reason: decision.rationale });
     }
 
-    // Open the violation
+    // Recurrence (§209.006(d)): a movable violation cured within 6 months and now
+    // back. Skip the courtesy and open at certified §209 — every community sends
+    // certifieds (only Lakes of Pine Forest fines, so this never auto-fines). An
+    // operator can always restage up or down afterward. (Ed 2026-07-25.)
+    const isRepeat = !!(recurrenceSignal && recurrenceSignal.is_repeat);
+    const openStage = isRepeat ? 'certified_209' : decision.stage;
     const cureEndsAt = decision.cure_days > 0
       ? new Date(Date.now() + decision.cure_days * 24 * 60 * 60 * 1000).toISOString()
       : null;
 
+    const violationRow = {
+      property_id:              obs.property_id,
+      community_id:             obs.community_id,
+      opened_from_observation_id: obs.id,
+      primary_category_id:      obs.category_id,
+      board_priority_at_open:   priorityRow ? priorityRow.priority_weight : 'standard',
+      current_stage:            openStage,
+      cure_period_ends_at:      cureEndsAt,
+    };
+    // Only a genuine recurrence touches the new columns (migration 337), so the
+    // normal path keeps working even if the code deploys before that migration.
+    if (isRepeat) {
+      violationRow.is_recurrence = true;
+      violationRow.recurrence_of_violation_id = recurrenceSignal.prior_violation_id;
+      violationRow.review_notes = `Recurrence within 6 months of a cured same/similar violation (Tex. Prop. Code §209.006(d)) — opened at certified §209, skipping courtesy. Review before sending; adjust severity with Advance/Reduce if needed.`;
+    }
     const { data: violation, error: vErr } = await supabase
       .from('violations')
-      .insert({
-        property_id:              obs.property_id,
-        community_id:             obs.community_id,
-        opened_from_observation_id: obs.id,
-        primary_category_id:      obs.category_id,
-        board_priority_at_open:   priorityRow ? priorityRow.priority_weight : 'standard',
-        current_stage:            decision.stage,
-        cure_period_ends_at:      cureEndsAt,
-      })
+      .insert(violationRow)
       .select('id, current_stage, cure_period_ends_at')
       .single();
     if (vErr) return res.status(500).json({ error: 'violation insert failed: ' + vErr.message });

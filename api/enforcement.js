@@ -6884,6 +6884,18 @@ router.post('/violations/:violationId/advance-stage', upload.single('pdf'), asyn
       || 'other';
     const note = (req.body && req.body.note) || null;
 
+    // Fine guard: only communities with fines enabled can advance to a fine (or
+    // beyond). Today only Lakes of Pine Forest fines; the rest do certifieds but
+    // don't fine, so advancing certified §209 → fine_assessed there would issue a
+    // fine the community doesn't levy. Certified is the ceiling until fines are
+    // turned on for the community. (Ed 2026-07-25.)
+    if (['fine_assessed', 'hearing_notice', 'legal_referral', 'lien_filed'].includes(nextStage)) {
+      const { data: comm } = await supabase.from('communities').select('fines_enabled').eq('id', violation.community_id).maybeSingle();
+      if (comm && comm.fines_enabled === false) {
+        return res.status(400).json({ error: 'This community does not have fines enabled — certified §209 is the ceiling. Enable fines for the community first if you intend to fine.' });
+      }
+    }
+
     // Update the violation row. (This table has no last_action_at / notes
     // columns — the note rides on an audit interaction below.)
     const nowTs = new Date().toISOString();
