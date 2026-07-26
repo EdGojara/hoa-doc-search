@@ -86,6 +86,22 @@ function fakeSupabase(rows) {
   })();
 
   await (async () => {
+    // Trend: recent window cleaner than the prior window -> 'improving'.
+    // Rows are newest-first; put clean ones first (recent), messy ones after (prior).
+    const rows = [];
+    for (let i = 0; i < 20; i++) rows.push({ persona: 'kat', classification: 'homeowner_request', edit_ratio: 0.01, created_at: `2026-07-${i + 1}` });   // recent = clean
+    for (let i = 0; i < 20; i++) rows.push({ persona: 'kat', classification: 'homeowner_request', edit_ratio: 0.5, created_at: `2026-06-${i + 1}` });    // prior = messy
+    const r = await personaReadiness(fakeSupabase(rows), { ownerEmail: 'e@x.com' });
+    assert.strictEqual(r.kat.trend, 'improving', 'recent cleaner than prior -> improving');
+    assert.ok(r.kat.trend_delta > 0, 'improving trend has positive delta');
+    // by_classification present and shaped.
+    assert.ok(Array.isArray(r.kat.by_classification) && r.kat.by_classification[0].classification === 'homeowner_request');
+    assert.ok('ready' in r.kat.by_classification[0], 'per-class carries a ready flag');
+    passed += 3;
+    console.log('  ✓ personaReadiness: trend + by_classification');
+  })();
+
+  await (async () => {
     const errSupa = { from() { return { select(){return this;}, order(){return this;}, limit(){return this;}, ilike(){return this;}, then(res){res({data:null, error:{message:'relation does not exist'}});} }; } };
     assert.deepStrictEqual(await personaReadiness(errSupa, { ownerEmail: 'x' }), {});
     passed++;

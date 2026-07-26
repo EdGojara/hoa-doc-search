@@ -180,7 +180,7 @@ function personaCardHtml(t){
     </div>
     <div style="font-size:11.5px;color:var(--muted);margin-top:3px;">${esc(t.title)} &middot; ${t.total} email${t.total===1?'':'s'}</div>
     ${t.routing?`<div style="font-size:11px;color:var(--muted);margin-top:2px;">📨 to ${esc((t.mailbox||'').split(' ')[0])} ${t.routing.direct} &middot; ↪ via info@ ${t.routing.via_info}</div>`:''}
-    ${t.training?`<div title="${esc(t.training.reason)}" style="font-size:10.5px;margin-top:5px;padding:2px 7px;border-radius:20px;display:inline-block;font-weight:700;background:${t.training.ready?'#e7f6ec':'#fbf1dc'};color:${t.training.ready?'#1a7a3c':'#8a6d00'};">${t.training.ready?'✓ ready for auto':'🎓 training'} &middot; ${Math.round(t.training.clean_rate*100)}% clean &middot; n=${t.training.n}</div>`:''}
+    ${t.training?(()=>{const tr=t.training;const arrow=tr.trend==='improving'?' <span style="color:#1a7a3c;">▲</span>':tr.trend==='slipping'?' <span style="color:#b42318;">▼</span>':'';const cls=(tr.by_classification||[]).slice(0,6).map(c=>`\n${c.classification}: ${Math.round(c.clean_rate*100)}% clean (n=${c.n})${c.ready?' ✓ready':''}`).join('');const tip=`${tr.reason}${cls?'\n\nBy type:'+cls:''}`;return `<div title="${esc(tip)}" style="font-size:10.5px;margin-top:5px;padding:2px 7px;border-radius:20px;display:inline-block;font-weight:700;background:${tr.ready?'#e7f6ec':'#fbf1dc'};color:${tr.ready?'#1a7a3c':'#8a6d00'};">${tr.ready?'✓ ready for auto':'🎓 training'} &middot; ${Math.round(tr.clean_rate*100)}% clean${arrow} &middot; n=${tr.n}</div>`;})():''}
     <div style="font-size:11px;color:${active?'var(--gold)':(priv?'#7c5cbf':'#9fb0c2')};margin-top:6px;font-weight:600;">${foot}</div>
   </div>`;
 }
