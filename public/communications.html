@@ -276,7 +276,8 @@ function msgHtml(m){
         <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
           ${m.standing&&m.standing.action==='add_to_payables'?`<button class="act" style="background:${m.standing.escalate?'#b91c1c':'#065f46'};color:#fff;" onclick="doFile('${m.id}','add-to-payables',this)" title="This bill isn't in Payables yet — add it as an urgent placeholder so it isn't missed; the approver verifies before paying">➕ Add to Payables${m.standing.escalate?' · URGENT':''}</button>`:''}${m.can_file_payables?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button>`:''}${m.can_record_gl?`<button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}${m.persona==='emma'&&!m.can_record_gl&&!m.can_file_payables&&!(m.standing&&m.standing.action==='add_to_payables')?`<span class="note" style="font-size:11px;color:#94a3b8;align-self:center;" title="${esc(m.record_gl_blocked||'')}">can't file this one — ${esc(m.record_gl_blocked||'nothing to post')}</span>`:''}
           ${canOweCredit(m) ? `<button class="act" style="background:#b91c1c;color:#fff;" onclick="flagCredit('${m.id}')" title="A vendor owes us money because of this. Puts a hold on their next invoice so we don't pay full.">💳 Credit owed</button>` : ''}
-          <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Draft reply'}</button>
+          <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')" title="Reply to the sender — drafts a reply you review before sending">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Reply'}</button>
+          <button class="act" onclick="rowReplyAll('${m.id}','${m.persona||'claire'}')" title="Reply and copy everyone else on the thread (board members, the CM, etc.)">↩ Reply all</button>
           <button class="act" onclick="forwardPrompt('${m.id}','${esc(m.sender_email||'')}')" title="Forward to a teammate (or hand to an AI teammate) to check before we reply">↪ Forward</button>
           <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
           ${cls==='spam'?'':`<button class="act spam" onclick="dismiss('${m.id}','spam')">Spam</button>`}
@@ -445,6 +446,12 @@ function toRowHtml(id){
 // Reply All: copy everyone else on the thread. Sender stays as the To; the rest
 // (board members, the CM, etc.) go to Cc. Pulls the real To/Cc from Graph since
 // ingest only stored the mailbox. (Ed 2026-07-26.)
+// Row-level Reply all: open the reply draft if it isn't already, then copy
+// everyone else on the thread.
+async function rowReplyAll(id, persona){
+  if(!document.getElementById('dt-'+id)){ await doDraft(id, persona||'claire'); }
+  await doReplyAll(id);
+}
 async function doReplyAll(id){
   try {
     const r = await af(`${API}/${id}/participants`); const j = await r.json();
