@@ -290,7 +290,7 @@ function msgHtml(m){
       ${m.extracted&&m.extracted.held_for_coding?`<div style="font-size:11.5px;color:#6d28d9;font-weight:600;margin-top:4px;">🕓 Held — needs community coding. Pick the association above once known; the platform will learn it.</div>`:''}
       ${m.standing?`<div style="font-size:12px;margin-top:5px;background:${m.standing.escalate?'#fdecec':(m.standing.in_payables?'#eaf7ee':'#fff7ed')};border:1px solid ${m.standing.escalate?'#f3c0c0':(m.standing.in_payables?'#b7e0c2':'#f6d5ad')};border-radius:6px;padding:6px 9px;color:#1a2230;">${esc(m.standing.banner)}</div>`:''}
       ${!m.standing&&m.extracted&&m.extracted.follow_up?(function(){var c=m.extracted.follow_up.chased;var paid=c&&c.status==='paid';var nf=c&&c.found===false;return '<div style="font-size:12px;margin-top:5px;background:'+(paid?'#eaf7ee':nf?'#fdecec':'#fff7ed')+';border:1px solid '+(paid?'#b7e0c2':nf?'#f3c0c0':'#f6d5ad')+';border-radius:6px;padding:6px 9px;color:#1a2230;">🔔 <strong>Vendor is chasing payment.</strong> '+(c?esc(c.message||''):'Match this to the bill in Payables.')+(c&&c.found&&c.invoice_number?' <span style="color:#64748b;">(invoice '+esc(c.invoice_number)+')</span>':'')+'</div>';})():''}
-      ${m.extracted&&m.extracted.draft&&m.extracted.draft.review_hint?`<div style="font-size:12px;color:#8a6d00;background:#fbf7ec;border:1px solid #e8dcae;border-radius:6px;padding:6px 9px;margin-top:5px;">💡 <strong>Claire suggests:</strong> ${esc(m.extracted.draft.review_hint)} <a href="#" onclick="event.preventDefault();forwardPrompt('${m.id}','${esc(m.sender_email||'')}')" style="color:#0B1D34;font-weight:600;white-space:nowrap;">↪ Loop someone in</a></div>`:''}
+      ${m.extracted&&m.extracted.draft&&m.extracted.draft.review_hint?`<div style="font-size:12px;color:#8a6d00;background:#fbf7ec;border:1px solid #e8dcae;border-radius:6px;padding:6px 9px;margin-top:5px;">💡 <strong>Claire suggests:</strong> ${esc(m.extracted.draft.review_hint)} <a href="#" onclick="event.preventDefault();forwardPrompt('${m.id}','${esc(m.sender_email||'')}'${m.extracted.draft.route&&m.extracted.draft.route.persona?`,'${esc(m.extracted.draft.route.persona)}'`:''})" style="color:#0B1D34;font-weight:600;white-space:nowrap;">↪ ${m.extracted.draft.route&&m.extracted.draft.route.name?'Hand to '+esc(m.extracted.draft.route.name):'Loop someone in'}</a></div>`:''}
       ${m.extracted&&m.extracted.forwarded?`<div style="font-size:11.5px;color:#5b21b6;font-weight:600;margin-top:4px;">↪ Forwarded to ${esc(m.extracted.forwarded.name||m.extracted.forwarded.to)}${m.extracted.forwarded.at?' · '+new Date(m.extracted.forwarded.at).toLocaleString():''} — awaiting their review</div>`:''}
       <div id="thread-${m.id}"></div>
       <div id="fwd-${m.id}"></div>
@@ -761,14 +761,18 @@ async function loadBoardGroups(){
       .sort((a,b)=>a.community.localeCompare(b.community));
   } catch(_) { boardGroups = []; }
 }
-function forwardPrompt(id, senderEmail){
+// persona key -> AI teammate mailbox, so a router suggestion can preselect the
+// right person. Mirrors lib/email/graph_send.js persona mailboxes.
+var AI_MAILBOX = { emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com', miranda:'miranda@bedrocktx.com', kat:'kat@bedrocktx.com', reese:'reese@bedrocktx.com', paige:'paige@bedrocktx.com', amanda:'amanda@bedrocktx.com' };
+function forwardPrompt(id, senderEmail, preselectPersona){
   const box = document.getElementById('fwd-'+id);
   if(!box) return;
   if(box.innerHTML){ box.innerHTML=''; return; } // toggle closed
   const opts = staffCache.map(u=>`<option value="${esc(u.email)}" data-name="${esc(u.full_name||'')}">${esc(u.full_name||u.email)}${u.role?' ('+esc(u.role)+')':''}</option>`).join('');
   // AI teammates as forward targets — hand an item to the AI persona who owns it
-  // (Emma for AP/invoices, Annie for ACC, Miranda for DRV) and it lands in their queue.
-  const aiOpts = `<optgroup label="AI team"><option value="emma@bedrocktx.com" data-name="Emma">Emma Brooks — accounts payable</option><option value="annie@bedrocktx.com" data-name="Annie">Annie Reeves — architectural (ACC/ARC)</option><option value="miranda@bedrocktx.com" data-name="Miranda">Miranda Pierce — compliance / DRV</option></optgroup>`;
+  // and it lands in their queue. The full specialist bench, so a router
+  // suggestion always has a matching target.
+  const aiOpts = `<optgroup label="AI team"><option value="emma@bedrocktx.com" data-name="Emma">Emma Brooks — accounts payable</option><option value="kat@bedrocktx.com" data-name="Kat">Kat Reed — accounting</option><option value="annie@bedrocktx.com" data-name="Annie">Annie Reeves — architectural (ACC/ARC)</option><option value="miranda@bedrocktx.com" data-name="Miranda">Miranda Pierce — compliance / DRV</option><option value="reese@bedrocktx.com" data-name="Reese">Reese Calloway — resale / estoppels</option><option value="paige@bedrocktx.com" data-name="Paige">Paige Chandler — board operations</option><option value="amanda@bedrocktx.com" data-name="Amanda">Amanda Albright — senior community manager</option></optgroup>`;
   box.innerHTML = `<div class="draftbox">
     <div class="note">↪ Forward to a teammate — or hand to an AI teammate (Emma/Annie/Miranda) who owns it — to check before we reply. They get this email, the full conversation history, and your note. Claire's draft is not included. Nothing goes to the homeowner.</div>
     <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:6px 0;">
@@ -788,6 +792,10 @@ function forwardPrompt(id, senderEmail){
       <button class="act dismiss" onclick="document.getElementById('fwd-${id}').innerHTML='';">Cancel</button>
       <span id="fwd-status-${id}" class="note"></span>
     </div></div>`;
+  // If Claire suggested a specialist, preselect them so it's a one-click hand-off
+  // to the right person (the operator can still change it).
+  const pre = preselectPersona && AI_MAILBOX[preselectPersona];
+  if (pre) { const sel = document.getElementById('fwd-to-'+id); if (sel) sel.value = pre; }
 }
 // "Write from my notes" — expand the operator's few words into a full forward
 // note to the teammate (mirrors "Rewrite with my notes" on replies).
