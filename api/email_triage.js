@@ -1093,7 +1093,18 @@ router.post('/:id/send', express.json(), async (req, res) => {
         try { const { fetchMessageText } = require('../lib/email/graph_attachments'); const t = await fetchMessageText(m.mailbox, m.graph_id); if (t && t.length > origBody.length) origBody = t; } catch (_) {}
       }
       origBody = stripQuoted(String(origBody || m.body_preview || '')).slice(0, 6000);
-      // Earlier messages in the same conversation (context), newest first.
+      // Render one email as its own readable block: a "From · when" header and a
+      // body with real paragraph breaks (blank line -> new paragraph). Separate,
+      // spaced blocks per message so a chain reads as distinct emails, not a wall.
+      const fmtBody = (t) => {
+        const paras = eq(String(t || '')).replace(/\r/g, '').split(/\n{2,}/);
+        return paras.map((p) => `<p style="margin:0 0 8px;">${p.replace(/\n/g, '<br>')}</p>`).join('');
+      };
+      const msgBlock = (who, when, bodyText) => `<div style="margin:12px 0 0;padding:10px 12px;border-left:3px solid #e5e7eb;background:#fafbfc;border-radius:4px;">
+        <div style="color:#8a97a6;font-size:12px;margin-bottom:6px;">${eq(who || '')}${when ? ' · ' + eq(when) : ''}</div>
+        <div style="color:#454f5b;font-size:13px;line-height:1.55;">${fmtBody(bodyText)}</div>
+      </div>`;
+      // Earlier messages in the same conversation, newest first.
       let priorHtml = '';
       if (m.conversation_id) {
         try {
@@ -1102,13 +1113,16 @@ router.post('/:id/send', express.json(), async (req, res) => {
             .eq('conversation_id', m.conversation_id).neq('id', req.params.id)
             .order('received_at', { ascending: false }).limit(8);
           priorHtml = (td || []).map((x) => {
-            const who = x.direction === 'outbound' ? 'Bedrock' : (x.sender_name || x.sender_email || '');
-            const b = stripQuoted(String(x.body_full || x.body_preview || '')).slice(0, 1500);
-            return `<div style="border-left:2px solid #e5e7eb;padding:2px 0 2px 12px;margin:10px 0 0;color:#666;font-size:12.5px;"><div style="color:#999;">On ${fmtWhen(x.received_at)}, ${eq(who)} wrote:</div><div style="white-space:pre-wrap;">${eq(b)}</div></div>`;
+            const who = x.direction === 'outbound' ? 'Bedrock Association Management' : (x.sender_name || x.sender_email || '');
+            const b = stripQuoted(String(x.body_full || x.body_preview || '')).slice(0, 4000);
+            return msgBlock(who, fmtWhen(x.received_at), b);
           }).join('');
         } catch (_) {}
       }
-      quotedHtml = `<div style="border-top:1px solid #e5e7eb;margin-top:22px;padding-top:12px;"><div style="color:#999;font-size:12.5px;">On ${fmtWhen(m.received_at)}, ${eq(m.sender_name || m.sender_email || '')} wrote:</div><blockquote style="border-left:3px solid #e5e7eb;margin:8px 0 0;padding:2px 0 2px 12px;color:#555;font-size:13px;white-space:pre-wrap;">${eq(origBody)}</blockquote>${priorHtml}</div>`;
+      quotedHtml = `<div style="border-top:1px solid #e5e7eb;margin-top:22px;padding-top:10px;">
+        <div style="color:#8a97a6;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Conversation history</div>
+        ${msgBlock(m.sender_name || m.sender_email, fmtWhen(m.received_at), origBody)}${priorHtml}
+      </div>`;
       html = html + quotedHtml;
     } catch (_) { /* quoting best-effort — never block a send */ }
 
