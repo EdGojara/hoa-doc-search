@@ -345,13 +345,24 @@ async function assemble(contactId) {
     if (it.status && BAD_LETTER_STATUS.has(String(it.status))) return false;
     return !!(it.sent_at || it.mailed_at || it.printed_at);
   };
-  const letterByViolation = {};
+  const lettersByViolation = {};
   for (const it of (interactions || [])) {
     if (it.violation_id && it.content && /\.pdf$/i.test(it.content) && /letter/i.test(it.type || '') && letterWentOut(it)) {
-      if (!letterByViolation[it.violation_id]) letterByViolation[it.violation_id] = it.content;
+      (lettersByViolation[it.violation_id] || (lettersByViolation[it.violation_id] = [])).push({
+        path: it.content,
+        sent_at: it.sent_at || it.mailed_at || it.printed_at || it.created_at || null,
+      });
     }
   }
-  violations = violations.map((v) => ({ ...v, letter_path: letterByViolation[v.id] || null }));
+  // Newest sent first, so the most recent letter reads first on the violation row.
+  for (const vid of Object.keys(lettersByViolation)) {
+    lettersByViolation[vid].sort((a, b) => String(b.sent_at || '').localeCompare(String(a.sent_at || '')));
+  }
+  violations = violations.map((v) => ({
+    ...v,
+    letters: lettersByViolation[v.id] || [],
+    letter_path: (lettersByViolation[v.id] && lettersByViolation[v.id][0] && lettersByViolation[v.id][0].path) || null, // back-compat
+  }));
 
   // Assessment-delinquency / amenity-access status — the SAME engine the pool
   // gate uses, so 360 shows exactly what would block a fob. Assessments only
