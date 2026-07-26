@@ -1,6 +1,6 @@
 // Tests for lib/email/reply_learning — the encode-Ed reply capture + retrieval.
 const assert = require('assert');
-const { editRatio, getReplyExamples, formatExamplesForPrompt, SUBSTANTIVE_EDIT_RATIO } = require('../lib/email/reply_learning');
+const { editRatio, getReplyExamples, personaReadiness, formatExamplesForPrompt, SUBSTANTIVE_EDIT_RATIO } = require('../lib/email/reply_learning');
 
 let passed = 0;
 const t = (name, fn) => { fn(); passed++; console.log('  ✓', name); };
@@ -67,6 +67,30 @@ function fakeSupabase(rows) {
   t('SUBSTANTIVE_EDIT_RATIO floor is sane', () => {
     assert.ok(SUBSTANTIVE_EDIT_RATIO > 0 && SUBSTANTIVE_EDIT_RATIO < 0.3);
   });
+
+  await (async () => {
+    // Kat: 30 sends, ~10% substantive -> ready. Emma: still editing most -> not.
+    // Claire: too few samples -> not ready regardless of clean rate.
+    const rows = [];
+    for (let i = 0; i < 30; i++) rows.push({ persona: 'kat', was_edited: i < 3, edit_ratio: i < 3 ? 0.4 : 0.01, created_at: `2026-07-${(i % 28) + 1}` });
+    for (let i = 0; i < 25; i++) rows.push({ persona: 'emma', was_edited: true, edit_ratio: 0.3, created_at: `2026-07-${(i % 28) + 1}` });
+    for (let i = 0; i < 5; i++)  rows.push({ persona: 'claire', was_edited: true, edit_ratio: 0.5, created_at: `2026-06-0${i + 1}` });
+    const r = await personaReadiness(fakeSupabase(rows), { ownerEmail: 'egojara@bedrocktx.com' });
+    assert.strictEqual(r.kat.ready, true, 'kat clean+enough -> ready');
+    assert.ok(r.kat.clean_rate >= 0.85, 'kat clean_rate high');
+    assert.strictEqual(r.emma.ready, false, 'emma still editing -> not ready');
+    assert.strictEqual(r.claire.ready, false, 'claire too few samples -> not ready');
+    assert.ok(/need 20/.test(r.claire.reason), 'claire reason cites sample floor');
+    passed += 5;
+    console.log('  ✓ personaReadiness: ready when clean + enough volume, not otherwise');
+  })();
+
+  await (async () => {
+    const errSupa = { from() { return { select(){return this;}, order(){return this;}, limit(){return this;}, ilike(){return this;}, then(res){res({data:null, error:{message:'relation does not exist'}});} }; } };
+    assert.deepStrictEqual(await personaReadiness(errSupa, { ownerEmail: 'x' }), {});
+    passed++;
+    console.log('  ✓ personaReadiness: table-missing -> {} (degrades cleanly)');
+  })();
 
   console.log(`\nreply_learning: ${passed} passed`);
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

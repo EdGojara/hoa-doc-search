@@ -180,6 +180,7 @@ function personaCardHtml(t){
     </div>
     <div style="font-size:11.5px;color:var(--muted);margin-top:3px;">${esc(t.title)} &middot; ${t.total} email${t.total===1?'':'s'}</div>
     ${t.routing?`<div style="font-size:11px;color:var(--muted);margin-top:2px;">📨 to ${esc((t.mailbox||'').split(' ')[0])} ${t.routing.direct} &middot; ↪ via info@ ${t.routing.via_info}</div>`:''}
+    ${t.training?`<div title="${esc(t.training.reason)}" style="font-size:10.5px;margin-top:5px;padding:2px 7px;border-radius:20px;display:inline-block;font-weight:700;background:${t.training.ready?'#e7f6ec':'#fbf1dc'};color:${t.training.ready?'#1a7a3c':'#8a6d00'};">${t.training.ready?'✓ ready for auto':'🎓 training'} &middot; ${Math.round(t.training.clean_rate*100)}% clean &middot; n=${t.training.n}</div>`:''}
     <div style="font-size:11px;color:${active?'var(--gold)':(priv?'#7c5cbf':'#9fb0c2')};margin-top:6px;font-weight:600;">${foot}</div>
   </div>`;
 }

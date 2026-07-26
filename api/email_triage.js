@@ -229,12 +229,17 @@ router.get('/team', async (req, res) => {
     // Each teammate's OWN address — used to split "addressed directly to them"
     // vs "came to info@ and was routed to them."
     const SELF = { claire: 'claire@', emma: 'emma@', annie: 'annie@', miranda: 'miranda@' };
+    // Training readiness (owner-only, single-teacher) — the edit-rate signal that
+    // tells Ed which teammate is clean enough to consider auto-send.
+    let readiness = {};
+    if (owner) { try { const { personaReadiness } = require('../lib/email/reply_learning'); readiness = await personaReadiness(supabase, { ownerEmail: OWNER_EMAIL }); } catch (_) {} }
     const roster = [];
     for (const t of list) {
       const total = await supabase.from('email_messages').select('id', { count: 'exact', head: true }).eq('persona', t.persona);
       const unrev = await supabase.from('email_messages').select('id', { count: 'exact', head: true }).eq('persona', t.persona).in('triage_status', ['needs_review', 'new']);
       const latest = await supabase.from('email_messages').select('received_at').eq('persona', t.persona).order('received_at', { ascending: false }).limit(1).maybeSingle();
       const entry = { ...t, total: total.count || 0, unreviewed: unrev.count || 0, latest_at: latest.data ? latest.data.received_at : null };
+      if (owner && readiness[t.persona]) entry.training = readiness[t.persona];
       if (SELF[t.persona]) {
         const d = await supabase.from('email_messages').select('id', { count: 'exact', head: true }).eq('persona', t.persona).ilike('mailbox', `%${SELF[t.persona]}%`);
         const direct = d.count || 0;
