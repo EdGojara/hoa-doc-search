@@ -469,15 +469,30 @@ async function forwardFromSent(id){
   try {
     const r = await af(`${API}/${id}`); const j = await r.json();
     const m = j.message || {};
+    // Pull the whole conversation so the forward carries the HISTORY — the board
+    // needs the homeowner's original request, not just Claire's reply. (Ed 2026-07-25.)
+    let historyTxt = '';
+    try {
+      const tr = await af(`${API}/${id}/thread`); const tj = await tr.json();
+      const chain = (tj.thread||[]).filter(t=>t.id!==id)
+        .slice().sort((a,b)=>String(a.received_at||'').localeCompare(String(b.received_at||'')));
+      if (chain.length) {
+        historyTxt = '\n\n----- Conversation history -----\n' + chain.map(t=>{
+          const who = t.direction==='outbound' ? 'Bedrock' : (t.sender_name||t.sender_email||'');
+          const when = t.received_at ? new Date(t.received_at).toLocaleString() : '';
+          return `On ${when}, ${who} wrote:\n${String(t.body_preview||'').trim()}`;
+        }).join('\n\n');
+      }
+    } catch(_){}
     openCompose();
     const p = COMPOSE_PERSONAS[m.persona] ? m.persona : 'claire';
     document.getElementById('nmPersona').value = p; ncPersonaChange();
     document.getElementById('nmSubject').value = /^fwd:/i.test(m.subject||'') ? m.subject : ('Fwd: ' + (m.subject||''));
     const to = Array.isArray(m.recipients) ? m.recipients.join(', ') : (m.recipients||'');
-    const when = m.received_at ? new Date(m.received_at).toLocaleString() : '';
+    const when = (m.created_at||m.received_at) ? new Date(m.created_at||m.received_at).toLocaleString() : '';
     const orig = m.body_full || m.body_preview || '';
-    document.getElementById('nmBody').value = `\n\n----- Forwarded message -----\nFrom: ${m.sender_name||m.sender_email||''}\nDate: ${when}\nTo: ${to}\nSubject: ${m.subject||''}\n\n${orig}`;
-    document.getElementById('nmStatus').textContent = 'Add who to forward to in the To field, then send.';
+    document.getElementById('nmBody').value = `\n\n----- Forwarded message -----\nFrom: ${m.sender_name||m.sender_email||''}\nDate: ${when}\nTo: ${to}\nSubject: ${m.subject||''}\n\n${orig}${historyTxt}`;
+    document.getElementById('nmStatus').textContent = historyTxt ? 'Conversation history included below. Add who to forward to, then send.' : 'Add who to forward to in the To field, then send.';
   } catch(e){ alert('Could not open forward: '+(e.message||'error')); }
 }
 // ---- Attach documents to a reply -----------------------------------------
