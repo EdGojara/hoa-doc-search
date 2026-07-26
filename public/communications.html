@@ -715,6 +715,22 @@ async function loadStaff(){
     staffCache = list.filter(u => u && u.email && (u.is_active === undefined || u.is_active));
   } catch(_) { staffCache = []; }
 }
+// Predefined board-email lists: each community's active board roster (+ its CM),
+// so composing/forwarding to a board is one pick. Sourced from board_members.
+let boardGroups = [];
+async function loadBoardGroups(){
+  try {
+    const r = await af('/api/board-members'); const j = await r.json();
+    const byComm = {};
+    for (const m of (j.members||[])) {
+      if (!m.email) continue;
+      (byComm[m.community_name] = byComm[m.community_name] || []).push(m.email.trim());
+    }
+    boardGroups = Object.entries(byComm)
+      .map(([community, emails])=>({community, emails:[...new Set(emails)]}))
+      .sort((a,b)=>a.community.localeCompare(b.community));
+  } catch(_) { boardGroups = []; }
+}
 function forwardPrompt(id, senderEmail){
   const box = document.getElementById('fwd-'+id);
   if(!box) return;
@@ -833,10 +849,13 @@ window.ncPersonaChange = function(){
 // and the AI-agent mailboxes. Free-text stays for external addresses.
 async function ncFillPickers(){
   if(!staffCache.length){ try{ await loadStaff(); }catch(_){} }
+  if(!boardGroups.length){ try{ await loadBoardGroups(); }catch(_){} }
   const staffOpts = staffCache.map(u=>`<option value="${esc(u.email)}">${esc(u.full_name||u.email)}${u.role?' ('+esc(u.role)+')':''}</option>`).join('');
   const agentOpts = Object.values(COMPOSE_PERSONAS).map(p=>`<option value="${esc(p.mail)}">${esc(p.name)}</option>`).join('');
-  const html = `<option value="">+ add staff, everyone, or an AI agent…</option>`
+  const boardOpts = boardGroups.map(g=>`<option value="${esc(g.emails.join(', '))}">🏛️ ${esc(g.community)} — Board (${g.emails.length})</option>`).join('');
+  const html = `<option value="">+ add a board list, staff, everyone, or an AI agent…</option>`
     + `<option value="__all_staff__">👥 Everyone (all staff)</option>`
+    + (boardOpts?`<optgroup label="Board distribution lists">${boardOpts}</optgroup>`:'')
     + (staffOpts?`<optgroup label="Staff">${staffOpts}</optgroup>`:'')
     + `<optgroup label="AI agents">${agentOpts}</optgroup>`;
   const tp=document.getElementById('nmToPick'), cp=document.getElementById('nmCcPick');
@@ -848,7 +867,9 @@ function ncAddRecip(fieldId, sel){
   const v=sel.value; sel.value='';
   if(!v) return;
   const field=document.getElementById(fieldId); if(!field) return;
-  const toAdd = v==='__all_staff__' ? staffCache.map(u=>u.email).filter(Boolean) : [v];
+  const toAdd = v==='__all_staff__' ? staffCache.map(u=>u.email).filter(Boolean)
+    : v.split(/[;,]/).map(x=>x.trim()).filter(Boolean); // a board-list option is a joined string
+
   const existing = field.value.split(/[,;]/).map(x=>x.trim()).filter(Boolean);
   for(const a of toAdd){ if(!existing.some(e=>e.toLowerCase()===a.toLowerCase())) existing.push(a); }
   field.value = existing.join(', ');
