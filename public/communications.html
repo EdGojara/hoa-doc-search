@@ -413,6 +413,7 @@ function draftBoxHtml(id, subject, body, careful, persona, covers){
     <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
       <label style="font-size:12px;color:var(--muted);min-width:24px;">Cc</label>
       <input id="cc-${id}" type="text" placeholder="copy anyone — a teammate, the board, another owner (commas for multiple)" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;flex:1;">
+      <button class="act" style="font-size:11px;padding:4px 9px;white-space:nowrap;" onclick="doReplyAll('${id}')" title="Copy everyone else on this email thread (board members, etc.) — pulls the real To/Cc.">↩ Reply all</button>
     </div>
     ${attachRowHtml(id)}
     <div style="margin-top:8px; display:flex; gap:6px; align-items:center;">
@@ -440,6 +441,24 @@ function toRowHtml(id){
       <label style="font-size:12px;color:var(--muted);min-width:24px;">To</label>
       <input id="to-${id}" type="text" value="${esc(r.to||'')}" placeholder="recipient email" style="padding:6px 8px;border:1px solid ${fromForm?'#f59e0b':'var(--line)'};border-radius:6px;font-size:12.5px;flex:1;">
     </div>${hint}`;
+}
+// Reply All: copy everyone else on the thread. Sender stays as the To; the rest
+// (board members, the CM, etc.) go to Cc. Pulls the real To/Cc from Graph since
+// ingest only stored the mailbox. (Ed 2026-07-26.)
+async function doReplyAll(id){
+  try {
+    const r = await af(`${API}/${id}/participants`); const j = await r.json();
+    const toEl=document.getElementById('to-'+id), ccEl=document.getElementById('cc-'+id);
+    if(toEl && j.reply_to && !toEl.value.trim()) toEl.value = j.reply_to;
+    const others = j.reply_all_cc||[];
+    if(ccEl){
+      const existing = ccEl.value.split(/[,;]/).map(x=>x.trim()).filter(Boolean);
+      for(const a of others){ if(!existing.some(e=>e.toLowerCase()===a.toLowerCase())) existing.push(a); }
+      ccEl.value = existing.join(', ');
+    }
+    const st=document.getElementById('cc-'+id);
+    if(!others.length && st){ st.placeholder='No other participants found on this thread.'; }
+  } catch(e){ alert('Could not load participants: '+(e.message||'error')); }
 }
 // A sent (outbound) email — read-only, with a Forward button so the whole
 // history can be forwarded from trustEd (e.g. to the board) instead of Outlook.

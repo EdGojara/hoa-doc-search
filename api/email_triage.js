@@ -395,6 +395,56 @@ router.get('/:id/thread', async (req, res) => {
   }
 });
 
+// GET /:id/participants — who Reply / Reply All should go to. The sender is the
+// reply-to; Reply All adds everyone else on the thread. Ingest only stored the
+// mailbox the message landed in, so the real To+Cc come from Graph; we also fold
+// in everyone who's been on the conversation. Our own bot/system inboxes are
+// stripped, but real staff (e.g. the community manager) are kept. (Ed 2026-07-26.)
+const SYSTEM_MAILBOXES = new Set([
+  graphSend.CLAIRE_MAILBOX, graphSend.EMMA_MAILBOX, graphSend.ANNIE_MAILBOX, graphSend.MIRANDA_MAILBOX,
+  graphSend.PAIGE_MAILBOX, graphSend.REESE_MAILBOX, graphSend.KAT_MAILBOX, graphSend.AMANDA_MAILBOX,
+  'info@bedrocktx.com', 'archive1emails@bedrocktx.com', 'archive2@bedrocktx.com', 'scans@bedrocktx.com',
+].filter(Boolean).map((s) => String(s).toLowerCase()));
+
+router.get('/:id/participants', async (req, res) => {
+  try {
+    const { data: m, error } = await supabase.from('email_messages')
+      .select('sender_email, recipients, graph_id, mailbox, conversation_id')
+      .eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!m) return res.status(404).json({ error: 'not_found' });
+
+    const norm = (e) => String(e || '').trim().toLowerCase();
+    const sender = m.sender_email || null;
+
+    // Real To+Cc from Graph (ingest kept only the mailbox).
+    let to = [], cc = [];
+    if (m.graph_id && m.mailbox) {
+      try { const { fetchMessageRecipients } = require('../lib/email/graph_attachments'); const rec = await fetchMessageRecipients(m.mailbox, m.graph_id); to = rec.to || []; cc = rec.cc || []; } catch (_) {}
+    }
+    // Plus everyone who's been on the conversation (supplement / fallback).
+    const pool = [...to, ...cc, ...(Array.isArray(m.recipients) ? m.recipients : [])];
+    if (m.conversation_id) {
+      try {
+        const { data: td } = await supabase.from('email_messages').select('sender_email, recipients').eq('conversation_id', m.conversation_id).limit(50);
+        for (const t of (td || [])) { if (t.sender_email) pool.push(t.sender_email); (Array.isArray(t.recipients) ? t.recipients : []).forEach((r) => pool.push(r)); }
+      } catch (_) {}
+    }
+
+    const seen = new Set();
+    const others = [];
+    for (const e of pool) {
+      const n = norm(e);
+      if (!n || n === norm(sender) || SYSTEM_MAILBOXES.has(n) || seen.has(n)) continue;
+      seen.add(n); others.push(String(e).trim());
+    }
+    res.json({ reply_to: sender, reply_all_cc: others });
+  } catch (err) {
+    console.error('[email_triage] participants failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /:id/link — human confirms (or redirects) the linkage.
 router.post('/:id/link', express.json(), async (req, res) => {
   try {
