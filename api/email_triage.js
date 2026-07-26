@@ -53,6 +53,44 @@ function personaFor(m) {
   return 'claire';
 }
 
+// Neighbor complaint grounding. When a homeowner reports an issue at ANOTHER
+// property (a neighbor's trailer, fence, etc.), a good CM already knows whether
+// we've got a case open on it and reassures with confidence. The drafter only
+// grounds on the SENDER's account, so it was blind to the reported property.
+// This resolves the reported address(es) — excluding the sender's own — to
+// properties in the community and checks for an OPEN enforcement matter. Returns
+// ONLY a boolean (no stage/fine/owner), so Claire can calibrate her reassurance
+// without any way to leak the other owner's private details. (Ed 2026-07-25 —
+// the Ronald Davis trailer report.)
+function _normStreet(a) {
+  if (!a) return '';
+  return String(a).split(',')[0].trim().toLowerCase().replace(/\s+/g, ' ');
+}
+async function resolveReportedIssue(m) {
+  const addrs = (m && m.extracted && Array.isArray(m.extracted.addresses)) ? m.extracted.addresses : [];
+  if (!addrs.length || !m.community_id) return null;
+  let ownStreet = '';
+  if (m.resolved_property_id) {
+    const { data: op } = await supabase.from('properties').select('street_address').eq('id', m.resolved_property_id).maybeSingle();
+    ownStreet = _normStreet(op && op.street_address);
+  }
+  const seen = new Set();
+  const reportedPropIds = [];
+  for (const a of addrs) {
+    const s = _normStreet(a);
+    if (!s || s === ownStreet || seen.has(s)) continue;
+    seen.add(s);
+    const { data: props } = await supabase.from('properties')
+      .select('id, street_address').eq('community_id', m.community_id).ilike('street_address', s + '%').limit(3);
+    for (const p of (props || [])) if (p.id !== m.resolved_property_id) reportedPropIds.push(p.id);
+  }
+  if (!reportedPropIds.length) return { resolved: false, has_active_matter: false };
+  const { data: vios } = await supabase.from('violations')
+    .select('current_stage, resolved_at').in('property_id', reportedPropIds).is('resolved_at', null);
+  const open = (vios || []).filter((v) => !['cured', 'closed', 'voided'].includes(v.current_stage));
+  return { resolved: true, has_active_matter: open.length > 0 };
+}
+
 // Claire's honest-AI signature — every AI-sent email identifies as AI and
 // offers a human (same rule as the voice persona).
 function claireSignature(communityName) {
@@ -688,6 +726,11 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     // examples so the draft moves toward his voice. Owner-only (single-teacher).
     const replyExamples = await loadExamples(persona);
 
+    // Neighbor complaint: is the reported issue already an open enforcement
+    // matter? Lets Claire reassure with grounded confidence (no specifics).
+    let reportedIssue = null;
+    try { reportedIssue = await resolveReportedIssue(m); } catch (_) {}
+
     const draft = await draftReply({
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, conversation_id: m.conversation_id, sender_email: m.sender_email, graph_id: m.graph_id, mailbox: m.mailbox, has_attachments: m.has_attachments },
       classification: m.classification,
@@ -703,6 +746,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       notes, currentDraft, // reviewer steering (Rewrite with my notes)
       siblings, // cover the homeowner's other recent emails in one reply
       applicationOnFile: accFormCtx, // what they attached (address/project) — confirm, don't re-ask
+      reportedIssue, // neighbor complaint: is the reported issue already an open case? (privacy-safe boolean)
     });
     res.json({ ...draft, covers, auto_attachments: autoAttachments, community_id: communityId, ...recipientOut });
   } catch (err) {
