@@ -209,9 +209,8 @@ async function loadPersonaList(){
     try {
       const r = await af(API + `?persona=${openPersona}&direction=outbound&status=handled&limit=200`);
       const j = await r.json();
-      // Newest sent first — fall back to created_at for older rows sent before
-      // received_at was stamped on outbound records.
-      const msgs = (j.messages||[]).slice().sort((a,b)=>String(b.received_at||b.created_at||'').localeCompare(String(a.received_at||a.created_at||''))); window._msgs = msgs;
+      // Newest sent first, by created_at (a sent email's real timestamp).
+      const msgs = (j.messages||[]).slice().sort((a,b)=>String(b.created_at||b.received_at||'').localeCompare(String(a.created_at||a.received_at||''))); window._msgs = msgs;
       sel.innerHTML = msgs.length
         ? '<div class="note" style="margin:4px 0 8px;color:var(--muted);">Emails your AI team has sent. Open the thread to see the full exchange, or forward any of them from here so the whole history stays in trustEd.</div>' + msgs.map(sentMsgHtml).join('')
         : '<div class="empty">No sent emails here yet.</div>';
@@ -446,15 +445,16 @@ function toRowHtml(id){
 // history can be forwarded from trustEd (e.g. to the board) instead of Outlook.
 function sentMsgHtml(m){
   const to = Array.isArray(m.recipients) ? m.recipients.join(', ') : (m.recipients||'');
-  const sentTs = m.received_at || m.created_at;
-  const when = sentTs ? ('sent ' + new Date(sentTs).toLocaleString()) : '';
+  // A sent email's timestamp is created_at (received_at is an inbound field).
+  const sentTs = m.created_at || m.received_at;
+  const dateStr = sentTs ? new Date(sentTs).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}) : '(no date)';
   const who = PNAME[m.persona] || m.sender_name || 'Claire';
   return `<div class="msg" id="msg-${m.id}">
       <div class="msg-top">
         <div>
-          <span class="badge b-linked">Sent</span>
-          <div class="subj" style="margin-top:5px;">${esc(m.subject||'(no subject)')}</div>
-          <div class="from">${esc(who)} &rarr; ${esc(to||'(recipient on file)')} &middot; ${when}${m.community&&m.community.name?' &middot; '+esc(m.community.name):''}</div>
+          <div style="font-size:12.5px;font-weight:700;color:var(--navy);">📅 ${esc(dateStr)}${m.community&&m.community.name?` <span style="font-weight:400;color:var(--muted);">· ${esc(m.community.name)}</span>`:''}</div>
+          <div class="subj" style="margin-top:4px;">${esc(m.subject||'(no subject)')}</div>
+          <div class="from">Sent by ${esc(who)} &rarr; ${esc(to||'(recipient on file)')}</div>
         </div>
         <div style="display:flex; gap:6px;">
           <button class="act" onclick="forwardFromSent('${m.id}')" title="Forward this email to anyone (e.g. the board) from trustEd — sent from Claire and logged here, so the whole history stays in trustEd.">&#8618; Forward</button>

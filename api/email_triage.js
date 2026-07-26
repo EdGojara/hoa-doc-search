@@ -196,7 +196,12 @@ router.get('/', async (req, res) => {
     if (persona && String(persona).split(',').includes('tessa') && !owner) {
       return res.status(403).json({ error: 'owner_only' });
     }
-    let query = supabase.from('email_messages').select(SELECT).order('received_at', { ascending: false }).range(offset, offset + limit - 1);
+    // Sent view (direction=outbound) orders by created_at — a sent email has no
+    // received_at (that's an inbound field), so ordering those by received_at
+    // left today's sends unsorted and off the top. (Ed 2026-07-25.)
+    let query = supabase.from('email_messages').select(SELECT)
+      .order(direction === 'outbound' ? 'created_at' : 'received_at', { ascending: false })
+      .range(offset, offset + limit - 1);
     if (status) query = query.in('triage_status', String(status).split(','));
     if (classification) query = query.in('classification', String(classification).split(','));
     if (persona) query = query.in('persona', String(persona).split(','));
