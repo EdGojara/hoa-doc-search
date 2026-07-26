@@ -935,7 +935,11 @@ router.post('/:id/forward-note', express.json(), async (req, res) => {
 // depth: refuse to send for non-draftable (compliance) classes even if asked.
 router.post('/:id/send', express.json(), async (req, res) => {
   try {
-    const { body, to, subject, reviewed_by, original_draft } = req.body || {};
+    const { body: _rawBody, to, subject, reviewed_by, original_draft } = req.body || {};
+    // Proofread the operator's copy — fix spelling/typos before it sends (and
+    // before it's captured as encode-Ed training). Conservative + fail-safe.
+    let body = String(_rawBody == null ? '' : _rawBody).trim();
+    if (body) { try { const { proofreadEmailBody } = require('../lib/email/proofread'); body = (await proofreadEmailBody(body)).text; } catch (_) {} }
     // Optional Cc — copy a teammate, the board, another owner on the reply.
     const ccList = String((req.body || {}).cc || '').split(/[,;]/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).join(', ');
     if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
@@ -1414,13 +1418,17 @@ router.post('/compose', express.json(), async (req, res) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return; // 403 already sent
-    const { to, cc, subject, body, community_name, persona } = req.body || {};
+    const { to, cc, subject, body: _rawBody, community_name, persona } = req.body || {};
+    let body = String(_rawBody == null ? '' : _rawBody);
     const P = ['emma', 'annie', 'miranda', 'paige', 'kat', 'amanda'].includes(String(persona || '').toLowerCase()) ? String(persona).toLowerCase() : 'claire';
     const asEmma = P === 'emma';
     const toList = parseAddrs(to);
     const ccList = parseAddrs(cc);
     if (toList.length === 0) return res.status(400).json({ error: 'to_required', detail: 'Enter at least one valid recipient email.' });
-    if (!body || !String(body).trim()) return res.status(400).json({ error: 'body_required' });
+    if (!body.trim()) return res.status(400).json({ error: 'body_required' });
+    // Proofread the operator's copy (spelling/typos only) before sending; leaves
+    // any forwarded/quoted history untouched. Fail-safe. (Ed 2026-07-26.)
+    try { const { proofreadEmailBody } = require('../lib/email/proofread'); body = (await proofreadEmailBody(body)).text; } catch (_) {}
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'claire_not_connected', detail: 'AI-team email send is not wired yet — the Azure app (Mail.Send) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET must be set.' });
 
     const subj = (subject && String(subject).trim()) ? String(subject).trim() : '(no subject)';
