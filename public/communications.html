@@ -280,6 +280,7 @@ function msgHtml(m){
           <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')" title="Reply to the sender — drafts a reply you review before sending">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Reply'}</button>
           <button class="act" onclick="rowReplyAll('${m.id}','${m.persona||'claire'}')" title="Reply and copy everyone else on the thread (board members, the CM, etc.)">↩ Reply all</button>
           <button class="act" onclick="forwardPrompt('${m.id}','${esc(m.sender_email||'')}')" title="Forward to a teammate (or hand to an AI teammate) to check before we reply">↪ Forward</button>
+          ${(m.has_attachments && (m.persona==='annie' || m.classification==='acc_request' || /\barc\b|architectural|acc form/i.test(m.subject||'')))?`<button class="act" style="background:#6d28d9;color:#fff;" onclick="fileToAcc('${m.id}',this)" title="File this architectural application into the ACC review queue as pending review">🏗️ Send to ACC queue</button>`:''}
           <button class="act dismiss" onclick="dismiss('${m.id}','dismissed')">Dismiss</button>
           ${cls==='spam'?'':`<button class="act spam" onclick="dismiss('${m.id}','spam')">Spam</button>`}
         </div>
@@ -395,6 +396,18 @@ async function bulkDismiss(as){
 async function dismiss(id, as){
   const r = await af(`${API}/${id}/dismiss`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({as})});
   if(r.ok){ loadStats(); loadList(); }
+}
+// File an emailed/forwarded ACC application into the ACC review queue.
+async function fileToAcc(id, btn){
+  if(!confirm('File this into the ACC review queue as pending review? Annie’s receipt (if any) waits in the draft queue — nothing goes to the homeowner automatically.')) return;
+  const prev=btn.textContent; btn.disabled=true; btn.textContent='Filing…';
+  try{
+    const r=await af(`${API}/${id}/to-acc`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j=await r.json();
+    if(!r.ok){ btn.disabled=false; btn.textContent=prev; alert((j&&(j.detail||j.error))||'Could not file to the ACC queue.'); return; }
+    btn.textContent = (j.status==='attached') ? '✓ Added to open app' : '✓ In ACC queue';
+    setTimeout(()=>{ loadStats(); loadList(); }, 800);
+  }catch(e){ btn.disabled=false; btn.textContent=prev; alert('Could not file to ACC: '+e.message); }
 }
 function draftBoxHtml(id, subject, body, careful, persona, covers){
   persona = persona || 'claire';

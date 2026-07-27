@@ -66,6 +66,30 @@ function _normStreet(a) {
   if (!a) return '';
   return String(a).split(',')[0].trim().toLowerCase().replace(/\s+/g, ' ');
 }
+// Open/recent ACC applications on file for a property (or the person who wrote
+// in), so Annie is grounded on what's already in her queue. Matches by
+// normalized address OR submitter email. Best-effort; returns up to 5, newest
+// first, or null. (Ed 2026-07-27.)
+async function pendingAccForEmail({ community_id, address, senderEmail } = {}) {
+  if (!community_id) return null;
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const target = norm(address);
+  const em = String(senderEmail || '').toLowerCase();
+  if (!target && !em) return null;
+  const { data, error } = await supabase.from('acc_decisions')
+    .select('reference_number, status, decision_type, project_summary, homeowner_name, homeowner_address, submitter_email, created_at')
+    .eq('community_id', community_id)
+    .order('created_at', { ascending: false }).limit(80);
+  if (error || !data) return null;
+  const mine = data.filter((d) => {
+    const a = norm(d.homeowner_address);
+    const byAddr = target && a && (a === target || a.includes(target) || target.includes(a));
+    const byEmail = em && d.submitter_email && String(d.submitter_email).toLowerCase() === em;
+    return byAddr || byEmail;
+  });
+  return mine.length ? mine.slice(0, 5) : null;
+}
+
 async function resolveReportedIssue(m) {
   const addrs = (m && m.extracted && Array.isArray(m.extracted.addresses)) ? m.extracted.addresses : [];
   if (!addrs.length || !m.community_id) return null;
@@ -791,6 +815,15 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     let reportedIssue = null;
     try { reportedIssue = await resolveReportedIssue(m); } catch (_) {}
 
+    // Annie is the ACC expert: like Emma checks the AP subledger before replying
+    // to a vendor, Annie must KNOW whether this property already has an
+    // application in our queue — so she never asks a homeowner to submit what's
+    // already pending, and can answer a status question. (Ed 2026-07-27.)
+    let pendingApplications = null;
+    if (persona === 'annie' || m.classification === 'acc_request') {
+      try { pendingApplications = await pendingAccForEmail({ community_id: communityId, address: (m.resolved_property && m.resolved_property.street_address) || null, senderEmail: m.sender_email }); } catch (_) {}
+    }
+
     const draft = await draftReply({
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, conversation_id: m.conversation_id, sender_email: m.sender_email, graph_id: m.graph_id, mailbox: m.mailbox, has_attachments: m.has_attachments },
       classification: m.classification,
@@ -807,6 +840,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       siblings, // cover the homeowner's other recent emails in one reply
       applicationOnFile: accFormCtx, // what they attached (address/project) — confirm, don't re-ask
       reportedIssue, // neighbor complaint: is the reported issue already an open case? (privacy-safe boolean)
+      pendingApplications, // Annie: ACC applications already in our queue for this property
     });
     res.json({ ...draft, covers, auto_attachments: autoAttachments, community_id: communityId, ...recipientOut });
   } catch (err) {
@@ -1216,6 +1250,41 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
     res.json({ ok: true, loaded, duplicates: dup });
   } catch (err) { console.error('[email_triage] to-payables failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /:id/to-acc — file an emailed ACC/ARC application into the ACC review
+// queue (the SAME engine + acc_decisions queue as a web submission). The manual
+// counterpart to the auto-intake at ingest, for the case that auto-intake can't
+// catch: a staffer FORWARDS a homeowner's application (reads as 'internal', so
+// the classifier-gated auto-intake skips it — Ed 2026-07-27, Martha's Still
+// Creek ACC form). Self-serve resilience: staff file it in one click instead of
+// escalating. Idempotent (intake_source_ref); the intake self-validates and
+// HOLDS the decision for human review.
+router.post('/:id/to-acc', express.json(), async (req, res) => {
+  try {
+    const { data: m } = await supabase.from('email_messages')
+      .select('id, mailbox, graph_id, subject, sender_email, sender_name, classification, community_id, resolved_property_id, resolved_contact_id, has_attachments, extracted')
+      .eq('id', req.params.id).maybeSingle();
+    if (!m) return res.status(404).json({ error: 'not_found' });
+    if (!m.graph_id || !m.has_attachments) return res.status(400).json({ error: 'no_attachment', detail: 'No application form is attached to file to the ACC queue.' });
+    const { intakeApplicationFromEmail } = require('../lib/applications/email_intake');
+    const out = await intakeApplicationFromEmail({ email: m, extracted: m.extracted || {}, communityId: m.community_id || null });
+    const st = out && out.status;
+    if (st === 'created' || st === 'attached' || out.queued) {
+      await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
+      return res.json({ ok: true, status: st || 'created', id: out.id || null, detail: st === 'attached' ? 'Added to the existing open application for this homeowner.' : 'Filed to the ACC review queue as pending review.' });
+    }
+    // Self-diagnosing failure — say exactly why it couldn't file, so staff can fix it.
+    const why = {
+      no_attachments: 'No form/photo was attached to this email.',
+      no_address: 'Could not determine the property address from the form, body, or sender. Confirm the homeowner, then retry.',
+      no_community: 'Could not resolve which community this belongs to.',
+      no_arc_service: 'This community has no ACC/ARC service configured, so applications can’t be queued for it.',
+      no_graph_id: 'The original email is no longer fetchable (it was filed and rotated). Ask the homeowner (or the forwarder) to resend it.',
+      engine_not_ready: 'The ACC decision engine is not available right now — try again shortly.',
+    };
+    return res.status(422).json({ error: st || 'not_filed', detail: why[st] || 'Could not file this to the ACC queue.', community_id: out && out.community_id });
+  } catch (err) { console.error('[email_triage] to-acc failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // POST /:id/add-to-payables — create an AP invoice STUB from a vendor's past-due
