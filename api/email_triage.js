@@ -90,6 +90,34 @@ async function pendingAccForEmail({ community_id, address, senderEmail } = {}) {
   return mine.length ? mine.slice(0, 5) : null;
 }
 
+// Kat's grounding: the homeowner's live balance + collections/bankruptcy status
+// for the property that wrote in, so the accounting expert answers with real
+// numbers instead of "I'll look it up." Returns an array of lines or null.
+// (Ed 2026-07-27.)
+async function katFinancialContext({ propertyId } = {}) {
+  if (!propertyId) return null;
+  const lines = [];
+  try {
+    const { data: bal } = await supabase.from('v_homeowner_current_balance')
+      .select('balance_cents, most_recent_txn_date').eq('property_id', propertyId).maybeSingle();
+    if (bal) {
+      const c = Number(bal.balance_cents) || 0;
+      const amt = '$' + (Math.abs(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      lines.push(`Account balance: ${c > 0 ? amt + ' owed' : c < 0 ? amt + ' credit' : '$0.00 (current)'}${bal.most_recent_txn_date ? `, last activity ${String(bal.most_recent_txn_date).slice(0, 10)}` : ''}`);
+    }
+  } catch (_) { /* balance view absent — skip */ }
+  try {
+    const { data: col } = await supabase.from('ar_account_collections')
+      .select('collection_status, bankruptcy_petition_date, bankruptcy_chapter').eq('property_id', propertyId).maybeSingle();
+    if (col && col.collection_status) {
+      let s = `Collections status: ${col.collection_status}`;
+      if (col.bankruptcy_petition_date) s += ` — BANKRUPTCY (${col.bankruptcy_chapter || 'chapter n/a'}, filed ${String(col.bankruptcy_petition_date).slice(0, 10)}); do NOT attempt to collect, direct any account questions to the attorney handling it`;
+      lines.push(s);
+    }
+  } catch (_) { /* collections table absent — skip */ }
+  return lines.length ? lines : null;
+}
+
 async function resolveReportedIssue(m) {
   const addrs = (m && m.extracted && Array.isArray(m.extracted.addresses)) ? m.extracted.addresses : [];
   if (!addrs.length || !m.community_id) return null;
@@ -717,6 +745,11 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     // ANYTHING in their queue via the general persona drafter. (Ed 2026-07-20:
     // "make Kat and all of them be able to reply to any emails in their que.")
     if (['kat', 'amanda', 'reese', 'paige'].includes(persona)) {
+      // Kat is the accounting expert — like Emma grounds in the AP subledger,
+      // Kat must answer with the homeowner's REAL balance / collections status,
+      // not a blind "I'll look it up." (Ed 2026-07-27: "others need to function.")
+      let extra = null;
+      if (persona === 'kat') { try { extra = await katFinancialContext({ propertyId: m.resolved_property_id }); } catch (_) {} }
       const { draftPersonaReply } = require('../lib/email/persona_reply');
       const draft = await draftPersonaReply({
         persona,
@@ -726,6 +759,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
           contactName: (m.resolved_contact && m.resolved_contact.full_name) || m.sender_name || null,
           propertyAddress: m.resolved_property ? m.resolved_property.street_address : null,
           vendorName: m.resolved_vendor ? m.resolved_vendor.name : null,
+          extra,
         },
         notes, currentDraft, examples: await loadExamples(persona),
       });
