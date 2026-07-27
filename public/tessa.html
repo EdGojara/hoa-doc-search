@@ -65,6 +65,8 @@ function render(){
           </div>
           <span class="note" id="mode-note">Ghostwritten in your voice, from your mailbox.</span>
         </div>
+        <label>Pick a recipient <span class="note" style="font-weight:400;">(board member, staff, or AI teammate — or just type below)</span></label>
+        <select id="rpick" onchange="pickRecipient()"><option value="">— loading directory&hellip; —</option></select>
         <label>To</label><input id="to" placeholder="name@example.com">
         <label>Recipient name (optional, helps the greeting)</label><input id="rname" placeholder="e.g. Karla at DRB">
         <label>Your thought <span class="note" style="font-weight:400;">(type it, or tap the mic and talk)</span></label>
@@ -106,6 +108,66 @@ function render(){
   </div>`;
   loadFu();
   loadInbox();
+  loadRecipients();
+}
+
+// Recipient directory for the compose picker: board members (by community),
+// Bedrock staff, and the AI team. One pick fills To + the greeting name. All
+// groups sorted A–Z by label (house rule). Best-effort — a failed source just
+// leaves that group out; the free-text To always works.
+let _rpickName = {}; // email -> display name, so a pick fills the greeting
+async function loadRecipients(){
+  const sel = $('rpick'); if(!sel) return;
+  // AI team mirrors lib/email/graph_send.js persona mailboxes.
+  const AI = [
+    ['Amanda Albright','amanda@bedrocktx.com','senior community manager'],
+    ['Annie Reeves','annie@bedrocktx.com','ACC / ARC'],
+    ['Claire','claire@bedrocktx.com','front office'],
+    ['Emma Brooks','emma@bedrocktx.com','accounts payable'],
+    ['Kat Reed','kat@bedrocktx.com','accounting'],
+    ['Miranda Pierce','miranda@bedrocktx.com','compliance / DRV'],
+    ['Paige Chandler','paige@bedrocktx.com','board operations'],
+    ['Reese Calloway','reese@bedrocktx.com','resale / estoppels'],
+  ];
+  let staff=[], board=[];
+  try { const r=await af('/api/users'); const j=await r.json(); const l=Array.isArray(j)?j:(j.users||[]); staff=l.filter(u=>u&&u.email&&(u.is_active===undefined||u.is_active)); } catch(_){}
+  try { const r=await af('/api/board-members'); const j=await r.json(); board=(j.members||[]).filter(m=>m&&m.email); } catch(_){}
+  const opt=(v,label)=>`<option value="${esc(v)}">${esc(label)}</option>`;
+  _rpickName = {};
+  let html = '<option value="">— pick a board member, staff, or AI teammate —</option>';
+  // Board, grouped by community, each group A–Z.
+  if(board.length){
+    const byC={};
+    for(const m of board){ const c=m.community_name||'Board'; (byC[c]=byC[c]||[]).push(m); }
+    for(const [comm, mem] of Object.entries(byC).sort((a,b)=>a[0].localeCompare(b[0]))){
+      html += `<optgroup label="Board — ${esc(comm)}">`;
+      for(const m of mem.sort((a,b)=>String(a.name||a.full_name||a.email).localeCompare(String(b.name||b.full_name||b.email)))){
+        const nm = m.name || m.full_name || m.email;
+        const title = m.position || m.role || '';
+        _rpickName[m.email]=nm;
+        html += opt(m.email, `${nm}${title?' ('+title+')':''}`);
+      }
+      html += '</optgroup>';
+    }
+  }
+  if(staff.length){
+    html += '<optgroup label="Bedrock staff">';
+    for(const u of staff.slice().sort((a,b)=>String(a.full_name||a.email).localeCompare(String(b.full_name||b.email)))){
+      _rpickName[u.email]=u.full_name||u.email;
+      html += opt(u.email, `${u.full_name||u.email}${u.role?' ('+u.role+')':''}`);
+    }
+    html += '</optgroup>';
+  }
+  html += '<optgroup label="AI team">';
+  for(const [nm,em,role] of AI){ _rpickName[em]=nm; html += opt(em, `${nm} — ${role}`); }
+  html += '</optgroup>';
+  sel.innerHTML = html;
+}
+function pickRecipient(){
+  const v=$('rpick').value; if(!v) return;
+  $('to').value = v;
+  const nm=_rpickName[v]||'';
+  if(nm && $('rname') && !$('rname').value.trim()) $('rname').value = nm;
 }
 
 const _ibmode={};
@@ -245,7 +307,7 @@ async function doSend(){
     const r=await af('/api/tessa/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to, subject:$('d-subj').value, body:$('d-body').value, mode:_mode, create_followup:$('d-fu').checked, followup_title:'Follow up: '+$('d-subj').value})});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||'send failed');
     $('sendMsg').innerHTML='<span class="ok">✅ Sent '+(_mode==='ed'?'as you':'as Tessa')+'.</span>';
-    $('thought').value=''; $('to').value=''; $('rname').value=''; $('draftArea').innerHTML=''; if(j.followup_id) loadFu();
+    $('thought').value=''; $('to').value=''; $('rname').value=''; if($('rpick')) $('rpick').value=''; $('draftArea').innerHTML=''; if(j.followup_id) loadFu();
   }catch(e){ $('sendMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; btn.disabled=false; }
 }
 
