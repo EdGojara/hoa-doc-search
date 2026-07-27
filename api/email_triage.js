@@ -271,6 +271,65 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /acc-leaks — the standing "ACC inbox leak" check (Ed 2026-07-27: "we can't
+// have leaks"). Scans inbound ACC-looking mail in Claire's/Annie's lanes,
+// strips the known noise (our own no-reply receipts, bounces, DRV reports,
+// builder submissions), and returns the ones with NO linked acc_decisions row —
+// applications/requests that were never captured as pending or approved. Read-
+// only; owner-gated (it reads across communities). Each row carries the email id
+// so the UI can file it with the same one-click /:id/to-acc.
+router.get('/acc-leaks', async (req, res) => {
+  try {
+    if (!(await isOwner(req))) return res.status(403).json({ error: 'forbidden' });
+    const ACC_RX = /\b(acc|arc)\b|architectural|acc form|arc form|exterior (modification|change)|fence|shed|patio|paint|pergola|roof|driveway|concrete|walkway/i;
+    const NOISE_FROM = /no-?reply@|mailer-daemon|postmaster|donotreply/i;
+    const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const { data: em, error } = await supabase.from('email_messages')
+      .select('id, subject, sender_email, sender_name, persona, classification, graph_id, has_attachments, community_id, resolved_property_id, received_at, triage_status')
+      .eq('direction', 'inbound').in('persona', ['claire', 'annie'])
+      .order('received_at', { ascending: false }).limit(1000);
+    if (error) throw error;
+    const { data: dec, error: e2 } = await supabase.from('acc_decisions').select('intake_source_ref, source_email_refs, homeowner_address, status');
+    if (e2) throw e2;
+    const linkKeys = new Set(); const decByProp = {};
+    for (const d of (dec || [])) {
+      if (d.intake_source_ref) linkKeys.add(d.intake_source_ref);
+      for (const r of (d.source_email_refs || [])) linkKeys.add(r);
+      const k = norm(d.homeowner_address); if (k) (decByProp[k] = decByProp[k] || []).push(d.status);
+    }
+    const cand = (em || []).filter((m) =>
+      (m.classification === 'acc_request' || ACC_RX.test(m.subject || '')) &&
+      m.classification !== 'violation_report' &&
+      !NOISE_FROM.test(m.sender_email || '') &&
+      !/undeliverable|new construction submission received/i.test(m.subject || ''));
+    const leaks = cand.filter((m) =>
+      m.triage_status !== 'handled' &&
+      !(linkKeys.has('email:' + m.graph_id) || linkKeys.has('msg:' + m.id) || linkKeys.has('email:' + m.id)));
+    // Resolve addresses (paginated — the properties table is > the 1000-row cap).
+    const propIds = [...new Set(leaks.map((m) => m.resolved_property_id).filter(Boolean))];
+    const propAddr = {};
+    if (propIds.length) {
+      try {
+        const { fetchAll } = require('../lib/db/fetch_all');
+        const props = await fetchAll(() => supabase.from('properties').select('id, street_address').in('id', propIds));
+        for (const p of (props || [])) propAddr[p.id] = p.street_address;
+      } catch (_) { /* address is best-effort — subject usually carries it */ }
+    }
+    const isBuilder = (e) => /lennar|builder|\bhomes\b|construction/i.test(e || '');
+    const out = leaks.map((m) => {
+      const addr = propAddr[m.resolved_property_id] || null;
+      const propDec = addr ? (decByProp[norm(addr)] || []).join('/') : '';
+      return {
+        id: m.id, subject: m.subject, from: m.sender_email, persona: m.persona,
+        classification: m.classification, has_attachment: !!m.has_attachments,
+        received_at: m.received_at, property_address: addr, community_id: m.community_id,
+        property_has_decision: propDec || null, builder: isBuilder(m.sender_email),
+      };
+    });
+    res.json({ leaks: out, scanned: (em || []).length, candidates: cand.length });
+  } catch (err) { console.error('[email_triage] acc-leaks failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // GET /team — the AI team roster: one row per teammate with their mail counts,
 // so the board shows names you can click to expand all of their emails.
 router.get('/team', async (req, res) => {
@@ -1297,12 +1356,14 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
 router.post('/:id/to-acc', express.json(), async (req, res) => {
   try {
     const { data: m } = await supabase.from('email_messages')
-      .select('id, mailbox, graph_id, subject, sender_email, sender_name, classification, community_id, resolved_property_id, resolved_contact_id, has_attachments, extracted')
+      .select('id, mailbox, graph_id, subject, sender_email, sender_name, body_full, body_preview, classification, community_id, resolved_property_id, resolved_contact_id, has_attachments, extracted')
       .eq('id', req.params.id).maybeSingle();
     if (!m) return res.status(404).json({ error: 'not_found' });
-    if (!m.graph_id || !m.has_attachments) return res.status(400).json({ error: 'no_attachment', detail: 'No application form is attached to file to the ACC queue.' });
+    if (!m.graph_id) return res.status(400).json({ error: 'no_graph_id', detail: 'The original email is no longer fetchable. Ask the homeowner (or forwarder) to resend it.' });
+    // allowBodyOnly: staff asserted this IS an application, so file it even with
+    // no attachment — the engine reads the message body. (Ed 2026-07-27.)
     const { intakeApplicationFromEmail } = require('../lib/applications/email_intake');
-    const out = await intakeApplicationFromEmail({ email: m, extracted: m.extracted || {}, communityId: m.community_id || null });
+    const out = await intakeApplicationFromEmail({ email: m, extracted: m.extracted || {}, communityId: m.community_id || null, allowBodyOnly: true });
     const st = out && out.status;
     if (st === 'created' || st === 'attached' || out.queued) {
       await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
