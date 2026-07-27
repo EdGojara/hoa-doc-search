@@ -772,7 +772,11 @@ async function doSend(id, btn, careful, persona){
   const original_draft = originalDraftByMsg[id] || '';
   const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, to, also_handle, attach_doc_ids, cc, original_draft})});
   const j = await r.json();
-  if(r.ok){ document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}${j.also_handled?` — cleared ${j.also_handled+1} emails`:''}.</div></div>`; delete coversByMsg[id]; loadStats(); setTimeout(loadList, 800); }
+  if(r.ok){
+    const fu = j.followups||{};
+    const fuMsg = (fu.queued&&fu.queued.length) ? `<div class="note" style="color:#166534;margin-top:4px;">✉️ Also queued a follow-up draft to ${fu.queued.map(q=>esc(q.name||q.email)).join(', ')} — review it in the <a href="/admin/draft-queue" style="color:#0B1D34;font-weight:600;">Draft Queue</a>.</div>` : '';
+    const fuWarn = (fu.unresolved&&fu.unresolved.length) ? `<div class="note" style="color:#8a6d00;margin-top:4px;">⚠ Couldn't find an address for ${fu.unresolved.map(esc).join(', ')} — reach them separately so it doesn't fall through.</div>` : '';
+    document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}${j.also_handled?` — cleared ${j.also_handled+1} emails`:''}.</div>${fuMsg}${fuWarn}</div>`; delete coversByMsg[id]; loadStats(); setTimeout(loadList, 800); }
   else { btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert(j.detail || j.error || 'Send failed'); }
 }
 // ---- Forward to a teammate (loop someone in before replying) --------------

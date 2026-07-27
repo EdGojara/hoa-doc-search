@@ -1306,7 +1306,16 @@ router.post('/:id/send', express.json(), async (req, res) => {
         await logDrvOutbound({ violationId: m.extracted.drv.violation_id, communityId: m.community_id, propertyId: m.resolved_property_id, contactId: m.resolved_contact_id, subject: subj, body: String(body).trim(), sentBy: reviewed_by || 'staff' });
       } catch (e) { console.warn('[email_triage] drv outbound log skipped:', e.message); }
     }
-    res.json({ sent: true, to: recipient, from: fromMailbox, persona, also_handled: alsoHandle.length });
+    // Promised follow-up (Ed 2026-07-27): if this reply said "I'll let Carlos
+    // know", resolve Carlos from the forwarded chain and queue a draft note to
+    // him — held in the Draft Queue for review. Closes the silent-fail where the
+    // homeowner never hears. Best-effort; never affects the send.
+    let followups = null;
+    try {
+      const { queuePromisedFollowups } = require('../lib/email/promised_followup');
+      followups = await queuePromisedFollowups({ inbound: m, sentBody: String(body).trim(), persona, fromMailbox, communityName: commName });
+    } catch (e) { console.warn('[email_triage] promised follow-up skipped:', e.message); }
+    res.json({ sent: true, to: recipient, from: fromMailbox, persona, also_handled: alsoHandle.length, followups });
   } catch (err) {
     console.error('[email_triage] send failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
