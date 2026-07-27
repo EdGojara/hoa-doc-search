@@ -116,6 +116,7 @@ function render(){
 // groups sorted A–Z by label (house rule). Best-effort — a failed source just
 // leaves that group out; the free-text To always works.
 let _rpickName = {}; // email -> display name, so a pick fills the greeting
+let _allStaffEmails = []; // for the company-wide "All Bedrock team" pick
 async function loadRecipients(){
   const sel = $('rpick'); if(!sel) return;
   // AI team mirrors lib/email/graph_send.js persona mailboxes.
@@ -134,7 +135,13 @@ async function loadRecipients(){
   try { const r=await af('/api/board-members'); const j=await r.json(); board=(j.members||[]).filter(m=>m&&m.email); } catch(_){}
   const opt=(v,label)=>`<option value="${esc(v)}">${esc(label)}</option>`;
   _rpickName = {};
+  _allStaffEmails = staff.map(u=>u.email).filter(Boolean);
   let html = '<option value="">— pick a board member, staff, or AI teammate —</option>';
+  // Company-wide: one pick to email the whole Bedrock team (Tessa sends on Ed's
+  // behalf). Real staff only — not the AI mailboxes (those route into queues).
+  if(_allStaffEmails.length){
+    html += `<optgroup label="Company-wide"><option value="__all_staff__">👥 All Bedrock team (${_allStaffEmails.length})</option></optgroup>`;
+  }
   // Board, grouped by community, each group A–Z.
   if(board.length){
     const byC={};
@@ -165,6 +172,11 @@ async function loadRecipients(){
 }
 function pickRecipient(){
   const v=$('rpick').value; if(!v) return;
+  if(v==='__all_staff__'){
+    $('to').value = _allStaffEmails.join(', ');
+    if($('rname') && !$('rname').value.trim()) $('rname').value = 'team';
+    return;
+  }
   $('to').value = v;
   const nm=_rpickName[v]||'';
   if(nm && $('rname') && !$('rname').value.trim()) $('rname').value = nm;
