@@ -571,10 +571,34 @@ router.get('/invoices/:id', async (req, res) => {
     } catch (e) { console.warn('[ap] applied-credit check skipped:', e.message); }
     // Which approval path: consistent + recurring -> Ed releases directly;
     // anything else (or an owed credit) -> a manager vouches first. (Ed 2026-07-15.)
+    // Vantaca-cutover statement? If the bill lists prior payments (already posted
+    // in Vantaca) that net to the balance due, those negatives are NOT credits —
+    // they're history. Label them so, record only the balance due, and don't
+    // frame them as a vendor credit we're owed. (Ed 2026-07-28.)
+    let statement = { is_statement: false };
+    let outLines = lines || [];
+    try {
+      const { classifyStatement } = require('../lib/ap/statement_lines');
+      const cl = classifyStatement(lines || []);
+      if (cl.is_statement) {
+        outLines = (lines || []).map((l) => cl.isPriorLine(l)
+          ? { ...l, prior_payment: true, prior_payment_note: 'Prior payment already recorded in Vantaca — not posted here. We record only the balance due.' }
+          : l);
+        statement = {
+          is_statement: true,
+          prior_payment_cents: cl.prior_payment_cents,        // negative
+          balance_due_cents: invoice.total_cents,
+          note: `This bill is a statement carrying prior payments already recorded in Vantaca (${(cl.prior_payment_cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}). We record only the balance due, ${(invoice.total_cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}; the rest stays as posted in Vantaca.`,
+        };
+        // A prior payment is not a vendor credit we're owed — drop that framing.
+        openCredits = [];
+        appliedCredit = null;
+      }
+    } catch (e) { console.warn('[ap] statement classify skipped:', e.message); }
     let policy = null;
     try { policy = require('../lib/ap/approval_policy').approvalPath(recurrence, openCredits); }
     catch (e) { console.warn('[ap] approval policy skipped:', e.message); }
-    res.json({ invoice, lines: lines || [], approvals: approvals || [], recurrence, policy, open_credits: openCredits, applied_credit: appliedCredit });
+    res.json({ invoice, lines: outLines, approvals: approvals || [], recurrence, policy, open_credits: openCredits, applied_credit: appliedCredit, statement });
   } catch (err) {
     console.error('[ap] invoice detail failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });

@@ -44552,11 +44552,13 @@ ${questionsPage}
       // is a credit ON the bill; show it as one. (Ed 2026-07-15.)
       const linesHtml = lines.map((ln) => {
         const isCredit = Number(ln.amount_cents) < 0;
+        const isPrior = ln.prior_payment === true; // prior payment recorded in Vantaca — not a credit
         const acctName = ln.chart_of_accounts?.account_name
           || (ln.gl_account_id ? '(coded)' : '<span style="color:#dc2626;">⚠ no GL</span>');
+        const lineNote = isPrior ? (ln.prior_payment_note || 'Prior payment — recorded in Vantaca, not posted here.') : ln.notes;
         return `
-        <tr style="border-bottom:1px solid #f3f4f6; ${isCredit ? 'background:#f0fdf4;' : ''}">
-          <td style="padding:6px 10px;">${isCredit ? '<span title="A credit on this bill — it reduces what we owe." style="color:#166534; font-weight:700;">💳 </span>' : ''}${apEsc(ln.description)}${ln.notes ? `<div style="color:#5a7390; font-size:11px; margin-top:1px;">${apEsc(ln.notes)}</div>` : ''}</td>
+        <tr style="border-bottom:1px solid #f3f4f6; ${isPrior ? 'background:#f1f5f9;' : (isCredit ? 'background:#f0fdf4;' : '')}">
+          <td style="padding:6px 10px;">${isPrior ? '<span title="Prior payment already recorded in Vantaca — not posted here." style="color:#475569; font-weight:700;">📄 </span>' : (isCredit ? '<span title="A credit on this bill — it reduces what we owe." style="color:#166534; font-weight:700;">💳 </span>' : '')}${apEsc(ln.description)}${lineNote ? `<div style="color:#5a7390; font-size:11px; margin-top:1px;">${apEsc(lineNote)}</div>` : ''}</td>
           <td style="padding:6px 10px; text-align:center;">${ln.quantity || 1}</td>
           <td style="padding:6px 10px; font-family:ui-monospace,monospace; font-size:11.5px;">${apEsc(ln.chart_of_accounts?.account_number || '—')}</td>
           <td style="padding:6px 10px;">
@@ -44617,6 +44619,7 @@ ${questionsPage}
           </div>
 
           <h4 style="margin:14px 0 6px; color:#0B1D34;">Line Items + GL Coding</h4>
+          ${lines.some((l) => l.prior_payment) ? `<div style="margin:0 0 10px; padding:9px 12px; border-radius:6px; background:#eff6ff; border:1px solid #bfdbfe; font-size:12px; color:#1e3a8a;">📄 <strong>Prior payments already recorded in Vantaca.</strong> The lines marked 📄 below are payments already made and posted in Vantaca — they are history, not credits, and are <strong>not posted again here</strong>. We record only the balance due, <strong>$${(Number(inv.total_cents)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>.</div>` : ''}
           <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-bottom:14px;">
             <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
               <th style="padding:6px 10px; text-align:left;">Description</th>
