@@ -44757,7 +44757,9 @@ ${questionsPage}
                 </select></label>
               <label style="font-size:12.5px;">Amount $
                 <input id="ap-paid-amt-${inv.id}" type="number" step="0.01" value="${(((inv.total_cents || 0) - (inv.amount_paid_cents || 0)) / 100).toFixed(2)}" style="margin-left:5px; width:110px; padding:6px 9px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;"></label>
-              <span style="font-size:11.5px; color:#64748b;">edit if a credit/debit adjusts it</span>
+              <label style="font-size:12.5px;">Paid on
+                <input id="ap-paid-date-${inv.id}" type="date" value="${apEsc(inv.draft_date || inv.due_date || '')}" style="margin-left:5px; padding:6px 9px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;"></label>
+              ${(inv.is_ach_autopay || inv.draft_date) ? `<span style="font-size:11.5px; color:#166534;">📅 auto-filled from the bill's draft date &mdash; the ACH debit date for bank rec</span>` : `<span style="font-size:11.5px; color:#64748b;">edit if a credit/debit adjusts it</span>`}
               <button class="action-btn" onclick="apRecordPaid('${inv.id}')" style="background:#0B1D34;">Record payment</button>
               <button class="secondary-btn" onclick="document.getElementById('ap-paidpanel-${inv.id}').style.display='none'">Cancel</button>
             </div>
@@ -44860,9 +44862,10 @@ ${questionsPage}
       const amt = parseFloat((document.getElementById('ap-paid-amt-' + id) || {}).value || '0');
       if (!(amt > 0)) { alert('Enter a valid amount.'); return; }
       const amount_cents = Math.round(amt * 100);
+      const payment_date = (document.getElementById('ap-paid-date-' + id) || {}).value || undefined;
       try {
         const r = await fetch('/api/ap/invoices/' + encodeURIComponent(id) + '/mark-paid', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method, amount_cents }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method, amount_cents, payment_date }),
         });
         const j = await r.json();
         if (!r.ok) throw new Error(j.detail || j.error || 'mark-paid failed');
