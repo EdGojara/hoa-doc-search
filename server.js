@@ -2808,23 +2808,85 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
       }
     }
 
-    // Record the outbound communication on the timeline (best-effort).
+    // Record the outbound communication on the timeline. This is what makes the
+    // decision email show up in (a) Annie's SENT box — requires persona='annie',
+    // like the /reply path — and (b) the Homeowner 360 email panel — requires the
+    // message resolved to a contact + property. The old insert set neither, so a
+    // finalized ACC email (e.g. LAK-ARC-2026-0003) was invisible in both. It also
+    // never stamped acknowledged_at on the decision, so ACC history read as
+    // "homeowner never heard from us" even after the letter was emailed. Fix all
+    // three here (Ed 2026-07-28).
     if (emailResult.sent) {
+      const { resolveProperty, resolveContact } = require('./lib/entity_resolution');
+      // Resolve the property + contact so the message lands on the 360. Property
+      // by address-in-community; contact by name-via-property (email won't match
+      // — the submitter address usually isn't on the contact yet; we add it below).
+      let prop = null, contact = null;
+      try {
+        prop = dec.community_id
+          ? await resolveProperty(supabase, dec.community_id, dec.homeowner_address).catch(() => null)
+          : null;
+        contact = await resolveContact(supabase, {
+          email: toEmail,
+          name: dec.homeowner_name,
+          communityId: dec.community_id,
+          propertyId: prop && prop.id,
+        }).catch(() => null);
+        if (contact && contact.ambiguous) contact = null;
+      } catch (e) { console.warn('[acc-finalize] resolve for log failed:', e.message); }
+
       try {
         const annie = require('./lib/email/graph_send').ANNIE_MAILBOX;
+        const verb = decisionType.startsWith('approved') ? 'Approved'
+                   : decisionType === 'denied' ? 'Decision'
+                   : decisionType === 'request_more_info' ? 'More information needed'
+                   : 'Decision';
         await supabase.from('email_messages').insert({
           mailbox: annie,
           direction: 'outbound',
           sender_email: annie,
-          sender_name: 'Annie Reeves',
-          recipients: [{ emailAddress: { address: toEmail } }],
-          subject: `ACC decision sent — ${dec.reference_number || ''}`.trim(),
-          body_preview: bodyText.slice(0, 240),
-          classification: 'acc_decision_sent',
+          sender_name: 'Annie Reeves (Bedrock AI)',
+          recipients: [toEmail],
+          subject: `${dec.community_name} architectural request — ${verb}${dec.reference_number ? ' (' + dec.reference_number + ')' : ''}`,
+          body_preview: bodyText.slice(0, 400),
+          classification: 'outbound_reply',
+          classification_confidence: 'high',
+          persona: 'annie',
+          ai_summary: `Annie sent the ACC decision (${String(decisionType).replace(/_/g, ' ')}) for ${dec.homeowner_address || ''}`.trim(),
+          resolved_contact_id: (contact && contact.id) || null,
+          resolved_property_id: (prop && prop.id) || null,
           community_id: dec.community_id || null,
+          triage_status: 'handled',
+          record_ownership: 'association_record',
+          reviewed_at: new Date().toISOString(),
           received_at: new Date().toISOString(),
         });
-      } catch (_) { /* timeline logging is best-effort */ }
+      } catch (e) { console.warn('[acc-finalize] outbound log failed:', e.message); }
+
+      // Capture the submitter's email onto the contact if it isn't already on
+      // file, so FUTURE messages resolve by address (this is why bcalloo@outlook
+      // resolved to nobody). Never overwrite a primary; fill secondary_email only
+      // when empty, and never capture a system/relay address.
+      try {
+        const { SYSTEM_ADDR } = require('./lib/email/contact_enrich');
+        if (contact && contact.id && toEmail && !SYSTEM_ADDR.test(toEmail)) {
+          const lower = toEmail.toLowerCase();
+          const onFile = [contact.primary_email, contact.secondary_email]
+            .filter(Boolean).map((e) => String(e).toLowerCase());
+          if (!onFile.includes(lower)) {
+            const patch = contact.primary_email ? { secondary_email: lower } : { primary_email: lower };
+            await supabase.from('contacts').update(patch).eq('id', contact.id);
+          }
+        }
+      } catch (e) { console.warn('[acc-finalize] contact email capture skipped:', e.message); }
+
+      // Stamp the decision as communicated so ACC history shows the homeowner
+      // was notified (mirrors the /reply path's ack behavior).
+      try {
+        await supabase.from('acc_decisions')
+          .update({ acknowledged_at: new Date().toISOString(), acknowledged_to: toEmail, acknowledgment_error: null })
+          .eq('id', id).is('acknowledged_at', null);
+      } catch (e) { console.warn('[acc-finalize] ack stamp skipped:', e.message); }
     }
 
     // Homeowner-pays ACC fee (Ed 2026-07-25). Communities whose management
