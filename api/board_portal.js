@@ -447,6 +447,28 @@ router.get('/property/:id', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /api/board-portal/board-members?q=   (STAFF ONLY)
+//   Look up board members by name so a manager can preview a member's board
+//   view from their own seat. Never available to a board member.
+// ----------------------------------------------------------------------------
+router.get('/board-members', async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    if (viewer.kind !== 'staff') return res.status(403).json({ error: 'staff_only' });
+    const q = String(req.query.q || '').trim();
+    let query = supabase.from('board_members')
+      .select('name, email, community_name, position, community_id')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID).eq('is_active', true)
+      .not('email', 'is', null).order('name', { ascending: true }).limit(25);
+    if (q) query = query.ilike('name', `%${q}%`);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ members: data || [] });
+  } catch (err) { console.error('[board_portal] board-members failed:', err.message); res.status(500).json({ error: err.message }); }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/board-portal/community/:id/projects
 //   Board accountability view of the community's annual/capital projects:
 //   budget vs live actual spend, schedule health, milestones, next action.

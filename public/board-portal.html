@@ -290,23 +290,45 @@
   // cookie rides along automatically (same-origin). The board-portal API now
   // requires one or the other and scopes to the caller's community.
   let _supa = null;
-  // Staff tool: VIEW AS a board member — see the portal exactly as they do,
-  // scoped to their community. Down-scoping only (staff can already see all), so
-  // it's a preview, not an escalation. A magic-link generator also exists for
-  // real invites (/api/portal/board-login-link); this is the in-place view.
+  // Staff tool: look a board member up BY NAME and see their board view as a
+  // read-only preview — you stay the manager, you're not signing in as them. It
+  // works by narrowing your (all-communities) scope to what that member sees.
+  async function authHeaders() {
+    const h = {};
+    try { if (_supa) { const s = (await _supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; } } catch (_) {}
+    return h;
+  }
   function renderStaffPreview() {
     const el = document.getElementById('staffPreview');
     if (!el) return;
-    el.innerHTML = `<span style="display:inline-flex;gap:6px;align-items:center;font-size:12px;color:rgba(255,255,255,0.85);">
-      <input id="prevEmail" type="email" placeholder="view as board member (email)" onkeydown="if(event.key==='Enter')setViewAs()" style="padding:5px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.12);color:#fff;font-size:12px;width:200px;">
-      <button onclick="setViewAs()" style="padding:5px 10px;border-radius:6px;border:none;background:#D4AF37;color:#0B1D34;font-weight:700;font-size:12px;cursor:pointer;">View as</button>
+    el.innerHTML = `<span style="position:relative;display:inline-flex;align-items:center;">
+      <input id="bmSearch" type="text" placeholder="see a board member's view…" autocomplete="off" oninput="searchBoardMembers(this.value)" onfocus="searchBoardMembers(this.value)"
+        style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.12);color:#fff;font-size:12px;width:210px;">
+      <div id="bmResults" style="position:absolute;top:120%;right:0;background:#fff;color:#0B1D34;border:1px solid #e2e8f0;border-radius:8px;min-width:250px;box-shadow:0 8px 24px rgba(0,0,0,0.18);display:none;z-index:300;max-height:280px;overflow:auto;"></div>
     </span>`;
   }
-  function setViewAs() {
-    const email = (document.getElementById('prevEmail').value || '').trim().toLowerCase();
-    if (!email || email.indexOf('@') < 0) return;
-    viewAsEmail = email; currentCommunityId = null;
-    document.getElementById('container').innerHTML = '<div class="loading">Loading their view…</div>';
+  let _bmTimer = null;
+  function searchBoardMembers(q) {
+    clearTimeout(_bmTimer);
+    const box = document.getElementById('bmResults');
+    if (!box) return;
+    _bmTimer = setTimeout(async () => {
+      try {
+        const r = await fetch('/api/board-portal/board-members' + (q ? ('?q=' + encodeURIComponent(q)) : ''), { headers: await authHeaders(), credentials: 'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        const ms = j.members || [];
+        box.innerHTML = ms.length
+          ? ms.map(m => `<div onclick="pickBoardMember('${esc(m.email)}','${esc((m.name || '').replace(/'/g, ''))}')" style="padding:8px 11px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;">
+              <b>${esc(m.name)}</b><div style="color:#64748b;font-size:11.5px;">${esc(m.community_name || '')}${m.position ? ' · ' + esc(m.position) : ''}</div></div>`).join('')
+          : '<div style="padding:9px 11px;color:#64748b;font-size:12px;">No board members found</div>';
+        box.style.display = 'block';
+      } catch (_) { box.style.display = 'none'; }
+    }, 180);
+  }
+  function pickBoardMember(email, name) {
+    const box = document.getElementById('bmResults'); if (box) box.style.display = 'none';
+    viewAsEmail = String(email).toLowerCase(); currentCommunityId = null;
+    document.getElementById('container').innerHTML = `<div class="loading">Loading ${esc(name)}'s board view…</div>`;
     loadCommunities();
   }
   function clearViewAs() { viewAsEmail = null; currentCommunityId = null; document.getElementById('container').innerHTML = '<div class="loading">Loading…</div>'; loadCommunities(); }
@@ -314,8 +336,8 @@
     const el = document.getElementById('staffPreview');
     if (!el) return;
     if (viewer && viewer.acting_as) {
-      el.innerHTML = `<span style="display:inline-flex;gap:8px;align-items:center;font-size:12px;background:#D4AF37;color:#0B1D34;padding:4px 10px;border-radius:20px;font-weight:700;">👁 Viewing as ${esc(viewer.name || viewAsEmail)}
-        <a href="#" onclick="event.preventDefault();clearViewAs()" style="color:#0B1D34;text-decoration:underline;">exit</a></span>`;
+      el.innerHTML = `<span style="display:inline-flex;gap:8px;align-items:center;font-size:12px;background:#D4AF37;color:#0B1D34;padding:4px 11px;border-radius:20px;font-weight:700;">Board-member view: ${esc(viewer.name || viewAsEmail)} <span style="font-weight:400;">(read-only preview)</span>
+        <a href="#" onclick="event.preventDefault();clearViewAs()" style="color:#0B1D34;text-decoration:underline;">back to my view</a></span>`;
     } else if (viewer && viewer.kind === 'staff') {
       renderStaffPreview();
     }
