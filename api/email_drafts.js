@@ -114,6 +114,66 @@ router.put('/:id', async (req, res) => {
 });
 
 // POST /api/email-drafts/:id/send  — approve + actually send. The gate.
+// Record a sent draft on the homeowner timeline (email_messages) so it shows on
+// the 360. The Draft Queue is a SEND PATH and every send path must log a
+// RESOLVED outbound, or the customer email is invisible on the 360. (Ed
+// 2026-07-28: Claire's fee-waiver email to Carlos, sent from here, never
+// appeared — same class as the ACC finalize email.) Resolution order: inherit
+// from the inbound this answers (source_email_ref → same thread's contact +
+// conversation), else resolve the recipient address to a contact + property.
+// Best-effort: the mail already went out, so a logging miss never fails the
+// send — but it warns loudly.
+async function logSentDraftToTimeline(d, from, subject) {
+  try {
+    let contactId = null, propertyId = null, communityId = d.community_id || null, conversationId = null;
+    if (d.source_email_ref) {
+      // Resilient thread lookup: a bad/non-uuid ref must NOT abort logging — fall
+      // through to recipient resolution. id.eq only when the ref is a real uuid
+      // (an id.eq on a non-uuid errors and would skip the whole log).
+      try {
+        const ref = String(d.source_email_ref);
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
+        const ors = [`internet_message_id.eq.${ref}`, `graph_id.eq.${ref}`];
+        if (isUuid) ors.unshift(`id.eq.${ref}`);
+        const { data: src } = await supabase.from('email_messages')
+          .select('resolved_contact_id, resolved_property_id, community_id, conversation_id')
+          .or(ors.join(',')).limit(1).maybeSingle();
+        if (src) {
+          contactId = src.resolved_contact_id || null;
+          propertyId = src.resolved_property_id || null;
+          communityId = communityId || src.community_id || null;
+          conversationId = src.conversation_id || null;
+        }
+      } catch (e) { console.warn('[email_drafts] source thread lookup skipped:', e.message); }
+    }
+    if (!contactId && d.to_email) {
+      const { resolveContact } = require('../lib/entity_resolution');
+      const c = await resolveContact(supabase, { email: d.to_email, name: d.to_name, communityId }).catch(() => null);
+      if (c && c.id && !c.ambiguous) {
+        contactId = c.id;
+        const { data: own } = await supabase.from('property_ownerships')
+          .select('property_id, properties:property_id(community_id)').eq('contact_id', c.id).is('end_date', null).limit(1).maybeSingle();
+        if (own) { propertyId = own.property_id; communityId = communityId || (own.properties && own.properties.community_id); }
+      }
+    }
+    const nm = String((PERSONA[d.persona] && PERSONA[d.persona].label) || '').split(' (')[0].trim();
+    const cc = String(d.cc || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const { error } = await supabase.from('email_messages').insert({
+      mailbox: from, direction: 'outbound', sender_email: from,
+      sender_name: nm ? `${nm} (Bedrock AI)` : 'Bedrock', persona: d.persona || null,
+      recipients: [d.to_email, ...cc].filter(Boolean),
+      subject, body_preview: (d.body_text || '').slice(0, 400), body_full: d.body_text || null,
+      classification: 'outbound_reply', classification_confidence: 'high',
+      resolved_contact_id: contactId, resolved_property_id: propertyId,
+      community_id: communityId, conversation_id: conversationId,
+      triage_status: 'handled', record_ownership: 'association_record',
+      reviewed_at: new Date().toISOString(), sent_at: new Date().toISOString(), received_at: new Date().toISOString(),
+    });
+    if (error) console.warn('[email_drafts] timeline log failed:', error.message);
+    return { logged: !error, resolved: !!contactId };
+  } catch (e) { console.warn('[email_drafts] timeline log skipped:', e.message); return { logged: false, resolved: false }; }
+}
+
 router.post('/:id/send', async (req, res) => {
   try {
     const { data: d, error } = await supabase.from('outbound_email_drafts').select('*').eq('id', req.params.id).maybeSingle();
@@ -160,7 +220,9 @@ router.post('/:id/send', async (req, res) => {
       approved_by: req.body.approved_by || 'staff', send_error: null,
       record_ownership: 'association_record',
     }).eq('id', d.id);
-    res.json({ ok: true, sent_from: from, to: d.to_email });
+    // Log the sent email onto the homeowner's 360 (resolved). Best-effort.
+    const timeline = await logSentDraftToTimeline(d, from, subject);
+    res.json({ ok: true, sent_from: from, to: d.to_email, timeline });
   } catch (err) {
     console.error('[email_drafts] send failed:', err.message);
     res.status(500).json({ error: safe(err) });
