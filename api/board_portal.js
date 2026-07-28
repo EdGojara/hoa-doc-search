@@ -416,4 +416,61 @@ router.get('/property/:id', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// GET /api/board-portal/community/:id/projects
+//   Board accountability view of the community's annual/capital projects:
+//   budget vs live actual spend, schedule health, milestones, next action.
+//   Read-only. (Ed 2026-07-27 — a board upset about project accountability.)
+// ----------------------------------------------------------------------------
+router.get('/community/:id/projects', async (req, res) => {
+  try {
+    const communityId = req.params.id;
+    const { data: community, error: cErr } = await supabase
+      .from('communities').select('id, name')
+      .eq('id', communityId).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+    if (cErr) throw cErr;
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+    const { data: projects, error: pErr } = await supabase
+      .from('vendor_projects').select('*')
+      .eq('community_id', communityId)
+      .order('created_at', { ascending: false }).limit(500);
+    if (pErr) throw pErr;
+
+    // Milestones for all these projects in one trip.
+    const ids = (projects || []).map((p) => p.id);
+    let byProject = {};
+    if (ids.length) {
+      const { data: ms } = await supabase.from('project_milestones')
+        .select('*').in('project_id', ids).order('sort_order', { ascending: true }).limit(2000);
+      for (const m of (ms || [])) (byProject[m.project_id] = byProject[m.project_id] || []).push(m);
+    }
+
+    const { boardProjectView } = require('../lib/projects/board_view');
+    const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const rows = [];
+    for (const p of (projects || [])) rows.push(await boardProjectView(supabase, p, byProject[p.id] || [], todayISO));
+
+    // Worst-health first, so what needs attention is at the top.
+    const order = { behind: 0, stalled: 1, at_risk: 2, on_track: 3, no_target: 4, complete: 5 };
+    rows.sort((a, b) => (order[a.health] ?? 9) - (order[b.health] ?? 9));
+
+    const active = rows.filter((r) => r.health !== 'complete');
+    res.json({
+      community: { id: community.id, name: community.name },
+      as_of: todayISO,
+      summary: {
+        total: rows.length,
+        active: active.length,
+        needs_attention: rows.filter((r) => ['behind', 'stalled', 'at_risk'].includes(r.health)).length,
+        over_budget: rows.filter((r) => r.over_budget).length,
+      },
+      projects: rows,
+    });
+  } catch (err) {
+    console.error('[board_portal] projects failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };

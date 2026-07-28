@@ -383,12 +383,14 @@
     const wrap = document.getElementById('container');
     wrap.innerHTML = '<div class="loading">Loading…</div>';
     try {
-      const [summary, props] = await Promise.all([
+      const [summary, props, projects] = await Promise.all([
         fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/summary`),
         fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/properties?${currentFilter === 'open_only' ? 'open_only=1&' : ''}order_by=open_violations_desc&limit=2000`),
+        fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/projects`).catch(() => ({ projects: [] })),
       ]);
       wrap.innerHTML = `
         ${renderSummary(summary)}
+        ${renderProjects(projects)}
         ${renderDashboardCards(summary)}
         ${renderFilterBar()}
         ${renderPropertyList(props.properties || [])}
@@ -423,6 +425,50 @@
           <div class="sub">decisions on file</div>
         </div>
       </div>`;
+  }
+
+  // Projects — board accountability view. Health-sorted (worst first), with
+  // budget vs live actual spend, target date, next action + owner, and milestone
+  // progress. Read-only; this is what a board asks for on "where do projects stand."
+  function renderProjects(data) {
+    const rows = (data && data.projects) || [];
+    if (!rows.length) return '';
+    const sm = (data && data.summary) || {};
+    const HEALTH = {
+      behind:   { label: 'Behind',    bg: '#fde8e8', fg: '#b42318' },
+      stalled:  { label: 'Stalled',   bg: '#fdecdc', fg: '#b45309' },
+      at_risk:  { label: 'At risk',   bg: '#fdf6dc', fg: '#8a6d00' },
+      on_track: { label: 'On track',  bg: '#e7f6ec', fg: '#1a7a3c' },
+      complete: { label: 'Complete',  bg: '#eef2f7', fg: '#475569' },
+      no_target:{ label: 'No date set',bg: '#eef2f7', fg: '#64748b' },
+    };
+    const card = (p) => {
+      const h = HEALTH[p.health] || HEALTH.no_target;
+      const pct = (p.percent_complete != null) ? p.percent_complete : (p.milestones_total ? Math.round(p.milestones_done / p.milestones_total * 100) : null);
+      const cost = (p.budget_display || p.actual_display)
+        ? `<div style="font-size:12.5px;color:#475569;">Budget <b>${esc(p.budget_display || '—')}</b> · Spent <b style="color:${p.over_budget ? '#b42318' : '#1a2230'}">${esc(p.actual_display || '—')}</b>${p.variance_display && p.budget_cents != null && p.actual_cents != null ? ` · ${p.over_budget ? 'over by ' + esc(p.variance_display.replace('-', '')) : esc(p.variance_display) + ' left'}` : ''}${p.actual_basis ? `<span style="color:#94a3b8;"> (${esc(p.actual_basis)})</span>` : ''}</div>`
+        : '';
+      const next = p.next_action ? `<div style="font-size:12.5px;color:#334155;margin-top:3px;">Next: ${esc(p.next_action)}${p.next_action_owner ? ` <span style="color:#64748b;">— ${esc(p.next_action_owner)}</span>` : ''}</div>` : '';
+      const nm = p.next_milestone ? `<div style="font-size:11.5px;color:#64748b;margin-top:2px;">Next milestone: ${esc(p.next_milestone.title)}${p.next_milestone.due_date ? ` — due ${esc(p.next_milestone.due_date)}` : ''}</div>` : '';
+      return `<div style="border:1px solid #e2e8f0;border-left:4px solid ${h.fg};border-radius:9px;padding:11px 13px;margin-bottom:9px;background:#fff;">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+          <div style="min-width:220px;flex:1;">
+            <div style="font-weight:700;color:#0B1D34;font-size:14px;">${esc(p.title || 'Project')}</div>
+            <div style="font-size:11.5px;color:#64748b;">${esc(p.vendor || 'vendor TBD')}${p.target_date ? ` · target ${esc(p.target_date)}` : ''}${p.milestones_total ? ` · ${p.milestones_done}/${p.milestones_total} milestones` : ''}</div>
+          </div>
+          <span style="background:${h.bg};color:${h.fg};font-size:11px;font-weight:700;border-radius:20px;padding:3px 10px;white-space:nowrap;">${h.label}${pct != null ? ` · ${pct}%` : ''}</span>
+        </div>
+        ${cost}${next}${nm}
+      </div>`;
+    };
+    const attn = sm.needs_attention || 0, over = sm.over_budget || 0;
+    return `<div style="margin:6px 0 16px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
+        <h2 style="margin:0;color:#0B1D34;font-size:16px;">Projects</h2>
+        <span style="font-size:12px;color:#64748b;">${sm.active || 0} active${attn ? ` · <b style="color:#b42318;">${attn} need attention</b>` : ''}${over ? ` · <b style="color:#b42318;">${over} over budget</b>` : ''}</span>
+      </div>
+      ${rows.map(card).join('')}
+    </div>`;
   }
 
   // Phase 2 v2 — board tiles (clean tile pattern matching homeowner portal).

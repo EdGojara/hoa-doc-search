@@ -169,7 +169,7 @@ router.post('/', express.json(), async (req, res) => {
   }
 });
 
-const PATCH_FIELDS = ['title', 'category', 'description', 'vendor_id', 'vendor_name', 'asset', 'stage', 'next_action', 'next_action_note', 'next_action_owner', 'priority', 'estimated_cost_cents', 'approved_cost_cents', 'funding_source', 'target_date', 'started_at', 'completed_at', 'status_note'];
+const PATCH_FIELDS = ['title', 'category', 'description', 'vendor_id', 'vendor_name', 'asset', 'stage', 'next_action', 'next_action_note', 'next_action_owner', 'priority', 'estimated_cost_cents', 'approved_cost_cents', 'funding_source', 'target_date', 'started_at', 'completed_at', 'status_note', 'percent_complete'];
 
 // PATCH /:id — update fields. A stage change resets the days-waiting clock and
 // writes a timeline event; a note/status writes one too.
@@ -237,6 +237,76 @@ router.post('/:id/events', express.json(), async (req, res) => {
     console.error('[operations] event failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
+});
+
+// ---- Milestones (deadlines with an owner + status) -------------------------
+// GET /:id/milestones — list for one project.
+router.get('/:id/milestones', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('project_milestones')
+      .select('*').eq('project_id', req.params.id).order('sort_order', { ascending: true }).limit(500);
+    if (error) throw error;
+    res.json({ milestones: data || [] });
+  } catch (err) { console.error('[operations] milestones list failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /:id/milestones — add one.
+router.post('/:id/milestones', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.title || !String(b.title).trim()) return res.status(400).json({ error: 'title_required' });
+    const { data: proj } = await supabase.from('vendor_projects').select('id').eq('id', req.params.id).maybeSingle();
+    if (!proj) return res.status(404).json({ error: 'not_found' });
+    const row = {
+      project_id: req.params.id, title: String(b.title).slice(0, 300),
+      due_date: b.due_date || null, owner: b.owner ? String(b.owner).slice(0, 120) : null,
+      status: ['pending', 'in_progress', 'done', 'blocked'].includes(b.status) ? b.status : 'pending',
+      sort_order: Number.isInteger(b.sort_order) ? b.sort_order : 0,
+    };
+    const { data, error } = await supabase.from('project_milestones').insert(row).select('*').single();
+    if (error) throw error;
+    res.json({ milestone: data });
+  } catch (err) { console.error('[operations] milestone add failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// PATCH /milestones/:mid — update status/date/owner/title/sort.
+router.patch('/milestones/:mid', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const patch = {};
+    for (const k of ['title', 'due_date', 'owner', 'sort_order']) if (k in b) patch[k] = b[k];
+    if ('status' in b) {
+      if (!['pending', 'in_progress', 'done', 'blocked'].includes(b.status)) return res.status(400).json({ error: 'bad_status' });
+      patch.status = b.status;
+      patch.completed_at = b.status === 'done' ? new Date().toISOString() : null;
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'nothing_to_update' });
+    const { data, error } = await supabase.from('project_milestones').update(patch).eq('id', req.params.mid).select('*').single();
+    if (error) throw error;
+    res.json({ milestone: data });
+  } catch (err) { console.error('[operations] milestone patch failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// DELETE /milestones/:mid
+router.delete('/milestones/:mid', async (req, res) => {
+  try {
+    const { error } = await supabase.from('project_milestones').delete().eq('id', req.params.mid);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { console.error('[operations] milestone delete failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// GET /:id/board-view — the same computed board card (budget/actual/health) staff see.
+router.get('/:id/board-view', async (req, res) => {
+  try {
+    const { data: p, error } = await supabase.from('vendor_projects').select('*').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!p) return res.status(404).json({ error: 'not_found' });
+    const { data: ms } = await supabase.from('project_milestones').select('*').eq('project_id', p.id).order('sort_order', { ascending: true });
+    const { boardProjectView } = require('../lib/projects/board_view');
+    const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    res.json({ view: await boardProjectView(supabase, p, ms || [], todayISO) });
+  } catch (err) { console.error('[operations] board-view failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 module.exports = router;
