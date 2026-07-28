@@ -26,6 +26,7 @@ const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const { createInvoice, attachSourceAndRecode, approveInvoice, recordPayment, autoCodeGlAccount } = require('../lib/accounting/ap_engine');
 const { safeErrorMessage } = require('./_safe_error');
+const { captureServerError } = require('../lib/capture_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -187,6 +188,13 @@ async function findOrCreateVendor({ vendor_name, vendor_email, vendor_phone, sug
 // POST /api/ap/invoices/upload — the main intake endpoint
 // ---------------------------------------------------------------------------
 router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
+  // Stage marker so a failure names WHERE it broke (extraction / community /
+  // vendor / posting). Staff hit "upload failed" with no way to say why and the
+  // route returned its own 500, bypassing the admin error log — so the cause was
+  // invisible to everyone. Now every failure is captured with its stage +
+  // filename, queryable from system_errors. (Ed 2026-07-28.)
+  let stage = 'received';
+  const fileName = (req.file && req.file.originalname) || 'unknown.pdf';
   try {
     if (!req.file) return res.status(400).json({ error: 'pdf_required' });
     if (req.file.mimetype !== 'application/pdf') {
@@ -198,6 +206,7 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
     const fileBuffer = req.file.buffer;
 
     // 1. Store PDF in storage + library_documents for audit
+    stage = 'store_pdf';
     const sha = crypto.createHash('sha256').update(fileBuffer).digest('hex');
     const safeName = (req.file.originalname || 'invoice.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
     const storagePath = `ap-invoices/${sha.slice(0, 12)}-${safeName}`;
@@ -208,9 +217,11 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
     } catch (_) { /* non-fatal — may already exist */ }
 
     // 2. Extract via Claude
+    stage = 'extract';
     const extracted = await extractInvoice(fileBuffer);
 
     // 3. Match community (use override if provided)
+    stage = 'match_community';
     let community = null;
     if (overrideCommunityId) {
       const { data } = await supabase.from('communities').select('id, name').eq('id', overrideCommunityId).maybeSingle();
@@ -246,6 +257,7 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
     if (libErr) console.warn('[ap] library_documents retention insert failed:', libErr.message);
 
     // 5. Find/create vendor — mgmt-co-level, NOT community-scoped
+    stage = 'find_vendor';
     const vendorResult = await findOrCreateVendor({
       vendor_name: extracted.vendor_name,
       vendor_email: extracted.vendor_email,
@@ -267,6 +279,7 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
     }
 
     // 6. Create the invoice via the engine — auto-codes + posts JE
+    stage = 'create_invoice';
     try {
       const result = await createInvoice({
         community_id: community.id,
@@ -316,8 +329,15 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       throw e;
     }
   } catch (err) {
-    console.error('[ap] invoice upload failed:', err);
-    res.status(500).json({ error: safeErrorMessage(err) });
+    console.error(`[ap] invoice upload failed at stage=${stage} file=${fileName}:`, err);
+    // Capture to the admin error log so the cause is one query away instead of a
+    // fleeting red line no one can read back. Fire-and-forget.
+    captureServerError({
+      method: 'POST', path: '/api/ap/invoices/upload',
+      statusCode: 500, message: `stage=${stage} file=${fileName} :: ${err && err.message}`,
+      userAgent: req.headers['user-agent'],
+    });
+    res.status(500).json({ error: safeErrorMessage(err), stage });
   }
 });
 

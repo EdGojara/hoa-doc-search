@@ -44436,7 +44436,7 @@ ${questionsPage}
               r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#d97706;"> — duplicate: ${apEsc(j.message || '')}</span>`;
               continue;
             }
-            throw new Error(j.error || 'upload failed');
+            throw new Error((j.error || 'upload failed') + (j.stage ? ` (step: ${j.stage})` : ''));
           }
           if (j.status === 'needs_community') {
             r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#dc2626;"> — could not match community; retry with community pre-selected</span>`;
