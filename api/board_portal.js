@@ -54,10 +54,11 @@ router.get('/communities', async (req, res) => {
       .order('name', { ascending: true });
     // Board members only enumerate their own community(ies); staff see all.
     const ids = scopeCommunityIds(viewer);
-    if (ids !== 'all') { if (!ids.length) return res.json({ communities: [], viewer: { kind: viewer.kind, name: viewer.name } }); q = q.in('id', ids); }
+    const viewerOut = { kind: viewer.kind, name: viewer.name, email: viewer.email, acting_as: viewer.acting_as || null };
+    if (ids !== 'all') { if (!ids.length) return res.json({ communities: [], viewer: viewerOut }); q = q.in('id', ids); }
     const { data, error } = await q;
     if (error) throw error;
-    res.json({ communities: data || [], viewer: { kind: viewer.kind, name: viewer.name } });
+    res.json({ communities: data || [], viewer: viewerOut });
   } catch (err) {
     console.error('[board_portal] communities failed:', err.message);
     res.status(500).json({ error: err.message });

@@ -285,33 +285,40 @@
 <script>
   let currentCommunityId = null;
   let boardViewer = null;
+  let viewAsEmail = null; // staff "view as this board member" — down-scopes to their view
   // Auth: staff attach their Supabase JWT; a board member's portal magic-link
   // cookie rides along automatically (same-origin). The board-portal API now
   // requires one or the other and scopes to the caller's community.
   let _supa = null;
-  // Staff tool: generate a board-member preview link (not emailed) to see the
-  // portal exactly as that board member would, scoped to their community.
+  // Staff tool: VIEW AS a board member — see the portal exactly as they do,
+  // scoped to their community. Down-scoping only (staff can already see all), so
+  // it's a preview, not an escalation. A magic-link generator also exists for
+  // real invites (/api/portal/board-login-link); this is the in-place view.
   function renderStaffPreview() {
     const el = document.getElementById('staffPreview');
     if (!el) return;
     el.innerHTML = `<span style="display:inline-flex;gap:6px;align-items:center;font-size:12px;color:rgba(255,255,255,0.85);">
-      <input id="prevEmail" type="email" placeholder="board member email" style="padding:5px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.12);color:#fff;font-size:12px;width:180px;">
-      <button onclick="genBoardLink()" style="padding:5px 10px;border-radius:6px;border:none;background:#D4AF37;color:#0B1D34;font-weight:700;font-size:12px;cursor:pointer;">Preview as board member</button>
-    </span><div id="prevOut" style="font-size:11.5px;color:rgba(255,255,255,0.85);margin-top:4px;"></div>`;
+      <input id="prevEmail" type="email" placeholder="view as board member (email)" onkeydown="if(event.key==='Enter')setViewAs()" style="padding:5px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.12);color:#fff;font-size:12px;width:200px;">
+      <button onclick="setViewAs()" style="padding:5px 10px;border-radius:6px;border:none;background:#D4AF37;color:#0B1D34;font-weight:700;font-size:12px;cursor:pointer;">View as</button>
+    </span>`;
   }
-  async function genBoardLink() {
-    const email = (document.getElementById('prevEmail').value || '').trim();
-    const out = document.getElementById('prevOut');
-    if (!email) { out.textContent = 'Enter a board member email.'; return; }
-    out.textContent = 'Generating…';
-    try {
-      const h = { 'Content-Type': 'application/json' };
-      if (_supa) { const s = (await _supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; }
-      const r = await fetch('/api/portal/board-login-link', { method: 'POST', headers: h, credentials: 'same-origin', body: JSON.stringify({ email }) });
-      const j = await r.json();
-      if (!r.ok) { out.textContent = j.detail || j.error || 'Could not generate a link.'; return; }
-      out.innerHTML = `Board of <b>${esc((j.board_of || []).join(', ') || '—')}</b>. Open this in a private window to see their view (not emailed):<br><a href="${esc(j.url)}" target="_blank" style="color:#D4AF37;word-break:break-all;">${esc(j.url)}</a>`;
-    } catch (e) { out.textContent = 'Error: ' + e.message; }
+  function setViewAs() {
+    const email = (document.getElementById('prevEmail').value || '').trim().toLowerCase();
+    if (!email || email.indexOf('@') < 0) return;
+    viewAsEmail = email; currentCommunityId = null;
+    document.getElementById('container').innerHTML = '<div class="loading">Loading their view…</div>';
+    loadCommunities();
+  }
+  function clearViewAs() { viewAsEmail = null; currentCommunityId = null; document.getElementById('container').innerHTML = '<div class="loading">Loading…</div>'; loadCommunities(); }
+  function renderActingBanner(viewer) {
+    const el = document.getElementById('staffPreview');
+    if (!el) return;
+    if (viewer && viewer.acting_as) {
+      el.innerHTML = `<span style="display:inline-flex;gap:8px;align-items:center;font-size:12px;background:#D4AF37;color:#0B1D34;padding:4px 10px;border-radius:20px;font-weight:700;">👁 Viewing as ${esc(viewer.name || viewAsEmail)}
+        <a href="#" onclick="event.preventDefault();clearViewAs()" style="color:#0B1D34;text-decoration:underline;">exit</a></span>`;
+    } else if (viewer && viewer.kind === 'staff') {
+      renderStaffPreview();
+    }
   }
   async function initAuth() {
     try {
@@ -366,6 +373,7 @@
   async function fetchJSON(url) {
     const h = {};
     try { if (_supa) { const s = (await _supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; } } catch (_) {}
+    if (viewAsEmail && url.indexOf('/api/board-portal') === 0) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'view_as=' + encodeURIComponent(viewAsEmail);
     const r = await fetch(url, { headers: h, credentials: 'same-origin' });
     const j = await r.json().catch(() => ({}));
     if (r.status === 401) throw new Error('not_signed_in');
@@ -388,11 +396,10 @@
       sel.innerHTML = '<option value="">— Select a community —</option>' +
         (j.communities || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.is_demo ? ' (Demo)' : ''}</option>`).join('');
       boardViewer = j.viewer || null;
-      // Staff-only: a tool to PREVIEW the portal as a board member (generates a
-      // sign-in link, does not email anyone) so you can see exactly what a board
-      // member sees — scoped to their community. (Ed 2026-07-27.)
-      if (boardViewer && boardViewer.kind === 'staff') renderStaffPreview();
-      // A board member on exactly one community — jump straight into it.
+      // Staff get the "View as" tool; when actively viewing-as, a banner + exit.
+      renderActingBanner(boardViewer);
+      // A board member view (their own, or staff viewing-as) with exactly one
+      // community — drop straight into it.
       if ((j.communities || []).length === 1 && j.viewer && j.viewer.kind === 'board') {
         sel.value = j.communities[0].id; currentCommunityId = j.communities[0].id;
         applyDemoBanner(currentCommunityId); renderCommunityView();
@@ -482,6 +489,30 @@
       </div>`;
   }
 
+  // A compact schedule timeline for a project: milestones as dots (green=done,
+  // red=overdue, grey=pending) positioned by date, a target marker, and today.
+  function projectTimeline(p) {
+    const parse = (d) => { if (!d) return null; const t = Date.parse(String(d).slice(0, 10) + 'T00:00:00Z'); return Number.isNaN(t) ? null : t; };
+    const start = parse(p.started_at), target = parse(p.target_date);
+    const ms = (p.milestones || []).map((m) => ({ ...m, t: parse(m.due_date) })).filter((m) => m.t != null);
+    const dates = [start, target, ...ms.map((m) => m.t)].filter((v) => v != null);
+    if (!dates.length) return '';
+    const today = Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
+    dates.push(today);
+    let min = Math.min(...dates), max = Math.max(...dates);
+    if (min === max) { min -= 86400000; max += 86400000; }
+    const pos = (t) => Math.max(0, Math.min(100, (t - min) / (max - min) * 100));
+    const fmt = (t) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const color = (m) => m.status === 'done' ? '#1a7a3c' : (m.overdue ? '#b42318' : '#94a3b8');
+    const dots = ms.map((m) => `<div title="${esc(m.title)} — ${esc(m.due_date)} (${esc(m.status)})" style="position:absolute;left:${pos(m.t)}%;top:50%;transform:translate(-50%,-50%);width:10px;height:10px;border-radius:50%;background:${color(m)};border:2px solid #fff;box-shadow:0 0 0 1px ${color(m)};"></div>`).join('');
+    const todayMark = `<div title="today" style="position:absolute;left:${pos(today)}%;top:-2px;bottom:-2px;width:2px;background:#0B1D34;opacity:.45;"></div>`;
+    const targetMark = target != null ? `<div title="target ${esc(p.target_date)}" style="position:absolute;left:${pos(target)}%;top:50%;transform:translate(-50%,-50%);width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:11px solid #8a6d00;"></div>` : '';
+    return `<div style="margin-top:9px;">
+      <div style="position:relative;height:16px;background:linear-gradient(#e2e8f0,#e2e8f0) center/100% 3px no-repeat;border-radius:3px;">${todayMark}${targetMark}${dots}</div>
+      <div style="display:flex;justify-content:space-between;font-size:10.5px;color:#94a3b8;margin-top:3px;"><span>${fmt(min)}</span><span>${target != null ? 'target ' + fmt(target) : fmt(max)}</span></div>
+    </div>`;
+  }
+
   // Projects — board accountability view. Health-sorted (worst first), with
   // budget vs live actual spend, target date, next action + owner, and milestone
   // progress. Read-only; this is what a board asks for on "where do projects stand."
@@ -505,6 +536,7 @@
         : '';
       const next = p.next_action ? `<div style="font-size:12.5px;color:#334155;margin-top:3px;">Next: ${esc(p.next_action)}${p.next_action_owner ? ` <span style="color:#64748b;">— ${esc(p.next_action_owner)}</span>` : ''}</div>` : '';
       const nm = p.next_milestone ? `<div style="font-size:11.5px;color:#64748b;margin-top:2px;">Next milestone: ${esc(p.next_milestone.title)}${p.next_milestone.due_date ? ` — due ${esc(p.next_milestone.due_date)}` : ''}</div>` : '';
+      const timeline = projectTimeline(p);
       return `<div style="border:1px solid #e2e8f0;border-left:4px solid ${h.fg};border-radius:9px;padding:11px 13px;margin-bottom:9px;background:#fff;">
         <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
           <div style="min-width:220px;flex:1;">
@@ -513,7 +545,7 @@
           </div>
           <span style="background:${h.bg};color:${h.fg};font-size:11px;font-weight:700;border-radius:20px;padding:3px 10px;white-space:nowrap;">${h.label}${pct != null ? ` · ${pct}%` : ''}</span>
         </div>
-        ${cost}${next}${nm}
+        ${cost}${next}${nm}${timeline}
       </div>`;
     };
     const attn = sm.needs_attention || 0, over = sm.over_budget || 0;
