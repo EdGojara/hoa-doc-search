@@ -173,6 +173,20 @@ async function reload(){
   }catch(e){ list.innerHTML='<div class="empty">Couldn’t load projects.</div>'; }
 }
 
+// Board-accountability strip: same health/budget-vs-spent/milestones the board sees.
+function boardStrip(b){
+  if(!b) return '';
+  const H={behind:['#fde8e8','#b42318','Behind'],stalled:['#fdecdc','#b45309','Stalled'],at_risk:['#fdf6dc','#8a6d00','At risk'],on_track:['#e7f6ec','#1a7a3c','On track'],complete:['#eef2f7','#475569','Complete'],no_target:['#eef2f7','#64748b','No date set']};
+  const h=H[b.health]||H.no_target;
+  const pct=(b.percent_complete!=null)?b.percent_complete:null;
+  let variance='';
+  if(b.budget_cents!=null&&b.actual_cents!=null&&b.variance_display){ variance = b.over_budget ? (' &middot; over by '+esc((b.variance_display||'').replace('-',''))) : (' &middot; '+esc(b.variance_display)+' left'); }
+  const cost=(b.budget_display||b.actual_display)?('<span>Budget <b>'+esc(b.budget_display||'—')+'</b> &middot; Spent <b style="color:'+(b.over_budget?'#b42318':'inherit')+'">'+esc(b.actual_display||'—')+'</b>'+variance+'</span>'):'';
+  const ms=b.milestones_total?('<span>'+b.milestones_done+'/'+b.milestones_total+' milestones</span>'):'';
+  return '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:12px;color:#475569;">'+
+    '<span style="background:'+h[0]+';color:'+h[1]+';font-weight:700;border-radius:20px;padding:2px 9px;">'+h[2]+(pct!=null?' &middot; '+pct+'%':'')+'</span>'+
+    cost+ms+'</div>';
+}
 function cardHtml(p){
   const cls=p.stalled?'stalled':(p.needs_action?'act':'');
   const prio=(p.priority==='urgent'||p.priority==='high')?'<span class="badge prio-'+p.priority+'">'+p.priority+'</span>':'';
@@ -196,6 +210,7 @@ function cardHtml(p){
     '</div></div>'+
     (p.needs_action&&p.next_action_label?'<div class="action"><span class="actpill">&#9873; '+esc(p.next_action_label)+(p.next_action_owner?' &middot; '+esc(p.next_action_owner):'')+'</span>'+(p.next_action_note?'<span style="font-size:12px;color:var(--muted);">'+esc(p.next_action_note)+'</span>':'')+'</div>':'')+
     (p.status_note?'<div class="note">'+esc(p.status_note)+'</div>':'')+
+    boardStrip(p.board)+
   '</div>';
 }
 

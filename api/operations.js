@@ -92,6 +92,20 @@ router.get('/', async (req, res) => {
     else if (view === 'open') rows = rows.filter((r) => r.is_open);
     // Attention first, then stalled, then oldest-in-stage.
     rows.sort((a, b) => (b.needs_action - a.needs_action) || (b.stalled - a.stalled) || ((b.days_in_stage || 0) - (a.days_in_stage || 0)));
+    // Attach the same board-accountability view staff+board both see (budget vs
+    // live actual, health, milestones). Milestones batched; AP is per-project
+    // (fine at current scale — revisit if a community runs dozens of live projects).
+    try {
+      const { boardProjectView } = require('../lib/projects/board_view');
+      const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+      const ids = rows.map((r) => r.id);
+      const msByProj = {};
+      if (ids.length) {
+        const { data: ms } = await supabase.from('project_milestones').select('*').in('project_id', ids).order('sort_order', { ascending: true });
+        for (const m of (ms || [])) (msByProj[m.project_id] = msByProj[m.project_id] || []).push(m);
+      }
+      for (const r of rows) { try { r.board = await boardProjectView(supabase, r, msByProj[r.id] || [], todayISO); } catch (_) {} }
+    } catch (_) { /* board-view is additive; never break the list */ }
     res.json({ projects: rows });
   } catch (err) {
     console.error('[operations] list failed:', err.message);
