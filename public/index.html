@@ -45039,15 +45039,30 @@ ${questionsPage}
       try {
         const fetchFn = window._authFetch || fetch;
         const post = (body) => fetchFn('/api/ap/invoices/' + encodeURIComponent(invId) + '/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        let r = await post({ gl_account_id: glId });
+        const body = { gl_account_id: glId };
+        let r = await post(body);
         let j = await r.json();
+        // Split bill: the server refuses to collapse a line-by-line coding onto
+        // one account unless we say plainly that's what we want. Offer that
+        // choice instead of dead-ending in an alert — recoding a split bill to a
+        // single account (e.g. two Superior invoices to 5125 Irrigation) was
+        // impossible from the UI. (Ed 2026-07-28.)
+        if (!r.ok && j.error === 'invoice_is_split') {
+          const ok = confirm((j.detail || 'This bill is coded across multiple accounts.') +
+            '\n\nOK = collapse the whole bill onto the account you just picked.\nCancel = leave it and change an individual line instead.');
+          if (!ok) return;
+          body.collapse_split = true;
+          r = await post(body);
+          j = await r.json();
+        }
         // The SERVER decides whether this is the exception path (an accrual
         // that's already posted), not the button. First coding is routine and
         // goes straight through; changing a posted one comes back asking why.
         if (!r.ok && j.error === 'reason_required') {
           const reason = prompt((j.detail || 'Changing a posted account is an exception.') + '\n\nWhy is the account being changed?');
           if (!reason || !reason.trim()) return;
-          r = await post({ gl_account_id: glId, reason: reason.trim() });
+          body.reason = reason.trim();
+          r = await post(body);
           j = await r.json();
         }
         if (!r.ok) throw new Error(j.detail || j.error || 'code failed');
