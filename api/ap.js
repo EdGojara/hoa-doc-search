@@ -825,6 +825,14 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
       jeId = null;
     }
     await supabase.from('ap_invoices').update({ coded_gl_account_id: gl_account_id, auto_coded: false, needs_review: false, posting_journal_entry_id: jeId, updated_at: new Date().toISOString() }).eq('id', id);
+    // Sync the LINE-level GL accounts to the invoice-level change, so the Line
+    // Items table matches the posted entry — no more hand-editing each line after
+    // an invoice-level recode. The split guard above already blocked a genuine
+    // multi-account split (unless collapse was confirmed), so setting every line
+    // to the new account here is intended; lines can still be recoded
+    // individually afterward. (Ed 2026-07-28.)
+    try { await supabase.from('ap_invoice_lines').update({ gl_account_id }).eq('invoice_id', id); }
+    catch (e) { console.warn('[ap] line GL sync after recode skipped:', e.message); }
 
     if (!jeId) {
       const { postAccrualForInvoice } = require('../lib/ap/intake');
