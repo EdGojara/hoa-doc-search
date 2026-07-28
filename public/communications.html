@@ -472,15 +472,36 @@ function draftBoxHtml(id, subject, body, careful, persona, covers){
 // editable, and flagged when it was pulled from the form so the operator knows
 // the reply is going to the person, not the website. (Ed 2026-07-25 — Bich Pham.)
 function toRowHtml(id){
-  const r = recipientByMsg[id] || { to:'', source:'sender' };
+  const r = recipientByMsg[id] || { to:'', source:'sender', onFile:[] };
   const fromForm = r.source === 'form_body';
   const hint = fromForm
     ? `<div class="note" style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:5px 9px;color:#9a3412;margin-top:4px;font-size:12px;">↩ This came through a website contact form. Replying here reaches <strong>${esc(r.to||'')}</strong> — the person who wrote in — not the form's address. Edit if needed.</div>`
     : '';
+  // Verify the address against what's on file for this owner. Chips = known-good
+  // addresses (click to use); the badge turns green when To matches one, amber
+  // when it's an address we don't have on file.
+  const onFile = Array.isArray(r.onFile) ? r.onFile : [];
+  const chips = onFile.length
+    ? `<div class="note" style="margin-top:3px;font-size:11.5px;">on file: ${onFile.map(e=>`<a href="#" onclick="event.preventDefault();useAddr('${id}','${esc(e)}')" style="color:#0B1D34;font-weight:600;">${esc(e)}</a>`).join(' · ')} <span id="verify-${id}">${verifyBadgeHtml(r.to||'', onFile)}</span></div>`
+    : `<div class="note" style="margin-top:3px;font-size:11.5px;" id="verify-${id}"></div>`;
   return `<div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
       <label style="font-size:12px;color:var(--muted);min-width:24px;">To</label>
-      <input id="to-${id}" type="text" value="${esc(r.to||'')}" placeholder="recipient email" style="padding:6px 8px;border:1px solid ${fromForm?'#f59e0b':'var(--line)'};border-radius:6px;font-size:12.5px;flex:1;">
-    </div>${hint}`;
+      <input id="to-${id}" type="text" value="${esc(r.to||'')}" oninput="verifyTo('${id}')" placeholder="recipient email" style="padding:6px 8px;border:1px solid ${fromForm?'#f59e0b':'var(--line)'};border-radius:6px;font-size:12.5px;flex:1;">
+    </div>${chips}${hint}`;
+}
+function verifyBadgeHtml(to, onFile){
+  const t=(to||'').trim().toLowerCase(); const list=(onFile||[]).map(e=>String(e).toLowerCase());
+  if(!t || !list.length) return '';
+  return list.includes(t)
+    ? '<span style="color:#166534;font-weight:600;">✓ verified — on file</span>'
+    : '<span style="color:#b45309;font-weight:600;">⚠ not an address on file — verify before sending</span>';
+}
+function useAddr(id, email){ const el=document.getElementById('to-'+id); if(el){ el.value=email; verifyTo(id); } }
+function verifyTo(id){
+  const el=document.getElementById('to-'+id), badge=document.getElementById('verify-'+id);
+  if(!el||!badge) return;
+  const r = recipientByMsg[id] || {};
+  badge.innerHTML = verifyBadgeHtml(el.value, r.onFile||[]);
 }
 // Reply All: copy everyone else on the thread. Sender stays as the To; the rest
 // (board members, the CM, etc.) go to Cc. Pulls the real To/Cc from Graph since
@@ -724,7 +745,7 @@ async function doDraft(id, persona){
   if(j.draftable===false){ box.innerHTML = `<div class="draftbox"><div class="refuse">No draft — ${esc(j.reason)}.</div></div>`; return; }
   coversByMsg[id] = j.covers || [];
   attachByMsg[id] = j.auto_attachments || []; communityByMsg[id] = j.community_id || '';
-  recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender' };
+  recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender', onFile: j.on_file_emails || [] };
   // Baseline for encode-Ed: this fresh draft is what Claire produced on her own.
   // A regenerate resets it; a Rewrite-with-notes deliberately keeps the FIRST one.
   originalDraftByMsg[id] = j.body || '';
@@ -746,7 +767,7 @@ async function doRewrite(id, persona){
   if(!r.ok){ box.innerHTML = prevHtml; alert('Couldn’t rewrite: '+(j.error||'error')+'. Your draft is unchanged.'); return; }
   if(j.draftable===false){ box.innerHTML = prevHtml; alert('No draft — '+(j.reason||'')); return; }
   coversByMsg[id] = j.covers || [];
-  recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender' };
+  recipientByMsg[id] = { to: j.suggested_recipient || '', source: j.recipient_source || 'sender', onFile: j.on_file_emails || [] };
   // Keep the FIRST autonomous draft as the learning baseline — a rewrite folds in
   // Ed's notes, and the draft->sent delta should reflect his teaching, not reset.
   if (!originalDraftByMsg[id]) originalDraftByMsg[id] = j.body || '';

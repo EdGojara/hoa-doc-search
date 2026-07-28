@@ -118,6 +118,33 @@ async function katFinancialContext({ propertyId } = {}) {
   return lines.length ? lines : null;
 }
 
+// The email addresses ON FILE for the owner of a thread — the resolved contact,
+// the property's current owners, and their contact_methods. Used at send time to
+// verify we're replying to a known-good address (green ✓ on file / amber ⚠ stray).
+async function ownerEmailsOnFile({ contactId, propertyId } = {}) {
+  const set = new Set();
+  const add = (e) => { const v = String(e || '').trim().toLowerCase(); if (v && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v) && !/@bedrocktx\.com$/i.test(v)) set.add(v); };
+  const cids = new Set();
+  if (contactId) cids.add(contactId);
+  if (propertyId) {
+    try {
+      const { data } = await supabase.from('property_ownerships').select('contact_id').eq('property_id', propertyId).is('end_date', null).limit(10);
+      for (const o of (data || [])) if (o.contact_id) cids.add(o.contact_id);
+    } catch (_) { /* best-effort */ }
+  }
+  if (!cids.size) return [];
+  const ids = [...cids];
+  try {
+    const { data } = await supabase.from('contacts').select('primary_email, secondary_email').in('id', ids);
+    for (const c of (data || [])) { add(c.primary_email); add(c.secondary_email); }
+  } catch (_) {}
+  try {
+    const { data } = await supabase.from('contact_methods').select('value').eq('method_type', 'email').in('contact_id', ids).limit(40);
+    for (const m of (data || [])) add(m.value);
+  } catch (_) {}
+  return [...set];
+}
+
 async function resolveReportedIssue(m) {
   const addrs = (m && m.extracted && Array.isArray(m.extracted.addresses)) ? m.extracted.addresses : [];
   if (!addrs.length || !m.community_id) return null;
@@ -770,7 +797,12 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     // the homeowner, not the website. The UI shows it as an editable To.
     // (Ed 2026-07-25 — the Bich Pham thread.)
     const suggested = suggestReplyTo({ senderEmail: m.sender_email, senderName: m.sender_name, bodyText: m.body_full || m.body_preview });
-    const recipientOut = { suggested_recipient: suggested.email, recipient_source: suggested.source, sender_email: m.sender_email };
+    // Verify the address on send: pull the resolved owner's emails ON FILE so the
+    // UI can confirm we're sending to a known-good address (and flag a stray one).
+    // (Ed 2026-07-27 — Carlos has two addresses; don't send to a wrong/stale one.)
+    let onFileEmails = [];
+    try { onFileEmails = await ownerEmailsOnFile({ contactId: m.resolved_contact_id, propertyId: m.resolved_property_id }); } catch (_) {}
+    const recipientOut = { suggested_recipient: suggested.email, recipient_source: suggested.source, sender_email: m.sender_email, on_file_emails: onFileEmails };
 
     // Persona routing: a vendor / AP conversation (came to emma@, or resolves to
     // a vendor, or is vendor-financial) is Emma's — she grounds the reply in the
