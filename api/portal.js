@@ -82,8 +82,27 @@ function resolveBuilderLandingUrl(companyNames) {
 // Helpers
 // ----------------------------------------------------------------------------
 
+// The HMAC key that signs BOTH portals' session cookies (the board portal reuses
+// this same cookie via resolvePortalUser). The old fallback chain ended in a
+// literal 'fallback-do-not-use' — if neither env var was set, every cookie was
+// forgeable with a known constant — and used the service-role key (SUPABASE_KEY)
+// as the signing secret, which is key reuse. Now: prefer a dedicated secret,
+// keep STAFF_PASSWORD as the compatibility fallback so LIVE 30-day sessions
+// still verify (no mass logout), drop the forgeable constant, and FAIL LOUD if
+// nothing is configured rather than silently signing with a guessable key.
+// (Ed 2026-07-28, portal-hardening.)
+const PORTAL_SECRET = process.env.PORTAL_COOKIE_SECRET || process.env.STAFF_PASSWORD || process.env.SUPABASE_KEY || null;
+if (!PORTAL_SECRET) {
+  console.error('[portal] SECURITY: no PORTAL_COOKIE_SECRET or STAFF_PASSWORD set — portal/board cookies cannot be signed securely and sign-in will refuse.');
+} else if (!process.env.PORTAL_COOKIE_SECRET && !process.env.STAFF_PASSWORD) {
+  console.warn('[portal] Signing portal cookies with SUPABASE_KEY (service-role key reuse). Set PORTAL_COOKIE_SECRET to a dedicated random value.');
+}
+
 function portalSecret() {
-  return process.env.STAFF_PASSWORD || process.env.SUPABASE_KEY || 'fallback-do-not-use';
+  if (!PORTAL_SECRET) {
+    throw new Error('Portal cookie secret not configured — set PORTAL_COOKIE_SECRET. Refusing to sign a session cookie with a guessable key.');
+  }
+  return PORTAL_SECRET;
 }
 
 function signCookie(portalUserId) {
