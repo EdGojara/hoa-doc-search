@@ -821,7 +821,7 @@ function confirmLog(key) {
         if (_status >= 500) { const err = new Error(j.error || 'server_error'); err.system = true; throw err; }
         if (!j.ok) throw new Error(j.error || 'log_failed');
         window._mailScanFile = null;
-        renderLogged(r, j.record_ref || ('ML-' + Date.now().toString().slice(-6)), key, j.deduped);
+        renderLogged(r, j.record_ref || ('ML-' + Date.now().toString().slice(-6)), key, j.deduped, j.ap_intake);
         try { mailLoadQueue(); } catch (_) {}
       })
       .catch((e) => {
@@ -841,7 +841,24 @@ function confirmLog(key) {
   renderLogged(r, 'ML-' + Date.now().toString().slice(-6), key, false);
 }
 
-function renderLogged(r, ref, key, deduped) {
+// Map Emma's AP-intake outcome (returned when a scanned bill is a Vendor
+// Invoice) to a plain line so staff SEE whether it actually reached Payables —
+// otherwise "did the bill get to Emma?" is invisible and the answer is a guess.
+function apIntakeLine(ap) {
+  if (!ap || !ap.outcome) return '';
+  const map = {
+    loaded:                    ['💳', 'Added to Payables for Emma &mdash; <strong>awaiting approval</strong>', '#166534'],
+    held_suspected_duplicate:  ['⚠️', 'Sent to Payables but <strong>held as a possible duplicate</strong> &mdash; Emma will review', '#b45309'],
+    blocked_duplicate:         ['📄', 'Already in Payables &mdash; <strong>matched an existing bill</strong>, not added twice', '#b45309'],
+    needs_review:              ['⚠️', 'Could <strong>not</strong> auto-add to Payables (' + (ap.reason || 'needs a human') + ') &mdash; filed for manual entry', '#b45309'],
+    not_an_invoice:            ['', '', ''],
+  };
+  const m = map[ap.outcome];
+  if (!m || !m[1]) return '';
+  return '<div class="trusted-log-entry" style="padding:6px 0;border-top:1px solid var(--border);color:' + m[2] + ';">' + m[0] + ' ' + m[1] + '</div>';
+}
+
+function renderLogged(r, ref, key, deduped, apIntake) {
   const panel = document.getElementById('rightPanel');
   panel.innerHTML = `
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 40px;text-align:center;">
@@ -855,6 +872,7 @@ function renderLogged(r, ref, key, deduped) {
         <div class="trusted-log-entry" style="padding:6px 0;border-bottom:1px solid var(--border);">👤 Routed to: <strong>${r.routing.owner}</strong></div>
         <div class="trusted-log-entry" style="padding:6px 0;border-bottom:1px solid var(--border);">📂 Filed in: <strong>${r.routing.system}</strong></div>
         <div class="trusted-log-entry" style="padding:6px 0;">⏱ SLA: <strong>${r.routing.sla}</strong></div>
+        ${apIntakeLine(apIntake)}
       </div>
       <div style="display:flex;gap:10px;">
         <button class="btn btn-primary" onclick="showResult('${key}')">← Back to item</button>
