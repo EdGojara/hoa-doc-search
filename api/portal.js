@@ -630,6 +630,49 @@ router.post('/request-link', express.json({ limit: '8kb' }), async (req, res) =>
 });
 
 // ============================================================================
+// POST /api/portal/board-login-link   (admin only; does NOT email)
+// ----------------------------------------------------------------------------
+// The board-access "build it, don't invite yet" step (Ed 2026-07-27). Given a
+// board member's email (must be on an active board_members seat), ensure a board
+// portal_user exists and return a single-use sign-in URL — NOT emailed. Ed can
+// open it himself to test the board experience (scoped to that member's
+// community), or we wire a "Send invite" button when it's time to release. A
+// real invite flow (rate-limited email) is /request-link, unchanged.
+// ============================================================================
+router.post('/board-login-link', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const { getActingUser } = require('./_acting_user');
+    const actor = await getActingUser(req);
+    if (!actor || !['admin', 'staff', 'manager'].includes(actor.role)) return res.status(403).json({ error: 'forbidden' });
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'email_required' });
+    // Must be an ACTIVE board member — that's what grants the board scope.
+    const { data: seats } = await supabase.from('board_members')
+      .select('community_id, name, community_name').ilike('email', email).eq('is_active', true);
+    if (!seats || !seats.length) return res.status(404).json({ error: 'not_a_board_member', detail: 'That email is not on any active board.' });
+    // Find or create the board portal_user (idempotent).
+    let { data: user } = await supabase.from('portal_users')
+      .select('id, status').eq('management_company_id', BEDROCK_MGMT_CO_ID).eq('email', email).maybeSingle();
+    if (!user) {
+      const { data: created, error: cErr } = await supabase.from('portal_users')
+        .insert({ management_company_id: BEDROCK_MGMT_CO_ID, email, full_name: seats[0].name || null, role: 'board_member', status: 'active' })
+        .select('id').single();
+      if (cErr) throw cErr;
+      user = created;
+    } else if (user.status === 'revoked') {
+      await supabase.from('portal_users').update({ status: 'active' }).eq('id', user.id);
+    }
+    const token = makeMagicToken();
+    const expiresAt = new Date(Date.now() + MAGIC_LINK_TTL_HOURS * 60 * 60 * 1000).toISOString();
+    await supabase.from('portal_magic_links').insert({ portal_user_id: user.id, token, purpose: 'login', expires_at: expiresAt });
+    res.json({ ok: true, url: magicLinkUrl(req, token), email, board_of: [...new Set((seats || []).map((s) => s.community_name).filter(Boolean))], note: 'Link generated, NOT emailed. Open it yourself to test, or send when you release.' });
+  } catch (err) {
+    console.error('[portal] board-login-link failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
 // POST /api/portal/consume?token=...
 // Single-use; sets HMAC cookie; redirects (or returns ok JSON for fetch caller).
 // ============================================================================

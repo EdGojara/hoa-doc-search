@@ -260,6 +260,7 @@
       <select id="communitySelect" class="community-select" onchange="handleCommunityChange(this.value)">
         <option value="">Loading…</option>
       </select>
+      <span id="staffPreview" style="margin-left:auto;"></span>
     </div>
   </div>
 
@@ -283,10 +284,35 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
   let currentCommunityId = null;
+  let boardViewer = null;
   // Auth: staff attach their Supabase JWT; a board member's portal magic-link
   // cookie rides along automatically (same-origin). The board-portal API now
   // requires one or the other and scopes to the caller's community.
   let _supa = null;
+  // Staff tool: generate a board-member preview link (not emailed) to see the
+  // portal exactly as that board member would, scoped to their community.
+  function renderStaffPreview() {
+    const el = document.getElementById('staffPreview');
+    if (!el) return;
+    el.innerHTML = `<span style="display:inline-flex;gap:6px;align-items:center;font-size:12px;color:rgba(255,255,255,0.85);">
+      <input id="prevEmail" type="email" placeholder="board member email" style="padding:5px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.12);color:#fff;font-size:12px;width:180px;">
+      <button onclick="genBoardLink()" style="padding:5px 10px;border-radius:6px;border:none;background:#D4AF37;color:#0B1D34;font-weight:700;font-size:12px;cursor:pointer;">Preview as board member</button>
+    </span><div id="prevOut" style="font-size:11.5px;color:rgba(255,255,255,0.85);margin-top:4px;"></div>`;
+  }
+  async function genBoardLink() {
+    const email = (document.getElementById('prevEmail').value || '').trim();
+    const out = document.getElementById('prevOut');
+    if (!email) { out.textContent = 'Enter a board member email.'; return; }
+    out.textContent = 'Generating…';
+    try {
+      const h = { 'Content-Type': 'application/json' };
+      if (_supa) { const s = (await _supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; }
+      const r = await fetch('/api/portal/board-login-link', { method: 'POST', headers: h, credentials: 'same-origin', body: JSON.stringify({ email }) });
+      const j = await r.json();
+      if (!r.ok) { out.textContent = j.detail || j.error || 'Could not generate a link.'; return; }
+      out.innerHTML = `Board of <b>${esc((j.board_of || []).join(', ') || '—')}</b>. Open this in a private window to see their view (not emailed):<br><a href="${esc(j.url)}" target="_blank" style="color:#D4AF37;word-break:break-all;">${esc(j.url)}</a>`;
+    } catch (e) { out.textContent = 'Error: ' + e.message; }
+  }
   async function initAuth() {
     try {
       const cfg = await (await fetch('/api/auth/config')).json();
@@ -361,6 +387,11 @@
       (j.communities || []).forEach(c => { communityIndex[c.id] = { name: c.name, is_demo: c.is_demo === true }; });
       sel.innerHTML = '<option value="">— Select a community —</option>' +
         (j.communities || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.is_demo ? ' (Demo)' : ''}</option>`).join('');
+      boardViewer = j.viewer || null;
+      // Staff-only: a tool to PREVIEW the portal as a board member (generates a
+      // sign-in link, does not email anyone) so you can see exactly what a board
+      // member sees — scoped to their community. (Ed 2026-07-27.)
+      if (boardViewer && boardViewer.kind === 'staff') renderStaffPreview();
       // A board member on exactly one community — jump straight into it.
       if ((j.communities || []).length === 1 && j.viewer && j.viewer.kind === 'board') {
         sel.value = j.communities[0].id; currentCommunityId = j.communities[0].id;
