@@ -1880,4 +1880,159 @@ router.post('/dismiss-bulk', express.json(), async (req, res) => {
   }
 });
 
+// ===========================================================================
+// UNATTRIBUTED HOMEOWNER-EMAIL QUEUE (Ed 2026-07-28)
+// ---------------------------------------------------------------------------
+// The AI team's replies land on a homeowner's 360 automatically — BUT only
+// when the inbound they answered resolved to a contact. A homeowner who emails
+// from an address that's on no contact (and whose name doesn't match) leaves
+// the whole thread unattributed: invisible on their 360. Rather than guess (a
+// wrong guess files mail on the WRONG homeowner), surface these for a one-click
+// human assign, which links the whole conversation AND captures the address so
+// it never happens again.
+// ---------------------------------------------------------------------------
+
+// The external (homeowner-candidate) address on a message: the sender if it's
+// inbound-and-external, else the first external recipient. null = purely
+// internal (nothing to attribute to a homeowner).
+function externalParty(m) {
+  const { SYSTEM_ADDR } = require('../lib/email/contact_enrich');
+  const norm = (e) => String(e || '').trim().toLowerCase();
+  const isExt = (e) => e && !SYSTEM_ADDR.test(e) && !SYSTEM_MAILBOXES.has(norm(e));
+  const recips = (Array.isArray(m.recipients) ? m.recipients : [])
+    .map((r) => (typeof r === 'string' ? r : (r && r.emailAddress && r.emailAddress.address) || (r && r.address) || ''))
+    .map(norm).filter(Boolean);
+  if (m.direction === 'inbound' && isExt(m.sender_email)) return { email: norm(m.sender_email), name: m.sender_name || null };
+  const ext = recips.find(isExt);
+  if (ext) return { email: ext, name: null };
+  if (isExt(m.sender_email)) return { email: norm(m.sender_email), name: m.sender_name || null };
+  return null;
+}
+
+// GET /unattributed — homeowner-candidate emails with no contact link, one row
+// per conversation (latest message), newest first.
+router.get('/unattributed', async (req, res) => {
+  try {
+    const { fetchAllQuery } = require('../lib/db/fetch_all');
+    const rows = await fetchAllQuery(() => supabase.from('email_messages')
+      .select('id, conversation_id, direction, persona, sender_email, sender_name, recipients, subject, community_id, received_at, resolved_vendor_id, triage_status, community:community_id(name)')
+      .is('resolved_contact_id', null).is('resolved_vendor_id', null)
+      .not('persona', 'is', null)
+      .neq('persona', 'emma'), { orderBy: 'received_at', ascending: false });   // Emma = vendor/AP mail, not homeowner 360
+
+    // Automated / vendor senders that are never a homeowner (keep them out of a
+    // homeowner-attribution queue). SYSTEM_ADDR already covers our own relays.
+    const NOISE = /noreply|no-reply|order-update|@amazon|@amazonses|mailer|notification|@intuit|quickbooks|@.*lawncare|@.*services\./i;
+
+    // Keep only messages with an external homeowner-candidate party, then dedupe
+    // to one row per conversation (the most recent, which we already have first).
+    const seenConv = new Set();
+    const items = [];
+    for (const m of rows) {
+      if (['dismissed', 'spam'].includes(m.triage_status)) continue;
+      const party = externalParty(m);
+      if (!party || NOISE.test(party.email)) continue;
+      const key = m.conversation_id || m.id;
+      if (seenConv.has(key)) continue;
+      seenConv.add(key);
+      items.push({
+        id: m.id, conversation_id: m.conversation_id || null, direction: m.direction, persona: m.persona,
+        party_email: party.email, party_name: party.name, subject: m.subject || '',
+        community: m.community ? m.community.name : null, community_id: m.community_id || null,
+        received_at: m.received_at,
+      });
+    }
+    res.json({ items, total: items.length });
+  } catch (err) {
+    console.error('[email_triage] unattributed failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /contact-search?q= — homeowner picker. Matches name / email / address.
+router.get('/contact-search', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ items: [] });
+    const like = `%${q}%`;
+    const { data: byName } = await supabase.from('contacts')
+      .select('id, full_name, primary_email').or(`full_name.ilike.${like},primary_email.ilike.${like},secondary_email.ilike.${like}`).limit(12);
+    const ids = (byName || []).map((c) => c.id);
+    // Attach each contact's active property + community for disambiguation.
+    const propByContact = {};
+    if (ids.length) {
+      const { data: owns } = await supabase.from('property_ownerships')
+        .select('contact_id, properties:property_id(street_address, communities:community_id(name))').in('contact_id', ids).is('end_date', null);
+      (owns || []).forEach((o) => { if (!propByContact[o.contact_id] && o.properties) propByContact[o.contact_id] = { address: o.properties.street_address, community: o.properties.communities && o.properties.communities.name }; });
+    }
+    const items = (byName || []).map((c) => ({
+      id: c.id, name: c.full_name, email: c.primary_email || null,
+      address: propByContact[c.id] ? propByContact[c.id].address : null,
+      community: propByContact[c.id] ? propByContact[c.id].community : null,
+    }));
+    res.json({ items });
+  } catch (err) {
+    console.error('[email_triage] contact-search failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /:id/assign-homeowner — link this message's WHOLE conversation to a
+// contact and capture every external address in the thread onto that contact
+// (so the next email auto-links). One human click closes the gap for good.
+router.post('/:id/assign-homeowner', express.json(), async (req, res) => {
+  try {
+    const contactId = (req.body || {}).contact_id;
+    if (!contactId) return res.status(400).json({ error: 'contact_id_required' });
+    const { data: msg } = await supabase.from('email_messages')
+      .select('id, conversation_id, community_id').eq('id', req.params.id).maybeSingle();
+    if (!msg) return res.status(404).json({ error: 'not_found' });
+
+    // Resolve the contact's active property + community.
+    const { data: own } = await supabase.from('property_ownerships')
+      .select('property_id, properties:property_id(community_id)').eq('contact_id', contactId).is('end_date', null).limit(1).maybeSingle();
+    const propertyId = own ? own.property_id : null;
+    const communityId = msg.community_id || (own && own.properties && own.properties.community_id) || null;
+
+    // Every message in the conversation (or just this one).
+    let convRows = [msg.id];
+    let threadMsgs = [{ id: msg.id }];
+    if (msg.conversation_id) {
+      const { data: conv } = await supabase.from('email_messages')
+        .select('id, direction, sender_email, recipients').eq('conversation_id', msg.conversation_id);
+      if (conv && conv.length) { convRows = conv.map((c) => c.id); threadMsgs = conv; }
+    } else {
+      const { data: one } = await supabase.from('email_messages').select('id, direction, sender_email, recipients').eq('id', msg.id).maybeSingle();
+      if (one) threadMsgs = [one];
+    }
+
+    const patch = { resolved_contact_id: contactId, resolution_confidence: 'high', triage_status: 'linked', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() };
+    if (propertyId) patch.resolved_property_id = propertyId;
+    if (communityId) patch.community_id = communityId;
+    const { error: upErr } = await supabase.from('email_messages').update(patch).in('id', convRows);
+    if (upErr) throw upErr;
+
+    // Capture every external address in the thread onto the contact so the next
+    // email from any of them auto-links.
+    let capturedAddrs = [];
+    try {
+      const { enrichContactFromEmail } = require('../lib/email/contact_enrich');
+      const addrs = new Set();
+      for (const t of threadMsgs) {
+        const p = externalParty(t);
+        if (p && p.email) addrs.add(p.email);
+      }
+      for (const a of addrs) {
+        const added = await enrichContactFromEmail(supabase, contactId, { email: a });
+        if (added && added.length) capturedAddrs.push(a);
+      }
+    } catch (e) { console.warn('[email_triage] assign capture skipped:', e.message); }
+
+    res.json({ ok: true, linked: convRows.length, captured_addresses: capturedAddrs, property_id: propertyId, community_id: communityId });
+  } catch (err) {
+    console.error('[email_triage] assign-homeowner failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = { router };
