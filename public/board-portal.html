@@ -280,8 +280,19 @@
     </div>
   </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
   let currentCommunityId = null;
+  // Auth: staff attach their Supabase JWT; a board member's portal magic-link
+  // cookie rides along automatically (same-origin). The board-portal API now
+  // requires one or the other and scopes to the caller's community.
+  let _supa = null;
+  async function initAuth() {
+    try {
+      const cfg = await (await fetch('/api/auth/config')).json();
+      if (cfg && cfg.enabled && window.supabase) _supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+    } catch (_) { /* board members have no Supabase session — the cookie carries them */ }
+  }
   let currentFilter = 'open_only'; // 'all' | 'open_only'
 
   // Save the user's last-view preference so subsequent logins default to
@@ -327,8 +338,11 @@
   }
 
   async function fetchJSON(url) {
-    const r = await fetch(url);
+    const h = {};
+    try { if (_supa) { const s = (await _supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; } } catch (_) {}
+    const r = await fetch(url, { headers: h, credentials: 'same-origin' });
     const j = await r.json().catch(() => ({}));
+    if (r.status === 401) throw new Error('not_signed_in');
     if (!r.ok) throw new Error(j.error || (r.status + ' ' + r.statusText));
     return j;
   }
@@ -347,7 +361,17 @@
       (j.communities || []).forEach(c => { communityIndex[c.id] = { name: c.name, is_demo: c.is_demo === true }; });
       sel.innerHTML = '<option value="">— Select a community —</option>' +
         (j.communities || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.is_demo ? ' (Demo)' : ''}</option>`).join('');
+      // A board member on exactly one community — jump straight into it.
+      if ((j.communities || []).length === 1 && j.viewer && j.viewer.kind === 'board') {
+        sel.value = j.communities[0].id; currentCommunityId = j.communities[0].id;
+        applyDemoBanner(currentCommunityId); renderCommunityView();
+      }
     } catch (e) {
+      if (String(e.message) === 'not_signed_in') {
+        document.getElementById('communitySelect').innerHTML = '<option value="">Sign in required</option>';
+        document.getElementById('container').innerHTML = `<div class="err" style="padding:24px;text-align:center;">Please sign in to view the board portal.<br><span style="font-size:13px;color:#64748b;">Staff: sign in to the platform. Board members: use the link sent to your email.</span></div>`;
+        return;
+      }
       document.getElementById('communitySelect').innerHTML = '<option value="">Failed to load</option>';
       document.getElementById('container').innerHTML = `<div class="err">Load failed: ${esc(e.message)}</div>`;
     }
@@ -810,7 +834,7 @@
   }
 
   // ----- Boot ---------------------------------------------------------------
-  loadCommunities();
+  initAuth().then(loadCommunities);
 </script>
 </body>
 </html>

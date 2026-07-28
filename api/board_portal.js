@@ -33,18 +33,31 @@ const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 
 const router = express.Router();
 
+// Board portal AUTHORIZATION (Ed 2026-07-27). Was v0 unauthenticated — any
+// request returned any community's data. Now every endpoint proves identity and
+// derives an allowed-community scope server-side; the community id in the URL is
+// checked against that scope, never trusted. Staff (JWT) see the portfolio; a
+// board member sees only the communities they sit on.
+const { requireBoardViewer, canSeeCommunity, scopeCommunityIds } = require('../lib/portal/board_access');
+
 // ----------------------------------------------------------------------------
 // GET /api/board-portal/communities
 // ----------------------------------------------------------------------------
 router.get('/communities', async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    let q = supabase
       .from('communities')
       .select('id, name, is_demo')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('name', { ascending: true });
+    // Board members only enumerate their own community(ies); staff see all.
+    const ids = scopeCommunityIds(viewer);
+    if (ids !== 'all') { if (!ids.length) return res.json({ communities: [], viewer: { kind: viewer.kind, name: viewer.name } }); q = q.in('id', ids); }
+    const { data, error } = await q;
     if (error) throw error;
-    res.json({ communities: data || [] });
+    res.json({ communities: data || [], viewer: { kind: viewer.kind, name: viewer.name } });
   } catch (err) {
     console.error('[board_portal] communities failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -56,7 +69,10 @@ router.get('/communities', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.get('/community/:id/summary', async (req, res) => {
   try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
     const communityId = req.params.id;
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
 
     const { data: community, error: cErr } = await supabase
       .from('communities')
@@ -281,7 +297,10 @@ router.get('/community/:id/summary', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.get('/community/:id/properties', async (req, res) => {
   try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
     const communityId = req.params.id;
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
     const openOnly = req.query.open_only === '1';
     const limit = Math.max(1, Math.min(2000, parseInt(req.query.limit || '500', 10)));
     const orderBy = req.query.order_by || 'open_violations_desc';
@@ -331,7 +350,17 @@ router.get('/community/:id/properties', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.get('/property/:id', async (req, res) => {
   try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
     const propertyId = req.params.id;
+
+    // Authorize by the property's OWN community — a board member of one community
+    // must not read a property in another. Look it up before returning anything.
+    const { data: prop, error: pErr } = await supabase
+      .from('properties').select('community_id').eq('id', propertyId).maybeSingle();
+    if (pErr) throw pErr;
+    if (!prop) return res.status(404).json({ error: 'property_not_found' });
+    if (!canSeeCommunity(viewer, prop.community_id)) return res.status(403).json({ error: 'forbidden_community' });
 
     const { data: summary, error: sErr } = await supabase
       .from('v_property_summary')
@@ -424,7 +453,10 @@ router.get('/property/:id', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.get('/community/:id/projects', async (req, res) => {
   try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
     const communityId = req.params.id;
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
     const { data: community, error: cErr } = await supabase
       .from('communities').select('id, name')
       .eq('id', communityId).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
