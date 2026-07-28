@@ -81,6 +81,7 @@
       <div class="chip" data-view="all" onclick="setView('all')">Everything</div>
     </div>
     <input type="text" id="q" placeholder="Search title / vendor / asset" oninput="debounced()" style="flex:1;min-width:160px;">
+    <button class="btn" onclick="openYearView()" style="white-space:nowrap;" title="Annual project roadmap — current + planned projects on a calendar for the selected community">&#128197; Year snapshot</button>
   </div>
   <div id="list"><div class="empty">Loading&hellip;</div></div>
 </div>
@@ -171,6 +172,42 @@ async function reload(){
     if(!rows.length){ list.innerHTML='<div class="empty">'+(VIEW==='attention'?'&#127881; Nothing waiting on you. Every open project is moving.':'No projects here yet. Click <b>+ New project</b> to add one.')+'</div>'; return; }
     list.innerHTML=rows.map(cardHtml).join('');
   }catch(e){ list.innerHTML='<div class="empty">Couldn’t load projects.</div>'; }
+}
+
+// ---- Year snapshot (annual project roadmap) — same visual as the board portal.
+let yearViewYear = new Date().getFullYear();
+async function openYearView(){
+  const cid=document.getElementById('communitySel').value;
+  if(!cid){ alert('Pick a community first (top-left), then Year snapshot.'); return; }
+  const list=document.getElementById('list'); list.innerHTML='<div class="empty">Loading the year…</div>';
+  try{ const r=await af(API+'/year?community_id='+encodeURIComponent(cid)+'&year='+yearViewYear); const j=await r.json(); if(!r.ok) throw new Error(j.error||'load failed'); list.innerHTML=renderYearView(j); }
+  catch(e){ list.innerHTML='<div class="empty">Couldn’t load the year view.</div>'; }
+}
+function changeOpsYear(d){ yearViewYear+=d; openYearView(); }
+function renderYearView(j){
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const year=j.year;
+  const HEALTH={behind:'#b42318',stalled:'#b45309',at_risk:'#8a6d00',on_track:'#1a7a3c',complete:'#94a3b8',no_target:'#cbd5e1'};
+  const money=(c)=>c==null?'—':'$'+Math.round(Number(c)/100).toLocaleString('en-US');
+  const parse=(d)=>{ if(!d) return null; const t=new Date(String(d).slice(0,10)+'T00:00:00'); return Number.isNaN(t.getTime())?null:t; };
+  const y0=new Date(year,0,1), y1=new Date(year+1,0,1);
+  const frac=(dt)=>Math.max(0,Math.min(1,(dt-y0)/(y1-y0)));
+  const grid=months.map(()=>'<div style="border-left:1px solid #f1f5f9;"></div>').join('');
+  const rows=(j.active||[]).map((p)=>{
+    const start=parse(p.started_at), target=parse(p.target_date);
+    let left=0,right=1,has=true;
+    if(start&&target){ left=frac(start); right=frac(target); } else if(target){ left=Math.max(0,frac(target)-0.03); right=frac(target); } else if(start){ left=frac(start); right=1; } else has=false;
+    const c=HEALTH[p.health]||'#94a3b8';
+    const bar=has?'<div title="'+esc(p.title)+' — '+esc(p.health)+(p.target_date?' · target '+esc(p.target_date):'')+'" style="position:absolute;left:'+(left*100)+'%;width:'+Math.max(2,(right-left)*100)+'%;top:50%;transform:translateY(-50%);height:14px;background:'+c+';border-radius:7px;opacity:.92;"></div>':'<span style="position:absolute;left:4px;top:50%;transform:translateY(-50%);font-size:10.5px;color:#94a3b8;">no dates</span>';
+    return '<div style="display:grid;grid-template-columns:190px 1fr;gap:8px;align-items:center;margin-bottom:6px;"><div style="min-width:0;"><div style="font-size:12.5px;color:#0B1D34;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(p.title)+'</div><div style="font-size:10.5px;color:#64748b;">'+esc((p.health||'').replace('_',' '))+(p.budget_display?' · '+esc(p.budget_display):'')+'</div></div><div style="position:relative;height:24px;background:#f8fafc;border-radius:4px;"><div style="position:absolute;inset:0;display:grid;grid-template-columns:repeat(12,1fr);">'+grid+'</div>'+bar+'</div></div>';
+  }).join('');
+  const planned=(j.planned||[]).length?'<div style="margin-top:18px;"><div style="font-weight:700;color:#0B1D34;margin-bottom:6px;font-size:14px;">Expected in '+year+' — planned from the reserve study</div>'+j.planned.map((pl)=>'<div style="display:flex;justify-content:space-between;border-top:1px solid #f1f5f9;padding:6px 0;font-size:12.5px;"><span>📅 '+esc(pl.name)+'</span><span style="color:#475569;">'+money(pl.cost_cents)+'</span></div>').join('')+'<div style="display:flex;justify-content:space-between;padding-top:7px;font-weight:700;font-size:12.5px;border-top:2px solid #e2e8f0;margin-top:4px;"><span>Planned total</span><span>'+money(j.summary.planned_cost_cents)+'</span></div></div>':'';
+  const btn='padding:6px 11px;border-radius:7px;border:1px solid #e2e8f0;background:#fff;color:#0B1D34;font-size:12px;font-weight:600;cursor:pointer;';
+  return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:11px;padding:18px;">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;"><div><h2 style="margin:0;color:#0B1D34;font-size:18px;">'+esc(j.community.name)+' — '+year+' Project Calendar</h2><div style="font-size:12px;color:#64748b;">'+j.summary.active+' active · '+j.summary.planned+' planned'+(j.summary.planned_cost_cents?' ('+money(j.summary.planned_cost_cents)+')':'')+'</div></div>'+
+    '<div style="display:flex;gap:6px;"><button style="'+btn+'" onclick="changeOpsYear(-1)">◀ '+(year-1)+'</button><button style="'+btn+'" onclick="changeOpsYear(1)">'+(year+1)+' ▶</button><button style="'+btn+'" onclick="reload()">← Back to list</button></div></div>'+
+    '<div style="display:grid;grid-template-columns:190px 1fr;gap:8px;margin-bottom:4px;"><div></div><div style="display:grid;grid-template-columns:repeat(12,1fr);font-size:10.5px;color:#64748b;text-align:center;">'+months.map((m)=>'<div style="border-left:1px solid #eef2f7;padding:2px 0;">'+m+'</div>').join('')+'</div></div>'+
+    (rows||'<div style="color:#64748b;font-size:13px;padding:8px 0;">No active projects with dates this year.</div>')+planned+'</div>';
 }
 
 // Board-accountability strip: same health/budget-vs-spent/milestones the board sees.

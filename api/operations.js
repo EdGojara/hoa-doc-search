@@ -136,6 +136,44 @@ router.get('/summary', async (req, res) => {
   }
 });
 
+// GET /year?community_id=&year=YYYY — the annual project roadmap for staff:
+// active projects (dates + health) + expected projects from the reserve study.
+// Same compute the board portal uses (lib/projects/board_view.js). Must be
+// registered before '/:id' so 'year' isn't matched as an id.
+router.get('/year', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
+    const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+    const { data: community } = await supabase.from('communities').select('id, name').eq('id', communityId).maybeSingle();
+    const { data: projects, error: pErr } = await supabase.from('vendor_projects')
+      .select('*').eq('community_id', communityId).neq('stage', 'cancelled').order('target_date', { ascending: true }).limit(500);
+    if (pErr) throw pErr;
+    const ids = (projects || []).map((p) => p.id);
+    const byProj = {};
+    if (ids.length) {
+      const { data: ms } = await supabase.from('project_milestones').select('*').in('project_id', ids).order('sort_order', { ascending: true });
+      for (const m of (ms || [])) (byProj[m.project_id] = byProj[m.project_id] || []).push(m);
+    }
+    const { boardProjectView } = require('../lib/projects/board_view');
+    const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const active = [];
+    for (const p of (projects || [])) active.push(await boardProjectView(supabase, p, byProj[p.id] || [], todayISO));
+    let planned = [];
+    try {
+      const { data: rc } = await supabase.from('reserve_components')
+        .select('component_name, future_cost_estimate_cents, current_cost_estimate_cents, next_scheduled_replacement_year')
+        .eq('community_id', communityId).eq('next_scheduled_replacement_year', year).order('component_name', { ascending: true }).limit(300);
+      planned = (rc || []).map((r) => ({ name: r.component_name, cost_cents: (r.future_cost_estimate_cents != null ? r.future_cost_estimate_cents : r.current_cost_estimate_cents), year }));
+    } catch (_) {}
+    const sum = (a, k) => a.reduce((s, x) => s + (Number(x[k]) || 0), 0);
+    res.json({ community: community || { id: communityId, name: '' }, year, active, planned, summary: { active: active.length, planned: planned.length, planned_cost_cents: sum(planned, 'cost_cents'), active_budget_cents: sum(active, 'budget_cents') } });
+  } catch (err) {
+    console.error('[operations] year failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // GET /communities — picker (management-company scoped, A-Z).
 router.get('/communities', async (req, res) => {
   try {
