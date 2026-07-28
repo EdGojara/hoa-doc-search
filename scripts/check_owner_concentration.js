@@ -115,10 +115,42 @@ async function runContactMethods() {
   return false;
 }
 
+// A single relay/staff address on a homeowner is enough to hijack resolution
+// (Billie / Jerry / mkessler, 2026-07-27) — no concentration needed. Flag any
+// contact holding a SYSTEM address; allow-list the real staff who are also
+// legitimately contacts (Ed).
+const SYSTEM_ADDR = /@bedrocktx\.com$|no-?reply|do-?not-?reply|donotreply|mailer-daemon|postmaster|notification|@appriver\.com/i;
+const ALLOWED_SYSTEM = new Set(['egojara@bedrocktx.com']);
+
+async function runSystemAddresses() {
+  const rows = await fetchAllEmailMethods();
+  const hits = rows.filter((r) => SYSTEM_ADDR.test(String(r.value || '')) && !ALLOWED_SYSTEM.has(String(r.value || '').toLowerCase().trim()));
+  // Also check the flat primary/secondary columns.
+  let flat = [];
+  try {
+    const { data, error } = await supabase.from('contacts').select('full_name, primary_email, secondary_email')
+      .or('primary_email.ilike.%@bedrocktx.com,secondary_email.ilike.%@bedrocktx.com,primary_email.ilike.%no-reply%,primary_email.ilike.%mailer-daemon%');
+    if (error) throw error;
+    flat = (data || []).filter((c) => [c.primary_email, c.secondary_email].some((e) => e && SYSTEM_ADDR.test(e) && !ALLOWED_SYSTEM.has(String(e).toLowerCase().trim())));
+  } catch (_) { /* best-effort */ }
+
+  console.log(`\n\x1b[1mSystem-address-on-contact check\x1b[0m  (relay/staff/no-reply addresses must never sit on a homeowner)`);
+  if (!hits.length && !flat.length) {
+    console.log('  \x1b[32m✓ No homeowner holds a system/relay address — resolution can\'t be hijacked.\x1b[0m');
+    return true;
+  }
+  console.log(`  \x1b[31m✗ ${hits.length + flat.length} system address(es) on homeowner contacts — these hijack email resolution:\x1b[0m`);
+  hits.forEach((r) => console.log(`     ${r.value}  ×  ${(r.contact && r.contact.full_name) || r.contact_id}`));
+  flat.forEach((c) => console.log(`     ${c.primary_email || c.secondary_email}  ×  ${c.full_name} (flat column)`));
+  console.log('\n  Remove them (a relay/staff address is never a homeowner\'s). Source guard: lib/email/contact_enrich.js SYSTEM_ADDR.');
+  return false;
+}
+
 async function run() {
   const okOwn = await runOwnership();
   const okMethods = await runContactMethods();
-  if (!okOwn || !okMethods) process.exit(1);
+  const okSystem = await runSystemAddresses();
+  if (!okOwn || !okMethods || !okSystem) process.exit(1);
 }
 
 run().catch((e) => { console.error('[owner-concentration] check failed:', e.message); process.exit(1); });
