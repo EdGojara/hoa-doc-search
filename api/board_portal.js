@@ -469,6 +469,65 @@ router.get('/board-members', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /api/board-portal/community/:id/year?year=YYYY
+//   The annual project roadmap: live/active projects (with dates + health) PLUS
+//   expected projects for the year from the reserve study (components scheduled
+//   for replacement). One visual snapshot of the whole year for the board.
+// ----------------------------------------------------------------------------
+router.get('/community/:id/year', async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const communityId = req.params.id;
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+    const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+
+    const { data: community } = await supabase.from('communities').select('id, name').eq('id', communityId).maybeSingle();
+
+    // Live/active projects (anything not cancelled).
+    const { data: projects, error: pErr } = await supabase.from('vendor_projects')
+      .select('*').eq('community_id', communityId).neq('stage', 'cancelled')
+      .order('target_date', { ascending: true }).limit(500);
+    if (pErr) throw pErr;
+    const ids = (projects || []).map((p) => p.id);
+    const byProj = {};
+    if (ids.length) {
+      const { data: ms } = await supabase.from('project_milestones').select('*').in('project_id', ids).order('sort_order', { ascending: true });
+      for (const m of (ms || [])) (byProj[m.project_id] = byProj[m.project_id] || []).push(m);
+    }
+    const { boardProjectView } = require('../lib/projects/board_view');
+    const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const active = [];
+    for (const p of (projects || [])) active.push(await boardProjectView(supabase, p, byProj[p.id] || [], todayISO));
+
+    // Expected projects for the year — from the reserve study (components due for
+    // replacement this year). Year-level (no exact date), with projected cost.
+    let planned = [];
+    try {
+      const { data: rc } = await supabase.from('reserve_components')
+        .select('component_name, future_cost_estimate_cents, current_cost_estimate_cents, next_scheduled_replacement_year')
+        .eq('community_id', communityId).eq('next_scheduled_replacement_year', year)
+        .order('component_name', { ascending: true }).limit(300);
+      planned = (rc || []).map((r) => ({ name: r.component_name, cost_cents: (r.future_cost_estimate_cents != null ? r.future_cost_estimate_cents : r.current_cost_estimate_cents), year }));
+    } catch (_) { /* no reserve study — just show active */ }
+
+    const sumCents = (arr, key) => arr.reduce((s, x) => s + (Number(x[key]) || 0), 0);
+    res.json({
+      community: community ? { id: community.id, name: community.name } : { id: communityId, name: '' },
+      year,
+      active,
+      planned,
+      summary: {
+        active: active.length,
+        planned: planned.length,
+        planned_cost_cents: sumCents(planned, 'cost_cents'),
+        active_budget_cents: sumCents(active, 'budget_cents'),
+      },
+    });
+  } catch (err) { console.error('[board_portal] year failed:', err.message); res.status(500).json({ error: err.message }); }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/board-portal/community/:id/projects
 //   Board accountability view of the community's annual/capital projects:
 //   budget vs live actual spend, schedule health, milestones, next action.
