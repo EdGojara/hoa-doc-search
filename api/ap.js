@@ -762,7 +762,16 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
     const { data: acct } = await supabase.from('chart_of_accounts')
       .select('id, account_number, account_name').eq('id', gl_account_id).eq('community_id', inv.community_id).maybeSingle();
     if (!acct) return res.status(400).json({ error: 'invalid_account', detail: 'That account is not on this community\'s chart.' });
-    if (inv.coded_gl_account_id === gl_account_id) return res.json({ ok: true, unchanged: true, gl_account: `${acct.account_number} ${acct.account_name}`, posting_journal_entry_id: inv.posting_journal_entry_id, posted: !!inv.posting_journal_entry_id });
+    // Same account AND already posted = truly nothing to do. But an invoice that
+    // was auto-coded at low confidence has coded_gl_account_id set with NO posted
+    // JE — re-applying the SAME account must fall through and POST the accrual, or
+    // the bill is stuck (coded, unapprovable, no way forward). Scar (Ed 2026-07-27):
+    // Saifee Signs showed "5250 · not posted" with only a Change button and a
+    // banner saying it wasn't coded — the coding was right, but nothing could post
+    // or approve it. Only short-circuit when it's genuinely done (posted).
+    if (inv.coded_gl_account_id === gl_account_id && inv.posting_journal_entry_id) {
+      return res.json({ ok: true, unchanged: true, gl_account: `${acct.account_number} ${acct.account_name}`, posting_journal_entry_id: inv.posting_journal_entry_id, posted: true });
+    }
 
     // FIRST coding is routine. CHANGING a coding whose accrual is already on the
     // books is the exception (Ed 2026-07-15): it reverses a posted journal entry
