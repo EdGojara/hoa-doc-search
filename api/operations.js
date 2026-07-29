@@ -8,22 +8,24 @@
 // action is it waiting on, and for how long?" — so nothing sits 52 days like
 // the Waterview soccer-field repair that motivated this.
 //
-// Owner-only during beta (like Communications); the API is the boundary. Widen
-// to a manager role when it graduates.
+// Open to any active staffer (requireStaff): staff work this board day to day —
+// creating, advancing, and noting projects. It tracks WORKFLOW state, not money;
+// actual payment stays in AP/Payables (requireAdmin). This is the "widen to a
+// manager role when it graduates" step (Ed 2026-07-29).
 // ============================================================================
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
-const { requireAdmin } = require('./_require_admin');
+const { requireStaff } = require('./_require_admin');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 
 router.use(async (req, res, next) => {
-  const admin = await requireAdmin(req, res);
-  if (!admin) return; // 403 already sent
-  req.admin = admin;
+  const user = await requireStaff(req, res);
+  if (!user) return; // 403 already sent
+  req.admin = user;
   next();
 });
 
