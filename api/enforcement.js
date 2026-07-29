@@ -2309,6 +2309,31 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
       return { bundles_created: 0, drafts_bundled: 0, singletons: 0, skipped: 0 };
     }
 
+    // SELF-HEAL stage/type mismatches BEFORE grouping. A violation that advanced
+    // (courtesy_1 → certified_209) keeps its old-stage letter draft until it's
+    // regenerated; grouping by that stale type lands a certified violation in a
+    // COURTESY bundle — a §209 procedural defect (16323 Crooked Arrow: a
+    // certified_209 trash violation carried a letter_courtesy_1 draft and bundled
+    // with a courtesy inoperable-vehicle letter). Correct each draft's type to
+    // match its violation's CURRENT stage so grouping splits stages correctly and
+    // the re-render below produces the right letter. (Ed 2026-07-29.)
+    const STAGE_TO_LETTER = { courtesy_1: 'letter_courtesy_1', courtesy_2: 'letter_courtesy_2', certified_209: 'letter_209', fine_assessed: 'letter_209' };
+    const vioIds = [...new Set(drafts.map((d) => d.violation_id).filter(Boolean))];
+    if (vioIds.length) {
+      const { data: vios } = await supabase.from('violations').select('id, current_stage').in('id', vioIds);
+      const stageById = Object.fromEntries((vios || []).map((v) => [v.id, v.current_stage]));
+      for (const d of drafts) {
+        const want = d.violation_id ? STAGE_TO_LETTER[stageById[d.violation_id]] : null;
+        if (want && want !== d.type) {
+          try {
+            await supabase.from('interactions').update({ type: want, bundle_id: null }).eq('id', d.id);
+            console.warn(`[auto-bundle] corrected letter type ${d.type} → ${want} for violation ${d.violation_id} (stage advanced without regenerating the letter)`);
+            d.type = want; d.bundle_id = null; // reflect in memory so grouping + force-render use the corrected stage
+          } catch (e) { console.warn('[auto-bundle] stage/type self-heal failed for', d.id, e.message); }
+        }
+      }
+    }
+
     // Per-community §209 bundling-opt-out config (migration 133). When TRUE,
     // letter_209 drafts (covers both certified_209 and fine_assessed) are
     // treated as singletons regardless of how many are at the same property.
