@@ -2737,16 +2737,13 @@ router.post('/mail-queue/redownload', express.json(), async (req, res) => {
       return res.status(404).json({ error: 'No locked letters to re-download — they may already be confirmed mailed.' });
     }
     const { PDFDocument } = require('pdf-lib');
+    const { uniqueLettersByPdf } = require('../lib/enforcement/letter_batch');
     const out = await PDFDocument.create();
     let merged = 0;
-    // Dedupe by the shared PDF path: a bundle's N interactions all point at the
-    // SAME letter PDF, so merging per-interaction would print the bundle N times
-    // (the "217 bundles → 267 envelopes" un-bundling Laurie hit). Merge each
-    // unique letter once. (Ed 2026-07-29.)
-    const seenPdf = new Set();
-    for (const L of letters) {
-      if (!L.content || seenPdf.has(L.content)) continue;
-      seenPdf.add(L.content);
+    // Merge each unique bundle PDF once — siblings share one PDF, so a per-
+    // interaction merge prints the bundle N times ("217 → 267 envelopes"). Shared
+    // helper so the three print paths can't drift again. (Ed 2026-07-29.)
+    for (const L of uniqueLettersByPdf(letters)) {
       try {
         const { data: blob } = await supabase.storage.from('violation-letters').download(L.content);
         if (!blob) continue;
