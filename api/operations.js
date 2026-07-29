@@ -197,7 +197,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-const CREATE_FIELDS = ['title', 'category', 'description', 'vendor_id', 'vendor_name', 'asset', 'stage', 'next_action', 'next_action_note', 'next_action_owner', 'priority', 'estimated_cost_cents', 'approved_cost_cents', 'funding_source', 'target_date', 'source', 'source_email_id', 'status_note'];
+const CREATE_FIELDS = ['title', 'category', 'description', 'vendor_id', 'vendor_name', 'asset', 'stage', 'next_action', 'next_action_note', 'next_action_owner', 'priority', 'estimated_cost_cents', 'approved_cost_cents', 'funding_source', 'target_date', 'started_at', 'source', 'source_email_id', 'status_note'];
 
 // POST / — create a project.
 router.post('/', express.json(), async (req, res) => {

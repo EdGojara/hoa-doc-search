@@ -111,8 +111,12 @@
       <div class="field"><label>Funding</label><select id="f_funding"></select></div>
     </div>
     <div class="grid2">
-      <div class="field"><label>Target completion</label><input type="text" id="f_target" placeholder="YYYY-MM-DD"></div>
+      <div class="field"><label>Start date</label><input type="date" id="f_start"></div>
+      <div class="field"><label>Target completion</label><input type="date" id="f_target"></div>
+    </div>
+    <div class="grid2">
       <div class="field"><label>Action owner</label><input type="text" id="f_owner" placeholder="manager / board / staff"></div>
+      <div class="field"></div>
     </div>
     <div class="field"><label>Description / scope</label><textarea id="f_desc" rows="3"></textarea></div>
     <div class="field"><label>Status note</label><textarea id="f_note" rows="2" placeholder="Latest update — shows on the card"></textarea></div>
@@ -198,8 +202,8 @@ function renderYearView(j){
     let left=0,right=1,has=true;
     if(start&&target){ left=frac(start); right=frac(target); } else if(target){ left=Math.max(0,frac(target)-0.03); right=frac(target); } else if(start){ left=frac(start); right=1; } else has=false;
     const c=HEALTH[p.health]||'#94a3b8';
-    const bar=has?'<div title="'+esc(p.title)+' — '+esc(p.health)+(p.target_date?' · target '+esc(p.target_date):'')+'" style="position:absolute;left:'+(left*100)+'%;width:'+Math.max(2,(right-left)*100)+'%;top:50%;transform:translateY(-50%);height:14px;background:'+c+';border-radius:7px;opacity:.92;"></div>':'<span style="position:absolute;left:4px;top:50%;transform:translateY(-50%);font-size:10.5px;color:#94a3b8;">no dates</span>';
-    return '<div style="display:grid;grid-template-columns:190px 1fr;gap:8px;align-items:center;margin-bottom:6px;"><div style="min-width:0;"><div style="font-size:12.5px;color:#0B1D34;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(p.title)+'</div><div style="font-size:10.5px;color:#64748b;">'+esc((p.health||'').replace('_',' '))+(p.budget_display?' · '+esc(p.budget_display):'')+'</div></div><div style="position:relative;height:24px;background:#f8fafc;border-radius:4px;"><div style="position:absolute;inset:0;display:grid;grid-template-columns:repeat(12,1fr);">'+grid+'</div>'+bar+'</div></div>';
+    const bar=has?'<div title="'+esc(p.title)+' — '+esc(p.health)+(p.target_date?' · target '+esc(p.target_date):'')+'" style="position:absolute;left:'+(left*100)+'%;width:'+Math.max(2,(right-left)*100)+'%;top:50%;transform:translateY(-50%);height:14px;background:'+c+';border-radius:7px;opacity:.92;"></div>':'<span style="position:absolute;left:4px;top:50%;transform:translateY(-50%);font-size:10.5px;color:#2563eb;">＋ add dates</span>';
+    return '<div onclick="openEdit(\''+p.id+'\')" title="Click to set start &amp; target dates" style="display:grid;grid-template-columns:190px 1fr;gap:8px;align-items:center;margin-bottom:6px;cursor:pointer;"><div style="min-width:0;"><div style="font-size:12.5px;color:#0B1D34;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(p.title)+'</div><div style="font-size:10.5px;color:#64748b;">'+esc((p.health||'').replace('_',' '))+(p.budget_display?' · '+esc(p.budget_display):'')+'</div></div><div style="position:relative;height:24px;background:#f8fafc;border-radius:4px;"><div style="position:absolute;inset:0;display:grid;grid-template-columns:repeat(12,1fr);">'+grid+'</div>'+bar+'</div></div>';
   }).join('');
   const planned=(j.planned||[]).length?'<div style="margin-top:18px;"><div style="font-weight:700;color:#0B1D34;margin-bottom:6px;font-size:14px;">Expected in '+year+' — planned from the reserve study</div>'+j.planned.map((pl)=>'<div style="display:flex;justify-content:space-between;border-top:1px solid #f1f5f9;padding:6px 0;font-size:12.5px;"><span>📅 '+esc(pl.name)+'</span><span style="color:#475569;">'+money(pl.cost_cents)+'</span></div>').join('')+'<div style="display:flex;justify-content:space-between;padding-top:7px;font-weight:700;font-size:12.5px;border-top:2px solid #e2e8f0;margin-top:4px;"><span>Planned total</span><span>'+money(j.summary.planned_cost_cents)+'</span></div></div>':'';
   const btn='padding:6px 11px;border-radius:7px;border:1px solid #e2e8f0;background:#fff;color:#0B1D34;font-size:12px;font-weight:600;cursor:pointer;';
@@ -267,7 +271,7 @@ function openNew(){
   fillSelect(document.getElementById('f_stage'),STAGES,STAGE_LABEL);
   fillSelect(document.getElementById('f_action'),ACTIONS,ACTION_LABEL);
   fillSelect(document.getElementById('f_funding'),['','operating','reserve','special_assessment','unknown'],{'':'—',operating:'Operating',reserve:'Reserve',special_assessment:'Special assessment',unknown:'Unknown'});
-  ['f_title','f_vendor','f_asset','f_est','f_target','f_owner','f_desc','f_note'].forEach(i=>document.getElementById(i).value='');
+  ['f_title','f_vendor','f_asset','f_est','f_start','f_target','f_owner','f_desc','f_note'].forEach(i=>document.getElementById(i).value='');
   document.getElementById('f_category').value='general'; document.getElementById('f_priority').value='normal'; document.getElementById('f_stage').value='requested'; document.getElementById('f_action').value='request_bid';
   document.getElementById('editModal').style.display='flex';
 }
@@ -280,7 +284,7 @@ async function openEdit(id){
   document.getElementById('f_asset').value=p.asset||''; document.getElementById('f_stage').value=p.stage;
   document.getElementById('f_action').value=(p.next_action||'none'); document.getElementById('f_funding').value=p.funding_source||'';
   document.getElementById('f_est').value=p.estimated_cost_cents?(p.estimated_cost_cents/100).toFixed(2):'';
-  document.getElementById('f_target').value=p.target_date||''; document.getElementById('f_owner').value=p.next_action_owner||'';
+  document.getElementById('f_start').value=(p.started_at||'').slice(0,10); document.getElementById('f_target').value=(p.target_date||'').slice(0,10); document.getElementById('f_owner').value=p.next_action_owner||'';
   document.getElementById('f_desc').value=p.description||''; document.getElementById('f_note').value='';
 }
 async function saveProject(){
@@ -296,6 +300,7 @@ async function saveProject(){
     next_action:document.getElementById('f_action').value,
     funding_source:document.getElementById('f_funding').value||null,
     estimated_cost_cents:dollarsToCents(document.getElementById('f_est').value),
+    started_at:document.getElementById('f_start').value.trim()||null,
     target_date:document.getElementById('f_target').value.trim()||null,
     next_action_owner:document.getElementById('f_owner').value.trim()||null,
     description:document.getElementById('f_desc').value.trim()||null,
