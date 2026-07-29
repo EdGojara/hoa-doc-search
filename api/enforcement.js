@@ -2547,16 +2547,32 @@ router.post('/drafts/reject', express.json(), async (req, res) => {
     if (!interactionId) return res.status(400).json({ error: 'interaction_id required' });
     const { data: inter } = await supabase
       .from('interactions')
-      .select('id, violation_id, observation_id, content')
+      .select('id, violation_id, observation_id, content, bundle_id, property_id, community_id, type')
       .eq('id', interactionId)
       .maybeSingle();
     if (!inter) return res.status(404).json({ error: 'draft not found' });
 
-    // Best-effort: delete the rendered PDF from storage. Rejected drafts
-    // have no audit value (the violation gets voided, the observation
-    // marked rejected — nothing points at the PDF anymore). Without this,
-    // every rejection during testing leaves a stale PDF behind.
-    if (inter.content && /\.pdf$/i.test(String(inter.content))) {
+    // Is this a BUNDLED item with siblings that stay? In a bundle every item
+    // SHARES one rendered PDF (same content path). Two bugs when dropping one
+    // (Ed 2026-07-29, staff: "won't drop the Lawn Height violation" + "it keeps
+    // unbundling when printing"): (1) deleting inter.content deletes the WHOLE
+    // bundle's letter, and (2) the shared PDF still shows the dropped violation
+    // because nothing regenerates it. So: only delete the PDF for a true
+    // singleton, and re-run the bundler for the property afterward so the
+    // remaining items get a fresh PDF WITHOUT the dropped one (or the last one
+    // renders as a clean singleton).
+    let survivingSiblings = 0;
+    if (inter.bundle_id) {
+      const { count } = await supabase.from('interactions')
+        .select('id', { count: 'exact', head: true })
+        .eq('bundle_id', inter.bundle_id).eq('status', 'draft').neq('id', interactionId);
+      survivingSiblings = count || 0;
+    }
+
+    // Delete the rendered PDF only when nothing else points at it — a singleton,
+    // or the last item in the bundle. If siblings remain, the bundler below
+    // replaces the shared PDF; deleting it here would blank their letter.
+    if (survivingSiblings === 0 && inter.content && /\.pdf$/i.test(String(inter.content))) {
       try { await supabase.storage.from('violation-letters').remove([inter.content]); } catch (_) {}
     }
 
@@ -2589,7 +2605,20 @@ router.post('/drafts/reject', express.json(), async (req, res) => {
         notes: reason || 'Rejected from Drafts review',
       })
       .eq('id', interactionId);
-    res.json({ ok: true });
+
+    // If this was one item of a multi-violation bundle, regenerate the bundle
+    // for the property so the remaining letter(s) reflect the drop — the shared
+    // PDF is rebuilt WITHOUT the dropped violation, and a bundle that's now down
+    // to one item renders as a clean singleton. Without this the printed letter
+    // still shows the dropped violation and the bundle breaks apart on print.
+    let rebundled = false;
+    if (inter.bundle_id && survivingSiblings > 0 && inter.property_id) {
+      try {
+        await runAutoBundle({ communityId: inter.community_id || null, propertyId: inter.property_id, force: true });
+        rebundled = true;
+      } catch (e) { console.warn('[enforcement.drafts.reject] rebundle after drop failed:', e.message); }
+    }
+    res.json({ ok: true, rebundled, surviving_in_bundle: survivingSiblings });
   } catch (err) {
     console.error('[enforcement.drafts.reject]', err);
     res.status(500).json({ error: err.message });
@@ -2710,8 +2739,14 @@ router.post('/mail-queue/redownload', express.json(), async (req, res) => {
     const { PDFDocument } = require('pdf-lib');
     const out = await PDFDocument.create();
     let merged = 0;
+    // Dedupe by the shared PDF path: a bundle's N interactions all point at the
+    // SAME letter PDF, so merging per-interaction would print the bundle N times
+    // (the "217 bundles → 267 envelopes" un-bundling Laurie hit). Merge each
+    // unique letter once. (Ed 2026-07-29.)
+    const seenPdf = new Set();
     for (const L of letters) {
-      if (!L.content) continue;
+      if (!L.content || seenPdf.has(L.content)) continue;
+      seenPdf.add(L.content);
       try {
         const { data: blob } = await supabase.storage.from('violation-letters').download(L.content);
         if (!blob) continue;
@@ -3002,8 +3037,14 @@ router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
     const out = await PDFDocument.create();
     let included = [];
     let skipped = [];
+    // Dedupe by shared PDF path: a bundle's N interactions share one letter PDF,
+    // so a per-interaction merge would print the bundle N times (un-bundling /
+    // extra envelopes). Merge each unique letter once. (Ed 2026-07-29.)
+    const seenPdf = new Set();
     for (const L of letters) {
       if (!L.content) { skipped.push({ id: L.id, reason: 'no storage path' }); continue; }
+      if (seenPdf.has(L.content)) { included.push(L.id); continue; }  // same bundle PDF already merged
+      seenPdf.add(L.content);
       try {
         const { data: blob } = await supabase.storage.from('violation-letters').download(L.content);
         if (!blob) { skipped.push({ id: L.id, reason: 'storage missing' }); continue; }
