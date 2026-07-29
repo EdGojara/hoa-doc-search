@@ -75,7 +75,7 @@ function decorate(p) {
   };
 }
 
-const SELECT = 'id, community_id, title, category, description, vendor_id, vendor_name, asset, stage, stage_since, next_action, next_action_note, next_action_owner, priority, estimated_cost_cents, approved_cost_cents, funding_source, target_date, started_at, completed_at, source, source_email_id, status_note, created_by, created_at, updated_at, communities:community_id(name), vendors:vendor_id(name)';
+const SELECT = 'id, community_id, title, category, description, vendor_id, vendor_name, asset, stage, stage_since, next_action, next_action_note, next_action_owner, priority, estimated_cost_cents, approved_cost_cents, funding_source, target_date, started_at, completed_at, source, source_email_id, status_note, is_major, budget_account_id, created_by, created_at, updated_at, communities:community_id(name), vendors:vendor_id(name), budget_account:budget_account_id(account_number, account_name)';
 
 // GET / — the board. Filters: community_id, stage, category, view=attention|open|all, q.
 router.get('/', async (req, res) => {
@@ -185,6 +185,35 @@ router.get('/communities', async (req, res) => {
   } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// GET /budget-accounts?community_id=&year= — operating-expense budget lines for
+// the community's approved/active budget, to tag which line a project draws
+// against. Ordered by account number (chart-of-accounts convention). If no year
+// is given, returns lines from the most recent fiscal year on file.
+router.get('/budget-accounts', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_required' });
+    let q = supabase.from('v_current_budgets')
+      .select('account_id, account_number, account_name, account_type, fiscal_year, annual_amount_cents')
+      .eq('community_id', communityId).eq('account_type', 'expense');
+    const year = parseInt(req.query.year, 10);
+    if (year) q = q.eq('fiscal_year', year);
+    const { data, error } = await q.limit(2000);
+    if (error) throw error;
+    let rows = data || [];
+    // No year requested → keep only the latest fiscal year present.
+    if (!year && rows.length) {
+      const latest = Math.max(...rows.map((r) => Number(r.fiscal_year) || 0));
+      rows = rows.filter((r) => Number(r.fiscal_year) === latest);
+    }
+    rows.sort((a, b) => String(a.account_number || '').localeCompare(String(b.account_number || ''), undefined, { numeric: true }));
+    res.json({ accounts: rows });
+  } catch (err) {
+    console.error('[operations] budget-accounts failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // GET /:id — one project + its timeline.
 router.get('/:id', async (req, res) => {
   try {
@@ -199,7 +228,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-const CREATE_FIELDS = ['title', 'category', 'description', 'vendor_id', 'vendor_name', 'asset', 'stage', 'next_action', 'next_action_note', 'next_action_owner', 'priority', 'estimated_cost_cents', 'approved_cost_cents', 'funding_source', 'target_date', 'started_at', 'source', 'source_email_id', 'status_note'];
+const CREATE_FIELDS = ['title', 'category', 'description', 'vendor_id', 'vendor_name', 'asset', 'stage', 'next_action', 'next_action_note', 'next_action_owner', 'priority', 'estimated_cost_cents', 'approved_cost_cents', 'funding_source', 'target_date', 'started_at', 'source', 'source_email_id', 'status_note', 'is_major', 'budget_account_id'];
 
 // POST / — create a project.
 router.post('/', express.json(), async (req, res) => {
@@ -223,7 +252,7 @@ router.post('/', express.json(), async (req, res) => {
   }
 });
 
-const PATCH_FIELDS = ['title', 'category', 'description', 'vendor_id', 'vendor_name', 'asset', 'stage', 'next_action', 'next_action_note', 'next_action_owner', 'priority', 'estimated_cost_cents', 'approved_cost_cents', 'funding_source', 'target_date', 'started_at', 'completed_at', 'status_note', 'percent_complete'];
+const PATCH_FIELDS = ['title', 'category', 'description', 'vendor_id', 'vendor_name', 'asset', 'stage', 'next_action', 'next_action_note', 'next_action_owner', 'priority', 'estimated_cost_cents', 'approved_cost_cents', 'funding_source', 'target_date', 'started_at', 'completed_at', 'status_note', 'percent_complete', 'is_major', 'budget_account_id'];
 
 // PATCH /:id — update fields. A stage change resets the days-waiting clock and
 // writes a timeline event; a note/status writes one too.

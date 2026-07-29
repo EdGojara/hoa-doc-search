@@ -108,7 +108,11 @@
     </div>
     <div class="grid2">
       <div class="field"><label>Estimated cost ($)</label><input type="text" id="f_est" placeholder="0.00"></div>
-      <div class="field"><label>Funding</label><select id="f_funding"></select></div>
+      <div class="field"><label>Funding</label><select id="f_funding" onchange="toggleBudgetLine()"></select></div>
+    </div>
+    <div class="grid2">
+      <div class="field" id="f_budget_wrap" style="display:none;"><label>Operating budget line</label><select id="f_budget_account"></select></div>
+      <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" id="f_major" style="width:auto;"> Major project <span style="color:var(--muted);font-weight:400;font-size:12px;">(highlighted for the board)</span></label></div>
     </div>
     <div class="grid2">
       <div class="field"><label>Start date</label><input type="date" id="f_start"></div>
@@ -119,7 +123,7 @@
       <div class="field"></div>
     </div>
     <div class="field"><label>Description / scope</label><textarea id="f_desc" rows="3"></textarea></div>
-    <div class="field"><label>Status note</label><textarea id="f_note" rows="2" placeholder="Latest update — shows on the card"></textarea></div>
+    <div class="field"><label>Internal note <span style="color:var(--muted);font-weight:400;font-size:12px;">— staff only, never shown to the board</span></label><textarea id="f_note" rows="2" placeholder="Working notes for the team"></textarea></div>
     <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
       <button class="btn ghost" onclick="closeModal('editModal')">Cancel</button>
       <button class="btn gold" id="saveBtn" onclick="saveProject()">Save</button>
@@ -231,11 +235,13 @@ function boardStrip(b){
 function cardHtml(p){
   const cls=p.stalled?'stalled':(p.needs_action?'act':'');
   const prio=(p.priority==='urgent'||p.priority==='high')?'<span class="badge prio-'+p.priority+'">'+p.priority+'</span>':'';
+  const major=p.is_major?'<span class="badge" style="background:#0B1D34;color:#D4AF37;">Major</span>':'';
   const cost=p.approved_cost_cents?('Approved '+money(p.approved_cost_cents)):(p.estimated_cost_cents?('Est. '+money(p.estimated_cost_cents)):'');
   return '<div class="card '+cls+'">'+
     '<div class="ctop"><div style="min-width:0;">'+
       '<div class="title" onclick="openDetail(\''+p.id+'\')">'+esc(p.title)+'</div>'+
       '<div class="meta">'+
+        major +
         '<span class="badge stage '+p.stage+'">'+esc(p.stage_label)+'</span>'+
         '<span class="badge cat">'+esc(p.category)+'</span>'+ prio +
         (p.community_name?'<span>&#127968; '+esc(p.community_name)+'</span>':'')+
@@ -272,8 +278,30 @@ function openNew(){
   fillSelect(document.getElementById('f_action'),ACTIONS,ACTION_LABEL);
   fillSelect(document.getElementById('f_funding'),['','operating','reserve','special_assessment','unknown'],{'':'—',operating:'Operating',reserve:'Reserve',special_assessment:'Special assessment',unknown:'Unknown'});
   ['f_title','f_vendor','f_asset','f_est','f_start','f_target','f_owner','f_desc','f_note'].forEach(i=>document.getElementById(i).value='');
+  document.getElementById('f_major').checked=false;
+  document.getElementById('f_budget_account').innerHTML='<option value="">—</option>'; document.getElementById('f_budget_account').value='';
   document.getElementById('f_category').value='general'; document.getElementById('f_priority').value='normal'; document.getElementById('f_stage').value='requested'; document.getElementById('f_action').value='request_bid';
+  toggleBudgetLine();
   document.getElementById('editModal').style.display='flex';
+}
+// Show the operating-budget-line picker only for operating-funded projects, and
+// load that community's expense budget lines to populate it.
+async function toggleBudgetLine(selectedId){
+  const funding=document.getElementById('f_funding').value;
+  const wrap=document.getElementById('f_budget_wrap');
+  wrap.style.display = funding==='operating' ? '' : 'none';
+  if(funding!=='operating') return;
+  const cid=document.getElementById('f_community').value;
+  const sel=document.getElementById('f_budget_account');
+  if(!cid){ sel.innerHTML='<option value="">Pick a community first</option>'; return; }
+  sel.innerHTML='<option value="">Loading…</option>';
+  try{
+    const r=await af(API+'/budget-accounts?community_id='+encodeURIComponent(cid));
+    const accts=(await r.json()).accounts||[];
+    if(!accts.length){ sel.innerHTML='<option value="">No operating budget on file</option>'; return; }
+    sel.innerHTML='<option value="">—</option>'+accts.map(a=>'<option value="'+a.account_id+'">'+esc((a.account_number?a.account_number+' · ':'')+a.account_name)+' ('+money(a.annual_amount_cents)+'/yr)</option>').join('');
+    if(selectedId) sel.value=selectedId;
+  }catch(_){ sel.innerHTML='<option value="">Couldn’t load budget lines</option>'; }
 }
 async function openEdit(id){
   const r=await af(API+'/'+id); const {project:p}=await r.json();
@@ -286,6 +314,8 @@ async function openEdit(id){
   document.getElementById('f_est').value=p.estimated_cost_cents?(p.estimated_cost_cents/100).toFixed(2):'';
   document.getElementById('f_start').value=(p.started_at||'').slice(0,10); document.getElementById('f_target').value=(p.target_date||'').slice(0,10); document.getElementById('f_owner').value=p.next_action_owner||'';
   document.getElementById('f_desc').value=p.description||''; document.getElementById('f_note').value='';
+  document.getElementById('f_major').checked=!!p.is_major;
+  toggleBudgetLine(p.budget_account_id||'');
 }
 async function saveProject(){
   const id=document.getElementById('f_id').value;
@@ -304,6 +334,8 @@ async function saveProject(){
     target_date:document.getElementById('f_target').value.trim()||null,
     next_action_owner:document.getElementById('f_owner').value.trim()||null,
     description:document.getElementById('f_desc').value.trim()||null,
+    is_major:document.getElementById('f_major').checked,
+    budget_account_id:(document.getElementById('f_funding').value==='operating' ? (document.getElementById('f_budget_account').value||null) : null),
   };
   const noteVal=document.getElementById('f_note').value.trim(); if(noteVal) body.status_note=noteVal;
   if(!body.title){ alert('Give the project a title.'); return; }
