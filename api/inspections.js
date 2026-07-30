@@ -637,11 +637,20 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
             if (comm) context.community_name = comm.name;
           } catch (_) {}
 
+          // Few-shot learning loop (Ed 2026-07-30): inject this community's recent
+          // reviewer corrections so the AI stops repeating them. Best-effort.
+          let learnedCorrections = '';
+          try {
+            const { buildLearnedCorrections } = require('../lib/enforcement/vision_learning');
+            learnedCorrections = await buildLearnedCorrections(supabase, insp.community_id);
+          } catch (_) {}
+
           const result = await categorizePhoto({
             image_buffer:     req.file.buffer,
             image_media_type: req.file.mimetype || 'image/jpeg',
             categories:       cats || [],
             context,
+            learned_corrections: learnedCorrections,
           });
           if (!result) {
             console.log(`[ai_vision] observation ${observationId} got null result — staying pending`);
