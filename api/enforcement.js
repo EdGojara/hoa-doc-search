@@ -1138,6 +1138,31 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
       if (uploadedPaths.length > 0) {
         try { await supabase.storage.from('documents').remove(uploadedPaths); } catch (_) {}
       }
+      // The open-violation unique index (migration 340) blocked a DUPLICATE:
+      // there is already an open violation of this category at this property.
+      // Don't leak the raw Postgres constraint text — tell staff the case
+      // already exists and point them to it so they reissue/regenerate the
+      // existing letter instead of opening a second case. (Ed 2026-07-30,
+      // Martha: certified §209 reissue on 9607 Eaglewood Window AC Unit.)
+      if (vErr.code === '23505' && /one_open_per_property_category/.test(vErr.message || '')) {
+        let existingId = null, existingStage = null, label = 'that';
+        try {
+          const { data: ex } = await supabase.from('violations')
+            .select('id, current_stage')
+            .eq('property_id', propertyId).eq('primary_category_id', categoryId)
+            .not('current_stage', 'in', '(cured,closed,voided)')
+            .order('opened_at', { ascending: false }).limit(1).maybeSingle();
+          if (ex) { existingId = ex.id; existingStage = ex.current_stage; }
+          const { data: cat } = await supabase.from('enforcement_categories').select('label').eq('id', categoryId).maybeSingle();
+          if (cat && cat.label) label = cat.label;
+        } catch (_) {}
+        return res.status(409).json({
+          error: `There's already an open "${label}" violation at this property, so a second one can't be opened for the same issue. Open the existing case and use its Letter button to regenerate or reissue the notice.`,
+          code: 'already_open',
+          existing_violation_id: existingId,
+          existing_stage: existingStage,
+        });
+      }
       return res.status(500).json({ error: safeErrorMessage(vErr) });
     }
 
@@ -1341,7 +1366,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       .from('violations')
       .select(`
         id, property_id, community_id, current_stage, cure_period_ends_at, cure_days_override,
-        opened_at, opened_from_observation_id, primary_category_id, board_priority_at_open, quality_status,
+        opened_at, opened_from_observation_id, primary_category_id, board_priority_at_open, quality_status, source,
         enforcement_categories ( slug, label, description ),
         communities ( name )
       `)
@@ -1350,11 +1375,13 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     if (vErr || !violation) return res.status(404).json({ error: 'violation not found' });
 
     // APPROVAL GATE (Ed 2026-07-30): a letter only drafts for an APPROVED
-    // violation. New AI-flagged violations are 'unreviewed' — a human verifies
-    // (or rejects) them first, then letters generate. This is the pruning gate
-    // that stops raw high-recall AI output from flooding into mailed notices.
-    if (violation.quality_status === 'unreviewed' && !body.allow_unreviewed) {
-      return res.status(409).json({ error: 'not_approved', message: 'This violation has not been approved yet. Approve it (verify) before drafting a letter.' });
+    // violation — but this gate is specifically for the raw AI-flag flood, so it
+    // ONLY blocks AI-inspection-sourced (trustEd_native) unreviewed violations.
+    // Vantaca-imported and manual violations are established cases staff work
+    // directly (e.g. Martha reissuing a certified §209 on a Vantaca import), so
+    // they are never blocked here.
+    if (violation.quality_status === 'unreviewed' && violation.source === 'trustEd_native' && !body.allow_unreviewed) {
+      return res.status(409).json({ error: 'not_approved', message: 'This AI-flagged violation has not been approved yet. Approve it (verify) before drafting a letter.' });
     }
 
     // Self-help 10-day tracks (lawn force-mow, trash cleanup) use the dedicated
