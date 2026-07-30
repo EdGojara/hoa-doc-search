@@ -2672,7 +2672,18 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
     // the ACC specialist mailbox, so it threads with her acknowledgment.
     let emailResult = { attempted: false, sent: false };
     const toEmail = (body.to_email || dec.submitter_email || '').trim();
-    if (body.send && toEmail) {
+    // IDEMPOTENCY GUARD (Ed 2026-07-30): a decision letter is emailed to the
+    // homeowner AT MOST ONCE. acknowledged_at is stamped on the first successful
+    // send; if it's already set, NEVER re-send. A bounced/rejected recipient
+    // address (e.g. a malformed gmail) made staff re-click finalize, and with no
+    // guard the homeowner got the same letter again and again. A re-finalize of
+    // an already-sent decision is now a no-op on the email (reported, not an
+    // error) so the reviewer can still adjust/close the item.
+    if (body.send && dec.acknowledged_at) {
+      emailResult.already_sent = true;
+      emailResult.acknowledged_to = dec.acknowledged_to || null;
+      console.warn(`[acc-finalize] decision ${id} already emailed at ${dec.acknowledged_at} to ${dec.acknowledged_to} — NOT re-sending.`);
+    } else if (body.send && toEmail) {
       emailResult.attempted = true;
       try {
         const graph = require('./lib/email/graph_send');
