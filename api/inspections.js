@@ -48,6 +48,39 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 
 const router = express.Router();
 
+// Sign inspection-photo storage paths for the browser — in PARALLEL, chunked,
+// with an image transform so the client gets a ~1600px thumbnail (tens of KB)
+// rather than the multi-MB original. Signing used to be a sequential per-photo
+// loop that stalled the reviewer ~15s on big (400-500 photo) inspections and
+// then shipped hundreds of MB of full-res JPEGs. Pass storage paths; get back a
+// Map<path, signedUrl|null>. Falls back to a plain signed URL if the image
+// transform is unavailable, so it degrades safely. (Ed 2026-07-30)
+async function signPhotoUrls(paths, opts = {}) {
+  const width = opts.width || 1600;
+  const quality = opts.quality || 72;
+  const uniq = [...new Set((paths || []).filter(Boolean))];
+  const out = new Map();
+  const CHUNK = 30;
+  for (let i = 0; i < uniq.length; i += CHUNK) {
+    const chunk = uniq.slice(i, i + CHUNK);
+    await Promise.all(chunk.map(async (path) => {
+      try {
+        const { data: signed } = await supabase.storage
+          .from('documents')
+          .createSignedUrl(path, 60 * 60, { transform: { width, quality, resize: 'contain' } });
+        if (signed && signed.signedUrl) { out.set(path, signed.signedUrl); return; }
+      } catch (_) { /* transform unavailable — fall through to plain */ }
+      try {
+        const { data: plain } = await supabase.storage
+          .from('documents')
+          .createSignedUrl(path, 60 * 60);
+        out.set(path, (plain && plain.signedUrl) || null);
+      } catch (_) { out.set(path, null); }
+    }));
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/inspections — start a new inspection session
 // Body: { community_id, mode, route_label?, notes?, operator_id? }
@@ -2697,17 +2730,14 @@ router.get('/inspections/:id', async (req, res, next) => {
       }
     }
 
-    // Generate signed URLs for the storage paths so the frontend can render
-    // them in the reviewer queue. 1-hour expiry is plenty for a review session.
+    // Sign every photo URL up front — parallel + thumbnail transform. Was a
+    // sequential per-photo loop that stalled ~15s on 400-500 photo inspections
+    // and shipped full-res originals. See signPhotoUrls(). (Ed 2026-07-30)
+    const signedByPath = await signPhotoUrls((photos || []).map((p) => p.storage_path));
+
     const withUrls = [];
     for (const p of (photos || [])) {
-      let signedUrl = null;
-      try {
-        const { data: signed } = await supabase.storage
-          .from('documents')
-          .createSignedUrl(p.storage_path, 60 * 60);
-        signedUrl = signed?.signedUrl || null;
-      } catch (_) { /* leave null */ }
+      const signedUrl = signedByPath.get(p.storage_path) || null;
       const obs = obsByPhoto.get(p.id) || [];
       // Derive a single ai_verdict.
       // Priority: observations (if any) > photo.ai_findings/ai_is_clean
@@ -2999,17 +3029,9 @@ router.get('/inspections/:id/photos-needing-link', async (req, res) => {
       !p.reviewer_confirmed_property_id && !p.polygon_match_property_id && !obsPhotoIds.has(p.id)
     );
 
-    // Sign photo URLs
-    const withUrls = await Promise.all(needsLink.map(async (p) => {
-      let photo_url = null;
-      try {
-        const { data: sd } = await supabase.storage
-          .from('documents')
-          .createSignedUrl(p.storage_path, 60 * 60);
-        photo_url = sd && sd.signedUrl;
-      } catch (e) { /* no-op */ }
-      return { ...p, photo_url };
-    }));
+    // Sign photo URLs — parallel + thumbnail transform. See signPhotoUrls().
+    const signedByPath = await signPhotoUrls(needsLink.map((p) => p.storage_path));
+    const withUrls = needsLink.map((p) => ({ ...p, photo_url: signedByPath.get(p.storage_path) || null }));
 
     res.json({ photos: withUrls, community_id: communityId, community_name: communityName });
   } catch (err) {
@@ -3160,18 +3182,11 @@ router.get('/inspections/observations/pending', async (req, res) => {
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
 
-    // Sign URLs for the photos
-    const withUrls = await Promise.all((data || []).map(async (o) => {
-      let photo_url = null;
-      if (o.inspection_photos && o.inspection_photos.storage_path) {
-        try {
-          const { data: sd } = await supabase.storage
-            .from('documents')
-            .createSignedUrl(o.inspection_photos.storage_path, 60 * 60);
-          photo_url = sd && sd.signedUrl;
-        } catch (e) { /* no-op */ }
-      }
-      return { ...o, photo_url };
+    // Sign URLs for the photos — parallel + thumbnail transform. See signPhotoUrls().
+    const signedByPath = await signPhotoUrls((data || []).map((o) => o.inspection_photos && o.inspection_photos.storage_path));
+    const withUrls = (data || []).map((o) => ({
+      ...o,
+      photo_url: (o.inspection_photos && signedByPath.get(o.inspection_photos.storage_path)) || null,
     }));
 
     res.json({ observations: withUrls });
