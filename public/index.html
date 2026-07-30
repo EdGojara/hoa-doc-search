@@ -14745,7 +14745,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           </div>
         </div>
         <div class="acc-ai-actions">
-          <button class="acc-action-btn approve" onclick="accSend('${a.id}', true)">✉ Send to homeowner (as Annie)</button>
+          ${a.acknowledged_at
+            ? `<button class="acc-action-btn" disabled title="Already emailed ${accEsc(a.acknowledged_to || 'the homeowner')} on ${accEsc(String(a.acknowledged_at).slice(0, 10))} — Annie will not send this again." style="opacity:0.55; cursor:not-allowed;">✓ Already sent to homeowner${a.acknowledged_to ? ' (' + accEsc(a.acknowledged_to) + ')' : ''}</button>`
+            : `<button class="acc-action-btn approve" onclick="accSend('${a.id}', true)">✉ Send to homeowner (as Annie)</button>`}
           <button class="acc-action-btn modify" onclick="accSend('${a.id}', false)">💾 Mark done without emailing</button>
           <button class="secondary-btn" onclick="accDownloadCurrent()" style="align-self:center;">⬇ Download letter PDF</button>
           <a class="secondary-btn" href="/acc-review/decisions/${a.id}/packet" target="_blank" rel="noopener" style="align-self:center; text-decoration:none;">⬇ Packet</a>
