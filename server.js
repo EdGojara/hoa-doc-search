@@ -435,6 +435,7 @@ const STAFF_GATE_TTL_DAYS = 30;
 const _STAFF_GATE_PUBLIC = [
   // Static infrastructure
   /^\/robots\.txt$/,
+  /^\/version$/,                            // running-commit probe — SHA + boot time only, no data
   /^\/favicon\.ico$/,
   /^\/logos\//,
   /^\/assets\//,
