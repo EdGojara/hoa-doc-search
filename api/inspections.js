@@ -839,7 +839,19 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                   .select('id')
                   .single();
                 if (vErr) {
-                  console.warn('[auto-draft] violation insert failed:', vErr.message);
+                  // 23505 = the open-violation unique index (migration 340) blocked
+                  // a duplicate: an OPEN violation of this category already exists at
+                  // this property. Don't drop the evidence — continue the existing
+                  // case with this observation instead of opening a twin.
+                  if (vErr.code === '23505') {
+                    try {
+                      const { findOrContinueViolation } = require('../lib/enforcement/find_or_continue_violation');
+                      await findOrContinueViolation({ propertyId: resolvedPropertyId, categoryId, observationId, inspectionId: id, source: 'inspection' });
+                      await supabase.from('property_observations').update({ reviewer_status: 'confirmed', reviewed_at: new Date().toISOString() }).eq('id', observationId);
+                    } catch (e) { console.warn('[auto-draft] continue-existing after dup block failed:', e.message); }
+                  } else {
+                    console.warn('[auto-draft] violation insert failed:', vErr.message);
+                  }
                 } else {
                   // Mark observation confirmed so it's tied to the violation
                   await supabase.from('property_observations').update({
