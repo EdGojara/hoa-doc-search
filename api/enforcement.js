@@ -4567,6 +4567,13 @@ router.post('/violations/:id/change-category', express.json(), async (req, res) 
       .limit(1).maybeSingle();
     if (dup) duplicate_open_case = { id: dup.id, current_stage: dup.current_stage, opened_at: dup.opened_at };
 
+    // Re-render this property's DRAFT letter(s) from the NEW category so the
+    // reviewed preview matches what ships. Without this the draft PDF stays a
+    // frozen snapshot of the OLD category. Best-effort — never fail the change
+    // on it. (Ed 2026-07-30 — same fix as /drafts/:id/reclassify.)
+    try { await runAutoBundle({ propertyId: v.property_id, force: true }); }
+    catch (e) { console.warn('[violations.change-category] draft re-render failed (non-fatal):', e.message); }
+
     res.json({ ok: true, category_label: newCat.label, prior_label: priorLabel, duplicate_open_case });
   } catch (err) {
     console.error('[violations.change-category]', err);
@@ -10001,6 +10008,17 @@ router.post('/drafts/:interactionId/reclassify', express.json(), async (req, res
         .limit(1).maybeSingle();
       if (existing) duplicate_open_case = { id: existing.id, current_stage: existing.current_stage, opened_at: existing.opened_at };
     } catch (e) { console.warn('[drafts.reclassify] duplicate check failed:', e.message); }
+
+    // Re-render this property's DRAFT letter(s) from the NEW category so the
+    // preview the operator reviews matches what will ship. Without this the
+    // draft PDF is a frozen snapshot of the OLD category — the reviewer sees
+    // "lawn dead patches" on a letter whose violation is now "parking" (Ed
+    // 2026-07-30, 9606 Eagle Eye Lane). lock-and-batch re-renders at send time,
+    // but review must equal ship. Best-effort — never fail the reclassify on it.
+    if (interaction.status !== 'sent') {
+      try { await runAutoBundle({ propertyId: violation.property_id, force: true }); }
+      catch (e) { console.warn('[drafts.reclassify] draft re-render failed (non-fatal):', e.message); }
+    }
 
     res.json({
       ok: true,
