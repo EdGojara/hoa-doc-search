@@ -9030,7 +9030,7 @@
         const res = entry.residency;
         const cname = (p.communities && p.communities.name) || '';
         const arPill = ar
-          ? `<span style="background:${_hpArColor(ar)}; color:#fff; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:700;" title="AR snapshot ${escapeHtml(ar.snapshot_date || '')}">$${Number(ar.balance_total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · ${escapeHtml(ar.enforcement_stage || 'reminder')}</span>`
+          ? `<span onclick="event.stopPropagation(); window.hpOpenLedgerModal('${p.id}')" style="background:${_hpArColor(ar)}; color:#fff; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:700; cursor:pointer;" title="Click to see the full transaction history (balance as of ${escapeHtml(ar.snapshot_date || '')})">$${Number(ar.balance_total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · ${escapeHtml(ar.enforcement_stage || 'reminder')} ›</span>`
           : '<span style="color:#94A3B8; font-size:10.5px;">No AR snapshot</span>';
         const legalPill = ar && (ar.at_legal || ar.in_collections)
           ? `<span style="background:#fef2f2; color:#b91c1c; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:700; border:1px solid #fecaca;">⚠ ${ar.at_legal ? 'WITH LEGAL' : 'IN COLLECTIONS'} — verify before quoting balance</span>`
