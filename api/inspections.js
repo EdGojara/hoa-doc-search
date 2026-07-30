@@ -2610,7 +2610,14 @@ router.get('/inspections/recent', async (req, res) => {
     if (req.query.include_voided !== '1') q = q.neq('status', 'voided');
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ inspections: data || [] });
+    // Hide FINALIZED zero-photo inspections — a closed inspection with no photo
+    // captured is a false start (someone started a drive and completed it
+    // without capturing anything), and they just clutter the Completed list.
+    // A real inspection always has at least one photo. Active/captured rows are
+    // left alone so an in-progress drive is never hidden. (Ed 2026-07-30)
+    const rows = (data || []).filter((i) =>
+      !(i.status === 'closed' && !(Number(i.total_photos) > 0)));
+    res.json({ inspections: rows });
   } catch (err) {
     console.error('[inspections.recent]', err);
     res.status(500).json({ error: err.message || 'failed to list inspections' });
