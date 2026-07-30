@@ -1374,14 +1374,28 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       .maybeSingle();
     if (vErr || !violation) return res.status(404).json({ error: 'violation not found' });
 
-    // APPROVAL GATE (Ed 2026-07-30): a letter only drafts for an APPROVED
-    // violation — but this gate is specifically for the raw AI-flag flood, so it
-    // ONLY blocks AI-inspection-sourced (trustEd_native) unreviewed violations.
-    // Vantaca-imported and manual violations are established cases staff work
-    // directly (e.g. Martha reissuing a certified §209 on a Vantaca import), so
-    // they are never blocked here.
-    if (violation.quality_status === 'unreviewed' && violation.source === 'trustEd_native' && !body.allow_unreviewed) {
-      return res.status(409).json({ error: 'not_approved', message: 'This AI-flagged violation has not been approved yet. Approve it (verify) before drafting a letter.' });
+    // APPROVAL AT LETTER TIME (Ed 2026-07-30): the raw AI-flag flood must never
+    // AUTO-draft letters — that's blocked at the source (AUTO_DRAFT_LETTERS_ON_
+    // INSPECTION=false in api/inspections.js). But this endpoint is only ever
+    // reached by a deliberate staff action (the "Generate letter" button, behind
+    // the staff gate). A human choosing to draft a letter for a violation IS the
+    // review of it — so instead of REFUSING an unreviewed AI violation (which
+    // just dead-ended staff mid-edit with "not approved"), we record the click
+    // as the approval: mark it verified, stamped with who + when, then proceed.
+    // Vantaca/manual violations are already established cases and skip this.
+    if (violation.quality_status === 'unreviewed' && violation.source === 'trustEd_native') {
+      try {
+        const { getActingUser } = require('./_acting_user');
+        const actor = await getActingUser(req).catch(() => null);
+        await supabase.from('violations').update({
+          quality_status: 'verified',
+          reviewed_by_user_id: actor ? actor.id : null,
+          reviewed_at: new Date().toISOString(),
+        }).eq('id', violation.id);
+        violation.quality_status = 'verified';
+      } catch (e) {
+        console.warn('[generate-letter] auto-verify on letter generation failed (non-fatal):', e.message);
+      }
     }
 
     // Self-help 10-day tracks (lawn force-mow, trash cleanup) use the dedicated
