@@ -757,9 +757,28 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
             .filter(x => x.finding.severity !== 'clean')
             .filter(x => x.finding.category_slug && slugToId.has(x.finding.category_slug));
 
+          // DEDUP BY CATEGORY within this inspection (Ed 2026-07-30). The
+          // multi-finding photo AI can flag the SAME category from several photos
+          // of one house. This loop opens a violation per finding and does NOT go
+          // through findOrContinueViolation, so each same-category finding created
+          // a DUPLICATE open violation (portfolio-wide: 83 dupes voided). Collapse
+          // to ONE finding per category here — keep the highest-confidence one so
+          // the single violation carries the strongest evidence. Different
+          // categories still open separately (Ed: "separate but no duplicates").
+          const confRank = { high: 2, medium: 1, low: 0 };
+          const bestByCategory = new Map();
+          for (const x of findingsForDraft) {
+            const key = x.finding.category_slug;
+            const prev = bestByCategory.get(key);
+            if (!prev || (confRank[x.finding.confidence] || 0) > (confRank[prev.finding.confidence] || 0)) {
+              bestByCategory.set(key, x);
+            }
+          }
+          const dedupedForDraft = [...bestByCategory.values()];
+
           // For each high/medium-confidence finding with a known category,
-          // open a violation + draft the letter. Loop over findingsForDraft.
-          for (const { finding: result, observationId } of findingsForDraft) {
+          // open a violation + draft the letter. One finding per category.
+          for (const { finding: result, observationId } of dedupedForDraft) {
             try {
               const { decideEscalation } = require('../lib/enforcement/escalation');
               const categoryId = slugToId.get(result.category_slug);
