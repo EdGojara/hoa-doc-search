@@ -550,11 +550,11 @@
        persona reply / ACC receipt / decision letter waits here for Ed's review +
        one-click release. Nothing sends without that click. Standalone page. -->
   <div class="tab" onclick="window.location.href='/admin/draft-queue'">✉️ Draft Queue</div>
-  <!-- 🛠️ Operations — vendor/capital PROJECT lifecycle board (bid → board →
-       contract → work → done) + the approval/pay action queue with days-waiting,
-       so a repair never sits 52 days in an inbox. Open to staff (Ed 2026-07-29):
-       staff work this board; money-movement stays in AP. Standalone. -->
-  <div class="tab" onclick="window.location.href='/admin/operations'">🛠️ Operations</div>
+  <!-- 🗂️ Projects (vendor/capital PROJECT lifecycle board) now lives INSIDE the
+       🛠️ Operations group (below), alongside ACC / Inspect / etc., so there is a
+       single Operations entry point. The old duplicate top-level Operations tab
+       that pointed straight at /admin/operations was removed (Ed 2026-07-29) —
+       it collided with the Operations group tab and hid ACC and the rest. -->
   <!-- 💼 Tessa — OWNER ONLY (Ed). Ed's personal executive assistant: dictate or
        type a thought -> she drafts + sends email (as Ed or as Tessa), tracks
        his follow-ups, and drafts replies to anything he forwards to tessa@.
@@ -45818,6 +45818,7 @@ ${questionsPage}
     operations: {
       label: '🛠️ Operations',
       children: [
+        { id: '__projects',      label: '🗂️ Projects',             section: 'Projects', href: '/admin/operations' },
         { id: 'acc',             label: '🏗️ ACC',                  section: 'Enforcement' },
         { id: 'inspect',         label: '🚗 Inspect',               section: 'Enforcement' },
         { id: 'cures',           label: '🌱 Cures',                 section: 'Enforcement' },
