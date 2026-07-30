@@ -600,6 +600,28 @@ app.get('/robots.txt', (req, res) => {
   res.type('text/plain').send('User-agent: *\nDisallow: /\n');
 });
 
+// Which commit is actually running? Ends the "is it deployed yet?" guessing.
+// Render injects RENDER_GIT_COMMIT on every deploy; locally we fall back to the
+// working tree's HEAD. Public + read-only — it exposes only a SHA and boot time,
+// nothing sensitive. Boot time confirms a fresh deploy actually restarted the
+// process (a new SHA with an old boot time would mean the deploy didn't take).
+const _BOOT_AT = new Date().toISOString();
+let _RUNNING_COMMIT = process.env.RENDER_GIT_COMMIT || null;
+if (!_RUNNING_COMMIT) {
+  try { _RUNNING_COMMIT = require('child_process').execSync('git rev-parse HEAD', { cwd: __dirname }).toString().trim(); }
+  catch (_) { _RUNNING_COMMIT = 'unknown'; }
+}
+app.get('/version', (req, res) => {
+  res.json({
+    commit: _RUNNING_COMMIT,
+    commit_short: _RUNNING_COMMIT && _RUNNING_COMMIT !== 'unknown' ? _RUNNING_COMMIT.slice(0, 7) : _RUNNING_COMMIT,
+    branch: process.env.RENDER_GIT_BRANCH || null,
+    booted_at: _BOOT_AT,
+    now: new Date().toISOString(),
+    uptime_seconds: Math.round(process.uptime()),
+  });
+});
+
 // Validate the password, set the signed session cookie.
 app.post('/api/staff-login', (req, res) => {
   const password = process.env.STAFF_PASSWORD;
