@@ -30,6 +30,11 @@ const { createClient } = require('@supabase/supabase-js');
 const { categorizePhoto } = require('../lib/enforcement/ai_vision');
 const { getLegalFlag } = require('../lib/enforcement/legal_flag');
 
+// APPROVAL-FIRST workflow (Ed 2026-07-30): the AI opens violations as UNREVIEWED
+// and does NOT auto-draft letters. A human approves (verifies) each violation,
+// THEN letters generate for the approved set. Flip true to restore old behavior.
+const AUTO_DRAFT_LETTERS_ON_INSPECTION = false;
+
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 // Bedrock management company id — matches the seed in 001_foundation.sql and
@@ -862,17 +867,19 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                     console.warn('[auto-draft] violation insert failed:', vErr.message);
                   }
                 } else {
-                  // Mark observation confirmed so it's tied to the violation
+                  // Leave the observation PENDING — a human approves the violation
+                  // before it's acted on (approval-first workflow). Not 'confirmed':
+                  // the AI flagging it is not a human review.
                   await supabase.from('property_observations').update({
-                    reviewer_status: 'confirmed',
-                    reviewed_at: new Date().toISOString(),
+                    reviewer_status: 'pending',
+                    reviewed_at: null,
                   }).eq('id', observationId);
 
-                  // Generate the letter PDF immediately — sits in storage with the
-                  // interaction logged as 'letter_*' but tagged as DRAFT until approved.
+                  // Letters do NOT auto-draft anymore — they generate only after a
+                  // human approves the violation (gated by AUTO_DRAFT_LETTERS_ON_INSPECTION).
                   // We reuse the existing /api/enforcement/generate-letter logic by
                   // calling the underlying library directly (no internal HTTP hop).
-                  try {
+                  if (AUTO_DRAFT_LETTERS_ON_INSPECTION) try {
                     const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
                     // Re-fetch the joined data the letter generator needs
                     const { data: pRow } = await supabase

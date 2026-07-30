@@ -1341,13 +1341,21 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       .from('violations')
       .select(`
         id, property_id, community_id, current_stage, cure_period_ends_at, cure_days_override,
-        opened_at, opened_from_observation_id, primary_category_id, board_priority_at_open,
+        opened_at, opened_from_observation_id, primary_category_id, board_priority_at_open, quality_status,
         enforcement_categories ( slug, label, description ),
         communities ( name )
       `)
       .eq('id', violationId)
       .maybeSingle();
     if (vErr || !violation) return res.status(404).json({ error: 'violation not found' });
+
+    // APPROVAL GATE (Ed 2026-07-30): a letter only drafts for an APPROVED
+    // violation. New AI-flagged violations are 'unreviewed' — a human verifies
+    // (or rejects) them first, then letters generate. This is the pruning gate
+    // that stops raw high-recall AI output from flooding into mailed notices.
+    if (violation.quality_status === 'unreviewed' && !body.allow_unreviewed) {
+      return res.status(409).json({ error: 'not_approved', message: 'This violation has not been approved yet. Approve it (verify) before drafting a letter.' });
+    }
 
     // Self-help 10-day tracks (lawn force-mow, trash cleanup) use the dedicated
     // renderer, not the standard §209 courtesy pipeline. Detected up front so
