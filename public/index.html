@@ -24574,6 +24574,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             </div>
             <div style="font-size:11.5px; color:#78350f;">→ ${ownerLine} · one envelope, one admin fee${feeDollars ? ` ($${feeDollars.toFixed(2)})` : ''} · ${first.letter_url ? `<a href="${escapeHtml(first.letter_url)}" target="_blank" style="color:#78350f; font-weight:700;">📄 Preview bundle</a>` : '<span style="color:#94a3b8;">PDF not ready</span>'} · <a href="#" onclick="event.preventDefault(); inspRegenerateBundle('${escapeHtml(first.property_id || '')}','${escapeHtml(first.community_id || '')}', this)" style="color:#78350f; font-weight:700;" title="Re-render this envelope with the latest letter format + current stage">🔄 Regenerate</a></div>
           </div>
+          <button onclick="inspDraftsApproveBundle('${bundleId}', this)" style="background:#16a34a; color:#fff; border:0; padding:8px 14px; border-radius:6px; font-size:12.5px; font-weight:800; cursor:pointer; flex-shrink:0; align-self:center;" title="Approve the whole bundle as ONE envelope. (Approving items one at a time splits them into separate letters.)">✓ Approve bundle</button>
         </div>
         ${memberRows}
       </div>` };
@@ -24699,7 +24700,6 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <div style="font-size:11.5px; color:#78350f; margin-bottom:3px;">Cure by ${cureDate}${confidence ? ` · <span style="color:${confColor};">Confidence: ${escapeHtml(confidence)}</span>` : ''}</div>
           ${d.observation && d.observation.ai_description ? `<div style="font-size:11.5px; color:#64748b; font-style:italic; margin-bottom:5px;">"${escapeHtml(d.observation.ai_description)}"</div>` : ''}
           <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
-            <button onclick="inspDraftsApproveOne('${d.interaction_id}', this)" style="background:#16a34a; color:#fff; border:0; padding:2px 10px; border-radius:5px; font-size:10.5px; font-weight:700; cursor:pointer;" title="Approve just this item → moves it to the Mail Queue, ready to print. Reversible until you print + confirm mailed.">✓ Approve</button>
             <button onclick="inspDraftsTraceOpen('${d.interaction_id}')" style="background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;" title="Why is this item at this stage? Shows prior history + engine decision.">🔍 Trace</button>
             <button onclick="inspDraftsReclassifyOpen('${d.interaction_id}')" style="background:#fef3c7; border:1px solid #fde68a; color:#854d0e; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;" title="AI got it wrong? Pick the right category + fix the description. Letter regenerates automatically.">✏️ Fix</button>
             <button onclick="inspOpenPropertyDetail('${d.property_id || ''}')" style="background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;" title="Open this homeowner's full history before sending.">🏠 History</button>
@@ -24994,6 +24994,34 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       await inspMailQueueLoad();
     } catch (e) {
       alert('Approve failed: ' + e.message);
+      if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+  }
+
+  // Approve an ENTIRE bundle as one envelope. Approving members one at a time
+  // leaves the others as drafts and the Mail Queue sends the approved one on its
+  // own — splitting one envelope into separate letters. This approves every
+  // member in a single call so the bundle stays one letter. (Ed 2026-07-31)
+  async function inspDraftsApproveBundle(bundleId, btn) {
+    const ids = inspDraftsData.filter((d) => d.bundle_id === bundleId).map((d) => d.interaction_id);
+    if (!ids.length) return;
+    const original = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳…'; }
+    try {
+      const session = (await window.supa.auth.getSession()).data?.session;
+      const headers = { 'Content-Type': 'application/json' };
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      const r = await fetch('/api/enforcement/drafts/approve', {
+        method: 'POST', headers,
+        body: JSON.stringify({ interaction_ids: ids }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      ids.forEach((id) => inspDraftsSelected.delete(id));
+      await inspDraftsLoad();
+      await inspMailQueueLoad();
+    } catch (e) {
+      alert('Approve bundle failed: ' + e.message);
       if (btn) { btn.disabled = false; btn.innerHTML = original; }
     }
   }
