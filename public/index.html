@@ -25678,9 +25678,28 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     }
   }
 
+  // Resolve which community to lock/print. Ed 2026-07-31: the queue can hold
+  // letters from several communities, but each community must print as its OWN
+  // batch (own letterhead, its own stack to mail). If a community filter is set
+  // we scope to it; if not and the queue spans multiple communities, block and
+  // tell the operator to pick one. Returns: a community_id, '' (single community
+  // — safe to print all), or false (blocked; caller returns immediately).
+  function inspMailQueueResolveCommunity() {
+    const cid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    if (cid) return cid;
+    const s = window._inspMailQueueSummary;
+    const comms = s && s.by_community ? Object.keys(s.by_community) : [];
+    if (comms.length > 1) {
+      alert(`This queue has letters from ${comms.length} communities:\n\n• ${comms.join('\n• ')}\n\nPrint one community at a time — pick a community in the filter above the queue, then print. That keeps each community's letters in their own batch.`);
+      return false;
+    }
+    return '';
+  }
+
   function inspMailQueueRender(summary) {
     const wrap = document.getElementById('inspMailQueuePanel');
     if (!wrap) return;
+    window._inspMailQueueSummary = summary;
     const fc = summary.first_class_mail || 0;
     const cm = summary.certified_mail || 0;
     const lfc = summary.locked_first_class || 0;
@@ -25693,7 +25712,14 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       `<div style="font-size:11.5px; color:#64748b; margin-top:3px;">${escapeHtml(name)}: ${counts.first_class} first-class · ${counts.certified} certified</div>`
     ).join('');
 
-    wrap.innerHTML = `
+    const _commNames = Object.keys(summary.by_community || {});
+    const _filtered = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const multiCommWarn = (!_filtered && _commNames.length > 1) ? `
+      <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:12px; color:#78350f;">
+        ⚠ <strong>${_commNames.length} communities in this queue.</strong> Pick one in the community filter above, then print — each community mails as its own batch (its own letterhead + stack). Printing without a filter is blocked.
+      </div>` : '';
+
+    wrap.innerHTML = multiCommWarn + `
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
         <!-- First-class batch -->
         <div style="border:1px solid #e2e8f0; border-radius:10px; padding:14px; background:${fc ? '#f8fafc' : '#fafafa'};">
@@ -25878,6 +25904,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // return receipt) and first-class (no tracking, courtesy stage). The
   // backend auto-derives mail type from each interaction's delivery_method.
   async function inspMailQueueSendViaLob(filterMethod) {
+    const cid = inspMailQueueResolveCommunity();
+    if (cid === false) return;
     const isCertified = filterMethod === 'certified_mail';
     const stageLabel = isCertified ? 'certified' : 'first-class courtesy';
     const lobDetail = isCertified
@@ -25887,7 +25915,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
     let interactionIds = [];
     try {
-      const r = await window._authFetch('/api/enforcement/mail-queue/letters');
+      const lettersQs = cid ? `?community_id=${encodeURIComponent(cid)}` : '';
+      const r = await window._authFetch('/api/enforcement/mail-queue/letters' + lettersQs);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       interactionIds = (j.letters || [])
@@ -26023,6 +26052,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   }
 
   async function inspMailQueueLockAndDownload(deliveryMethod) {
+    const cid = inspMailQueueResolveCommunity();
+    if (cid === false) return;
     const label = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
     const todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     const confirmMsg = deliveryMethod === 'certified_mail'
@@ -26033,7 +26064,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const r = await window._authFetch('/api/enforcement/mail-queue/lock-and-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ delivery_method: deliveryMethod }),
+        body: JSON.stringify({ delivery_method: deliveryMethod, community_id: cid || undefined }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -26058,13 +26089,15 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   }
 
   async function inspMailQueueDownload(deliveryMethod) {
+    const cid = inspMailQueueResolveCommunity();
+    if (cid === false) return;
     const label = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
     if (!confirm(`Download all pending ${label} letters as one PDF?\n\nThis will:\n• Merge every approved letter into a single multi-page PDF\n• Mark them all as "printed" so they don't appear in the next batch\n• Download immediately to your computer\n\nProceed?`)) return;
     try {
       const r = await window._authFetch('/api/enforcement/mail-queue/batch-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ delivery_method: deliveryMethod }),
+        body: JSON.stringify({ delivery_method: deliveryMethod, community_id: cid || undefined }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
