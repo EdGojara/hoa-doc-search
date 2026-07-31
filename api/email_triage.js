@@ -1360,7 +1360,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
 router.post('/:id/to-payables', express.json(), async (req, res) => {
   try {
     const { data: m } = await supabase.from('email_messages')
-      .select('id, mailbox, graph_id, subject, community_id, resolved_vendor_id, has_attachments, extracted, sender_name')
+      .select('id, mailbox, graph_id, subject, community_id, resolved_vendor_id, has_attachments, extracted, sender_name, sender_email, body_full, body_preview')
       .eq('id', req.params.id).maybeSingle();
     if (!m) return res.status(404).json({ error: 'not_found' });
     if (!m.graph_id || !m.has_attachments) return res.status(400).json({ error: 'no_attachment', detail: 'No bill is attached to file. Use Record to GL for a payment confirmation, or handle it in Accounting.' });
@@ -1370,7 +1370,7 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
     if (!pdfs.length) return res.status(400).json({ error: 'no_pdf', detail: 'No PDF bill attached to file to Payables.' });
     let loaded = 0, dup = 0;
     for (const pdf of pdfs) {
-      const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '' });
+      const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '', staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '' });
       if (out && out.outcome === 'loaded') loaded += 1;
       else if (out && out.outcome === 'held_suspected_duplicate') dup += 1;
     }
@@ -1612,7 +1612,7 @@ router.post('/vendor-process', express.json(), async (req, res) => {
           if (picked.status === 'stale') { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'the email was filed since it arrived — click Pull inbox, then try again' }); continue; }
           if (picked.status !== 'ok') { results.push({ id: m.id, label, action: 'needs_manual', disposition: cls.disposition, method: cls.method, reason: 'no invoice PDF found in the attachments (bill may be in the email body)' }); continue; }
           const emailCommunityHint = [m.subject || '', (m.extracted && m.extracted.community_hint) || '', ((m.extracted && m.extracted.addresses) || []).join(' ')].join(' ').trim();
-          const out = await autoIntake({ buffer: picked.buffer, filename: picked.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '', communityHint: emailCommunityHint });
+          const out = await autoIntake({ buffer: picked.buffer, filename: picked.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '', communityHint: emailCommunityHint, staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '' });
           const oc = out && out.outcome;
           if (oc === 'loaded' || oc === 'held_suspected_duplicate') {
             await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: b.reviewed_by || 'emma-bulk', reviewed_at: now }).eq('id', m.id);
