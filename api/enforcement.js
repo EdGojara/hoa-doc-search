@@ -2371,9 +2371,17 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
     // the re-render below produces the right letter. (Ed 2026-07-29.)
     const STAGE_TO_LETTER = { courtesy_1: 'letter_courtesy_1', courtesy_2: 'letter_courtesy_2', certified_209: 'letter_209', fine_assessed: 'letter_209' };
     const vioIds = [...new Set(drafts.map((d) => d.violation_id).filter(Boolean))];
+    // Self-help 10-day letters use a DIFFERENT renderer (lib/lawn_force_mow_renderer)
+    // and must never merge into a standard multi-violation bundle — the bundle
+    // renderer would reprint them as a generic §209 notice. Their interaction
+    // .type is a stage type (letter_courtesy_1 etc.), so bundling can't tell by
+    // type; key on the violation's CATEGORY. (Ed 2026-07-31.)
+    const SELF_HELP_SLUGS = new Set(['lawn_force_mow_10day', 'trash_cleanup_10day', 'tree_hazard_10day']);
+    const selfHelpVioIds = new Set();
     if (vioIds.length) {
-      const { data: vios } = await supabase.from('violations').select('id, current_stage').in('id', vioIds);
+      const { data: vios } = await supabase.from('violations').select('id, current_stage, enforcement_categories(slug)').in('id', vioIds);
       const stageById = Object.fromEntries((vios || []).map((v) => [v.id, v.current_stage]));
+      for (const v of (vios || [])) { if (v.enforcement_categories && SELF_HELP_SLUGS.has(v.enforcement_categories.slug)) selfHelpVioIds.add(v.id); }
       for (const d of drafts) {
         const want = d.violation_id ? STAGE_TO_LETTER[stageById[d.violation_id]] : null;
         if (want && want !== d.type) {
@@ -2423,6 +2431,12 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
     const groups = new Map();
     for (const d of drafts) {
       if (!d.property_id) continue;
+      // Self-help 10-day letters are standalone (rendered by lib/lawn_force_mow_
+      // renderer). Never let the bundle assembler touch them — not by merging,
+      // and not by force re-rendering a singleton — or they reprint as a generic
+      // §209 notice. They flow through the mail queue's per-interaction path,
+      // which renders self-help correctly.
+      if (d.violation_id && selfHelpVioIds.has(d.violation_id)) continue;
       const isSeparateCertified = d.type === 'letter_209'
         && separateCertifiedCommunities.has(d.community_id);
       const key = isSeparateCertified
@@ -3581,7 +3595,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         // CANONICAL category. Without this, a correctly-drafted force-mow letter
         // reprinted as a generic 30-day §209 notice at mail time. (Ed 2026-07-21.)
         const selfHelpSlug = catRow && catRow.slug;
-        const isSelfHelp10Day = selfHelpSlug === 'lawn_force_mow_10day' || selfHelpSlug === 'trash_cleanup_10day';
+        const isSelfHelp10Day = selfHelpSlug === 'lawn_force_mow_10day' || selfHelpSlug === 'trash_cleanup_10day' || selfHelpSlug === 'tree_hazard_10day';
 
         // If this letter is part of a pre-rendered multi-violation bundle, use
         // the ONE consolidated PDF instead of rendering this violation alone.
@@ -3589,7 +3603,10 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         let pdfBuffer, letterPath;
         if (_br) { pdfBuffer = _br.pdfBuffer; letterPath = _br.letterPath; }
         if (!_br && isSelfHelp10Day) {
-          const remedyMode = selfHelpSlug === 'trash_cleanup_10day' ? 'cleanup' : 'lawn';
+          const remedyMode = selfHelpSlug === 'trash_cleanup_10day' ? 'cleanup'
+                           : selfHelpSlug === 'tree_hazard_10day'    ? 'tree'
+                           : 'lawn';
+          // tree + lawn both cite the general self-help section (force_mow_section_full).
           const authorizingSection = remedyMode === 'cleanup' ? community.cleanup_section_full : community.force_mow_section_full;
           // No fallback between cleanup/force-mow articles — citing the wrong
           // Declaration section on a certified self-help notice is real exposure.
@@ -3615,8 +3632,8 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             declaration_section_full: authorizingSection,
             observation_date:        (vio.opened_at || '').slice(0, 10),
             observed_condition:      (observation && observation.ai_description)
-              || (remedyMode === 'cleanup'
-                ? 'Accumulation of trash, debris, and unsightly materials on the Lot.'
+              || (remedyMode === 'cleanup' ? 'Accumulation of trash, debris, and unsightly materials on the Lot.'
+                : remedyMode === 'tree'    ? 'A dead, failing, or hazardous tree on the Lot is at risk of falling, creating an unsafe condition that endangers persons and property.'
                 : 'Lawn requires mowing, edging, and weed control.'),
             admin_fee_amount:        `$${(adminFeeCents / 100).toFixed(2)}`,
             include_hearing_rights:  priorCertified === 0,
