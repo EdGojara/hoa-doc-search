@@ -5580,6 +5580,76 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
       } catch (_) {}
     }
 
+    // SELF-HELP 10-DAY letters (force-mow / cleanup / tree) are a DIFFERENT letter
+    // from a §209 courtesy/certified notice — Declaration self-help authority, a
+    // 10-day cure, and a notice of intent to enter, NOT the 30-day §209 notice
+    // that asserts documented prior notices. This auto-draft path (manual create +
+    // cure-lapse) rendered the STANDARD letter for them, so a tree_hazard_10day
+    // manual entry got a 30-day §209 notice claiming prior notices (Ed 2026-07-31,
+    // 19723 Canyon Gate Court). Route self-help categories to the self-help
+    // renderer. Third path to get this fix — see /generate-letter + lock-and-batch.
+    const SELF_HELP_REMEDY = { lawn_force_mow_10day: 'lawn', trash_cleanup_10day: 'cleanup', tree_hazard_10day: 'tree' };
+    const remedyMode = catRow && SELF_HELP_REMEDY[catRow.slug];
+    if (remedyMode) {
+      const { data: shComm } = await supabase.from('communities')
+        .select('name, legal_name, declaration_short_name, declaration_doc_number, declaration_county, force_mow_section_full, cleanup_section_full, force_mow_admin_fee_cents')
+        .eq('id', communityId).maybeSingle();
+      const authorizingSection = remedyMode === 'cleanup' ? (shComm && shComm.cleanup_section_full) : (shComm && shComm.force_mow_section_full);
+      if (!shComm || !authorizingSection || !shComm.declaration_doc_number || !shComm.declaration_county) {
+        return { error: `self-help ${remedyMode} config missing for this community (declaration_doc_number / county / self-help section) — set in Community Profile before drafting.` };
+      }
+      const _propAddr = `${pRow.street_address || ''}${pRow.unit ? ' #' + pRow.unit : ''}`;
+      const _csz = `${pRow.city || ''}, ${pRow.state || 'TX'} ${pRow.zip || ''}`.replace(/\s+,/g, ',').trim();
+      const _mailing = pRow.owner_mailing_address || `${_propAddr}, ${_csz}`;
+      const _m = String(_mailing).match(/^(.*?),\s*(.*)$/);
+      const _homeownerBlock = [pRow.owner_name || 'Property Owner', _m ? _m[1].trim() : _propAddr, _m ? _m[2].trim() : _csz].join('\n');
+      const _feeCents = (shComm.force_mow_admin_fee_cents != null) ? shComm.force_mow_admin_fee_cents : 2500;
+      const _today = new Date().toISOString().slice(0, 10);
+      const _obsCond = _cleanFinding(opts.ai_description || (obsRow && obsRow.ai_description), catRow && catRow.label)
+        || (remedyMode === 'cleanup' ? 'Accumulation of trash, debris, and unsightly materials on the Lot.'
+          : remedyMode === 'tree' ? 'A dead, failing, or hazardous tree on the Lot is at risk of falling, creating an unsafe condition that endangers persons and property.'
+          : 'Lawn requires mowing, edging, and weed control.');
+      let _shPdf;
+      try {
+        _shPdf = await renderForceMowLetterPdf({
+          community_legal_name: shComm.legal_name || shComm.name,
+          community_short_name: shComm.declaration_short_name || shComm.name,
+          letter_date: _today,
+          homeowner_names_block: _homeownerBlock,
+          property_address_full: `${_propAddr}, ${_csz}`,
+          property_address_short: _propAddr,
+          declaration_doc_number: shComm.declaration_doc_number,
+          declaration_county: shComm.declaration_county,
+          declaration_section_full: authorizingSection,
+          observation_date: String(violation.opened_at || _today).slice(0, 10),
+          observed_condition: _obsCond,
+          admin_fee_amount: `$${(_feeCents / 100).toFixed(2)}`,
+          include_hearing_rights: true,
+          remedy_mode: remedyMode,
+          photo_buffer: photoBuffer,
+          photo_captured_at: (obsRow && obsRow.inspection_photos && obsRow.inspection_photos.captured_at) || null,
+        });
+      } catch (e) { return { error: 'self-help letter render failed: ' + e.message }; }
+      await _ensureLettersBucket();
+      const _stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const _path = `${violation.id}/selfhelp-${remedyMode}-${_stamp}.pdf`;
+      const { error: _upErr } = await supabase.storage.from(LETTERS_BUCKET).upload(_path, _shPdf, { contentType: 'application/pdf', upsert: false });
+      if (_upErr && !/already exists|duplicate/i.test(_upErr.message)) return { error: 'self-help letter upload failed: ' + _upErr.message };
+      // Type is a stage type so the Mail Queue picks it up; self-help always goes
+      // CERTIFIED, and lock-and-batch re-renders by CATEGORY, so the mailed copy
+      // stays the self-help letter.
+      const _stageToType = { courtesy_1: 'letter_courtesy_1', courtesy_2: 'letter_courtesy_2', certified_209: 'letter_209', fine_assessed: 'letter_209' };
+      const { data: _inter } = await supabase.from('interactions').insert({
+        community_id: communityId, property_id: violation.property_id, violation_id: violation.id,
+        observation_id: violation.opened_from_observation_id,
+        type: _stageToType[decision.stage] || 'letter_courtesy_1',
+        direction: 'outbound',
+        subject: `10-day certified self-help ${remedyMode} letter`,
+        content: _path, delivery_method: 'certified_mail', status: 'draft', ai_drafted: true, ai_model: 'self_help_10day',
+      }).select('id').single();
+      return { letter_path: _path, interaction_id: _inter && _inter.id };
+    }
+
     const newCureEnd = _newCureDate(decision);
     const pdfBuffer = await renderViolationLetterPdf({
       violation: {
