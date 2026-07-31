@@ -1404,8 +1404,10 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     // stage letter, so a prior cached courtesy/§209 PDF must never be served
     // for it (the Abigail bug: the property held a stale courtesy_1 draft).
     const categorySlug = violation.enforcement_categories && violation.enforcement_categories.slug;
-    const isSelfHelp10Day = categorySlug === 'lawn_force_mow_10day' || categorySlug === 'trash_cleanup_10day';
-    const selfHelpRemedy = categorySlug === 'trash_cleanup_10day' ? 'cleanup' : 'lawn';
+    const isSelfHelp10Day = categorySlug === 'lawn_force_mow_10day' || categorySlug === 'trash_cleanup_10day' || categorySlug === 'tree_hazard_10day';
+    const selfHelpRemedy = categorySlug === 'trash_cleanup_10day' ? 'cleanup'
+                         : categorySlug === 'tree_hazard_10day' ? 'tree'
+                         : 'lawn';
 
     // Map stage to interaction type
     const stageToType = {
@@ -1762,8 +1764,9 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         declaration_county:      commForceMow.declaration_county,
         declaration_section_full: authorizingSection,
         observation_date:        obsIso,
-        observed_condition:      (observation && observation.ai_description) || (selfHelpRemedy === 'cleanup'
-          ? 'Accumulation of trash, debris, and unsightly materials on the Lot.'
+        observed_condition:      (observation && observation.ai_description) || (
+            selfHelpRemedy === 'cleanup' ? 'Accumulation of trash, debris, and unsightly materials on the Lot.'
+          : selfHelpRemedy === 'tree'    ? 'A dead, failing, or hazardous tree on the Lot is at risk of falling, creating an unsafe condition that endangers persons and property.'
           : 'Lawn in need of mowing, edging, and weed control consistent with the standard maintained by the community.'),
         admin_fee_amount:        feeFormatted,
         include_hearing_rights:  includeHearingRights,

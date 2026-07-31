@@ -93,7 +93,7 @@
     },
     "remedy_mode": {
       "type": ["string", "null"],
-      "enum": ["lawn", "cleanup", null],
+      "enum": ["lawn", "cleanup", "tree", null],
       "description": "Which self-help remedy the letter describes. 'lawn' (default) = force-mow / yard maintenance wording. 'cleanup' = general lot cleanup / abatement of trash, debris, and unsightly materials. Only the remedy-description lines change; all §209 statutory paragraphs and the self-help authority citation are identical. Omit/null = 'lawn' for backward compatibility."
     }
   },
