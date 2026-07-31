@@ -2069,11 +2069,19 @@ router.get('/drafts', async (req, res) => {
           photoPath = fallbackPhoto.storage_path;
         }
       }
-      let photoUrl = null;
+      // Row thumbnail is displayed ~90px wide — sign a small resized transform
+      // (~10KB) for the list img so the queue isn't downloading a ~1MB full-res
+      // photo per row, AND a full-res URL for the click-to-zoom lightbox.
+      // (Ed 2026-07-31 — "letters take long to load".)
+      let photoUrl = null, photoUrlFull = null;
       if (photoPath) {
         try {
-          const { data: sd } = await supabase.storage.from('documents').createSignedUrl(photoPath, 60 * 60);
-          if (sd) photoUrl = sd.signedUrl;
+          const [thumb, full] = await Promise.all([
+            supabase.storage.from('documents').createSignedUrl(photoPath, 60 * 60, { transform: { width: 220, quality: 55, resize: 'contain' } }),
+            supabase.storage.from('documents').createSignedUrl(photoPath, 60 * 60),
+          ]);
+          if (thumb && thumb.data) photoUrl = thumb.data.signedUrl;
+          if (full && full.data) photoUrlFull = full.data.signedUrl;
         } catch (_) {}
       }
       let letterUrl = null;
@@ -2124,6 +2132,7 @@ router.get('/drafts', async (req, res) => {
           reviewer_notes: o ? o.reviewer_notes : null,
           captured_at: o && o.inspection_photos && o.inspection_photos.captured_at,
           photo_url: photoUrl,
+          photo_url_full: photoUrlFull,
         } : null,
       };
     }));

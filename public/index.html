@@ -24680,8 +24680,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       ? `<img src="${escapeHtml(d.observation.photo_url)}"
               loading="lazy" decoding="async"
               data-caption="${escapeHtml(photoCaption)}"
+              data-full="${escapeHtml(d.observation.photo_url_full || d.observation.photo_url)}"
               title="Click to zoom"
-              onclick="openImageLightbox(this.src, this.dataset.caption)"
+              onclick="openImageLightbox(this.dataset.full, this.dataset.caption)"
               style="width:${isBundle ? '70' : '90'}px; height:${isBundle ? '70' : '90'}px; object-fit:cover; border-radius:6px; flex-shrink:0; cursor:zoom-in;" />`
       : `<div style="width:${isBundle ? '70' : '90'}px; height:${isBundle ? '70' : '90'}px; background:#f1f5f9; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:#94a3b8; font-size:11px;">no photo</div>`;
     const ownerLine = d.owner ? `${escapeHtml(d.owner.full_name || '—')}${d.owner.mailing_address ? ` · mail: ${escapeHtml(d.owner.mailing_address)}` : ''}` : '—';
