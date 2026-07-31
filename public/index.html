@@ -22935,6 +22935,14 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   let inspDraftsNextOffset = 0;   // raw offset for the next "Load more" page
   const INSP_DRAFTS_PAGE = 100;   // page size — small pages avoid the big-response blank
   let inspDraftsSelected = new Set();
+  // Full-set selection index (all pages for the current filter), so the
+  // quick-select buttons span the ENTIRE queue, not just the loaded 100.
+  // Approve/Reject POST the selected id set directly, so selecting ids that
+  // aren't currently rendered still works. Without this, "All courtesy 1" on a
+  // 279-draft queue silently selected only the first page — you'd approve a
+  // third of the batch believing it was all of them. Rebuilt on each load.
+  // (Ed 2026-07-31)
+  let inspDraftsAllIndex = null;  // [{ interaction_id, stage, community_name }] | null
 
   // ============================================================
   // REVIEW QUEUE (observations pending operator confirm)
@@ -24372,6 +24380,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   async function inspDraftsLoad() {
     const wrap = document.getElementById('inspDraftsList');
     if (!wrap) return;
+    inspDraftsAllIndex = null;  // fresh data → rebuild the full-set index on next quick-select
     wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:18px 0;">Loading drafts…</div>';
     const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
     const qs = filterCid ? `&community_id=${encodeURIComponent(filterCid)}` : '';
@@ -24569,31 +24578,63 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // Quick-select helpers — feed the inspDraftsSelected set with subsets of
   // the loaded drafts. Re-render only (no data fetch) to keep the click
   // snappy at scale.
-  function inspDraftsSelectAll() {
-    for (const d of inspDraftsData) {
-      if (d.interaction_id) inspDraftsSelected.add(d.interaction_id);
+  // Fetch EVERY draft (all pages) for the current filter into a lightweight
+  // index, so quick-select spans the whole queue rather than the loaded 100.
+  // Cached until the next inspDraftsLoad(). /drafts caps at 200/page → page.
+  async function inspDraftsEnsureAllIndex() {
+    if (inspDraftsAllIndex) return inspDraftsAllIndex;
+    const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const qs = filterCid ? `&community_id=${encodeURIComponent(filterCid)}` : '';
+    const all = [];
+    try {
+      let offset = 0;
+      for (let guard = 0; guard < 100; guard++) {   // guard: 100 pages × 200 = 20k ceiling
+        const r = await window._authFetch(`/api/enforcement/drafts?limit=200&offset=${offset}${qs}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        const page = j.drafts || [];
+        all.push(...page);
+        const total = j.total != null ? j.total : all.length;
+        offset += page.length;
+        if (page.length === 0 || all.length >= total) break;
+      }
+      inspDraftsAllIndex = all.map((d) => ({
+        interaction_id: d.interaction_id,
+        stage: (d.violation && d.violation.current_stage) || null,
+        community_name: (d.violation && d.violation.community_name) || d.community_name || '',
+      }));
+    } catch (e) {
+      // Fall back to the loaded page so the button still does something — but
+      // warn, because a partial select on an approve action is exactly the trap
+      // this function exists to prevent.
+      console.warn('[drafts] full-index fetch failed, selecting loaded page only:', e.message);
+      alert('Heads up: could not load every page to select across the whole queue — selecting only the drafts currently loaded. Click "Load more" to load the rest, then re-select.');
+      inspDraftsAllIndex = inspDraftsData.map((d) => ({
+        interaction_id: d.interaction_id,
+        stage: (d.violation && d.violation.current_stage) || null,
+        community_name: (d.violation && d.violation.community_name) || d.community_name || '',
+      }));
     }
+    return inspDraftsAllIndex;
+  }
+
+  async function inspDraftsSelectAll() {
+    const idx = await inspDraftsEnsureAllIndex();
+    for (const d of idx) if (d.interaction_id) inspDraftsSelected.add(d.interaction_id);
     inspDraftsRender();
   }
   function inspDraftsSelectNone() {
     inspDraftsSelected.clear();
     inspDraftsRender();
   }
-  function inspDraftsSelectByStage(stage) {
-    for (const d of inspDraftsData) {
-      if (d.interaction_id && d.violation && d.violation.current_stage === stage) {
-        inspDraftsSelected.add(d.interaction_id);
-      }
-    }
+  async function inspDraftsSelectByStage(stage) {
+    const idx = await inspDraftsEnsureAllIndex();
+    for (const d of idx) if (d.interaction_id && d.stage === stage) inspDraftsSelected.add(d.interaction_id);
     inspDraftsRender();
   }
-  function inspDraftsSelectByCommunity(communityName) {
-    for (const d of inspDraftsData) {
-      const cn = (d.violation && d.violation.community_name) || d.community_name || '';
-      if (d.interaction_id && cn === communityName) {
-        inspDraftsSelected.add(d.interaction_id);
-      }
-    }
+  async function inspDraftsSelectByCommunity(communityName) {
+    const idx = await inspDraftsEnsureAllIndex();
+    for (const d of idx) if (d.interaction_id && d.community_name === communityName) inspDraftsSelected.add(d.interaction_id);
     inspDraftsRender();
   }
 
