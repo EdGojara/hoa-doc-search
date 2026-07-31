@@ -20780,15 +20780,36 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const selectedOpt = sel.options[sel.selectedIndex];
     const slug = selectedOpt ? selectedOpt.dataset.slug : '';
     const warn = document.getElementById('manualVioForceMowWarn');
-    if (slug === 'lawn_force_mow_10day') {
-      warn.innerHTML = '🟪 <strong>Force-mow 10-day certified track</strong> — confirm CC&R and §202.018 authority before submitting. This creates the violation only; draft the certified letter from the property panel afterward.';
+    // The 10-DAY CERTIFIED SELF-HELP letters (force-mow / cleanup / tree) are a
+    // DIFFERENT track from the §209 courtesy/30-day certified notices. Staff kept
+    // confusing them (the word "Certified" in the category name) and picking the
+    // §209 30-day stage, which drafted the wrong letter. When a self-help category
+    // is chosen, lock "Enforcement start" to the self-help track and never offer
+    // the §209 30-day option. (Ed 2026-07-31.)
+    const SELF_HELP = {
+      lawn_force_mow_10day: { icon: '🟪', remedy: 'lawn force-mow' },
+      trash_cleanup_10day:  { icon: '♻️', remedy: 'trash / debris cleanup' },
+      tree_hazard_10day:    { icon: '🌳', remedy: 'hazardous tree removal' },
+    };
+    const startSel = document.getElementById('manualVioStartStage');
+    const sh = SELF_HELP[slug];
+    if (sh) {
+      warn.innerHTML = `${sh.icon} <strong>10-Day Certified Self-Help track (${sh.remedy})</strong> — this is <u>not</u> a §209 courtesy or 30-day certified notice. It is a <strong>10-day</strong> certified notice under the Declaration's self-help authority: if uncured after 10 days, the Association may enter and abate at the owner's cost. Confirm the community's self-help authority is set. The 10-day certified letter drafts automatically.`;
       warn.style.display = 'block';
-    } else if (slug === 'trash_cleanup_10day') {
-      warn.innerHTML = '♻️ <strong>Trash 10-day certified cleanup track</strong> — confirm CC&R self-help authority before submitting. This creates the violation only; draft the 10-day certified cleanup letter from the property panel afterward.';
-      warn.style.display = 'block';
+      if (startSel) {
+        startSel.innerHTML = '<option value="">🔟 10-Day Certified Self-Help notice — separate from §209</option>';
+        startSel.value = '';
+      }
     } else {
       warn.style.display = 'none';
+      // Restore the standard §209 start options if they were replaced.
+      if (startSel && startSel.options.length < 2) {
+        startSel.innerHTML = '<option value="">Courtesy notice — standard start</option>'
+          + '<option value="certified_209">30-day Certified §209 — skip courtesy notices</option>';
+        startSel.value = '';
+      }
     }
+    if (typeof manualVioStartStageChanged === 'function') manualVioStartStageChanged();
     // Trigger duplicate check whenever category changes (property may
     // already be set from a prior selection).
     manualVioDuplicateCheck();
