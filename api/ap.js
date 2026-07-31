@@ -839,9 +839,17 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
     }
 
     const isRecode = !!(inv.coded_gl_account_id && inv.posting_journal_entry_id);
+    // A bill no one has approved or paid is not yet a committed business
+    // transaction — its posted accrual is just Emma's coding, so a wrong account
+    // there is a system misinterpretation to REPLACE, not a real entry to reverse.
+    // A reversal would litter the ledger with offsetting entries that never
+    // reflected real business activity for this bill. (Ed 2026-07-31.)
+    const preApproval = !inv.approved_at && !inv.paid_at;
     let ctx = null;
     if (isRecode) {
-      if (!reason) return res.status(400).json({ error: 'reason_required', detail: 'This bill\'s accrual is already posted. Changing the account reverses that entry and posts a new one — say why.' });
+      // Reversing a COMMITTED (approved/paid) entry must say why; correcting a
+      // pre-approval mis-coding is routine and needs no ceremony.
+      if (!reason && !preApproval) return res.status(400).json({ error: 'reason_required', detail: 'This bill\'s accrual is already posted and approved. Changing the account reverses that entry and posts a new one — say why.' });
       const { resolveUserRole } = require('./users');
       ctx = await resolveUserRole(req);
       if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required', detail: 'Sign in to change the account on a posted bill.' });
@@ -853,18 +861,32 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
       : { data: null };
     const prevLabel = prevAcct ? `${prevAcct.account_number} ${prevAcct.account_name}` : '(uncoded)';
 
-    // Re-coding an already-posted accrual: reverse the old one first.
+    // Clear the old accrual before re-posting. HOW depends on whether it's a
+    // committed transaction: pre-approval it's a coding mistake to DELETE; once
+    // approved/paid it's a real entry corrected by REVERSAL (audit trail).
     let jeId = inv.posting_journal_entry_id;
     if (jeId) {
-      const voidReason = isRecode
-        ? `Re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}: ${reason}`
-        : 'Re-coded expense account';
-      try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: jeId, void_reason: voidReason }); }
-      catch (e) {
-        // A reversal we couldn't post means the OLD entry is still live on the
-        // books. Re-posting now would double-count the expense. Stop.
-        console.error('[ap] recode reversal FAILED — refusing to re-post:', e.message);
-        return res.status(500).json({ error: 'reversal_failed', detail: 'Could not reverse the existing journal entry, so the account was not changed (re-posting would double-count the expense). Nothing was modified.' });
+      if (preApproval) {
+        // System misinterpretation on an unapproved bill → remove it, no reversal.
+        try {
+          await supabase.from('journal_entry_lines').delete().eq('journal_entry_id', jeId);
+          await supabase.from('journal_entries').delete().eq('id', jeId);
+        } catch (e) {
+          // Couldn't remove the old entry → re-posting would double-count. Stop.
+          console.error('[ap] recode replace FAILED — refusing to re-post:', e.message);
+          return res.status(500).json({ error: 'replace_failed', detail: 'Could not remove the mis-coded entry, so the account was not changed (re-posting would double-count the expense). Nothing was modified.' });
+        }
+      } else {
+        const voidReason = isRecode
+          ? `Re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}: ${reason}`
+          : 'Re-coded expense account';
+        try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: jeId, void_reason: voidReason }); }
+        catch (e) {
+          // A reversal we couldn't post means the OLD entry is still live on the
+          // books. Re-posting now would double-count the expense. Stop.
+          console.error('[ap] recode reversal FAILED — refusing to re-post:', e.message);
+          return res.status(500).json({ error: 'reversal_failed', detail: 'Could not reverse the existing journal entry, so the account was not changed (re-posting would double-count the expense). Nothing was modified.' });
+        }
       }
       jeId = null;
     }
@@ -898,7 +920,9 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
       const { error: audErr } = await supabase.from('ap_invoice_approvals').insert({
         invoice_id: id, action: 'recoded', user_id: (ctx.user && ctx.user.id) || null, user_name: who,
         amount_at_time_cents: inv.total_cents,
-        notes: `Expense account changed from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the accrual was posted. Prior entry reversed, replacement posted. Reason: ${reason}`,
+        notes: preApproval
+          ? `Expense account corrected from ${prevLabel} to ${acct.account_number} ${acct.account_name} before approval — mis-coded accrual replaced (no reversal; not yet a committed transaction).${reason ? ' Reason: ' + reason : ''}`
+          : `Expense account changed from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the accrual was posted. Prior entry reversed, replacement posted. Reason: ${reason}`,
       });
       if (audErr) {
         // Never let this fail silently — an unrecorded exception is the whole
