@@ -169,4 +169,99 @@ router.get('/communities', async (req, res) => {
   } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// ---- Intake exceptions: emailed bills Emma captured but couldn't auto-file ----
+// The straggler list, so they clear from ONE place in Payables instead of Emma's
+// inbox. Resolve = supply the missing community/vendor -> promote to a payable.
+
+// GET /exceptions — pending stragglers.
+router.get('/exceptions', async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const { listExceptions } = require('../lib/ap/intake_exceptions');
+    const items = await listExceptions({ limit: 200 });
+    res.json({ ok: true, exceptions: items });
+  } catch (err) { console.error('[ap_intake] list exceptions failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /exceptions/:id/resolve — { community_id?, vendor_id? } -> load to Payables.
+router.post('/exceptions/:id/resolve', express.json(), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const b = req.body || {};
+    const { promoteException } = require('../lib/ap/intake_exceptions');
+    const out = await promoteException(req.params.id, { communityId: b.community_id || null, vendorId: b.vendor_id || null, vendorName: b.vendor_name || null, resolvedBy: admin.full_name || 'staff' });
+    if (!out.ok) return res.status(out.error === 'not_found' ? 404 : 400).json(out);
+    res.json(out);
+  } catch (err) { console.error('[ap_intake] resolve exception failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /exceptions/:id/dismiss — not a bill / handled elsewhere.
+router.post('/exceptions/:id/dismiss', express.json(), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const { dismissException } = require('../lib/ap/intake_exceptions');
+    const out = await dismissException(req.params.id, { by: admin.full_name || 'staff', notes: (req.body && req.body.notes) || null });
+    if (!out.ok) return res.status(404).json(out);
+    res.json(out);
+  } catch (err) { console.error('[ap_intake] dismiss exception failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /sweep-inbox — one-time: pull vendor bills already sitting in Emma's inbox
+// into Payables (or the exceptions list) using the PDF we archived at ingest, so
+// the existing backlog clears the same way new mail now does. Idempotent per
+// email (source ref / sha dedup downstream). (Ed 2026-08-01 — "empty the inbox".)
+router.post('/sweep-inbox', express.json(), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const { autoIntake } = require('../lib/ap/intake');
+    const { recordException } = require('../lib/ap/intake_exceptions');
+    // Vendor mail still showing in Emma's queue, with an attachment, no community.
+    const { data: emails } = await supabase.from('email_messages')
+      .select('id, mailbox, graph_id, subject, sender_name, sender_email, community_id, resolved_vendor_id, extracted, body_full, body_preview')
+      .eq('persona', 'emma').eq('direction', 'inbound').eq('has_attachments', true)
+      .in('triage_status', ['new', 'needs_review', 'linked']).limit(200);
+    let filed = 0, exceptioned = 0, skipped = 0, handled = 0;
+    for (const m of (emails || [])) {
+      if (m.extracted && m.extracted.follow_up) { skipped += 1; continue; } // a chase needs a reply, not filing
+      // Prefer the archived PDF (the live message may be stale); fall back to Graph.
+      let pdfs = [];
+      try {
+        const { data: arch } = await supabase.from('email_attachments').select('filename, storage_path, mime').eq('email_message_id', m.id);
+        for (const a of (arch || [])) {
+          if (!/pdf/i.test(a.mime || '') && !/\.pdf$/i.test(a.filename || '')) continue;
+          const { data: blob } = await supabase.storage.from('documents').download(a.storage_path);
+          if (blob) pdfs.push({ filename: a.filename || 'invoice.pdf', buffer: Buffer.from(await blob.arrayBuffer()) });
+        }
+      } catch (_) {}
+      if (!pdfs.length && m.graph_id) {
+        try { const { fetchAttachmentBuffers } = require('../lib/email/graph_attachments'); pdfs = await fetchAttachmentBuffers(m.mailbox, m.graph_id); } catch (_) {}
+      }
+      if (!pdfs.length) { skipped += 1; continue; } // no recoverable PDF (pre-archiver + stale) — leave it
+      const srcRef = `email:${m.graph_id || m.id}`;
+      let did = false;
+      for (const pdf of pdfs) {
+        const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: srcRef, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: `${m.subject || ''} ${m.body_full || m.body_preview || ''}`, staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '' });
+        if (out && (out.outcome === 'loaded' || out.outcome === 'held_suspected_duplicate')) { filed += 1; did = true; }
+        else if (out && out.outcome === 'needs_review') { const r = await recordException({ emailMessageId: m.id, sourceRef: srcRef, reason: out.reason, extracted: out.extracted || {}, storagePath: out.storage_path, sha256: out.sha256, communityId: m.community_id || null }); if (r.ok) { exceptioned += 1; did = true; } }
+      }
+      if (did) { try { await supabase.from('email_messages').update({ triage_status: 'handled' }).eq('id', m.id); handled += 1; } catch (_) {} }
+      else skipped += 1;
+    }
+    res.json({ ok: true, scanned: (emails || []).length, filed, exceptioned, handled, skipped });
+  } catch (err) { console.error('[ap_intake] sweep failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// GET /exceptions/:id/file — open the archived bill PDF for an exception.
+router.get('/exceptions/:id/file', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const { data: exc } = await supabase.from('ap_intake_exceptions').select('storage_path').eq('id', req.params.id).maybeSingle();
+    if (!exc || !exc.storage_path) return res.status(404).json({ error: 'no_file' });
+    const { data, error } = await supabase.storage.from('documents').createSignedUrl(exc.storage_path, 60 * 60);
+    if (error || !data || !data.signedUrl) return res.status(404).json({ error: 'file_not_found' });
+    if (/application\/json/.test(req.headers.accept || '') || req.query.json) return res.json({ url: data.signedUrl });
+    res.redirect(data.signedUrl);
+  } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 module.exports = { router };

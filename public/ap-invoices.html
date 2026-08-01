@@ -70,6 +70,8 @@ function shell(){
       <button class="btn" id="analyze" disabled>Read invoice</button>
     </div>
     <div id="preview"></div>
+    <div style="margin:4px 0 10px;"><button class="btn ghost" id="sweepBtn" style="font-size:12px;padding:5px 11px;" onclick="sweepInbox(this)" title="Pull vendor bills already sitting in Emma's inbox into Payables (or the needs-attention list) using the archived PDF">🧹 Pull vendor bills from Emma’s inbox</button> <span id="sweepMsg" style="font-size:12px;color:#64748b;"></span></div>
+    <div id="exceptionsWrap"></div>
     <h2>Review queue</h2>
     <div id="queue"><div class="empty">Loading&hellip;</div></div>`;
   af('/api/ap-intake/communities').then(r=>r.json()).then(j=>{ window._comms=(j.communities||[]); const sel=document.getElementById('comm'); (j.communities||[]).forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;sel.appendChild(o);}); });
@@ -83,7 +85,84 @@ function shell(){
   drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');setFile(e.dataTransfer.files[0]);});
   analyze.addEventListener('click',()=>doIngest(chosen,document.getElementById('comm').value,analyze));
   loadQueue();
+  loadExceptions();
 }
+
+// ---- Intake exceptions: emailed bills that couldn't auto-file --------------
+// Emma captured the PDF + the amount but couldn't place the bill (usually no
+// community). Clear each here: pick the community (and vendor if needed) and it
+// loads to Payables, or dismiss it if it isn't a bill. Empties Emma's inbox.
+const REASON_LABEL={no_community:'needs a community',no_vendor:'needs a vendor',vendor_ambiguous:'vendor is ambiguous',no_total:'no amount read',no_date:'no date read',other:'needs review'};
+async function loadExceptions(){
+  const wrap=document.getElementById('exceptionsWrap'); if(!wrap) return;
+  try{
+    const r=await af('/api/ap-intake/exceptions'); const j=await r.json().catch(()=>({}));
+    const items=(j&&j.exceptions)||[];
+    if(!items.length){ wrap.innerHTML=''; return; }
+    const commOpts=(window._comms||[]).map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    wrap.innerHTML=`<h2 style="color:#92400e;">🧾 Needs attention · ${items.length} bill${items.length===1?'':'s'} from email couldn’t auto-file</h2>
+      <div class="note" style="margin:-6px 0 10px;color:#64748b;">Emma saved the invoice but couldn’t place it. Pick the community (and vendor if asked), then send it to Payables — or dismiss it if it isn’t a bill.</div>
+      ${items.map(x=>excRow(x,commOpts)).join('')}`;
+  }catch(e){ wrap.innerHTML=''; }
+}
+function excRow(x,commOpts){
+  const needVendor = !x.suggested_vendor_id;
+  const vend = (x.suggested_vendor&&x.suggested_vendor.name) || x.vendor_name || '(vendor unknown)';
+  return `<div class="exc" data-id="${x.id}" style="border:1px solid #f6d5ad;background:#fffdf7;border-radius:9px;padding:10px 12px;margin-bottom:10px;">
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;">
+      <div><b>${escapeHtml(vend)}</b> · <b>${x.total_cents?money(x.total_cents):'amount ?'}</b>${x.invoice_number?` · inv ${escapeHtml(x.invoice_number)}`:''}${x.invoice_date?` · ${d10(x.invoice_date)}`:''}</div>
+      <span style="font-size:11px;font-weight:700;color:#92400e;background:#fde9c8;border-radius:20px;padding:2px 9px;">${REASON_LABEL[x.reason]||x.reason}</span>
+    </div>
+    <div class="note" style="font-size:11.5px;color:#64748b;margin:3px 0 8px;">${x.community_hint?('reads as “'+escapeHtml(x.community_hint)+'” · '):''}${x.storage_path?`<a href="javascript:void(0)" onclick="openExcFile('${x.id}')" style="color:#0B1D34;font-weight:600;">📄 view the bill</a>`:'<span style="color:#b91c1c;">no PDF on file</span>'}</div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+      <select id="exc-comm-${x.id}" style="font-size:12px;padding:3px 6px;"><option value="">— community —</option>${commOpts}</select>
+      ${needVendor?`<input id="exc-vend-${x.id}" placeholder="vendor name…" style="font-size:12px;padding:4px 6px;border:1px solid #d7dee7;border-radius:5px;width:170px;"><span id="exc-vpick-${x.id}" data-vid=""></span>`:''}
+      <button class="btn" style="padding:4px 11px;font-size:12px;" onclick="resolveExc('${x.id}',${needVendor})">Send to Payables</button>
+      <button class="btn ghost" style="padding:4px 10px;font-size:12px;" onclick="dismissExc('${x.id}')">Not a bill</button>
+      <span id="exc-msg-${x.id}" style="font-size:12px;"></span>
+    </div>
+  </div>`;
+}
+window.openExcFile=async function(id){
+  try{ const r=await af('/api/ap-intake/exceptions/'+id+'/file?json=1'); const j=await r.json(); if(j&&j.url) window.open(j.url,'_blank'); else alert('Could not open the bill.'); }
+  catch(e){ alert('Could not open the bill.'); }
+};
+window.resolveExc=async function(id,needVendor){
+  const msg=document.getElementById('exc-msg-'+id);
+  const cid=(document.getElementById('exc-comm-'+id)||{}).value;
+  if(!cid){ if(msg){msg.style.color='#b91c1c';msg.textContent='Pick the community first.';} return; }
+  const body={community_id:cid};
+  if(needVendor){ const vn=(document.getElementById('exc-vend-'+id)||{}).value; if(!vn||!vn.trim()){ if(msg){msg.style.color='#b91c1c';msg.textContent='Enter the vendor name.';} return; } body.vendor_name=vn.trim(); }
+  if(msg){ msg.style.color='#64748b'; msg.textContent='Sending…'; }
+  try{
+    const r=await af('/api/ap-intake/exceptions/'+id+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok){ if(msg){msg.style.color='#b91c1c';msg.textContent=(j.detail||j.error||'Could not send.');} return; }
+    const card=document.querySelector('.exc[data-id="'+id+'"]'); if(card){ card.style.transition='opacity .2s'; card.style.opacity='0'; setTimeout(()=>{card.remove(); loadExceptions(); loadQueue();},220); }
+  }catch(e){ if(msg){msg.style.color='#b91c1c';msg.textContent='Could not send.';} }
+};
+window.dismissExc=async function(id){
+  if(!confirm('Dismiss this — it isn’t a bill to pay? It leaves the list and the email is marked handled.')) return;
+  try{
+    const r=await af('/api/ap-intake/exceptions/'+id+'/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    if(r.ok){ const card=document.querySelector('.exc[data-id="'+id+'"]'); if(card){card.style.opacity='0';setTimeout(()=>{card.remove();loadExceptions();},220);} }
+    else alert('Could not dismiss.');
+  }catch(e){ alert('Could not dismiss.'); }
+};
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+window.sweepInbox=async function(btn){
+  const msg=document.getElementById('sweepMsg');
+  if(!confirm('Pull the vendor bills sitting in Emma’s inbox into Payables? Each files itself (awaiting approval) or lands in the needs-attention list to assign a community. Nothing is paid — approval is still the gate.')) return;
+  btn.disabled=true; const t=btn.textContent; btn.textContent='Working…'; if(msg)msg.textContent='';
+  try{
+    const r=await af('/api/ap-intake/sweep-inbox',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){ if(msg){msg.style.color='#b91c1c';msg.textContent='Sweep failed: '+(j.error||'error');} }
+    else if(msg){ msg.style.color='#166534'; msg.textContent=`Scanned ${j.scanned}: ${j.filed} filed to Payables, ${j.exceptioned} need a community, ${j.skipped} left (no recoverable PDF or needs a reply).`; }
+    loadExceptions(); loadQueue();
+  }catch(e){ if(msg){msg.style.color='#b91c1c';msg.textContent='Sweep failed.';} }
+  finally{ btn.disabled=false; btn.textContent=t; }
+};
 
 async function doIngest(file,communityId,btn){
   if(!file)return; btn.disabled=true; btn.textContent='Reading…';
