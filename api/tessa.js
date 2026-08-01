@@ -43,7 +43,22 @@ async function searchContacts(q) {
   if (q) ccQ = ccQ.or(`name.ilike.${like},category.ilike.${like}`);
   const { data: cc } = await ccQ;
   for (const c of (cc || [])) add({ name: c.name, org: (c.community && c.community.name) || null, email: c.email, phone: c.phone, role: c.category, source: 'community_contact' });
-  return out.slice(0, 40);
+  // Homeowners on file — she can email an owner by name too. (Directory only.)
+  if (q) {
+    const { data: ho } = await supabase.from('contacts').select('full_name, primary_email').not('primary_email', 'is', null).or(`full_name.ilike.${like},primary_email.ilike.${like}`).limit(20);
+    for (const c of (ho || [])) add({ name: c.full_name, org: 'homeowner', email: c.primary_email, role: 'homeowner', source: 'homeowner' });
+  }
+  // Anyone who has corresponded through the company mailboxes — NAME + ADDRESS
+  // only, never message content. Skips no-reply / automated senders. (Ed 2026-08-01.)
+  if (q) {
+    const { data: em } = await supabase.from('email_messages').select('sender_name, sender_email').not('sender_email', 'is', null).or(`sender_name.ilike.${like},sender_email.ilike.${like}`).order('received_at', { ascending: false }).limit(40);
+    for (const e of (em || [])) {
+      const addr = e.sender_email;
+      if (!addr || /no-?reply|do-?not-?reply|noreply|mailer-daemon|postmaster|notifications?@|@.*(mailchimp|constantcontact|sendgrid|salesforce)/i.test(addr)) continue;
+      add({ name: e.sender_name || addr, org: null, email: addr, role: 'from email', source: 'correspondent' });
+    }
+  }
+  return out.slice(0, 50);
 }
 
 // Resolve a spoken recipient like "Melody at New First National Bank" to a real
