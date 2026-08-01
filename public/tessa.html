@@ -61,6 +61,8 @@ let _supa=null, af=null, _mode='ed';
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $=id=>document.getElementById(id);
 function showComingSoon(){ $('body').innerHTML='<div class="soon"><b>Owner only</b>Tessa is Ed’s assistant.</div>'; }
+function goSignIn(){ try{ sessionStorage.setItem('postLoginRedirect','/admin/tessa'); }catch(_){}; location.href='/login.html'; }
+function showSignIn(){ $('body').innerHTML='<div class="soon"><b>Sign in to open Tessa</b>You’re not signed in on this device yet.<div style="margin-top:16px;"><button onclick="goSignIn()" style="background:#0B1D34;color:#fff;border:none;padding:11px 22px;border-radius:9px;font-weight:700;font-size:14px;cursor:pointer;">Sign in with Microsoft</button></div></div>'; }
 
 function render(){
   $('body').innerHTML = `<div class="grid">
@@ -426,7 +428,7 @@ async function setFu(id,status){ await af('/api/tessa/followups/'+id,{method:'PA
     if(!cfg||!cfg.enabled||!window.supabase) return showComingSoon();
     _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
     const {data:{session}}=await _supa.auth.getSession();
-    if(!session||!session.access_token) return showComingSoon();
+    if(!session||!session.access_token) return showSignIn();  // not logged in on this device -> offer sign-in, not a dead end
     af=async(u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
     // Owner-only: gate the UI on the owner-gated API itself, so the shell never
     // renders for anyone but Ed (not even another admin).

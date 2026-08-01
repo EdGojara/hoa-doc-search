@@ -287,8 +287,11 @@
           }
           throw new Error(j.error || ('HTTP ' + r.status));
         }
-        // Success — gate cookie is set, drop into the app
-        window.location.replace('/');
+        // Success — gate cookie is set, drop into the app (or back to the page
+        // that sent us here, e.g. the Tessa app). (Ed 2026-08-01.)
+        var _next = '/';
+        try { var n = sessionStorage.getItem('postLoginRedirect'); if (n && /^\/[A-Za-z0-9/_-]*$/.test(n)) { _next = n; sessionStorage.removeItem('postLoginRedirect'); } } catch (_) {}
+        window.location.replace(_next);
       } catch (e) {
         pending.classList.remove('show');
         showErr('Microsoft sign-in worked, but the app could not finalize your session: ' + (e.message || 'unknown error') + '. Try again or contact info@bedrocktx.com.');
