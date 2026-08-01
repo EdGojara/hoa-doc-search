@@ -1003,27 +1003,29 @@ router.post('/:id/forward-internal', express.json(), async (req, res) => {
   try {
     const { to_email, to_name, note, cc_email } = req.body || {};
     const { data: m, error } = await supabase.from('email_messages')
-      .select('id, subject, body_full, body_preview, sender_email, sender_name, classification, extracted, graph_id, mailbox, conversation_id, received_at, community:community_id(name)')
+      .select('id, subject, body_full, body_preview, sender_email, sender_name, classification, extracted, graph_id, mailbox, conversation_id, received_at, resolved_contact_id, resolved_property_id, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
     if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email_not_connected', detail: 'Graph credentials missing — internal forward needs email connected.' });
 
-    // INTERNAL means INTERNAL. This forward is "hand it to a teammate to check
-    // BEFORE we reply" — it discusses the homeowner and says nothing's gone to
-    // them yet, so it can ONLY reach Bedrock staff, never the homeowner, an
-    // outside address, or the original sender. A homeowner got Cc'd on one of
-    // these because the Cc defaulted to the sender and the server sent what it
-    // was handed. The UI is fixed too, but the UI is not the control — this is.
-    // (Ed 2026-07-16.) See lib/email/forward_hygiene.js (tested).
-    const { internalRecipients, stripQuoted } = require('../lib/email/forward_hygiene');
-    const { to: recips, cc: ccArr, dropped: droppedExternal } = internalRecipients({ toEmail: to_email, ccEmail: cc_email, senderEmail: m.sender_email });
+    // The one hard rule: this forward DISCUSSES the homeowner, so it must never
+    // reach the homeowner — the original sender OR any of their on-file addresses.
+    // (Azalia got Cc'd on a note about her once; that guard stays.) But the
+    // operator CAN deliberately add an outside person — a board member, a
+    // colleague on another domain — and that intent must be honored, not silently
+    // stripped. So we block the homeowner specifically and allow the rest, always
+    // surfacing anything removed. (Ed 2026-08-01.) See lib/email/forward_hygiene.js.
+    const { forwardRecipients, stripQuoted } = require('../lib/email/forward_hygiene');
+    let homeownerEmails = [m.sender_email];
+    try { const owned = await ownerEmailsOnFile({ contactId: m.resolved_contact_id, propertyId: m.resolved_property_id }); if (Array.isArray(owned)) homeownerEmails = homeownerEmails.concat(owned.map((o) => (typeof o === 'string' ? o : (o && o.email)))); } catch (_) {}
+    const { to: recips, cc: ccArr, blocked: blockedHomeowner } = forwardRecipients({ toEmail: to_email, ccEmail: cc_email, blockedEmails: homeownerEmails.filter(Boolean) });
     if (!recips.length) {
       return res.status(400).json({
-        error: 'no_internal_recipient',
-        detail: droppedExternal.length
-          ? `An internal review forward can only go to Bedrock teammates (@bedrocktx.com), never to the homeowner or an outside address. Removed: ${droppedExternal.join(', ')}. To answer the homeowner, use Draft reply instead.`
-          : 'Pick a Bedrock teammate to forward this to.',
+        error: 'no_recipient',
+        detail: blockedHomeowner.length
+          ? `That review forward would have gone only to the homeowner (${blockedHomeowner.join(', ')}) — it discusses them, so it can't. To answer the homeowner, use Draft reply instead; to loop in a teammate or an outside reviewer, add their address.`
+          : 'Add someone to forward this to.',
       });
     }
     const to = recips.join(', ');
@@ -1106,7 +1108,14 @@ ${thread.length ? `<div style="margin:14px 0 0;">
   </div>`; }).join('')}
 </div>` : ''}
 ${fwdAttachments.length ? `<p style="margin:12px 0 0;color:#166534;"><strong>Attachments included:</strong> ${e(fwdAttachments.map((a) => a.name).join(', '))}</p>` : ''}
+${(() => { try { return require('../lib/email/claire_signature').claireSignatureParts(m.community && m.community.name).html || ''; } catch (_) { return ''; } })()}
 </div>`;
+    // Claire's branded signature (+ its inline logo) so the forward is a complete,
+    // signed Claire email, not an abrupt unsigned block. (Ed 2026-08-01.)
+    try {
+      const { attachment: sigLogo } = require('../lib/email/claire_signature').claireSignatureParts(m.community && m.community.name);
+      if (sigLogo && !fwdAttachments.some((a) => a.contentId === 'bedrocklogo')) fwdAttachments.push(sigLogo);
+    } catch (_) { /* signature logo optional */ }
     // Send from Claire's (authorized) mailbox, not Ed's personal one — the app's
     // Azure Application Access Policy only covers the bot mailboxes, so sending as
     // egojara@ is blocked (403 RAOP). Claire forwarding to the teammate is also the
@@ -1121,7 +1130,7 @@ ${fwdAttachments.length ? `<p style="margin:12px 0 0;color:#166534;"><strong>Att
     // Handed-off/All filters, not lost. (Ed 2026-07-21 — "clear it out so we know
     // she's addressed them.")
     try {
-      const merged = Object.assign({}, m.extracted || {}, { forwarded: { to, cc: cc || null, name: to_name || null, at: new Date().toISOString(), note: note || null, dropped_external: droppedExternal.length ? droppedExternal : undefined } });
+      const merged = Object.assign({}, m.extracted || {}, { forwarded: { to, cc: cc || null, name: to_name || null, at: new Date().toISOString(), note: note || null, blocked_homeowner: blockedHomeowner.length ? blockedHomeowner : undefined } });
       await supabase.from('email_messages').update({
         extracted: merged,
         triage_status: 'handled',
@@ -1129,8 +1138,8 @@ ${fwdAttachments.length ? `<p style="margin:12px 0 0;color:#166534;"><strong>Att
         reviewed_at: new Date().toISOString(),
       }).eq('id', req.params.id);
     } catch (_) { /* annotation best-effort */ }
-    if (droppedExternal.length) console.warn(`[email_triage] internal forward stripped external recipient(s): ${droppedExternal.join(', ')}`);
-    res.json({ ok: true, to, cc: cc || null, dropped_external: droppedExternal.length ? droppedExternal : undefined });
+    if (blockedHomeowner.length) console.warn(`[email_triage] forward blocked homeowner recipient(s): ${blockedHomeowner.join(', ')}`);
+    res.json({ ok: true, to, cc: cc || null, blocked_homeowner: blockedHomeowner.length ? blockedHomeowner : undefined });
   } catch (err) {
     console.error('[email_triage] forward-internal failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

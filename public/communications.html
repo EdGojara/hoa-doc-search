@@ -1059,7 +1059,7 @@ function forwardPrompt(id, senderEmail, preselectPersona){
     </div>
     <div style="display:flex; gap:6px; align-items:center; margin:0 0 6px;">
       <label style="font-size:12px;color:var(--muted);min-width:24px;">Cc</label>
-      <input id="fwd-cc-${id}" type="text" value="" placeholder="copy another teammate (optional, @bedrocktx.com only)" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;flex:1;">
+      <input id="fwd-cc-${id}" type="text" value="" placeholder="copy someone — a teammate or an outside email (commas for multiple)" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;flex:1;">
     </div>
     <textarea id="fwd-note-${id}" placeholder="Type a few words — e.g. 'has this been paid?' — then ✍️ Write, or write the note yourself." style="width:100%;min-height:56px;"></textarea>
     <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
@@ -1106,13 +1106,17 @@ async function doForward(id, btn){
   const cc_email = ccEl ? (ccEl.value||'').trim() : '';
   const st = document.getElementById('fwd-status-'+id);
   if(!to_email){ if(st){ st.style.color='#b91c1c'; st.textContent='Pick a teammate or type an email.'; } return; }
+  // An outside recipient (not @bedrocktx.com) will see the internal review that
+  // discusses the homeowner — allowed, but confirm so it's deliberate, never a slip.
+  const outside=[...to_email.split(/[,;]/),...cc_email.split(/[,;]/)].map(s=>s.trim()).filter(s=>/@/.test(s)&&!/@bedrocktx\.com$/i.test(s));
+  if(outside.length && !confirm('Heads up: this forward includes an outside recipient — '+outside.join(', ')+'.\n\nThey will see the internal review discussing the homeowner. Send to them anyway?')) return;
   btn.disabled=true; const prev=btn.textContent; btn.textContent='Forwarding…';
   try{
     const r = await af(`${API}/${id}/forward-internal`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email,to_name,note,cc_email})});
     const j = await r.json();
     if(!r.ok){ if(st){ st.style.color='#b91c1c'; st.textContent=j.detail||j.error||'Forward failed'; } btn.disabled=false; btn.textContent=prev; return; }
-    if(st){ st.style.color='#166534'; st.textContent='✓ Forwarded to '+j.to+(j.cc?' (cc '+j.cc+')':''); }
-    setTimeout(loadList, 1100);
+    if(st){ st.style.color='#166534'; st.innerHTML='✓ Forwarded to '+esc(j.to)+(j.cc?' (cc '+esc(j.cc)+')':'')+(j.blocked_homeowner&&j.blocked_homeowner.length?' <span style="color:#b91c1c;font-weight:600;">— left off the homeowner ('+esc(j.blocked_homeowner.join(', '))+'); a review can’t go to them.</span>':''); }
+    setTimeout(loadList, 1600);
   }catch(e){ if(st){ st.style.color='#b91c1c'; st.textContent=e.message; } btn.disabled=false; btn.textContent=prev; }
 }
 

@@ -11,7 +11,7 @@
 //
 // Run: npm run test:forward-hygiene
 // ============================================================================
-const { internalRecipients, stripQuoted } = require('../lib/email/forward_hygiene');
+const { internalRecipients, forwardRecipients, stripQuoted } = require('../lib/email/forward_hygiene');
 
 let failures = 0;
 const check = (name, cond, detail) => {
@@ -49,6 +49,31 @@ check('a genuine staff-to-staff forward passes through', clean.to.length === 1 &
 // De-dupe: an address in both To and Cc doesn't get copied twice.
 const dup = internalRecipients({ toEmail: 'mbravo@bedrocktx.com', ccEmail: 'mbravo@bedrocktx.com', senderEmail: HOMEOWNER });
 check('an address in both To and Cc is not duplicated', dup.to.length === 1 && dup.cc.length === 0);
+
+// ---- forwardRecipients: the operator MAY add an outside reviewer, but the
+// homeowner is still never reachable. (Ed 2026-08-01.) ----------------------
+console.log('\n\x1b[1mForward recipients — outside reviewers allowed, homeowner never\x1b[0m\n');
+
+const HO = 'claudette@gmail.com';
+// The real case: forward to Martha (staff) + Alexis on an OUTSIDE domain.
+const withExternal = forwardRecipients({ toEmail: 'mbravo@bedrocktx.com', ccEmail: 'alexis@othercompany.com', blockedEmails: [HO] });
+check('an intentional outside Cc is KEPT, not stripped', withExternal.cc.includes('alexis@othercompany.com'), JSON.stringify(withExternal));
+check('the staff recipient is kept', withExternal.to.includes('mbravo@bedrocktx.com'));
+check('nothing is reported blocked when no homeowner was addressed', withExternal.blocked.length === 0);
+
+// The homeowner is blocked even when the operator types them, and it's surfaced.
+const hoTyped = forwardRecipients({ toEmail: 'mbravo@bedrocktx.com', ccEmail: `${HO}, alexis@othercompany.com`, blockedEmails: [HO] });
+check('the homeowner is removed from Cc', !hoTyped.cc.includes(HO));
+check('...but the outside reviewer still gets it', hoTyped.cc.includes('alexis@othercompany.com'));
+check('the removed homeowner is reported (never silent)', hoTyped.blocked.includes(HO));
+
+// On-file alternate homeowner address is also blocked (case-insensitive).
+const alt = forwardRecipients({ toEmail: 'mbravo@bedrocktx.com', ccEmail: 'Claudette.Campbell@work.com', blockedEmails: ['claudette.campbell@work.com'] });
+check('an on-file homeowner address is blocked case-insensitively', !alt.cc.length && alt.blocked.length === 1);
+
+// If ONLY the homeowner was addressed, To is empty so the endpoint refuses.
+const onlyHo = forwardRecipients({ toEmail: HO, ccEmail: '', blockedEmails: [HO] });
+check('forwarding only to the homeowner leaves no recipient (endpoint refuses)', onlyHo.to.length === 0 && onlyHo.blocked.includes(HO));
 
 console.log('\n\x1b[1mForward body — readable, not a quoted wall\x1b[0m\n');
 
