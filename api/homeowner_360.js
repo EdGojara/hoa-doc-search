@@ -400,7 +400,18 @@ router.get('/file', async (req, res) => {
     const bucket = FILE_BUCKETS[req.query.kind];
     const path = req.query.path;
     if (!bucket || !path) return res.status(400).json({ error: 'kind (letter|photo) and path required' });
-    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(String(path), 60 * 60);
+    // download=1 forces a "Save As" (Content-Disposition: attachment) with a
+    // friendly filename, so staff can grab the letter to send to a homeowner
+    // instead of it opening inline. name= sets the filename; sanitized here.
+    let opts;
+    if (req.query.download) {
+      let fname = String(req.query.name || String(path).split('/').pop() || 'document')
+        .replace(/[^\w.\-() ]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120);
+      if (!fname) fname = 'document';
+      if (!/\.pdf$/i.test(fname)) fname += '.pdf';
+      opts = { download: fname };
+    }
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(String(path), 60 * 60, opts);
     if (error || !data || !data.signedUrl) return res.status(404).json({ error: 'file_not_found' });
     res.redirect(data.signedUrl);
   } catch (err) {
