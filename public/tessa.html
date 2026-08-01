@@ -335,7 +335,26 @@ async function sendVoice(){
     const j=await r.json(); if(!r.ok) throw new Error(j.error||'voice failed');
     if(j.transcript) $('thought').value=j.transcript;
     $('voiceMsg').innerHTML = j.summary ? '<span class="ok">Heard: '+esc(j.summary)+'</span>' : (j.note?'<span class="note">'+esc(j.note)+'</span>':'');
-    if(j.email){ setMode('ed'); showEmailDraft(j.email.subject, j.email.body); if(j.email.recipient_hint) $('rname').value=j.email.recipient_hint; }
+    if(j.email){
+      setMode('ed'); showEmailDraft(j.email.subject, j.email.body);
+      const rec=j.recipient;
+      if(rec && rec.best && rec.best.email){
+        // Resolved — fill To and read it back for confirmation.
+        $('to').value=rec.best.email;
+        $('rname').value=rec.best.name+(rec.best.org?(' at '+rec.best.org):'');
+        $('csearch').value=rec.best.name+(rec.best.org?(' · '+rec.best.org):'');
+        $('voiceMsg').innerHTML+=' <span class="ok">&rarr; To <b>'+esc(rec.best.name)+(rec.best.org?' at '+esc(rec.best.org):'')+'</b> ('+esc(rec.best.email)+'). Review the draft below and send if it&rsquo;s right.</span>';
+      } else if(rec && rec.matches && rec.matches.length){
+        // Ambiguous — show the options to pick from.
+        _contacts=rec.matches; $('csearch').value=rec.hint||'';
+        const box=$('cresults'); box.style.display='block';
+        box.innerHTML=rec.matches.map((c,i)=>`<div onclick="pickContact(${i})" style="padding:8px 10px;border-bottom:1px solid #eef2f7;cursor:pointer;"><div style="font-weight:600;color:#0B1D34;font-size:13.5px;">${esc(c.name)}${c.org?` · ${esc(c.org)}`:''}</div><div style="font-size:11.5px;color:#64748b;">${esc(c.email||'')}</div></div>`).join('')+`<div onclick="addContactPrompt()" style="padding:8px 10px;cursor:pointer;color:#0B1D34;font-weight:600;font-size:12.5px;background:#fbfcfe;">➕ Add &ldquo;${esc(rec.hint||'')}&rdquo;</div>`;
+        $('voiceMsg').innerHTML+=' <span class="note">Who did you mean by &ldquo;'+esc(rec.hint||'')+'&rdquo;? Pick below to set the address.</span>';
+      } else if(j.email.recipient_hint){
+        $('rname').value=j.email.recipient_hint; $('csearch').value=j.email.recipient_hint;
+        $('voiceMsg').innerHTML+=' <span class="note">I heard &ldquo;'+esc(j.email.recipient_hint)+'&rdquo; &mdash; search or add them below to set the address.</span>';
+      }
+    }
     renderVoiceTasks(j.tasks||[]);
   }catch(e){ $('voiceMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
 }

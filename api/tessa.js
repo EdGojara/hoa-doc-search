@@ -23,37 +23,59 @@ const router = express.Router();
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const parseAddrs = (v) => String(v || '').split(/[,;]/).map((s) => s.trim()).filter((s) => EMAIL_RE.test(s));
 
-// GET /contacts?q= — Tessa's address book search. Resolves "Melody at New First
-// National Bank" across the saved EA book + vendor reps + per-community contacts
-// (bank / attorney / insurance). Staff, board, and the AI team stay in the
-// compose picker; this covers the OUTSIDE contacts that had no home. (Ed 2026-08-01.)
+// Search Tessa's contacts across the saved EA book + vendor reps + per-community
+// contacts (bank / attorney / insurance). Returns [{name, org, email, phone,
+// role, source}], deduped by email. Shared by /contacts and the voice resolver.
+async function searchContacts(q) {
+  q = String(q || '').trim();
+  const like = `%${q.replace(/[%,]/g, ' ')}%`;
+  const out = []; const seen = new Set();
+  const add = (c) => { if (!c.email) return; const k = c.email.toLowerCase(); if (seen.has(k)) return; seen.add(k); out.push(c); };
+  let eaQ = supabase.from('ea_contacts').select('name, organization, email, phone, role, category').limit(40);
+  if (q) eaQ = eaQ.or(`name.ilike.${like},organization.ilike.${like},email.ilike.${like}`);
+  const { data: ea } = await eaQ;
+  for (const c of (ea || [])) add({ name: c.name, org: c.organization, email: c.email, phone: c.phone, role: c.role || c.category, source: 'address_book' });
+  let vQ = supabase.from('vendors').select('name, contact_name, contact_email, email, phone').neq('is_active', false).limit(30);
+  if (q) vQ = vQ.or(`name.ilike.${like},contact_name.ilike.${like},contact_email.ilike.${like}`);
+  const { data: vs } = await vQ;
+  for (const v of (vs || [])) { const em = v.contact_email || v.email; if (em) add({ name: v.contact_name || v.name, org: v.name, email: em, phone: v.phone, role: 'vendor', source: 'vendor' }); }
+  let ccQ = supabase.from('community_contacts').select('name, email, phone, category, community:community_id(name)').not('email', 'is', null).limit(30);
+  if (q) ccQ = ccQ.or(`name.ilike.${like},category.ilike.${like}`);
+  const { data: cc } = await ccQ;
+  for (const c of (cc || [])) add({ name: c.name, org: (c.community && c.community.name) || null, email: c.email, phone: c.phone, role: c.category, source: 'community_contact' });
+  return out.slice(0, 40);
+}
+
+// Resolve a spoken recipient like "Melody at New First National Bank" to a real
+// contact. Splits "<name> at <org>", scores name+org matches, returns the best
+// plus a few alternates. { best, matches, hint } — best is null if unsure.
+async function resolveRecipient(hint) {
+  hint = String(hint || '').trim(); if (!hint) return null;
+  const m = hint.match(/^(.+?)\s+(?:at|from|with|@)\s+(.+)$/i);
+  const norm = (s) => String(s || '').toLowerCase();
+  let cands = [];
+  if (m) {
+    const name = m[1].trim(), org = m[2].trim();
+    const byName = await searchContacts(name);
+    const byOrg = await searchContacts(org);
+    const pool = [...byName, ...byOrg];
+    const seen = new Set();
+    for (const c of pool) { const k = norm(c.email); if (k && !seen.has(k)) { seen.add(k); cands.push(c); } }
+    cands = cands.map((c) => ({ c, s: (c.org && norm(c.org).includes(norm(org)) ? 2 : 0) + (norm(c.name).includes(norm(name)) ? 1 : 0) }))
+      .sort((a, b) => b.s - a.s).map((x) => x.c);
+  } else {
+    cands = await searchContacts(hint);
+  }
+  // Only auto-fill To when there's exactly one strong match; otherwise let Ed pick.
+  const best = cands.length === 1 ? cands[0] : (cands.length && m ? cands[0] : null);
+  return { best, matches: cands.slice(0, 5), hint };
+}
+
+// GET /contacts?q= — Tessa's address book search. (Ed 2026-08-01.)
 router.get('/contacts', async (req, res) => {
   const owner = await requireOwner(req, res); if (!owner) return;
-  try {
-    const q = String(req.query.q || '').trim();
-    const like = `%${q.replace(/[%,]/g, ' ')}%`;
-    const out = []; const seen = new Set();
-    const add = (c) => {
-      if (!c.email) return; const k = c.email.toLowerCase();
-      if (seen.has(k)) return; seen.add(k); out.push(c);
-    };
-    // 1) Saved EA address book (primary — the place "Melody" lands).
-    let eaQ = supabase.from('ea_contacts').select('name, organization, email, phone, role, category').limit(40);
-    if (q) eaQ = eaQ.or(`name.ilike.${like},organization.ilike.${like},email.ilike.${like}`);
-    const { data: ea } = await eaQ;
-    for (const c of (ea || [])) add({ name: c.name, org: c.organization, email: c.email, phone: c.phone, role: c.role || c.category, source: 'address_book' });
-    // 2) Vendor reps (the vendor's contact person).
-    let vQ = supabase.from('vendors').select('name, contact_name, contact_email, email, phone').neq('is_active', false).limit(30);
-    if (q) vQ = vQ.or(`name.ilike.${like},contact_name.ilike.${like},contact_email.ilike.${like}`);
-    const { data: vs } = await vQ;
-    for (const v of (vs || [])) { const em = v.contact_email || v.email; if (em) add({ name: v.contact_name || v.name, org: v.name, email: em, phone: v.phone, role: 'vendor', source: 'vendor' }); }
-    // 3) Per-community contacts (bank / attorney / insurance rep).
-    let ccQ = supabase.from('community_contacts').select('name, email, phone, category, community:community_id(name)').not('email', 'is', null).limit(30);
-    if (q) ccQ = ccQ.or(`name.ilike.${like},category.ilike.${like}`);
-    const { data: cc } = await ccQ;
-    for (const c of (cc || [])) add({ name: c.name, org: (c.community && c.community.name) || null, email: c.email, phone: c.phone, role: c.category, source: 'community_contact' });
-    res.json({ contacts: out.slice(0, 40) });
-  } catch (err) { console.error('[tessa] contacts failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+  try { res.json({ contacts: await searchContacts(req.query.q) }); }
+  catch (err) { console.error('[tessa] contacts failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // POST /contacts — save a contact to the EA book (upsert on email) so it resolves
@@ -159,7 +181,13 @@ router.post('/voice', uploadAudio.single('audio'), async (req, res) => {
     }
     if (!transcript) return res.status(200).json({ transcript: '', summary: '', email: null, tasks: [], note: 'Nothing was picked up.' });
     const routed = await routeDictation(transcript);
-    res.json({ transcript, summary: routed.summary || '', email: routed.email, tasks: routed.tasks || [] });
+    // If she heard "contact <someone>", resolve it to a real address so the UI can
+    // read it back and fill To — the "just talk to her" loop. (Ed 2026-08-01.)
+    let recipient = null;
+    if (routed.email && routed.email.recipient_hint) {
+      try { recipient = await resolveRecipient(routed.email.recipient_hint); } catch (_) {}
+    }
+    res.json({ transcript, summary: routed.summary || '', email: routed.email, tasks: routed.tasks || [], recipient });
   } catch (err) {
     console.error('[tessa] voice failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
