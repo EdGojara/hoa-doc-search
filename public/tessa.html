@@ -57,7 +57,7 @@
   <div id="body"><div class="soon">Loading&hellip;</div></div>
 </div>
 <script>
-let _supa=null, af=null, _mode='ed';
+let _supa=null, af=null, _mode='tessa';  // default: send as Tessa, on Ed's behalf
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $=id=>document.getElementById(id);
 function showComingSoon(){ $('body').innerHTML='<div class="soon"><b>Owner only</b>Tessa is Ed’s assistant.</div>'; }
@@ -71,10 +71,10 @@ function render(){
         <h2>Draft an email</h2>
         <div class="row" style="justify-content:space-between;">
           <div class="modewrap">
-            <button id="m-ed" class="on" onclick="setMode('ed')">Send as me</button>
-            <button id="m-tessa" onclick="setMode('tessa')">Send as Tessa</button>
+            <button id="m-ed" onclick="setMode('ed')">Send as me</button>
+            <button id="m-tessa" class="on" onclick="setMode('tessa')">Send as Tessa</button>
           </div>
-          <span class="note" id="mode-note">Ghostwritten in your voice, from your mailbox.</span>
+          <span class="note" id="mode-note">Sent as Tessa, on your behalf.</span>
         </div>
         <label>Pick a recipient <span class="note" style="font-weight:400;">(board member, staff, or AI teammate — or just type below)</span></label>
         <select id="rpick" onchange="pickRecipient()"><option value="">— loading directory&hellip; —</option></select>
@@ -299,7 +299,7 @@ async function ibDismiss(id){
   await af('/api/tessa/inbox/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'dismissed'})});
   loadInbox();
 }
-function setMode(m){ _mode=m; $('m-ed').className=m==='ed'?'on':''; $('m-tessa').className=m==='tessa'?'on':''; $('mode-note').textContent = m==='ed'?'Ghostwritten in your voice, from your mailbox.':'Sent as Tessa, on your behalf.'; }
+function setMode(m){ _mode=m; $('m-ed').className=m==='ed'?'on':''; $('m-tessa').className=m==='tessa'?'on':''; $('mode-note').textContent = m==='ed'?'Ghostwritten in your voice, from your mailbox.':'Sent as Tessa, on your behalf.'; const sb=$('sendBtn'); if(sb) sb.textContent='Send '+(m==='ed'?'as me':'as Tessa'); }
 
 async function doDraft(){
   const thought=$('thought').value.trim(); if(!thought) return;
@@ -347,7 +347,7 @@ async function sendVoice(){
     if(j.transcript) $('thought').value=j.transcript;
     $('voiceMsg').innerHTML = j.summary ? '<span class="ok">Heard: '+esc(j.summary)+'</span>' : (j.note?'<span class="note">'+esc(j.note)+'</span>':'');
     if(j.email){
-      setMode('ed'); showEmailDraft(j.email.subject, j.email.body);
+      showEmailDraft(j.email.subject, j.email.body);  // keep the current send-as mode (defaults to Tessa)
       const rec=j.recipient;
       // "team" / "staff" / "everyone" is the whole-company list, not one contact.
       const hint=String(j.email.recipient_hint||'').toLowerCase();
