@@ -44928,7 +44928,7 @@ ${questionsPage}
             <div style="display:flex; gap:8px;">
               <button class="secondary-btn" onclick="apCloseDetail()">Close</button>
               ${notFinal ? `<button class="secondary-btn" onclick="apVoidInvoice('${inv.id}')" style="color:#b91c1c; border-color:#fecaca;" title="Vendor sent another copy — discard this duplicate">🗑 Delete duplicate</button>` : ''}
-              ${notFinal ? `<button class="secondary-btn" onclick="apMarkPaid('${inv.id}', ${(inv.total_cents || 0) - (inv.amount_paid_cents || 0)})" title="Already paid by ACH / debit card — record the entry, no check">💳 Already paid</button>` : ''}
+              ${notFinal ? `<button class="secondary-btn" onclick="apMarkPaid('${inv.id}', ${(inv.total_cents || 0) - (inv.amount_paid_cents || 0)})" title="${inv.is_ach_autopay ? 'This bill auto-drafts (ACH) — record the debit on its draft date. No check is cut.' : 'Already paid by ACH / debit card — record the entry, no check'}">${inv.is_ach_autopay ? '⚡ Record autodraft' : '💳 Already paid'}</button>` : ''}
               ${openForApproval && !mgrApproval
                 ? (isAdmin
                     // Ed asked three times where this button is, and "trust me,
@@ -44949,7 +44949,7 @@ ${questionsPage}
             </div>
           </div>
           <div id="ap-paidpanel-${inv.id}" style="display:none; margin-top:12px; padding:12px 14px; background:#f0f7ff; border:1px solid #bcdcff; border-radius:8px;">
-            <div style="font-weight:600; color:#0B1D34; margin-bottom:8px;">Record as already paid (no check)</div>
+            <div style="font-weight:600; color:#0B1D34; margin-bottom:8px;">${inv.is_ach_autopay ? 'Record the auto-draft (ACH debit — no check)' : 'Record as already paid (no check)'}</div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
               <label style="font-size:12.5px;">How paid
                 <select id="ap-paid-method-${inv.id}" style="margin-left:5px; padding:6px 9px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;">
