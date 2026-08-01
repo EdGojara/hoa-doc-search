@@ -31,10 +31,10 @@ async function searchContacts(q) {
   const like = `%${q.replace(/[%,]/g, ' ')}%`;
   const out = []; const seen = new Set();
   const add = (c) => { if (!c.email) return; const k = c.email.toLowerCase(); if (seen.has(k)) return; seen.add(k); out.push(c); };
-  let eaQ = supabase.from('ea_contacts').select('name, organization, email, phone, role, category').limit(40);
-  if (q) eaQ = eaQ.or(`name.ilike.${like},organization.ilike.${like},email.ilike.${like}`);
+  let eaQ = supabase.from('ea_contacts').select('name, organization, email, phone, role, category, title, responsibilities').limit(40);
+  if (q) eaQ = eaQ.or(`name.ilike.${like},organization.ilike.${like},email.ilike.${like},title.ilike.${like}`);
   const { data: ea } = await eaQ;
-  for (const c of (ea || [])) add({ name: c.name, org: c.organization, email: c.email, phone: c.phone, role: c.role || c.category, source: 'address_book' });
+  for (const c of (ea || [])) add({ name: c.name, org: c.organization, email: c.email, phone: c.phone, role: c.title || c.role || c.category, source: 'address_book' });
   let vQ = supabase.from('vendors').select('name, contact_name, contact_email, email, phone').neq('is_active', false).limit(30);
   if (q) vQ = vQ.or(`name.ilike.${like},contact_name.ilike.${like},contact_email.ilike.${like}`);
   const { data: vs } = await vQ;
@@ -103,7 +103,7 @@ router.post('/contacts', express.json(), async (req, res) => {
     const email = String(b.email || '').trim();
     if (!name) return res.status(400).json({ error: 'name_required', detail: 'A name is required.' });
     if (email && !EMAIL_RE.test(email)) return res.status(400).json({ error: 'bad_email', detail: 'That email doesn\'t look valid.' });
-    const row = { name, organization: b.organization || null, email: email || null, phone: b.phone || null, role: b.role || null, category: b.category || null, notes: b.notes || null, created_by: owner.email || owner.full_name || 'Ed' };
+    const row = { name, organization: b.organization || null, email: email || null, phone: b.phone || null, title: b.title || null, category: b.category || null, responsibilities: b.responsibilities || null, notes: b.notes || null, created_by: owner.email || owner.full_name || 'Ed' };
     if (email) {
       const { data: ex } = await supabase.from('ea_contacts').select('id').ilike('email', email).limit(1);
       if (ex && ex.length) { const { data } = await supabase.from('ea_contacts').update(row).eq('id', ex[0].id).select().single(); return res.json({ ok: true, contact: data, updated: true }); }
@@ -112,6 +112,44 @@ router.post('/contacts', express.json(), async (req, res) => {
     if (error) throw error;
     res.json({ ok: true, contact: data });
   } catch (err) { console.error('[tessa] add contact failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// GET /contacts/book — the MANAGED address book (ea_contacts only), with ids for
+// editing. Separate from /contacts (which resolves across every source). (Ed 2026-08-01.)
+router.get('/contacts/book', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const q = String(req.query.q || '').trim();
+    let query = supabase.from('ea_contacts').select('id, name, organization, title, email, phone, category, responsibilities, notes').order('name').limit(500);
+    if (q) query = query.or(`name.ilike.%${q}%,organization.ilike.%${q}%,email.ilike.%${q}%,title.ilike.%${q}%`);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ contacts: data || [] });
+  } catch (err) { console.error('[tessa] book failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// PATCH /contacts/:id — edit a saved contact.
+router.patch('/contacts/:id', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const b = req.body || {}; const upd = {};
+    for (const f of ['name', 'organization', 'title', 'email', 'phone', 'category', 'responsibilities', 'notes']) if (f in b) upd[f] = (b[f] === '' ? null : b[f]);
+    if (upd.email && !EMAIL_RE.test(String(upd.email))) return res.status(400).json({ error: 'bad_email', detail: 'That email doesn\'t look valid.' });
+    if (!Object.keys(upd).length) return res.status(400).json({ error: 'nothing_to_update' });
+    const { data, error } = await supabase.from('ea_contacts').update(upd).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ ok: true, contact: data });
+  } catch (err) { console.error('[tessa] edit contact failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// DELETE /contacts/:id — remove a saved contact.
+router.delete('/contacts/:id', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { error } = await supabase.from('ea_contacts').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { console.error('[tessa] delete contact failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // POST /draft — turn a thought into a send-ready email (nothing sent).

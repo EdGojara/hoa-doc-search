@@ -120,11 +120,19 @@ function render(){
         </div>
         <div id="fuList" style="margin-top:10px;"><div class="note">Loading&hellip;</div></div>
       </div>
+      <div class="card" style="margin-top:14px;">
+        <div class="row" style="justify-content:space-between;"><h2 style="margin:0;">My contacts</h2><button class="btn ghost sm" onclick="cbToggleAdd()">+ Add</button></div>
+        <div class="note">Names, orgs, titles &amp; emails Tessa uses to send for you.</div>
+        <input id="cb-search" placeholder="Search contacts…" oninput="cbLoad()" style="margin-top:8px;">
+        <div id="cbAdd" style="display:none; margin-top:10px; padding:10px; background:#f6f9ff; border:1px solid #d7e3f4; border-radius:8px;"></div>
+        <div id="cbList" style="margin-top:10px;"><div class="note">Loading&hellip;</div></div>
+      </div>
     </div>
   </div>`;
   loadFu();
   loadInbox();
   loadRecipients();
+  cbLoad();
 }
 
 // Recipient directory for the compose picker: board members (by community),
@@ -242,6 +250,56 @@ async function addContactPrompt(){
   }catch(e){ alert('Could not save the contact.'); }
 }
 document.addEventListener('click',(e)=>{ const b=$('cresults'); if(b && b.style.display!=='none' && e.target.id!=='csearch' && !e.target.closest('#cresults')) b.style.display='none'; });
+
+// ---- My contacts: a real managed address book Tessa sends from. (Ed 2026-08-01)
+let _cbList=[];
+async function cbLoad(){
+  const q=(($('cb-search')||{}).value||'').trim(); const el=$('cbList'); if(!el) return;
+  try{
+    const r=await af('/api/tessa/contacts/book'+(q?'?q='+encodeURIComponent(q):'')); const j=await r.json();
+    _cbList=j.contacts||[];
+    if(!_cbList.length){ el.innerHTML='<div class="note">'+(q?'No contacts match.':'No contacts yet — add one above, or use “➕ Add” from the compose search.')+'</div>'; return; }
+    el.innerHTML=_cbList.map(c=>`<div style="padding:8px 0; border-bottom:1px solid #eef2f7;">
+      <div class="row" style="justify-content:space-between; gap:8px; align-items:flex-start;">
+        <div><div style="font-weight:600; color:var(--navy); font-size:13.5px;">${esc(c.name)}${c.title?' <span style="color:#64748b; font-weight:400;">· '+esc(c.title)+'</span>':''}</div>
+          <div class="note" style="font-size:11.5px;">${c.organization?esc(c.organization)+' · ':''}${esc(c.email||'no email')}${c.phone?' · '+esc(c.phone):''}</div>
+          ${c.responsibilities?`<div class="note" style="font-size:11.5px; color:#5a7390;">${esc(c.responsibilities)}</div>`:''}</div>
+        <div style="white-space:nowrap;"><button class="btn ghost sm" onclick="cbEdit('${c.id}')" style="padding:3px 8px;">Edit</button> <button class="btn ghost sm" onclick="cbDelete('${c.id}')" style="padding:3px 8px; color:#b91c1c;">✕</button></div>
+      </div></div>`).join('');
+  }catch(e){ el.innerHTML='<div class="err note">Could not load contacts.</div>'; }
+}
+function cbFormHtml(c){ c=c||{};
+  return `<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+    <input id="cf-name" placeholder="Name *" value="${esc(c.name||'')}">
+    <input id="cf-org" placeholder="Organization" value="${esc(c.organization||'')}">
+    <input id="cf-title" placeholder="Title" value="${esc(c.title||'')}">
+    <input id="cf-email" placeholder="Email" value="${esc(c.email||'')}">
+    <input id="cf-phone" placeholder="Phone" value="${esc(c.phone||'')}">
+    <input id="cf-cat" placeholder="Type (bank, attorney, insurance…)" value="${esc(c.category||'')}">
+  </div>
+  <input id="cf-resp" placeholder="Responsibilities / what they handle for us" style="margin-top:6px;" value="${esc(c.responsibilities||'')}">
+  <div class="row" style="margin-top:8px;"><button class="btn gold sm" onclick="cbSave('${c.id||''}')">Save contact</button><button class="btn ghost sm" onclick="cbCancel()">Cancel</button><span id="cbMsg" class="result"></span></div>`;
+}
+function cbToggleAdd(){ const w=$('cbAdd'); if(!w) return; if(w.style.display==='none'){ w.innerHTML=cbFormHtml(); w.style.display='block'; $('cf-name').focus(); } else cbCancel(); }
+function cbCancel(){ const w=$('cbAdd'); if(w){ w.style.display='none'; w.innerHTML=''; } }
+function cbEdit(id){ const c=_cbList.find(x=>x.id===id); if(!c) return; const w=$('cbAdd'); w.innerHTML=cbFormHtml(c); w.style.display='block'; $('cf-name').focus(); }
+async function cbSave(id){
+  const g=x=>(($('cf-'+x)||{}).value||'').trim();
+  const body={ name:g('name'), organization:g('org'), title:g('title'), email:g('email'), phone:g('phone'), category:g('cat'), responsibilities:g('resp') };
+  const msg=$('cbMsg');
+  if(!body.name){ if(msg){msg.innerHTML='<span class="err">Name is required.</span>';} return; }
+  if(msg){ msg.textContent='Saving…'; }
+  try{
+    const url=id?('/api/tessa/contacts/'+id):'/api/tessa/contacts';
+    const r=await af(url,{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json(); if(!r.ok||(!j.ok&&!j.contact)) throw new Error(j.detail||j.error||'save failed');
+    cbCancel(); cbLoad();
+  }catch(e){ if(msg){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; } }
+}
+async function cbDelete(id){
+  const c=_cbList.find(x=>x.id===id); if(!confirm('Remove '+(c?c.name:'this contact')+' from your contacts?')) return;
+  try{ const r=await af('/api/tessa/contacts/'+id,{method:'DELETE'}); if(r.ok) cbLoad(); else alert('Could not delete.'); }catch(e){ alert('Could not delete.'); }
+}
 
 const _ibmode={};
 async function pollInbox(){
