@@ -26073,11 +26073,16 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const lr = await window._authFetch('/api/enforcement/mail-queue/letters' + lq);
       const lj = await lr.json();
       if (!lr.ok) throw new Error(lj.error || `HTTP ${lr.status}`);
-      pending = (lj.letters || []).filter((l) => l.delivery_method === deliveryMethod && l.status === 'approved' && !l.sent_at && !l.printed_at);
+      // Anything not yet printed is printable — the endpoint already scopes to
+      // approved/sent + printed_at IS NULL. (Do NOT also require status=approved
+      // + no sent_at: a prior timed-out lock leaves letters status=sent /
+      // sent_at set but printed_at null — still needs printing. That over-strict
+      // filter is what wrongly said "No pending" on 110 real letters. Ed 2026-08-01.)
+      pending = (lj.letters || []).filter((l) => l.delivery_method === deliveryMethod && !l.printed_at);
     } catch (e) { alert('Could not load the queue to print: ' + e.message); return; }
     if (!pending.length) { alert(`No pending ${label} letters to print.`); return; }
 
-    const CHUNK = 30; // letters per request — small enough that each render finishes well under any timeout
+    const CHUNK = 100; // letters per request — 99 printed fine in one batch historically; only truly huge batches split
     const envMap = new Map();
     for (const l of pending) { const k = l.bundle_id || ('one-' + l.id); if (!envMap.has(k)) envMap.set(k, []); envMap.get(k).push(l.id); }
     const chunks = []; let cur = [];
