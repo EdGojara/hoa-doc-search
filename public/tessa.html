@@ -349,7 +349,16 @@ async function sendVoice(){
     if(j.email){
       setMode('ed'); showEmailDraft(j.email.subject, j.email.body);
       const rec=j.recipient;
-      if(rec && rec.best && rec.best.email){
+      // "team" / "staff" / "everyone" is the whole-company list, not one contact.
+      const hint=String(j.email.recipient_hint||'').toLowerCase();
+      const saysTeam=/\b(the\s+)?(entire\s+|whole\s+|all\s+|bedrock\s+)?(team|staff|everyone|everybody|company)\b/.test(hint)
+        || /\b(email|send|tell|let|reach)\b.{0,20}\b(the\s+)?(entire\s+|whole\s+|all\s+|bedrock\s+)?(team|staff|everyone)\b/.test(String(j.transcript||'').toLowerCase());
+      if(saysTeam && _allStaffEmails.length){
+        $('to').value=_allStaffEmails.join(', ');
+        if($('rname')) $('rname').value='team';
+        $('csearch').value='All Bedrock team';
+        $('voiceMsg').innerHTML+=' <span class="ok">&rarr; To the <b>whole Bedrock team</b> ('+_allStaffEmails.length+'). Review the draft below and send if it&rsquo;s right.</span>';
+      } else if(rec && rec.best && rec.best.email){
         // Resolved — fill To and read it back for confirmation.
         $('to').value=rec.best.email;
         $('rname').value=rec.best.name+(rec.best.org?(' at '+rec.best.org):'');
