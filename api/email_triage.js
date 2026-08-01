@@ -1392,7 +1392,22 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
     }
     const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
     const { autoIntake } = require('../lib/ap/intake');
-    const pdfs = (await fetchAllAttachmentBuffers(m.mailbox, m.graph_id)).filter((f) => f.isPdf);
+    let pdfs = (await fetchAllAttachmentBuffers(m.mailbox, m.graph_id)).filter((f) => f.isPdf);
+    // Live message unfetchable (its Graph id rotated when it was filed, or it was
+    // moved/deleted)? Fall back to the copy we archived at ingest — email_attachments
+    // in the `documents` bucket — so a bill captured weeks ago can still be filed
+    // instead of dead-ending on a stale id. (Ed 2026-08-01 — the Strike case.)
+    if (!pdfs.length) {
+      try {
+        const { data: arch } = await supabase.from('email_attachments').select('filename, storage_path, mime').eq('email_message_id', m.id);
+        for (const a of (arch || [])) {
+          if (!/pdf/i.test(a.mime || '') && !/\.pdf$/i.test(a.filename || '')) continue;
+          const { data: blob, error: dErr } = await supabase.storage.from('documents').download(a.storage_path);
+          if (dErr || !blob) continue;
+          pdfs.push({ filename: a.filename || 'invoice.pdf', buffer: Buffer.from(await blob.arrayBuffer()), contentType: 'application/pdf', isPdf: true });
+        }
+      } catch (e) { console.warn('[email_triage] archived-PDF fallback skipped:', e.message); }
+    }
     if (!pdfs.length) {
       // No fetchable PDF — either the invoice was in the email body / an image,
       // or the forwarded message was moved out of the mailbox (Graph 404) so its
