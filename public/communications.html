@@ -874,34 +874,41 @@ async function glComChanged(id){
     ? `<option value="">— let the system pick —</option>` + list.map(a=>`<option value="${esc(a.id)}">${esc(a.account_number)} &middot; ${esc(a.account_name)}</option>`).join('')
     : '<option value="">(no expense accounts on file — leave blank)</option>';
 }
+const _glPosting = new Set(); // in-flight guard: one GL post per email at a time
 async function submitGlEntry(id){
+  if(_glPosting.has(id)) return;               // already posting this bill — ignore the double-press
   const cid = (document.getElementById('gl-com-'+id)||{}).value;
   const amtRaw = (document.getElementById('gl-amt-'+id)||{}).value || '';
   const acct = (document.getElementById('gl-acct-'+id)||{}).value;
   const msg = document.getElementById('gl-msg-'+id);
+  const box = document.getElementById('glentry-'+id);
+  const btns = box ? Array.from(box.querySelectorAll('button')) : [];
   const setErr = (t)=>{ if(msg) msg.innerHTML='<span style="color:#b91c1c;">'+esc(t)+'</span>'; };
   if(!cid){ setErr('Pick the community this bill belongs to.'); return; }
   const amt = parseFloat(String(amtRaw).replace(/[^0-9.]/g,''));
   if(!(amt>0)){ setErr('Enter the bill amount, e.g. 2397.00'); return; }
   const body = { community_id: cid, amount_cents: Math.round(amt*100) };
   if(acct) body.gl_account_id = acct;
+  _glPosting.add(id);
+  btns.forEach(b=>b.disabled=true);
+  const release=()=>{ _glPosting.delete(id); btns.forEach(b=>b.disabled=false); };
   if(msg) msg.innerHTML='<span style="color:#64748b;">Posting…</span>';
   try{
     let r = await af(`${API}/${id}/to-gl`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     let j = await r.json().catch(()=>({}));
     // Same-payment guard: a second autopay notification for one payment. Confirm before double-posting.
     if(r.status===409 && j.error==='suspected_duplicate'){
-      if(!confirm((j.detail||'This looks like a payment already recorded.')+'\n\nOK = record it again anyway.  Cancel = skip (recommended).')){ if(msg) msg.innerHTML='<span style="color:#64748b;">Skipped as a duplicate — not recorded.</span>'; return; }
+      if(!confirm((j.detail||'This looks like a payment already recorded.')+'\n\nOK = record it again anyway.  Cancel = skip (recommended).')){ if(msg) msg.innerHTML='<span style="color:#64748b;">Skipped as a duplicate — not recorded.</span>'; release(); return; }
       body.confirm_duplicate = true;
       r = await af(`${API}/${id}/to-gl`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       j = await r.json().catch(()=>({}));
     }
-    if(!r.ok || j.error){ setErr(j.detail||j.error||'Could not record to the GL.'); return; }
-    // Recorded — drop the row from the inbox (backend is idempotent on a re-press).
+    if(!r.ok || j.error){ setErr(j.detail||j.error||'Could not record to the GL.'); release(); return; }
+    // Recorded — drop the row from the inbox (backend is idempotent + unique-indexed, so a re-press never double-posts).
     const card = document.getElementById('msg-'+id);
     if(card){ card.style.transition='opacity .25s'; card.style.opacity='0'; setTimeout(()=>card.remove(),260); }
     selectedIds.delete(id); loadStats();
-  }catch(e){ setErr(e.message||String(e)); }
+  }catch(e){ setErr(e.message||String(e)); release(); }
 }
 async function doDraft(id, persona){
   const box = document.getElementById('draft-'+id);
