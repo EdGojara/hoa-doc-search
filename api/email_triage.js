@@ -1363,11 +1363,35 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
       .select('id, mailbox, graph_id, subject, community_id, resolved_vendor_id, has_attachments, extracted, sender_name, sender_email, body_full, body_preview')
       .eq('id', req.params.id).maybeSingle();
     if (!m) return res.status(404).json({ error: 'not_found' });
-    if (!m.graph_id || !m.has_attachments) return res.status(400).json({ error: 'no_attachment', detail: 'No bill is attached to file. Use Record to GL for a payment confirmation, or handle it in Accounting.' });
+    if (!m.graph_id || !m.has_attachments) {
+      const { singleAmountCents } = require('../lib/accounting/record_vendor_payment');
+      const cents = singleAmountCents((m.extracted && m.extracted.amounts) || []);
+      return res.status(400).json({
+        error: 'no_attachment',
+        detail: 'No invoice document is attached to this email — the bill may be in the body, or the message was moved out of the mailbox.',
+        can_stub: !!cents, amount_cents: cents || null, has_community: !!m.community_id,
+      });
+    }
     const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
     const { autoIntake } = require('../lib/ap/intake');
     const pdfs = (await fetchAllAttachmentBuffers(m.mailbox, m.graph_id)).filter((f) => f.isPdf);
-    if (!pdfs.length) return res.status(400).json({ error: 'no_pdf', detail: 'No PDF bill attached to file to Payables.' });
+    if (!pdfs.length) {
+      // No fetchable PDF — either the invoice was in the email body / an image,
+      // or the forwarded message was moved out of the mailbox (Graph 404) so its
+      // attachments can't be pulled anymore. Don't dead-end a real bill: if there
+      // is a clear amount, tell the UI it can file a reviewed PLACEHOLDER to
+      // Payables (the /add-to-payables stub) so the bill still reaches the
+      // approval queue. (Ed 2026-08-01 — Strike Electrical Invoice 4654, $720.)
+      const { singleAmountCents } = require('../lib/accounting/record_vendor_payment');
+      const cents = singleAmountCents((m.extracted && m.extracted.amounts) || []);
+      return res.status(400).json({
+        error: 'no_pdf',
+        detail: 'Couldn\'t pull an invoice PDF from this email — it may have been the bill in the body rather than a PDF, or the forwarded message was moved out of the mailbox.',
+        can_stub: !!cents,
+        amount_cents: cents || null,
+        has_community: !!m.community_id,
+      });
+    }
     let loaded = 0, dup = 0;
     for (const pdf of pdfs) {
       const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '', staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '' });

@@ -197,7 +197,13 @@ function linkCell(m){
   const name = (m.resolved_contact&&m.resolved_contact.full_name) || (m.resolved_vendor&&m.resolved_vendor.name) || (m.resolved_property&&m.resolved_property.street_address);
   const comm = m.community && m.community.name ? ` &middot; ${esc(m.community.name)}` : '';
   if (m.triage_status==='linked' || (name && m.resolution_confidence==='high')){
-    return `<span class="linked">✓ Linked to ${esc(name||'record')}</span><span class="lbl">${comm}</span>`;
+    // Linked to a vendor/contact but not yet to a community? A vendor invoice
+    // still needs its community before it can be filed to Payables or the GL —
+    // offer the picker instead of a dead "✓ Linked" with nothing else to do.
+    // (Ed 2026-08-01 — Strike Electrical invoice linked to the vendor, no community.)
+    const needsCommunity = !m.community && (m.persona==='emma' || String(m.classification||'').startsWith('vendor'));
+    return `<span class="linked">✓ Linked to ${esc(name||'record')}</span><span class="lbl">${comm}</span>`
+      + (needsCommunity ? ` <span class="lbl">— which community? link it to file / record:</span> ${communityPicker(m.id)}` : '');
   }
   // A vendor / utility bill whose COMMUNITY is already resolved (e.g. North
   // Mission Glen MUD -> Eaglewood via the alias registry) is correctly filed —
@@ -802,6 +808,30 @@ async function doFile(id, action, btn){
       }
       r=await af(`${API}/${id}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_duplicate:true})});
       j=await r.json();
+    }
+    // No fetchable invoice PDF — a real bill would otherwise dead-end here. If the
+    // amount is clear, offer the placeholder path (a reviewed stub the approver
+    // verifies + attaches the invoice to before paying) so the bill still reaches
+    // Payables. Needs a community first. (Ed 2026-08-01 — Strike Electrical $720.)
+    if(!r.ok && action==='to-payables' && j && j.can_stub){
+      if(!j.has_community){
+        if(msg){ msg.innerHTML='<span class="err">'+esc(j.detail)+' First link this email to a community (pick it in the row above), then try again.</span>'; msg.scrollIntoView({block:'nearest',behavior:'smooth'}); }
+        alert(j.detail+'\n\nFirst link this email to a community — pick it in the row, then file the placeholder.');
+        rowBtns.forEach(b=>b.disabled=false); btn.textContent=prev; _filingIds.delete(id); return;
+      }
+      const dollars = j.amount_cents?('$'+(j.amount_cents/100).toFixed(2)):'this amount';
+      if(confirm(j.detail+`\n\nAdd a placeholder to Payables for ${dollars}? It lands flagged for review — the approver verifies the amount and attaches the real invoice before it can be paid. No email is sent.`)){
+        btn.textContent='Filing…';
+        const sr=await af(`${API}/${id}/add-to-payables`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+        const sj=await sr.json().catch(()=>({}));
+        if(sr.ok){
+          if(card){ card.style.transition='opacity .25s'; card.style.opacity='0'; setTimeout(()=>{ card.remove(); }, 260); }
+          selectedIds.delete(id); loadStats(); return;
+        }
+        if(msg) msg.innerHTML='<span class="err">'+esc('Could not add the placeholder: '+(sj.detail||sj.error||'failed'))+'</span>';
+        alert('Could not add the placeholder: '+(sj.detail||sj.error||'failed'));
+      }
+      rowBtns.forEach(b=>b.disabled=false); btn.textContent=prev; _filingIds.delete(id); return;
     }
     if(!r.ok){
       const why = j.detail||j.error||'Failed';
