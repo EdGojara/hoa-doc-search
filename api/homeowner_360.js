@@ -373,7 +373,17 @@ async function assemble(contactId) {
     try { amenity = await evaluateAmenityAccess(supabase, { propertyId: primaryProp.property_id, communityId: primaryProp.community_id }); } catch (_) {}
   }
 
-  return { contact, properties, ar: { balance_cents, transactions: txns }, amenity, flags, collections, violations, arc, interactions, emails, calls, poolAccess, paymentPlans, attachments, emailAttachments };
+  // Stamp whether each interaction is a REAL, retrievable letter — it actually
+  // went out (not a rejected/failed/draft) AND has a PDF path. The 360 timeline
+  // offers View / Download / Email only when this is true, so a caught letter
+  // whose PDF was never written no longer shows a dead "View letter" link.
+  // (Ed 2026-08-01 — the rejected wrong-homeowner courtesy_1 at 4731 Autumn Pine.)
+  const interactionsOut = (interactions || []).map((it) => ({
+    ...it,
+    letter_available: !!(it.content && /\.pdf$/i.test(it.content) && /letter/i.test(it.type || '') && letterWentOut(it)),
+  }));
+
+  return { contact, properties, ar: { balance_cents, transactions: txns }, amenity, flags, collections, violations, arc, interactions: interactionsOut, emails, calls, poolAccess, paymentPlans, attachments, emailAttachments };
 }
 
 // GET /profile/:contactId — the assembled 360 (fast, no AI)
@@ -412,7 +422,15 @@ router.get('/file', async (req, res) => {
       opts = { download: fname };
     }
     const { data, error } = await supabase.storage.from(bucket).createSignedUrl(String(path), 60 * 60, opts);
-    if (error || !data || !data.signedUrl) return res.status(404).json({ error: 'file_not_found' });
+    if (error || !data || !data.signedUrl) {
+      // Opened in a browser tab — show a readable message, not raw JSON. Happens
+      // when a letter row points at a PDF that was never written (a failed/caught
+      // letter). (Ed 2026-08-01.)
+      if (/text\/html/.test(req.headers.accept || '')) {
+        return res.status(404).type('html').send('<div style="font-family:system-ui,Arial,sans-serif;max-width:520px;margin:60px auto;padding:24px;text-align:center;color:#334155;"><h2 style="color:#0B1D34;">This letter isn’t available</h2><p>The PDF for this letter couldn’t be found — it was likely a draft that never completed or a letter that was cancelled before it was produced. Nothing was sent.</p></div>');
+      }
+      return res.status(404).json({ error: 'file_not_found' });
+    }
     res.redirect(data.signedUrl);
   } catch (err) {
     console.error('[homeowner360] file failed:', err.message);
