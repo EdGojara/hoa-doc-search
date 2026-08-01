@@ -949,11 +949,29 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       try { pendingApplications = await pendingAccForEmail({ community_id: communityId, address: (m.resolved_property && m.resolved_property.street_address) || null, senderEmail: m.sender_email }); } catch (_) {}
     }
 
+    // Emma checks the AP subledger before answering a vendor. When this vendor is
+    // CHASING payment (a status inquiry, not a fresh invoice), match the bill and
+    // pass its VERIFIED status so Emma states the truth ("received and in
+    // approval" / "paid on [date]") instead of "let me check and get back to you."
+    // Gated to a detected follow-up so a NEW invoice submission never gets a
+    // "we don't show it, resend" answer. Facts only — the prompt forbids promising
+    // a pay date. (Ed 2026-08-01.)
+    let paymentStatus = null;
+    const isPaymentChase = !!(m.extracted && m.extracted.follow_up);
+    if (isPaymentChase && (persona === 'emma' || /^vendor/.test(String(m.classification || '')))) {
+      try {
+        const { matchChasedInvoice } = require('../lib/ap/followup');
+        const ex = m.extracted || {};
+        paymentStatus = await matchChasedInvoice(supabase, { communityId, vendorId: m.resolved_vendor_id, accountNumber: ex.account_number, invoiceNumber: ex.invoice_number || null });
+      } catch (_) {}
+    }
+
     const draft = await draftReply({
       email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, conversation_id: m.conversation_id, sender_email: m.sender_email, graph_id: m.graph_id, mailbox: m.mailbox, has_attachments: m.has_attachments },
       classification: m.classification,
       contactId: m.resolved_contact_id, propertyId, communityId,
       examples: replyExamples,
+      paymentStatus, // vendor payment chase: the invoice's verified AP status
       // Greet whoever actually wrote in (the sender), not the household account
       // name — so a joint "Julie McKay & James Storm" record still gets "Hi James"
       // when James emailed. Account DATA still comes from contactId/propertyId.
