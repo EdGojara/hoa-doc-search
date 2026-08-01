@@ -316,10 +316,28 @@ router.get('/:vendorId', async (req, res) => {
       }
     } catch (_) { /* spend rollup best-effort */ }
 
+    // Proposals this vendor submitted (RFP responses) + correspondence linked to
+    // them — the rest of the 360, all off canonical rails. (Ed 2026-08-01.)
+    const { data: proposals } = await supabase
+      .from('vendor_proposals')
+      .select('id, proposal_date, service_category, total_amount, total_annual_amount, outcome, is_finalist, is_incumbent, filename, community, community_id, created_at')
+      .eq('vendor_id', vendorId)
+      .order('proposal_date', { ascending: false, nullsFirst: false })
+      .limit(30);
+
+    const { data: correspondence } = await supabase
+      .from('email_messages')
+      .select('id, subject, sender_email, direction, received_at, ai_summary, classification')
+      .eq('resolved_vendor_id', vendorId)
+      .order('received_at', { ascending: false })
+      .limit(30);
+
     res.json({
       vendor,
       invoices: (invoices || []).map(apInvoiceToLegacy),
       payments: payments || [],
+      proposals: proposals || [],
+      correspondence: correspondence || [],
       documents: documents || [],
       spend: { ytd_cents: ytdCents, lifetime_cents: lifeCents, year: new Date().getFullYear() },
     });
@@ -1399,6 +1417,22 @@ router.get('/spend', async (req, res) => {
         needs_w9: !!v.is_1099_vendor && !v.w9_on_file,
       };
     }).sort((a, b) => b.total_cents - a.total_cents);
+
+    // One-click 1099 worklist: ?format=csv downloads the year's spend with W-9 /
+    // over-threshold status, ready for the filing. (Ed 2026-08-01.)
+    if (String(req.query.format || '').toLowerCase() === 'csv') {
+      const only1099 = String(req.query.only_1099 || '') === '1';
+      const rowsOut = only1099 ? out.filter((r) => r.is_1099_vendor || r.over_threshold) : out;
+      const cell = (s) => `"${String(s == null ? '' : s).replace(/"/g, '""')}"`;
+      const header = ['Vendor', 'TIN', 'Tax classification', 'Community', 'Year', 'Total paid', 'Payments', '1099 vendor', 'W-9 on file', 'Over $600', 'Needs W-9'];
+      const lines = [header.map(cell).join(',')];
+      for (const r of rowsOut) {
+        lines.push([r.vendor_name, r.tax_id, r.tax_classification, r.community_name, r.year, (r.total_cents / 100).toFixed(2), r.payment_count, r.is_1099_vendor ? 'Yes' : 'No', r.w9_on_file ? 'Yes' : 'No', r.over_threshold ? 'Yes' : 'No', r.needs_w9 ? 'Yes' : 'No'].map(cell).join(','));
+      }
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="1099-vendor-spend-${year}.csv"`);
+      return res.send(lines.join('\r\n'));
+    }
 
     res.json({ year, threshold_cents: CENTS_1099_THRESHOLD, rows: out });
   } catch (err) {

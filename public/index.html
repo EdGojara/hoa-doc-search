@@ -1823,7 +1823,9 @@
       <div class="panel" style="margin-bottom:14px;">
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <input id="ven-search" type="text" placeholder="Search vendors by name…" oninput="venSearch()" style="flex:1; min-width:240px; padding:9px 12px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px;">
-          <span style="font-size:12px; color:#64748b;">Single source of truth — edits here update the vendor everywhere (AP, 1099, bank rec).</span>
+          <input id="ven-1099-year" type="number" placeholder="Year" title="1099 tax year" style="width:88px; padding:9px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px;">
+          <button class="secondary-btn" onclick="venExport1099()" title="Download every vendor's paid total for the year with W-9 / over-$600 status — the 1099 filing worklist">⬇ 1099 export</button>
+          <span id="ven-export-msg" style="font-size:12px; color:#64748b;"></span>
         </div>
       </div>
       <div style="display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap;">
@@ -44498,6 +44500,7 @@ ${questionsPage}
     function venD(s){ return s ? String(s).slice(0,10) : '—'; }
     window.venSearch = function(){ clearTimeout(_venTimer); _venTimer = setTimeout(venLoadList, 250); };
     window.venLoadList = async function(){
+      const yi = document.getElementById('ven-1099-year'); if(yi && !yi.value) yi.value = new Date().getFullYear();
       const q = ((document.getElementById('ven-search')||{}).value||'').trim();
       const el = document.getElementById('ven-list'); if(!el) return;
       try {
@@ -44526,7 +44529,7 @@ ${questionsPage}
       return `<label style="font-size:11.5px; color:#64748b; display:block;">${label}<br><input id="ven-f-${id}" type="text" value="${apEsc(val==null?'':val)}" style="width:100%; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; margin-top:2px; box-sizing:border-box;"></label>`;
     }
     function venRenderDetail(j){
-      const v = j.vendor, inv = j.invoices||[], pay = j.payments||[], sp = j.spend||{};
+      const v = j.vendor, inv = j.invoices||[], pay = j.payments||[], sp = j.spend||{}, prop = j.proposals||[], corr = j.correspondence||[];
       const el = document.getElementById('ven-detail'); if(!el) return;
       const badge = (txt,bg,fg)=>`<span style="font-size:11px; font-weight:700; background:${bg}; color:${fg}; padding:2px 9px; border-radius:12px; margin-left:4px;">${txt}</span>`;
       el.innerHTML = `
@@ -44563,6 +44566,12 @@ ${questionsPage}
             ${inv.length? '<div style="max-height:280px; overflow:auto;">'+inv.map(i=>`<div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12.5px;"><span>${venD(i.invoice_date)} · ${apEsc(i.invoice_number||i.vendor_invoice_number||'—')}${i.community&&i.community.name?' · '+apEsc(i.community.name):''}</span><span style="font-variant-numeric:tabular-nums;">${venMoney(i.total_cents)}</span></div>`).join('')+'</div>' : '<div style="font-size:12px; color:#888;">No invoices on file.</div>'}</div>
           <div><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Payments (${pay.length})</div>
             ${pay.length? '<div style="max-height:280px; overflow:auto;">'+pay.map(p=>`<div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12.5px;"><span>${venD(p.payment_date)} · ${apEsc(p.payment_method||'—')}${p.check_number?' #'+apEsc(p.check_number):''}${p.community&&p.community.name?' · '+apEsc(p.community.name):''}</span><span style="font-variant-numeric:tabular-nums;">${venMoney(p.amount_cents)}</span></div>`).join('')+'</div>' : '<div style="font-size:12px; color:#888;">No payments recorded yet.</div>'}</div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px;">
+          <div><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Proposals (${prop.length})</div>
+            ${prop.length? '<div style="max-height:240px; overflow:auto;">'+prop.map(p=>`<div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12.5px;"><span>${venD(p.proposal_date)} · ${apEsc((p.service_category||'—').replace(/_/g,' '))}${p.outcome?' · <span style="color:#64748b;">'+apEsc(p.outcome)+'</span>':''}${p.is_incumbent?' <span style="color:#166534;">(incumbent)</span>':''}</span><span style="font-variant-numeric:tabular-nums;">${(p.total_annual_amount||p.total_amount)?('$'+Number(p.total_annual_amount||p.total_amount).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})):'—'}</span></div>`).join('')+'</div>' : '<div style="font-size:12px; color:#888;">No proposals on file.</div>'}</div>
+          <div><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Correspondence (${corr.length})</div>
+            ${corr.length? '<div style="max-height:240px; overflow:auto;">'+corr.map(c=>`<div style="padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12.5px;"><div>${venD(c.received_at)} ${c.direction==='outbound'?'↑':'↓'} ${apEsc((c.subject||'(no subject)').slice(0,64))}</div>${c.ai_summary?'<div style="color:#64748b; font-size:11.5px;">'+apEsc(String(c.ai_summary).slice(0,100))+'</div>':''}</div>`).join('')+'</div>' : '<div style="font-size:12px; color:#888;">No correspondence linked yet.</div>'}</div>
         </div>`;
     }
     window.venSave = async function(id){
@@ -44578,6 +44587,21 @@ ${questionsPage}
         if(msg){ msg.style.color='#166534'; msg.textContent='✓ Saved'; }
         venLoadList();
       } catch(e){ if(msg){ msg.style.color='#dc2626'; msg.textContent='Could not save: '+e.message; } }
+    };
+    // One-click 1099 worklist: download the year's vendor spend + W-9 / over-$600
+    // status as CSV (auth'd fetch -> blob, since the endpoint needs the token).
+    window.venExport1099 = async function(){
+      const year = ((document.getElementById('ven-1099-year')||{}).value||'').trim() || new Date().getFullYear();
+      const msg = document.getElementById('ven-export-msg'); if(msg){ msg.style.color='#64748b'; msg.textContent='Building '+year+' report…'; }
+      try {
+        const r = await venFetch()('/api/vendors/spend?format=csv&year='+encodeURIComponent(year));
+        if(!r.ok) throw new Error('export failed ('+r.status+')');
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = '1099-vendor-spend-'+year+'.csv';
+        document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 4000);
+        if(msg){ msg.style.color='#166534'; msg.textContent='✓ Downloaded '+year+' 1099 worklist'; }
+      } catch(e){ if(msg){ msg.style.color='#dc2626'; msg.textContent='Could not export: '+e.message; } }
     };
 
     async function apLoadCounts() {
