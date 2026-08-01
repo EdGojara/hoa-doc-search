@@ -15,6 +15,7 @@
 //   GET  /for-record  ?contact_id= | property_id= | vendor_id=   (record's comms feed)
 // ============================================================================
 const express = require('express');
+const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { draftReply } = require('../lib/email/draft_reply');
@@ -178,6 +179,9 @@ function claireSignature(communityName) {
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+// In-memory upload for drag-and-drop email attachments (staff attaches a file
+// from their computer to a reply). 15 MB cap per file. (Ed 2026-08-01.)
+const attachUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 // BETA GATE (Ed 2026-07-07): Communications is owner-only for now. Every
 // endpoint on this router requires the admin (Ed) JWT — staff get 403, so the
@@ -1174,6 +1178,20 @@ router.post('/:id/forward-note', express.json(), async (req, res) => {
 // POST /:id/send — approve-to-send: a human reviewed the draft; send it from
 // claire@ (honest-AI signature), log it, mark the inbound handled. Defense in
 // depth: refuse to send for non-draftable (compliance) classes even if asked.
+// POST /:id/attach-upload — stash a drag-and-dropped file so it can ride out on
+// the reply. Returns { storage_path, name, mime } for the composer to carry; the
+// bytes are attached at send time from storage. (Ed 2026-08-01.)
+router.post('/:id/attach-upload', attachUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer || !req.file.buffer.length) return res.status(400).json({ error: 'no_file', detail: 'No file received.' });
+    const safe = String(req.file.originalname || 'attachment').replace(/[^\w.\-() ]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || 'attachment';
+    const path = `email_outbound_attachments/${req.params.id}/${Date.now()}_${safe}`;
+    const { error } = await supabase.storage.from('documents').upload(path, req.file.buffer, { contentType: req.file.mimetype || 'application/octet-stream', upsert: true });
+    if (error) return res.status(500).json({ error: 'upload_failed', detail: safeErrorMessage(error) });
+    res.json({ ok: true, storage_path: path, name: safe, mime: req.file.mimetype || 'application/octet-stream', size: req.file.size });
+  } catch (err) { console.error('[email_triage] attach-upload failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 router.post('/:id/send', express.json(), async (req, res) => {
   try {
     const { body: _rawBody, to, subject, reviewed_by, original_draft } = req.body || {};
@@ -1267,6 +1285,19 @@ router.post('/:id/send', express.json(), async (req, res) => {
           if (a && a.attachment) attachments = [...(attachments || []), a.attachment];
         }
       } catch (_) { /* best-effort */ }
+    }
+
+    // Files the operator drag-and-dropped from their computer (stashed via
+    // /attach-upload). Pulled from storage and attached at send. (Ed 2026-08-01.)
+    const attachUploads = Array.isArray(req.body && req.body.attach_uploads) ? req.body.attach_uploads.filter((u) => u && u.storage_path).slice(0, 8) : [];
+    for (const u of attachUploads) {
+      try {
+        const { data: blob, error: dErr } = await supabase.storage.from('documents').download(u.storage_path);
+        if (dErr || !blob) { console.warn('[email_triage] dropped attachment missing:', u.storage_path, dErr && dErr.message); continue; }
+        const buf = Buffer.from(await blob.arrayBuffer());
+        if (buf.length > 15 * 1024 * 1024) continue;
+        attachments = [...(attachments || []), { '@odata.type': '#microsoft.graph.fileAttachment', name: String(u.name || 'attachment').slice(0, 150), contentType: u.mime || 'application/octet-stream', contentBytes: buf.toString('base64') }];
+      } catch (e) { console.warn('[email_triage] dropped attachment error:', e.message); }
     }
 
     // Quote the ORIGINAL message (and the prior thread) beneath the reply, so the

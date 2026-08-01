@@ -687,16 +687,46 @@ async function forwardFromSent(id){
 // ---- Attach documents to a reply -----------------------------------------
 function chipsHtml(id){
   const atts = attachByMsg[id]||[];
-  const chips = atts.map(a=>`<span style="display:inline-flex;align-items:center;gap:5px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:3px 8px;font-size:12px;color:#3730a3;">📎 <a href="#" onclick="event.preventDefault();viewDoc('${a.id}')" style="color:#3730a3;text-decoration:underline;">${esc(a.title)}</a>${a.auto?' <span style="opacity:.65;font-size:11px;">auto</span>':` <a href="#" onclick="event.preventDefault();removeAttach('${id}','${a.id}')" title="Remove" style="color:#b91c1c;text-decoration:none;font-weight:700;">×</a>`}</span>`).join('');
+  const chips = atts.map(a=>{
+    if(a.upload){
+      // A file dragged in from the computer.
+      return `<span style="display:inline-flex;align-items:center;gap:5px;background:#e7f6ec;border:1px solid #b7e0c2;border-radius:6px;padding:3px 8px;font-size:12px;color:#166534;">📎 ${esc(a.title)}${a.uploading?' <span style="opacity:.6;">uploading…</span>':''} <a href="#" onclick="event.preventDefault();removeAttach('${id}','${a.id}')" title="Remove" style="color:#b91c1c;text-decoration:none;font-weight:700;">×</a></span>`;
+    }
+    return `<span style="display:inline-flex;align-items:center;gap:5px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:3px 8px;font-size:12px;color:#3730a3;">📎 <a href="#" onclick="event.preventDefault();viewDoc('${a.id}')" style="color:#3730a3;text-decoration:underline;">${esc(a.title)}</a>${a.auto?' <span style="opacity:.65;font-size:11px;">auto</span>':` <a href="#" onclick="event.preventDefault();removeAttach('${id}','${a.id}')" title="Remove" style="color:#b91c1c;text-decoration:none;font-weight:700;">×</a>`}</span>`;
+  }).join('');
   return chips + `<button class="act" style="font-size:12px;" onclick="toggleAttachPicker('${id}')">📎 Attach a document</button>`;
 }
 function attachRowHtml(id){
-  return `<div style="margin-top:7px;">
+  return `<div class="attzone" id="attzone-${id}" ondragover="attachDragOver(event,'${id}')" ondragleave="attachDragLeave(event,'${id}')" ondrop="attachDrop(event,'${id}')" style="margin-top:7px;border:1px dashed transparent;border-radius:8px;padding:3px;transition:border-color .12s,background .12s;">
     <div id="attchips-${id}" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">${chipsHtml(id)}</div>
+    <div class="note" style="font-size:11px;color:#94a3b8;margin-top:4px;">or drag a file here from your computer to attach it · <a href="#" onclick="event.preventDefault();document.getElementById('attfile-${id}').click();" style="color:#0B1D34;font-weight:600;">choose a file</a><input type="file" id="attfile-${id}" multiple style="display:none;" onchange="uploadAttachFiles('${id}',this.files); this.value='';"></div>
     <div id="attpick-${id}" style="display:none;margin-top:6px;">
       <input id="attq-${id}" type="text" placeholder="Search filed documents — e.g. application, policy, letter…" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;" oninput="searchDocs('${id}')">
       <div id="attres-${id}" style="margin-top:4px;max-height:190px;overflow:auto;"></div>
     </div></div>`;
+}
+function attachDragOver(e,id){ e.preventDefault(); const z=document.getElementById('attzone-'+id); if(z){ z.style.borderColor='#0B1D34'; z.style.background='#f5f8ff'; } }
+function attachDragLeave(e,id){ const z=document.getElementById('attzone-'+id); if(z){ z.style.borderColor='transparent'; z.style.background=''; } }
+function attachDrop(e,id){ e.preventDefault(); attachDragLeave(e,id); const files=e.dataTransfer&&e.dataTransfer.files; if(files&&files.length) uploadAttachFiles(id,files); }
+// Upload each dropped/chosen file, showing an "uploading…" chip, then carry its
+// storage_path so doSend attaches it. (Ed 2026-08-01.)
+async function uploadAttachFiles(id, fileList){
+  const files=[...(fileList||[])]; if(!files.length) return;
+  attachByMsg[id]=attachByMsg[id]||[];
+  for(const f of files){
+    if(f.size>15*1024*1024){ alert('"'+f.name+'" is larger than 15 MB — too big to attach to an email.'); continue; }
+    const tmpId='up-'+Math.random().toString(36).slice(2);
+    attachByMsg[id].push({ id:tmpId, title:f.name, upload:true, uploading:true });
+    renderAttachChips(id);
+    try{
+      const fd=new FormData(); fd.append('file', f);
+      const r=await af(`${API}/${id}/attach-upload`, {method:'POST', body:fd});
+      const j=await r.json().catch(()=>({}));
+      const item=(attachByMsg[id]||[]).find(a=>a.id===tmpId);
+      if(!r.ok||!j.ok){ attachByMsg[id]=(attachByMsg[id]||[]).filter(a=>a.id!==tmpId); renderAttachChips(id); alert('Could not attach "'+f.name+'": '+(j.detail||j.error||'upload failed')); }
+      else if(item){ item.uploading=false; item.storage_path=j.storage_path; item.mime=j.mime; item.id=j.storage_path; renderAttachChips(id); }
+    }catch(e){ attachByMsg[id]=(attachByMsg[id]||[]).filter(a=>a.id!==tmpId); renderAttachChips(id); alert('Upload failed for "'+f.name+'".'); }
+  }
 }
 function renderAttachChips(id){ const w=document.getElementById('attchips-'+id); if(w) w.innerHTML=chipsHtml(id); }
 function toggleAttachPicker(id){
@@ -993,17 +1023,21 @@ async function doSend(id, btn, careful, persona){
   const who = (PNAME[persona]||'Claire').split(' ')[0];
   const covers = coversByMsg[id] || [];
   if(careful && !confirm(`This is a compliance-sensitive reply (legal / violation / ACC / money). Send it as ${who} now?`)) return;
+  // A file still uploading? Don't send without it. (Ed 2026-08-01.)
+  if((attachByMsg[id]||[]).some(a=>a.upload&&a.uploading)){ alert('A file is still uploading — give it a second, then send.'); return; }
   const body = document.getElementById('dt-'+id).value;
   btn.disabled = true; btn.textContent = 'Sending…';
   const also_handle = covers.map(c=>c.id);
-  // Auto attachments (the ARC form) attach server-side by classification; send the
-  // documents the operator picked manually.
-  const attach_doc_ids = (attachByMsg[id]||[]).filter(a=>!a.auto).map(a=>a.id);
+  // Auto attachments (the ARC form) attach server-side by classification. Split the
+  // rest: filed library docs go by id; files dragged in go by storage_path.
+  const manual = (attachByMsg[id]||[]).filter(a=>!a.auto);
+  const attach_doc_ids = manual.filter(a=>!a.upload).map(a=>a.id);
+  const attach_uploads = manual.filter(a=>a.upload&&a.storage_path).map(a=>({name:a.title, storage_path:a.storage_path, mime:a.mime}));
   const ccEl = document.getElementById('cc-'+id); const cc = ccEl ? (ccEl.value||'').trim() : '';
   const toEl = document.getElementById('to-'+id); const to = toEl ? (toEl.value||'').trim() : '';
   if(toEl && !to){ btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert('Enter a recipient in the To field before sending.'); toEl.focus(); return; }
   const original_draft = originalDraftByMsg[id] || '';
-  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, to, also_handle, attach_doc_ids, cc, original_draft})});
+  const r = await af(`${API}/${id}/send`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body, to, also_handle, attach_doc_ids, attach_uploads, cc, original_draft})});
   const j = await r.json();
   if(r.ok){
     const fu = j.followups||{};
