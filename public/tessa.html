@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tessa McCall — Executive Assistant</title>
+<!-- Installable app: "Add to Home Screen" gives Tessa her own icon + full-screen app. (Ed 2026-08-01) -->
+<link rel="manifest" href="/tessa.webmanifest">
+<meta name="theme-color" content="#0B1D34">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tessa">
+<link rel="apple-touch-icon" href="/tessa-icon.png">
+<link rel="icon" type="image/png" href="/tessa-icon.png">
 <link rel="stylesheet" href="/brand.css">
 <style>
   :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
@@ -428,5 +437,14 @@ async function setFu(id,status){ await af('/api/tessa/followups/'+id,{method:'PA
 })();
 </script>
 <script src="/deploy-watcher.js"></script>
+<script>
+  // Register the service worker so Tessa is installable (Chrome/Android show the
+  // install prompt; iOS uses Add to Home Screen). Reuses the app's shared sw.js.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('SW registration failed', err));
+    });
+  }
+</script>
 </body>
 </html>

@@ -1,0 +1,15 @@
+{
+  "name": "Tessa — Bedrock",
+  "short_name": "Tessa",
+  "description": "Ed's executive assistant. Dictate a request, she resolves the contact, drafts the email, and sends it on your OK. Tracks admin, banking, and vendor follow-ups.",
+  "start_url": "/admin/tessa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0B1D34",
+  "theme_color": "#0B1D34",
+  "icons": [
+    { "src": "/tessa-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "categories": ["productivity", "business"]
+}
