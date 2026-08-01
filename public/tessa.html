@@ -67,6 +67,11 @@ function render(){
         </div>
         <label>Pick a recipient <span class="note" style="font-weight:400;">(board member, staff, or AI teammate — or just type below)</span></label>
         <select id="rpick" onchange="pickRecipient()"><option value="">— loading directory&hellip; —</option></select>
+        <label>Search my contacts <span class="note" style="font-weight:400;">(bank, attorney, insurance, vendor reps &mdash; e.g. &ldquo;Melody&rdquo; or &ldquo;New First&rdquo;)</span></label>
+        <div style="position:relative;">
+          <input id="csearch" placeholder="Type a name or company…" autocomplete="off" oninput="contactSearch()">
+          <div id="cresults" style="display:none; position:absolute; z-index:30; left:0; right:0; background:#fff; border:1px solid #cbd5e1; border-radius:0 0 8px 8px; max-height:250px; overflow:auto; box-shadow:0 10px 28px rgba(11,29,52,.15);"></div>
+        </div>
         <label>To</label><input id="to" placeholder="name@example.com">
         <label>Recipient name (optional, helps the greeting)</label><input id="rname" placeholder="e.g. Karla at DRB">
         <label>Your thought <span class="note" style="font-weight:400;">(type it, or tap the mic and talk)</span></label>
@@ -181,6 +186,51 @@ function pickRecipient(){
   const nm=_rpickName[v]||'';
   if(nm && $('rname') && !$('rname').value.trim()) $('rname').value = nm;
 }
+
+// ---- Contact loop: search Tessa's address book (bank / attorney / vendors),
+// resolve one into To, "read it back", or save a new one. (Ed 2026-08-01.) ----
+let _cTimer=null, _contacts=[];
+function contactSearch(){
+  clearTimeout(_cTimer);
+  _cTimer=setTimeout(async()=>{
+    const q=($('csearch').value||'').trim(); const box=$('cresults'); if(!box) return;
+    if(q.length<2){ box.style.display='none'; box.innerHTML=''; return; }
+    box.style.display='block'; box.innerHTML='<div class="note" style="padding:8px 10px;">Searching…</div>';
+    try{
+      const r=await af('/api/tessa/contacts?q='+encodeURIComponent(q)); const j=await r.json();
+      _contacts=j.contacts||[];
+      let h=_contacts.map((c,i)=>`<div onclick="pickContact(${i})" style="padding:8px 10px; border-bottom:1px solid #eef2f7; cursor:pointer;" onmouseover="this.style.background='#f5f8fc'" onmouseout="this.style.background='#fff'">
+        <div style="font-weight:600; color:#0B1D34; font-size:13.5px;">${esc(c.name)}${c.org?` <span style="color:#64748b; font-weight:400;">· ${esc(c.org)}</span>`:''}</div>
+        <div style="font-size:11.5px; color:#64748b;">${esc(c.email||'no email')}${c.role?' · '+esc(c.role):''}</div></div>`).join('');
+      h+=`<div onclick="addContactPrompt()" style="padding:8px 10px; cursor:pointer; color:#0B1D34; font-weight:600; font-size:12.5px; background:#fbfcfe;">➕ Add &ldquo;${esc(q)}&rdquo; as a new contact</div>`;
+      box.innerHTML=h;
+    }catch(e){ box.innerHTML='<div class="note" style="padding:8px 10px;">Search failed.</div>'; }
+  }, 220);
+}
+function pickContact(i){
+  const c=_contacts[i]; if(!c) return;
+  if(c.email) $('to').value=c.email;
+  if($('rname')) $('rname').value=c.name+(c.org?(' at '+c.org):'');
+  $('csearch').value=c.name+(c.org?(' · '+c.org):'');
+  $('cresults').style.display='none';
+  const dm=$('draftMsg'); if(dm){ dm.style.color='#166534'; dm.innerHTML='✓ To: <b>'+esc(c.email||c.name)+'</b> — write your thought, draft it, and confirm before it sends.'; }
+}
+async function addContactPrompt(){
+  const q=($('csearch').value||'').trim();
+  const name=prompt('Contact name:', q); if(!name) return;
+  const organization=prompt('Company / organization (optional):', '')||'';
+  const email=prompt('Email:', ''); if(email===null) return;
+  try{
+    const r=await af('/api/tessa/contacts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name, organization, email:(email||'').trim()})});
+    const j=await r.json();
+    if(!r.ok||!j.ok){ alert('Could not save: '+(j.detail||j.error||'error')); return; }
+    if(j.contact.email) $('to').value=j.contact.email;
+    if($('rname')) $('rname').value=name+(organization?(' at '+organization):'');
+    $('csearch').value=name+(organization?(' · '+organization):''); $('cresults').style.display='none';
+    const dm=$('draftMsg'); if(dm){ dm.style.color='#166534'; dm.textContent='✓ Saved'+(j.contact.email?' & set To: '+j.contact.email:'')+'. She’ll resolve this name next time.'; }
+  }catch(e){ alert('Could not save the contact.'); }
+}
+document.addEventListener('click',(e)=>{ const b=$('cresults'); if(b && b.style.display!=='none' && e.target.id!=='csearch' && !e.target.closest('#cresults')) b.style.display='none'; });
 
 const _ibmode={};
 async function pollInbox(){

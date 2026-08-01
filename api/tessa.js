@@ -23,6 +23,60 @@ const router = express.Router();
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const parseAddrs = (v) => String(v || '').split(/[,;]/).map((s) => s.trim()).filter((s) => EMAIL_RE.test(s));
 
+// GET /contacts?q= — Tessa's address book search. Resolves "Melody at New First
+// National Bank" across the saved EA book + vendor reps + per-community contacts
+// (bank / attorney / insurance). Staff, board, and the AI team stay in the
+// compose picker; this covers the OUTSIDE contacts that had no home. (Ed 2026-08-01.)
+router.get('/contacts', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const q = String(req.query.q || '').trim();
+    const like = `%${q.replace(/[%,]/g, ' ')}%`;
+    const out = []; const seen = new Set();
+    const add = (c) => {
+      if (!c.email) return; const k = c.email.toLowerCase();
+      if (seen.has(k)) return; seen.add(k); out.push(c);
+    };
+    // 1) Saved EA address book (primary — the place "Melody" lands).
+    let eaQ = supabase.from('ea_contacts').select('name, organization, email, phone, role, category').limit(40);
+    if (q) eaQ = eaQ.or(`name.ilike.${like},organization.ilike.${like},email.ilike.${like}`);
+    const { data: ea } = await eaQ;
+    for (const c of (ea || [])) add({ name: c.name, org: c.organization, email: c.email, phone: c.phone, role: c.role || c.category, source: 'address_book' });
+    // 2) Vendor reps (the vendor's contact person).
+    let vQ = supabase.from('vendors').select('name, contact_name, contact_email, email, phone').neq('is_active', false).limit(30);
+    if (q) vQ = vQ.or(`name.ilike.${like},contact_name.ilike.${like},contact_email.ilike.${like}`);
+    const { data: vs } = await vQ;
+    for (const v of (vs || [])) { const em = v.contact_email || v.email; if (em) add({ name: v.contact_name || v.name, org: v.name, email: em, phone: v.phone, role: 'vendor', source: 'vendor' }); }
+    // 3) Per-community contacts (bank / attorney / insurance rep).
+    let ccQ = supabase.from('community_contacts').select('name, email, phone, category, community:community_id(name)').not('email', 'is', null).limit(30);
+    if (q) ccQ = ccQ.or(`name.ilike.${like},category.ilike.${like}`);
+    const { data: cc } = await ccQ;
+    for (const c of (cc || [])) add({ name: c.name, org: (c.community && c.community.name) || null, email: c.email, phone: c.phone, role: c.category, source: 'community_contact' });
+    res.json({ contacts: out.slice(0, 40) });
+  } catch (err) { console.error('[tessa] contacts failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /contacts — save a contact to the EA book (upsert on email) so it resolves
+// next time. { name, organization?, email?, phone?, role?, category?, notes? }.
+router.post('/contacts', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const b = req.body || {};
+    const name = String(b.name || '').trim();
+    const email = String(b.email || '').trim();
+    if (!name) return res.status(400).json({ error: 'name_required', detail: 'A name is required.' });
+    if (email && !EMAIL_RE.test(email)) return res.status(400).json({ error: 'bad_email', detail: 'That email doesn\'t look valid.' });
+    const row = { name, organization: b.organization || null, email: email || null, phone: b.phone || null, role: b.role || null, category: b.category || null, notes: b.notes || null, created_by: owner.email || owner.full_name || 'Ed' };
+    if (email) {
+      const { data: ex } = await supabase.from('ea_contacts').select('id').ilike('email', email).limit(1);
+      if (ex && ex.length) { const { data } = await supabase.from('ea_contacts').update(row).eq('id', ex[0].id).select().single(); return res.json({ ok: true, contact: data, updated: true }); }
+    }
+    const { data, error } = await supabase.from('ea_contacts').insert(row).select().single();
+    if (error) throw error;
+    res.json({ ok: true, contact: data });
+  } catch (err) { console.error('[tessa] add contact failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // POST /draft — turn a thought into a send-ready email (nothing sent).
 router.post('/draft', express.json({ limit: '32kb' }), async (req, res) => {
   const admin = await requireOwner(req, res); if (!admin) return;
