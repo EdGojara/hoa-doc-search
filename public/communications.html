@@ -39,6 +39,7 @@
   .act { border:none; border-radius:6px; padding:5px 11px; font-size:12px; cursor:pointer; }
   .act.dismiss { background:#f1f5f9; color:#64748b; } .act.spam { background:#fef2f2; color:#b91c1c; } .act.draft { background:#eef2ff; color:#3730a3; } .act.send { background:#166534; color:#fff; }
   .draftbox { margin-top:9px; border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfcfe; }
+  .draftbox.dragging { outline:2px dashed #0B1D34; outline-offset:3px; background:#eef4ff; }
   .draftbox textarea { width:100%; min-height:110px; border:1px solid var(--line); border-radius:6px; padding:8px; font:13px/1.5 inherit; box-sizing:border-box; }
   .draftbox .note { font-size:11px; color:var(--muted); margin-bottom:6px; }
   .draftbox .refuse { font-size:12.5px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:8px 10px; }
@@ -542,7 +543,7 @@ function draftBoxHtml(id, subject, body, careful, persona, covers){
   const coversNote = covers.length
     ? `<div class="note" style="background:#eef6ff;border:1px solid #bcdcff;border-radius:6px;padding:6px 9px;color:#0b4a8f;">📎 This homeowner sent ${covers.length+1} emails close together — this one reply covers them all${covers.length? ' ('+covers.map(c=>esc(c.subject||'(no subject)')).join(', ')+')':''}. Sending clears all ${covers.length+1}.</div>`
     : '';
-  return `<div class="draftbox">
+  return `<div class="draftbox" id="draftbox-${id}" ondragover="boxDragOver(event,'${id}')" ondragleave="boxDragLeave(event,'${id}')" ondrop="boxDrop(event,'${id}')">
     ${careful?`<div class="refuse">⚠ Compliance-sensitive (legal / violation / ACC / money). ${esc(whoFirst)} drafted a careful answer from the account + §209 / governing docs — <strong>read carefully</strong> before sending.</div>`:''}
     ${coversNote}
     <div class="note">${esc(whoFirst)}'s draft${subject?' ('+esc(subject)+')':''} — review / edit, then approve. Nothing sends until you click.</div>
@@ -697,17 +698,21 @@ function chipsHtml(id){
   return chips + `<button class="act" style="font-size:12px;" onclick="toggleAttachPicker('${id}')">📎 Attach a document</button>`;
 }
 function attachRowHtml(id){
-  return `<div class="attzone" id="attzone-${id}" ondragover="attachDragOver(event,'${id}')" ondragleave="attachDragLeave(event,'${id}')" ondrop="attachDrop(event,'${id}')" style="margin-top:7px;border:1px dashed transparent;border-radius:8px;padding:3px;transition:border-color .12s,background .12s;">
+  return `<div style="margin-top:7px;">
     <div id="attchips-${id}" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">${chipsHtml(id)}</div>
-    <div class="note" style="font-size:11px;color:#94a3b8;margin-top:4px;">or drag a file here from your computer to attach it · <a href="#" onclick="event.preventDefault();document.getElementById('attfile-${id}').click();" style="color:#0B1D34;font-weight:600;">choose a file</a><input type="file" id="attfile-${id}" multiple style="display:none;" onchange="uploadAttachFiles('${id}',this.files); this.value='';"></div>
+    <div class="note" style="font-size:11px;color:#94a3b8;margin-top:4px;">or <b>drag a file anywhere onto this draft</b> to attach it · <a href="#" onclick="event.preventDefault();document.getElementById('attfile-${id}').click();" style="color:#0B1D34;font-weight:600;">choose a file</a><input type="file" id="attfile-${id}" multiple style="display:none;" onchange="uploadAttachFiles('${id}',this.files); this.value='';"></div>
     <div id="attpick-${id}" style="display:none;margin-top:6px;">
       <input id="attq-${id}" type="text" placeholder="Search filed documents — e.g. application, policy, letter…" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;" oninput="searchDocs('${id}')">
       <div id="attres-${id}" style="margin-top:4px;max-height:190px;overflow:auto;"></div>
     </div></div>`;
 }
-function attachDragOver(e,id){ e.preventDefault(); const z=document.getElementById('attzone-'+id); if(z){ z.style.borderColor='#0B1D34'; z.style.background='#f5f8ff'; } }
-function attachDragLeave(e,id){ const z=document.getElementById('attzone-'+id); if(z){ z.style.borderColor='transparent'; z.style.background=''; } }
-function attachDrop(e,id){ e.preventDefault(); attachDragLeave(e,id); const files=e.dataTransfer&&e.dataTransfer.files; if(files&&files.length) uploadAttachFiles(id,files); }
+// The WHOLE draft box is a drop target (dropping on the small attach row was too
+// easy to miss — a near-miss made the browser open the file instead). Only
+// intercept FILE drags, so dropping text into the textarea still works. (Ed 2026-08-01.)
+function _hasFiles(e){ try{ return [...((e.dataTransfer&&e.dataTransfer.types)||[])].includes('Files'); }catch(_){ return !!(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length); } }
+function boxDragOver(e,id){ if(!_hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect='copy'; const b=document.getElementById('draftbox-'+id); if(b) b.classList.add('dragging'); }
+function boxDragLeave(e,id){ const b=document.getElementById('draftbox-'+id); if(b && !b.contains(e.relatedTarget)) b.classList.remove('dragging'); }
+function boxDrop(e,id){ if(!_hasFiles(e)) return; e.preventDefault(); const b=document.getElementById('draftbox-'+id); if(b) b.classList.remove('dragging'); const files=e.dataTransfer&&e.dataTransfer.files; if(files&&files.length) uploadAttachFiles(id,files); }
 // Upload each dropped/chosen file, showing an "uploading…" chip, then carry its
 // storage_path so doSend attaches it. (Ed 2026-08-01.)
 async function uploadAttachFiles(id, fileList){
