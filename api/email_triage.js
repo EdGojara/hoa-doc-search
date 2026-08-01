@@ -1505,16 +1505,25 @@ router.post('/:id/add-to-payables', express.json(), async (req, res) => {
 // confident expense account are all present, so it can't corrupt the books.
 router.post('/:id/to-gl', express.json(), async (req, res) => {
   try {
+    const b = req.body || {};
     const { data: m } = await supabase.from('email_messages')
       .select('id, graph_id, subject, sender_name, ai_summary, body_full, body_preview, community_id, resolved_vendor_id, extracted, received_at')
       .eq('id', req.params.id).maybeSingle();
     if (!m) return res.status(404).json({ error: 'not_found' });
-    if (!m.community_id) return res.status(400).json({ error: 'no_community', detail: 'Link this email to a community first — the entry has to post to the right association books.' });
+    // Community: the email's link if it has one, else the one supplied with a
+    // manual entry. Autopay / auto-draft notices arrive as internal forwards with
+    // NO resolved community and NO PDF (Martha's NRG "auto draft" for Still Creek
+    // Ranch — the amount lives only in the draft narrative), so Emma's queue has
+    // to let the operator name the community + amount by hand and still post it.
+    // Persist the community so the entry, the audit trail, and future
+    // account/community auto-routing (learnMapping below) all agree. (Ed 2026-08-01.)
+    const communityId = m.community_id || (b.community_id ? String(b.community_id) : null);
+    if (!communityId) return res.status(400).json({ error: 'no_community', detail: 'Pick the community this bill belongs to — the entry has to post to the right association books.' });
+    if (!m.community_id) { m.community_id = communityId; try { await supabase.from('email_messages').update({ community_id: communityId }).eq('id', m.id); } catch (_) {} }
 
-    const b = req.body || {};
     const { recordVendorPaymentToGL, singleAmountCents } = require('../lib/accounting/record_vendor_payment');
     let cents = (b.amount_cents && Number.isInteger(+b.amount_cents) && +b.amount_cents > 0) ? +b.amount_cents : singleAmountCents(m.extracted && m.extracted.amounts);
-    if (!cents) return res.status(400).json({ error: 'ambiguous_amount', detail: 'Couldn\'t pin a single amount. Record this one in Accounting so the figure is exact.' });
+    if (!cents) return res.status(400).json({ error: 'ambiguous_amount', detail: 'Enter the bill amount — the email doesn\'t state it as a single clear figure to post.' });
     // A utility bill under a known alias codes to that alias's account: a North
     // Mission Glen MUD auto-pay -> Eaglewood 5120 Water, no history needed. This
     // is why the registry carries the GL account, not just the community. The

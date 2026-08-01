@@ -182,6 +182,16 @@ function linkCell(m){
   // correspondence (kept for the staff-interaction/training loop). Don't nag to
   // "link to a homeowner"; label it a staff email.
   if (m.classification === 'internal') {
+    // A staffer's internal note in Emma's (AP) queue is usually a forwarded
+    // vendor / utility bill — it still needs a community so it can be recorded to
+    // the GL or filed to Payables. Show the picker, not a dead label. Claire's
+    // homeowner-side internal chatter stays a plain label. (Ed 2026-08-01.)
+    if (m.persona === 'emma') {
+      if (m.community && m.community.name) {
+        return `<span class="linked">✓ ${esc(m.community.name)}</span> <span class="lbl">— wrong community? re-map:</span> ${communityPicker(m.id)}`;
+      }
+      return `<span class="lbl" style="color:#5b21b6;font-weight:600;">👥 Staff email &middot; AP</span> <span class="lbl">— link a community:</span> ${communityPicker(m.id)}`;
+    }
     return `<span class="lbl" style="color:#5b21b6;font-weight:600;">👥 Staff email &middot; internal correspondence</span>`;
   }
   const name = (m.resolved_contact&&m.resolved_contact.full_name) || (m.resolved_vendor&&m.resolved_vendor.name) || (m.resolved_property&&m.resolved_property.street_address);
@@ -381,7 +391,7 @@ function msgHtml(m){
           </div>
         </div>
         <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
-          ${m.standing&&m.standing.action==='add_to_payables'?`<button class="act" style="background:${m.standing.escalate?'#b91c1c':'#065f46'};color:#fff;" onclick="doFile('${m.id}','add-to-payables',this)" title="This bill isn't in Payables yet — add it as an urgent placeholder so it isn't missed; the approver verifies before paying">➕ Add to Payables${m.standing.escalate?' · URGENT':''}</button>`:''}${m.can_file_payables?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button>`:''}${m.can_record_gl?`<button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}${m.persona==='emma'&&!m.can_record_gl&&!m.can_file_payables&&!(m.standing&&m.standing.action==='add_to_payables')?`<span class="note" style="font-size:11px;color:#94a3b8;align-self:center;" title="${esc(m.record_gl_blocked||'')}">can't file this one — ${esc(m.record_gl_blocked||'nothing to post')}</span>`:''}
+          ${m.standing&&m.standing.action==='add_to_payables'?`<button class="act" style="background:${m.standing.escalate?'#b91c1c':'#065f46'};color:#fff;" onclick="doFile('${m.id}','add-to-payables',this)" title="This bill isn't in Payables yet — add it as an urgent placeholder so it isn't missed; the approver verifies before paying">➕ Add to Payables${m.standing.escalate?' · URGENT':''}</button>`:''}${m.can_file_payables?`<button class="act" style="background:#065f46;color:#fff;" onclick="doFile('${m.id}','to-payables',this)">🧾 Send to Payables</button>`:''}${m.can_record_gl?`<button class="act" style="background:#1e3a8a;color:#fff;" onclick="doFile('${m.id}','to-gl',this)">📒 Record to GL</button>`:''}${m.persona==='emma'&&!m.can_record_gl?`<button class="act" style="background:#1e3a8a;color:#fff;" onclick="openGlEntry('${m.id}')" title="Record this bill to the GL by hand — pick the community, enter the amount and expense account. Use this for an autopay / auto-draft notice where nothing is left to pay but the books still need the entry.">📒 Record to GL&hellip;</button>`:''}
           ${canOweCredit(m) ? `<button class="act" style="background:#b91c1c;color:#fff;" onclick="flagCredit('${m.id}')" title="A vendor owes us money because of this. Puts a hold on their next invoice so we don't pay full.">💳 Credit owed</button>` : ''}
           <button class="act draft" onclick="doDraft('${m.id}','${m.persona||'claire'}')" title="Reply to the sender — drafts a reply you review before sending">✉️ ${m.extracted&&m.extracted.draft?'Re-draft':'Reply'}</button>
           <button class="act" onclick="rowReplyAll('${m.id}','${m.persona||'claire'}')" title="Reply and copy everyone else on the thread (board members, the CM, etc.)">↩ Reply all</button>
@@ -403,6 +413,7 @@ function msgHtml(m){
       <div id="thread-${m.id}"></div>
       <div id="fwd-${m.id}"></div>
       <div class="link-row">${linkCell(m)}</div>
+      <div id="glentry-${m.id}"></div>
       <div id="filemsg-${m.id}" class="result" style="margin-top:4px;"></div>
       <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire'):''}</div>
     </div>`;
@@ -809,6 +820,88 @@ async function doFile(id, action, btn){
     selectedIds.delete(id);
     loadStats();
   }catch(e){ if(msg) msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; rowBtns.forEach(b=>b.disabled=false); btn.textContent=prev; _filingIds.delete(id); }
+}
+// Manual "Record to GL" for a bill in Emma's queue that didn't auto-resolve —
+// the autopay / auto-draft case: an internal forward with no PDF and no single
+// extracted amount (Martha's NRG "auto draft" for Still Creek Ranch), where the
+// books still need Dr expense / Cr 1000 Operating Cash. Collects community +
+// amount + expense account and posts through the SAME idempotent, duplicate-
+// guarded /to-gl path as the one-click button. (Ed 2026-08-01.)
+const glAcctCache = {}; // communityId -> [{id, account_number, account_name}]
+async function loadExpenseAccounts(cid){
+  if(!cid) return [];
+  if(glAcctCache[cid]) return glAcctCache[cid];
+  try{
+    const r = await af(`/api/gl/${cid}/chart-of-accounts`); const j = await r.json();
+    const list = (j.accounts||[]).filter(a=>a && a.account_type==='expense' && a.is_active!==false)
+      .sort((a,b)=>String(a.account_number).localeCompare(String(b.account_number)));
+    glAcctCache[cid] = list; return list;
+  }catch(_){ return []; }
+}
+async function openGlEntry(id){
+  const box = document.getElementById('glentry-'+id);
+  if(!box) return;
+  if(box.innerHTML){ box.innerHTML=''; return; }   // toggle closed on a second click
+  const m = (window._msgs||[]).find(x=>x.id===id) || {};
+  await loadCommunities();
+  const curCid = m.community_id || '';
+  // Pre-fill any single dollar amount the classifier already found (blank on the
+  // NRG case, where it lives only in the draft narrative — Ed types it in).
+  const amts = (m.extracted && m.extracted.amounts) || [];
+  const nums = [...new Set(amts.map(a=>parseFloat(String(a).replace(/[^0-9.]/g,''))).filter(n=>n>0))];
+  const preAmt = nums.length===1 ? nums[0].toFixed(2) : '';
+  const comOpts = (communitiesCache||[]).map(c=>`<option value="${esc(c.id)}"${c.id===curCid?' selected':''}>${esc(c.name)}</option>`).join('');
+  box.innerHTML = `<div class="draftbox" style="background:#f6f9ff;border:1px solid #c9d9f5;">
+    <div style="font-weight:700;color:#1e3a8a;font-size:13px;margin-bottom:4px;">📒 Record this bill to the GL</div>
+    <div style="font-size:11.5px;color:#475569;margin-bottom:9px;">Posts <b>Dr</b> the expense account / <b>Cr</b> 1000 Operating Cash, flagged for month-end review. No email is sent. Use this for an autopay / auto-draft where there's nothing left to pay but the books still need the entry.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+      <label style="font-size:11.5px;color:#334155;">Community<br><select id="gl-com-${id}" onchange="glComChanged('${id}')" style="font-size:12.5px;padding:4px 6px;border:1px solid var(--line);border-radius:5px;min-width:180px;"><option value="">— pick —</option>${comOpts}</select></label>
+      <label style="font-size:11.5px;color:#334155;">Amount ($)<br><input id="gl-amt-${id}" type="text" inputmode="decimal" value="${esc(preAmt)}" placeholder="2397.00" style="font-size:12.5px;padding:5px 6px;border:1px solid var(--line);border-radius:5px;width:110px;"></label>
+      <label style="font-size:11.5px;color:#334155;">Expense account<br><select id="gl-acct-${id}" style="font-size:12.5px;padding:4px 6px;border:1px solid var(--line);border-radius:5px;min-width:230px;"><option value="">— pick a community first —</option></select></label>
+      <button class="act" style="background:#1e3a8a;color:#fff;" onclick="submitGlEntry('${id}')">Post to GL</button>
+      <button class="act" style="background:#f1f5f9;color:#334155;" onclick="document.getElementById('glentry-${id}').innerHTML=''">Cancel</button>
+    </div>
+    <div id="gl-msg-${id}" style="margin-top:7px;font-size:12px;"></div>
+  </div>`;
+  if(curCid) glComChanged(id);
+}
+async function glComChanged(id){
+  const cid = document.getElementById('gl-com-'+id).value;
+  const sel = document.getElementById('gl-acct-'+id);
+  sel.innerHTML = '<option value="">loading accounts…</option>';
+  const list = await loadExpenseAccounts(cid);
+  sel.innerHTML = list.length
+    ? `<option value="">— let the system pick —</option>` + list.map(a=>`<option value="${esc(a.id)}">${esc(a.account_number)} &middot; ${esc(a.account_name)}</option>`).join('')
+    : '<option value="">(no expense accounts on file — leave blank)</option>';
+}
+async function submitGlEntry(id){
+  const cid = (document.getElementById('gl-com-'+id)||{}).value;
+  const amtRaw = (document.getElementById('gl-amt-'+id)||{}).value || '';
+  const acct = (document.getElementById('gl-acct-'+id)||{}).value;
+  const msg = document.getElementById('gl-msg-'+id);
+  const setErr = (t)=>{ if(msg) msg.innerHTML='<span style="color:#b91c1c;">'+esc(t)+'</span>'; };
+  if(!cid){ setErr('Pick the community this bill belongs to.'); return; }
+  const amt = parseFloat(String(amtRaw).replace(/[^0-9.]/g,''));
+  if(!(amt>0)){ setErr('Enter the bill amount, e.g. 2397.00'); return; }
+  const body = { community_id: cid, amount_cents: Math.round(amt*100) };
+  if(acct) body.gl_account_id = acct;
+  if(msg) msg.innerHTML='<span style="color:#64748b;">Posting…</span>';
+  try{
+    let r = await af(`${API}/${id}/to-gl`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    let j = await r.json().catch(()=>({}));
+    // Same-payment guard: a second autopay notification for one payment. Confirm before double-posting.
+    if(r.status===409 && j.error==='suspected_duplicate'){
+      if(!confirm((j.detail||'This looks like a payment already recorded.')+'\n\nOK = record it again anyway.  Cancel = skip (recommended).')){ if(msg) msg.innerHTML='<span style="color:#64748b;">Skipped as a duplicate — not recorded.</span>'; return; }
+      body.confirm_duplicate = true;
+      r = await af(`${API}/${id}/to-gl`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      j = await r.json().catch(()=>({}));
+    }
+    if(!r.ok || j.error){ setErr(j.detail||j.error||'Could not record to the GL.'); return; }
+    // Recorded — drop the row from the inbox (backend is idempotent on a re-press).
+    const card = document.getElementById('msg-'+id);
+    if(card){ card.style.transition='opacity .25s'; card.style.opacity='0'; setTimeout(()=>card.remove(),260); }
+    selectedIds.delete(id); loadStats();
+  }catch(e){ setErr(e.message||String(e)); }
 }
 async function doDraft(id, persona){
   const box = document.getElementById('draft-'+id);
