@@ -195,12 +195,14 @@ router.post('/:id/send', async (req, res) => {
       html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;white-space:pre-wrap;">${d.body_text.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</div>`;
     }
 
-    // Pull any stored file attachments from the documents bucket.
+    // Pull any stored file attachments. Default bucket is 'documents'; an
+    // attachment may name its own bucket (e.g. a violation letter lives in
+    // 'violation-letters'), so honor a.bucket when set. (Ed 2026-08-01.)
     const fileAttachments = [];
     for (const a of Array.isArray(d.attachments) ? d.attachments : []) {
       if (!a || !a.storage_path) continue;
       try {
-        const { data: blob, error: dErr } = await supabase.storage.from('documents').download(a.storage_path);
+        const { data: blob, error: dErr } = await supabase.storage.from(a.bucket || 'documents').download(a.storage_path);
         if (dErr) { console.warn('[email_drafts] attachment download failed:', a.storage_path, dErr.message); continue; }
         const buf = Buffer.from(await blob.arrayBuffer());
         fileAttachments.push({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name || 'attachment', contentType: a.mime || 'application/octet-stream', contentBytes: buf.toString('base64') });

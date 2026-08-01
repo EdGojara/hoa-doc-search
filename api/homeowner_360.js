@@ -420,6 +420,59 @@ router.get('/file', async (req, res) => {
   }
 });
 
+// POST /email-letter — drop a letter that's already on file into an email DRAFT
+// to the homeowner (from Claire, the letter PDF attached), queued in the Draft
+// Queue for review. NOTHING sends from here — a human releases it. Turns "send
+// this letter to the owner" into one click from the 360 instead of download →
+// compose → attach by hand. (Ed 2026-08-01.)
+router.post('/email-letter', express.json(), async (req, res) => {
+  try {
+    const { requireStaff, getAuthedUser } = require('./_require_admin');
+    const staff = await requireStaff(req, res); if (!staff) return; // 403 already sent
+    const b = req.body || {};
+    const letterPath = b.letter_path;
+    const toEmail = String(b.to_email || '').trim();
+    if (!letterPath) return res.status(400).json({ error: 'letter_path_required', detail: 'No letter to send.' });
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(toEmail)) return res.status(400).json({ error: 'no_recipient', detail: 'Add or type a valid email for this homeowner first.' });
+
+    let contact = null;
+    if (b.contact_id) { const { data } = await supabase.from('contacts').select('id, full_name, preferred_name').eq('id', b.contact_id).maybeSingle(); contact = data; }
+    let community = null, propAddr = null;
+    if (b.property_id) { const { data } = await supabase.from('properties').select('street_address, community:community_id(id, name)').eq('id', b.property_id).maybeSingle(); if (data) { propAddr = data.street_address; community = data.community; } }
+
+    const first = (contact && (contact.preferred_name || String(contact.full_name || '').trim().split(/\s+/)[0])) || 'there';
+    const commName = community && community.name ? community.name : null;
+    const bodyText = (b.note && String(b.note).trim())
+      || `Hi ${first},\n\nPlease see the attached letter${propAddr ? ` regarding ${propAddr}` : ''}. If you have any questions or would like to discuss it, just reply to this email and we'll be glad to help.`;
+    const subject = `Letter regarding ${propAddr || 'your property'}${commName ? ` — ${commName}` : ''}`.slice(0, 160);
+    const fname = (`${String(b.letter_label || 'Letter')} ${new Date().toISOString().slice(0, 10)}`
+      .replace(/[^\w.\-() ]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 110)) + '.pdf';
+
+    const graphSend = require('../lib/email/graph_send');
+    const { queueDraft } = require('../lib/email/outbound_drafts');
+    const actor = await getAuthedUser(req).catch(() => null);
+    const q = await queueDraft({
+      communityId: community && community.id ? community.id : null, communityName: commName,
+      persona: 'claire', fromMailbox: graphSend.CLAIRE_MAILBOX,
+      toEmail, toName: contact && contact.full_name ? contact.full_name : null,
+      subject, bodyText,
+      // The letter lives in the violation-letters bucket, not documents — the
+      // release path honors a.bucket (email_drafts.js). (Ed 2026-08-01.)
+      attachments: [{ name: fname, storage_path: letterPath, mime: 'application/pdf', bucket: 'violation-letters' }],
+      relatedType: 'homeowner_letter', relatedId: b.contact_id || null,
+      sourceEmailRef: `homeowner_letter:${letterPath}`, // idempotent: one draft per letter
+      draftKind: 'homeowner_letter', draftReason: 'Letter to homeowner — review before sending',
+      createdBy: (actor && (actor.full_name || actor.email)) || 'Staff',
+    });
+    if (q.status === 'skipped' && q.reason === 'no_table') return res.status(400).json({ error: 'draft_queue_unavailable', detail: 'The Draft Queue isn’t set up yet.' });
+    if (q.status !== 'queued' && q.status !== 'exists') return res.status(500).json({ error: 'queue_failed', detail: q.error || 'Could not draft the email.' });
+    res.json({ ok: true, to: toEmail, already: q.status === 'exists' });
+  } catch (err) {
+    console.error('[homeowner360] email-letter failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // GET /recap/:contactId — AI briefing: who they are + what to know before you
 // talk to them. Grounded strictly in the assembled data (never invents).
 router.get('/recap/:contactId', async (req, res) => {

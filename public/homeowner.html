@@ -159,6 +159,8 @@ async function openProfile(cid){
   const r=await fetch(API+'/profile/'+cid); const d=await r.json();
   if(!r.ok){ document.getElementById('profile').innerHTML='<div class="empty">Could not load.</div>'; return; }
   const c=d.contact, ps=d.properties||[];
+  // Stash context so the "email this letter" composer can pre-fill recipient + community.
+  window._ho={ cid, name:(c&&c.full_name)||'', email:(c&&(c.primary_email||c.secondary_email))||'', propertyId:(ps[0]&&ps[0].id)||null };
   const openV=(d.violations||[]).filter(v=>v.open);
   const flagChips=(d.flags||[]).map(f=>`<span class="chip flag">${esc(String(f.state).replace(/_/g,' '))}</span>`).join('');
   const balChip = d.ar.balance_cents>0?`<span class="chip bal">Owes ${money(d.ar.balance_cents)}</span>`:(d.ar.balance_cents<0?`<span class="chip ok">Credit ${money(-d.ar.balance_cents)}</span>`:`<span class="chip ok">Current</span>`);
@@ -296,7 +298,7 @@ async function openProfile(cid){
       <div class="card">
         <div class="sec-title">✉️ Correspondence &amp; notes (${tl.length})</div>
         <div class="notebox"><input id="noteInput" placeholder="Add a note to this account…" onkeydown="if(event.key==='Enter')addNote('${cid}')"><button onclick="addNote('${cid}')">Add note</button></div>
-        <div class="timeline">${tl.map(x=>`<div class="li ${x.dir==='inbound'?'tl-in':(x.note?'tl-note':'tl-out')}"><span class="t">${d10(x.t)} · ${esc(x.kind)} ${x.dir==='inbound'?'↓':x.dir==='internal'?'•':'↑'}</span>${x.note?`<span onclick="deleteNote('${x.id}','${cid}')" title="Delete note" style="float:right;cursor:pointer;color:#b91c1c;font-weight:700;">✕</span>`:''}<br>${esc(String(x.label).slice(0,110))}${x.letterPath?` <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(x.letterPath)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:4px;">📄 View letter</a> <a href="/api/homeowner/file?kind=letter&download=1&name=${encodeURIComponent(((c&&c.full_name?c.full_name+' - ':'')+String(x.label||'letter')+' '+d10(x.t)))}&path=${encodeURIComponent(x.letterPath)}" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:6px;" title="Download the PDF to send to the homeowner">⬇ Download</a>`:''}</div>`).join('')||'<div class="empty">No correspondence on file yet.</div>'}</div>
+        <div class="timeline">${tl.map(x=>`<div class="li ${x.dir==='inbound'?'tl-in':(x.note?'tl-note':'tl-out')}"><span class="t">${d10(x.t)} · ${esc(x.kind)} ${x.dir==='inbound'?'↓':x.dir==='internal'?'•':'↑'}</span>${x.note?`<span onclick="deleteNote('${x.id}','${cid}')" title="Delete note" style="float:right;cursor:pointer;color:#b91c1c;font-weight:700;">✕</span>`:''}<br>${esc(String(x.label).slice(0,110))}${x.letterPath?` <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(x.letterPath)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:4px;">📄 View letter</a> <a href="/api/homeowner/file?kind=letter&download=1&name=${encodeURIComponent(((c&&c.full_name?c.full_name+' - ':'')+String(x.label||'letter')+' '+d10(x.t)))}&path=${encodeURIComponent(x.letterPath)}" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:6px;" title="Download the PDF to send to the homeowner">⬇ Download</a> <a href="#" onclick="event.preventDefault();emailLetter('${encodeURIComponent(x.letterPath)}','${esc(String(x.label||'Letter')).replace(/'/g,'&#39;')}')" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:6px;" title="Draft an email to the homeowner with this letter attached (queued for your review)">✉️ Email to homeowner</a>`:''}</div>`).join('')||'<div class="empty">No correspondence on file yet.</div>'}</div>
       </div>
     </div>`;
 
@@ -391,6 +393,44 @@ async function openProfile(cid){
     inp.disabled=true;
     const r=await fetch(API+'/'+id+'/note',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content})});
     if(r.ok){ openProfile(id); } else { inp.disabled=false; alert('Could not save note'); }
+  };
+  // Draft an email to the homeowner with a letter attached (queued for review).
+  window.emailLetter=function(pathEnc, label){
+    const ho=window._ho||{}; window._letterEmail={ path:decodeURIComponent(pathEnc), label };
+    const first=((ho.name||'').trim().split(/\s+/)[0])||'there';
+    const defNote='Hi '+first+',\n\nPlease see the attached letter. If you have any questions or would like to discuss it, just reply to this email and we\'ll be glad to help.';
+    const old=document.getElementById('letterEmailOverlay'); if(old) old.remove();
+    const ov=document.createElement('div'); ov.id='letterEmailOverlay';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(11,29,52,.45);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+    ov.innerHTML='<div style="background:#fff;border-radius:12px;max-width:560px;width:100%;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.3);">'
+      +'<div style="font-weight:800;color:#0B1D34;font-size:16px;">✉️ Email letter to homeowner</div>'
+      +'<div style="font-size:12px;color:#5a7390;margin:2px 0 14px;">'+esc(label)+' · sent from Claire with the PDF attached. Queued in the Draft Queue for your review — nothing sends until you release it.</div>'
+      +'<label style="font-size:12px;color:#5a7390;font-weight:600;">To</label>'
+      +'<input id="leTo" type="email" value="'+esc(ho.email||'')+'" placeholder="homeowner@email.com" style="width:100%;padding:8px 10px;border:1px solid #d7dee7;border-radius:7px;font-size:13px;margin:3px 0 10px;box-sizing:border-box;">'
+      +'<label style="font-size:12px;color:#5a7390;font-weight:600;">Message</label>'
+      +'<textarea id="leNote" style="width:100%;min-height:110px;padding:8px 10px;border:1px solid #d7dee7;border-radius:7px;font-size:13px;margin:3px 0 6px;box-sizing:border-box;">'+esc(defNote)+'</textarea>'
+      +'<div id="leMsg" style="font-size:12.5px;min-height:18px;"></div>'
+      +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">'
+      +'<button onclick="document.getElementById(\'letterEmailOverlay\').remove()" style="padding:8px 14px;border:1px solid #d7dee7;background:#fff;border-radius:7px;cursor:pointer;font-size:13px;">Cancel</button>'
+      +'<button id="leSend" onclick="submitLetterEmail()" style="padding:8px 16px;border:none;background:#0B1D34;color:#fff;border-radius:7px;cursor:pointer;font-size:13px;font-weight:700;">Queue draft</button>'
+      +'</div></div>';
+    ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
+    document.body.appendChild(ov);
+  };
+  window.submitLetterEmail=async function(){
+    const ho=window._ho||{}, le=window._letterEmail||{};
+    const to=(document.getElementById('leTo').value||'').trim();
+    const note=(document.getElementById('leNote').value||'').trim();
+    const msg=document.getElementById('leMsg'), btn=document.getElementById('leSend');
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)){ msg.style.color='#b91c1c'; msg.textContent='Enter a valid email address.'; return; }
+    btn.disabled=true; btn.textContent='Queuing…'; msg.style.color='#5a7390'; msg.textContent='';
+    try{
+      const r=await fetch(API+'/email-letter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ contact_id:ho.cid||null, property_id:ho.propertyId||null, letter_path:le.path, letter_label:le.label, to_email:to, note })});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok||!j.ok){ msg.style.color='#b91c1c'; msg.textContent=j.detail||j.error||'Could not draft the email.'; btn.disabled=false; btn.textContent='Queue draft'; return; }
+      msg.style.color='#166534'; msg.innerHTML=(j.already?'Already drafted for '+esc(j.to)+'. ':'✓ Drafted to '+esc(j.to)+'. ')+'Review &amp; send it in the <b>Draft Queue</b>.';
+      btn.textContent='Done'; setTimeout(()=>{ const ov=document.getElementById('letterEmailOverlay'); if(ov) ov.remove(); },2400);
+    }catch(e){ msg.style.color='#b91c1c'; msg.textContent='Failed to draft.'; btn.disabled=false; btn.textContent='Queue draft'; }
   };
 
   // AI recap loads async so the profile is instant
