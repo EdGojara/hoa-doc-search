@@ -302,19 +302,36 @@ router.get('/:vendorId', async (req, res) => {
       .order('payment_date', { ascending: false, nullsFirst: false })
       .limit(50);
 
-    // YTD + lifetime spend from ap_payments (cash-basis). Per-vendor is small, so
-    // a bounded pull is safe; sum in JS.
+    // Historical invoices (invoices_received) — bills paid OUTSIDE the system,
+    // kept for the record. Merged into the vendor's invoice history so the 360
+    // shows EVERYTHING billed, not just the current AP rail. total_amount is
+    // dollars here; normalize to cents for one display shape. (Ed 2026-08-01.)
+    const { data: histInv } = await supabase
+      .from('invoices_received')
+      .select('id, community_id, invoice_number, invoice_date, total_amount, status, paid_date, community:communities(name)')
+      .eq('vendor_id', vendorId)
+      .order('invoice_date', { ascending: false, nullsFirst: false })
+      .limit(100);
+
+    // YTD + lifetime spend from ap_payments (cash-basis), AND a per-ASSOCIATION
+    // breakdown — 1099 is per filer (each community is its own EIN), so spend is
+    // never co-mingled across associations. Per-vendor is small; sum in JS.
     const yearStart = `${new Date().getFullYear()}-01-01`;
     let ytdCents = 0, lifeCents = 0;
+    const byComm = {};
     try {
       const { data: allPays } = await supabase.from('ap_payments')
-        .select('amount_cents, payment_date').eq('vendor_id', vendorId).limit(2000);
+        .select('amount_cents, payment_date, community_id, community:communities(name)').eq('vendor_id', vendorId).limit(2000);
       for (const p of (allPays || [])) {
         const amt = Number(p.amount_cents || 0);
-        lifeCents += amt;
-        if (p.payment_date && String(p.payment_date) >= yearStart) ytdCents += amt;
+        const inYear = p.payment_date && String(p.payment_date) >= yearStart;
+        lifeCents += amt; if (inYear) ytdCents += amt;
+        const key = p.community_id || 'unassigned';
+        if (!byComm[key]) byComm[key] = { community_id: p.community_id || null, community_name: (p.community && p.community.name) || 'Unassigned', ytd_cents: 0, lifetime_cents: 0 };
+        byComm[key].lifetime_cents += amt; if (inYear) byComm[key].ytd_cents += amt;
       }
     } catch (_) { /* spend rollup best-effort */ }
+    const spend_by_community = Object.values(byComm).sort((a, b) => b.lifetime_cents - a.lifetime_cents);
 
     // Proposals this vendor submitted (RFP responses) + correspondence linked to
     // them — the rest of the 360, all off canonical rails. (Ed 2026-08-01.)
@@ -332,14 +349,22 @@ router.get('/:vendorId', async (req, res) => {
       .order('received_at', { ascending: false })
       .limit(30);
 
+    const historical_invoices = (histInv || []).map((h) => ({
+      id: h.id, invoice_number: h.invoice_number, invoice_date: h.invoice_date,
+      total_cents: Math.round(Number(h.total_amount || 0) * 100), status: h.status,
+      paid_date: h.paid_date, community: h.community, source: 'historical',
+    }));
+
     res.json({
       vendor,
       invoices: (invoices || []).map(apInvoiceToLegacy),
+      historical_invoices,
       payments: payments || [],
       proposals: proposals || [],
       correspondence: correspondence || [],
       documents: documents || [],
       spend: { ytd_cents: ytdCents, lifetime_cents: lifeCents, year: new Date().getFullYear() },
+      spend_by_community,
     });
   } catch (err) {
     console.error('[vendors] detail failed:', err.message);

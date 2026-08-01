@@ -44529,7 +44529,7 @@ ${questionsPage}
       return `<label style="font-size:11.5px; color:#64748b; display:block;">${label}<br><input id="ven-f-${id}" type="text" value="${apEsc(val==null?'':val)}" style="width:100%; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; margin-top:2px; box-sizing:border-box;"></label>`;
     }
     function venRenderDetail(j){
-      const v = j.vendor, inv = j.invoices||[], pay = j.payments||[], sp = j.spend||{}, prop = j.proposals||[], corr = j.correspondence||[];
+      const v = j.vendor, inv = j.invoices||[], pay = j.payments||[], sp = j.spend||{}, prop = j.proposals||[], corr = j.correspondence||[], hist = j.historical_invoices||[], byComm = j.spend_by_community||[];
       const el = document.getElementById('ven-detail'); if(!el) return;
       const badge = (txt,bg,fg)=>`<span style="font-size:11px; font-weight:700; background:${bg}; color:${fg}; padding:2px 9px; border-radius:12px; margin-left:4px;">${txt}</span>`;
       el.innerHTML = `
@@ -44561,9 +44561,14 @@ ${questionsPage}
           <button class="action-btn" onclick="venSave('${v.id}')" style="background:#0B1D34;">Save vendor</button>
           <span id="ven-savemsg" style="font-size:12px;"></span>
         </div>
+        ${byComm.length? `<div style="margin-bottom:14px;"><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Spend by association <span style="font-weight:400; color:#64748b; font-size:11.5px;">— 1099 is filed per association (each is its own EIN)</span></div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">${byComm.map(c=>`<div style="border:1px solid #e2e8f0; border-radius:8px; padding:6px 11px; font-size:12px; background:#fbfcfe;"><div style="color:#0B1D34; font-weight:600;">${apEsc(c.community_name)}</div><div style="color:#64748b;">YTD ${venMoney(c.ytd_cents)} · life ${venMoney(c.lifetime_cents)}${c.ytd_cents>=60000?' <span style="color:#166534; font-weight:700;" title="Over the $600 1099 threshold for this association this year">1099</span>':''}</div></div>`).join('')}</div></div>` : ''}
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
-          <div><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Invoices (${inv.length})</div>
-            ${inv.length? '<div style="max-height:280px; overflow:auto;">'+inv.map(i=>`<div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12.5px;"><span>${venD(i.invoice_date)} · ${apEsc(i.invoice_number||i.vendor_invoice_number||'—')}${i.community&&i.community.name?' · '+apEsc(i.community.name):''}</span><span style="font-variant-numeric:tabular-nums;">${venMoney(i.total_cents)}</span></div>`).join('')+'</div>' : '<div style="font-size:12px; color:#888;">No invoices on file.</div>'}</div>
+          <div><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Invoices (${inv.length + hist.length})</div>
+            ${(inv.length||hist.length)? '<div style="max-height:280px; overflow:auto;">'
+              +inv.map(i=>`<div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12.5px;"><span>${venD(i.invoice_date)} · ${apEsc(i.invoice_number||i.vendor_invoice_number||'—')}${i.community&&i.community.name?' · '+apEsc(i.community.name):''}</span><span style="font-variant-numeric:tabular-nums;">${venMoney(i.total_cents)}</span></div>`).join('')
+              +hist.map(i=>`<div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12.5px;"><span>${venD(i.invoice_date)} · ${apEsc(i.invoice_number||'—')} <span style="color:#94a3b8; font-size:10.5px;">historical</span>${i.community&&i.community.name?' · '+apEsc(i.community.name):''}</span><span style="font-variant-numeric:tabular-nums; color:#64748b;">${venMoney(i.total_cents)}</span></div>`).join('')
+              +'</div>' : '<div style="font-size:12px; color:#888;">No invoices on file.</div>'}</div>
           <div><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Payments (${pay.length})</div>
             ${pay.length? '<div style="max-height:280px; overflow:auto;">'+pay.map(p=>`<div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12.5px;"><span>${venD(p.payment_date)} · ${apEsc(p.payment_method||'—')}${p.check_number?' #'+apEsc(p.check_number):''}${p.community&&p.community.name?' · '+apEsc(p.community.name):''}</span><span style="font-variant-numeric:tabular-nums;">${venMoney(p.amount_cents)}</span></div>`).join('')+'</div>' : '<div style="font-size:12px; color:#888;">No payments recorded yet.</div>'}</div>
         </div>
