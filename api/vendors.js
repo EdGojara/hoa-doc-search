@@ -293,7 +293,36 @@ router.get('/:vendorId', async (req, res) => {
       .eq('vendor_id', vendorId)
       .order('uploaded_at', { ascending: false });
 
-    res.json({ vendor, invoices: (invoices || []).map(apInvoiceToLegacy), documents: documents || [] });
+    // Payments — the CANONICAL cash-out rail (ap_payments), so the 360 shows what
+    // actually left the bank, not just what was billed. (Ed 2026-08-01.)
+    const { data: payments } = await supabase
+      .from('ap_payments')
+      .select('id, community_id, amount_cents, payment_date, payment_method, check_number, status, created_at, community:communities(name)')
+      .eq('vendor_id', vendorId)
+      .order('payment_date', { ascending: false, nullsFirst: false })
+      .limit(50);
+
+    // YTD + lifetime spend from ap_payments (cash-basis). Per-vendor is small, so
+    // a bounded pull is safe; sum in JS.
+    const yearStart = `${new Date().getFullYear()}-01-01`;
+    let ytdCents = 0, lifeCents = 0;
+    try {
+      const { data: allPays } = await supabase.from('ap_payments')
+        .select('amount_cents, payment_date').eq('vendor_id', vendorId).limit(2000);
+      for (const p of (allPays || [])) {
+        const amt = Number(p.amount_cents || 0);
+        lifeCents += amt;
+        if (p.payment_date && String(p.payment_date) >= yearStart) ytdCents += amt;
+      }
+    } catch (_) { /* spend rollup best-effort */ }
+
+    res.json({
+      vendor,
+      invoices: (invoices || []).map(apInvoiceToLegacy),
+      payments: payments || [],
+      documents: documents || [],
+      spend: { ytd_cents: ytdCents, lifetime_cents: lifeCents, year: new Date().getFullYear() },
+    });
   } catch (err) {
     console.error('[vendors] detail failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -303,9 +332,12 @@ router.get('/:vendorId', async (req, res) => {
 // PATCH /api/vendors/:id  — update vendor fields
 router.patch('/:vendorId', async (req, res) => {
   const { vendorId } = req.params;
-  const allowed = ['name','dba','ein','address','phone','email','category','status','w9_on_file','notes',
+  const allowed = ['name','dba','ein','address','phone','email','website','category','status','w9_on_file','notes',
                    'is_1099_vendor','tax_classification','tax_id','w9_received_date',
-                   'is_mud','convenience_fee_cents'];
+                   'is_mud','convenience_fee_cents','payment_terms_days','payee_name','auto_pay_ach',
+                   // Contact person + remittance — single source of truth for who/where. (Ed 2026-08-01.)
+                   'contact_name','contact_email','contact_phone',
+                   'remit_address_line1','remit_address_line2','remit_city','remit_state','remit_zip'];
   const update = {};
   for (const k of allowed) if (k in (req.body || {})) update[k] = req.body[k];
   // A MUD vendor carries the standard $1 convenience fee unless a specific

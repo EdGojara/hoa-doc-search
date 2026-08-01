@@ -1763,6 +1763,7 @@
         <button class="ap-tab-btn" data-aptab="approved" onclick="apSubswitch('approved')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">✓ Approved <span id="ap-count-approved" style="background:#dbeafe; color:#1e3a8a; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; margin-left:4px;">0</span></button>
         <button class="ap-tab-btn" data-aptab="all" onclick="apSubswitch('all')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📋 All Invoices</button>
         <button class="ap-tab-btn" data-aptab="aging" onclick="apSubswitch('aging')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📊 Aging</button>
+        <button class="ap-tab-btn" data-aptab="vendors" onclick="apSubswitch('vendors')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">👷 Vendors</button>
       </div>
     </div>
 
@@ -1813,6 +1814,21 @@
     <div id="ap-aging-section" style="display:none;">
       <div class="panel">
         <div id="ap-aging-container" style="font-size:13px;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Vendor 360: one searchable source of truth per vendor — profile (1099 / W-9 /
+         contact / remit), invoices, payments, YTD spend. (Ed 2026-08-01.) -->
+    <div id="ap-vendors-section" style="display:none;">
+      <div class="panel" style="margin-bottom:14px;">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <input id="ven-search" type="text" placeholder="Search vendors by name…" oninput="venSearch()" style="flex:1; min-width:240px; padding:9px 12px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px;">
+          <span style="font-size:12px; color:#64748b;">Single source of truth — edits here update the vendor everywhere (AP, 1099, bank rec).</span>
+        </div>
+      </div>
+      <div style="display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap;">
+        <div id="ven-list" class="panel" style="flex:1 1 320px; min-width:280px; max-height:70vh; overflow:auto;"><div style="color:#888; font-size:13px; padding:8px;">Loading vendors…</div></div>
+        <div id="ven-detail" class="panel" style="flex:2 1 480px; min-width:340px; min-height:200px;"><div style="color:#888; font-size:13px; padding:8px;">Pick a vendor to see their 360 — invoices, payments, 1099 status, and contact.</div></div>
       </div>
     </div>
 
@@ -44462,11 +44478,106 @@ ${questionsPage}
       const showDrop = tab === 'awaiting' || tab === 'approved' || tab === 'all';
       const showList = tab === 'awaiting' || tab === 'approved' || tab === 'all';
       const showAging = tab === 'aging';
+      const showVendors = tab === 'vendors';
       document.getElementById('ap-drop-section').style.display = showDrop ? 'block' : 'none';
       document.getElementById('ap-list-section').style.display = showList ? 'block' : 'none';
       document.getElementById('ap-aging-section').style.display = showAging ? 'block' : 'none';
+      const vs = document.getElementById('ap-vendors-section'); if (vs) vs.style.display = showVendors ? 'block' : 'none';
+      const mq = document.getElementById('ap-manager-queue'); if (mq && showVendors) mq.style.display = 'none';
       if (showList) apLoadList();
       if (showAging) apLoadAging();
+      if (showVendors) venLoadList();
+    };
+
+    // ---- Vendor 360 — one searchable source of truth per vendor. All reads/writes
+    // go through the canonical /api/vendors (vendor master + ap_invoices +
+    // ap_payments), so an edit here is the edit everywhere. (Ed 2026-08-01.) ----
+    var _venOpenId = null, _venTimer = null;
+    function venFetch(){ return window._authFetch || fetch; }
+    function venMoney(c){ return '$' + (Number(c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+    function venD(s){ return s ? String(s).slice(0,10) : '—'; }
+    window.venSearch = function(){ clearTimeout(_venTimer); _venTimer = setTimeout(venLoadList, 250); };
+    window.venLoadList = async function(){
+      const q = ((document.getElementById('ven-search')||{}).value||'').trim();
+      const el = document.getElementById('ven-list'); if(!el) return;
+      try {
+        const r = await venFetch()('/api/vendors?limit=500' + (q ? '&q='+encodeURIComponent(q) : ''));
+        const j = await r.json();
+        const vendors = j.vendors || [];
+        if(!vendors.length){ el.innerHTML = '<div style="color:#888; font-size:13px; padding:8px;">No vendors'+(q?' match "'+apEsc(q)+'"':' yet')+'.</div>'; return; }
+        el.innerHTML = vendors.map(v => `<div onclick="venOpen('${v.id}')" style="padding:9px 10px; border-bottom:1px solid #eef2f7; cursor:pointer; ${_venOpenId===v.id?'background:#eef4fb;':''}">
+          <div style="font-weight:600; color:#0B1D34; font-size:13.5px;">${apEsc(v.name)}${v.is_1099_vendor?' <span style="font-size:10px; color:#166534; background:#dcfce7; padding:1px 6px; border-radius:10px;">1099</span>':''}</div>
+          <div style="font-size:11.5px; color:#64748b;">${apEsc(v.category||'—')}${v.last_invoice_at?' · last bill '+venD(v.last_invoice_at):''}${(v.is_1099_vendor && !v.w9_received_date)?' · <span style="color:#b45309;">no W-9</span>':''}</div>
+        </div>`).join('');
+      } catch(e){ el.innerHTML = '<div style="color:#dc2626; font-size:13px; padding:8px;">Could not load vendors.</div>'; }
+    };
+    window.venOpen = async function(id){
+      _venOpenId = id; venLoadList();
+      const el = document.getElementById('ven-detail'); if(!el) return;
+      el.innerHTML = '<div style="color:#888; font-size:13px; padding:8px;">Loading…</div>';
+      try {
+        const r = await venFetch()('/api/vendors/'+encodeURIComponent(id));
+        const j = await r.json();
+        if(!r.ok || !j.vendor) throw new Error(j.error||'not found');
+        venRenderDetail(j);
+      } catch(e){ el.innerHTML = '<div style="color:#dc2626; font-size:13px; padding:8px;">Could not load this vendor.</div>'; }
+    };
+    function venField(id, label, val){
+      return `<label style="font-size:11.5px; color:#64748b; display:block;">${label}<br><input id="ven-f-${id}" type="text" value="${apEsc(val==null?'':val)}" style="width:100%; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; margin-top:2px; box-sizing:border-box;"></label>`;
+    }
+    function venRenderDetail(j){
+      const v = j.vendor, inv = j.invoices||[], pay = j.payments||[], sp = j.spend||{};
+      const el = document.getElementById('ven-detail'); if(!el) return;
+      const badge = (txt,bg,fg)=>`<span style="font-size:11px; font-weight:700; background:${bg}; color:${fg}; padding:2px 9px; border-radius:12px; margin-left:4px;">${txt}</span>`;
+      el.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
+          <div><div style="font-size:18px; font-weight:800; color:#0B1D34;">${apEsc(v.name)}</div>
+            <div style="font-size:12px; color:#64748b;">${apEsc(v.category||'uncategorized')}${v.dba?' · dba '+apEsc(v.dba):''}</div></div>
+          <div style="text-align:right;">
+            ${v.is_1099_vendor?badge('1099 vendor','#dcfce7','#166534'):badge('not 1099','#f1f5f9','#64748b')}${v.w9_on_file?badge('W-9 on file','#dcfce7','#166534'):badge('no W-9','#fef3c7','#92400e')}
+            <div style="font-size:12px; color:#0B1D34; margin-top:6px;">YTD paid <b>${venMoney(sp.ytd_cents)}</b> · lifetime ${venMoney(sp.lifetime_cents)}</div>
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px 12px; margin:14px 0;">
+          ${venField('contact_name','Contact person',v.contact_name)}
+          ${venField('contact_email','Contact email',v.contact_email)}
+          ${venField('contact_phone','Contact phone',v.contact_phone)}
+          ${venField('email','Company email',v.email)}
+          ${venField('phone','Phone',v.phone)}
+          ${venField('website','Website',v.website)}
+          ${venField('tax_id','Tax ID / TIN',v.tax_id||v.ein)}
+          ${venField('tax_classification','Tax classification',v.tax_classification)}
+          ${venField('remit_address_line1','Remit address',v.remit_address_line1)}
+          ${venField('remit_city','City',v.remit_city)}
+          ${venField('remit_state','State',v.remit_state)}
+          ${venField('remit_zip','ZIP',v.remit_zip)}
+        </div>
+        <div style="display:flex; gap:16px; align-items:center; margin-bottom:14px; flex-wrap:wrap;">
+          <label style="font-size:12.5px;"><input type="checkbox" id="ven-f-is_1099_vendor" ${v.is_1099_vendor?'checked':''}> 1099 vendor</label>
+          <label style="font-size:12.5px;"><input type="checkbox" id="ven-f-w9_on_file" ${v.w9_on_file?'checked':''}> W-9 on file</label>
+          <button class="action-btn" onclick="venSave('${v.id}')" style="background:#0B1D34;">Save vendor</button>
+          <span id="ven-savemsg" style="font-size:12px;"></span>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+          <div><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Invoices (${inv.length})</div>
+            ${inv.length? '<div style="max-height:280px; overflow:auto;">'+inv.map(i=>`<div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12.5px;"><span>${venD(i.invoice_date)} · ${apEsc(i.invoice_number||i.vendor_invoice_number||'—')}${i.community&&i.community.name?' · '+apEsc(i.community.name):''}</span><span style="font-variant-numeric:tabular-nums;">${venMoney(i.total_cents)}</span></div>`).join('')+'</div>' : '<div style="font-size:12px; color:#888;">No invoices on file.</div>'}</div>
+          <div><div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px;">Payments (${pay.length})</div>
+            ${pay.length? '<div style="max-height:280px; overflow:auto;">'+pay.map(p=>`<div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12.5px;"><span>${venD(p.payment_date)} · ${apEsc(p.payment_method||'—')}${p.check_number?' #'+apEsc(p.check_number):''}${p.community&&p.community.name?' · '+apEsc(p.community.name):''}</span><span style="font-variant-numeric:tabular-nums;">${venMoney(p.amount_cents)}</span></div>`).join('')+'</div>' : '<div style="font-size:12px; color:#888;">No payments recorded yet.</div>'}</div>
+        </div>`;
+    }
+    window.venSave = async function(id){
+      const val = fid => { const e = document.getElementById('ven-f-'+fid); return e ? (e.type==='checkbox'? e.checked : e.value.trim()) : undefined; };
+      const body = {};
+      ['contact_name','contact_email','contact_phone','email','phone','website','tax_id','tax_classification','remit_address_line1','remit_city','remit_state','remit_zip'].forEach(f=>{ const x=val(f); if(x!==undefined) body[f]=x||null; });
+      body.is_1099_vendor = val('is_1099_vendor'); body.w9_on_file = val('w9_on_file');
+      const msg = document.getElementById('ven-savemsg'); if(msg){ msg.style.color='#64748b'; msg.textContent='Saving…'; }
+      try {
+        const r = await venFetch()('/api/vendors/'+encodeURIComponent(id), { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const j = await r.json();
+        if(!r.ok) throw new Error(j.error||'save failed');
+        if(msg){ msg.style.color='#166534'; msg.textContent='✓ Saved'; }
+        venLoadList();
+      } catch(e){ if(msg){ msg.style.color='#dc2626'; msg.textContent='Could not save: '+e.message; } }
     };
 
     async function apLoadCounts() {
