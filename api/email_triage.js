@@ -1007,7 +1007,7 @@ router.post('/:id/forward-internal', express.json(), async (req, res) => {
   try {
     const { to_email, to_name, note, cc_email } = req.body || {};
     const { data: m, error } = await supabase.from('email_messages')
-      .select('id, subject, body_full, body_preview, sender_email, sender_name, classification, extracted, graph_id, mailbox, conversation_id, received_at, resolved_contact_id, resolved_property_id, community:community_id(name)')
+      .select('id, subject, body_full, body_preview, sender_email, sender_name, classification, extracted, graph_id, mailbox, conversation_id, received_at, resolved_contact_id, resolved_property_id, resolved_vendor_id, community_id, community:community_id(name)')
       .eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'not_found' });
@@ -1142,6 +1142,27 @@ ${(() => { try { return require('../lib/email/claire_signature').claireSignature
         reviewed_at: new Date().toISOString(),
       }).eq('id', req.params.id);
     } catch (_) { /* annotation best-effort */ }
+
+    // Log the forward as an OUTBOUND record too — so it lands in the Sent view,
+    // stays reviewable, and can be re-forwarded later (e.g. to someone who was
+    // meant to be on it). Replies were already logged this way; forwards weren't,
+    // so a forward "disappeared" from trustEd. (Ed 2026-08-01.)
+    try {
+      await supabase.from('email_messages').insert({
+        mailbox: graphSend.CLAIRE_MAILBOX, direction: 'outbound', sender_email: graphSend.CLAIRE_MAILBOX, sender_name: 'Claire',
+        recipients: [...recips, ...ccArr],
+        subject: `For your review: ${m.subject || 'homeowner email'}`,
+        body_preview: String(note || '').slice(0, 2000), body_full: String(note || ''),
+        conversation_id: m.conversation_id || null, received_at: new Date().toISOString(),
+        classification: 'outbound_forward', classification_confidence: 'high',
+        ai_summary: `Forwarded to ${to_name || recips.join(', ')} for review`,
+        persona: 'claire', community_id: m.community_id || null,
+        resolved_contact_id: m.resolved_contact_id || null, resolved_property_id: m.resolved_property_id || null, resolved_vendor_id: m.resolved_vendor_id || null,
+        resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'workpaper',
+        reviewed_by: (await getAuthedUser(req).catch(() => null))?.email || 'staff', reviewed_at: new Date().toISOString(),
+      });
+    } catch (e) { console.warn('[email_triage] forward outbound log skipped:', e.message); }
+
     if (blockedHomeowner.length) console.warn(`[email_triage] forward blocked homeowner recipient(s): ${blockedHomeowner.join(', ')}`);
     res.json({ ok: true, to, cc: cc || null, blocked_homeowner: blockedHomeowner.length ? blockedHomeowner : undefined });
   } catch (err) {
