@@ -439,4 +439,84 @@ router.post('/inbox/:id/handle', express.json(), async (req, res) => {
   } catch (err) { console.error('[tessa] inbox handle failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// ---- Standing instructions: recurring emails Tessa sends on schedule ---------
+const STANDING_FIELDS = ['title', 'recipients_spec', 'to_emails', 'subject', 'body', 'mode', 'freq', 'day_of_week', 'day_of_month', 'active'];
+
+// GET /standing — list Ed's standing instructions.
+router.get('/standing', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { data, error } = await supabase.from('ea_standing_tasks').select('*').order('created_at', { ascending: false }).limit(200);
+    if (error) throw error;
+    res.json({ tasks: data || [] });
+  } catch (err) { console.error('[tessa] standing list failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /standing/draft — turn a thought into a ready subject + body (nothing saved).
+router.post('/standing/draft', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const thought = String((req.body && req.body.thought) || '').trim();
+    if (!thought) return res.status(400).json({ error: 'thought_required' });
+    const mode = (req.body && req.body.mode) === 'ed' ? 'ed' : 'tessa';
+    const { draftEmail } = require('../lib/ea/tessa');
+    const d = await draftEmail({ thought, mode });
+    res.json({ ok: true, subject: d.subject, body: d.body, mode });
+  } catch (err) { console.error('[tessa] standing draft failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /standing — create a standing instruction.
+router.post('/standing', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const b = req.body || {};
+    if (!String(b.title || '').trim() || !String(b.subject || '').trim() || !String(b.body || '').trim()) return res.status(400).json({ error: 'title_subject_body_required' });
+    const freq = ['daily', 'weekly', 'monthly'].includes(b.freq) ? b.freq : 'monthly';
+    const row = {
+      title: String(b.title).trim(), recipients_spec: b.recipients_spec === 'team' ? 'team' : 'custom',
+      to_emails: b.recipients_spec === 'team' ? null : String(b.to_emails || '').trim() || null,
+      subject: String(b.subject).trim(), body: String(b.body).trim(), mode: b.mode === 'ed' ? 'ed' : 'tessa',
+      freq, day_of_week: freq === 'weekly' ? (Number(b.day_of_week) || 1) : null,
+      day_of_month: freq === 'monthly' ? Math.min(28, Math.max(1, Number(b.day_of_month) || 1)) : null,
+      active: b.active !== false, created_by: owner.email || 'Ed',
+    };
+    const { data, error } = await supabase.from('ea_standing_tasks').insert(row).select().single();
+    if (error) throw error;
+    res.json({ ok: true, task: data });
+  } catch (err) { console.error('[tessa] standing create failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// PATCH /standing/:id — edit / pause / resume.
+router.patch('/standing/:id', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const b = req.body || {}; const upd = {};
+    for (const f of STANDING_FIELDS) if (f in b) upd[f] = b[f];
+    if ('day_of_month' in upd && upd.day_of_month != null) upd.day_of_month = Math.min(28, Math.max(1, Number(upd.day_of_month) || 1));
+    if (!Object.keys(upd).length) return res.status(400).json({ error: 'nothing_to_update' });
+    const { data, error } = await supabase.from('ea_standing_tasks').update(upd).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ ok: true, task: data });
+  } catch (err) { console.error('[tessa] standing patch failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// DELETE /standing/:id
+router.delete('/standing/:id', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try { const { error } = await supabase.from('ea_standing_tasks').delete().eq('id', req.params.id); if (error) throw error; res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /standing/:id/run-now — send it now to test (ignores the schedule).
+router.post('/standing/:id/run-now', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email_not_connected' });
+    const { runTaskNow } = require('../lib/ea/tessa_standing');
+    const out = await runTaskNow(req.params.id);
+    if (!out.sent) return res.status(400).json({ error: out.reason || 'not_sent', detail: out.reason === 'no_recipients' ? 'No valid recipients on this task.' : 'Could not send.' });
+    res.json({ ok: true, to: out.to });
+  } catch (err) { console.error('[tessa] standing run-now failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 module.exports = { router };

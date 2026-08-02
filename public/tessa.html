@@ -128,12 +128,19 @@ function render(){
         <div id="cbAdd" style="display:none; margin-top:10px; padding:10px; background:#f6f9ff; border:1px solid #d7e3f4; border-radius:8px;"></div>
         <div id="cbList" style="margin-top:10px;"><div class="note">Loading&hellip;</div></div>
       </div>
+      <div class="card" style="margin-top:14px;">
+        <div class="row" style="justify-content:space-between;"><h2 style="margin:0;">Standing instructions</h2><button class="btn ghost sm" onclick="stToggleAdd()">+ Add</button></div>
+        <div class="note">Recurring emails Tessa sends on schedule, without being re-asked.</div>
+        <div id="stAdd" style="display:none; margin-top:10px; padding:10px; background:#f6f9ff; border:1px solid #d7e3f4; border-radius:8px;"></div>
+        <div id="stList" style="margin-top:10px;"><div class="note">Loading&hellip;</div></div>
+      </div>
     </div>
   </div>`;
   loadFu();
   loadInbox();
   loadRecipients();
   cbLoad();
+  stLoad();
 }
 
 // Recipient directory for the compose picker: board members (by community),
@@ -301,6 +308,76 @@ async function cbDelete(id){
   const c=_cbList.find(x=>x.id===id); if(!confirm('Remove '+(c?c.name:'this contact')+' from your contacts?')) return;
   try{ const r=await af('/api/tessa/contacts/'+id,{method:'DELETE'}); if(r.ok) cbLoad(); else alert('Could not delete.'); }catch(e){ alert('Could not delete.'); }
 }
+
+// ---- Standing instructions: recurring emails Tessa sends on schedule. --------
+const _DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+let _stList=[];
+async function stLoad(){
+  const el=$('stList'); if(!el) return;
+  try{
+    const r=await af('/api/tessa/standing'); const j=await r.json(); _stList=j.tasks||[];
+    if(!_stList.length){ el.innerHTML='<div class="note">None yet. Add one — e.g. remind the team monthly to set their out-of-office.</div>'; return; }
+    el.innerHTML=_stList.map(t=>{
+      const when=t.freq==='daily'?'every day':(t.freq==='weekly'?('every '+_DOW[t.day_of_week||1]):('monthly on day '+(t.day_of_month||1)));
+      const who=t.recipients_spec==='team'?'the team':(t.to_emails||'—');
+      return `<div style="padding:8px 0;border-bottom:1px solid #eef2f7;">
+        <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start;">
+          <div><div style="font-weight:600;color:var(--navy);font-size:13.5px;">${esc(t.title)}${t.active?'':' <span class="note">(paused)</span>'}</div>
+            <div class="note" style="font-size:11.5px;">${when} → ${esc(who)} · as ${t.mode==='ed'?'me':'Tessa'}${t.last_run_at?' · last sent '+new Date(t.last_run_at).toLocaleDateString():''}</div></div>
+          <div style="white-space:nowrap;">
+            <button class="btn ghost sm" style="padding:3px 7px;" onclick="stEdit('${t.id}')">Edit</button>
+            <button class="btn ghost sm" style="padding:3px 7px;" onclick="stToggleActive('${t.id}','${t.active?'false':'true'}')">${t.active?'Pause':'Resume'}</button>
+            <button class="btn ghost sm" style="padding:3px 7px;" onclick="stRunNow('${t.id}')">Send now</button>
+            <button class="btn ghost sm" style="padding:3px 7px;color:#b91c1c;" onclick="stDelete('${t.id}')">✕</button>
+          </div>
+        </div><div id="stmsg-${t.id}" style="font-size:12px;"></div></div>`;
+    }).join('');
+  }catch(e){ el.innerHTML='<div class="err note">Could not load.</div>'; }
+}
+function stFormHtml(t){ t=t||{};
+  return `<input id="st-title" placeholder="Title (e.g. Monthly OOO reminder)" value="${esc(t.title||'')}">
+    <div class="row" style="gap:6px;margin-top:6px;">
+      <select id="st-rspec" onchange="stRspecChange()" style="flex:1;"><option value="team"${t.recipients_spec==='team'?' selected':''}>The whole team</option><option value="custom"${t.recipients_spec!=='team'?' selected':''}>Specific emails</option></select>
+      <select id="st-mode" style="flex:1;"><option value="tessa"${t.mode!=='ed'?' selected':''}>As Tessa</option><option value="ed"${t.mode==='ed'?' selected':''}>As me</option></select>
+    </div>
+    <input id="st-emails" placeholder="emails, comma separated" value="${esc(t.to_emails||'')}" style="margin-top:6px;display:${t.recipients_spec==='custom'?'block':'none'};">
+    <div class="row" style="gap:6px;margin-top:6px;">
+      <select id="st-freq" onchange="stFreqChange()" style="flex:1;"><option value="daily"${t.freq==='daily'?' selected':''}>Daily</option><option value="weekly"${t.freq==='weekly'?' selected':''}>Weekly</option><option value="monthly"${(t.freq||'monthly')==='monthly'?' selected':''}>Monthly</option></select>
+      <select id="st-dow" style="flex:1;display:${t.freq==='weekly'?'block':'none'};">${_DOW.map((d,i)=>`<option value="${i}"${Number(t.day_of_week)===i?' selected':''}>${d}</option>`).join('')}</select>
+      <select id="st-dom" style="flex:1;display:${(t.freq||'monthly')==='monthly'?'block':'none'};">${Array.from({length:28},(x,i)=>i+1).map(n=>`<option value="${n}"${Number(t.day_of_month||1)===n?' selected':''}>Day ${n}</option>`).join('')}</select>
+    </div>
+    <div class="row" style="gap:6px;margin-top:8px;"><input id="st-thought" placeholder="What should she say? (a thought — then Draft)" style="flex:1;"><button class="btn ghost sm" onclick="stDraft()">✍️ Draft</button></div>
+    <input id="st-subj" placeholder="Subject" value="${esc(t.subject||'')}" style="margin-top:6px;">
+    <textarea id="st-body" rows="5" placeholder="Message body" style="margin-top:6px;">${esc(t.body||'')}</textarea>
+    <div class="row" style="margin-top:8px;"><button class="btn gold sm" onclick="stSave('${t.id||''}')">Save</button><button class="btn ghost sm" onclick="stCancel()">Cancel</button><span id="stFormMsg" class="result"></span></div>`;
+}
+function stToggleAdd(){ const w=$('stAdd'); if(!w)return; if(w.style.display==='none'){ w.innerHTML=stFormHtml(); w.style.display='block'; } else stCancel(); }
+function stCancel(){ const w=$('stAdd'); if(w){ w.style.display='none'; w.innerHTML=''; } }
+function stEdit(id){ const t=_stList.find(x=>x.id===id); if(!t)return; const w=$('stAdd'); w.innerHTML=stFormHtml(t); w.style.display='block'; }
+function stRspecChange(){ $('st-emails').style.display=$('st-rspec').value==='custom'?'block':'none'; }
+function stFreqChange(){ const f=$('st-freq').value; $('st-dow').style.display=f==='weekly'?'block':'none'; $('st-dom').style.display=f==='monthly'?'block':'none'; }
+async function stDraft(){
+  const thought=(($('st-thought')||{}).value||'').trim(); const msg=$('stFormMsg'); if(!thought){ if(msg)msg.innerHTML='<span class="err">Type a thought first.</span>'; return; }
+  if(msg)msg.textContent='Drafting…';
+  try{ const r=await af('/api/tessa/standing/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thought, mode:$('st-mode').value})}); const j=await r.json(); if(!r.ok)throw new Error(j.error||'failed'); $('st-subj').value=j.subject||$('st-subj').value; $('st-body').value=j.body||''; if(msg)msg.textContent=''; }
+  catch(e){ if(msg)msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+}
+async function stSave(id){
+  const g=x=>(($('st-'+x)||{}).value||'');
+  const body={ title:g('title').trim(), recipients_spec:g('rspec'), to_emails:g('emails').trim(), mode:g('mode'), freq:g('freq'), day_of_week:Number(g('dow'))||0, day_of_month:Number(g('dom'))||1, subject:g('subj').trim(), body:g('body').trim() };
+  const msg=$('stFormMsg');
+  if(!body.title||!body.subject||!body.body){ if(msg)msg.innerHTML='<span class="err">Title, subject and body are required.</span>'; return; }
+  if(msg)msg.textContent='Saving…';
+  try{ const r=await af('/api/tessa/standing'+(id?'/'+id:''),{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok)throw new Error(j.error||'failed'); stCancel(); stLoad(); }
+  catch(e){ if(msg)msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+}
+async function stToggleActive(id,active){ await af('/api/tessa/standing/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({active:active==='true'})}); stLoad(); }
+async function stRunNow(id){
+  if(!confirm('Send this now as a test?'))return; const msg=$('stmsg-'+id); if(msg)msg.textContent='Sending…';
+  try{ const r=await af('/api/tessa/standing/'+id+'/run-now',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); const j=await r.json(); if(!r.ok)throw new Error(j.detail||j.error||'failed'); if(msg)msg.innerHTML='<span class="ok">✅ Sent to '+((j.to&&j.to.length)||0)+' recipient(s).</span>'; }
+  catch(e){ if(msg)msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+}
+async function stDelete(id){ if(!confirm('Delete this standing instruction?'))return; const r=await af('/api/tessa/standing/'+id,{method:'DELETE'}); if(r.ok)stLoad(); }
 
 const _ibmode={};
 async function pollInbox(){
