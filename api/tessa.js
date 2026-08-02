@@ -414,4 +414,29 @@ router.post('/inbox/:id/send', express.json({ limit: '64kb' }), async (req, res)
   }
 });
 
+// POST /inbox/:id/handle — "handle this": Ed gives a one-line instruction and
+// Tessa drafts the right action (reply to the sender, or forward to someone he
+// named), resolving the forward recipient from his address book. Updates the
+// stored draft and returns it for review. Nothing is sent here. (Ed 2026-08-01.)
+router.post('/inbox/:id/handle', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { data: item, error } = await supabase.from('ea_inbox').select('*').eq('id', req.params.id).single();
+    if (error || !item) return res.status(404).json({ error: 'not_found' });
+    const instruction = String((req.body && req.body.instruction) || '').trim();
+    const mode = (req.body && req.body.mode) === 'ed' ? 'ed' : 'tessa';
+    const { handleForwarded } = require('../lib/ea/tessa');
+    const d = await handleForwarded({ incomingSubject: item.subject, incomingBody: item.body_full || item.body_preview, fromName: item.from_name || item.from_email, instruction, mode });
+    if (!d || d.degraded) return res.status(502).json({ error: 'draft_failed', detail: 'Tessa couldn’t draft that one. Try rephrasing the instruction.' });
+
+    // For a forward, resolve who it goes to from the address book.
+    let recipient = null, toEmail = null;
+    if (d.action === 'forward' && d.recipient_hint) {
+      try { recipient = await resolveRecipient(d.recipient_hint); toEmail = recipient && recipient.best ? recipient.best.email : null; } catch (_) {}
+    }
+    await supabase.from('ea_inbox').update({ draft_subject: d.subject, draft_body: d.body, draft_mode: d.mode, updated_at: new Date().toISOString() }).eq('id', item.id);
+    res.json({ ok: true, action: d.action, subject: d.subject, body: d.body, mode: d.mode, to: toEmail, recipient_hint: d.recipient_hint || null, recipient });
+  } catch (err) { console.error('[tessa] inbox handle failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 module.exports = { router };

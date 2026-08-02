@@ -325,7 +325,11 @@ async function loadInbox(){
         <div class="t">${esc(it.subject||'(no subject)')}</div>
         <div class="note">from ${esc(it.from_name||it.from_email||'unknown')}${it.received_at?' · '+new Date(it.received_at).toLocaleString():''}</div>
         <details style="margin:6px 0;"><summary class="note" style="cursor:pointer;">Show original</summary><div class="note" style="white-space:pre-wrap;margin-top:4px;">${snip}</div></details>
-        <label>Reply to</label><input id="ib-to-${it.id}" value="${esc(it.from_email||'')}">
+        <div class="row" style="gap:6px;margin:6px 0;">
+          <input id="ib-instr-${it.id}" placeholder="Tell Tessa what to do — e.g. “politely decline” or “forward to Melody at the bank”" style="flex:1;" onkeydown="if(event.key==='Enter')ibHandle('${it.id}')">
+          <button class="btn sm" style="white-space:nowrap;" onclick="ibHandle('${it.id}')">🪄 Handle it</button>
+        </div>
+        <label>Reply / forward to</label><input id="ib-to-${it.id}" value="${esc(it.from_email||'')}">
         <label>Subject</label><input id="ib-subj-${it.id}" value="${esc(it.draft_subject||('Re: '+(it.subject||'')))}">
         <label>Tessa’s draft</label><textarea id="ib-body-${it.id}" rows="7">${esc(it.draft_body||'')}</textarea>
         <div class="row" style="justify-content:space-between;margin-top:8px;">
@@ -344,6 +348,30 @@ async function loadInbox(){
   }catch(e){ $('inboxList').innerHTML='<div class="err note">Could not load the inbox.</div>'; }
 }
 function ibMode(id,m){ _ibmode[id]=m; $('ibm-ed-'+id).className=m==='ed'?'on':''; $('ibm-t-'+id).className=m==='tessa'?'on':''; }
+// "Handle it": Ed's one-line instruction -> Tessa drafts a reply or a forward.
+async function ibHandle(id){
+  const instruction=(($('ib-instr-'+id)||{}).value||'').trim();
+  const msg=$('ibmsg-'+id); const hb=document.querySelector('#ib-'+id+' .btn.sm');
+  if(hb){ hb.disabled=true; }
+  msg.innerHTML='<span class="note">Tessa’s working on it…</span>';
+  try{
+    const r=await af('/api/tessa/inbox/'+id+'/handle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction, mode:_ibmode[id]})});
+    const j=await r.json(); if(!r.ok||!j.ok) throw new Error(j.detail||j.error||'could not handle');
+    if(j.mode) ibMode(id, j.mode);
+    $('ib-subj-'+id).value=j.subject||$('ib-subj-'+id).value;
+    $('ib-body-'+id).value=j.body||'';
+    const sendBtn=$('ibsend-'+id);
+    if(j.action==='forward'){
+      if(sendBtn) sendBtn.textContent='Send forward';
+      if(j.to){ $('ib-to-'+id).value=j.to; msg.innerHTML='<span class="ok">↪ Drafted a forward to <b>'+esc(j.to)+'</b>. Review and send.</span>'; }
+      else { msg.innerHTML='<span class="err">Drafted a forward, but I couldn’t find “'+esc(j.recipient_hint||'')+'” in your contacts — type their email above in “Reply / forward to”.</span>'; }
+    } else {
+      if(sendBtn) sendBtn.textContent='Send reply';
+      msg.innerHTML='<span class="ok">✉️ Drafted a reply. Review and send.</span>';
+    }
+  }catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+  finally{ if(hb) hb.disabled=false; }
+}
 async function ibSend(id){
   const to=$('ib-to-'+id).value.trim(); const msg=$('ibmsg-'+id);
   if(!to){ msg.innerHTML='<span class="err">Add a recipient to reply to.</span>'; return; }
