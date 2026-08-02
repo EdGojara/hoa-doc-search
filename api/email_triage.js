@@ -1887,6 +1887,54 @@ router.post('/compose', express.json(), async (req, res) => {
       ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
       fromMailbox = graphSend.CLAIRE_MAILBOX; senderLabel = 'Claire (Bedrock AI)'; personaName = 'Claire';
     }
+
+    // Re-attach the ORIGINAL files when forwarding a message from Sent, so the
+    // forward carries the homeowner's supporting docs (receipts, photos), not just
+    // the text. Pulled UNCHANGED (no conversion) from the archive across the whole
+    // conversation, plus the live message if still fetchable. (Ed 2026-08-01.)
+    let reattached = 0;
+    try {
+      const srcId = (req.body || {}).source_email_id;
+      if (srcId) {
+        const { data: src } = await supabase.from('email_messages').select('id, conversation_id, graph_id, mailbox, has_attachments').eq('id', srcId).maybeSingle();
+        if (src) {
+          let ids = [src.id];
+          if (src.conversation_id) {
+            const { data: conv } = await supabase.from('email_messages').select('id, graph_id, mailbox, has_attachments').eq('conversation_id', src.conversation_id).limit(50);
+            ids = [...new Set([...ids, ...(conv || []).map((r) => r.id)])];
+          }
+          const fileAtts = []; const seenName = new Set();
+          // 1) Archived copies (documents bucket) — survives a rotated Graph id.
+          const { data: arch } = await supabase.from('email_attachments').select('filename, mime, storage_path').in('email_message_id', ids).limit(25);
+          for (const a of (arch || [])) {
+            if (!a.storage_path) continue; const key = (a.filename || a.storage_path).toLowerCase(); if (seenName.has(key)) continue;
+            try {
+              const { data: blob, error: dErr } = await supabase.storage.from('documents').download(a.storage_path);
+              if (dErr || !blob) continue;
+              const buf = Buffer.from(await blob.arrayBuffer());
+              if (buf.length > 12 * 1024 * 1024) continue;
+              seenName.add(key);
+              fileAtts.push({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.filename || 'attachment', contentType: a.mime || 'application/octet-stream', contentBytes: buf.toString('base64') });
+            } catch (_) {}
+          }
+          // 2) Live Graph fetch for the source (if not already archived + still fetchable).
+          try {
+            if (src.graph_id && src.mailbox) {
+              const { fetchAllAttachmentBuffers } = require('../lib/email/graph_attachments');
+              const live = await fetchAllAttachmentBuffers(src.mailbox, src.graph_id);
+              for (const f of (live || [])) {
+                const key = String(f.filename || '').toLowerCase(); if (seenName.has(key) || !f.buffer || f.buffer.length > 12 * 1024 * 1024) continue;
+                if (f.isImage && /^(image\d*|logo|signature|bedrock)[-_ ]?\d*\.(png|jpe?g|gif|bmp|webp)$/i.test(String(f.filename || ''))) continue;
+                seenName.add(key);
+                fileAtts.push({ '@odata.type': '#microsoft.graph.fileAttachment', name: f.filename, contentType: f.contentType, contentBytes: f.buffer.toString('base64') });
+              }
+            }
+          } catch (_) {}
+          if (fileAtts.length) { attachments = [...(attachments || []), ...fileAtts]; reattached = fileAtts.length; }
+        }
+      }
+    } catch (e) { console.warn('[email_triage] compose re-attach skipped:', e.message); }
+
     await graphSend.sendAs({ from: fromMailbox, to: toList, cc: ccList, subject: subj, html, attachments });
 
     const allRecipients = [...toList, ...ccList];
@@ -1898,7 +1946,7 @@ router.post('/compose', express.json(), async (req, res) => {
       triage_status: 'handled', record_ownership: 'association_record', reviewed_by: admin.full_name || admin.email || 'admin', reviewed_at: new Date().toISOString(),
     });
 
-    res.json({ sent: true, to: toList, cc: ccList, from: fromMailbox, persona: personaName.toLowerCase(), linked_to_homeowner: !!resolved_contact_id });
+    res.json({ sent: true, to: toList, cc: ccList, from: fromMailbox, persona: personaName.toLowerCase(), linked_to_homeowner: !!resolved_contact_id, attached_files: reattached });
   } catch (err) {
     console.error('[email_triage] compose failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

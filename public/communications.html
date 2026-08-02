@@ -672,6 +672,7 @@ async function forwardFromSent(id){
       }
     } catch(_){}
     openCompose();
+    window._composeSourceId = id;  // so the send re-attaches the original files
     const p = COMPOSE_PERSONAS[m.persona] ? m.persona : 'claire';
     document.getElementById('nmPersona').value = p; ncPersonaChange();
     document.getElementById('nmSubject').value = /^fwd:/i.test(m.subject||'') ? m.subject : ('Fwd: ' + (m.subject||''));
@@ -1238,6 +1239,7 @@ function ncAddRecip(fieldId, sel){
 }
 window.openCompose = function(){
   forwardHistory='';
+  window._composeSourceId = null;  // fresh compose has no source to re-attach from
   document.getElementById('nmStatus').textContent='';
   ['nmTo','nmCc','nmSubject','nmCommunity','nmIntent','nmBody'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('nmPersona').value='claire'; ncPersonaChange();
@@ -1278,10 +1280,10 @@ window.ncSend = async function(){
   if(!body){ st.style.color='#b91c1c'; st.textContent='Write a message, or have '+who+' draft one.'; return; }
   btn.disabled=true; const o=btn.textContent; btn.textContent='Sending…'; st.style.color='#5a7390'; st.textContent='Sending as '+who+'…';
   try{
-    const r=await af('/api/email-triage/compose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to,cc,subject,community_name,body,persona:ncP()})});
+    const r=await af('/api/email-triage/compose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to,cc,subject,community_name,body,persona:ncP(),source_email_id:window._composeSourceId||null})});
     const j=await r.json();
     if(!r.ok||!j.sent){ st.style.color='#b91c1c'; st.textContent=j.detail||j.error||('Send failed (HTTP '+r.status+').'); }
-    else{ const t=Array.isArray(j.to)?j.to.join(', '):j.to; st.style.color='#166534'; st.textContent='✓ Sent to '+t+(j.linked_to_homeowner?' — filed on their record.':'.'); setTimeout(()=>{closeCompose(); loadStats(); loadList();},1500); }
+    else{ const t=Array.isArray(j.to)?j.to.join(', '):j.to; st.style.color='#166534'; st.textContent='✓ Sent to '+t+(j.attached_files?' with '+j.attached_files+' original attachment'+(j.attached_files===1?'':'s'):'')+(j.linked_to_homeowner?' — filed on their record.':'.'); setTimeout(()=>{closeCompose(); loadStats(); loadList();},1800); }
   }catch(e){ st.style.color='#b91c1c'; st.textContent='Send failed: '+(e.message||'network'); }
   finally{ btn.disabled=false; btn.textContent=o; }
 };
