@@ -485,7 +485,9 @@ router.get('/:id/thread', async (req, res) => {
     if (m.conversation_id) {
       const { data } = await supabase.from('email_messages')
         .select('id, direction, sender_name, sender_email, subject, body_full, body_preview, received_at')
-        .eq('conversation_id', m.conversation_id).order('received_at', { ascending: true }).limit(30);
+        // Exclude the message being viewed — it's shown as "THIS MESSAGE" above the
+        // chain, so including it here rendered the same email twice. (Ed 2026-08-01.)
+        .eq('conversation_id', m.conversation_id).neq('id', req.params.id).order('received_at', { ascending: true }).limit(30);
       thread = data || [];
     }
     // Image/PDF attachments — homeowners photograph violations, and iPhone photos
