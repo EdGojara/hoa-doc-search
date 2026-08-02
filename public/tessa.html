@@ -58,6 +58,7 @@
 </div>
 <script>
 let _supa=null, af=null, _mode='tessa';  // default: send as Tessa, on Ed's behalf
+let _draftMode=null;                      // the voice the current draft was written in
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $=id=>document.getElementById(id);
 function showComingSoon(){ $('body').innerHTML='<div class="soon"><b>Owner only</b>Tessa is Ed’s assistant.</div>'; }
@@ -357,7 +358,18 @@ async function ibDismiss(id){
   await af('/api/tessa/inbox/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'dismissed'})});
   loadInbox();
 }
-function setMode(m){ _mode=m; $('m-ed').className=m==='ed'?'on':''; $('m-tessa').className=m==='tessa'?'on':''; $('mode-note').textContent = m==='ed'?'Ghostwritten in your voice, from your mailbox.':'Sent as Tessa, on your behalf.'; const sb=$('sendBtn'); if(sb) sb.textContent='Send '+(m==='ed'?'as me':'as Tessa'); }
+function setMode(m){
+  _mode=m; $('m-ed').className=m==='ed'?'on':''; $('m-tessa').className=m==='tessa'?'on':'';
+  $('mode-note').textContent = m==='ed'?'Ghostwritten in your voice, from your mailbox.':'Sent as Tessa, on your behalf.';
+  const sb=$('sendBtn'); if(sb) sb.textContent='Send '+(m==='ed'?'as me':'as Tessa');
+  // If a draft is already on screen and it was written in a DIFFERENT voice,
+  // re-draft so the BODY matches who it's sent as — not just the signature.
+  // (Ed 2026-08-01: a send-as-Tessa email still signed "Ed".)
+  if(document.getElementById('d-body') && _draftMode && _draftMode!==m && $('thought') && $('thought').value.trim()){
+    if($('draftMsg')) $('draftMsg').textContent='Re-drafting in '+(m==='ed'?'your':'Tessa’s')+' voice…';
+    doDraft();
+  }
+}
 
 async function doDraft(){
   const thought=$('thought').value.trim(); if(!thought) return;
@@ -366,6 +378,7 @@ async function doDraft(){
     const r=await af('/api/tessa/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thought, mode:_mode, recipient_name:$('rname').value.trim()||null})});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||'draft failed');
     $('draftMsg').textContent='';
+    _draftMode = j.mode || _mode;   // the voice this draft was written in
     showEmailDraft(j.subject, j.body);
   }catch(e){ $('draftMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
   finally{ btn.disabled=false; }
@@ -405,7 +418,13 @@ async function sendVoice(){
     if(j.transcript) $('thought').value=j.transcript;
     $('voiceMsg').innerHTML = j.summary ? '<span class="ok">Heard: '+esc(j.summary)+'</span>' : (j.note?'<span class="note">'+esc(j.note)+'</span>':'');
     if(j.email){
-      showEmailDraft(j.email.subject, j.email.body);  // keep the current send-as mode (defaults to Tessa)
+      // Stash the transcript as the "thought" so a send-as switch can re-draft,
+      // and record the voice this dictation was written in. (Ed 2026-08-01.)
+      if($('thought') && j.transcript) $('thought').value = j.transcript;
+      _draftMode = j.email.mode || _mode;
+      showEmailDraft(j.email.subject, j.email.body);
+      // Dictation written in a different voice than we're sending as? Re-draft to match.
+      if(_draftMode!==_mode && $('thought') && $('thought').value.trim()){ doDraft(); }
       const rec=j.recipient;
       // "team" / "staff" / "everyone" is the whole-company list, not one contact.
       const hint=String(j.email.recipient_hint||'').toLowerCase();
