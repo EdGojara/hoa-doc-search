@@ -3633,7 +3633,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         certified_209: 'letter_209',
         fine_assessed: 'letter_209',
       };
-      const { data: inter } = await supabase.from('interactions').insert({
+      const { data: inter, error: intErr } = await supabase.from('interactions').insert({
         community_id:    obs.community_id,
         property_id:     obs.property_id,
         violation_id:    violation.id,
@@ -3647,10 +3647,11 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         ai_drafted:      true,
         ai_model:        'reviewer_confirm',
       }).select('id').single();
+      if (intErr) throw new Error('draft interaction insert failed: ' + intErr.message);
 
       letterResult = { interaction_id: inter && inter.id, letter_path: letterPath };
     } catch (letterErr) {
-      console.warn('[inspections.confirm] letter draft failed:', letterErr.message);
+      console.error('[inspections.confirm] letter draft FAILED (violation opened, no draft):', letterErr.message);
       letterResult = { error: letterErr.message };
     }
 
@@ -3661,6 +3662,8 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       stage: violation.current_stage,
       cure_period_ends_at: violation.cure_period_ends_at,
       rationale: decision.rationale,
+      draft_created: !!(letterResult && letterResult.interaction_id),
+      letter_error: (letterResult && letterResult.error) || null,
       letter: letterResult,
     });
   } catch (err) {
