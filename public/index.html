@@ -17648,7 +17648,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     <div id="inspReviewSection" style="margin-top:14px; background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
         <h3 style="font-size:14px; color:var(--navy,#0B1D34); margin:0;"><span style="font-family:var(--font-mono,monospace); font-size:9.5px; letter-spacing:0.15em; background:#0B1D34; color:#D4AF37; padding:2px 7px; border-radius:4px; vertical-align:middle; margin-right:6px;">STEP 1</span>🔍 Verify violations <span style="color:#64748b; font-weight:500;">— confirm, change, or reject</span></h3>
-        <div style="display:flex; gap:6px;">
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <label style="font-size:11px; color:#475569; display:flex; align-items:center; gap:4px; cursor:pointer;"><input type="checkbox" id="revSelectAll" onchange="inspReviewSelectAll(this.checked)" style="width:15px; height:15px;"> All</label>
+          <button id="revConfirmSelBtn" onclick="inspReviewConfirmSelected()" style="font-size:11px; padding:5px 12px; background:#16a34a; color:#fff; border:0; border-radius:6px; font-weight:600; cursor:pointer;" disabled>✓ Confirm selected (0)</button>
+          <button id="revRejectSelBtn" onclick="inspReviewRejectSelected()" style="font-size:11px; padding:5px 12px; background:#fff; color:#b91c1c; border:1px solid #fecaca; border-radius:6px; font-weight:600; cursor:pointer;" disabled>✕ Reject selected (0)</button>
           <button id="inspReviewAnalyzeBtn" class="secondary-btn" onclick="inspReviewRunAnalyze()" style="font-size:11px; padding:4px 10px;" title="Re-run AI analysis on the latest inspection's photos">▶ Run analysis</button>
           <button class="secondary-btn" onclick="inspReviewLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
         </div>
@@ -23234,8 +23237,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       : '<span style="color:#b45309;">— no property linked —</span>';
     return `
       <div style="display:flex; gap:12px; padding:12px 0; border-bottom:1px solid #f1f5f9; align-items:flex-start;">
+        <input type="checkbox" class="revchk" value="${o.id}" onchange="inspReviewUpdateSelCount()" style="margin-top:4px; width:17px; height:17px; flex-shrink:0; cursor:pointer;" title="Select for bulk confirm/reject">
         ${o.photo_url
-          ? `<img src="${escapeHtml(o.photo_url)}" loading="lazy" decoding="async" onclick="inspReviewViewPhoto(this.src)" title="Click to enlarge" style="width:120px; height:120px; object-fit:cover; border-radius:8px; border:1px solid #e2e8f0; flex-shrink:0; cursor:zoom-in;" />`
+          ? `<a href="${escapeHtml(o.photo_url)}" target="_blank" rel="noopener" title="Click to open the full-size photo" style="flex-shrink:0; display:block; line-height:0;"><img src="${escapeHtml(o.photo_url)}" loading="lazy" decoding="async" style="width:120px; height:120px; object-fit:cover; border-radius:8px; border:1px solid #e2e8f0; cursor:zoom-in;" /></a>`
           : '<div style="width:120px; height:120px; background:#f1f5f9; border-radius:8px; flex-shrink:0;"></div>'}
         <div style="flex:1; min-width:0;">
           <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:4px;">
@@ -23307,6 +23311,44 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
       await inspReviewLoad();
     } catch (e) { alert('Could not change category: ' + e.message); }
+  }
+
+  // --- Bulk confirm / reject in the Review queue (like the Drafts queue) ---
+  function inspReviewUpdateSelCount() {
+    const n = document.querySelectorAll('.revchk:checked').length;
+    const cb = document.getElementById('revConfirmSelBtn'), rb = document.getElementById('revRejectSelBtn');
+    if (cb) { cb.textContent = '✓ Confirm selected (' + n + ')'; cb.disabled = n === 0; }
+    if (rb) { rb.textContent = '✕ Reject selected (' + n + ')'; rb.disabled = n === 0; }
+  }
+  function inspReviewSelectAll(checked) {
+    document.querySelectorAll('.revchk').forEach((c) => { c.checked = checked; });
+    inspReviewUpdateSelCount();
+  }
+  async function inspReviewConfirmSelected() {
+    const ids = [...document.querySelectorAll('.revchk:checked')].map((c) => c.value);
+    if (!ids.length) return;
+    if (!confirm('Confirm ' + ids.length + ' violation' + (ids.length === 1 ? '' : 's') + '? Each opens a violation + creates a draft letter (Step 2).')) return;
+    const btn = document.getElementById('revConfirmSelBtn'); if (btn) { btn.disabled = true; btn.textContent = '⏳ Confirming…'; }
+    let ok = 0, fail = 0;
+    for (const id of ids) {
+      try { const r = await fetch('/api/inspections/observations/' + id + '/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); if (r.ok) ok++; else fail++; } catch (_) { fail++; }
+    }
+    const sa = document.getElementById('revSelectAll'); if (sa) sa.checked = false;
+    await Promise.all([inspReviewLoad(), (typeof inspDraftsLoad === 'function') ? inspDraftsLoad() : Promise.resolve()]);
+    alert('Confirmed ' + ok + (fail ? (' · ' + fail + ' failed') : '') + '. Draft letters are in Step 2 below.');
+  }
+  async function inspReviewRejectSelected() {
+    const ids = [...document.querySelectorAll('.revchk:checked')].map((c) => c.value);
+    if (!ids.length) return;
+    if (!confirm('Reject ' + ids.length + ' observation' + (ids.length === 1 ? '' : 's') + '? No letters are created.')) return;
+    const btn = document.getElementById('revRejectSelBtn'); if (btn) { btn.disabled = true; btn.textContent = '⏳ Rejecting…'; }
+    let ok = 0, fail = 0;
+    for (const id of ids) {
+      try { const r = await fetch('/api/inspections/observations/' + id + '/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); if (r.ok) ok++; else fail++; } catch (_) { fail++; }
+    }
+    const sa = document.getElementById('revSelectAll'); if (sa) sa.checked = false;
+    await inspReviewLoad();
+    alert('Rejected ' + ok + (fail ? (' · ' + fail + ' failed') : '') + '.');
   }
 
   async function inspReviewRunAnalyze() {
