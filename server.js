@@ -1016,6 +1016,9 @@ app.get('/admin/collections', (req, res) => {
 app.get('/admin/payment-plans', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'payment-plans.html'));
 });
+app.get('/admin/violations-schedule', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'violations-schedule.html'));
+});
 app.get('/admin/tessa', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'tessa.html'));
 });

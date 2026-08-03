@@ -140,6 +140,55 @@ function _downsamplePath(arr, max) {
 // a parallel store. Ingest stays POST /inspections/:id/route-trace; this just
 // fans those pings out per community for the shared map.
 // ---------------------------------------------------------------------------
+// GET /inspections/schedule?community_id=&year=&month= — calendar data for the
+// Violations "Schedule" tab: when we drove each community (inspections) and when
+// we mailed letters (interactions.printed_at = the Mail Queue postmark stamp),
+// bucketed by Central-time day. (Ed 2026-08-01.)
+router.get('/inspections/schedule', async (req, res) => {
+  try {
+    const communityId = (req.query.community_id || '').trim() || null;
+    const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+    const mReq = parseInt(req.query.month, 10);
+    const m = (mReq >= 1 && mReq <= 12) ? mReq : (new Date().getMonth() + 1);
+    // Widen the UTC fetch window by a day on each side, then bucket by CENTRAL
+    // day — so an event near a month boundary (e.g. Aug 1 00:30 UTC = Jul 31
+    // evening Central) lands on the right Central date, and the grid (which only
+    // renders this month's Central days) drops anything genuinely in another month.
+    const fromISO = new Date(Date.UTC(year, m - 1, 1) - 86400000).toISOString();
+    const toISO = new Date(Date.UTC(year, m, 1) + 86400000).toISOString();
+    const dayOf = (iso) => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)); } catch (_) { return String(iso).slice(0, 10); } };
+
+    // Drives (inspections) — small per month.
+    let dq = supabase.from('inspections').select('started_at, status, community_id, community:community_id(name)').gte('started_at', fromISO).lt('started_at', toISO).order('started_at', { ascending: true }).limit(2000);
+    if (communityId) dq = dq.eq('community_id', communityId);
+    const { data: drives, error: de } = await dq;
+    if (de) throw de;
+
+    // Mailed letters (interactions) — paginate; a big print batch can exceed 1000.
+    const letters = [];
+    for (let off = 0; ; off += 1000) {
+      let lq = supabase.from('interactions').select('printed_at, type, community_id, community:community_id(name)').like('type', 'letter%').not('printed_at', 'is', null).gte('printed_at', fromISO).lt('printed_at', toISO).order('printed_at', { ascending: true }).range(off, off + 999);
+      if (communityId) lq = lq.eq('community_id', communityId);
+      const { data, error: le } = await lq;
+      if (le) throw le;
+      letters.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+
+    const days = {};
+    for (const d of (drives || [])) {
+      const day = dayOf(d.started_at); (days[day] = days[day] || { drives: [], mailings: {} }).drives.push({ community_id: d.community_id, community: d.community && d.community.name, status: d.status });
+    }
+    for (const l of (letters || [])) {
+      const day = dayOf(l.printed_at); const bucket = (days[day] = days[day] || { drives: [], mailings: {} });
+      const key = l.community_id || 'unassigned';
+      const mm = bucket.mailings[key] = bucket.mailings[key] || { community_id: l.community_id, community: (l.community && l.community.name) || 'Unassigned', count: 0, stages: {} };
+      mm.count += 1; const stage = String(l.type || '').replace(/^letter_/, '') || 'other'; mm.stages[stage] = (mm.stages[stage] || 0) + 1;
+    }
+    res.json({ ok: true, year, month: m, days });
+  } catch (err) { console.error('[inspections] schedule failed:', err.message); res.status(500).json({ error: err.message }); }
+});
+
 router.get('/inspections/coverage', async (req, res) => {
   try {
     const communityId = req.query.community_id;

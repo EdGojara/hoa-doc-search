@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Violations Schedule</title>
+<link rel="stylesheet" href="/brand.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{ --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f4f5f7; }
+  *{box-sizing:border-box;} body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg);}
+  .wrap{max-width:1160px;margin:0 auto;padding:18px 16px 60px;}
+  a.back{display:inline-flex;gap:6px;color:#5a7390;text-decoration:none;font-size:13px;font-weight:600;margin-bottom:10px;}
+  .head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px;}
+  h1{margin:0;color:var(--navy);font-size:21px;}
+  .ctrls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  select,button{font-family:inherit;}
+  select{padding:7px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;background:#fff;}
+  .navbtn{padding:7px 12px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;cursor:pointer;font-size:14px;font-weight:700;color:var(--navy);}
+  .month{font-weight:800;color:var(--navy);font-size:16px;min-width:150px;text-align:center;}
+  .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin:8px 0 12px;flex-wrap:wrap;}
+  .chip{display:inline-flex;align-items:center;gap:5px;}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
+  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
+  .dow{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;text-align:center;padding:4px 0;}
+  .cell{background:#fff;border:1px solid var(--line);border-radius:9px;min-height:104px;padding:6px 7px;display:flex;flex-direction:column;gap:3px;overflow:hidden;}
+  .cell.empty{background:transparent;border:none;}
+  .cell.today{border-color:var(--gold);box-shadow:0 0 0 2px rgba(212,175,55,.25);}
+  .dnum{font-size:12px;font-weight:700;color:#334155;}
+  .ev{font-size:11px;line-height:1.3;border-radius:5px;padding:2px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .ev-drive{background:#e7f6ec;color:#166534;}
+  .ev-drive.prog{background:#fef3c7;color:#92400e;}
+  .ev-mail{background:#eaf1fb;color:#1e3a8a;}
+  .empty-note{color:var(--muted);font-size:13px;padding:30px;text-align:center;}
+  @media(max-width:640px){ .cell{min-height:78px;} .ev{font-size:10px;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">&larr; Back to trustEd</a>
+  <div class="head">
+    <h1>🚗 Violations Schedule</h1>
+    <div class="ctrls">
+      <select id="comm"><option value="">All communities</option></select>
+      <button class="navbtn" onclick="stepMonth(-1)">&larr;</button>
+      <span class="month" id="monthLabel">…</span>
+      <button class="navbtn" onclick="stepMonth(1)">&rarr;</button>
+      <button class="navbtn" onclick="goToday()">Today</button>
+    </div>
+  </div>
+  <div class="legend">
+    <span class="chip"><span class="dot" style="background:#166534;"></span> Drive (inspection)</span>
+    <span class="chip"><span class="dot" style="background:#92400e;"></span> Drive in progress</span>
+    <span class="chip"><span class="dot" style="background:#1e3a8a;"></span> Letters mailed</span>
+  </div>
+  <div id="cal"><div class="empty-note">Loading…</div></div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let _supa=null, af=null;
+let cur=new Date(); let curY=cur.getFullYear(), curM=cur.getMonth()+1; // 1-12
+const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+// today's Central Y-M-D for the highlight
+const todayCentral=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+
+function stepMonth(d){ curM+=d; if(curM<1){curM=12;curY--;} if(curM>12){curM=1;curY++;} load(); }
+function goToday(){ const n=new Date(); curY=n.getFullYear(); curM=n.getMonth()+1; load(); }
+
+async function load(){
+  $('monthLabel').textContent=MONTHS[curM-1]+' '+curY;
+  const cal=$('cal'); cal.innerHTML='<div class="empty-note">Loading…</div>';
+  try{
+    const cid=$('comm').value;
+    const r=await af('/api/inspections/schedule?year='+curY+'&month='+curM+(cid?'&community_id='+encodeURIComponent(cid):''));
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    render(j.days||{});
+  }catch(e){ cal.innerHTML='<div class="empty-note">Could not load the schedule.</div>'; }
+}
+
+function render(days){
+  const first=new Date(curY,curM-1,1); const lead=first.getDay(); const dim=new Date(curY,curM,0).getDate();
+  let cells='';
+  DOW.forEach(d=>cells+='<div class="dow">'+d+'</div>');
+  for(let i=0;i<lead;i++) cells+='<div class="cell empty"></div>';
+  for(let day=1;day<=dim;day++){
+    const ymd=curY+'-'+String(curM).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+    const ev=days[ymd]||{drives:[],mailings:{}};
+    let inner='<div class="dnum">'+day+'</div>';
+    (ev.drives||[]).forEach(dr=>{
+      const prog=(dr.status==='in_progress')?' prog':'';
+      inner+='<div class="ev ev-drive'+prog+'" title="Drive · '+esc(dr.community||'')+' · '+esc(dr.status||'')+'">🚗 '+esc(dr.community||'—')+'</div>';
+    });
+    Object.values(ev.mailings||{}).forEach(mm=>{
+      const stages=Object.entries(mm.stages||{}).map(([k,v])=>v+' '+k.replace(/_/g,' ')).join(', ');
+      inner+='<div class="ev ev-mail" title="Letters mailed · '+esc(mm.community||'')+' · '+esc(stages)+'">✉️ '+esc(mm.community||'—')+' ('+mm.count+')</div>';
+    });
+    cells+='<div class="cell'+(ymd===todayCentral?' today':'')+'">'+inner+'</div>';
+  }
+  $('cal').innerHTML='<div class="grid">'+cells+'</div>';
+}
+
+(async function boot(){
+  try{
+    const cfg=await (await fetch('/api/auth/config')).json();
+    if(!cfg||!cfg.enabled||!window.supabase){ $('cal').innerHTML='<div class="empty-note">Sign in to trustEd to view the schedule.</div>'; return; }
+    _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    const {data:{session}}=await _supa.auth.getSession();
+    if(!session||!session.access_token){ location.href='/login.html?next='+encodeURIComponent('/admin/violations-schedule'); return; }
+    af=async(u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
+    // communities filter
+    try{ const r=await af('/api/gl/communities'); const j=await r.json(); (j.communities||j||[]).filter(c=>c&&c.id).sort((a,b)=>String(a.name).localeCompare(String(b.name))).forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.name; $('comm').appendChild(o); }); }catch(_){}
+    $('comm').addEventListener('change', load);
+    load();
+  }catch(e){ $('cal').innerHTML='<div class="empty-note">Could not load.</div>'; }
+})();
+</script>
+<script src="/deploy-watcher.js"></script>
+</body>
+</html>
