@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flyer Studio</title>
+<link rel="stylesheet" href="/brand.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{ --navy:#0B1D34; --gold:#C6A15B; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f4f5f7; }
+  *{box-sizing:border-box;} body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg);}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 80px;}
+  a.back{display:inline-flex;gap:6px;color:#5a7390;text-decoration:none;font-size:13px;font-weight:600;margin-bottom:10px;}
+  h1{margin:0 0 2px;color:var(--navy);font-size:22px;}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 16px;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;}
+  @media(max-width:900px){ .grid{grid-template-columns:1fr;} }
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px;}
+  label{font-size:11px;color:var(--muted);font-weight:700;display:block;margin-top:10px;}
+  select,input,textarea{font-family:inherit;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;background:#fff;width:100%;margin-top:3px;}
+  textarea{line-height:1.5;min-height:70px;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  button{font-family:inherit;cursor:pointer;border-radius:8px;font-weight:700;font-size:13px;padding:9px 14px;border:1px solid transparent;}
+  .btn-navy{background:var(--navy);color:#fff;} .btn-gold{background:var(--gold);color:#20303f;}
+  .btn-green{background:#166534;color:#fff;} .btn-ghost{background:#fff;color:var(--navy);border:1px solid #cbd5e1;}
+  .btn-sm{padding:5px 10px;font-size:12px;}
+  .themes{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
+  .theme{width:34px;height:34px;border-radius:8px;cursor:pointer;border:2px solid transparent;}
+  .theme.sel{border-color:var(--navy);box-shadow:0 0 0 2px #fff inset;}
+  iframe#prev{width:100%;height:720px;border:1px solid var(--line);border-radius:10px;background:#e7ebf1;}
+  .muted{color:var(--muted);font-size:12.5px;}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .hidden{display:none;}
+  .note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:9px 11px;font-size:12px;color:#1e3a8a;margin-top:8px;}
+  .warn{background:#fef3c7;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:9px 11px;font-size:12px;margin-top:8px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">&larr; Back to trustEd</a>
+  <h1>🎏 Flyer Studio</h1>
+  <p class="sub">Type the event details, let AI polish the wording, pick a look — then preview, download a PDF, or email it to the community.</p>
+
+  <div class="grid">
+    <!-- Left: form -->
+    <div>
+      <div class="card">
+        <label>Community</label>
+        <select id="comm"><option value="">Choose…</option></select>
+
+        <label>Describe your event (for AI wording — optional)</label>
+        <textarea id="prompt" placeholder="e.g. Back to school pool party with Kona Ice and snacks, Aug 8 from 11-1 at the clubhouse"></textarea>
+        <div class="row" style="margin-top:6px;">
+          <button class="btn-ghost btn-sm" id="polishBtn" onclick="polish()">✨ Polish wording with AI</button>
+          <span class="muted">Fills the headline, tagline, and blurb below. Dates &amp; details stay exactly as you type them.</span>
+        </div>
+
+        <div class="two">
+          <div><label>Kicker (small top line)</label><input id="f_kicker" placeholder="You're invited"></div>
+          <div><label>Headline</label><input id="f_headline" placeholder="Back to School Bash!"></div>
+        </div>
+        <label>Tagline</label><input id="f_tagline" placeholder="Kick off the school year with Kona Ice, snacks &amp; community">
+        <div class="two">
+          <div><label>Date</label><input id="f_event_date" placeholder="August 8th"></div>
+          <div><label>Time</label><input id="f_event_time" placeholder="11:00 AM – 1:00 PM"></div>
+        </div>
+        <div class="two">
+          <div><label>Location name</label><input id="f_location_name" placeholder="Waterview Estates Clubhouse"></div>
+          <div><label>Address</label><input id="f_location_address" placeholder="5110 Waterview Estates Trail"></div>
+        </div>
+        <label>Blurb</label><textarea id="f_description" placeholder="Let's celebrate the new school year at the pool!"></textarea>
+        <div class="two">
+          <div><label>Button label (optional)</label><input id="f_cta_label" placeholder="RSVP"></div>
+          <div><label>Button link (optional)</label><input id="f_cta_url" placeholder="https://…"></div>
+        </div>
+        <label>Image URL (optional)</label><input id="f_image_url" placeholder="https://… (paste a photo link)">
+
+        <label>Look</label>
+        <div class="themes" id="themes"></div>
+
+        <div class="row" style="margin-top:14px;">
+          <button class="btn-navy" id="saveBtn" onclick="saveFlyer(this)">Create flyer</button>
+          <button class="btn-ghost" onclick="refreshPreview()">↻ Update preview</button>
+        </div>
+      </div>
+
+      <!-- Email panel -->
+      <div class="card" id="emailCard" style="display:none;">
+        <strong style="color:var(--navy);">Email this flyer</strong>
+        <div class="warn">Staff-only test send is on. Sending to owners/residents is turned off until go-live — ask to enable it.</div>
+        <label>Audience</label>
+        <select id="audience">
+          <option value="staff">Staff only (test)</option>
+          <option value="owners_and_residents" disabled>Owners &amp; residents (disabled)</option>
+          <option value="owners_only" disabled>Owners only (disabled)</option>
+          <option value="residents_only" disabled>Residents only (disabled)</option>
+        </select>
+        <label>Subject</label><input id="mailSubject" placeholder="You're invited: Back to School Bash!">
+        <label>Message (appears above the flyer)</label>
+        <textarea id="mailVerbiage" placeholder="Hi neighbors — join us for a fun afternoon! See the flyer below, and it's attached as a PDF too."></textarea>
+        <div class="row" style="margin-top:12px;">
+          <button class="btn-green" id="sendBtn" onclick="sendEmail(this)">Send to staff (test)</button>
+          <span class="muted">The flyer goes out embedded in the email <strong>and</strong> attached as a PDF.</span>
+        </div>
+        <div id="sendResult" class="note hidden"></div>
+      </div>
+    </div>
+
+    <!-- Right: preview + downloads -->
+    <div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between;">
+          <strong style="color:var(--navy);">Preview</strong>
+          <div class="row">
+            <button class="btn-gold btn-sm" onclick="download('pdf',this)">⬇ PDF</button>
+            <button class="btn-ghost btn-sm" onclick="download('png',this)">⬇ PNG</button>
+          </div>
+        </div>
+        <div style="margin-top:10px;">
+          <iframe id="prev"></iframe>
+        </div>
+        <div id="prevHint" class="muted" style="margin-top:8px;">Create the flyer to see a live preview.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/deploy-watcher.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+let _supa=null, af=null, curIssue=null, curSectionId=null, theme='summer';
+const THEME_SWATCH={summer:'linear-gradient(135deg,#0ea5e9,#0b3a63)',festive:'linear-gradient(135deg,#f97316,#db2777)',autumn:'linear-gradient(135deg,#b45309,#7c2d12)',spring:'linear-gradient(135deg,#22c55e,#15803d)',holiday:'linear-gradient(135deg,#b91c1c,#14532d)',formal:'linear-gradient(135deg,#0B1D34,#132f52)'};
+const FIELDS=['kicker','headline','tagline','event_date','event_time','location_name','location_address','description','cta_label','cta_url','image_url'];
+
+function buildThemes(){
+  const box=$('themes'); box.innerHTML='';
+  Object.entries(THEME_SWATCH).forEach(([k,g])=>{
+    const d=document.createElement('div'); d.className='theme'+(k===theme?' sel':''); d.style.background=g; d.title=k;
+    d.onclick=()=>{ theme=k; buildThemes(); };
+    box.appendChild(d);
+  });
+}
+function readFields(){ const o={theme}; FIELDS.forEach(f=>o[f]=($('f_'+f)||{}).value||''); return o; }
+function writeFields(b){ b=b||{}; FIELDS.forEach(f=>{ if($('f_'+f)) $('f_'+f).value=b[f]||''; }); if(b.theme){ theme=b.theme; buildThemes(); } }
+
+async function loadCommunities(){
+  try{ const r=await af('/api/gl/communities'); const j=await r.json();
+    (j.communities||j||[]).filter(c=>c&&c.id).sort((a,b)=>String(a.name).localeCompare(String(b.name)))
+      .forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.name; $('comm').appendChild(o); });
+  }catch(_){}
+}
+
+async function polish(){
+  const cid=$('comm').value; const prompt=$('prompt').value.trim();
+  if(!prompt){ alert('Type a short event description first.'); return; }
+  const btn=$('polishBtn'); btn.disabled=true; btn.textContent='✨ Thinking…';
+  try{
+    const r=await af('/api/newsletters/flyers/polish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid,prompt,fields:readFields()})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    const c=j.copy||{};
+    if(c.kicker) $('f_kicker').value=c.kicker;
+    if(c.headline) $('f_headline').value=c.headline;
+    if(c.tagline) $('f_tagline').value=c.tagline;
+    if(c.description) $('f_description').value=c.description;
+    if(curIssue) refreshPreview();
+  }catch(e){ alert('Could not polish: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent='✨ Polish wording with AI'; }
+}
+
+async function saveFlyer(btn){
+  const cid=$('comm').value;
+  if(!cid){ alert('Pick a community.'); return; }
+  if(!($('f_headline').value.trim())){ alert('Add a headline (or Polish with AI).'); return; }
+  btn.disabled=true; const t=btn.textContent; btn.textContent='Saving…';
+  try{
+    if(!curIssue){
+      const r=await af('/api/newsletters/flyers/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid,fields:readFields()})});
+      const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+      await openFlyer(j.issue_id);
+    }else{
+      const body={ title:$('f_headline').value.trim(), body_json:readFields() };
+      const r=await af('/api/newsletters/sections/'+curSectionId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+      refreshPreview();
+    }
+    $('emailCard').style.display='block';
+    if(!$('mailSubject').value) $('mailSubject').value=$('f_headline').value.trim();
+  }catch(e){ alert('Could not save: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent=curIssue?'Save changes':t; }
+}
+
+async function openFlyer(id){
+  const r=await af('/api/newsletters/issues/'+id); const j=await r.json();
+  if(!r.ok) throw new Error(j.error||'failed');
+  curIssue=j.issue; const sec=(j.sections||[]).find(s=>s.section_type==='flyer')||(j.sections||[])[0];
+  curSectionId=sec?sec.id:null;
+  if(sec) writeFields(sec.body_json||{});
+  $('saveBtn').textContent='Save changes';
+  refreshPreview();
+}
+
+async function refreshPreview(){
+  if(!curIssue) return;
+  $('prevHint').textContent='Rendering…';
+  try{
+    const r=await af('/api/newsletters/issues/'+curIssue.id+'/html?mode=web');
+    const html=await r.text(); if(!r.ok) throw new Error('failed');
+    $('prev').srcdoc=html; $('prevHint').textContent='';
+  }catch(e){ $('prevHint').textContent='Preview failed.'; }
+}
+
+async function download(kind,btn){
+  if(!curIssue){ alert('Create the flyer first.'); return; }
+  btn.disabled=true; const t=btn.textContent; btn.textContent='…';
+  try{
+    const r=await af('/api/newsletters/issues/'+curIssue.id+'/'+kind);
+    if(!r.ok) throw new Error('failed');
+    const blob=await r.blob(); const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=($('f_headline').value||'flyer').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.'+kind;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  }catch(e){ alert(kind.toUpperCase()+' failed: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
+
+async function sendEmail(btn){
+  if(!curIssue){ alert('Create the flyer first.'); return; }
+  const audience=$('audience').value;
+  if(!confirm('Send this flyer test to all staff now?')) return;
+  btn.disabled=true; const t=btn.textContent; btn.textContent='Sending…';
+  try{
+    const r=await af('/api/newsletters/issues/'+curIssue.id+'/send-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audience,subject:$('mailSubject').value,verbiage:$('mailVerbiage').value})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||j.error||'failed');
+    const box=$('sendResult'); box.classList.remove('hidden');
+    box.innerHTML='<strong>Sent.</strong> '+j.sent+' of '+j.recipients+' staff recipient(s)'+(j.failed?(' · '+j.failed+' failed'):'')+'. Check your inbox — the flyer is embedded and attached as a PDF.';
+  }catch(e){ alert('Could not send: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
+
+(async function boot(){
+  try{
+    const cfg=await (await fetch('/api/auth/config')).json();
+    if(!cfg||!cfg.enabled||!window.supabase){ document.querySelector('.wrap').innerHTML='<p style="padding:30px;color:#5a7390;">Sign in to trustEd to use the Flyer Studio.</p>'; return; }
+    _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    const {data:{session}}=await _supa.auth.getSession();
+    if(!session||!session.access_token){ location.href='/login.html?next='+encodeURIComponent('/admin/flyer-studio'); return; }
+    af=async(u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
+    buildThemes();
+    await loadCommunities();
+  }catch(e){ document.querySelector('.wrap').innerHTML='<p style="padding:30px;color:#b91c1c;">Could not load the studio.</p>'; }
+})();
+</script>
+</body>
+</html>

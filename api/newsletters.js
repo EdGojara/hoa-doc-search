@@ -16,9 +16,34 @@ const { requireStaff } = require('./_require_admin');
 const { isValidSectionType, NEWSLETTER_SECTION_TYPES } = require('../lib/newsletters/section_types');
 const { generateNewsletterDraft } = require('../lib/newsletters/generate');
 const { renderNewsletterHTML } = require('../lib/newsletters/render');
+const { sendEmail } = require('../lib/notifications/email');
+const Anthropic = require('@anthropic-ai/sdk');
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
+
+// Go-live guard (Ed 2026-08-03): flyer email blasts are STAFF-ONLY for testing
+// until we go fully live off Vantaca. Flip to true to allow owner/resident sends.
+const FLYER_MEMBER_SEND_ENABLED = false;
+
+// Render a flyer/issue to BOTH a print PDF and a poster PNG in one browser.
+async function renderFlyerAssets(bundle) {
+  const puppeteer = require('puppeteer');
+  const html = renderNewsletterHTML(bundle, { mode: 'print' });
+  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 2 });
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 60000 });
+    await page.emulateMediaType('print');
+    const pdf = await page.pdf({ format: 'Letter', printBackground: true, preferCSSPageSize: true });
+    let png;
+    const el = await page.$('.fl-page');
+    png = el ? await el.screenshot({ type: 'png' }) : await page.screenshot({ type: 'png', fullPage: true });
+    return { pdf, png };
+  } finally { try { await browser.close(); } catch (_) {} }
+}
 
 function slugify(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'issue';
@@ -301,6 +326,157 @@ router.get('/public/:id', async (req, res) => {
     res.set('Content-Type', 'text/html; charset=utf-8');
     res.send(renderNewsletterHTML(bundle, { mode: 'web' }));
   } catch (err) { console.error('[newsletters.public]', err); res.status(500).send('Error'); }
+});
+
+// --- Flyers -----------------------------------------------------------------
+
+// POST /flyers/generate — create a flyer (a one-section 'flyer' issue). If a
+// free-text prompt is given, the AI polishes ONLY the copy (headline / tagline /
+// blurb); the factual fields (date, time, location, links) are used verbatim.
+router.post('/flyers/generate', express.json(), async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    const b = req.body || {};
+    if (!b.community_id) return res.status(400).json({ error: 'community_id required' });
+    const fields = b.fields || {};
+    let community = { name: '' };
+    try { const { data } = await supabase.from('communities').select('name').eq('id', b.community_id).maybeSingle(); if (data) community = data; } catch (_) {}
+
+    let copy = { headline: fields.headline || '', tagline: fields.tagline || '', description: fields.description || '', kicker: fields.kicker || '' };
+    if (b.prompt && String(b.prompt).trim()) {
+      try {
+        const sys = `You write short, punchy, friendly copy for a community event flyer. Return STRICT JSON only.
+Rules: warm and inviting; NEVER invent dates, times, prices, or locations (those are supplied separately); keep it celebratory and community-oriented; no legal or enforcement tone.`;
+        const user = `Event description from staff: "${String(b.prompt).trim()}"
+Known facts (do not restate literally unless natural): community=${community.name}, date=${fields.event_date || ''}, time=${fields.event_time || ''}, location=${[fields.location_name, fields.location_address].filter(Boolean).join(' ')}.
+Return JSON: { "kicker": "<= 4 words, e.g. community name or 'You're invited'", "headline": "the big flyer title, <= 5 words, exciting", "tagline": "one inviting line, <= 16 words", "description": "1-2 warm sentences about the event" }`;
+        const resp = await anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 600, system: sys, messages: [{ role: 'user', content: user }] });
+        const text = (resp.content || []).map((c) => c.text || '').join('');
+        const a = text.indexOf('{'), z = text.lastIndexOf('}');
+        if (a >= 0 && z > a) { const p = JSON.parse(text.slice(a, z + 1)); copy = { headline: p.headline || copy.headline, tagline: p.tagline || copy.tagline, description: p.description || copy.description, kicker: p.kicker || copy.kicker }; }
+      } catch (e) { console.warn('[flyer.generate] AI polish failed:', e.message); }
+    }
+
+    const headline = copy.headline || fields.headline || 'Community Event';
+    const bodyJson = {
+      headline, tagline: copy.tagline || fields.tagline || '', kicker: copy.kicker || fields.kicker || '',
+      description: copy.description || fields.description || '',
+      event_date: fields.event_date || '', event_time: fields.event_time || '',
+      location_name: fields.location_name || '', location_address: fields.location_address || '',
+      cta_label: fields.cta_label || '', cta_url: fields.cta_url || '',
+      theme: fields.theme || 'summer', image_url: fields.image_url || '',
+    };
+    const month = (b.event_month ? String(b.event_month).slice(0, 7) : new Date().toISOString().slice(0, 7));
+    const { data: issue, error: ie } = await supabase.from('newsletter_issues').insert({
+      community_id: b.community_id, title: headline, slug: `${month}-${slugify(headline)}-flyer`,
+      issue_month: `${month}-01`, format_key: 'flyer', template_key: 'flyer',
+      created_by: u.user.id, created_by_name: u.full_name || null,
+    }).select().single();
+    if (ie) return res.status(500).json({ error: ie.message });
+    const { error: se } = await supabase.from('newsletter_sections').insert({
+      newsletter_issue_id: issue.id, section_type: 'flyer', title: headline, body_json: bodyJson, display_order: 0, ai_generated: !!b.prompt,
+    });
+    if (se) return res.status(500).json({ error: se.message });
+    res.json({ ok: true, issue_id: issue.id, copy });
+  } catch (err) { console.error('[flyer.generate]', err); res.status(500).json({ error: err.message }); }
+});
+
+// POST /flyers/polish — AI copy only (headline/tagline/description/kicker),
+// creates nothing. Lets staff iterate wording before saving.
+router.post('/flyers/polish', express.json(), async (req, res) => {
+  try {
+    if (!(await requireStaff(req, res))) return;
+    const b = req.body || {}; const fields = b.fields || {};
+    if (!b.prompt || !String(b.prompt).trim()) return res.status(400).json({ error: 'prompt required' });
+    let communityName = '';
+    if (b.community_id) { try { const { data } = await supabase.from('communities').select('name').eq('id', b.community_id).maybeSingle(); communityName = (data && data.name) || ''; } catch (_) {} }
+    const sys = `You write short, punchy, friendly copy for a community event flyer. Return STRICT JSON only.
+Rules: warm and inviting; NEVER invent dates, times, prices, or locations (supplied separately); celebratory, community-oriented; no legal/enforcement tone.`;
+    const user = `Event description from staff: "${String(b.prompt).trim()}"
+Known facts: community=${communityName}, date=${fields.event_date || ''}, time=${fields.event_time || ''}, location=${[fields.location_name, fields.location_address].filter(Boolean).join(' ')}.
+Return JSON: { "kicker": "<= 4 words", "headline": "big title <= 5 words", "tagline": "one inviting line <= 16 words", "description": "1-2 warm sentences" }`;
+    const resp = await anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 600, system: sys, messages: [{ role: 'user', content: user }] });
+    const text = (resp.content || []).map((c) => c.text || '').join('');
+    const a = text.indexOf('{'), z = text.lastIndexOf('}');
+    const copy = (a >= 0 && z > a) ? JSON.parse(text.slice(a, z + 1)) : {};
+    res.json({ ok: true, copy: { headline: copy.headline || '', tagline: copy.tagline || '', description: copy.description || '', kicker: copy.kicker || '' } });
+  } catch (err) { console.error('[flyer.polish]', err); res.status(500).json({ error: err.message }); }
+});
+
+// GET /issues/:id/png — poster PNG (staff). Used for the email embed + download.
+router.get('/issues/:id/png', async (req, res) => {
+  try {
+    if (!(await requireStaff(req, res))) return;
+    const bundle = await loadIssueBundle(req.params.id);
+    if (!bundle) return res.status(404).json({ error: 'not found' });
+    const { png } = await renderFlyerAssets(bundle);
+    res.set('Content-Type', 'image/png');
+    res.set('Content-Disposition', `inline; filename="flyer.png"`);
+    res.send(png);
+  } catch (err) { console.error('[flyer.png]', err); res.status(500).json({ error: 'PNG generation failed' }); }
+});
+
+// POST /issues/:id/send-email — blast the flyer. STAFF-ONLY during go-live
+// testing. Sends custom verbiage + the flyer embedded as an image + the flyer
+// PDF attached. Body: { audience, subject, verbiage }.
+router.post('/issues/:id/send-email', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    const b = req.body || {};
+    const audience = b.audience || 'staff';
+    if (audience !== 'staff' && !FLYER_MEMBER_SEND_ENABLED) {
+      return res.status(403).json({ error: 'member_send_disabled', detail: 'Flyer blasts are staff-only while we test the go-live. Ask Ed to enable owner/resident sends.' });
+    }
+    const bundle = await loadIssueBundle(req.params.id);
+    if (!bundle) return res.status(404).json({ error: 'not found' });
+
+    // Recipients.
+    let recipients = [];
+    if (audience === 'staff') {
+      const { data, error } = await supabase.from('user_profiles').select('email, full_name, is_active').limit(500);
+      if (error) return res.status(500).json({ error: error.message });
+      recipients = (data || []).filter((x) => x && x.is_active !== false && x.email).map((x) => ({ email: x.email, name: x.full_name || '' }));
+    } else {
+      const { resolveRecipients } = require('./email_campaigns');
+      recipients = await resolveRecipients({ scope: 'single_community', target_community_id: bundle.issue.community_id, audience });
+    }
+    // Dedupe by email.
+    const seen = new Set(); recipients = recipients.filter((r) => r.email && !seen.has(r.email.toLowerCase()) && seen.add(r.email.toLowerCase()));
+    if (!recipients.length) return res.status(400).json({ error: 'no_recipients', detail: 'No active recipients found for that audience.' });
+
+    // Render assets once.
+    const { pdf, png } = await renderFlyerAssets(bundle);
+
+    // Host the PNG so email clients can display it inline (data URIs are often
+    // stripped). Long-lived signed URL so the email keeps rendering.
+    let imgUrl = null;
+    try {
+      const path = `newsletters/flyers/${bundle.issue.id}.png`;
+      await supabase.storage.from('documents').upload(path, png, { contentType: 'image/png', upsert: true });
+      const { data: signed } = await supabase.storage.from('documents').createSignedUrl(path, 60 * 60 * 24 * 365);
+      imgUrl = signed && signed.signedUrl ? signed.signedUrl : null;
+    } catch (e) { console.warn('[flyer.email] png host failed:', e.message); }
+
+    const subject = (b.subject || '').trim() || bundle.issue.title || 'Community Flyer';
+    const verbiageHtml = (b.verbiage || '').trim()
+      ? '<div style="font-size:15px;line-height:1.6;color:#20303f;margin:0 0 18px;">' + String(b.verbiage).trim().split(/\n{2,}/).map((p) => '<p style="margin:0 0 12px;">' + p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>') + '</p>').join('') + '</div>'
+      : '';
+    const imgHtml = imgUrl ? `<img src="${imgUrl}" alt="${subject.replace(/"/g, '')}" style="width:100%;max-width:600px;border-radius:10px;display:block;margin:0 auto;">` : '<p style="color:#5f7488;">(Flyer attached as PDF.)</p>';
+    const html = `<div style="max-width:640px;margin:0 auto;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:8px;">
+      ${verbiageHtml}${imgHtml}
+      <p style="font-size:12.5px;color:#5f7488;text-align:center;margin:18px 0 0;">The full flyer is attached as a PDF. Sent by Bedrock Association Management.</p>
+    </div>`;
+    const attachments = [{ filename: `${slugify(subject)}.pdf`, content: Buffer.from(pdf).toString('base64') }];
+
+    // Send with small concurrency.
+    let sent = 0, failed = 0;
+    for (let i = 0; i < recipients.length; i += 5) {
+      const batch = recipients.slice(i, i + 5);
+      const results = await Promise.all(batch.map((r) => sendEmail({ to: r.email, subject, html, attachments }).then(() => true).catch((e) => { console.warn('[flyer.email] send failed', r.email, e.message); return false; })));
+      sent += results.filter(Boolean).length; failed += results.filter((x) => !x).length;
+    }
+    res.json({ ok: true, audience, recipients: recipients.length, sent, failed, staff_only: audience === 'staff' });
+  } catch (err) { console.error('[flyer.send-email]', err); res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;

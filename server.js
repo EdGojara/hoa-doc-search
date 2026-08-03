@@ -1025,6 +1025,9 @@ app.get('/admin/violations-schedule', (req, res) => {
 app.get('/admin/newsletter-studio', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'newsletter-studio.html'));
 });
+app.get('/admin/flyer-studio', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'flyer-studio.html'));
+});
 app.get('/admin/tessa', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'tessa.html'));
 });
