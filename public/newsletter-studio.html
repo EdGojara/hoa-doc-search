@@ -132,6 +132,11 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let _supa=null, af=null, curIssue=null, curSections=[], SECTION_TYPES={};
 const PROSE=new Set(['board_message','hoa_corner','custom_article','project_update','amenity_update']);
+const FEATURE=new Set(['resident_spotlight','vendor_spotlight','advertisement','in_the_news','event_feature']);
+const MD=new Set([...PROSE,...FEATURE]);
+const EVENTLIST=new Set(['event_grid','calendar']);
+const HASIMG=new Set(['cover',...MD]);
+const AIKIND={resident_spotlight:'resident_spotlight',vendor_spotlight:'vendor_spotlight',advertisement:'business_feature',in_the_news:'in_the_news'};
 
 function badge(status){
   const cls = status==='published'?'b-published':(status==='review'?'b-review':'b-draft');
@@ -207,16 +212,47 @@ async function openIssue(id){
   }catch(e){ alert('Could not open: '+e.message); }
 }
 
+function imgBlock(s){
+  return '<label>Photo / image</label>'
+    +'<div class="row" style="gap:6px;">'
+      +'<input id="img-'+s.id+'" style="flex:1;min-width:180px;" value="'+esc(s.image_url||'')+'" placeholder="Paste an image URL, or upload →">'
+      +'<input type="file" accept="image/*" id="file-'+s.id+'" style="display:none;" onchange="uploadImage(\''+s.id+'\',this)">'
+      +'<button class="btn-ghost btn-sm" type="button" onclick="document.getElementById(\'file-'+s.id+'\').click()">⬆ Upload</button>'
+    +'</div>'
+    +'<div id="imgprev-'+s.id+'">'+(s.image_url?'<img src="'+esc(s.image_url)+'" style="max-height:110px;border-radius:8px;margin-top:6px;">':'')+'</div>'
+    +'<div style="height:8px;"></div>';
+}
+function evRow(e){ e=e||{};
+  return '<div class="evrow" style="display:grid;grid-template-columns:1fr 1.2fr 2fr 2fr auto;gap:6px;margin-bottom:6px;">'
+    +'<input class="ev-date" placeholder="Aug 8" value="'+esc(e.date_label||e.date||'')+'">'
+    +'<input class="ev-time" placeholder="11 AM–1 PM" value="'+esc(e.time||'')+'">'
+    +'<input class="ev-title" placeholder="Event title" value="'+esc(e.title||'')+'">'
+    +'<input class="ev-loc" placeholder="Location" value="'+esc(e.location||'')+'">'
+    +'<button class="btn-red btn-sm" type="button" onclick="this.parentNode.remove()">✕</button>'
+  +'</div>';
+}
+function bodyBlock(s){
+  const t=s.section_type;
+  if(EVENTLIST.has(t)){
+    const evs=(s.body_json&&s.body_json.events)||[];
+    return '<label>Events</label><div id="evrows-'+s.id+'">'+(evs.length?evs.map(evRow).join(''):evRow())+'</div>'
+      +'<button class="btn-ghost btn-sm" type="button" onclick="addEvRow(\''+s.id+'\')">+ Add event</button>';
+  }
+  if(t==='cover'){
+    return '<label>Tagline</label><input id="tag-'+s.id+'" style="width:100%;" value="'+esc((s.body_json&&s.body_json.tagline)||'')+'">';
+  }
+  if(MD.has(t)){
+    return '<label>Body</label><textarea id="body-'+s.id+'">'+esc((s.body_json&&(s.body_json.markdown||s.body_json.body))||'')+'</textarea>'
+      +'<div class="row" style="margin-top:6px;"><button class="btn-ghost btn-sm" type="button" onclick="aiWrite(\''+s.id+'\',\''+t+'\',this)">✨ Write with AI</button><span class="muted">Type a topic or the facts; AI drafts it. Review before publishing.</span></div>';
+  }
+  return '<label>Content (advanced)</label><textarea id="body-'+s.id+'" style="font-family:monospace;font-size:12px;">'+esc(JSON.stringify(s.body_json||{},null,2))+'</textarea>';
+}
 function renderSections(){
   const box=$('sections');
   if(!curSections.length){ box.innerHTML='<div class="muted">No sections. Add one above.</div>'; return; }
   box.innerHTML=curSections.map((s,idx)=>{
     const meta=SECTION_TYPES[s.section_type]||{icon:'•',label:s.section_type};
     const review = s.needs_review ? '<span class="review-tag">review</span>' : '';
-    const isProse = PROSE.has(s.section_type);
-    const body = isProse
-      ? '<label>Body (markdown)</label><textarea data-f="markdown" id="body-'+s.id+'">'+esc((s.body_json&&(s.body_json.markdown||s.body_json.body))||'')+'</textarea>'
-      : '<label>Content (advanced JSON)</label><textarea data-f="json" id="body-'+s.id+'" style="font-family:monospace;font-size:12px;">'+esc(JSON.stringify(s.body_json||{},null,2))+'</textarea>';
     return '<div class="sec" id="sec-'+s.id+'">'
       +'<div class="sec-head">'
         +'<span class="ic">'+meta.icon+'</span>'
@@ -232,10 +268,10 @@ function renderSections(){
       +'<div class="sec-body">'
         +'<label>Title</label><input id="title-'+s.id+'" style="width:100%;" value="'+esc(s.title||'')+'">'
         +'<div style="height:8px;"></div>'
-        +'<label>Subtitle</label><input id="sub-'+s.id+'" style="width:100%;" value="'+esc(s.subtitle||'')+'">'
+        +'<label>Subtitle</label><input id="sub-'+s.id+'" style="width:100%;" value="'+esc(s.subtitle||'')+'" placeholder="'+(s.section_type==='event_feature'?'When &amp; where — Aug 8 · 11 AM–1 PM · Clubhouse':'')+'">'
         +'<div style="height:8px;"></div>'
-        +(s.section_type==='cover'?'<label>Cover image URL</label><input id="img-'+s.id+'" style="width:100%;" value="'+esc(s.image_url||'')+'"><div style="height:8px;"></div>':'')
-        +body
+        +(HASIMG.has(s.section_type)?imgBlock(s):'')
+        +bodyBlock(s)
         +'<div style="height:10px;"></div>'
         +'<button class="btn-navy btn-sm" onclick="saveSec(\''+s.id+'\',this)">Save section</button>'
         +(s.needs_review?' <button class="btn-green btn-sm" onclick="approveSec(\''+s.id+'\')">Mark reviewed</button>':'')
@@ -244,16 +280,47 @@ function renderSections(){
   }).join('');
 }
 function toggleSec(id){ const el=$('sec-'+id); if(el) el.classList.toggle('open'); }
+function addEvRow(id){ const box=$('evrows-'+id); if(box) box.insertAdjacentHTML('beforeend', evRow()); }
+function readEvRows(id){
+  const rows=[]; document.querySelectorAll('#evrows-'+id+' .evrow').forEach(r=>{
+    const d=(r.querySelector('.ev-date')||{}).value||'', tm=(r.querySelector('.ev-time')||{}).value||'', t=(r.querySelector('.ev-title')||{}).value||'', l=(r.querySelector('.ev-loc')||{}).value||'';
+    if(d||t||tm||l) rows.push({date_label:d.trim(), time:tm.trim(), title:t.trim(), location:l.trim()});
+  });
+  return rows;
+}
+async function uploadImage(id,input){
+  const file=input.files&&input.files[0]; if(!file) return;
+  const fd=new FormData(); fd.append('file',file);
+  try{
+    const r=await af('/api/newsletters/images',{method:'POST',body:fd});
+    const j=await r.json(); if(!r.ok||!j.url) throw new Error(j.error||'upload failed');
+    $('img-'+id).value=j.url;
+    $('imgprev-'+id).innerHTML='<img src="'+j.url+'" style="max-height:110px;border-radius:8px;margin-top:6px;">';
+  }catch(e){ alert('Upload failed: '+e.message); }
+}
+async function aiWrite(id,type,btn){
+  const topic=prompt('What should this be about?\n\nFor a spotlight or local business, include the real details (name, what they do, a quote) — the AI only uses what you give it and won\'t make facts up.');
+  if(!topic||!topic.trim()) return;
+  const kind=AIKIND[type]||'article';
+  if(btn){ btn.disabled=true; btn.textContent='✨ Writing…'; }
+  try{
+    const r=await af('/api/newsletters/ai/write',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:curIssue&&curIssue.community_id,kind,prompt:topic.trim(),title:$('title-'+id).value})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    if(j.title && !$('title-'+id).value.trim()) $('title-'+id).value=j.title;
+    if($('body-'+id)) $('body-'+id).value=j.markdown||'';
+  }catch(e){ alert('Could not write: '+e.message); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='✨ Write with AI'; } }
+}
 
 async function saveSec(id,btn){
   const s=curSections.find(x=>x.id===id); if(!s) return;
   const patch={ title:$('title-'+id).value, subtitle:$('sub-'+id).value };
   const img=$('img-'+id); if(img) patch.image_url=img.value;
-  const ta=$('body-'+id);
-  if(ta){
-    if(ta.dataset.f==='markdown'){ patch.body_json=Object.assign({},s.body_json||{},{markdown:ta.value}); }
-    else { try{ patch.body_json=JSON.parse(ta.value||'{}'); }catch(e){ alert('Content JSON is invalid: '+e.message); return; } }
-  }
+  const t=s.section_type;
+  if(EVENTLIST.has(t)){ patch.body_json=Object.assign({},s.body_json||{},{events:readEvRows(id)}); }
+  else if(t==='cover'){ patch.body_json=Object.assign({},s.body_json||{},{tagline:($('tag-'+id)||{}).value||''}); }
+  else if(MD.has(t)){ patch.body_json=Object.assign({},s.body_json||{},{markdown:($('body-'+id)||{}).value||''}); }
+  else { const ta=$('body-'+id); if(ta){ try{ patch.body_json=JSON.parse(ta.value||'{}'); }catch(e){ alert('Content JSON is invalid: '+e.message); return; } } }
   if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
   try{
     const r=await af('/api/newsletters/sections/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});

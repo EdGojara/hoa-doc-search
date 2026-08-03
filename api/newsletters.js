@@ -11,6 +11,8 @@
 // ============================================================================
 
 const express = require('express');
+const crypto = require('crypto');
+const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { requireStaff } = require('./_require_admin');
 const { isValidSectionType, NEWSLETTER_SECTION_TYPES } = require('../lib/newsletters/section_types');
@@ -262,6 +264,61 @@ router.post('/issues/:id/reorder', express.json(), async (req, res) => {
     }
     res.json({ ok: true });
   } catch (err) { console.error('[newsletters.reorder]', err); res.status(500).json({ error: err.message }); }
+});
+
+// --- AI writer + images -----------------------------------------------------
+
+const uploadImg = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+// POST /ai/write — write an article or spotlight blurb. body: { kind, prompt,
+// community_id?, title? }. Returns { title, markdown }. For spotlights of real
+// people/businesses the model uses ONLY the facts staff supply and flags gaps.
+router.post('/ai/write', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    if (!(await requireStaff(req, res))) return;
+    const b = req.body || {};
+    if (!b.prompt || !String(b.prompt).trim()) return res.status(400).json({ error: 'prompt required' });
+    const kind = b.kind || 'article';
+    let communityName = '';
+    if (b.community_id) { try { const { data } = await supabase.from('communities').select('name').eq('id', b.community_id).maybeSingle(); communityName = (data && data.name) || ''; } catch (_) {} }
+
+    const guidance = {
+      article: 'Write a friendly, interesting community-newsletter article. Educational or fun is fine.',
+      resident_spotlight: 'Write a warm "resident spotlight" featuring a neighbor. Use ONLY the facts provided — never invent details about a real person. If something is missing, write [STAFF REVIEW REQUIRED].',
+      vendor_spotlight: 'Write a friendly "local business spotlight". Use ONLY the facts provided about the business — never invent hours, prices, or claims. Flag gaps with [STAFF REVIEW REQUIRED].',
+      business_feature: 'Write a friendly feature on a local business. Use ONLY the supplied facts; never invent details. Flag gaps with [STAFF REVIEW REQUIRED].',
+      in_the_news: 'Write a short, upbeat "community in the news" item. Use ONLY the supplied facts about real people/events; flag gaps with [STAFF REVIEW REQUIRED].',
+    }[kind] || 'Write a friendly community-newsletter article.';
+
+    const sys = `You are the editorial assistant for Bedrock Association Management writing for homeowners.
+${guidance}
+Rules: warm, welcoming, service-oriented; write for homeowners, not HOA professionals; no legal conclusions; do not describe covenant enforcement in an aggressive tone. NEVER invent dates, prices, names, statistics, or facts about real people or businesses beyond what is supplied. Return STRICT JSON only.`;
+    const user = `Community: ${communityName || '(unspecified)'}
+Topic / facts from staff: "${String(b.prompt).trim()}"
+${b.title ? 'Suggested title: ' + b.title : ''}
+Return JSON: { "title": "a short friendly title", "markdown": "the article body in simple markdown (paragraphs, and - bullet lists if useful), ~120-260 words" }`;
+    const resp = await anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 1200, system: sys, messages: [{ role: 'user', content: user }] });
+    const text = (resp.content || []).map((c) => c.text || '').join('');
+    console.log('[newsletter.ai-write] returned:', text.slice(0, 200));
+    const a = text.indexOf('{'), z = text.lastIndexOf('}');
+    const parsed = (a >= 0 && z > a) ? JSON.parse(text.slice(a, z + 1)) : {};
+    res.json({ ok: true, title: parsed.title || b.title || '', markdown: parsed.markdown || '' });
+  } catch (err) { console.error('[newsletter.ai-write]', err); res.status(500).json({ error: err.message }); }
+});
+
+// POST /images — upload an image (multipart 'file'); returns a hosted URL to
+// drop into a section. Stored in the documents bucket under newsletters/images.
+router.post('/images', uploadImg.single('file'), async (req, res) => {
+  try {
+    if (!(await requireStaff(req, res))) return;
+    if (!req.file) return res.status(400).json({ error: 'file required' });
+    const ext = (req.file.originalname || '').split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const path = `newsletters/images/${crypto.randomUUID()}.${ext}`;
+    const { error } = await supabase.storage.from('documents').upload(path, req.file.buffer, { contentType: req.file.mimetype || 'image/jpeg', upsert: false });
+    if (error) return res.status(500).json({ error: error.message });
+    const { data: signed } = await supabase.storage.from('documents').createSignedUrl(path, 60 * 60 * 24 * 365);
+    res.json({ ok: true, url: (signed && signed.signedUrl) || null });
+  } catch (err) { console.error('[newsletter.images]', err); res.status(500).json({ error: err.message }); }
 });
 
 // --- Rendering --------------------------------------------------------------
