@@ -225,7 +225,22 @@ router.get('/inspections/schedule', async (req, res) => {
       const dd = bucket.deadlines[key] = bucket.deadlines[key] || { community_id: v.community_id, community: (v.community && v.community.name) || 'Unassigned', stage: v.current_stage, count: 0 };
       dd.count += 1;
     }
-    res.json({ ok: true, year, month: m, days });
+    // Month-level cadence strip — per community: how many days we were out +
+    // total pictures, and how many days letters mailed + total letters. Answers
+    // "what was our rhythm this month" at a glance, above the day grid.
+    const sum = new Map();
+    const bump = (id, name) => {
+      const k = id || 'unassigned';
+      if (!sum.has(k)) sum.set(k, { community_id: id || null, community: name || 'Unassigned', out_days: 0, pics: 0, mail_days: 0, letters: 0 });
+      return sum.get(k);
+    };
+    for (const [, bucket] of Object.entries(days)) {
+      for (const dr of Object.values(bucket.drives)) { const s = bump(dr.community_id, dr.community); s.out_days += 1; s.pics += dr.photos || 0; }
+      for (const mm of Object.values(bucket.mailings)) { const s = bump(mm.community_id, mm.community); s.mail_days += 1; s.letters += mm.count || 0; }
+    }
+    const summary = [...sum.values()].sort((a, b) => String(a.community).localeCompare(String(b.community)));
+
+    res.json({ ok: true, year, month: m, days, summary });
   } catch (err) { console.error('[inspections] schedule failed:', err.message); res.status(500).json({ error: err.message }); }
 });
 

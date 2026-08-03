@@ -34,6 +34,14 @@
   .ev-due{background:#fee2e2;color:#991b1b;font-weight:600;}
   .ev-due.soft{background:#fef3c7;color:#92400e;font-weight:500;}
   .empty-note{color:var(--muted);font-size:13px;padding:30px;text-align:center;}
+  .sumwrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin:2px 0 16px;}
+  .sumcard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 12px;}
+  .sumcard .name{font-weight:800;color:var(--navy);font-size:13px;margin-bottom:4px;}
+  .sumcard .row{font-size:11.5px;color:#475569;display:flex;align-items:center;gap:6px;line-height:1.5;}
+  .sumcard .k{color:#94a3b8;}
+  .sumcard .drive{color:#166534;font-weight:700;}
+  .sumcard .mail{color:#1e3a8a;font-weight:700;}
+  .sumnone{color:var(--muted);font-size:12.5px;}
   @media(max-width:640px){ .cell{min-height:78px;} .ev{font-size:10px;} }
 </style>
 </head>
@@ -56,6 +64,7 @@
     <span class="chip"><span class="dot" style="background:#1e3a8a;"></span> Letters mailed</span>
     <span class="chip"><span class="dot" style="background:#991b1b;"></span> §209 cure deadline (not at attorney)</span>
   </div>
+  <div id="summary"></div>
   <div id="cal"><div class="empty-note">Loading…</div></div>
 </div>
 <script>
@@ -78,8 +87,22 @@ async function load(){
     const cid=$('comm').value;
     const r=await af('/api/inspections/schedule?year='+curY+'&month='+curM+(cid?'&community_id='+encodeURIComponent(cid):''));
     const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    renderSummary(j.summary||[]);
     render(j.days||{});
-  }catch(e){ cal.innerHTML='<div class="empty-note">Could not load the schedule.</div>'; }
+  }catch(e){ $('summary').innerHTML=''; cal.innerHTML='<div class="empty-note">Could not load the schedule.</div>'; }
+}
+
+function renderSummary(rows){
+  const box=$('summary');
+  if(!rows.length){ box.innerHTML='<div class="sumnone">No drives or letter mailings recorded this month.</div>'; return; }
+  const cards=rows.map(s=>{
+    const outTxt=s.out_days?('<span class="drive">Out '+s.out_days+' day'+(s.out_days===1?'':'s')+'</span> <span class="k">·</span> '+s.pics+' picture'+(s.pics===1?'':'s')):'<span class="k">Not out this month</span>';
+    const mailTxt=s.mail_days?('<span class="mail">'+s.letters+' letter'+(s.letters===1?'':'s')+'</span> <span class="k">·</span> '+s.mail_days+' mailing day'+(s.mail_days===1?'':'s')):'<span class="k">No letters mailed</span>';
+    return '<div class="sumcard"><div class="name">'+esc(s.community||'—')+'</div>'+
+           '<div class="row">🚗 '+outTxt+'</div>'+
+           '<div class="row">✉️ '+mailTxt+'</div></div>';
+  }).join('');
+  box.innerHTML='<div class="sumwrap">'+cards+'</div>';
 }
 
 function render(days){
