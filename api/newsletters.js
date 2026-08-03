@@ -50,6 +50,10 @@ async function renderFlyerAssets(bundle) {
 function slugify(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'issue';
 }
+// A short random suffix so re-generating a draft for the same community + month
+// never collides with the UNIQUE(community_id, slug) constraint (Ed 2026-08-03:
+// every regenerate was failing with a duplicate-key error).
+function uniqueSlug(base) { return `${base}-${crypto.randomBytes(3).toString('hex')}`; }
 function monthLabel(isoMonth) {
   try {
     const d = new Date(String(isoMonth).slice(0, 7) + '-01T12:00:00');
@@ -111,7 +115,7 @@ router.post('/issues', express.json(), async (req, res) => {
     const title = (b.title || '').trim() || `${monthLabel(month)} Newsletter`;
     const format = ['community_update', 'community_magazine', 'announcement'].includes(b.format_key) ? b.format_key : 'community_update';
     const row = {
-      community_id: b.community_id, title, slug: `${month}-${slugify(title)}`,
+      community_id: b.community_id, title, slug: uniqueSlug(`${month}-${slugify(title)}`),
       issue_month: `${month}-01`, format_key: format, template_key: b.template_key || 'community-update',
       introduction: (b.introduction || '').trim() || null,
       created_by: u.user.id, created_by_name: u.full_name || null,
@@ -138,7 +142,7 @@ router.post('/issues/generate', express.json(), async (req, res) => {
 
     const title = draft.title || `${monthLabel(month)} Newsletter`;
     const { data: issue, error: ie } = await supabase.from('newsletter_issues').insert({
-      community_id: b.community_id, title, slug: `${month}-${slugify(title)}`,
+      community_id: b.community_id, title, slug: uniqueSlug(`${month}-${slugify(title)}`),
       issue_month: `${month}-01`, format_key: format, template_key: 'community-update',
       introduction: draft.introduction || null, cover_image_url: draft.cover_image_url || null,
       created_by: u.user.id, created_by_name: u.full_name || null,
@@ -469,7 +473,7 @@ Return JSON: { "kicker": "<= 4 words, e.g. community name or 'You're invited'", 
     };
     const month = (b.event_month ? String(b.event_month).slice(0, 7) : new Date().toISOString().slice(0, 7));
     const { data: issue, error: ie } = await supabase.from('newsletter_issues').insert({
-      community_id: b.community_id, title: headline, slug: `${month}-${slugify(headline)}-flyer`,
+      community_id: b.community_id, title: headline, slug: uniqueSlug(`${month}-${slugify(headline)}-flyer`),
       issue_month: `${month}-01`, format_key: 'flyer', template_key: 'flyer',
       created_by: u.user.id, created_by_name: u.full_name || null,
     }).select().single();
