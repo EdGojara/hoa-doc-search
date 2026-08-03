@@ -158,8 +158,10 @@ router.get('/inspections/schedule', async (req, res) => {
     const toISO = new Date(Date.UTC(year, m, 1) + 86400000).toISOString();
     const dayOf = (iso) => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)); } catch (_) { return String(iso).slice(0, 10); } };
 
-    // Drives (inspections) — small per month.
-    let dq = supabase.from('inspections').select('started_at, status, community_id, community:community_id(name)').gte('started_at', fromISO).lt('started_at', toISO).order('started_at', { ascending: true }).limit(2000);
+    // Drives (inspections) — small per month. Carry total_photos so the
+    // calendar can hide empty passes and label each drive with its picture
+    // count (Ed 2026-08-03: most drives captured zero — exclude those).
+    let dq = supabase.from('inspections').select('started_at, status, total_photos, community_id, community:community_id(name)').gte('started_at', fromISO).lt('started_at', toISO).order('started_at', { ascending: true }).limit(2000);
     if (communityId) dq = dq.eq('community_id', communityId);
     const { data: drives, error: de } = await dq;
     if (de) throw de;
@@ -198,7 +200,11 @@ router.get('/inspections/schedule', async (req, res) => {
     const mk = () => ({ drives: [], mailings: {}, deadlines: {} });
     const days = {};
     for (const d of (drives || [])) {
-      const day = dayOf(d.started_at); (days[day] = days[day] || mk()).drives.push({ community_id: d.community_id, community: d.community && d.community.name, status: d.status });
+      // Hide zero-photo passes (a drive that captured nothing is noise) — but
+      // keep a live in-progress drive visible even before its first photo.
+      const photos = d.total_photos || 0;
+      if (photos === 0 && d.status !== 'in_progress') continue;
+      const day = dayOf(d.started_at); (days[day] = days[day] || mk()).drives.push({ community_id: d.community_id, community: d.community && d.community.name, status: d.status, photos });
     }
     for (const l of (letters || [])) {
       const day = dayOf(l.printed_at); const bucket = (days[day] = days[day] || mk());

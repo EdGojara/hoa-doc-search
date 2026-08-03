@@ -51,7 +51,7 @@
     </div>
   </div>
   <div class="legend">
-    <span class="chip"><span class="dot" style="background:#166534;"></span> Drive (inspection)</span>
+    <span class="chip"><span class="dot" style="background:#166534;"></span> Drive (n = pictures taken)</span>
     <span class="chip"><span class="dot" style="background:#92400e;"></span> Drive in progress</span>
     <span class="chip"><span class="dot" style="background:#1e3a8a;"></span> Letters mailed</span>
     <span class="chip"><span class="dot" style="background:#991b1b;"></span> §209 cure deadline (not at attorney)</span>
@@ -93,7 +93,8 @@ function render(days){
     let inner='<div class="dnum">'+day+'</div>';
     (ev.drives||[]).forEach(dr=>{
       const prog=(dr.status==='in_progress')?' prog':'';
-      inner+='<div class="ev ev-drive'+prog+'" title="Drive · '+esc(dr.community||'')+' · '+esc(dr.status||'')+'">🚗 '+esc(dr.community||'—')+'</div>';
+      const n=(dr.photos==null)?0:dr.photos;
+      inner+='<div class="ev ev-drive'+prog+'" title="Drive · '+esc(dr.community||'')+' · '+n+' picture'+(n===1?'':'s')+' · '+esc(dr.status||'')+'">🚗 '+esc(dr.community||'—')+' ('+n+')</div>';
     });
     Object.values(ev.mailings||{}).forEach(mm=>{
       const stages=Object.entries(mm.stages||{}).map(([k,v])=>v+' '+k.replace(/_/g,' ')).join(', ');
