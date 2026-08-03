@@ -860,7 +860,7 @@
         <label style="font-size:11px; color:#475569; font-weight:600;">Title<br>
           <input id="calAddTitle" type="text" placeholder="e.g. Laurie out, Office closed" style="margin-top:3px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; min-width:220px;">
         </label>
-        <label style="font-size:11px; color:#475569; font-weight:600;">Staff (optional)<br>
+        <label style="font-size:11px; color:#475569; font-weight:600;" title="Who the event or time off is for. You can add it for a colleague — e.g. mark someone out sick.">For (staff, optional)<br>
           <select id="calAddStaff" style="margin-top:3px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; background:#fff; min-width:150px;"><option value="">—</option></select>
         </label>
         <label style="font-size:11px; color:#475569; font-weight:600;">Start<br>
@@ -47057,26 +47057,25 @@ ${questionsPage}
         cc.appendChild(opt);
       });
     }
-    // Staff options — from /api/users (admin-tier; silent fallback otherwise).
+    // Staff options — from /api/calendar/staff (staff-tier, so anyone can add an
+    // event for a colleague, e.g. mark someone out sick on their behalf).
     const ss = document.getElementById('calAddStaff');
     if (ss && !_calAddStaffLoaded) {
       _calAddStaffLoaded = true;
       try {
-        const r = await window._authFetch('/api/users');
+        const r = await window._authFetch('/api/calendar/staff');
         const j = await r.json();
-        const list = (j && (j.users || j)) || [];
+        const list = (j && j.staff) || [];
         if (r.ok && Array.isArray(list)) {
-          list.filter((u) => u && (u.full_name || u.email))
-            .sort((a, b) => String(a.full_name || a.email).localeCompare(String(b.full_name || b.email)))
-            .forEach((u) => {
-              const opt = document.createElement('option');
-              opt.value = u.id || '';
-              opt.textContent = u.full_name || u.email;
-              opt.dataset.name = u.full_name || u.email;
-              ss.appendChild(opt);
-            });
+          list.forEach((u) => {
+            const opt = document.createElement('option');
+            opt.value = u.id || '';
+            opt.textContent = u.name;
+            opt.dataset.name = u.name;
+            ss.appendChild(opt);
+          });
         }
-      } catch (_) { /* roster not available to this role — leave blank */ }
+      } catch (_) { /* roster not available — leave blank */ }
     }
   }
   async function calAddSave(btn) {

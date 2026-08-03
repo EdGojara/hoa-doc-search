@@ -10448,6 +10448,30 @@ app.delete('/api/calendar/events/:id', async (req, res) => {
   }
 });
 
+// GET /api/calendar/staff — minimal active-staff picker (id + name) for the
+// Add-event form. Deliberately staff-tier (NOT admin-only like /api/users) so
+// ANY staff member can put an event on a colleague's behalf — e.g. mark someone
+// out sick when they aren't here to do it themselves. Names only; no roles,
+// emails, or sign-in data leave the server.
+app.get('/api/calendar/staff', async (req, res) => {
+  try {
+    if (!(await requireCalendarStaff(req, res))) return;
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('id, full_name, email, is_active')
+      .limit(500);
+    if (error) return res.status(500).json({ error: error.message });
+    const staff = (data || [])
+      .filter((u) => u && u.is_active !== false)
+      .map((u) => ({ id: u.id, name: u.full_name || (u.email ? String(u.email).split('@')[0] : 'Staff') }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ staff });
+  } catch (err) {
+    console.error('[calendar/staff]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================================================
 // 📊 Performance — SLA metrics across customer-facing touchpoints.
 //   GET /api/performance/acc?days=30  → ACC application response-time metrics
