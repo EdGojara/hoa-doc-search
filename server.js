@@ -10186,8 +10186,20 @@ app.get('/api/annual-meetings/calendar', async (req, res) => {
 //     cycle is in the past)
 // Future sources: ARC backlog, vendor renewals, audit/tax/insurance.
 // ============================================================================
+// Staff-tier gate for the Bedrock Calendar — it now carries clubhouse renter
+// names and staff PTO, so it's no longer safe to serve unauthenticated.
+async function requireCalendarStaff(req, res) {
+  const role = await resolveUserRole(req);
+  if (!['admin', 'staff', 'assistant'].includes(role)) {
+    res.status(403).json({ error: 'staff role required' });
+    return false;
+  }
+  return true;
+}
+
 app.get('/api/calendar/events', async (req, res) => {
   try {
+    if (!(await requireCalendarStaff(req, res))) return;
     const from = req.query.from || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
     const to   = req.query.to   || new Date(Date.now() + 400 * 86400000).toISOString().slice(0, 10);
 
@@ -10303,9 +10315,135 @@ app.get('/api/calendar/events', async (req, res) => {
       console.warn('[calendar/events] drafts query failed:', e.message);
     }
 
+    // ---- Additional sources for the unified Bedrock Calendar ----
+    // Community id → name for the FK-based sources below (small table).
+    const commName = {};
+    try {
+      const { data: comms, error } = await supabase.from('communities').select('id, name');
+      if (error) throw error;
+      for (const c of comms || []) commName[c.id] = c.name;
+    } catch (e) { console.warn('[calendar/events] community map failed:', e.message); }
+
+    // Clubhouse / amenity reservations — canonical source amenity_rentals.
+    // Read-only on the calendar; still booked through the amenity module.
+    try {
+      const { data: rentals, error } = await supabase.from('amenity_rentals')
+        .select('id, community_id, event_date, arrival_time, renter_name, event_description, status, amenities(name)')
+        .not('event_date', 'is', null)
+        .gte('event_date', from).lte('event_date', to)
+        .not('status', 'in', '(cancelled,refunded,draft)')
+        .order('event_date', { ascending: true }).limit(2000);
+      if (error) throw error;
+      for (const r of rentals || []) {
+        const amen = (r.amenities && r.amenities.name) || 'Amenity';
+        const who = r.renter_name ? ` — ${r.renter_name}` : '';
+        events.push({
+          date: r.event_date, type: 'amenity_rental',
+          label: `${amen}${who}`, community: commName[r.community_id] || null,
+          time: r.arrival_time || null, ref_id: r.id,
+        });
+      }
+    } catch (e) { console.warn('[calendar/events] amenity rentals failed:', e.message); }
+
+    // Scheduled board meetings — canonical source meeting_agendas (the agenda is
+    // the concrete scheduled instance; annual-meeting planning already comes
+    // from nomination_cycles above, so those aren't double-counted here).
+    try {
+      const { data: mtgs, error } = await supabase.from('meeting_agendas')
+        .select('id, community_id, meeting_date, meeting_type, meeting_time, title')
+        .not('meeting_date', 'is', null)
+        .gte('meeting_date', from).lte('meeting_date', to)
+        .order('meeting_date', { ascending: true }).limit(2000);
+      if (error) throw error;
+      for (const mt of mtgs || []) {
+        const typ = String(mt.meeting_type || 'regular').replace(/_/g, ' ');
+        events.push({
+          date: mt.meeting_date, type: 'board_meeting',
+          label: mt.title || `${typ.charAt(0).toUpperCase() + typ.slice(1)} meeting`,
+          community: commName[mt.community_id] || null,
+          time: mt.meeting_time || null, ref_id: mt.id,
+        });
+      }
+    } catch (e) { console.warn('[calendar/events] meetings failed:', e.message); }
+
+    // Native staff events + PTO (calendar_events). Multi-day spans emit one
+    // chip per day, clamped to the requested window and capped for safety.
+    try {
+      const { data: rows, error } = await supabase.from('calendar_events')
+        .select('id, event_type, title, start_date, end_date, all_day, start_time, staff_name, community_id, notes')
+        .lte('start_date', to)
+        .or(`end_date.gte.${from},and(end_date.is.null,start_date.gte.${from})`)
+        .order('start_date', { ascending: true }).limit(2000);
+      if (error) throw error;
+      for (const rec of rows || []) {
+        const last = rec.end_date || rec.start_date;
+        let d = rec.start_date < from ? from : rec.start_date;
+        const end = last > to ? to : last;
+        let guard = 0;
+        while (d <= end && guard++ < 120) {
+          events.push({
+            date: d, type: rec.event_type,
+            label: rec.staff_name ? `${rec.title} · ${rec.staff_name}` : rec.title,
+            community: rec.community_id ? (commName[rec.community_id] || null) : null,
+            time: rec.all_day ? null : (rec.start_time || null),
+            event_id: rec.id, is_native: true, notes: rec.notes || null,
+          });
+          d = addDays(d, 1);
+        }
+      }
+    } catch (e) { console.warn('[calendar/events] native events failed:', e.message); }
+
     res.json({ events });
   } catch (err) {
     console.error('[calendar/events]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/calendar/events — create a native staff event / PTO entry.
+app.post('/api/calendar/events', express.json(), async (req, res) => {
+  try {
+    if (!(await requireCalendarStaff(req, res))) return;
+    const b = req.body || {};
+    const ALLOWED = ['staff_event', 'vacation', 'sick', 'holiday', 'reminder', 'meeting', 'other'];
+    const type = b.event_type || 'staff_event';
+    if (!ALLOWED.includes(type)) return res.status(400).json({ error: 'invalid event_type' });
+    if (!b.title || !String(b.title).trim()) return res.status(400).json({ error: 'title required' });
+    if (!b.start_date) return res.status(400).json({ error: 'start_date required' });
+    const row = {
+      event_type: type,
+      title: String(b.title).trim(),
+      start_date: b.start_date,
+      end_date: b.end_date || null,
+      all_day: b.all_day !== false,
+      start_time: (b.start_time || '').trim() || null,
+      end_time: (b.end_time || '').trim() || null,
+      staff_user_id: b.staff_user_id || null,
+      staff_name: (b.staff_name || '').trim() || null,
+      community_id: b.community_id || null,
+      notes: (b.notes || '').trim() || null,
+      created_by_user_id: b.created_by_user_id || null,
+      created_by_name: (b.created_by_name || '').trim() || null,
+    };
+    const { data, error } = await supabase.from('calendar_events').insert(row).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, event: data });
+  } catch (err) {
+    console.error('[calendar/events POST]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/calendar/events/:id — remove a native event (native rows only;
+// aggregated sources are edited in their own modules).
+app.delete('/api/calendar/events/:id', async (req, res) => {
+  try {
+    if (!(await requireCalendarStaff(req, res))) return;
+    const { error } = await supabase.from('calendar_events').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[calendar/events DELETE]', err);
     res.status(500).json({ error: err.message });
   }
 });

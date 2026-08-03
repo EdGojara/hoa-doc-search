@@ -832,24 +832,61 @@
   <div style="max-width:1200px; margin:0 auto;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom:14px;">
       <div>
-        <h2 style="font-size:22px; font-weight:700; color:#1E2761; margin-bottom:4px;">🗓️ Calendar</h2>
-        <p style="font-size:13px; color:#666; margin:0;">Every planning date across the portfolio. Click any event to jump into the work.</p>
+        <h2 style="font-size:22px; font-weight:700; color:#1E2761; margin-bottom:4px;">🗓️ Bedrock Calendar</h2>
+        <p style="font-size:13px; color:#666; margin:0;">Meetings, clubhouse reservations, staff events and time off — everything in one place. Click any event to open it; use ＋ Add event for staff events and PTO.</p>
       </div>
       <div style="display:flex; align-items:center; gap:6px;">
         <button class="secondary-btn" onclick="calPrev()" style="font-size:13px; padding:6px 12px;">←</button>
         <div id="calMonthLabel" style="min-width:170px; text-align:center; font-weight:700; color:#1E2761; font-size:15px;"></div>
         <button class="secondary-btn" onclick="calNext()" style="font-size:13px; padding:6px 12px;">→</button>
         <button class="secondary-btn" onclick="calToday()" style="font-size:12px; padding:6px 10px; margin-left:6px;">Today</button>
+        <button onclick="calAddOpen()" style="font-size:12px; padding:6px 12px; margin-left:6px; background:#1E2761; color:#fff; border:none; border-radius:6px; font-weight:700; cursor:pointer;">＋ Add event</button>
       </div>
     </div>
 
+    <!-- Add-event form (hidden until ＋ Add event). Native staff events + PTO. -->
+    <div id="calAddPanel" style="display:none; background:#fff; border:1px solid #d7e3f4; border-radius:10px; padding:14px 16px; margin-bottom:14px;">
+      <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
+        <label style="font-size:11px; color:#475569; font-weight:600;">Type<br>
+          <select id="calAddType" style="margin-top:3px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; background:#fff; min-width:130px;">
+            <option value="staff_event">📌 Staff event</option>
+            <option value="vacation">🌴 Vacation</option>
+            <option value="sick">🤒 Sick day</option>
+            <option value="holiday">🎈 Holiday (office)</option>
+            <option value="reminder">⏰ Reminder</option>
+            <option value="other">• Other</option>
+          </select>
+        </label>
+        <label style="font-size:11px; color:#475569; font-weight:600;">Title<br>
+          <input id="calAddTitle" type="text" placeholder="e.g. Laurie out, Office closed" style="margin-top:3px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; min-width:220px;">
+        </label>
+        <label style="font-size:11px; color:#475569; font-weight:600;">Staff (optional)<br>
+          <select id="calAddStaff" style="margin-top:3px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; background:#fff; min-width:150px;"><option value="">—</option></select>
+        </label>
+        <label style="font-size:11px; color:#475569; font-weight:600;">Start<br>
+          <input id="calAddStart" type="date" style="margin-top:3px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;">
+        </label>
+        <label style="font-size:11px; color:#475569; font-weight:600;">End (optional)<br>
+          <input id="calAddEnd" type="date" style="margin-top:3px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;">
+        </label>
+        <label style="font-size:11px; color:#475569; font-weight:600;">Community (optional)<br>
+          <select id="calAddCommunity" style="margin-top:3px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; background:#fff; min-width:170px;"><option value="">Company-wide</option></select>
+        </label>
+        <button onclick="calAddSave(this)" style="padding:7px 16px; background:#166534; color:#fff; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer;">Save</button>
+        <button onclick="calAddOpen(false)" style="padding:7px 12px; background:#fff; color:#475569; border:1px solid #cbd5e1; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer;">Cancel</button>
+      </div>
+      <div id="calAddMsg" style="font-size:11.5px; color:#b91c1c; margin-top:8px; display:none;"></div>
+    </div>
+
     <!-- Legend + community filter -->
-    <div style="display:flex; flex-wrap:wrap; gap:14px; margin-bottom:12px; font-size:12px; color:#475569; align-items:center;">
-      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-plan">🚀</span>Plan</span>
-      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-send">📤</span>Send</span>
-      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-close">📋</span>Close</span>
+    <div style="display:flex; flex-wrap:wrap; gap:12px 14px; margin-bottom:12px; font-size:12px; color:#475569; align-items:center;">
       <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-meeting">🏛️</span>Meeting</span>
-      <span style="color:#94A3B8; font-style:italic;">Dashed = tentative (📝 draft or last-year-based)</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-rental">🎉</span>Clubhouse</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-staff">📌</span>Staff event</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-pto">🌴</span>Vacation</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-sick">🤒</span>Sick</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-holiday">🎈</span>Holiday</span>
+      <span style="color:#94A3B8; font-style:italic;">Dashed = tentative annual-meeting date</span>
       <span style="margin-left:auto; display:flex; align-items:center; gap:6px;">
         <span style="font-weight:600;">Filter:</span>
         <select id="calCommFilter" onchange="calRender()" style="padding:4px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:12px; background:#fff; max-width:240px;">
@@ -873,6 +910,14 @@
       .cal-chip-send    { background:#fff7ed; color:#c2410c; }
       .cal-chip-close   { background:#fee2e2; color:#991b1b; }
       .cal-chip-meeting { background:#dbeafe; color:#1e3a8a; }
+      .cal-chip-board   { background:#dbeafe; color:#1e3a8a; }
+      .cal-chip-rental  { background:#fce7f3; color:#9d174d; }
+      .cal-chip-staff   { background:#e0f2fe; color:#075985; }
+      .cal-chip-pto     { background:#dcfce7; color:#166534; }
+      .cal-chip-sick    { background:#fef9c3; color:#854d0e; }
+      .cal-chip-holiday { background:#ffe4e6; color:#9f1239; }
+      .cal-chip-remind  { background:#f1f5f9; color:#334155; }
+      .cal-chip-other   { background:#f1f5f9; color:#334155; }
       .cal-chip:hover { filter:brightness(0.92); }
       .cal-more { display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:700; color:#1E2761; background:#e2e8f0; cursor:pointer; }
       .cal-more:hover { background:#cbd5e1; }
@@ -890,7 +935,7 @@
     </div>
 
     <div style="margin-top:18px; padding:12px 14px; background:#f8fafc; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:11.5px; color:#475569; line-height:1.6;">
-      <strong>What's on the calendar today:</strong> Annual-meeting cycle events. Coming soon: ARC review deadlines, vendor contract renewals, audit / tax / insurance due dates, reserve-study refreshes, scheduled board meetings.
+      <strong>On the calendar:</strong> annual-meeting cycle dates, scheduled board meetings, clubhouse reservations, and staff events + PTO (vacation / sick / holidays) added here. Clubhouse reservations and meetings are pulled live from their own modules — add or change those there. Coming soon: ARC review deadlines, vendor contract renewals, audit / tax / insurance due dates.
     </div>
   </div>
 </div>
@@ -46751,7 +46796,17 @@ ${questionsPage}
     send_by:           { icon: '📤', cls: 'cal-chip-send',    label: 'Send Call',              short: 'Send' },
     nominations_close: { icon: '📋', cls: 'cal-chip-close',   label: 'Nominations close',      short: 'Close' },
     annual_meeting:    { icon: '🏛️', cls: 'cal-chip-meeting', label: 'Annual meeting',         short: 'Meeting' },
+    board_meeting:     { icon: '🏛️', cls: 'cal-chip-board',   label: 'Board meeting',          short: 'Meeting' },
+    amenity_rental:    { icon: '🎉', cls: 'cal-chip-rental',  label: 'Clubhouse reservation',  short: 'Clubhouse' },
+    staff_event:       { icon: '📌', cls: 'cal-chip-staff',   label: 'Staff event',            short: 'Event' },
+    vacation:          { icon: '🌴', cls: 'cal-chip-pto',     label: 'Vacation',               short: 'Vacation' },
+    sick:              { icon: '🤒', cls: 'cal-chip-sick',    label: 'Sick day',               short: 'Sick' },
+    holiday:           { icon: '🎈', cls: 'cal-chip-holiday', label: 'Holiday',                short: 'Holiday' },
+    reminder:          { icon: '⏰', cls: 'cal-chip-remind',  label: 'Reminder',               short: 'Reminder' },
+    other:             { icon: '•',  cls: 'cal-chip-other',   label: 'Event',                  short: 'Event' },
   };
+  // Which types are native calendar_events (deletable) vs aggregated read-only.
+  const CAL_NATIVE_TYPES = new Set(['staff_event','vacation','sick','holiday','reminder','meeting','other']);
   let calCursor = new Date();
   calCursor.setDate(1);
   let calEventsCache = [];
@@ -46780,7 +46835,7 @@ ${questionsPage}
     // Reuse cache if range is covered
     if (calEventsRange.from && calEventsRange.from <= from && calEventsRange.to >= to) return calEventsCache;
     try {
-      const r = await fetch(`/api/calendar/events?from=${from}&to=${to}`);
+      const r = await window._authFetch(`/api/calendar/events?from=${from}&to=${to}`);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'load failed');
       calEventsCache = j.events || [];
@@ -46793,20 +46848,26 @@ ${questionsPage}
   }
 
   function calEventChipHtml(ev, opts = {}) {
-    const t = CAL_EVENT_TYPES[ev.type] || { icon: '•', cls: '', label: ev.type, short: ev.type };
+    const t = CAL_EVENT_TYPES[ev.type] || { icon: '•', cls: 'cal-chip-other', label: ev.type, short: ev.type };
     const tentative = (ev.is_projected || ev.is_draft) ? ' tentative' : '';
     const draftMark = ev.is_draft ? '📝 ' : '';
-    // Compact (calendar grid): icon + short event word + community name so the
-    // four work-back dates for a single cycle are distinguishable at a glance.
-    const text = opts.compact
-      ? `${draftMark}${t.icon} ${t.short} · ${ev.community}`
-      : `${draftMark}${t.icon} ${ev.community} — ${t.label}`;
+    const comm = ev.community || '';
+    // Aggregated/native events carry a ready-made label (e.g. "Waterview
+    // Clubhouse — Smith party" or "Vacation · Laurie"); annual-meeting cycle
+    // events build their text from the community + stage. Label wins when set.
+    const body = ev.label || (comm ? `${comm} — ${t.label}` : t.label);
+    const shortBody = ev.label || (comm ? `${t.short} · ${comm}` : t.short);
+    const text = opts.compact ? `${draftMark}${t.icon} ${shortBody}` : `${draftMark}${t.icon} ${body}`;
     let titleSuffix = '';
     if (ev.is_draft)     titleSuffix = ' (DRAFT — click to resume editing)';
     else if (ev.is_projected) titleSuffix = ' (tentative — from prior year)';
-    const titleSafe = `${ev.community}: ${t.label}${titleSuffix}`;
+    if (ev.time) titleSuffix += ` · ${ev.time}`;
+    if (ev.is_native) titleSuffix += ' · click to delete';
+    const titleSafe = `${body}${comm && !ev.label ? '' : (comm ? ' · ' + comm : '')}${titleSuffix}`;
     const draftId = ev.draft_id ? `'${ev.draft_id}'` : 'null';
-    return `<span class="cal-chip ${t.cls}${tentative}" title="${escapeHtml(titleSafe)}" onclick="calOpenEvent('${ev.type}', '${ev.community.replace(/'/g, "\\'")}', ${draftId})">${escapeHtml(text)}</span>`;
+    const commArg = "'" + String(comm).replace(/'/g, "\\'") + "'";
+    const idArg = ev.event_id ? ("'" + ev.event_id + "'") : 'null';
+    return `<span class="cal-chip ${t.cls}${tentative}" title="${escapeHtml(titleSafe)}" onclick="calOpenEvent('${ev.type}', ${commArg}, ${draftId}, ${idArg})">${escapeHtml(text)}</span>`;
   }
 
   function calRefreshCommunityOptions(events) {
@@ -46935,21 +46996,123 @@ ${questionsPage}
   // If the event was emitted from a draft, load the draft so the form fields
   // get re-populated; otherwise just switch to the cycle screen so the
   // manager can find the saved cycle in the list.
-  function calOpenEvent(type, communityName, draftId) {
+  async function calOpenEvent(type, communityName, draftId, eventId) {
+    // Native staff event / PTO — click deletes (after confirm).
+    if (eventId && CAL_NATIVE_TYPES.has(type)) {
+      const ev = (calEventsCache || []).find((e) => e.event_id === eventId);
+      const what = ev ? (ev.label || (CAL_EVENT_TYPES[type] || {}).label || 'this event') : 'this event';
+      if (!confirm(`Remove from the calendar?\n\n${what}`)) return;
+      try {
+        const r = await window._authFetch(`/api/calendar/events/${eventId}`, { method: 'DELETE' });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        calEventsRange = { from: null, to: null }; // bust cache
+        calRender();
+      } catch (e) { alert('Could not remove: ' + e.message); }
+      return;
+    }
+    // Clubhouse reservation / board meeting — informational for now (they're
+    // managed in the amenity + agenda modules).
+    if (type === 'amenity_rental' || type === 'board_meeting') {
+      const ev = (calEventsCache || []).find((e) => e.ref_id && (e.type === type) && (e.community === communityName));
+      alert(`${(CAL_EVENT_TYPES[type] || {}).label || type}\n\n${(ev && ev.label) || ''}${communityName ? '\n' + communityName : ''}${ev && ev.time ? '\n' + ev.time : ''}`);
+      return;
+    }
+    // Annual-meeting cycle events → Call for Nominations (existing behavior).
     const sel = document.getElementById('communitySelect');
-    if (sel) {
+    if (sel && communityName) {
       const opts = Array.from(sel.options);
       const match = opts.find((o) => o.value === communityName) || opts.find((o) => o.text && o.text.toLowerCase().includes(communityName.toLowerCase()));
       if (match) { sel.value = match.value; sel.dispatchEvent(new Event('change')); }
     }
     if (draftId) {
-      try {
-        Drafts.load('nominations_cycle', draftId).catch((e) => alert(e.message));
-      } catch (_) {}
-      return; // hydrate already switches to the nominations tab
+      try { Drafts.load('nominations_cycle', draftId).catch((e) => alert(e.message)); } catch (_) {}
+      return;
     }
-    // All four annual-meeting events land in Call for Nominations for now.
     try { switchTab('nominations'); } catch (_) {}
+  }
+
+  // --- Add native event (staff event / PTO / holiday / reminder) ---
+  let _calAddStaffLoaded = false;
+  function calAddOpen(show) {
+    const panel = document.getElementById('calAddPanel');
+    if (!panel) return;
+    const willShow = (show === undefined) ? (panel.style.display === 'none') : !!show;
+    panel.style.display = willShow ? 'block' : 'none';
+    const msg = document.getElementById('calAddMsg'); if (msg) msg.style.display = 'none';
+    if (!willShow) return;
+    const st = document.getElementById('calAddStart');
+    if (st && !st.value) st.value = calYmd(new Date());
+    calAddPopulateDropdowns();
+  }
+  async function calAddPopulateDropdowns() {
+    // Community options — clone from the global community picker.
+    const cc = document.getElementById('calAddCommunity');
+    const src = document.getElementById('communitySelect');
+    if (cc && src && cc.options.length <= 1) {
+      Array.from(src.options).forEach((o) => {
+        if (!o.value) return;
+        const opt = document.createElement('option');
+        opt.value = o.value; opt.textContent = o.text;
+        cc.appendChild(opt);
+      });
+    }
+    // Staff options — from /api/users (admin-tier; silent fallback otherwise).
+    const ss = document.getElementById('calAddStaff');
+    if (ss && !_calAddStaffLoaded) {
+      _calAddStaffLoaded = true;
+      try {
+        const r = await window._authFetch('/api/users');
+        const j = await r.json();
+        const list = (j && (j.users || j)) || [];
+        if (r.ok && Array.isArray(list)) {
+          list.filter((u) => u && (u.full_name || u.email))
+            .sort((a, b) => String(a.full_name || a.email).localeCompare(String(b.full_name || b.email)))
+            .forEach((u) => {
+              const opt = document.createElement('option');
+              opt.value = u.id || '';
+              opt.textContent = u.full_name || u.email;
+              opt.dataset.name = u.full_name || u.email;
+              ss.appendChild(opt);
+            });
+        }
+      } catch (_) { /* roster not available to this role — leave blank */ }
+    }
+  }
+  async function calAddSave(btn) {
+    const type  = (document.getElementById('calAddType')  || {}).value || 'staff_event';
+    const title = ((document.getElementById('calAddTitle') || {}).value || '').trim();
+    const start = (document.getElementById('calAddStart') || {}).value || '';
+    const end   = (document.getElementById('calAddEnd')   || {}).value || '';
+    const staffSel = document.getElementById('calAddStaff');
+    const commSel  = document.getElementById('calAddCommunity');
+    const msg = document.getElementById('calAddMsg');
+    const showErr = (t) => { if (msg) { msg.textContent = t; msg.style.display = 'block'; } };
+    if (!title) return showErr('Add a title.');
+    if (!start) return showErr('Pick a start date.');
+    if (end && end < start) return showErr('The end date is before the start date.');
+    const staffOpt = staffSel && staffSel.selectedOptions && staffSel.selectedOptions[0];
+    const body = {
+      event_type: type, title, start_date: start, end_date: end || null,
+      staff_user_id: (staffSel && staffSel.value) || null,
+      staff_name: (staffOpt && staffOpt.dataset && staffOpt.dataset.name) || null,
+      community_id: (commSel && commSel.value) || null,
+      created_by_name: (window.currentUser && (window.currentUser.full_name || window.currentUser.email)) || null,
+    };
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      const r = await window._authFetch('/api/calendar/events', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const ti = document.getElementById('calAddTitle'); if (ti) ti.value = '';
+      const en = document.getElementById('calAddEnd');   if (en) en.value = '';
+      calAddOpen(false);
+      calEventsRange = { from: null, to: null }; // bust cache so the new event shows
+      calRender();
+    } catch (e) { showErr('Could not save: ' + e.message); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = 'Save'; } }
   }
 
   // Auto-load on tab open
