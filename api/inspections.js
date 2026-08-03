@@ -197,14 +197,21 @@ router.get('/inspections/schedule', async (req, res) => {
       if (!data || data.length < 1000) break;
     }
 
-    const mk = () => ({ drives: [], mailings: {}, deadlines: {} });
+    const mk = () => ({ drives: {}, mailings: {}, deadlines: {} });
     const days = {};
     for (const d of (drives || [])) {
       // Hide zero-photo passes (a drive that captured nothing is noise) — but
       // keep a live in-progress drive visible even before its first photo.
       const photos = d.total_photos || 0;
       if (photos === 0 && d.status !== 'in_progress') continue;
-      const day = dayOf(d.started_at); (days[day] = days[day] || mk()).drives.push({ community_id: d.community_id, community: d.community && d.community.name, status: d.status, photos });
+      const day = dayOf(d.started_at); const bucket = (days[day] = days[day] || mk());
+      // One pill per community per day — the question is "were we out there,"
+      // not "how many separate sessions." Sum the pictures across the day's
+      // passes and count them so the title can show both.
+      const key = d.community_id || 'unassigned';
+      const dr = bucket.drives[key] = bucket.drives[key] || { community_id: d.community_id, community: (d.community && d.community.name) || 'Unassigned', photos: 0, drives: 0, in_progress: false };
+      dr.photos += photos; dr.drives += 1;
+      if (d.status === 'in_progress') dr.in_progress = true;
     }
     for (const l of (letters || [])) {
       const day = dayOf(l.printed_at); const bucket = (days[day] = days[day] || mk());

@@ -91,10 +91,12 @@ function render(days){
     const ymd=curY+'-'+String(curM).padStart(2,'0')+'-'+String(day).padStart(2,'0');
     const ev=days[ymd]||{drives:[],mailings:{}};
     let inner='<div class="dnum">'+day+'</div>';
-    (ev.drives||[]).forEach(dr=>{
-      const prog=(dr.status==='in_progress')?' prog':'';
+    Object.values(ev.drives||{}).forEach(dr=>{
+      const prog=dr.in_progress?' prog':'';
       const n=(dr.photos==null)?0:dr.photos;
-      inner+='<div class="ev ev-drive'+prog+'" title="Drive · '+esc(dr.community||'')+' · '+n+' picture'+(n===1?'':'s')+' · '+esc(dr.status||'')+'">🚗 '+esc(dr.community||'—')+' ('+n+')</div>';
+      const passes=dr.drives||1;
+      const passTxt=(passes>1)?(' · '+passes+' passes'):'';
+      inner+='<div class="ev ev-drive'+prog+'" title="Out in '+esc(dr.community||'')+' · '+n+' picture'+(n===1?'':'s')+passTxt+(dr.in_progress?' · in progress':'')+'">🚗 '+esc(dr.community||'—')+' ('+n+')</div>';
     });
     Object.values(ev.mailings||{}).forEach(mm=>{
       const stages=Object.entries(mm.stages||{}).map(([k,v])=>v+' '+k.replace(/_/g,' ')).join(', ');
