@@ -18775,6 +18775,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                      ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record (wrong house, duplicate, or void). To fix a wrong CATEGORY use ✎ Category instead." style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
                      ${['courtesy_1','courtesy_2','certified_209'].includes(v.current_stage) ? `<button onclick="inspAdvanceStage('${v.id}','${v.current_stage}')" title="Advance to the next enforcement stage (Courtesy 2 → Certified §209, etc.). Deliberate staff action — you still generate + mail the certified notice; the cure clock starts when it goes out." style="background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↑ Advance</button>` : ''}
                      ${['courtesy_2','certified_209','fine_assessed'].includes(v.current_stage) ? `<button onclick="inspReduceStage('${v.id}','${v.current_stage}')" title="Reduce to the previous stage (Courtesy 2 → Courtesy 1, Certified → Courtesy 2). Use when a case was over-escalated — e.g. a deduped duplicate bumped a first occurrence up a level. Clears the cure clock; regenerate the lower-stage letter." style="background:#eff6ff; border:1px solid #93c5fd; color:#1e40af; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↓ Reduce</button>` : ''}
+                     ${v.sent_to_attorney_at ? `<span title="Sent to the association's attorney on ${new Date(v.sent_to_attorney_at).toLocaleDateString()}${v.attorney_firm ? ' — ' + escapeHtml(v.attorney_firm) : ''}${v.attorney_matter_ref ? ' (ref ' + escapeHtml(v.attorney_matter_ref) + ')' : ''}. This §209's cure clock is now counsel's — it's off the Schedule calendar. If it comes back, mark it Cured." style="display:inline-block; background:#ede9fe; border:1px solid #c4b5fd; color:#5b21b6; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:700; margin-right:3px;">⚖ At attorney <button onclick="inspUnsetAttorney('${v.id}')" title="Undo — this was marked in error. Does not resolve the case." style="background:none; border:none; color:#7c3aed; cursor:pointer; font-size:10.5px; padding:0 0 0 3px; text-decoration:underline;">undo</button></span>` : (v.current_stage === 'certified_209' ? `<button onclick="inspSendToAttorney('${v.id}')" title="Hand this certified §209 to the association's attorney for enforcement. The case stays open but its cure deadline comes off the Schedule calendar — that clock is counsel's now. If it later comes back, mark it Cured." style="background:#f5f3ff; border:1px solid #c4b5fd; color:#5b21b6; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚖ To attorney</button>` : '')}
                      ${!['cured','closed','voided'].includes(v.current_stage) ? `<button onclick="inspMarkCured('${v.id}')" title="Close this violation (homeowner-confirmed cure, drive-by spot check, or board dismissal). Auto-resets any open repeat in this category back to Courtesy 1." style="background:#dcfce7; border:1px solid #86efac; color:#15803d; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Cure</button>` : ''}
                      ${(showLetterBtn && canDemote) ? `<button onclick="inspDemoteToPhotoPick('${v.id}')" title="Not a separate violation — attach this photo to another violation as its identifying/establishing shot (e.g. a front-of-house shot taken so a tight side-shot shows which house). Voids this one; the other letter then shows both photos." style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">📎 Just a photo for…</button>` : ''}
                      ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" title="Generate a NEW draft letter from today's data. This never touches a letter that was already sent — those stay sealed; use the 📄 Sent link to view what actually mailed." style="background:#0B1D34; color:#fff; border:none; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">＋ New letter</button>` : ''}
@@ -19560,6 +19561,51 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       setTimeout(() => alert(msg), 100);
     } catch (e) {
       alert('Could not mark cured: ' + e.message);
+    }
+  }
+
+  // Mark a certified §209 as sent to the association's attorney. Violation-level
+  // (not the account at_legal state). Case stays open but drops off the Schedule
+  // calendar's cure-deadline view — counsel owns that clock now.
+  async function inspSendToAttorney(violationId) {
+    if (!violationId) return;
+    const firm = prompt(
+      'Send this §209 to the attorney.\n\n' +
+      'Attorney / firm name (optional — press OK to skip):'
+    );
+    if (firm === null) return; // cancelled
+    const matterRef = prompt('Attorney matter / reference number (optional):') || '';
+    try {
+      const r = await window._authFetch(`/api/enforcement/violations/${violationId}/send-to-attorney`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firm: firm.trim(), matter_ref: matterRef.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (typeof inspPDCurrentPropertyId !== 'undefined' && inspPDCurrentPropertyId) {
+        await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+      }
+      setTimeout(() => alert('⚖ Marked sent to the attorney. Its §209 cure deadline is now off the Schedule calendar.\n\nIf it comes back, mark it Cured.'), 100);
+    } catch (e) {
+      alert('Could not mark sent to attorney: ' + e.message);
+    }
+  }
+
+  // Undo a sent-to-attorney mark made in error. Does NOT resolve the case — a
+  // §209 that came back because it was cured should be marked Cured instead.
+  async function inspUnsetAttorney(violationId) {
+    if (!violationId) return;
+    if (!confirm('Undo the sent-to-attorney mark?\n\nUse this only if it was marked in error. If the case came back because the owner CURED it, click ✓ Cure instead.')) return;
+    try {
+      const r = await window._authFetch(`/api/enforcement/violations/${violationId}/unset-attorney`, { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (typeof inspPDCurrentPropertyId !== 'undefined' && inspPDCurrentPropertyId) {
+        await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+      }
+    } catch (e) {
+      alert('Could not undo: ' + e.message);
     }
   }
 

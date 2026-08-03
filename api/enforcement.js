@@ -5229,6 +5229,91 @@ router.post('/violations/:id/resolve', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:id/send-to-attorney
+//   Body: { firm?, matter_ref?, notes?, user_id? }
+//   Marks a §209 covenant violation as handed to the association's attorney.
+//   VIOLATION-level (not the account/collections at_legal state). Stays open
+//   and still 'certified_209' — this is a flag, not a stage change — so the
+//   case keeps its history. Once flagged, the Schedule calendar stops showing
+//   its cure deadline (counsel owns that clock). If it later comes back, staff
+//   mark it cured via /resolve; the flag persists as history on the cured row.
+//   Guard: only a certified §209 case that's still open can be sent.
+// ---------------------------------------------------------------------------
+router.post('/violations/:id/send-to-attorney', express.json(), async (req, res) => {
+  try {
+    const violationId = req.params.id;
+    const body = req.body || {};
+    const { data: v, error: vErr } = await supabase
+      .from('violations')
+      .select('id, current_stage, resolved_at, sent_to_attorney_at')
+      .eq('id', violationId)
+      .maybeSingle();
+    if (vErr || !v) return res.status(404).json({ error: 'violation not found' });
+    if (v.resolved_at || ['cured', 'closed', 'voided'].includes(v.current_stage)) {
+      return res.status(400).json({ error: 'violation already resolved/closed' });
+    }
+    if (v.current_stage !== 'certified_209') {
+      return res.status(400).json({ error: 'only a certified §209 case can be sent to the attorney' });
+    }
+    if (v.sent_to_attorney_at) {
+      return res.status(400).json({ error: 'already marked sent to the attorney' });
+    }
+    const { data: updated, error: uErr } = await supabase
+      .from('violations')
+      .update({
+        sent_to_attorney_at:        new Date().toISOString(),
+        sent_to_attorney_by_user_id: body.user_id || null,
+        attorney_firm:              (body.firm || '').trim() || null,
+        attorney_matter_ref:        (body.matter_ref || '').trim() || null,
+        attorney_notes:             (body.notes || '').trim() || null,
+      })
+      .eq('id', violationId)
+      .select('id, sent_to_attorney_at, attorney_firm, attorney_matter_ref')
+      .single();
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    res.json({ ok: true, violation: updated });
+  } catch (err) {
+    console.error('[enforcement.send-to-attorney]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:id/unset-attorney
+//   Clears the sent-to-attorney flag — for a mark made in error. This does NOT
+//   resolve the violation (a case that came back because it was CURED should be
+//   marked cured via /resolve, which keeps the attorney flag as history). Use
+//   this only to undo a mistaken mark; the case returns to its plain §209 state.
+// ---------------------------------------------------------------------------
+router.post('/violations/:id/unset-attorney', express.json(), async (req, res) => {
+  try {
+    const violationId = req.params.id;
+    const { data: v, error: vErr } = await supabase
+      .from('violations')
+      .select('id, sent_to_attorney_at')
+      .eq('id', violationId)
+      .maybeSingle();
+    if (vErr || !v) return res.status(404).json({ error: 'violation not found' });
+    if (!v.sent_to_attorney_at) return res.status(400).json({ error: 'not marked sent to the attorney' });
+    const { error: uErr } = await supabase
+      .from('violations')
+      .update({
+        sent_to_attorney_at: null,
+        sent_to_attorney_by_user_id: null,
+        attorney_firm: null,
+        attorney_matter_ref: null,
+        attorney_notes: null,
+      })
+      .eq('id', violationId);
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    res.json({ ok: true, violation_id: violationId });
+  } catch (err) {
+    console.error('[enforcement.unset-attorney]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/enforcement/fine-queue?community_id=&status=
 //   Lists fines in the posting queue. Default: queued + recently posted.
 // ---------------------------------------------------------------------------

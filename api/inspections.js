@@ -175,27 +175,23 @@ router.get('/inspections/schedule', async (req, res) => {
       if (!data || data.length < 1000) break;
     }
 
-    // Cure deadlines coming due — ONLY certified §209 letters (courtesy stages
-    // don't get a tracked deadline here) whose cure window ends this month AND
-    // that are NOT already at the attorney (property at_legal / with_attorney) —
-    // those are counsel's clock now, not ours. (Ed 2026-08-01.)
-    const atAttorney = new Set();
-    try {
-      const { data: legal } = await supabase.from('property_enforcement_states').select('property_id, state').in('state', ['at_legal', 'with_attorney']);
-      for (const r of (legal || [])) if (r.property_id) atAttorney.add(r.property_id);
-    } catch (_) { /* if the table isn't there, show all §209 deadlines */ }
-
+    // Cure deadlines coming due — ONLY open certified §209 cases (courtesy
+    // stages don't get a tracked deadline here) whose cure window ends this
+    // month AND that have NOT been marked sent to the attorney. Once a §209 is
+    // handed to counsel (violations.sent_to_attorney_at set), the cure clock is
+    // theirs, not ours, so it drops off this calendar. (Ed 2026-08-03.)
     const deadlines = [];
     for (let off = 0; ; off += 1000) {
       let vq = supabase.from('violations').select('cure_period_ends_at, current_stage, community_id, property_id, community:community_id(name)')
         .eq('current_stage', 'certified_209').is('resolved_at', null)
+        .is('sent_to_attorney_at', null)
         .not('cure_period_ends_at', 'is', null)
         .gte('cure_period_ends_at', fromISO).lt('cure_period_ends_at', toISO)
         .order('cure_period_ends_at', { ascending: true }).range(off, off + 999);
       if (communityId) vq = vq.eq('community_id', communityId);
       const { data, error: ve } = await vq;
       if (ve) throw ve;
-      deadlines.push(...(data || []).filter((v) => !atAttorney.has(v.property_id)));
+      deadlines.push(...(data || []));
       if (!data || data.length < 1000) break;
     }
 
@@ -2414,7 +2410,7 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
       // silent "0 violations" on the detail panel even when the property
       // clearly has violations. (Scar: 6 hours chasing this 2026-05-28.)
       supabase.from('violations')
-        .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, resolved_notes, primary_category_id, quality_status, confidence_weight, source, reviewed_at, review_notes, opened_from_observation_id, enforcement_categories(id, slug, label)')
+        .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, resolved_notes, primary_category_id, quality_status, confidence_weight, source, reviewed_at, review_notes, opened_from_observation_id, sent_to_attorney_at, attorney_firm, attorney_matter_ref, enforcement_categories(id, slug, label)')
         .eq('property_id', propertyId)
         .order('opened_at', { ascending: false }),
       // Interactions — extended 2026-06-16 to include attachments JSONB and
@@ -2586,6 +2582,10 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
         source:            v.source,
         reviewed_at:       v.reviewed_at,
         review_notes:      v.review_notes,
+        // §209 sent-to-attorney mark (violation-level, not the account state).
+        sent_to_attorney_at: v.sent_to_attorney_at,
+        attorney_firm:       v.attorney_firm,
+        attorney_matter_ref: v.attorney_matter_ref,
       })),
       interactions: await Promise.all(interactions.map(async (i) => {
         // Pre-sign any attachment storage paths so the timeline can render
