@@ -267,11 +267,12 @@ async function uploadFlyerImage(input){
 async function genFlyerImage(btn){
   const cid=$('comm').value;
   const seed=$('prompt').value.trim()||$('f_tagline').value.trim()||$('f_headline').value.trim();
-  const desc=prompt('Describe the image to generate (no brand names or logos):', seed?('An illustration for: '+seed):'');
+  const desc=prompt('Describe the image to generate (no brand names or logos):', seed?('A scene for: '+seed):'');
   if(desc===null||!desc.trim()) return;
+  const photo=confirm('Realistic photo style?\n\nOK = photorealistic photo\nCancel = illustration');
   btn.disabled=true; const t=btn.textContent; btn.textContent='✨ Generating… (~20s)';
   try{
-    const r=await af('/api/newsletters/images/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid,prompt:desc.trim(),size:'landscape'})});
+    const r=await af('/api/newsletters/images/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid,prompt:desc.trim(),size:'landscape',style:photo?'photo':'illustration'})});
     const j=await r.json(); if(!r.ok||!j.url) throw new Error(j.detail||j.error||'failed');
     setFlyerImage(j.url);
   }catch(e){ alert('Could not generate: '+e.message); }

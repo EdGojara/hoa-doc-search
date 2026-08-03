@@ -218,6 +218,7 @@ function imgBlock(s){
       +'<input id="img-'+s.id+'" style="flex:1;min-width:180px;" value="'+esc(s.image_url||'')+'" placeholder="Paste an image URL, or upload →">'
       +'<input type="file" accept="image/*" id="file-'+s.id+'" style="display:none;" onchange="uploadImage(\''+s.id+'\',this)">'
       +'<button class="btn-ghost btn-sm" type="button" onclick="document.getElementById(\'file-'+s.id+'\').click()">⬆ Upload</button>'
+      +'<button class="btn-ghost btn-sm" type="button" onclick="genImage(\''+s.id+'\',this)">✨ Generate (AI)</button>'
     +'</div>'
     +'<div id="imgprev-'+s.id+'">'+(s.image_url?'<img src="'+esc(s.image_url)+'" style="max-height:110px;border-radius:8px;margin-top:6px;">':'')+'</div>'
     +'<div style="height:8px;"></div>';
@@ -297,6 +298,20 @@ async function uploadImage(id,input){
     $('img-'+id).value=j.url;
     $('imgprev-'+id).innerHTML='<img src="'+j.url+'" style="max-height:110px;border-radius:8px;margin-top:6px;">';
   }catch(e){ alert('Upload failed: '+e.message); }
+}
+async function genImage(id,btn){
+  const seed=($('title-'+id)||{}).value||'';
+  const desc=prompt('Describe the image to generate (no brand names or logos):', seed?('A scene for: '+seed):'');
+  if(desc===null||!desc.trim()) return;
+  const photo=confirm('Realistic photo style?\n\nOK = photorealistic photo\nCancel = illustration');
+  btn.disabled=true; const t=btn.textContent; btn.textContent='✨ Generating… (~20s)';
+  try{
+    const r=await af('/api/newsletters/images/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:curIssue&&curIssue.community_id,prompt:desc.trim(),size:'landscape',style:photo?'photo':'illustration'})});
+    const j=await r.json(); if(!r.ok||!j.url) throw new Error(j.detail||j.error||'failed');
+    $('img-'+id).value=j.url;
+    $('imgprev-'+id).innerHTML='<img src="'+j.url+'" style="max-height:110px;border-radius:8px;margin-top:6px;">';
+  }catch(e){ alert('Could not generate: '+e.message); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent=t; } }
 }
 async function aiWrite(id,type,btn){
   const topic=prompt('What should this be about?\n\nFor a spotlight or local business, include the real details (name, what they do, a quote) — the AI only uses what you give it and won\'t make facts up.');
