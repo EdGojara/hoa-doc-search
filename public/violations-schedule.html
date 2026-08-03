@@ -31,6 +31,8 @@
   .ev-drive{background:#e7f6ec;color:#166534;}
   .ev-drive.prog{background:#fef3c7;color:#92400e;}
   .ev-mail{background:#eaf1fb;color:#1e3a8a;}
+  .ev-due{background:#fee2e2;color:#991b1b;font-weight:600;}
+  .ev-due.soft{background:#fef3c7;color:#92400e;font-weight:500;}
   .empty-note{color:var(--muted);font-size:13px;padding:30px;text-align:center;}
   @media(max-width:640px){ .cell{min-height:78px;} .ev{font-size:10px;} }
 </style>
@@ -52,6 +54,8 @@
     <span class="chip"><span class="dot" style="background:#166534;"></span> Drive (inspection)</span>
     <span class="chip"><span class="dot" style="background:#92400e;"></span> Drive in progress</span>
     <span class="chip"><span class="dot" style="background:#1e3a8a;"></span> Letters mailed</span>
+    <span class="chip"><span class="dot" style="background:#991b1b;"></span> §209 / fine cure deadline</span>
+    <span class="chip"><span class="dot" style="background:#92400e;"></span> Courtesy cure deadline</span>
   </div>
   <div id="cal"><div class="empty-note">Loading…</div></div>
 </div>
@@ -95,6 +99,11 @@ function render(days){
     Object.values(ev.mailings||{}).forEach(mm=>{
       const stages=Object.entries(mm.stages||{}).map(([k,v])=>v+' '+k.replace(/_/g,' ')).join(', ');
       inner+='<div class="ev ev-mail" title="Letters mailed · '+esc(mm.community||'')+' · '+esc(stages)+'">✉️ '+esc(mm.community||'—')+' ('+mm.count+')</div>';
+    });
+    Object.values(ev.deadlines||{}).forEach(dd=>{
+      const soft=(dd.stage==='courtesy_1'||dd.stage==='courtesy_2')?' soft':'';
+      const label=String(dd.stage||'').replace('certified_209','§209').replace('fine_assessed','fine').replace(/_/g,' ');
+      inner+='<div class="ev ev-due'+soft+'" title="Cure deadline · '+esc(dd.community||'')+' · '+esc(label)+' · '+dd.count+' violation(s)">⏰ '+esc(dd.community||'—')+' '+esc(label)+' ('+dd.count+')</div>';
     });
     cells+='<div class="cell'+(ymd===todayCentral?' today':'')+'">'+inner+'</div>';
   }

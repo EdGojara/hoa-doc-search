@@ -175,15 +175,39 @@ router.get('/inspections/schedule', async (req, res) => {
       if (!data || data.length < 1000) break;
     }
 
+    // Cure deadlines coming due — OPEN violations whose cure period ends this
+    // month. So Ed sees what's about to lapse (a §209 window closing) alongside
+    // when we drove / mailed. Paginated (can exceed 1000 across communities).
+    const deadlines = [];
+    for (let off = 0; ; off += 1000) {
+      let vq = supabase.from('violations').select('cure_period_ends_at, current_stage, community_id, community:community_id(name)')
+        .not('cure_period_ends_at', 'is', null).is('resolved_at', null)
+        .in('current_stage', ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed'])
+        .gte('cure_period_ends_at', fromISO).lt('cure_period_ends_at', toISO)
+        .order('cure_period_ends_at', { ascending: true }).range(off, off + 999);
+      if (communityId) vq = vq.eq('community_id', communityId);
+      const { data, error: ve } = await vq;
+      if (ve) throw ve;
+      deadlines.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+
+    const mk = () => ({ drives: [], mailings: {}, deadlines: {} });
     const days = {};
     for (const d of (drives || [])) {
-      const day = dayOf(d.started_at); (days[day] = days[day] || { drives: [], mailings: {} }).drives.push({ community_id: d.community_id, community: d.community && d.community.name, status: d.status });
+      const day = dayOf(d.started_at); (days[day] = days[day] || mk()).drives.push({ community_id: d.community_id, community: d.community && d.community.name, status: d.status });
     }
     for (const l of (letters || [])) {
-      const day = dayOf(l.printed_at); const bucket = (days[day] = days[day] || { drives: [], mailings: {} });
+      const day = dayOf(l.printed_at); const bucket = (days[day] = days[day] || mk());
       const key = l.community_id || 'unassigned';
       const mm = bucket.mailings[key] = bucket.mailings[key] || { community_id: l.community_id, community: (l.community && l.community.name) || 'Unassigned', count: 0, stages: {} };
       mm.count += 1; const stage = String(l.type || '').replace(/^letter_/, '') || 'other'; mm.stages[stage] = (mm.stages[stage] || 0) + 1;
+    }
+    for (const v of (deadlines || [])) {
+      const day = dayOf(v.cure_period_ends_at); const bucket = (days[day] = days[day] || mk());
+      const key = (v.community_id || 'unassigned') + '|' + v.current_stage;
+      const dd = bucket.deadlines[key] = bucket.deadlines[key] || { community_id: v.community_id, community: (v.community && v.community.name) || 'Unassigned', stage: v.current_stage, count: 0 };
+      dd.count += 1;
     }
     res.json({ ok: true, year, month: m, days });
   } catch (err) { console.error('[inspections] schedule failed:', err.message); res.status(500).json({ error: err.message }); }
