@@ -23235,7 +23235,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     return `
       <div style="display:flex; gap:12px; padding:12px 0; border-bottom:1px solid #f1f5f9; align-items:flex-start;">
         ${o.photo_url
-          ? `<img src="${escapeHtml(o.photo_url)}" loading="lazy" decoding="async" onclick="inspReviewViewPhoto('${escapeHtml(o.photo_url)}')" title="Click to enlarge" style="width:120px; height:120px; object-fit:cover; border-radius:8px; border:1px solid #e2e8f0; flex-shrink:0; cursor:zoom-in;" />`
+          ? `<img src="${escapeHtml(o.photo_url)}" loading="lazy" decoding="async" onclick="inspReviewViewPhoto(this.src)" title="Click to enlarge" style="width:120px; height:120px; object-fit:cover; border-radius:8px; border:1px solid #e2e8f0; flex-shrink:0; cursor:zoom-in;" />`
           : '<div style="width:120px; height:120px; background:#f1f5f9; border-radius:8px; flex-shrink:0;"></div>'}
         <div style="flex:1; min-width:0;">
           <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:4px;">
@@ -23275,9 +23275,19 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     ov.querySelector('img').src = url;
     ov.style.display = 'flex';
   }
-  function inspReviewToggleCat(obsId) {
+  async function inspReviewToggleCat(obsId) {
     const sel = document.getElementById('revcat-' + obsId);
-    if (sel) sel.style.display = sel.style.display === 'none' ? 'block' : 'none';
+    if (!sel) return;
+    // Load categories on demand so the dropdown is never empty (the initial
+    // fetch in inspReviewLoad may have missed or not run yet).
+    if (!window._inspCats || !window._inspCats.length) {
+      try { const cr = await fetch('/api/enforcement/categories'); const cj = await cr.json(); window._inspCats = (cj.categories || cj || []).filter((c) => c && c.id).sort((a, b) => String(a.label).localeCompare(String(b.label))); } catch (_) {}
+    }
+    if (sel.options.length <= 1 && window._inspCats && window._inspCats.length) {
+      sel.innerHTML = '<option value="">— pick the correct category —</option>' + window._inspCats.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label)}</option>`).join('');
+    }
+    if (!window._inspCats || !window._inspCats.length) { alert('Could not load the category list — try Refresh, or tell me and I\'ll check.'); return; }
+    sel.style.display = sel.style.display === 'none' ? 'block' : 'none';
   }
   async function inspReviewSetCategory(obsId, categoryId) {
     if (!categoryId) return;
