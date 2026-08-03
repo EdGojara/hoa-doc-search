@@ -131,7 +131,7 @@
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let _supa=null, af=null, curIssue=null, curSections=[], SECTION_TYPES={};
-const PROSE=new Set(['board_message','hoa_corner','custom_article','project_update','amenity_update']);
+const PROSE=new Set(['board_message','hoa_corner','custom_article','recipe','seasonal_tips','project_update','amenity_update']);
 const FEATURE=new Set(['resident_spotlight','vendor_spotlight','advertisement','in_the_news','event_feature']);
 const MD=new Set([...PROSE,...FEATURE]);
 const EVENTLIST=new Set(['event_grid','calendar']);
