@@ -306,6 +306,31 @@ Return JSON: { "title": "a short friendly title", "markdown": "the article body 
   } catch (err) { console.error('[newsletter.ai-write]', err); res.status(500).json({ error: err.message }); }
 });
 
+// POST /images/generate — generate a flyer/illustration image with OpenAI
+// (gpt-image-1; same key already used for search embeddings). Brand-safe prompt
+// wrapper: no real logos, trademarks, or readable text. Returns a hosted URL.
+router.post('/images/generate', express.json(), async (req, res) => {
+  try {
+    if (!(await requireStaff(req, res))) return;
+    if (!process.env.OPENAI_API_KEY) return res.status(400).json({ error: 'image_generation_unavailable', detail: 'AI image generation is not configured on this environment.' });
+    const prompt = (req.body && req.body.prompt || '').trim();
+    if (!prompt) return res.status(400).json({ error: 'prompt required' });
+    const size = req.body.size === 'portrait' ? '1024x1536' : (req.body.size === 'landscape' ? '1536x1024' : '1024x1024');
+    const safe = `A warm, friendly, high-quality illustration for a community (HOA) event flyer: ${prompt}. Bright, welcoming, inclusive, family-friendly. Flat modern illustration style. Do NOT include any real brand names, company logos, trademarked characters, mascots, or readable text/words.`;
+    const OpenAI = require('openai');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const result = await openai.images.generate({ model: 'gpt-image-1', prompt: safe, size, n: 1 });
+    const b64 = result && result.data && result.data[0] && result.data[0].b64_json;
+    if (!b64) return res.status(500).json({ error: 'no image returned' });
+    const buf = Buffer.from(b64, 'base64');
+    const path = `newsletters/images/ai-${crypto.randomUUID()}.png`;
+    const { error } = await supabase.storage.from('documents').upload(path, buf, { contentType: 'image/png', upsert: false });
+    if (error) return res.status(500).json({ error: error.message });
+    const { data: signed } = await supabase.storage.from('documents').createSignedUrl(path, 60 * 60 * 24 * 365);
+    res.json({ ok: true, url: (signed && signed.signedUrl) || null });
+  } catch (err) { console.error('[newsletter.images.generate]', err); res.status(500).json({ error: err.message }); }
+});
+
 // POST /images — upload an image (multipart 'file'); returns a hosted URL to
 // drop into a section. Stored in the documents bucket under newsletters/images.
 router.post('/images', uploadImg.single('file'), async (req, res) => {

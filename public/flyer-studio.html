@@ -79,6 +79,7 @@
           <input type="file" accept="image/*" id="f_file" style="display:none;" onchange="uploadFlyerImage(this)">
           <button class="btn-ghost" type="button" onclick="document.getElementById('f_file').click()">⬆ Upload</button>
           <button class="btn-ghost" type="button" onclick="openPhotoPicker()">📷 Community photos</button>
+          <button class="btn-ghost" type="button" onclick="genFlyerImage(this)">✨ Generate (AI)</button>
         </div>
         <div id="f_imgprev"></div>
 
@@ -262,6 +263,19 @@ async function uploadFlyerImage(input){
     const j=await r.json(); if(!r.ok||!j.url) throw new Error(j.error||'upload failed');
     setFlyerImage(j.url);
   }catch(e){ alert('Upload failed: '+e.message); }
+}
+async function genFlyerImage(btn){
+  const cid=$('comm').value;
+  const seed=$('prompt').value.trim()||$('f_tagline').value.trim()||$('f_headline').value.trim();
+  const desc=prompt('Describe the image to generate (no brand names or logos):', seed?('An illustration for: '+seed):'');
+  if(desc===null||!desc.trim()) return;
+  btn.disabled=true; const t=btn.textContent; btn.textContent='✨ Generating… (~20s)';
+  try{
+    const r=await af('/api/newsletters/images/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid,prompt:desc.trim(),size:'landscape'})});
+    const j=await r.json(); if(!r.ok||!j.url) throw new Error(j.detail||j.error||'failed');
+    setFlyerImage(j.url);
+  }catch(e){ alert('Could not generate: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent=t; }
 }
 async function openPhotoPicker(){
   const cid=$('comm').value;
