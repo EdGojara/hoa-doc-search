@@ -23260,21 +23260,29 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       </div>`;
   }
 
-  // Lightbox — click a review photo to see it full size for a proper assessment.
-  function inspReviewViewPhoto(url) {
+  // Click a review photo to see it full size for a proper assessment. Tries an
+  // in-page lightbox; if that can't render, opens the full image in a new tab.
+  window.inspReviewViewPhoto = function inspReviewViewPhoto(url) {
     if (!url) return;
-    let ov = document.getElementById('inspPhotoLightbox');
-    if (!ov) {
-      ov = document.createElement('div');
-      ov.id = 'inspPhotoLightbox';
-      ov.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.88); z-index:100000; display:flex; align-items:center; justify-content:center; cursor:zoom-out; padding:20px;';
-      ov.onclick = () => { ov.style.display = 'none'; };
-      ov.innerHTML = '<img style="max-width:96vw; max-height:94vh; border-radius:8px; box-shadow:0 10px 40px rgba(0,0,0,0.5);">';
-      document.body.appendChild(ov);
+    try {
+      let ov = document.getElementById('inspPhotoLightbox');
+      if (!ov) {
+        ov = document.createElement('div');
+        ov.id = 'inspPhotoLightbox';
+        ov.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.9); z-index:2147483647; display:flex; align-items:center; justify-content:center; cursor:zoom-out; padding:20px;';
+        ov.addEventListener('click', () => { ov.style.display = 'none'; });
+        const im = document.createElement('img');
+        im.style.cssText = 'max-width:96vw; max-height:94vh; width:auto; height:auto; border-radius:8px; box-shadow:0 10px 40px rgba(0,0,0,0.5);';
+        ov.appendChild(im);
+        document.body.appendChild(ov);
+      }
+      const img = ov.querySelector('img');
+      img.src = url;
+      ov.style.display = 'flex';
+    } catch (e) {
+      window.open(url, '_blank', 'noopener');
     }
-    ov.querySelector('img').src = url;
-    ov.style.display = 'flex';
-  }
+  };
   async function inspReviewToggleCat(obsId) {
     const sel = document.getElementById('revcat-' + obsId);
     if (!sel) return;
