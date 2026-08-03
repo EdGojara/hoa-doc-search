@@ -23255,7 +23255,11 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             <option value="">— pick the correct category —</option>
             ${(window._inspCats || []).map((c) => `<option value="${escapeHtml(c.id)}"${c.id === o.category_id ? ' selected' : ''}>${escapeHtml(c.label)}</option>`).join('')}
           </select>
-          ${o.ai_description ? `<div style="font-size:11.5px; color:#64748b; font-style:italic; margin-bottom:6px; line-height:1.4;">"${escapeHtml(o.ai_description)}"</div>` : ''}
+          <div id="descview-${o.id}" style="font-size:11.5px; color:#64748b; margin-bottom:6px; line-height:1.4;"><span style="font-style:italic;">"${escapeHtml(o.ai_description || '(no description)')}"</span> <button onclick="inspReviewToggleDesc('${o.id}')" style="background:none; border:1px solid #c7d2fe; color:#4338ca; padding:0 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; font-style:normal;">✎ edit text</button></div>
+          <div id="descedit-${o.id}" style="display:none; margin-bottom:6px;">
+            <textarea id="revdesc-${o.id}" style="width:100%; padding:5px 8px; font-size:11.5px; border:1px solid #cbd5e1; border-radius:5px; min-height:52px; line-height:1.4;">${escapeHtml(o.ai_description || '')}</textarea>
+            <button onclick="inspReviewSaveDesc('${o.id}')" style="margin-top:4px; background:#0B1D34; color:#fff; border:0; padding:4px 12px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">Save text</button>
+          </div>
           <div style="display:flex; gap:6px; flex-wrap:wrap;">
             <button onclick="inspReviewConfirm('${o.id}', this)" style="background:#15803d; color:#fff; border:0; padding:5px 12px; border-radius:5px; font-size:11.5px; font-weight:600; cursor:pointer;" title="Open a violation + create the draft letter">✓ Confirm → draft</button>
             <button onclick="inspReviewReject('${o.id}', this)" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:5px 12px; border-radius:5px; font-size:11.5px; font-weight:600; cursor:pointer;">✕ Reject</button>
@@ -23311,6 +23315,20 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
       await inspReviewLoad();
     } catch (e) { alert('Could not change category: ' + e.message); }
+  }
+  function inspReviewToggleDesc(obsId) {
+    const view = document.getElementById('descview-' + obsId), edit = document.getElementById('descedit-' + obsId);
+    if (view && edit) { const showEdit = edit.style.display === 'none'; edit.style.display = showEdit ? 'block' : 'none'; view.style.display = showEdit ? 'none' : 'block'; }
+  }
+  async function inspReviewSaveDesc(obsId) {
+    const ta = document.getElementById('revdesc-' + obsId);
+    const text = ta ? ta.value.trim() : '';
+    if (text.length < 10) { alert('The description needs to be at least 10 characters (it goes on the letter).'); return; }
+    try {
+      const r = await fetch('/api/inspections/observations/' + obsId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ai_description: text }) });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
+      await inspReviewLoad();
+    } catch (e) { alert('Could not save the text: ' + e.message); }
   }
 
   // --- Bulk confirm / reject in the Review queue (like the Drafts queue) ---
