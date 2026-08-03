@@ -89,7 +89,17 @@
         <div class="row" style="margin-top:14px;">
           <button class="btn-navy" id="saveBtn" onclick="saveFlyer(this)">Create flyer</button>
           <button class="btn-ghost" onclick="refreshPreview()">↻ Update preview</button>
+          <button class="btn-red" id="delFlyerBtn" type="button" style="display:none;" onclick="deleteFlyer()">🗑 Delete</button>
         </div>
+      </div>
+
+      <!-- Saved flyers -->
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <strong style="color:var(--navy);">Your flyers</strong>
+          <button class="btn-ghost btn-sm" type="button" onclick="loadFlyers()">↻ Refresh</button>
+        </div>
+        <div id="flyerList" class="muted" style="margin-top:10px;">Pick a community to see saved flyers.</div>
       </div>
 
       <!-- Email panel -->
@@ -199,7 +209,9 @@ async function saveFlyer(btn){
       refreshPreview();
     }
     $('emailCard').style.display='block';
+    $('delFlyerBtn').style.display='inline-block';
     if(!$('mailSubject').value) $('mailSubject').value=$('f_headline').value.trim();
+    loadFlyers();
   }catch(e){ alert('Could not save: '+e.message); }
   finally{ btn.disabled=false; btn.textContent=curIssue?'Save changes':t; }
 }
@@ -211,7 +223,37 @@ async function openFlyer(id){
   curSectionId=sec?sec.id:null;
   if(sec) writeFields(sec.body_json||{});
   $('saveBtn').textContent='Save changes';
+  $('delFlyerBtn').style.display='inline-block';
+  $('emailCard').style.display='block';
+  if(!$('mailSubject').value) $('mailSubject').value=($('f_headline').value||'').trim();
   refreshPreview();
+}
+async function loadFlyers(){
+  const cid=$('comm').value; const box=$('flyerList');
+  if(!cid){ box.innerHTML='Pick a community to see saved flyers.'; return; }
+  box.innerHTML='Loading…';
+  try{
+    const r=await af('/api/newsletters/issues?community_id='+encodeURIComponent(cid)); const j=await r.json();
+    const list=(j.issues||[]).filter(i=>i.format_key==='flyer');
+    if(!list.length){ box.innerHTML='<span class="muted">No flyers yet.</span>'; return; }
+    box.innerHTML=list.map(i=>'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);"><span style="cursor:pointer;font-weight:600;color:var(--navy);" onclick="openFlyer(\''+i.id+'\')">'+esc(i.title||'Flyer')+'</span><button class="btn-red btn-sm" type="button" onclick="deleteFlyerById(\''+i.id+'\')">🗑</button></div>').join('');
+  }catch(e){ box.innerHTML='<span class="muted">Could not load.</span>'; }
+}
+async function deleteFlyerById(id){
+  if(!confirm('Delete this flyer? This cannot be undone.')) return;
+  try{
+    const r=await af('/api/newsletters/issues/'+id,{method:'DELETE'}); if(!r.ok) throw new Error('failed');
+    if(curIssue&&curIssue.id===id) resetFlyerEditor();
+    loadFlyers();
+  }catch(e){ alert('Could not delete: '+e.message); }
+}
+function deleteFlyer(){ if(curIssue) deleteFlyerById(curIssue.id); }
+function resetFlyerEditor(){
+  curIssue=null; curSectionId=null;
+  $('delFlyerBtn').style.display='none';
+  $('emailCard').style.display='none';
+  $('saveBtn').textContent='Create flyer';
+  $('prev').srcdoc=''; $('prevHint').textContent='Create the flyer to see a live preview.';
 }
 
 async function refreshPreview(){
@@ -309,6 +351,7 @@ async function pickPhoto(id){
     af=async(u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
     buildThemes();
     await loadCommunities();
+    $('comm').addEventListener('change', loadFlyers);
   }catch(e){ document.querySelector('.wrap').innerHTML='<p style="padding:30px;color:#b91c1c;">Could not load the studio.</p>'; }
 })();
 </script>
