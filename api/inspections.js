@@ -862,7 +862,6 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
               community_id:       insp.community_id,
               inspection_id:      insp.id,
               inspection_photo_id: req.params.id,
-              observed_at:        new Date().toISOString(),
               severity:           f.severity,
               ai_description:     f.description,
               ai_recommended_action: f.recommended_action,
@@ -3032,7 +3031,6 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
           reviewer_status:      'rejected',
           reviewed_at:          new Date().toISOString(),
           reviewer_notes:       'AI: no violation visible — auto-filed for documentation only.',
-          observed_at:          photo.captured_at || new Date().toISOString(),
         });
         if (!error) {
           photosClean += 1;
@@ -3058,7 +3056,6 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
           ai_confidence:         f.confidence || 'low',
           reviewer_status:       'pending',
           reviewer_notes:        f.notes || null,
-          observed_at:           photo.captured_at || new Date().toISOString(),
         };
         const { error: obsErr } = await supabase.from('property_observations').insert(insertRow);
         if (obsErr) {
@@ -4043,7 +4040,6 @@ router.post('/inspections/:id/voice-capture', upload.single('photo'), async (req
             ai_recommended_action: 'courtesy',
             reviewer_status:      'pending',
             reviewer_notes:       `Voice capture. Transcript: "${parsed.raw_transcript}"`,
-            observed_at:          capturedAt,
           })
           .select('id')
           .single();
@@ -4159,7 +4155,6 @@ router.patch('/inspections/photos/:id/link-property', express.json(), async (req
         reviewer_status:      'rejected',
         reviewed_at:          new Date().toISOString(),
         reviewer_notes:       'AI: no violation visible — auto-filed for documentation only.',
-        observed_at:          photo.captured_at || new Date().toISOString(),
       });
       if (!error) observationsCreated += 1;
     } else if (findings.length > 0) {
@@ -4183,7 +4178,6 @@ router.patch('/inspections/photos/:id/link-property', express.json(), async (req
           ai_confidence:         f.confidence || 'low',
           reviewer_status:       'pending',
           reviewer_notes:        f.notes || null,
-          observed_at:           photo.captured_at || new Date().toISOString(),
         });
         if (!error) observationsCreated += 1;
       }
@@ -4256,7 +4250,6 @@ router.post('/inspections/photos/:photoId/add-violation', express.json(), async 
         reviewer_notes:        notes || '(operator override — AI missed this)',
         inspection_photo_id:   photoId,
         inspection_id:         photo.inspection_id,
-        observed_at:           photo.captured_at || now,
         ai_confidence:         'high',
         ai_description:        notes || 'Operator-added violation (AI did not flag).',
       })
