@@ -73,7 +73,14 @@
           <div><label>Button label (optional)</label><input id="f_cta_label" placeholder="RSVP"></div>
           <div><label>Button link (optional)</label><input id="f_cta_url" placeholder="https://…"></div>
         </div>
-        <label>Image URL (optional)</label><input id="f_image_url" placeholder="https://… (paste a photo link)">
+        <label>Photo (optional)</label>
+        <div class="row" style="gap:6px;">
+          <input id="f_image_url" style="flex:1;min-width:150px;" placeholder="Paste a URL, upload, or pick a community photo">
+          <input type="file" accept="image/*" id="f_file" style="display:none;" onchange="uploadFlyerImage(this)">
+          <button class="btn-ghost" type="button" onclick="document.getElementById('f_file').click()">⬆ Upload</button>
+          <button class="btn-ghost" type="button" onclick="openPhotoPicker()">📷 Community photos</button>
+        </div>
+        <div id="f_imgprev"></div>
 
         <label>Look</label>
         <div class="themes" id="themes"></div>
@@ -125,6 +132,13 @@
   </div>
 </div>
 
+<div id="photoModal" style="display:none;position:fixed;inset:0;background:rgba(11,29,52,.55);z-index:50;padding:24px;overflow:auto;">
+  <div style="max-width:780px;margin:24px auto;background:#fff;border-radius:12px;padding:16px;">
+    <div class="row" style="justify-content:space-between;align-items:center;"><strong style="color:#0B1D34;">Community photos</strong><button class="btn-ghost btn-sm" type="button" onclick="closePhotoPicker()">Close</button></div>
+    <div id="photoGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-top:12px;">Loading…</div>
+    <p class="muted" style="margin-top:10px;">These are the community's own photos. Add more in the Community Photos screen.</p>
+  </div>
+</div>
 <script src="/deploy-watcher.js"></script>
 <script>
 const $=id=>document.getElementById(id);
@@ -234,6 +248,40 @@ async function sendEmail(btn){
     box.innerHTML='<strong>Sent.</strong> '+j.sent+' of '+j.recipients+' staff recipient(s)'+(j.failed?(' · '+j.failed+' failed'):'')+'. Check your inbox — the flyer is embedded and attached as a PDF.';
   }catch(e){ alert('Could not send: '+e.message); }
   finally{ btn.disabled=false; btn.textContent=t; }
+}
+
+function setFlyerImage(url){
+  $('f_image_url').value=url;
+  $('f_imgprev').innerHTML=url?'<img src="'+url+'" style="max-height:120px;border-radius:8px;margin-top:6px;">':'';
+}
+async function uploadFlyerImage(input){
+  const file=input.files&&input.files[0]; if(!file) return;
+  const fd=new FormData(); fd.append('file',file);
+  try{
+    const r=await af('/api/newsletters/images',{method:'POST',body:fd});
+    const j=await r.json(); if(!r.ok||!j.url) throw new Error(j.error||'upload failed');
+    setFlyerImage(j.url);
+  }catch(e){ alert('Upload failed: '+e.message); }
+}
+async function openPhotoPicker(){
+  const cid=$('comm').value;
+  if(!cid){ alert('Pick a community first.'); return; }
+  $('photoModal').style.display='block';
+  const grid=$('photoGrid'); grid.innerHTML='Loading…';
+  try{
+    const r=await af('/api/community-photos?community_id='+encodeURIComponent(cid));
+    const j=await r.json(); const photos=j.photos||[];
+    if(!photos.length){ grid.innerHTML='<div class="muted">No photos in this community\'s library yet. Add some in the Community Photos screen.</div>'; return; }
+    grid.innerHTML=photos.map(p=>'<div style="cursor:pointer;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;" onclick="pickPhoto(\''+p.id+'\')" title="'+(p.caption?p.caption.replace(/"/g,''):'')+'"><div style="height:96px;background:#f1f5f9 url(\''+(p.signed_url||'')+'\') center/cover;"></div></div>').join('');
+  }catch(e){ grid.innerHTML='<div class="muted">Could not load photos.</div>'; }
+}
+function closePhotoPicker(){ $('photoModal').style.display='none'; }
+async function pickPhoto(id){
+  try{
+    const r=await af('/api/newsletters/photo-url?photo_id='+encodeURIComponent(id));
+    const j=await r.json(); if(!r.ok||!j.url) throw new Error(j.error||'failed');
+    setFlyerImage(j.url); closePhotoPicker();
+  }catch(e){ alert('Could not use that photo: '+e.message); }
 }
 
 (async function boot(){

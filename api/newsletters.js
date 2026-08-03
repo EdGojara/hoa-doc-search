@@ -321,6 +321,22 @@ router.post('/images', uploadImg.single('file'), async (req, res) => {
   } catch (err) { console.error('[newsletter.images]', err); res.status(500).json({ error: err.message }); }
 });
 
+// GET /photo-url?photo_id= — re-sign a community photo with a long-lived URL so
+// it can be used as a flyer/newsletter image (the library's own list uses a
+// 10-min preview URL that would expire on the published piece).
+router.get('/photo-url', async (req, res) => {
+  try {
+    if (!(await requireStaff(req, res))) return;
+    const photoId = req.query.photo_id;
+    if (!photoId) return res.status(400).json({ error: 'photo_id required' });
+    const { data: photo, error } = await supabase.from('community_photos').select('storage_path, storage_bucket').eq('id', photoId).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!photo) return res.status(404).json({ error: 'photo not found' });
+    const { data: signed } = await supabase.storage.from(photo.storage_bucket || 'documents').createSignedUrl(photo.storage_path, 60 * 60 * 24 * 365);
+    res.json({ ok: true, url: (signed && signed.signedUrl) || null });
+  } catch (err) { console.error('[newsletter.photo-url]', err); res.status(500).json({ error: err.message }); }
+});
+
 // --- Rendering --------------------------------------------------------------
 
 async function loadIssueBundle(id) {
