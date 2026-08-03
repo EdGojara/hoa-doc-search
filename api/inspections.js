@@ -2672,7 +2672,7 @@ router.get('/inspections/:id/observations', async (req, res) => {
         id, inspection_photo_id, property_id, severity, ai_description,
         ai_recommended_action, ai_confidence, reviewer_status, reviewer_notes,
         created_at, reviewed_at, category_id,
-        enforcement_categories ( label )
+        enforcement_categories!category_id ( label )
       `)
       .eq('inspection_id', inspectionId)
       .order('created_at', { ascending: false });
@@ -3275,10 +3275,10 @@ router.get('/inspections/observations/pending', async (req, res) => {
         id, severity, ai_description, ai_recommended_action, ai_confidence,
         reviewer_status, created_at, property_id, community_id, category_id,
         inspection_photo_id,
-        enforcement_categories ( id, code, label ),
+        enforcement_categories!category_id ( id, label, code:slug ),
         properties ( id, street_address, unit ),
         inspection_photos ( id, storage_path, captured_at, gps_lat, gps_lng,
-                            compass_heading, ai_detected_house_number )
+                            compass_heading:compass_heading_deg, ai_detected_house_number )
       `)
       .eq('reviewer_status', 'pending')
       .order('created_at', { ascending: false });
@@ -3322,7 +3322,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         ai_recommended_action, ai_confidence, reviewer_status,
         inspection_id, inspection_photo_id,
         properties ( id, street_address, unit, community_id ),
-        enforcement_categories ( id, code, label )
+        enforcement_categories!category_id ( id, label, code:slug )
       `)
       .eq('id', obsId)
       .maybeSingle();
