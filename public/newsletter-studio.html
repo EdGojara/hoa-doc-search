@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Newsletter Studio</title>
+<link rel="stylesheet" href="/brand.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{ --navy:#0B1D34; --gold:#C6A15B; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f4f5f7; }
+  *{box-sizing:border-box;} body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg);}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 80px;}
+  a.back{display:inline-flex;gap:6px;color:#5a7390;text-decoration:none;font-size:13px;font-weight:600;margin-bottom:10px;}
+  h1{margin:0 0 2px;color:var(--navy);font-size:22px;}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 16px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px;}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;}
+  label{font-size:11px;color:var(--muted);font-weight:700;display:block;}
+  select,input,textarea{font-family:inherit;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;background:#fff;margin-top:3px;}
+  select,input{min-width:150px;}
+  textarea{width:100%;min-height:120px;line-height:1.5;}
+  button{font-family:inherit;cursor:pointer;border-radius:8px;font-weight:700;font-size:13px;padding:8px 14px;border:1px solid transparent;}
+  .btn-navy{background:var(--navy);color:#fff;} .btn-gold{background:var(--gold);color:#20303f;}
+  .btn-green{background:#166534;color:#fff;} .btn-ghost{background:#fff;color:var(--navy);border:1px solid #cbd5e1;}
+  .btn-red{background:#fff;color:#b91c1c;border:1px solid #fecaca;}
+  .btn-sm{padding:4px 9px;font-size:11.5px;}
+  .issues{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;}
+  .issue{border:1px solid var(--line);border-radius:10px;padding:11px 13px;cursor:pointer;background:#fff;}
+  .issue:hover{border-color:var(--gold);} .issue .t{font-weight:700;color:var(--navy);font-size:14px;}
+  .issue .m{font-size:11.5px;color:var(--muted);margin-top:3px;}
+  .badge{display:inline-block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:2px 7px;border-radius:99px;}
+  .b-draft{background:#f1f5f9;color:#475569;} .b-published{background:#dcfce7;color:#166534;} .b-review{background:#fef3c7;color:#92400e;}
+  .sec{border:1px solid var(--line);border-radius:10px;margin-bottom:10px;background:#fff;overflow:hidden;}
+  .sec-head{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#fafbfc;border-bottom:1px solid var(--line);}
+  .sec-head .ic{font-size:16px;} .sec-head .st{font-weight:700;color:var(--navy);font-size:13px;flex:1;}
+  .sec-type{font-size:11px;color:var(--muted);}
+  .sec-body{padding:12px;display:none;} .sec.open .sec-body{display:block;}
+  .sec-actions{display:flex;gap:5px;}
+  .review-tag{background:#fef3c7;color:#92400e;font-size:10px;font-weight:800;padding:2px 7px;border-radius:99px;text-transform:uppercase;}
+  .muted{color:var(--muted);font-size:12.5px;}
+  .prevbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;}
+  iframe#prev{width:100%;height:760px;border:1px solid var(--line);border-radius:10px;background:#eef1f5;}
+  .hidden{display:none;}
+  .link-box{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;}
+  .link-box input{flex:1;min-width:240px;background:#f8fafc;}
+  .notes{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#1e3a8a;margin-top:10px;}
+  .notes ul{margin:6px 0 0 18px;padding:0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">&larr; Back to trustEd</a>
+  <h1>🗞️ Newsletter Studio</h1>
+  <p class="sub">Trusted builds a first draft from your community's data — events, board, contacts, and resident trends. You edit the cards, preview, and publish to web + PDF.</p>
+
+  <!-- Setup -->
+  <div class="card">
+    <div class="row">
+      <div><label>Community</label><br><select id="comm"><option value="">Choose…</option></select></div>
+      <div><label>Month</label><br><input id="month" type="month"></div>
+      <div><label>Format</label><br>
+        <select id="format">
+          <option value="community_update">Community Update (2–3 pages)</option>
+          <option value="community_magazine">Community Magazine (longer)</option>
+          <option value="announcement">Announcement (one-pager)</option>
+        </select>
+      </div>
+      <button class="btn-navy" id="genBtn" onclick="generate()">✨ Generate draft</button>
+      <button class="btn-ghost" onclick="newBlank()">Start blank</button>
+    </div>
+    <div id="genNotes" class="notes hidden"></div>
+  </div>
+
+  <!-- Existing issues -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <strong style="color:var(--navy);">Issues</strong>
+      <button class="btn-ghost btn-sm" onclick="loadIssues()">↻ Refresh</button>
+    </div>
+    <div id="issues" class="issues"><div class="muted">Pick a community to see its issues.</div></div>
+  </div>
+
+  <!-- Editor -->
+  <div id="editor" class="hidden">
+    <div class="card">
+      <div class="row" style="justify-content:space-between;">
+        <div style="flex:1;min-width:240px;">
+          <label>Title</label><br>
+          <input id="issTitle" style="width:100%;" onchange="saveTitle()">
+          <div class="m" style="margin-top:4px;"><span id="issStatus" class="badge b-draft">draft</span> <span id="issMonth" class="muted"></span></div>
+        </div>
+        <div class="sec-actions" style="align-items:center;">
+          <button class="btn-ghost btn-sm" onclick="preview('web')">👁 Web preview</button>
+          <button class="btn-ghost btn-sm" onclick="preview('print')">🖨 Print preview</button>
+          <button class="btn-gold btn-sm" onclick="downloadPdf(this)">⬇ PDF</button>
+          <button class="btn-green btn-sm" onclick="publish()">Publish</button>
+          <button class="btn-red btn-sm" onclick="deleteIssue()">Delete</button>
+        </div>
+      </div>
+      <div id="pubLink" class="link-box hidden">
+        <span class="muted" style="font-weight:700;">Resident link:</span>
+        <input id="pubUrl" readonly>
+        <button class="btn-ghost btn-sm" onclick="copyPub()">Copy</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+        <strong style="color:var(--navy);">Sections</strong>
+        <div class="row" style="align-items:center;">
+          <select id="addType" class="btn-sm" style="min-width:170px;"></select>
+          <button class="btn-ghost btn-sm" onclick="addSection()">+ Add section</button>
+        </div>
+      </div>
+      <div id="sections"></div>
+    </div>
+
+    <div class="card hidden" id="prevCard">
+      <div class="prevbar">
+        <strong style="color:var(--navy);">Preview</strong>
+        <span id="prevMode" class="muted"></span>
+        <button class="btn-ghost btn-sm" style="margin-left:auto;" onclick="closePreview()">Close</button>
+      </div>
+      <iframe id="prev"></iframe>
+    </div>
+  </div>
+</div>
+
+<script src="/deploy-watcher.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let _supa=null, af=null, curIssue=null, curSections=[], SECTION_TYPES={};
+const PROSE=new Set(['board_message','hoa_corner','custom_article','project_update','amenity_update']);
+
+function badge(status){
+  const cls = status==='published'?'b-published':(status==='review'?'b-review':'b-draft');
+  return '<span class="badge '+cls+'">'+esc(status)+'</span>';
+}
+
+async function loadCommunities(){
+  try{
+    const r=await af('/api/gl/communities'); const j=await r.json();
+    (j.communities||j||[]).filter(c=>c&&c.id).sort((a,b)=>String(a.name).localeCompare(String(b.name)))
+      .forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.name; $('comm').appendChild(o); });
+  }catch(_){}
+}
+function buildAddTypes(){
+  const sel=$('addType'); sel.innerHTML='';
+  Object.entries(SECTION_TYPES).sort((a,b)=>a[1].label.localeCompare(b[1].label)).forEach(([k,v])=>{
+    const o=document.createElement('option'); o.value=k; o.textContent=v.icon+' '+v.label; sel.appendChild(o);
+  });
+}
+
+async function loadIssues(){
+  const cid=$('comm').value; const box=$('issues');
+  if(!cid){ box.innerHTML='<div class="muted">Pick a community to see its issues.</div>'; return; }
+  box.innerHTML='<div class="muted">Loading…</div>';
+  try{
+    const r=await af('/api/newsletters/issues?community_id='+encodeURIComponent(cid)); const j=await r.json();
+    const list=j.issues||[];
+    if(!list.length){ box.innerHTML='<div class="muted">No issues yet. Generate one above.</div>'; return; }
+    box.innerHTML=list.map(i=>'<div class="issue" onclick="openIssue(\''+i.id+'\')"><div class="t">'+esc(i.title)+'</div><div class="m">'+badge(i.status)+' · '+esc((i.issue_month||'').slice(0,7))+'</div></div>').join('');
+  }catch(e){ box.innerHTML='<div class="muted">Could not load issues.</div>'; }
+}
+
+async function generate(){
+  const cid=$('comm').value, month=$('month').value, fmt=$('format').value;
+  if(!cid){ alert('Pick a community first.'); return; }
+  if(!month){ alert('Pick a month.'); return; }
+  const btn=$('genBtn'); btn.disabled=true; btn.textContent='✨ Generating…';
+  try{
+    const r=await af('/api/newsletters/issues/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid,issue_month:month,format_key:fmt})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    const notes=$('genNotes');
+    notes.innerHTML='<strong>Draft ready — '+j.section_count+' sections.</strong>'+(j.notes&&j.notes.length?'<ul>'+j.notes.map(n=>'<li>'+esc(n)+'</li>').join('')+'</ul>':'');
+    notes.classList.remove('hidden');
+    await loadIssues(); openIssue(j.issue_id);
+  }catch(e){ alert('Could not generate: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent='✨ Generate draft'; }
+}
+async function newBlank(){
+  const cid=$('comm').value, month=$('month').value;
+  if(!cid){ alert('Pick a community first.'); return; }
+  if(!month){ alert('Pick a month.'); return; }
+  try{
+    const r=await af('/api/newsletters/issues',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid,issue_month:month,format_key:$('format').value})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    await loadIssues(); openIssue(j.issue.id);
+  }catch(e){ alert('Could not create: '+e.message); }
+}
+
+async function openIssue(id){
+  try{
+    const r=await af('/api/newsletters/issues/'+id); const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'failed');
+    curIssue=j.issue; curSections=j.sections||[];
+    $('editor').classList.remove('hidden');
+    $('issTitle').value=curIssue.title||'';
+    $('issStatus').outerHTML='<span id="issStatus">'+badge(curIssue.status)+'</span>';
+    $('issMonth').textContent=(curIssue.issue_month||'').slice(0,7);
+    $('pubLink').classList.toggle('hidden', curIssue.status!=='published');
+    if(curIssue.status==='published') $('pubUrl').value=location.origin+'/api/newsletters/public/'+curIssue.id;
+    closePreview();
+    renderSections();
+    $('editor').scrollIntoView({behavior:'smooth',block:'start'});
+  }catch(e){ alert('Could not open: '+e.message); }
+}
+
+function renderSections(){
+  const box=$('sections');
+  if(!curSections.length){ box.innerHTML='<div class="muted">No sections. Add one above.</div>'; return; }
+  box.innerHTML=curSections.map((s,idx)=>{
+    const meta=SECTION_TYPES[s.section_type]||{icon:'•',label:s.section_type};
+    const review = s.needs_review ? '<span class="review-tag">review</span>' : '';
+    const isProse = PROSE.has(s.section_type);
+    const body = isProse
+      ? '<label>Body (markdown)</label><textarea data-f="markdown" id="body-'+s.id+'">'+esc((s.body_json&&(s.body_json.markdown||s.body_json.body))||'')+'</textarea>'
+      : '<label>Content (advanced JSON)</label><textarea data-f="json" id="body-'+s.id+'" style="font-family:monospace;font-size:12px;">'+esc(JSON.stringify(s.body_json||{},null,2))+'</textarea>';
+    return '<div class="sec" id="sec-'+s.id+'">'
+      +'<div class="sec-head">'
+        +'<span class="ic">'+meta.icon+'</span>'
+        +'<span class="st">'+esc(s.title||meta.label)+' '+review+'</span>'
+        +'<span class="sec-type">'+esc(meta.label)+'</span>'
+        +'<div class="sec-actions">'
+          +'<button class="btn-ghost btn-sm" onclick="toggleSec(\''+s.id+'\')">Edit</button>'
+          +'<button class="btn-ghost btn-sm" onclick="moveSec('+idx+',-1)" '+(idx===0?'disabled':'')+'>↑</button>'
+          +'<button class="btn-ghost btn-sm" onclick="moveSec('+idx+',1)" '+(idx===curSections.length-1?'disabled':'')+'>↓</button>'
+          +'<button class="btn-red btn-sm" onclick="delSec(\''+s.id+'\')">✕</button>'
+        +'</div>'
+      +'</div>'
+      +'<div class="sec-body">'
+        +'<label>Title</label><input id="title-'+s.id+'" style="width:100%;" value="'+esc(s.title||'')+'">'
+        +'<div style="height:8px;"></div>'
+        +'<label>Subtitle</label><input id="sub-'+s.id+'" style="width:100%;" value="'+esc(s.subtitle||'')+'">'
+        +'<div style="height:8px;"></div>'
+        +(s.section_type==='cover'?'<label>Cover image URL</label><input id="img-'+s.id+'" style="width:100%;" value="'+esc(s.image_url||'')+'"><div style="height:8px;"></div>':'')
+        +body
+        +'<div style="height:10px;"></div>'
+        +'<button class="btn-navy btn-sm" onclick="saveSec(\''+s.id+'\',this)">Save section</button>'
+        +(s.needs_review?' <button class="btn-green btn-sm" onclick="approveSec(\''+s.id+'\')">Mark reviewed</button>':'')
+      +'</div>'
+    +'</div>';
+  }).join('');
+}
+function toggleSec(id){ const el=$('sec-'+id); if(el) el.classList.toggle('open'); }
+
+async function saveSec(id,btn){
+  const s=curSections.find(x=>x.id===id); if(!s) return;
+  const patch={ title:$('title-'+id).value, subtitle:$('sub-'+id).value };
+  const img=$('img-'+id); if(img) patch.image_url=img.value;
+  const ta=$('body-'+id);
+  if(ta){
+    if(ta.dataset.f==='markdown'){ patch.body_json=Object.assign({},s.body_json||{},{markdown:ta.value}); }
+    else { try{ patch.body_json=JSON.parse(ta.value||'{}'); }catch(e){ alert('Content JSON is invalid: '+e.message); return; } }
+  }
+  if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  try{
+    const r=await af('/api/newsletters/sections/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    Object.assign(s,j.section);
+  }catch(e){ alert('Could not save: '+e.message); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='Save section'; } }
+}
+async function approveSec(id){
+  try{ const r=await af('/api/newsletters/sections/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({needs_review:false,approval_status:'approved'})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    const s=curSections.find(x=>x.id===id); if(s){ s.needs_review=false; } renderSections();
+  }catch(e){ alert(e.message); }
+}
+async function delSec(id){
+  if(!confirm('Remove this section?')) return;
+  try{ const r=await af('/api/newsletters/sections/'+id,{method:'DELETE'}); if(!r.ok) throw new Error('failed');
+    curSections=curSections.filter(x=>x.id!==id); renderSections();
+  }catch(e){ alert('Could not remove: '+e.message); }
+}
+async function moveSec(idx,dir){
+  const j=idx+dir; if(j<0||j>=curSections.length) return;
+  const arr=curSections.slice(); const t=arr[idx]; arr[idx]=arr[j]; arr[j]=t;
+  curSections=arr; renderSections();
+  try{ await af('/api/newsletters/issues/'+curIssue.id+'/reorder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:arr.map(s=>s.id)})}); }catch(_){}
+}
+async function addSection(){
+  const type=$('addType').value;
+  try{
+    const r=await af('/api/newsletters/issues/'+curIssue.id+'/sections',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section_type:type,title:(SECTION_TYPES[type]||{}).label||'Section',body_json:{}})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    curSections.push(j.section); renderSections(); toggleSec(j.section.id);
+  }catch(e){ alert('Could not add: '+e.message); }
+}
+async function saveTitle(){
+  try{ await af('/api/newsletters/issues/'+curIssue.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:$('issTitle').value})}); curIssue.title=$('issTitle').value; loadIssues(); }catch(_){}
+}
+
+async function preview(mode){
+  $('prevCard').classList.remove('hidden');
+  $('prevMode').textContent=mode==='print'?'(print / PDF layout)':'(web)';
+  $('prev').srcdoc='<p style="font-family:sans-serif;color:#5a7390;padding:20px;">Rendering…</p>';
+  try{
+    const r=await af('/api/newsletters/issues/'+curIssue.id+'/html?mode='+mode);
+    const html=await r.text(); if(!r.ok) throw new Error('failed');
+    $('prev').srcdoc=html; $('prevCard').scrollIntoView({behavior:'smooth',block:'start'});
+  }catch(e){ $('prev').srcdoc='<p style="color:#b91c1c;font-family:sans-serif;padding:20px;">Preview failed.</p>'; }
+}
+function closePreview(){ $('prevCard').classList.add('hidden'); }
+
+async function downloadPdf(btn){
+  btn.disabled=true; const t=btn.textContent; btn.textContent='⬇ …';
+  try{
+    const r=await af('/api/newsletters/issues/'+curIssue.id+'/pdf');
+    if(!r.ok) throw new Error('failed');
+    const blob=await r.blob(); const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=(curIssue.title||'newsletter').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.pdf';
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  }catch(e){ alert('PDF failed: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
+async function publish(){
+  if(!confirm('Publish this newsletter? It becomes visible at the resident link.')) return;
+  try{
+    const r=await af('/api/newsletters/issues/'+curIssue.id+'/publish',{method:'POST'});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    curIssue.status='published';
+    $('issStatus').innerHTML=badge('published');
+    $('pubUrl').value=location.origin+'/api/newsletters/public/'+curIssue.id;
+    $('pubLink').classList.remove('hidden'); loadIssues();
+    alert('Published. Copy the resident link to share, email, or post to the portal.');
+  }catch(e){ alert('Could not publish: '+e.message); }
+}
+function copyPub(){ const i=$('pubUrl'); i.select(); try{ document.execCommand('copy'); }catch(_){} }
+async function deleteIssue(){
+  if(!confirm('Delete this whole issue? This cannot be undone.')) return;
+  try{ const r=await af('/api/newsletters/issues/'+curIssue.id,{method:'DELETE'}); if(!r.ok) throw new Error('failed');
+    $('editor').classList.add('hidden'); curIssue=null; loadIssues();
+  }catch(e){ alert('Could not delete: '+e.message); }
+}
+
+(async function boot(){
+  try{
+    const cfg=await (await fetch('/api/auth/config')).json();
+    if(!cfg||!cfg.enabled||!window.supabase){ document.querySelector('.wrap').innerHTML='<p style="padding:30px;color:#5a7390;">Sign in to trustEd to use the Newsletter Studio.</p>'; return; }
+    _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    const {data:{session}}=await _supa.auth.getSession();
+    if(!session||!session.access_token){ location.href='/login.html?next='+encodeURIComponent('/admin/newsletter-studio'); return; }
+    af=async(u,o)=>{ o=o||{}; const h=Object.assign({},o.headers||{}); try{const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){} return fetch(u,Object.assign({},o,{headers:h})); };
+    // Section-type library for the Add dropdown + prose detection.
+    try{ const r=await af('/api/newsletters/section-types'); const j=await r.json(); SECTION_TYPES=j.types||{}; }catch(_){}
+    if(!Object.keys(SECTION_TYPES).length){ SECTION_TYPES={cover:{icon:'🖼️',label:'Cover'},board_message:{icon:'📣',label:'Message from the Board'},hoa_corner:{icon:'💡',label:'HOA Corner'},event_grid:{icon:'📅',label:'Upcoming events'},calendar:{icon:'🗓️',label:'Calendar'},community_contacts:{icon:'☎️',label:'Community contacts'},important_links:{icon:'🔗',label:'Important links'},custom_article:{icon:'📝',label:'Article'}}; }
+    buildAddTypes();
+    const now=new Date(); $('month').value=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+    await loadCommunities();
+    $('comm').addEventListener('change', loadIssues);
+  }catch(e){ document.querySelector('.wrap').innerHTML='<p style="padding:30px;color:#b91c1c;">Could not load the studio.</p>'; }
+})();
+</script>
+</body>
+</html>

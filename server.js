@@ -978,6 +978,9 @@ app.use('/api/email-campaigns', emailCampaignsRouter);
 const communityPhotosRouter = require('./api/community_photos');
 app.use('/api/community-photos', communityPhotosRouter);
 
+const newslettersRouter = require('./api/newsletters');
+app.use('/api/newsletters', newslettersRouter);
+
 const masterPlanSubmissionsRouter = require('./api/master_plan_submissions');
 app.use('/api/master-plan-submissions', masterPlanSubmissionsRouter);
 app.get('/admin/master-plan-submissions', (req, res) => {
@@ -1018,6 +1021,9 @@ app.get('/admin/payment-plans', (req, res) => {
 });
 app.get('/admin/violations-schedule', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'violations-schedule.html'));
+});
+app.get('/admin/newsletter-studio', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'newsletter-studio.html'));
 });
 app.get('/admin/tessa', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'tessa.html'));
