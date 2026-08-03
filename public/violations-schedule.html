@@ -54,8 +54,7 @@
     <span class="chip"><span class="dot" style="background:#166534;"></span> Drive (inspection)</span>
     <span class="chip"><span class="dot" style="background:#92400e;"></span> Drive in progress</span>
     <span class="chip"><span class="dot" style="background:#1e3a8a;"></span> Letters mailed</span>
-    <span class="chip"><span class="dot" style="background:#991b1b;"></span> §209 / fine cure deadline</span>
-    <span class="chip"><span class="dot" style="background:#92400e;"></span> Courtesy cure deadline</span>
+    <span class="chip"><span class="dot" style="background:#991b1b;"></span> §209 cure deadline (not at attorney)</span>
   </div>
   <div id="cal"><div class="empty-note">Loading…</div></div>
 </div>
@@ -101,9 +100,7 @@ function render(days){
       inner+='<div class="ev ev-mail" title="Letters mailed · '+esc(mm.community||'')+' · '+esc(stages)+'">✉️ '+esc(mm.community||'—')+' ('+mm.count+')</div>';
     });
     Object.values(ev.deadlines||{}).forEach(dd=>{
-      const soft=(dd.stage==='courtesy_1'||dd.stage==='courtesy_2')?' soft':'';
-      const label=String(dd.stage||'').replace('certified_209','§209').replace('fine_assessed','fine').replace(/_/g,' ');
-      inner+='<div class="ev ev-due'+soft+'" title="Cure deadline · '+esc(dd.community||'')+' · '+esc(label)+' · '+dd.count+' violation(s)">⏰ '+esc(dd.community||'—')+' '+esc(label)+' ('+dd.count+')</div>';
+      inner+='<div class="ev ev-due" title="§209 cure deadline · '+esc(dd.community||'')+' · '+dd.count+' violation(s)">⏰ '+esc(dd.community||'—')+' §209 ('+dd.count+')</div>';
     });
     cells+='<div class="cell'+(ymd===todayCentral?' today':'')+'">'+inner+'</div>';
   }

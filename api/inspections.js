@@ -175,20 +175,27 @@ router.get('/inspections/schedule', async (req, res) => {
       if (!data || data.length < 1000) break;
     }
 
-    // Cure deadlines coming due — OPEN violations whose cure period ends this
-    // month. So Ed sees what's about to lapse (a §209 window closing) alongside
-    // when we drove / mailed. Paginated (can exceed 1000 across communities).
+    // Cure deadlines coming due — ONLY certified §209 letters (courtesy stages
+    // don't get a tracked deadline here) whose cure window ends this month AND
+    // that are NOT already at the attorney (property at_legal / with_attorney) —
+    // those are counsel's clock now, not ours. (Ed 2026-08-01.)
+    const atAttorney = new Set();
+    try {
+      const { data: legal } = await supabase.from('property_enforcement_states').select('property_id, state').in('state', ['at_legal', 'with_attorney']);
+      for (const r of (legal || [])) if (r.property_id) atAttorney.add(r.property_id);
+    } catch (_) { /* if the table isn't there, show all §209 deadlines */ }
+
     const deadlines = [];
     for (let off = 0; ; off += 1000) {
-      let vq = supabase.from('violations').select('cure_period_ends_at, current_stage, community_id, community:community_id(name)')
-        .not('cure_period_ends_at', 'is', null).is('resolved_at', null)
-        .in('current_stage', ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed'])
+      let vq = supabase.from('violations').select('cure_period_ends_at, current_stage, community_id, property_id, community:community_id(name)')
+        .eq('current_stage', 'certified_209').is('resolved_at', null)
+        .not('cure_period_ends_at', 'is', null)
         .gte('cure_period_ends_at', fromISO).lt('cure_period_ends_at', toISO)
         .order('cure_period_ends_at', { ascending: true }).range(off, off + 999);
       if (communityId) vq = vq.eq('community_id', communityId);
       const { data, error: ve } = await vq;
       if (ve) throw ve;
-      deadlines.push(...(data || []));
+      deadlines.push(...(data || []).filter((v) => !atAttorney.has(v.property_id)));
       if (!data || data.length < 1000) break;
     }
 
