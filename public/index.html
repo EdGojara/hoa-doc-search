@@ -14725,7 +14725,14 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const isQueue = a.status === 'pending_review';
     const created = a.created_at ? new Date(a.created_at) : null;
     const ageHours = created ? (Date.now() - created.getTime()) / 3600000 : null;
-    const letterBody = (isQueue ? (a.ai_letter_body || a.letter_body) : (a.letter_body || a.ai_letter_body)) || '';
+    // Prefer the working/edited draft (letter_body) over the original AI draft
+    // (ai_letter_body) on EVERY surface, matching GET /acc-review/decisions/:id/letter
+    // and the finalize send. The queue used to show ai_letter_body first, so a
+    // decision whose real letter lived in letter_body (e.g. a staff redraft or a
+    // consolidated case) showed the STALE AI draft — and the send could deliver
+    // it. One precedence everywhere. (Ed 2026-08-03 — Lopez approval showed the
+    // old "more info needed" draft.)
+    const letterBody = (a.letter_body || a.ai_letter_body) || '';
     const recip = a.submitter_email || '';
     const rec = a.ai_recommendation || a.decision_type || '';
 

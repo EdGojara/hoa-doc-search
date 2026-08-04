@@ -2668,8 +2668,12 @@ app.post('/acc-review/decisions/:id/finalize', async (req, res) => {
     // 'decided' in that case.
     const isFinal = decisionType !== 'request_more_info';
 
-    // The letter body the reviewer approved (falls back to the engine draft).
-    let bodyText = (body.body_text != null ? body.body_text : dec.ai_letter_body) || '';
+    // The letter body the reviewer approved. If the request doesn't carry an
+    // explicit body, fall back to the WORKING draft (letter_body) before the
+    // original engine draft (ai_letter_body) — same precedence as the queue view
+    // and GET .../letter. The old ai_letter_body-first fallback could send the
+    // stale AI draft when the real letter lived in letter_body (Ed 2026-08-03).
+    let bodyText = (body.body_text != null ? body.body_text : (dec.letter_body || dec.ai_letter_body)) || '';
     if (!bodyText.trim()) return res.status(400).json({ error: 'letter body is empty' });
 
     // IP-leak guard — same discipline as /acc-review/letter. Auto-rewrite soft
