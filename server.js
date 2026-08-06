@@ -10479,6 +10479,43 @@ app.delete('/api/calendar/events/:id', async (req, res) => {
   }
 });
 
+// GET /api/calendar/drv-communities — community picker for the DRV Summary tab
+// (id + name only). Staff-tier, same as the rest of the calendar.
+app.get('/api/calendar/drv-communities', async (req, res) => {
+  try {
+    if (!(await requireCalendarStaff(req, res))) return;
+    const { data, error } = await supabase.from('communities')
+      .select('id, name').eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('name', { ascending: true });
+    if (error) throw error;
+    res.json({ communities: data || [] });
+  } catch (err) {
+    console.error('[calendar/drv-communities]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /api/calendar/drv-summary?community_id=&month=YYYY-MM — the curated,
+// community-facing monthly DRV summary (snapshot + top violation types by
+// category + AI narrative + things-to-watch). CURRENT MONTH ONLY, carryovers
+// excluded. This is NOT the billing Activity Report (that is untouched); it is
+// a separate association-facing view. (Ed 2026-08-06.)
+app.get('/api/calendar/drv-summary', async (req, res) => {
+  try {
+    if (!(await requireCalendarStaff(req, res))) return;
+    const communityId = req.query.community_id;
+    const month = req.query.month; // 'YYYY-MM'
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    if (!/^\d{4}-\d{2}$/.test(String(month || ''))) return res.status(400).json({ error: 'month must be YYYY-MM' });
+    const { buildDrvMonthlySummary } = require('./lib/enforcement/drv_monthly_summary');
+    const summary = await buildDrvMonthlySummary({ communityId, month });
+    res.json(summary);
+  } catch (err) {
+    console.error('[calendar/drv-summary]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // GET /api/calendar/staff — minimal active-staff picker (id + name) for the
 // Add-event form. Deliberately staff-tier (NOT admin-only like /api/users) so
 // ANY staff member can put an event on a colleague's behalf — e.g. mark someone

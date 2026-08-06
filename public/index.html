@@ -843,7 +843,28 @@
         <button class="secondary-btn" onclick="calNext()" style="font-size:13px; padding:6px 12px;">→</button>
         <button class="secondary-btn" onclick="calToday()" style="font-size:12px; padding:6px 10px; margin-left:6px;">Today</button>
         <button onclick="calAddOpen()" style="font-size:12px; padding:6px 12px; margin-left:6px; background:#1E2761; color:#fff; border:none; border-radius:6px; font-weight:700; cursor:pointer;">＋ Add event</button>
+        <button onclick="drvSummaryToggle()" id="drvSummaryBtn" style="font-size:12px; padding:6px 12px; margin-left:6px; background:#0B1D34; color:#C6A15B; border:none; border-radius:6px; font-weight:700; cursor:pointer;">📋 DRV Summary</button>
       </div>
+    </div>
+
+    <!-- Monthly DRV Summary (community-facing). Separate from the billing
+         Activity Report. Current-month violations only, carryovers excluded. -->
+    <div id="drvSummaryPanel" style="display:none; background:#fff; border:1px solid #d7e3f4; border-radius:10px; padding:16px 18px; margin-bottom:16px;">
+      <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin-bottom:6px;">
+        <div>
+          <h3 style="margin:0 0 2px; font-size:17px; color:#1E2761;">📋 Monthly DRV Summary</h3>
+          <p style="margin:0; font-size:12px; color:#666;">Community-facing snapshot by category, with an AI narrative. New violations this month only, carryovers excluded.</p>
+        </div>
+        <label style="font-size:11px; color:#475569; font-weight:600;">Community<br>
+          <select id="drvSumCommunity" style="margin-top:3px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; background:#fff; min-width:200px;"></select>
+        </label>
+        <label style="font-size:11px; color:#475569; font-weight:600;">Month<br>
+          <input type="month" id="drvSumMonth" style="margin-top:3px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;">
+        </label>
+        <button onclick="drvSummaryGenerate()" id="drvSumGenBtn" style="font-size:12px; padding:7px 14px; background:#1E2761; color:#fff; border:none; border-radius:6px; font-weight:700; cursor:pointer;">Generate</button>
+        <button onclick="window.print()" style="font-size:12px; padding:7px 12px; background:#fff; color:#1E2761; border:1px solid #cbd5e1; border-radius:6px; font-weight:700; cursor:pointer;">🖨️ Print</button>
+      </div>
+      <div id="drvSumResult" style="margin-top:14px;"></div>
     </div>
 
     <!-- Add-event form (hidden until ＋ Add event). Native staff events + PTO. -->
@@ -47188,6 +47209,65 @@ ${questionsPage}
     if (st && !st.value) st.value = calYmd(new Date());
     calAddPopulateDropdowns();
   }
+
+  // ---- Monthly DRV Summary (Calendar tab) --------------------------------
+  function drvSummaryToggle() {
+    const panel = document.getElementById('drvSummaryPanel');
+    if (!panel) return;
+    const willShow = panel.style.display === 'none';
+    panel.style.display = willShow ? 'block' : 'none';
+    if (!willShow) return;
+    const mo = document.getElementById('drvSumMonth');
+    if (mo && !mo.value) { const d = new Date(); mo.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+    drvSumLoadCommunities();
+  }
+  async function drvSumLoadCommunities() {
+    const sel = document.getElementById('drvSumCommunity');
+    if (!sel || sel.options.length > 0) return;
+    try {
+      const r = await window._authFetch('/api/calendar/drv-communities');
+      const j = await r.json();
+      (j.communities || []).forEach((c) => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; sel.appendChild(o); });
+    } catch (e) { /* leave empty; Generate will report */ }
+  }
+  async function drvSummaryGenerate() {
+    const cid = (document.getElementById('drvSumCommunity') || {}).value;
+    const month = (document.getElementById('drvSumMonth') || {}).value;
+    const out = document.getElementById('drvSumResult');
+    const btn = document.getElementById('drvSumGenBtn');
+    if (!cid) { out.innerHTML = '<p style="color:#991b1b;font-size:13px;">Pick a community.</p>'; return; }
+    if (!month) { out.innerHTML = '<p style="color:#991b1b;font-size:13px;">Pick a month.</p>'; return; }
+    btn.disabled = true; const bt = btn.textContent; btn.textContent = 'Generating…';
+    out.innerHTML = '<p style="color:#666;font-size:13px;">Building summary…</p>';
+    try {
+      const r = await window._authFetch('/api/calendar/drv-summary?community_id=' + encodeURIComponent(cid) + '&month=' + encodeURIComponent(month));
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      out.innerHTML = drvSumRender(j);
+    } catch (e) {
+      out.innerHTML = '<p style="color:#991b1b;font-size:13px;">Could not build the summary: ' + (e.message || 'error') + '</p>';
+    } finally { btn.disabled = false; btn.textContent = bt; }
+  }
+  function drvSumRender(d) {
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const s = d.snapshot || {};
+    const kpi = (n, l) => '<div style="flex:1;min-width:120px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;text-align:center;"><div style="font-size:26px;font-weight:800;color:#1E2761;">' + (n == null ? 0 : n) + '</div><div style="font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.4px;">' + l + '</div></div>';
+    const cats = (d.categories || []).slice(0, 10);
+    const catRows = cats.map((c) => '<tr><td style="padding:5px 8px;border-bottom:1px solid #eef2f7;">' + esc(c.category) + '</td><td style="padding:5px 8px;border-bottom:1px solid #eef2f7;text-align:right;font-weight:700;color:#1E2761;">' + c.pct + '%</td></tr>').join('') || '<tr><td style="padding:8px;color:#94a3b8;font-size:12px;" colspan="2">No new violations this month.</td></tr>';
+    const watch = (d.watch_items || []).map((w) => '<li style="margin-bottom:4px;">' + esc(w) + '</li>').join('');
+    return ''
+      + '<div style="border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;">'
+      + '<div style="text-align:center;margin-bottom:14px;"><div style="font-size:20px;font-weight:800;color:#1E2761;">' + esc(d.community_name) + '</div><div style="font-size:13px;color:#475569;">Community Update, Deed Restriction Violations (DRV), ' + esc(d.month_label) + '</div></div>'
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">' + kpi(s.first_notices, 'First Notices') + kpi(s.second_notices, 'Second Notices') + kpi(s.certified_letters, 'Certified Letters') + kpi(s.new_violations, 'New Violations') + '</div>'
+      + '<div style="display:flex;gap:20px;flex-wrap:wrap;">'
+      + '<div style="flex:1;min-width:260px;"><div style="font-weight:700;color:#1E2761;margin-bottom:6px;">Top Violation Types</div><table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr><th style="text-align:left;padding:4px 8px;color:#64748b;font-size:11px;text-transform:uppercase;">Type</th><th style="text-align:right;padding:4px 8px;color:#64748b;font-size:11px;text-transform:uppercase;">% of Total</th></tr></thead><tbody>' + catRows + '</tbody></table></div>'
+      + '<div style="flex:1;min-width:260px;"><div style="font-weight:700;color:#1E2761;margin-bottom:6px;">Message</div><p style="font-size:13px;line-height:1.5;color:#334155;margin:0 0 12px;">' + esc(d.message) + '</p>'
+      + '<div style="font-weight:700;color:#1E2761;margin-bottom:6px;">Top 3 Things to Watch</div><ul style="font-size:13px;color:#334155;margin:0;padding-left:18px;">' + watch + '</ul></div>'
+      + '</div>'
+      + (d.narrative_fallback ? '<p style="font-size:11px;color:#94a3b8;margin-top:12px;">Narrative generated from a template (AI service was briefly unavailable).</p>' : '')
+      + '</div>';
+  }
+
   async function calAddPopulateDropdowns() {
     // Community options — clone from the global community picker.
     const cc = document.getElementById('calAddCommunity');
