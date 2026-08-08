@@ -18156,6 +18156,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
           <button onclick="inspPDPreselect()" class="ed-mode-btn active" style="font-size:12px;">📍 Pre-select for capture</button>
           <button onclick="inspPDMarkClean()" id="inspPDMarkCleanBtn" style="background:#15803d; color:#fff; border:none; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;" title="No violation observed — adds the green covered-ring to this property's pin so you know it's been walked.">✓ Mark clean</button>
+          <button onclick="inspPDOpen360()" style="background: var(--gold, #D4AF37); color:#0B1D34; border:none; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:700;" title="Open this owner's full Homeowner 360 — balance, violations, ACC, legal status, every letter and call.">👤 Homeowner 360</button>
           <button onclick="inspClosePropertyDetail()" style="background:rgba(255,255,255,0.15); color:#fff; border:none; padding:6px 12px; border-radius:6px; font-size:13px; cursor:pointer;">✕ Close</button>
         </div>
       </div>
@@ -18703,6 +18704,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // Shows owner / residency / violations / interactions / inspections.
   // ============================================================
   let inspPDCurrentPropertyId = null;
+  // Open the full Homeowner 360 for the property currently in the DRV detail
+  // modal (closure reads the live value; exposed so the inline button can call it).
+  window.inspPDOpen360 = function(){ if (inspPDCurrentPropertyId) window.openHomeowner360({ property: inspPDCurrentPropertyId }); };
   let inspPDCurrentLabel = null;
   async function inspOpenPropertyDetail(propertyId) {
     inspPDCurrentPropertyId = propertyId;
