@@ -447,8 +447,19 @@ async function openProfile(cid){
   try{
     const p=new URLSearchParams(location.search);
     const contact=p.get('contact');
+    const property=p.get('property');
     const q=p.get('q');
     if(contact){ openProfile(contact); }
+    else if(property){
+      // Deep link by trustEd property id: resolve current owner → open profile.
+      fetch(API+'/by-property/'+encodeURIComponent(property))
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(j){
+          if(j && j.contact_id){ openProfile(j.contact_id); }
+          else { const el=document.getElementById('q'); if(el){ el.value=''; el.placeholder='No current owner on file for that property — search by name or address.'; } }
+        })
+        .catch(function(){});
+    }
     else if(q){ const el=document.getElementById('q'); if(el){ el.value=q; } doSearch(); }
   }catch(_){}
 })();

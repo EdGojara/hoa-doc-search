@@ -47,6 +47,29 @@ async function ownedProperties(contactId) {
   }));
 }
 
+// GET /by-property/:propertyId — resolve a property to its CURRENT owner
+// contact, so any list that carries a property_id can deep-link straight into
+// the 360 (?property=<id>). Keys off trustEd's OWN properties.id (the Vantaca
+// property id is a migration match-key only, never the identifier). Prefers the
+// primary owner. (Ed 2026-08-08.)
+router.get('/by-property/:propertyId', async (req, res) => {
+  try {
+    const propertyId = req.params.propertyId;
+    if (!propertyId) return res.status(400).json({ error: 'property_id required' });
+    const { data, error } = await supabase.from('property_ownerships')
+      .select('contact_id, is_primary')
+      .eq('property_id', propertyId).is('end_date', null)
+      .order('is_primary', { ascending: false }).limit(1);
+    if (error) return res.status(500).json({ error: safeErrorMessage(error) });
+    const contactId = (data && data[0] && data[0].contact_id) || null;
+    if (!contactId) return res.status(404).json({ error: 'no_current_owner' });
+    res.json({ contact_id: contactId });
+  } catch (err) {
+    console.error('[homeowner-360/by-property] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // GET /search — name / address / email / phone → candidate homeowners
 router.get('/search', async (req, res) => {
   try {

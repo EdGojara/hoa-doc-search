@@ -705,6 +705,7 @@
     opts = opts || {};
     var url = '/admin/homeowner';
     if (opts.contact) url += '?contact=' + encodeURIComponent(opts.contact);
+    else if (opts.property) url += '?property=' + encodeURIComponent(opts.property);
     else if (opts.q)  url += '?q=' + encodeURIComponent(opts.q);
     window.location.href = url;
   };
