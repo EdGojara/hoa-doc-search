@@ -253,82 +253,127 @@ router.post('/create-checkout-session', express.json({ limit: '128kb' }), async 
 // Inert until STRIPE keys land (503). Posting the completed payment to AR+GL is
 // handled in the webhook (handleCheckoutCompleted) and validated with test keys.
 // ============================================================================
+// Shared assessment-checkout builder — used by the portal endpoint AND the
+// emailable payment link (/pay/:token). Resolves the current balance, applies
+// the card convenience-fee gross-up, mints the Connect Checkout Session, and
+// writes the pending payments-ledger rows. Returns a plain result object (never
+// throws for expected states) so both callers handle it the same way.
+//   -> { ok:true, checkout_url, session_id, amount_cents, convenience_fee_cents, method }
+//   -> { ok:false, status, error, hint }
+async function createAssessmentCheckout({ community_id, property_id, payment_method, amount_cents, payer, success_url, cancel_url, initiated_by = 'homeowner_portal' }) {
+  if (!stripeLib.isConfigured()) return { ok: false, status: 503, error: 'payment_not_configured', hint: 'Set STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET (test mode) to enable.' };
+  if (!community_id || !property_id) return { ok: false, status: 400, error: 'community_id_and_property_id_required' };
+  if (!success_url || !cancel_url) return { ok: false, status: 400, error: 'success_url_and_cancel_url_required' };
+  const method = payment_method === 'card' ? 'card' : 'ach'; // default to ACH (low cost)
+
+  const { data: community } = await supabase.from('communities')
+    .select('id, name, slug, hoa_legal_name, stripe_connected_account_id')
+    .eq('id', community_id).maybeSingle();
+  if (!community) return { ok: false, status: 404, error: 'community_not_found' };
+  if (!community.stripe_connected_account_id) {
+    return { ok: false, status: 503, error: 'community_stripe_not_onboarded', hint: `${community.hoa_legal_name || community.name} hasn't completed Stripe Connect onboarding.` };
+  }
+
+  // Amount = requested, else the homeowner's current balance.
+  let amt = Math.round(Number(amount_cents) || 0);
+  if (!amt) {
+    try {
+      const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
+      const ar = await resolveCurrentAR(supabase, { propertyId: property_id, communityId: community_id });
+      amt = ar && ar.balance_cents > 0 ? ar.balance_cents : 0;
+    } catch (_) { /* fall through to nothing_due */ }
+  }
+  if (amt <= 0) return { ok: false, status: 400, error: 'nothing_due', hint: 'Account balance is zero.' };
+
+  // Card convenience fee: gross-up so the HOA nets the full assessment.
+  // POLICY KNOB — Ed confirms the exact %/cap; this default covers card cost.
+  const convFeeCents = method === 'card' ? Math.max(0, Math.round((amt + 30) / (1 - 0.029)) - amt) : 0;
+
+  const fees = [{ label: `Assessment payment — ${community.name}`, amount_cents: amt, payee: 'community_association', fee_type: 'assessment' }];
+  if (convFeeCents > 0) fees.push({ label: 'Card convenience fee', amount_cents: convFeeCents, payee: 'management_company', fee_type: 'convenience_fee' });
+
+  const session = await stripeLib.createCheckoutSession({
+    fees,
+    connectedAccountId: community.stripe_connected_account_id,
+    customer: { email: (payer && payer.email) || undefined, name: (payer && payer.name) || undefined },
+    reference: `ASMT-${String(property_id).slice(0, 8)}`,
+    productType: 'assessment_payment',
+    productId: property_id,
+    successUrl: success_url,
+    cancelUrl: cancel_url,
+    communityName: community.name,
+    communityId: community.id,
+    statementDescriptor: (community.slug || community.name || 'BEDROCK').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 22),
+    paymentMethodTypes: method === 'card' ? ['card'] : ['us_bank_account'],
+  });
+  if (!session.ok) {
+    return { ok: false, status: session.skipped ? 503 : 500, error: session.error || 'checkout_failed', stripeCode: session.stripeCode };
+  }
+
+  const rows = fees.map((f) => ({
+    community_id: community.id, product_type: 'assessment_payment', product_id: property_id,
+    fee_type: f.fee_type, payee: f.payee,
+    // payee_display_name is NOT NULL — the HOA for the assessment, Bedrock for the card fee.
+    payee_display_name: f.payee === 'community_association'
+      ? (community.hoa_legal_name || community.name)
+      : 'Bedrock Association Management',
+    connected_account_id: f.payee === 'community_association' ? community.stripe_connected_account_id : null,
+    amount_cents: f.amount_cents, method: 'stripe_checkout', processor: 'stripe',
+    processor_session_id: session.session_id, status: 'pending', initiated_by,
+  }));
+  const { error: ledgerErr } = await supabase.from('payments').insert(rows);
+  if (ledgerErr) {
+    // Never swallow a ledger write — a silent failure here means money moves
+    // with no record and the webhook has nothing to mark paid or post to books.
+    console.error('[payments] assessment ledger insert failed:', ledgerErr.message);
+    return { ok: false, status: 500, error: 'payment_ledger_insert_failed', hint: safeErrorMessage(ledgerErr) };
+  }
+
+  return { ok: true, checkout_url: session.checkout_url, session_id: session.session_id, amount_cents: amt, convenience_fee_cents: convFeeCents, method };
+}
+
 router.post('/assessment/create-checkout', express.json({ limit: '32kb' }), async (req, res) => {
   try {
-    if (!stripeLib.isConfigured()) {
-      return res.status(503).json({ error: 'payment_not_configured', hint: 'Set STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET (test mode) to enable.' });
-    }
     const b = req.body || {};
-    if (!b.community_id || !b.property_id) return res.status(400).json({ error: 'community_id_and_property_id_required' });
-    if (!b.success_url || !b.cancel_url) return res.status(400).json({ error: 'success_url_and_cancel_url_required' });
-    const method = b.payment_method === 'card' ? 'card' : 'ach'; // default to ACH (low cost)
-
-    const { data: community } = await supabase.from('communities')
-      .select('id, name, slug, hoa_legal_name, stripe_connected_account_id')
-      .eq('id', b.community_id).maybeSingle();
-    if (!community) return res.status(404).json({ error: 'community_not_found' });
-    if (!community.stripe_connected_account_id) {
-      return res.status(503).json({ error: 'community_stripe_not_onboarded', hint: `${community.hoa_legal_name || community.name} hasn't completed Stripe Connect onboarding.` });
-    }
-
-    // Amount = requested, else the homeowner's current balance.
-    let amt = Math.round(Number(b.amount_cents) || 0);
-    if (!amt) {
-      try {
-        const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
-        const ar = await resolveCurrentAR(supabase, { propertyId: b.property_id, communityId: b.community_id });
-        amt = ar && ar.balance_cents > 0 ? ar.balance_cents : 0;
-      } catch (_) { /* fall through to nothing_due */ }
-    }
-    if (amt <= 0) return res.status(400).json({ error: 'nothing_due', hint: 'Account balance is zero.' });
-
-    // Card convenience fee: gross-up so the HOA nets the full assessment.
-    // POLICY KNOB — Ed confirms the exact %/cap; this default covers card cost.
-    const convFeeCents = method === 'card' ? Math.max(0, Math.round((amt + 30) / (1 - 0.029)) - amt) : 0;
-
-    const fees = [{ label: `Assessment payment — ${community.name}`, amount_cents: amt, payee: 'community_association', fee_type: 'assessment' }];
-    if (convFeeCents > 0) fees.push({ label: 'Card convenience fee', amount_cents: convFeeCents, payee: 'management_company', fee_type: 'convenience_fee' });
-
-    const session = await stripeLib.createCheckoutSession({
-      fees,
-      connectedAccountId: community.stripe_connected_account_id,
-      customer: { email: (b.payer && b.payer.email) || undefined, name: (b.payer && b.payer.name) || undefined },
-      reference: `ASMT-${String(b.property_id).slice(0, 8)}`,
-      productType: 'assessment_payment',
-      productId: b.property_id,
-      successUrl: b.success_url,
-      cancelUrl: b.cancel_url,
-      communityName: community.name,
-      communityId: community.id,
-      statementDescriptor: (community.slug || community.name || 'BEDROCK').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 22),
-      paymentMethodTypes: method === 'card' ? ['card'] : ['us_bank_account'],
+    const r = await createAssessmentCheckout({
+      community_id: b.community_id, property_id: b.property_id,
+      payment_method: b.payment_method, amount_cents: b.amount_cents, payer: b.payer,
+      success_url: b.success_url, cancel_url: b.cancel_url, initiated_by: 'homeowner_portal',
     });
-    if (!session.ok) {
-      return res.status(session.skipped ? 503 : 500).json({ error: session.error || 'checkout_failed', stripeCode: session.stripeCode });
-    }
-
-    const rows = fees.map((f) => ({
-      community_id: community.id, product_type: 'assessment_payment', product_id: b.property_id,
-      fee_type: f.fee_type, payee: f.payee,
-      // payee_display_name is NOT NULL — the HOA for the assessment, Bedrock for the card fee.
-      payee_display_name: f.payee === 'community_association'
-        ? (community.hoa_legal_name || community.name)
-        : 'Bedrock Association Management',
-      connected_account_id: f.payee === 'community_association' ? community.stripe_connected_account_id : null,
-      amount_cents: f.amount_cents, method: 'stripe_checkout', processor: 'stripe',
-      processor_session_id: session.session_id, status: 'pending', initiated_by: 'homeowner_portal',
-    }));
-    const { error: ledgerErr } = await supabase.from('payments').insert(rows);
-    if (ledgerErr) {
-      // Never swallow a ledger write — a silent failure here means money moves
-      // with no record and the webhook has nothing to mark paid or post to books.
-      console.error('[payments] assessment ledger insert failed:', ledgerErr.message);
-      return res.status(500).json({ error: 'payment_ledger_insert_failed', detail: safeErrorMessage(ledgerErr) });
-    }
-
-    res.json({ ok: true, checkout_url: session.checkout_url, session_id: session.session_id, amount_cents: amt, convenience_fee_cents: convFeeCents, method });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, stripeCode: r.stripeCode });
+    res.json(r);
   } catch (err) {
     console.error('[payments] assessment checkout failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/payments/payment-link  { community_id, property_id }  (staff)
+// Mint a STABLE, emailable pay link for a homeowner's balance. Does NOT require
+// Stripe to be live to mint (staff can prepare), but reports readiness. The link
+// resolves the balance + mints a fresh checkout only when clicked (/pay/:token).
+router.post('/payment-link', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.community_id || !b.property_id) return res.status(400).json({ error: 'community_id_and_property_id_required' });
+    // Verify the property actually belongs to the community (never mint a link
+    // that crosses communities).
+    const { data: prop, error: pErr } = await supabase.from('properties')
+      .select('id, community_id, street_address').eq('id', b.property_id).maybeSingle();
+    if (pErr) throw pErr;
+    if (!prop || prop.community_id !== b.community_id) return res.status(404).json({ error: 'property_not_in_community' });
+
+    const { signPaymentToken, paymentLinkUrl } = require('../lib/payments/payment_link');
+    const token = signPaymentToken({ community_id: b.community_id, property_id: b.property_id });
+    const url = paymentLinkUrl(token, process.env.APP_BASE_URL);
+    res.json({
+      ok: true, url, token,
+      property_address: prop.street_address,
+      stripe_ready: stripeLib.isConfigured(),
+      note: stripeLib.isConfigured() ? null : 'Link is generated but Stripe is not configured yet — it will not charge until keys + Connect onboarding are live.',
+    });
+  } catch (err) {
+    console.error('[payments] payment-link mint failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -873,4 +918,4 @@ function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-module.exports = { router };
+module.exports = { router, createAssessmentCheckout };

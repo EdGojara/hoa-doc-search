@@ -469,6 +469,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/apply\/[^/]+$/,                       // /apply/:slug — ARC application form
   /^\/apply\/status\/[^/]+$/,               // /apply/status/:reference — ARC status lookup
   /^\/c\/[^/]+$/,                           // /c/:slug — community landing page
+  /^\/pay\/[^/]+$/,                          // /pay/:token — emailable homeowner payment link (token-signed; charges nothing until Stripe is live)
   /^\/fob\/[^/]+$/,                         // /fob/:slug — pool/key-fob request
   /^\/event\/[^/]+$/,                       // /event/:slug — public event page
   /^\/event\/[^/]+\/checkin$/,              // /event/:slug/checkin — event checkin (6-digit code gated on the page itself)
@@ -1158,8 +1159,47 @@ app.use('/api/builder-applications', builderApplicationsRouter);
 // ARC fees + key fobs + builder review fees tomorrow. Per project_payment_rails.md
 // anti-commingling rule: HOA-side fees route to per-HOA connected accounts;
 // Bedrock platform fees stay on the platform. Webhook handler uses raw body.
-const { router: paymentsRouter } = require('./api/payments');
+const { router: paymentsRouter, createAssessmentCheckout } = require('./api/payments');
 app.use('/api/payments', paymentsRouter);
+
+// ---------------------------------------------------------------------------
+// Emailable homeowner payment link. /pay/:token is a STABLE link (no login) that
+// resolves the CURRENT balance and mints a fresh Stripe Checkout at click-time,
+// so an emailed link never expires and always reflects what's owed. Degrades to
+// a friendly landing page when Stripe isn't live, the community isn't onboarded,
+// the link is invalid/expired, or nothing is due. Public (homeowner-facing) —
+// exempted in the staff gate allowlist above. (Ed 2026-08-08.)
+// ---------------------------------------------------------------------------
+function _payPage(title, body) {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font-family:Arial,Helvetica,sans-serif;background:#f1f5f9;color:#0B1D34;display:flex;min-height:100vh;margin:0;align-items:center;justify-content:center;}.card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;max-width:440px;width:92%;padding:28px;text-align:center;box-shadow:0 8px 30px rgba(15,23,42,.08);}h1{font-size:20px;margin:0 0 8px;}p{color:#475569;font-size:14px;line-height:1.5;margin:6px 0;}</style></head><body><div class="card">${body}</div></body></html>`;
+}
+app.get('/pay/thanks', (req, res) => {
+  res.send(_payPage('Thank you', `<h1>Thank you</h1><p>Your payment is processing. You will receive a receipt by email. It may take a few minutes to reflect on your account.</p>`));
+});
+app.get('/pay/:token', async (req, res) => {
+  try {
+    const { verifyPaymentToken } = require('./lib/payments/payment_link');
+    const v = verifyPaymentToken(req.params.token);
+    if (!v.ok) return res.status(400).send(_payPage('Payment link', `<h1>This payment link isn't valid</h1><p>The link may have expired or been mistyped. Please contact management for a current link.</p>`));
+    const base = (process.env.APP_BASE_URL || (req.protocol + '://' + req.get('host'))).replace(/\/+$/, '');
+    const r = await createAssessmentCheckout({
+      community_id: v.community_id, property_id: v.property_id,
+      payment_method: (req.query.method === 'card' ? 'card' : 'ach'),
+      success_url: base + '/pay/thanks',
+      cancel_url: base + '/pay/' + encodeURIComponent(req.params.token),
+      initiated_by: 'payment_link',
+    });
+    if (r.ok && r.checkout_url) return res.redirect(302, r.checkout_url);
+    if (r.error === 'nothing_due') return res.send(_payPage('Nothing due', `<h1>Your balance is $0</h1><p>There's nothing due right now. Thank you.</p>`));
+    if (r.error === 'payment_not_configured' || r.error === 'community_stripe_not_onboarded') {
+      return res.send(_payPage('Online payment coming soon', `<h1>Online payment isn't available yet</h1><p>This community hasn't finished setting up online payments. Please contact management to pay by check or ACH in the meantime.</p>`));
+    }
+    return res.status(r.status || 500).send(_payPage('Payment link', `<h1>We couldn't start your payment</h1><p>Please try again shortly, or contact management.</p>`));
+  } catch (err) {
+    console.error('[pay-link] failed:', err.message);
+    res.status(500).send(_payPage('Payment link', `<h1>Something went wrong</h1><p>Please try again shortly, or contact management.</p>`));
+  }
+});
 
 // Homeowner portal — the customer-UX showcase. Magic-link auth (no passwords),
 // scoped to one property, tile grid renders live / coming-soon modules per
