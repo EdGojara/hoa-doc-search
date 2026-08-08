@@ -697,6 +697,17 @@
 (function(){
   var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
   var money=function(v){ if(v==null||v==='') return '<span style="color:#cbd5e1">—</span>'; return '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  // Canonical "open the full Homeowner 360" navigator. Prefer a contact id
+  // (direct profile open); fall back to a text query (address/name search that
+  // lands on the owner). One helper so every list can deep-link the same way —
+  // the 360 is the default click-through, never an empty tab. (Ed 2026-08-08.)
+  window.openHomeowner360 = window.openHomeowner360 || function(opts){
+    opts = opts || {};
+    var url = '/admin/homeowner';
+    if (opts.contact) url += '?contact=' + encodeURIComponent(opts.contact);
+    else if (opts.q)  url += '?q=' + encodeURIComponent(opts.q);
+    window.location.href = url;
+  };
   var LB={ at_legal:{t:'At legal',bg:'#fee2e2',fg:'#991b1b'}, in_bankruptcy:{t:'Bankruptcy §362',bg:'#ede9fe',fg:'#5b21b6'}, lien_filed:{t:'Lien filed',bg:'#ffedd5',fg:'#9a3412'}, judgment:{t:'Judgment',bg:'#fecaca',fg:'#7f1d1d'}, in_collections:{t:'Collections',bg:'#fef3c7',fg:'#92400e'} };
   var STAGE={ courtesy_1:'Courtesy 1', courtesy_2:'Courtesy 2', certified_209:'Certified §209', fine_assessed:'Fine' };
   var AMEN={ restricted:{t:'Amenity restricted',bg:'#fee2e2',fg:'#991b1b',ic:'🚫'}, allowed_payment_plan:{t:'Amenity OK — payment plan',bg:'#dbeafe',fg:'#1e40af',ic:'✓'}, allowed_bankruptcy:{t:'Amenity OK — bankruptcy',bg:'#ede9fe',fg:'#5b21b6',ic:'✓'} };
@@ -723,6 +734,15 @@
         +'<td style="padding:8px 10px; border-top:1px solid #eef1f6;">'+legalCell+'</td></tr>';
     }).join('');
     box.innerHTML='<table style="width:100%; border-collapse:collapse; font-size:13px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; overflow:hidden;"><thead><tr style="background:#f1f5f9; text-align:left; color:#475569; font-size:11.5px;"><th style="padding:8px 10px;">Property</th><th style="padding:8px 10px;">Homeowner</th><th style="padding:8px 10px;">Violations</th><th style="padding:8px 10px; text-align:right;">Balance</th><th style="padding:8px 10px;">Legal / Status</th></tr></thead><tbody>'+rows+'</tbody></table>';
+    // Every result row is a doorway into the full Homeowner 360 (the address in
+    // the first cell drives the search-and-land). Easy access, enforced by the
+    // product — you never land on an empty profile tab.
+    Array.prototype.forEach.call(box.querySelectorAll('tbody tr'), function(tr){
+      var addrEl = tr.querySelector('td div'); if(!addrEl) return;
+      var addr = (addrEl.textContent||'').trim(); if(!addr) return;
+      tr.style.cursor='pointer'; tr.title='Open Homeowner 360';
+      tr.addEventListener('click', function(){ window.openHomeowner360({ q: addr }); });
+    });
   }
   window.lookupSearch=function(){
     var q=(document.getElementById('lookupInput').value||'').trim();
