@@ -14199,6 +14199,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div style="margin-bottom:14px; display:flex; gap:8px; align-items:center;">
         <button class="secondary-btn" onclick="ahBackToList()" style="font-size:13px;">← Back to ACC History list</button>
         <button class="secondary-btn" onclick="ahEnterEditMode()" style="font-size:13px;">✏️ Edit fields</button>
+        ${d.property_address ? `<a href="/admin/homeowner?q=${encodeURIComponent(d.property_address)}" class="secondary-btn" style="font-size:13px; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">👤 Homeowner 360</a>` : ''}
       </div>
       <div class="ev-detail-card">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
