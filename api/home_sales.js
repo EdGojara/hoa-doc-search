@@ -21,6 +21,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const { safeErrorMessage } = require('./_safe_error');
+const { getLegalFlag } = require('../lib/enforcement/legal_flag');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -36,7 +37,7 @@ const OPEN_VIOLATION_STAGES = ['courtesy_1', 'courtesy_2', 'certified_209', 'fin
 // closing to prove the seller's account cleared.
 // ----------------------------------------------------------------------------
 async function propertySnapshot(community_id, property_id) {
-  const [propRes, ownerRes, balRes, violRes] = await Promise.all([
+  const [propRes, ownerRes, balRes, violRes, legal] = await Promise.all([
     supabase.from('properties')
       .select('id, community_id, street_address, unit, city, state, zip')
       .eq('id', property_id).maybeSingle(),
@@ -48,6 +49,11 @@ async function propertySnapshot(community_id, property_id) {
       .select('id, current_stage, opened_at')
       .eq('property_id', property_id)
       .in('current_stage', OPEN_VIOLATION_STAGES),
+    // Legal/lien/bankruptcy status (property_enforcement_states SSOT). A resale
+    // disclosure that shows a clean DRV + zero balance but omits a FILED LIEN or
+    // an at-legal/bankruptcy status is the highest-liability miss at a closing —
+    // the one thing title most needs. (Ed 2026-08-06.)
+    getLegalFlag(property_id),
   ]);
 
   if (propRes.error) throw propRes.error;
@@ -77,6 +83,19 @@ async function propertySnapshot(community_id, property_id) {
     drv_clean: openViolations.length === 0,
     open_violations_count: openViolations.length,
     worst_open_stage: worst,
+    // Legal encumbrance disclosure. legal_clean=false means a lien / at-legal /
+    // bankruptcy / judgment is on record — title must NOT treat this as a clean
+    // close. Surfaced explicitly so it can never be silently omitted.
+    legal_clean: !legal,
+    legal_status: legal ? legal.label : null,
+    legal_state: legal ? legal.state : null,
+    lien_filed: !!(legal && legal.lien_filed),
+    at_legal: !!(legal && legal.at_legal),
+    in_bankruptcy: !!(legal && legal.in_bankruptcy),
+    judgment: !!(legal && legal.judgment),
+    in_collections: !!(legal && legal.in_collections),
+    legal_attorney: legal ? (legal.attorney_name || null) : null,
+    legal_as_of: legal ? (legal.as_of || null) : null,
   };
 }
 
