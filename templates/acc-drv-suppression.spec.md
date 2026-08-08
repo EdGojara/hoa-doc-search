@@ -34,37 +34,35 @@ categories.
 
 ---
 
-## Judgment questions for Ed (encode-Ed decisions)
+## Decisions — LOCKED (Ed, 2026-08-06)
 
-1. **Match granularity.** An approved "fence" ACC decision suppresses which
-   enforcement categories? Recommendation: map at the **category-group** level
-   (approved fence → fence-existence/design group), NOT individual labels, and
-   NEVER the maintenance/condition group. Needs an `acc_project_type →
-   enforcement_category_group` map.
+1. **Fail-safe = FLAG, never silently suppress or silently cite.** When an
+   approved ACC decision matches the property + category group, **still create
+   the observation but FLAG it** (`needs_acc_verification` + `acc_approved_ref`)
+   so the DRV Review queue shows "⚠ Approved ACC decision on file for [category]
+   — verify this isn't the approved work before sending a letter." Human dismisses
+   if it's the approved fence; confirms if it's a genuine separate issue. This is
+   the encode-Ed-with-human-gate pattern, NOT silent auto-suppression. (Silently
+   suppressing risks letting a real violation slide, which is as bad as citing
+   approved work.)
 
-2. **Deviation from approved scope.** An approved 6ft cedar fence does not
-   approve an 8ft vinyl fence — but a DRV drive can't read height/material from a
-   photo reliably. Recommendation: the auto-layer can only match at category
-   level, so it **flags**, it does not silently suppress (see fail-safe).
+2. **Category classing = YES.** Each enforcement category gets a
+   `category_class`: `existence_design` | `maintenance_condition` | `other`.
+   Approvals only ever flag the `existence_design` categories; a
+   `maintenance_condition` violation (fence in disrepair) is never suppressed by
+   an approval. Ed to tag / review the category list once.
 
-3. **Duration.** Recommendation: existence-suppression is **permanent** (once
-   approved, the structure is approved). No expiry.
+3. **Approved-with-conditions = FLAG (revisit later).** A conditioned approval
+   (finish in 12 months, stain in 60 days) that may have lapsed is still flagged
+   for human, never auto-cleared. Deeper condition-lapse logic is a later pass —
+   for v1, conditions just mean "definitely flag, don't suppress."
 
-4. **Approved-with-conditions.** If conditions exist (complete within 12 months,
-   stain within 60 days) and aren't met, that's a compliance issue. Recommendation:
-   still suppress the "unapproved structure" violation, but **flag** for human —
-   never auto-clear a conditioned approval.
-
-5. **Fail-safe — flag, don't silently suppress OR silently cite.** THIS IS THE
-   KEY DECISION. Wrongly suppressing a real violation is as bad as wrongly citing
-   approved work. Recommendation: when an approved ACC decision matches the
-   property + category group, **still create the observation but FLAG it**
-   (`acc_approved_ref` on the violation/observation) so the DRV Review queue shows
-   "⚠ Approved ACC decision on file for [category] — verify this isn't the
-   approved work before sending a letter." Human dismisses if it's the approved
-   fence; confirms if it's a genuine separate issue. This is the same
-   encode-Ed-with-human-gate pattern the rest of the platform uses. It is NOT
-   silent auto-suppression.
+**Match granularity** (implied by the above): map at the **category-group**
+level via an `acc_project_type → enforcement_category_group` map, class-aware.
+**Duration**: existence-flagging is permanent (no expiry). **Deviation** (approved
+6ft cedar vs actual 8ft vinyl) is out of scope for v1 — the flag lets the human
+adjudicate; automated dimension/material detection is the telephoto/vision-detail
+problem, later.
 
 ---
 
