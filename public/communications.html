@@ -203,7 +203,14 @@ function linkCell(m){
     // offer the picker instead of a dead "✓ Linked" with nothing else to do.
     // (Ed 2026-08-01 — Strike Electrical invoice linked to the vendor, no community.)
     const needsCommunity = !m.community && (m.persona==='emma' || String(m.classification||'').startsWith('vendor'));
-    return `<span class="linked">✓ Linked to ${esc(name||'record')}</span><span class="lbl">${comm}</span>`
+    // Homeowner-linked emails deep-link to the full 360 (contact id, else our
+    // property id). Vendor-linked stays a plain label. (Ed 2026-08-08.)
+    const ho360 = m.resolved_contact_id ? ('/admin/homeowner?contact='+encodeURIComponent(m.resolved_contact_id))
+      : m.resolved_property_id ? ('/admin/homeowner?property='+encodeURIComponent(m.resolved_property_id)) : null;
+    const linkedLabel = ho360
+      ? `<a class="linked" href="${ho360}" title="Open Homeowner 360 — full history" style="text-decoration:none;">✓ Linked to ${esc(name||'record')} 👤</a>`
+      : `<span class="linked">✓ Linked to ${esc(name||'record')}</span>`;
+    return `${linkedLabel}<span class="lbl">${comm}</span>`
       + (needsCommunity ? ` <span class="lbl">— which community? link it to file / record:</span> ${communityPicker(m.id)}` : '');
   }
   // A vendor / utility bill whose COMMUNITY is already resolved (e.g. North
