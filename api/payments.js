@@ -835,6 +835,95 @@ router.post('/:id/refund', express.json({ limit: '32kb' }), async (req, res) => 
 });
 
 // ============================================================================
+// GET /api/payments/verify/:sessionId  (staff) — VERIFICATION HARNESS
+// ----------------------------------------------------------------------------
+// Prove the whole chain end-to-end for one payment, READ-ONLY: the ledger rows
+// succeeded, the AR subledger recorded the payment, and the GL posted
+// Dr Cash (1000) / Cr AR (1300), balanced to the amount. Run it after the first
+// test payment so the money-hits-the-books chain isn't a leap of faith. Reports
+// each link as pass/fail and explains expected non-posts (not-live-GL). (Ed 2026-08-08.)
+// ============================================================================
+router.get('/verify/:sessionId', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId;
+    const { data: pays } = await supabase.from('payments')
+      .select('fee_type, payee, amount_cents, status, paid_at, community_id, product_id, product_type')
+      .eq('processor_session_id', sessionId);
+    const payments = pays || [];
+    const assessment = payments.find((p) => p.fee_type === 'assessment' && p.product_type === 'assessment_payment');
+    const all_succeeded = payments.length > 0 && payments.every((p) => p.status === 'succeeded');
+
+    let community = null, glEntry = null, subledger = null;
+    const amt = assessment ? Math.abs(Number(assessment.amount_cents) || 0) : 0;
+
+    if (assessment) {
+      const { data: comm } = await supabase.from('communities')
+        .select('id, name, gl_cutover_date').eq('id', assessment.community_id).maybeSingle();
+      community = comm || null;
+
+      // GL journal entry — keyed to source_module='payment_intake' + source_reference=<session>.
+      const { data: je } = await supabase.from('journal_entries')
+        .select('id, posting_date, reference, total_debits_cents, total_credits_cents, status')
+        .eq('community_id', assessment.community_id).eq('source_module', 'payment_intake')
+        .eq('source_reference', sessionId).maybeSingle();
+      if (je) {
+        const { data: lines } = await supabase.from('journal_entry_lines')
+          .select('debit_cents, credit_cents, account_id').eq('journal_entry_id', je.id);
+        const acctIds = [...new Set((lines || []).map((l) => l.account_id))];
+        const { data: accts } = acctIds.length
+          ? await supabase.from('chart_of_accounts').select('id, account_number, account_name').in('id', acctIds)
+          : { data: [] };
+        const byId = Object.fromEntries((accts || []).map((a) => [a.id, a]));
+        glEntry = {
+          id: je.id, posting_date: je.posting_date, reference: je.reference, status: je.status,
+          total_debits_cents: je.total_debits_cents, total_credits_cents: je.total_credits_cents,
+          lines: (lines || []).map((l) => ({
+            account_number: byId[l.account_id] ? byId[l.account_id].account_number : null,
+            account_name: byId[l.account_id] ? byId[l.account_id].account_name : null,
+            debit_cents: l.debit_cents, credit_cents: l.credit_cents,
+          })),
+        };
+      }
+
+      // AR subledger — homeowner_transactions payment row keyed to the session.
+      const { data: sub } = await supabase.from('homeowner_transactions')
+        .select('id, transaction_date, amount_cents, description, txn_type')
+        .contains('raw_row_jsonb', { stripe_session_id: sessionId }).limit(1).maybeSingle();
+      subledger = sub || null;
+    }
+
+    const cutover = community && community.gl_cutover_date;
+    const isLiveGL = !!cutover && String(cutover).slice(0, 10) <= new Date().toISOString().slice(0, 10);
+    const drCash = glEntry && glEntry.lines.find((l) => l.account_number === '1000' && Number(l.debit_cents) > 0);
+    const crAR = glEntry && glEntry.lines.find((l) => l.account_number === '1300' && Number(l.credit_cents) > 0);
+
+    res.json({
+      session_id: sessionId,
+      found: payments.length > 0,
+      amount_cents: amt,
+      payments,
+      checks: {
+        payment_succeeded: all_succeeded,
+        live_gl_community: isLiveGL,
+        gl_posted: !!glEntry,
+        gl_dr_cash_cr_ar: !!(drCash && crAR),
+        gl_balanced: glEntry ? (Number(glEntry.total_debits_cents) === Number(glEntry.total_credits_cents) && Number(glEntry.total_debits_cents) === amt) : false,
+        ar_subledger_posted: !!subledger,
+      },
+      gl_entry: glEntry,
+      ar_subledger: subledger,
+      community: community ? { id: community.id, name: community.name, gl_cutover_date: community.gl_cutover_date, is_live_gl: isLiveGL } : null,
+      note: !assessment
+        ? 'No assessment payment found for this session id.'
+        : (!isLiveGL ? 'Community is not on live GL — the GL post is intentionally skipped (AR subledger still records it). This is expected, not a failure.' : null),
+    });
+  } catch (err) {
+    console.error('[payments] verify failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // GET /api/payments/:id  (admin)
 // ============================================================================
 router.get('/:id', async (req, res) => {
