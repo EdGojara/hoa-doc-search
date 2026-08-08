@@ -365,7 +365,10 @@ router.post('/payment-link', express.json({ limit: '8kb' }), async (req, res) =>
 
     const { signPaymentToken, paymentLinkUrl } = require('../lib/payments/payment_link');
     const token = signPaymentToken({ community_id: b.community_id, property_id: b.property_id });
-    const url = paymentLinkUrl(token, process.env.APP_BASE_URL);
+    // An emailed link MUST be absolute — fall back to the request origin when
+    // APP_BASE_URL isn't set (dev), so staff never copy a relative /pay/... URL.
+    const base = process.env.APP_BASE_URL || (req.protocol + '://' + req.get('host'));
+    const url = paymentLinkUrl(token, base);
     res.json({
       ok: true, url, token,
       property_address: prop.street_address,

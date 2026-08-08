@@ -160,7 +160,7 @@ async function openProfile(cid){
   if(!r.ok){ document.getElementById('profile').innerHTML='<div class="empty">Could not load.</div>'; return; }
   const c=d.contact, ps=d.properties||[];
   // Stash context so the "email this letter" composer can pre-fill recipient + community.
-  window._ho={ cid, name:(c&&c.full_name)||'', email:(c&&(c.primary_email||c.secondary_email))||'', propertyId:(ps[0]&&ps[0].id)||null };
+  window._ho={ cid, name:(c&&c.full_name)||'', email:(c&&(c.primary_email||c.secondary_email))||'', propertyId:(ps[0]&&ps[0].id)||null, communityId:(ps[0]&&ps[0].community_id)||null, balanceCents:(d.ar&&d.ar.balance_cents)||0 };
   const openV=(d.violations||[]).filter(v=>v.open);
   const flagChips=(d.flags||[]).map(f=>`<span class="chip flag">${esc(String(f.state).replace(/_/g,' '))}</span>`).join('');
   const balChip = d.ar.balance_cents>0?`<span class="chip bal">Owes ${money(d.ar.balance_cents)}</span>`:(d.ar.balance_cents<0?`<span class="chip ok">Credit ${money(-d.ar.balance_cents)}</span>`:`<span class="chip ok">Current</span>`);
@@ -218,6 +218,7 @@ async function openProfile(cid){
       <div class="card">
         <div class="sec-title">💵 Balance & recent activity</div>
         <div style="font-size:18px;font-weight:700;margin-bottom:8px;" class="money">${money(d.ar.balance_cents)}</div>
+        ${d.ar.balance_cents>0?`<button onclick="copyPaymentLink(this)" title="Generate a secure pay-my-balance link to email or text this homeowner — resolves the live balance at click time." style="background:#0B1D34;color:#C6A15B;border:none;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:8px;">🔗 Copy payment link</button>`:''}
         ${(am&&am.allowed===false)?`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:#991b1b;">🚫 <b>Amenity access restricted</b> — ${esc(am.reason)}</div>`:''}
         ${(d.ar.transactions||[]).slice(0,8).map(t=>`<div class="li"><span class="t">${d10(t.transaction_date)}</span> · ${esc(t.txn_type||t.charge_category||'txn')} <span class="money" style="float:right;">${money(t.amount_cents)}</span></div>`).join('')||'<div class="empty">No transactions.</div>'}
       </div>
@@ -439,6 +440,23 @@ async function openProfile(cid){
     if(el) el.textContent = j.recap || 'No recap available.';
     if(el) el.classList.remove('spin');
   }).catch(()=>{ const el=document.querySelector('#recap .body'); if(el){el.textContent='Recap unavailable.';el.classList.remove('spin');} });
+}
+
+// Generate + copy a secure, emailable "pay my balance" link for this homeowner.
+// Staff-only; the link resolves the live balance at click time and charges
+// nothing until Stripe is live. (Ed 2026-08-08.)
+async function copyPaymentLink(btn){
+  const ho = window._ho || {};
+  if(!ho.communityId || !ho.propertyId){ if(btn){ btn.textContent='No property/community on file'; } return; }
+  const orig = btn ? btn.textContent : '';
+  if(btn){ btn.disabled=true; btn.textContent='Generating…'; }
+  try{
+    const r = await fetch('/api/payments/payment-link', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ community_id: ho.communityId, property_id: ho.propertyId }) });
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok || !j.url){ if(btn){ btn.textContent = (j.error==='property_not_in_community') ? 'Property/community mismatch' : (j.error||'Could not generate'); setTimeout(()=>{ btn.disabled=false; btn.textContent=orig; },2400);} return; }
+    try{ await navigator.clipboard.writeText(j.url); }catch(_){ window.prompt('Copy the payment link:', j.url); }
+    if(btn){ btn.textContent = j.stripe_ready ? '✓ Link copied' : '✓ Copied (Stripe not live yet)'; setTimeout(()=>{ btn.disabled=false; btn.textContent=orig; },2800); }
+  }catch(e){ if(btn){ btn.textContent='Failed'; setTimeout(()=>{ btn.disabled=false; btn.textContent=orig; },2400);} }
 }
 
 // Deep link: /admin/homeowner?contact=<id> opens a profile directly (roster
