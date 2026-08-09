@@ -1312,6 +1312,14 @@ function renderPortal(ctx) {
   if (ctx.is_board_member) {
     const btn = $('boardViewBtn');
     btn.style.display = '';
+    // If they sit on exactly one board, deep-link straight to that community so
+    // the board portal opens on it instead of a picker (a true mirror of where
+    // a single-community board member lands). Multiple seats → let the board
+    // portal show the picker.
+    const bcs = Array.isArray(ctx.board_communities) ? ctx.board_communities : [];
+    if (bcs.length === 1 && bcs[0] && bcs[0].id) {
+      btn.href = '/board-portal?community=' + encodeURIComponent(bcs[0].id);
+    }
     btn.addEventListener('click', (e) => {
       try { localStorage.setItem('bedrock_portal_last_view', 'board'); } catch (_) {}
       // Let the navigation proceed normally

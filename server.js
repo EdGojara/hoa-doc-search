@@ -486,6 +486,8 @@ const _STAFF_GATE_PUBLIC = [
   /^\/inspector-voice(\.html)?$/,           // Voice DRV inspector (auth inside page)
   /^\/portal\/.+/,                          // future portal sub-pages (e.g., /portal/property, /portal/balance)
   /^\/builder-dashboard\.html$/,            // DRB Group-facing portal — auth checked via portal cookie inside the page
+  /^\/board-portal$/,                       // board portal landing — auth checked inside via board/staff session (board member's own homeowner magic-link cookie is honored); every /api/board-portal route enforces requireBoardViewer + canSeeCommunity
+  /^\/board-portal\.html$/,                 // same page at the static path (self-referencing year-view share links + portal-login hint use .html?community=…)
   /^\/clubhouse\/[^/]+$/,                   // /clubhouse/:slug — public clubhouse rental form (gated server-side by amenity_bookings_active)
   // Public API endpoints these pages call. Each verified against the
   // actual fetch() calls in the homeowner-facing HTML files.
@@ -509,6 +511,16 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/portal\/property$/,                 // GET property details + owners + activity (cookie-gated)
   /^\/api\/portal\/balance$/,                  // GET balance + aging buckets + history (cookie-gated)
   /^\/api\/portal\/meetings$/,                 // GET upcoming meetings + past minutes (cookie-gated)
+  // Board portal API — every handler enforces requireBoardViewer (staff JWT OR
+  // a board member's portal magic-link cookie whose email holds an active seat)
+  // + canSeeCommunity per-community scope (lib/portal/board_access.js,
+  // tests/test_board_access.js). Listed per-endpoint (not a blanket prefix) so a
+  // future unguarded /api/board-portal route can't ride the gate open by
+  // accident. Same cookie-gated-inside pattern as /api/portal/* above.
+  /^\/api\/board-portal\/communities$/,        // GET the caller's communities
+  /^\/api\/board-portal\/board-members$/,      // GET roster (scoped inside)
+  /^\/api\/board-portal\/community\/[^/]+\/(summary|properties|year|projects)$/, // community oversight panels
+  /^\/api\/board-portal\/property\/[^/]+$/,    // property detail (authorized by the property's own community)
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   // Twilio voice webhooks — same pattern as Stripe: outside-service webhooks,
   // never carry a staff cookie. The voice router handles them. Long-term,
@@ -1310,6 +1322,12 @@ app.get('/portal/vendor-directory/vendor',   (req, res) => res.sendFile(require(
 app.get('/inspector-voice', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'inspector-voice.html')));
 app.get('/portal/acc-review',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-acc-review.html')));
 app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+
+// Board portal — extensionless route mirrors the homeowner /portal pattern so
+// the "Board View →" switch (href="/board-portal") and the reciprocal
+// "← My homeowner view" (href="/portal") both resolve. The static
+// /board-portal.html still works; this just makes the clean URL land there.
+app.get('/board-portal', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'board-portal.html')));
 
 // Builder-specific landing pages — declared BEFORE the generic /builders/:slug
 // so Express matches the specific path first. Each dedicated page is
