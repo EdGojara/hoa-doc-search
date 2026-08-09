@@ -586,16 +586,17 @@
     if (!motions.length) {
       return `${header}<div class="empty">No motions yet.${j.can_write ? ' Click “New motion” to record the first board decision.' : ''}</div>`;
     }
-    const rows = motions.map((m) => {
+    const card = (m) => {
       const t = m.tally || {};
       const mine = m.my_vote ? `<span style="font-size:11.5px;color:${VOTE_STYLE[m.my_vote].fg};font-weight:700;">You voted: ${VOTE_STYLE[m.my_vote].label}</span>`
         : (m.status === 'open' ? '<span style="font-size:11.5px;color:#b45309;font-weight:700;">Awaiting your vote</span>' : '');
-      const deadline = m.voting_deadline ? ` · closes ${esc(fmtDate(m.voting_deadline))}` : '';
+      const decided = m.status !== 'open' && m.closed_at ? ` · ${esc(fmtDate(m.closed_at))}` : '';
+      const deadline = m.status === 'open' && m.voting_deadline ? ` · closes ${esc(fmtDate(m.voting_deadline))}` : '';
       return `<div onclick="showMotion('${esc(m.id)}')" style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:9px;background:#fff;cursor:pointer;">
         <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
           <div style="min-width:220px;flex:1;">
             <div style="font-weight:700;color:#0B1D34;font-size:14.5px;">${esc(m.title)}</div>
-            <div style="font-size:11.5px;color:#64748b;">${esc(MOTION_TYPE_LABELS[m.motion_type] || m.motion_type)}${deadline}</div>
+            <div style="font-size:11.5px;color:#64748b;">${esc(MOTION_TYPE_LABELS[m.motion_type] || m.motion_type)}${deadline}${decided}</div>
           </div>
           ${motionStatusBadge(m.status)}
         </div>
@@ -604,8 +605,13 @@
           <span>${tallyLine(t)}</span>${mine}
         </div>
       </div>`;
-    }).join('');
-    return `${header}${rows}`;
+    };
+    const open = motions.filter((m) => m.status === 'open');
+    const prior = motions.filter((m) => m.status !== 'open');
+    const label = (txt) => `<div class="tile-section-label" style="margin:6px 0 8px;">${txt}</div>`;
+    const openBlock = `${label('Active — open for voting')}${open.length ? open.map(card).join('') : '<div class="empty" style="margin-bottom:14px;">Nothing open right now.</div>'}`;
+    const priorBlock = prior.length ? `${label('Prior decisions')}${prior.map(card).join('')}` : '';
+    return `${header}${openBlock}${priorBlock}`;
   }
 
   async function showMotion(id) {
@@ -669,6 +675,22 @@
 
     const outcome = (m.status !== 'open' && m.outcome_note) ? `<div style="margin-top:8px;font-size:12.5px;color:#475569;">${esc(m.outcome_note)}</div>` : '';
 
+    // Notification delivery — lets a manager see status without opening email.
+    let notifyLine = '';
+    const ns = j.notify_status;
+    if (ns) {
+      const parts = [];
+      if (ns.sent) parts.push(`${ns.sent} notified`);
+      if (ns.suppressed) parts.push(`${ns.suppressed} queued (sending off)`);
+      if (ns.failed) parts.push(`${ns.failed} failed`);
+      if (ns.reminders) parts.push(`${ns.reminders} reminder${ns.reminders === 1 ? '' : 's'}`);
+      if (parts.length) notifyLine = `<div style="margin-top:8px;font-size:11.5px;color:#94a3b8;">🔔 ${parts.join(' · ')}</div>`;
+    }
+    // Nudge non-voters (chair/manager or any board member) while open.
+    const remindBtn = (m.status === 'open' && j.can_write)
+      ? `<button onclick="remindMotion('${esc(m.id)}')" style="padding:7px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#0B1D34;font-size:12.5px;font-weight:600;cursor:pointer;margin-top:12px;">🔔 Remind members who haven't voted</button>`
+      : '';
+
     return `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px;">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
         <div style="min-width:0;flex:1;"><h2 style="margin:0 0 3px;color:#0B1D34;font-size:19px;">${esc(m.title)}</h2>
@@ -676,8 +698,9 @@
         ${motionStatusBadge(m.status)}
       </div>
       ${m.description ? `<div style="margin-top:10px;font-size:13.5px;color:#334155;line-height:1.5;white-space:pre-wrap;">${esc(m.description)}</div>` : ''}
-      <div style="margin-top:14px;">${tallyBar(t)}<div style="font-size:12.5px;">${tallyLine(t)}</div>${outcome}</div>
+      <div style="margin-top:14px;">${tallyBar(t)}<div style="font-size:12.5px;">${tallyLine(t)}</div>${outcome}${notifyLine}</div>
       <div style="margin-top:16px;"><div style="font-weight:700;color:#0B1D34;font-size:13px;margin-bottom:2px;">How the board voted</div>${rosterRows || '<div style="color:#64748b;font-size:12.5px;padding:6px 0;">No active board members on record.</div>'}${offRoster}</div>
+      ${remindBtn}
       ${actions}
     </div>`;
   }
@@ -707,6 +730,17 @@
     if (!confirm('Withdraw this motion? It will no longer be open for voting.')) return;
     try { await fetchPost(`/api/board-motions/motion/${encodeURIComponent(motionId)}/withdraw`, {}); showMotion(motionId); }
     catch (e) { alert('Could not withdraw: ' + e.message); }
+  }
+  async function remindMotion(motionId) {
+    try {
+      const j = await fetchPost(`/api/board-motions/motion/${encodeURIComponent(motionId)}/remind`, {});
+      const n = j.notified || {};
+      const msg = j.non_voters === 0 ? 'Everyone has voted, no reminders needed.'
+        : (n.sent ? `Reminder sent to ${n.sent} member${n.sent === 1 ? '' : 's'}.`
+          : `${j.non_voters} member${j.non_voters === 1 ? '' : 's'} still to vote. Reminders are queued but sending is currently off.`);
+      alert(msg);
+      showMotion(motionId);
+    } catch (e) { alert('Could not send reminders: ' + e.message); }
   }
 
   function showNewMotion() {

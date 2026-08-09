@@ -526,7 +526,7 @@ const _STAFF_GATE_PUBLIC = [
   // is read-only). Same cookie-gated-inside pattern; listed per-endpoint.
   /^\/api\/board-motions\/community\/[^/]+\/motions$/,    // list + create motions
   /^\/api\/board-motions\/motion\/[^/]+$/,               // motion detail
-  /^\/api\/board-motions\/motion\/[^/]+\/(vote|close|withdraw)$/, // cast vote / finalize / pull
+  /^\/api\/board-motions\/motion\/[^/]+\/(vote|close|withdraw|remind)$/, // cast vote / finalize / pull / nudge non-voters
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   // Twilio voice webhooks — same pattern as Stripe: outside-service webhooks,
   // never carry a staff cookie. The voice router handles them. Long-term,

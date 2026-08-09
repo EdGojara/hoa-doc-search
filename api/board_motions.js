@@ -27,6 +27,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { requireBoardViewer, canSeeCommunity, boardCommunitiesForEmail } = require('../lib/portal/board_access');
+const { enqueueMotionNotifications } = require('../lib/board/motion_notify');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -185,7 +186,11 @@ router.post('/community/:id/motions', express.json({ limit: '32kb' }), async (re
     };
     const { data, error } = await supabase.from('board_motions').insert(insert).select('*').single();
     if (error) throw error;
-    res.json({ ok: true, motion: { ...data, tally: evaluateMotion(data, []), my_vote: null } });
+    // Notify the board a vote is needed (everyone but the person who moved it).
+    // Best-effort + kill-switched — never blocks the create.
+    const notifyList = roster.filter((m) => m.email !== String(actor.email || '').trim().toLowerCase());
+    const notif = await enqueueMotionNotifications(data, 'opened', notifyList);
+    res.json({ ok: true, motion: { ...data, tally: evaluateMotion(data, []), my_vote: null }, notified: notif });
   } catch (err) {
     console.error('[board_motions] create failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -213,13 +218,28 @@ router.get('/motion/:motionId', async (req, res) => {
     const motion = await loadAuthorizedMotion(req, res, viewer);
     if (!motion) return;
 
-    const [{ data: votes, error: ve }, roster] = await Promise.all([
+    const [{ data: votes, error: ve }, roster, { data: notifs }] = await Promise.all([
       supabase.from('board_motion_votes')
         .select('voter_email, voter_name, vote, comment, voted_at, recorded_by_email')
         .eq('motion_id', motion.id).order('voted_at', { ascending: true }),
       activeRoster(motion.community_id),
+      // Notification delivery status (best-effort; table may not exist pre-353).
+      supabase.from('board_motion_notifications')
+        .select('kind, status, created_at').eq('motion_id', motion.id),
     ]);
     if (ve) throw ve;
+    // Summarize notifications so a manager sees delivery at a glance.
+    let notify_status = null;
+    if (Array.isArray(notifs)) {
+      const s = { sent: 0, suppressed: 0, failed: 0, reminders: 0 };
+      for (const n of notifs) {
+        if (n.status === 'sent') s.sent++;
+        else if (n.status === 'suppressed') s.suppressed++;
+        else if (n.status === 'failed') s.failed++;
+        if (n.kind === 'reminder') s.reminders++;
+      }
+      notify_status = s;
+    }
 
     const voteByEmail = {};
     for (const v of (votes || [])) voteByEmail[String(v.voter_email).trim().toLowerCase()] = v;
@@ -249,6 +269,7 @@ router.get('/motion/:motionId', async (req, res) => {
       my_vote: myEmail && voteByEmail[myEmail] ? voteByEmail[myEmail].vote : null,
       can_write: !!actor,
       is_staff: !!(actor && actor.is_staff),
+      notify_status,
     });
   } catch (err) {
     console.error('[board_motions] detail failed:', err.message);
@@ -323,7 +344,7 @@ router.post('/motion/:motionId/vote', express.json({ limit: '16kb' }), async (re
         .update({ status: result, closed_at: new Date().toISOString(), closed_by: 'auto (all voted)', outcome_note: 'Auto-finalized: every active board member voted.' })
         .eq('id', motion.id).eq('status', 'open').select('*').maybeSingle();
       if (cerr) throw cerr;
-      if (u) updated = u;
+      if (u) { updated = u; await enqueueMotionNotifications(u, 'result', roster, { tally }); }
     }
     res.json({ ok: true, motion: updated, tally, your_vote: actor.is_staff ? null : vote });
   } catch (err) {
@@ -358,9 +379,42 @@ router.post('/motion/:motionId/close', express.json({ limit: '8kb' }), async (re
       .update({ status: result, closed_at: new Date().toISOString(), closed_by: actor.email, outcome_note: note })
       .eq('id', motion.id).eq('status', 'open').select('*').single();
     if (error) throw error;
-    res.json({ ok: true, motion: data, tally });
+    const roster = await activeRoster(motion.community_id);
+    const notif = await enqueueMotionNotifications(data, 'result', roster, { tally });
+    res.json({ ok: true, motion: data, tally, notified: notif });
   } catch (err) {
     console.error('[board_motions] close failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/board-motions/motion/:motionId/remind
+//   Nudge the active board members who have NOT voted yet on an open motion.
+//   Manual (a manager/chair click); the same helper backs a future scheduler.
+// ---------------------------------------------------------------------------
+router.post('/motion/:motionId/remind', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const motion = await loadAuthorizedMotion(req, res, viewer);
+    if (!motion) return;
+    const actor = writeActor(viewer);
+    if (!actor) return res.status(403).json({ error: 'read_only_preview' });
+    if (motion.status !== 'open') return res.status(409).json({ error: 'not_open', message: 'Only open motions can be reminded.' });
+
+    const [{ data: votes, error: ve }, roster] = await Promise.all([
+      supabase.from('board_motion_votes').select('voter_email, vote').eq('motion_id', motion.id),
+      activeRoster(motion.community_id),
+    ]);
+    if (ve) throw ve;
+    const voted = new Set((votes || []).map((v) => String(v.voter_email).trim().toLowerCase()));
+    const nonVoters = roster.filter((m) => !voted.has(m.email));
+    const tally = evaluateMotion(motion, votes || []);
+    const notif = await enqueueMotionNotifications(motion, 'reminder', nonVoters, { tally });
+    res.json({ ok: true, non_voters: nonVoters.length, notified: notif });
+  } catch (err) {
+    console.error('[board_motions] remind failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
