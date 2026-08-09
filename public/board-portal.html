@@ -432,9 +432,12 @@
       // more than one community (a manager, or a multi-board member).
       const pl = document.getElementById('portfolioLink');
       if (pl) pl.style.display = (j.communities || []).length > 1 ? '' : 'none';
-      // Deep link: ?community=..&view=year&year=YYYY jumps straight to the year
-      // snapshot (the shareable "Copy link"). Only if allowed to see it.
+      // Deep link: ?view=motions opens the cross-community motions cockpit
+      // (the trustEd "Board Votes" entry lands here).
       const params = new URLSearchParams(location.search);
+      if (params.get('view') === 'motions') { showPortfolioMotions(); return; }
+      // ?community=..&view=year&year=YYYY jumps straight to the year snapshot
+      // (the shareable "Copy link"). Only if allowed to see it.
       const deepComm = params.get('community');
       if (deepComm && communityIndex[deepComm]) {
         sel.value = deepComm; currentCommunityId = deepComm; applyDemoBanner(deepComm);
@@ -836,6 +839,30 @@
     } catch (e) { alert('Could not send reminders: ' + e.message); }
   }
 
+  // From the portfolio cockpit: a motion needs a community. If one is already in
+  // context, go straight to the form; otherwise let the manager pick.
+  function newMotionFromCockpit() {
+    if (currentCommunityId) { showNewMotion(); return; }
+    const wrap = document.getElementById('container');
+    const comms = Object.keys(communityIndex).map((id) => ({ id, name: communityIndex[id].name || id }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (!comms.length) { alert('No communities available.'); return; }
+    wrap.innerHTML = `<div style="margin-bottom:14px;"><a href="javascript:showPortfolioMotions()" style="color:#0B1D34;font-size:13px;font-weight:600;text-decoration:none;">← All motions</a></div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px;max-width:520px;">
+        <h2 style="margin:0 0 4px;color:#0B1D34;font-size:17px;">New motion</h2>
+        <div style="font-size:12.5px;color:#64748b;margin-bottom:12px;">Which community is this motion for?</div>
+        ${comms.map((c) => `<button onclick="pickCommunityForMotion('${esc(c.id)}')" style="display:block;width:100%;text-align:left;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;margin-bottom:7px;cursor:pointer;font-size:13.5px;font-weight:600;color:#0B1D34;">${esc(c.name)}</button>`).join('')}
+      </div>`;
+  }
+  function pickCommunityForMotion(id) {
+    currentCommunityId = id;
+    const sel = document.getElementById('communitySelect'); if (sel) sel.value = id;
+    applyDemoBanner(id);
+    // Load projects so the "link a project" dropdown is populated, then open the form.
+    fetchJSON(`/api/board-portal/community/${encodeURIComponent(id)}/projects`).catch(() => ({ projects: [] }))
+      .then((pj) => { _lastProjects = pj; showNewMotion(); });
+  }
+
   function showNewMotion() {
     const wrap = document.getElementById('container');
     // Motion-type options, alphabetical by label (house style).
@@ -928,8 +955,9 @@
     const okOpen = active.filter((m) => !m.needs_attention);
     const prior = motions.filter((m) => m.status !== 'open' && m.status !== 'proposed').slice(0, 40);
     const header = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px;flex-wrap:wrap;">
-      <h2 style="margin:0;color:#0B1D34;font-size:17px;">Board motions, all communities</h2>
-      <span style="font-size:12px;color:#64748b;">${active.length} active across ${j.communities} communit${j.communities === 1 ? 'y' : 'ies'}${attention.length ? ` · <b style="color:#b42318;">${attention.length} need attention</b>` : ''}</span></div>`;
+      <div><h2 style="margin:0;color:#0B1D34;font-size:17px;">Board motions, all communities</h2>
+      <span style="font-size:12px;color:#64748b;">${active.length} active across ${j.communities} communit${j.communities === 1 ? 'y' : 'ies'}${attention.length ? ` · <b style="color:#b42318;">${attention.length} need attention</b>` : ''}</span></div>
+      <button onclick="newMotionFromCockpit()" style="padding:6px 13px;border-radius:8px;border:1px solid #0B1D34;background:#0B1D34;color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">+ New motion</button></div>`;
     if (!motions.length) return `${header}<div class="empty">No motions on record yet.</div>`;
     const row = (m) => {
       const t = m.tally || {};
