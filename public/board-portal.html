@@ -636,7 +636,8 @@
       const v = r.vote ? VOTE_STYLE[r.vote] : null;
       const badge = v ? `<span style="background:${v.bg};color:${v.fg};font-size:11px;font-weight:700;border-radius:16px;padding:2px 9px;">${v.label}</span>`
         : `<span style="color:#94a3b8;font-size:11.5px;">— not voted —</span>`;
-      const by = r.recorded_by_email ? ` <span style="color:#94a3b8;font-size:10.5px;">(recorded)</span>` : '';
+      const by = r.recorded_by_email ? ` <span style="color:#94a3b8;font-size:10.5px;">(recorded)</span>`
+        : (r.source === 'email' ? ` <span style="color:#94a3b8;font-size:10.5px;">(by email)</span>` : '');
       return `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;border-top:1px solid #f1f5f9;padding:7px 0;">
         <div style="min-width:0;"><div style="font-size:13px;color:#0B1D34;font-weight:600;">${esc(r.name || r.email)}</div>${r.position ? `<div style="font-size:11px;color:#64748b;">${esc(r.position)}</div>` : ''}${r.comment ? `<div style="font-size:11.5px;color:#475569;font-style:italic;margin-top:2px;">“${esc(r.comment)}”</div>` : ''}</div>
         <div style="text-align:right;white-space:nowrap;">${badge}${by}${r.voted_at ? `<div style="font-size:10.5px;color:#94a3b8;">${esc(fmtDate(r.voted_at))}</div>` : ''}</div>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board Vote — Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  html, body { margin:0; padding:0; background:#f5f4ed; font-family:Inter,-apple-system,sans-serif; color:#1a2230; }
+  .wrap { max-width:560px; margin:0 auto; padding:32px 20px; }
+  .card { background:#fff; border:1px solid #e5e3da; border-radius:14px; padding:26px 28px; box-shadow:0 4px 24px rgba(11,29,52,0.06); }
+  .brand { font-family:'Cormorant Garamond',Georgia,serif; font-size:20px; color:#0B1D34; font-weight:600; margin-bottom:4px; }
+  .brand span { color:#D4AF37; font-style:italic; }
+  .comm { font-size:12px; color:#94a3b8; text-transform:uppercase; letter-spacing:.4px; font-weight:700; margin-bottom:14px; }
+  h1 { font-size:20px; color:#0B1D34; margin:0 0 8px; line-height:1.3; }
+  .desc { font-size:14px; color:#334155; line-height:1.5; white-space:pre-wrap; }
+  .meta { font-size:12px; color:#64748b; margin-top:6px; }
+  .who { font-size:13px; color:#475569; margin:16px 0 6px; }
+  .btns { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+  button.vote { flex:1; min-width:120px; padding:13px; border-radius:9px; font-size:15px; font-weight:700; cursor:pointer; border:2px solid; background:#fff; }
+  .vfor { color:#1a7a3c; border-color:#1a7a3c; } .vfor.sel { background:#1a7a3c; color:#fff; }
+  .vagainst { color:#b42318; border-color:#b42318; } .vagainst.sel { background:#b42318; color:#fff; }
+  .vabstain { color:#64748b; border-color:#94a3b8; } .vabstain.sel { background:#64748b; color:#fff; border-color:#64748b; }
+  textarea { width:100%; box-sizing:border-box; margin-top:12px; padding:9px; border:1px solid #cbd5e1; border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical; }
+  .status { margin-top:12px; font-size:13px; }
+  .ok { color:#1a7a3c; font-weight:600; } .err { color:#b42318; }
+  .tally { margin-top:16px; font-size:12.5px; color:#64748b; }
+  .muted { color:#94a3b8; font-size:12px; margin-top:18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="brand">Bedrock <span>Association Management</span></div>
+    <div id="body"><div class="who">Loading your ballot…</div></div>
+  </div>
+  <div class="muted">This is a secure board ballot link. Your vote is recorded to the association's minutes.</div>
+</div>
+<script>
+'use strict';
+var TOKEN = new URLSearchParams(location.search).get('token') || '';
+var CTX = null, chosen = null;
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function el(id){return document.getElementById(id);}
+
+async function load() {
+  if (!TOKEN) { el('body').innerHTML = '<div class="who err">This ballot link is missing its token.</div>'; return; }
+  try {
+    var r = await fetch('/api/board-vote/context?token=' + encodeURIComponent(TOKEN));
+    var j = await r.json();
+    if (!r.ok || !j.ok) { el('body').innerHTML = '<div class="who err">' + reason(j.error) + '</div>'; return; }
+    CTX = j; chosen = j.my_vote; render();
+  } catch (e) { el('body').innerHTML = '<div class="who err">Could not load this ballot. Please try again.</div>'; }
+}
+function reason(code) {
+  return ({ expired:'This ballot link has expired.', bad_signature:'This ballot link is invalid.',
+    malformed:'This ballot link is invalid.', motion_not_found:'This motion no longer exists.',
+    not_a_board_member:'This link is not tied to a current board member.' })[code] || 'This ballot link could not be opened.';
+}
+function render() {
+  var m = CTX.motion, t = CTX.tally || {};
+  var closed = !CTX.votable;
+  var voteRow = closed
+    ? '<div class="status">Voting is closed on this motion. Result: <b>' + esc((m.status||'').toUpperCase()) + '</b>.</div>'
+    : '<div class="btns">'
+      + btn('for','For','vfor') + btn('against','Against','vagainst') + btn('abstain','Abstain','vabstain')
+      + '</div><textarea id="cmt" rows="2" placeholder="Comment (optional)"></textarea>'
+      + '<div id="msg" class="status"></div>';
+  el('body').innerHTML =
+    '<div class="comm">' + esc(CTX.community_name || 'Board motion') + '</div>'
+    + '<h1>' + esc(m.title) + '</h1>'
+    + (m.description ? '<div class="desc">' + esc(m.description) + '</div>' : '')
+    + '<div class="who">Voting as <b>' + esc(CTX.voter_name) + '</b>'
+      + (CTX.my_vote ? ' &middot; you voted <b>' + esc(CTX.my_vote) + '</b> (you can change it)' : '') + '</div>'
+    + voteRow
+    + '<div class="tally">' + t.for + ' for &middot; ' + t.against + ' against &middot; ' + t.abstain + ' abstain'
+      + (t.quorum != null ? (t.quorum_met ? ' &middot; quorum met' : ' &middot; quorum not yet reached') : '') + '</div>';
+}
+function btn(v, label, cls) {
+  return '<button class="vote ' + cls + (chosen===v?' sel':'') + '" onclick="cast(\'' + v + '\')">' + label + (chosen===v?' ✓':'') + '</button>';
+}
+async function cast(v) {
+  chosen = v; render();
+  var cmt = el('cmt') ? el('cmt').value : '';
+  if (el('msg')) el('msg').innerHTML = 'Recording…';
+  try {
+    var r = await fetch('/api/board-vote/cast', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ token: TOKEN, vote: v, comment: cmt }) });
+    var j = await r.json();
+    if (!r.ok || !j.ok) { if (el('msg')) el('msg').innerHTML = '<span class="err">' + esc((j && (j.message||j.error)) || 'Could not record your vote.') + '</span>'; return; }
+    CTX.tally = j.tally; CTX.my_vote = v;
+    var done = j.status && j.status !== 'open';
+    if (el('msg')) el('msg').innerHTML = '<span class="ok">Your vote (' + esc(v) + ') is recorded.' + (done ? ' This motion is now ' + esc(j.status) + '.' : '') + '</span>';
+  } catch (e) { if (el('msg')) el('msg').innerHTML = '<span class="err">Could not record your vote. Please try again.</span>'; }
+}
+load();
+</script>
+</body>
+</html>

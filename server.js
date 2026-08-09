@@ -528,6 +528,9 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/board-motions\/community\/[^/]+\/motions$/,    // list + create motions
   /^\/api\/board-motions\/motion\/[^/]+$/,               // motion detail
   /^\/api\/board-motions\/motion\/[^/]+\/(vote|close|withdraw|remind|move|request-mover)$/, // vote / finalize / pull / nudge / move / ask-to-move
+  // No-login email ballot — auth is the HMAC-signed token, verified inside.
+  /^\/board-vote$/,                            // the ballot page
+  /^\/api\/board-vote\/(context|cast)$/,       // ballot data + record vote
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   // Twilio voice webhooks — same pattern as Stripe: outside-service webhooks,
   // never carry a staff cookie. The voice router handles them. Long-term,
@@ -1100,6 +1103,8 @@ const { router: boardPortalRouter } = require('./api/board_portal');
 app.use('/api/board-portal', boardPortalRouter);
 const { router: boardMotionsRouter } = require('./api/board_motions');
 app.use('/api/board-motions', boardMotionsRouter);
+const { router: boardVoteRouter } = require('./api/board_vote');
+app.use('/api/board-vote', boardVoteRouter);
 
 // Owner Receivables — Vantaca AR ingest + snapshot store + portfolio view
 // (project_owner_receivables.md). Bridge to full accounting integration.
@@ -1337,6 +1342,9 @@ app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__d
 // "← My homeowner view" (href="/portal") both resolve. The static
 // /board-portal.html still works; this just makes the clean URL land there.
 app.get('/board-portal', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'board-portal.html')));
+// No-login board ballot page — a board member votes from the signed link in
+// their "vote needed" email. Auth is the token, checked inside the page's API.
+app.get('/board-vote', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'board-vote.html')));
 
 // Builder-specific landing pages — declared BEFORE the generic /builders/:slug
 // so Express matches the specific path first. Each dedicated page is

@@ -393,7 +393,7 @@ router.get('/motion/:motionId', async (req, res) => {
 
     const [{ data: votes, error: ve }, roster, { data: notifs }] = await Promise.all([
       supabase.from('board_motion_votes')
-        .select('voter_email, voter_name, vote, comment, voted_at, recorded_by_email')
+        .select('voter_email, voter_name, vote, comment, voted_at, recorded_by_email, source')
         .eq('motion_id', motion.id).order('voted_at', { ascending: true }),
       activeRoster(motion.community_id),
       // Notification delivery status (best-effort; table may not exist pre-353).
@@ -424,6 +424,7 @@ router.get('/motion/:motionId', async (req, res) => {
       comment: voteByEmail[m.email] ? voteByEmail[m.email].comment : null,
       voted_at: voteByEmail[m.email] ? voteByEmail[m.email].voted_at : null,
       recorded_by_email: voteByEmail[m.email] ? voteByEmail[m.email].recorded_by_email : null,
+      source: voteByEmail[m.email] ? voteByEmail[m.email].source : null,
     }));
     // Any votes from emails no longer on the active roster (a member who has
     // since rolled off) — surface them rather than silently drop the record.
@@ -459,6 +460,47 @@ router.get('/motion/:motionId', async (req, res) => {
   }
 });
 
+// The ONE path that records a vote — used by the portal endpoint AND the
+// email-ballot endpoint, so a vote is recorded identically however it arrives
+// (upsert on the unique key, re-tally, auto-finalize when every seat has voted,
+// then fire result notice + project effect). Caller has already authorized the
+// voter and confirmed the motion is open. Returns { tally, motion }.
+async function recordMotionVote({ motion, voterEmail, voterName, vote, comment, source, recordedBy }) {
+  const row = {
+    motion_id: motion.id,
+    voter_email: voterEmail,
+    voter_name: voterName,
+    vote,
+    comment: comment ? String(comment) : null,
+    recorded_by_email: recordedBy || null,
+    source: source || 'portal',
+    voted_at: new Date().toISOString(),
+  };
+  const { error: ue } = await supabase
+    .from('board_motion_votes').upsert(row, { onConflict: 'motion_id,voter_email' });
+  if (ue) throw ue;
+
+  const { data: votes, error: ve } = await supabase
+    .from('board_motion_votes').select('vote').eq('motion_id', motion.id);
+  if (ve) throw ve;
+  const tally = evaluateMotion(motion, votes || []);
+  let updated = motion;
+  if (tally.cast >= (motion.seats_at_open || Infinity)) {
+    const result = tally.quorum_met && tally.would_pass ? 'passed' : 'failed';
+    const { data: u, error: cerr } = await supabase.from('board_motions')
+      .update({ status: result, closed_at: new Date().toISOString(), closed_by: 'auto (all voted)', outcome_note: 'Auto-finalized: every active board member voted.' })
+      .eq('id', motion.id).eq('status', 'open').select('*').maybeSingle();
+    if (cerr) throw cerr;
+    if (u) {
+      updated = u;
+      const roster = await activeRoster(motion.community_id);
+      await enqueueMotionNotifications(u, 'result', roster, { tally });
+      await applyMotionEffect(u, tally);
+    }
+  }
+  return { tally, motion: updated };
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/board-motions/motion/:motionId/vote
 //   A real board member casts/updates their own vote. Staff may record a vote
@@ -484,50 +526,21 @@ router.post('/motion/:motionId/vote', express.json({ limit: '16kb' }), async (re
     const rosterByEmail = {};
     for (const m of roster) rosterByEmail[m.email] = m;
 
-    let voterEmail, voterName, recordedBy = null;
+    let voterEmail, voterName, recordedBy = null, source = 'portal';
     if (actor.is_staff) {
       voterEmail = String(b.voter_email || '').trim().toLowerCase();
       if (!voterEmail) return res.status(400).json({ error: 'voter_email_required', message: 'Pick which board member this vote is for.' });
       if (!rosterByEmail[voterEmail]) return res.status(400).json({ error: 'not_a_board_member', message: 'That email is not on this active board.' });
       voterName = rosterByEmail[voterEmail].name || voterEmail;
       recordedBy = actor.email;
+      source = 'staff_recorded';
     } else {
       voterEmail = String(viewer.email).trim().toLowerCase();
       if (!rosterByEmail[voterEmail]) return res.status(403).json({ error: 'not_a_board_member' });
       voterName = rosterByEmail[voterEmail].name || actor.name || voterEmail;
     }
 
-    // Upsert on the (motion_id, voter_email) unique constraint so re-voting
-    // updates the existing row instead of duplicating.
-    const row = {
-      motion_id: motion.id,
-      voter_email: voterEmail,
-      voter_name: voterName,
-      vote,
-      comment: b.comment ? String(b.comment) : null,
-      recorded_by_email: recordedBy,
-      voted_at: new Date().toISOString(),
-    };
-    const { error: ue } = await supabase
-      .from('board_motion_votes')
-      .upsert(row, { onConflict: 'motion_id,voter_email' });
-    if (ue) throw ue;
-
-    // Re-read votes, evaluate. Auto-finalize once every active seat has voted —
-    // the result is settled, no reason to make someone click "close".
-    const { data: votes, error: ve } = await supabase
-      .from('board_motion_votes').select('vote').eq('motion_id', motion.id);
-    if (ve) throw ve;
-    const tally = evaluateMotion(motion, votes || []);
-    let updated = motion;
-    if (tally.cast >= (motion.seats_at_open || Infinity)) {
-      const result = tally.quorum_met && tally.would_pass ? 'passed' : 'failed';
-      const { data: u, error: cerr } = await supabase.from('board_motions')
-        .update({ status: result, closed_at: new Date().toISOString(), closed_by: 'auto (all voted)', outcome_note: 'Auto-finalized: every active board member voted.' })
-        .eq('id', motion.id).eq('status', 'open').select('*').maybeSingle();
-      if (cerr) throw cerr;
-      if (u) { updated = u; await enqueueMotionNotifications(u, 'result', roster, { tally }); await applyMotionEffect(u, tally); }
-    }
+    const { tally, motion: updated } = await recordMotionVote({ motion, voterEmail, voterName, vote, comment: b.comment, source, recordedBy });
     res.json({ ok: true, motion: updated, tally, your_vote: actor.is_staff ? null : vote });
   } catch (err) {
     console.error('[board_motions] vote failed:', err.message);
@@ -716,4 +729,4 @@ router.post('/motion/:motionId/withdraw', express.json({ limit: '8kb' }), async 
   }
 });
 
-module.exports = { router, evaluateMotion };
+module.exports = { router, evaluateMotion, recordMotionVote, activeRoster };
