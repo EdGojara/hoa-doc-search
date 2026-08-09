@@ -107,6 +107,10 @@ const FEATURES = [
     situation: 'How do I log physical mail that comes into the office?',
     response: 'Mail Scan (mailbox icon) is physical-mail intake: scan a piece of mail and the system classifies it, routes it, and logs it to the association record.',
   },
+  {
+    situation: 'How does the board vote on a motion or approval, and where do we see who voted and whether it passed?',
+    response: 'The board portal has a Motions & Voting tile (under Governance). Any board member (or a manager on their behalf) records a motion — for example “Approve the Versatex sidewalk estimate.” Each active board member casts For, Against, or Abstain with an optional comment. The motion shows a live tally, quorum, and the result, plus exactly who voted which way. It auto-finalizes once every seat has voted, or a chair/manager can close it early. This is the board’s internal approval record and belongs in the minutes — it is separate from community-wide homeowner elections.',
+  },
 ];
 
 (async () => {

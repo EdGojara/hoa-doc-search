@@ -521,6 +521,12 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/board-portal\/board-members$/,      // GET roster (scoped inside)
   /^\/api\/board-portal\/community\/[^/]+\/(summary|properties|year|projects)$/, // community oversight panels
   /^\/api\/board-portal\/property\/[^/]+$/,    // property detail (authorized by the property's own community)
+  // Board motions/voting — every handler enforces requireBoardViewer +
+  // canSeeCommunity, and WRITES require a real actor (a staff "view as" preview
+  // is read-only). Same cookie-gated-inside pattern; listed per-endpoint.
+  /^\/api\/board-motions\/community\/[^/]+\/motions$/,    // list + create motions
+  /^\/api\/board-motions\/motion\/[^/]+$/,               // motion detail
+  /^\/api\/board-motions\/motion\/[^/]+\/(vote|close|withdraw)$/, // cast vote / finalize / pull
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   // Twilio voice webhooks — same pattern as Stripe: outside-service webhooks,
   // never carry a staff cookie. The voice router handles them. Long-term,
@@ -1091,6 +1097,8 @@ app.use('/api/arc-history', arcHistoryRouter);
 // visibility. Future: board-member auth, scoped to their community only.
 const { router: boardPortalRouter } = require('./api/board_portal');
 app.use('/api/board-portal', boardPortalRouter);
+const { router: boardMotionsRouter } = require('./api/board_motions');
+app.use('/api/board-motions', boardMotionsRouter);
 
 // Owner Receivables — Vantaca AR ingest + snapshot store + portfolio view
 // (project_owner_receivables.md). Bridge to full accounting integration.

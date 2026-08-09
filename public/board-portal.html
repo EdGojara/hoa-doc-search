@@ -480,9 +480,9 @@
 
   // ----- Community view: summary + filterable property list ----------------
 
-  // Stashed so the drill-in views (Projects) don't re-fetch, and so a deep
-  // link back to the landing is instant.
-  let _lastSummary = null, _lastProjects = null;
+  // Stashed so the drill-in views (Projects, Motions) don't re-fetch, and so a
+  // deep link back to the landing is instant.
+  let _lastSummary = null, _lastProjects = null, _lastMotions = null;
 
   // LANDING — curated TILES ONLY (Ed 2026-08-09: the old all-at-once dashboard
   // was overwhelming, especially for a board member). Boards land on a clean
@@ -493,12 +493,14 @@
     const wrap = document.getElementById('container');
     wrap.innerHTML = '<div class="loading">Loading…</div>';
     try {
-      const [summary, projects] = await Promise.all([
+      const [summary, projects, motions] = await Promise.all([
         fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/summary`),
         fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/projects`).catch(() => ({ projects: [], summary: {} })),
+        // Motions may 404 until migration 352 is applied — degrade gracefully.
+        fetchJSON(`/api/board-motions/community/${encodeURIComponent(currentCommunityId)}/motions`).catch(() => ({ motions: [], can_write: false })),
       ]);
-      _lastSummary = summary; _lastProjects = projects;
-      wrap.innerHTML = renderDashboardCards(summary, projects);
+      _lastSummary = summary; _lastProjects = projects; _lastMotions = motions;
+      wrap.innerHTML = renderDashboardCards(summary, projects, motions);
     } catch (e) {
       wrap.innerHTML = `<div class="err">Load failed: ${esc(e.message)}</div>`;
     }
@@ -530,6 +532,239 @@
     const body = renderProjects(_lastProjects || { projects: [], summary: {} });
     wrap.innerHTML = `${backBar()}${body || '<div class="empty">No projects on file for this community.</div>'}`;
   }
+
+  // ===== Motions & Voting ===================================================
+  const MOTION_TYPE_LABELS = { general: 'General', project: 'Project', vendor: 'Vendor', budget: 'Budget', arc: 'ARC', policy: 'Policy', contract: 'Contract', other: 'Other' };
+  const THRESHOLD_LABELS = { simple_majority: 'Simple majority', two_thirds: 'Two-thirds', unanimous: 'Unanimous' };
+  const VOTE_STYLE = { for: { bg: '#e7f6ec', fg: '#1a7a3c', label: 'For' }, against: { bg: '#fde8e8', fg: '#b42318', label: 'Against' }, abstain: { bg: '#eef2f7', fg: '#64748b', label: 'Abstain' } };
+
+  function motionStatusBadge(status) {
+    const S = {
+      open: { bg: '#fdf6dc', fg: '#8a6d00', label: 'Open for voting' },
+      passed: { bg: '#e7f6ec', fg: '#1a7a3c', label: 'Passed' },
+      failed: { bg: '#fde8e8', fg: '#b42318', label: 'Failed' },
+      withdrawn: { bg: '#eef2f7', fg: '#64748b', label: 'Withdrawn' },
+      tabled: { bg: '#eef2f7', fg: '#64748b', label: 'Tabled' },
+    }[status] || { bg: '#eef2f7', fg: '#64748b', label: status };
+    return `<span style="background:${S.bg};color:${S.fg};font-size:11px;font-weight:700;border-radius:20px;padding:3px 10px;white-space:nowrap;">${esc(S.label)}</span>`;
+  }
+  // A compact for/against/abstain/not-voted bar.
+  function tallyBar(t) {
+    const total = Math.max(1, (t.seats || t.cast || 0));
+    const seg = (n, color) => n > 0 ? `<div style="width:${(n / total) * 100}%;background:${color};"></div>` : '';
+    const notVoted = Math.max(0, (t.seats || t.cast) - t.cast);
+    return `<div style="display:flex;height:8px;border-radius:5px;overflow:hidden;background:#f1f5f9;margin:6px 0;">
+      ${seg(t.for, '#1a7a3c')}${seg(t.against, '#b42318')}${seg(t.abstain, '#94a3b8')}${seg(notVoted, '#e2e8f0')}
+    </div>`;
+  }
+  function tallyLine(t) {
+    const q = (t.quorum != null)
+      ? (t.quorum_met ? `quorum met (${t.cast}/${t.seats})` : `<b style="color:#b45309;">no quorum yet (${t.cast}/${t.seats}, need ${t.quorum})</b>`)
+      : `${t.cast} voted`;
+    return `<span style="color:#1a7a3c;font-weight:700;">${t.for} for</span> · <span style="color:#b42318;font-weight:700;">${t.against} against</span> · <span style="color:#64748b;">${t.abstain} abstain</span> · <span style="color:#94a3b8;">${q}</span>`;
+  }
+
+  async function showMotions() {
+    const wrap = document.getElementById('container');
+    wrap.innerHTML = '<div class="loading">Loading motions…</div>';
+    try {
+      const j = await fetchJSON(`/api/board-motions/community/${encodeURIComponent(currentCommunityId)}/motions`);
+      _lastMotions = j;
+      wrap.innerHTML = `${backBar()}${renderMotionsList(j)}`;
+    } catch (e) {
+      wrap.innerHTML = `${backBar()}<div class="err">Load failed: ${esc(e.message)}${/not|404/i.test(e.message) ? '<br><span style="font-size:12px;color:#64748b;">If this just went live, apply migration 352 and Manual Deploy.</span>' : ''}</div>`;
+    }
+  }
+
+  function renderMotionsList(j) {
+    const motions = j.motions || [];
+    const newBtn = j.can_write
+      ? `<button onclick="showNewMotion()" style="padding:6px 13px;border-radius:8px;border:1px solid #0B1D34;background:#0B1D34;color:#fff;font-size:13px;font-weight:600;cursor:pointer;">+ New motion</button>`
+      : '';
+    const header = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap;">
+      <h2 style="margin:0;color:#0B1D34;font-size:17px;">Motions &amp; Voting</h2>${newBtn}</div>`;
+    if (!motions.length) {
+      return `${header}<div class="empty">No motions yet.${j.can_write ? ' Click “New motion” to record the first board decision.' : ''}</div>`;
+    }
+    const rows = motions.map((m) => {
+      const t = m.tally || {};
+      const mine = m.my_vote ? `<span style="font-size:11.5px;color:${VOTE_STYLE[m.my_vote].fg};font-weight:700;">You voted: ${VOTE_STYLE[m.my_vote].label}</span>`
+        : (m.status === 'open' ? '<span style="font-size:11.5px;color:#b45309;font-weight:700;">Awaiting your vote</span>' : '');
+      const deadline = m.voting_deadline ? ` · closes ${esc(fmtDate(m.voting_deadline))}` : '';
+      return `<div onclick="showMotion('${esc(m.id)}')" style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:9px;background:#fff;cursor:pointer;">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+          <div style="min-width:220px;flex:1;">
+            <div style="font-weight:700;color:#0B1D34;font-size:14.5px;">${esc(m.title)}</div>
+            <div style="font-size:11.5px;color:#64748b;">${esc(MOTION_TYPE_LABELS[m.motion_type] || m.motion_type)}${deadline}</div>
+          </div>
+          ${motionStatusBadge(m.status)}
+        </div>
+        ${tallyBar(t)}
+        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:12px;">
+          <span>${tallyLine(t)}</span>${mine}
+        </div>
+      </div>`;
+    }).join('');
+    return `${header}${rows}`;
+  }
+
+  async function showMotion(id) {
+    const wrap = document.getElementById('container');
+    wrap.innerHTML = '<div class="loading">Loading motion…</div>';
+    try {
+      const j = await fetchJSON(`/api/board-motions/motion/${encodeURIComponent(id)}`);
+      wrap.innerHTML = `<div style="margin-bottom:14px;"><a href="javascript:showMotions()" style="color:#0B1D34;font-size:13px;font-weight:600;text-decoration:none;">← All motions</a></div>${renderMotionDetail(j)}`;
+    } catch (e) {
+      wrap.innerHTML = `${backBar()}<div class="err">Load failed: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderMotionDetail(j) {
+    const m = j.motion, t = j.tally || {};
+    const rosterRows = (j.roster_votes || []).map((r) => {
+      const v = r.vote ? VOTE_STYLE[r.vote] : null;
+      const badge = v ? `<span style="background:${v.bg};color:${v.fg};font-size:11px;font-weight:700;border-radius:16px;padding:2px 9px;">${v.label}</span>`
+        : `<span style="color:#94a3b8;font-size:11.5px;">— not voted —</span>`;
+      const by = r.recorded_by_email ? ` <span style="color:#94a3b8;font-size:10.5px;">(recorded)</span>` : '';
+      return `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;border-top:1px solid #f1f5f9;padding:7px 0;">
+        <div style="min-width:0;"><div style="font-size:13px;color:#0B1D34;font-weight:600;">${esc(r.name || r.email)}</div>${r.position ? `<div style="font-size:11px;color:#64748b;">${esc(r.position)}</div>` : ''}${r.comment ? `<div style="font-size:11.5px;color:#475569;font-style:italic;margin-top:2px;">“${esc(r.comment)}”</div>` : ''}</div>
+        <div style="text-align:right;white-space:nowrap;">${badge}${by}${r.voted_at ? `<div style="font-size:10.5px;color:#94a3b8;">${esc(fmtDate(r.voted_at))}</div>` : ''}</div>
+      </div>`;
+    }).join('');
+    const offRoster = (j.off_roster_votes || []).length
+      ? `<div style="margin-top:10px;font-size:11.5px;color:#94a3b8;">Also on record (no longer on the active board): ${j.off_roster_votes.map((v) => `${esc(v.name)} — ${esc((VOTE_STYLE[v.vote] || {}).label || v.vote)}`).join(', ')}</div>`
+      : '';
+
+    // Action area — only for a real board member or staff, and only while open.
+    let actions = '';
+    if (m.status === 'open' && j.can_write) {
+      if (j.is_staff) {
+        const opts = (j.roster_votes || []).map((r) => `<option value="${esc(r.email)}">${esc(r.name || r.email)}${r.vote ? ' (voted ' + esc((VOTE_STYLE[r.vote] || {}).label) + ')' : ''}</option>`).join('');
+        actions = `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:13px;margin-top:14px;">
+          <div style="font-weight:700;color:#0B1D34;font-size:13px;margin-bottom:8px;">Record a board member's vote</div>
+          <select id="mv-voter" style="width:100%;padding:7px;border:1px solid #cbd5e1;border-radius:7px;font-size:13px;margin-bottom:8px;">${opts}</select>
+          <input id="mv-comment" placeholder="Comment (optional)" style="width:100%;padding:7px;border:1px solid #cbd5e1;border-radius:7px;font-size:13px;margin-bottom:8px;box-sizing:border-box;">
+          <div style="display:flex;gap:7px;flex-wrap:wrap;">
+            <button onclick="castVote('${esc(m.id)}','for',true)" style="${voteBtn('#1a7a3c')}">Record: For</button>
+            <button onclick="castVote('${esc(m.id)}','against',true)" style="${voteBtn('#b42318')}">Record: Against</button>
+            <button onclick="castVote('${esc(m.id)}','abstain',true)" style="${voteBtn('#64748b')}">Record: Abstain</button>
+          </div>
+          <div style="display:flex;gap:7px;margin-top:12px;padding-top:10px;border-top:1px solid #e2e8f0;">
+            <button onclick="closeMotion('${esc(m.id)}')" style="${voteBtn('#0B1D34')}">Close &amp; finalize now</button>
+            <button onclick="withdrawMotion('${esc(m.id)}')" style="padding:7px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-size:12.5px;font-weight:600;cursor:pointer;">Withdraw</button>
+          </div>
+        </div>`;
+      } else {
+        const cur = j.my_vote;
+        const btn = (v, color) => `<button onclick="castVote('${esc(m.id)}','${v}',false)" style="${voteBtn(color, cur === v)}">${VOTE_STYLE[v].label}${cur === v ? ' ✓' : ''}</button>`;
+        actions = `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:13px;margin-top:14px;">
+          <div style="font-weight:700;color:#0B1D34;font-size:13px;margin-bottom:8px;">${cur ? 'Change your vote' : 'Cast your vote'}</div>
+          <input id="mv-comment" placeholder="Comment (optional)" style="width:100%;padding:7px;border:1px solid #cbd5e1;border-radius:7px;font-size:13px;margin-bottom:8px;box-sizing:border-box;">
+          <div style="display:flex;gap:7px;flex-wrap:wrap;">${btn('for', '#1a7a3c')}${btn('against', '#b42318')}${btn('abstain', '#64748b')}</div>
+        </div>`;
+      }
+    } else if (m.status === 'open' && !j.can_write) {
+      actions = `<div style="margin-top:12px;font-size:12px;color:#64748b;">You're viewing a read-only preview — exit the board-member preview to vote.</div>`;
+    }
+
+    const outcome = (m.status !== 'open' && m.outcome_note) ? `<div style="margin-top:8px;font-size:12.5px;color:#475569;">${esc(m.outcome_note)}</div>` : '';
+
+    return `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px;">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+        <div style="min-width:0;flex:1;"><h2 style="margin:0 0 3px;color:#0B1D34;font-size:19px;">${esc(m.title)}</h2>
+          <div style="font-size:12px;color:#64748b;">${esc(MOTION_TYPE_LABELS[m.motion_type] || m.motion_type)} · ${esc(THRESHOLD_LABELS[m.threshold] || m.threshold)}${m.created_by_name ? ' · moved by ' + esc(m.created_by_name) : ''}${m.voting_deadline ? ' · closes ' + esc(fmtDate(m.voting_deadline)) : ''}</div></div>
+        ${motionStatusBadge(m.status)}
+      </div>
+      ${m.description ? `<div style="margin-top:10px;font-size:13.5px;color:#334155;line-height:1.5;white-space:pre-wrap;">${esc(m.description)}</div>` : ''}
+      <div style="margin-top:14px;">${tallyBar(t)}<div style="font-size:12.5px;">${tallyLine(t)}</div>${outcome}</div>
+      <div style="margin-top:16px;"><div style="font-weight:700;color:#0B1D34;font-size:13px;margin-bottom:2px;">How the board voted</div>${rosterRows || '<div style="color:#64748b;font-size:12.5px;padding:6px 0;">No active board members on record.</div>'}${offRoster}</div>
+      ${actions}
+    </div>`;
+  }
+  function voteBtn(color, active) {
+    return `padding:8px 14px;border-radius:8px;border:1px solid ${color};background:${active ? color : '#fff'};color:${active ? '#fff' : color};font-size:13px;font-weight:700;cursor:pointer;`;
+  }
+
+  async function castVote(motionId, vote, isStaff) {
+    const commentEl = document.getElementById('mv-comment');
+    const body = { vote, comment: commentEl ? commentEl.value : '' };
+    if (isStaff) {
+      const sel = document.getElementById('mv-voter');
+      if (!sel || !sel.value) { alert('Pick which board member this vote is for.'); return; }
+      body.voter_email = sel.value;
+    }
+    try {
+      await fetchPost(`/api/board-motions/motion/${encodeURIComponent(motionId)}/vote`, body);
+      showMotion(motionId);
+    } catch (e) { alert('Could not record vote: ' + e.message); }
+  }
+  async function closeMotion(motionId) {
+    if (!confirm('Close this motion and finalize the result now?')) return;
+    try { await fetchPost(`/api/board-motions/motion/${encodeURIComponent(motionId)}/close`, {}); showMotion(motionId); }
+    catch (e) { alert('Could not close: ' + e.message); }
+  }
+  async function withdrawMotion(motionId) {
+    if (!confirm('Withdraw this motion? It will no longer be open for voting.')) return;
+    try { await fetchPost(`/api/board-motions/motion/${encodeURIComponent(motionId)}/withdraw`, {}); showMotion(motionId); }
+    catch (e) { alert('Could not withdraw: ' + e.message); }
+  }
+
+  function showNewMotion() {
+    const wrap = document.getElementById('container');
+    // Motion-type options, alphabetical by label (house style).
+    const typeOpts = Object.keys(MOTION_TYPE_LABELS)
+      .map((k) => ({ k, label: MOTION_TYPE_LABELS[k] }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map((o) => `<option value="${o.k}"${o.k === 'general' ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+    const threshOpts = Object.keys(THRESHOLD_LABELS).map((k) => `<option value="${k}">${esc(THRESHOLD_LABELS[k])}</option>`).join('');
+    const fld = 'width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-size:13.5px;box-sizing:border-box;';
+    wrap.innerHTML = `<div style="margin-bottom:14px;"><a href="javascript:showMotions()" style="color:#0B1D34;font-size:13px;font-weight:600;text-decoration:none;">← All motions</a></div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px;max-width:640px;">
+        <h2 style="margin:0 0 12px;color:#0B1D34;font-size:17px;">New motion</h2>
+        <label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">Title</label>
+        <input id="nm-title" placeholder="e.g. Approve the Versatex sidewalk estimate ($82,640)" style="${fld};margin-bottom:12px;">
+        <label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">Details (optional)</label>
+        <textarea id="nm-desc" rows="4" placeholder="Context the board should have when voting…" style="${fld};margin-bottom:12px;resize:vertical;"></textarea>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+          <div style="flex:1;min-width:160px;"><label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">Type</label><select id="nm-type" style="${fld}">${typeOpts}</select></div>
+          <div style="flex:1;min-width:160px;"><label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">To pass</label><select id="nm-threshold" style="${fld}">${threshOpts}</select></div>
+        </div>
+        <label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">Voting deadline (optional)</label>
+        <input id="nm-deadline" type="date" style="${fld};margin-bottom:16px;max-width:220px;">
+        <div style="display:flex;gap:8px;">
+          <button onclick="submitMotion()" style="padding:9px 18px;border-radius:8px;border:1px solid #0B1D34;background:#0B1D34;color:#fff;font-size:13.5px;font-weight:600;cursor:pointer;">Open for voting</button>
+          <button onclick="showMotions()" style="padding:9px 18px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-size:13.5px;font-weight:600;cursor:pointer;">Cancel</button>
+        </div>
+      </div>`;
+  }
+  async function submitMotion() {
+    const title = (document.getElementById('nm-title').value || '').trim();
+    if (!title) { alert('Give the motion a title.'); return; }
+    const body = {
+      title,
+      description: document.getElementById('nm-desc').value || '',
+      motion_type: document.getElementById('nm-type').value,
+      threshold: document.getElementById('nm-threshold').value,
+    };
+    const dl = document.getElementById('nm-deadline').value;
+    if (dl) body.voting_deadline = dl + 'T23:59:00';
+    try {
+      const j = await fetchPost(`/api/board-motions/community/${encodeURIComponent(currentCommunityId)}/motions`, body);
+      if (j.motion && j.motion.id) showMotion(j.motion.id); else showMotions();
+    } catch (e) { alert('Could not create motion: ' + e.message); }
+  }
+
+  // POST helper mirroring fetchJSON (auth header + view_as passthrough).
+  async function fetchPost(url, body) {
+    const h = { 'Content-Type': 'application/json' };
+    try { if (_supa) { const s = (await _supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; } } catch (_) {}
+    if (viewAsEmail && url.indexOf('/api/board-') === 0) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'view_as=' + encodeURIComponent(viewAsEmail);
+    const r = await fetch(url, { method: 'POST', headers: h, credentials: 'same-origin', body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.message || j.error || (r.status + ' ' + r.statusText));
+    return j;
+  }
+  // ===== end Motions ========================================================
 
   function renderSummary(s) {
     const c = s.counts || {};
@@ -698,7 +933,7 @@
   // Each tile is an entry point: icon + title + short description + one
   // headline metric. Click → detail. Boards see the curated landing, drill
   // in for the data.
-  function renderDashboardCards(s, projects) {
+  function renderDashboardCards(s, projects, motions) {
     const fmtMoney = (cents) => {
       if (cents == null) return '—';
       const dollars = Number(cents) / 100;
@@ -823,6 +1058,24 @@
         <div class="tile-cta">View projects →</div>
       </a>`;
 
+    // Motions & Voting — board approvals with per-member votes and results.
+    const ms = (motions && motions.motions) || [];
+    const openMotions = ms.filter((m) => m.status === 'open');
+    const awaitingMe = openMotions.filter((m) => !m.my_vote).length;
+    const motionsTile = `
+      <a class="board-tile" href="javascript:showMotions()">
+        <div class="tile-icon">🗳️</div>
+        <div class="tile-title">Motions &amp; Voting</div>
+        <div class="tile-desc">Board approvals — record a motion, cast votes, see the result and who voted.</div>
+        <div class="tile-metric">
+          <div>
+            <div class="metric-value ${awaitingMe > 0 ? 'warn' : ''}">${openMotions.length}</div>
+            <div class="metric-label">open${awaitingMe > 0 ? ` · ${awaitingMe} awaiting your vote` : ''}</div>
+          </div>
+        </div>
+        <div class="tile-cta">${awaitingMe > 0 ? 'Cast your vote →' : 'View motions →'}</div>
+      </a>`;
+
     return `
       <div class="tile-section-label">Financial health</div>
       <div class="board-tile-grid">
@@ -831,12 +1084,17 @@
         ${meetingsTile}
       </div>
 
+      <div class="tile-section-label">Governance</div>
+      <div class="board-tile-grid">
+        ${motionsTile}
+        ${projectsTile}
+      </div>
+
       <div class="tile-section-label">Community health</div>
       <div class="board-tile-grid">
         ${drvTile}
         ${arcTile}
         ${propsTile}
-        ${projectsTile}
       </div>
     `;
   }
