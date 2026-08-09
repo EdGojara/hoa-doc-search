@@ -549,6 +549,30 @@ router.post('/motion/:motionId/vote', express.json({ limit: '16kb' }), async (re
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/board-motions/parse-reply
+//   Reply-to-vote: record a vote from a board member's email reply. Staff-gated
+//   (usable now to process a forwarded reply); the future votes@ inbound
+//   webhook calls the same lib in-process. Body: { from, subject, body }.
+//   Records NOTHING unless sender+motion+intent all resolve cleanly.
+// ---------------------------------------------------------------------------
+router.post('/parse-reply', express.json({ limit: '64kb' }), async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    if (viewer.kind !== 'staff') return res.status(403).json({ error: 'staff_only' });
+    const { from, subject, body } = req.body || {};
+    if (!from || !body) return res.status(400).json({ error: 'from_and_body_required', message: 'Need the sender and the reply body.' });
+    // Lazy require to avoid a load-time cycle (vote_reply → board_motions).
+    const { resolveVoteReply } = require('../lib/board/vote_reply');
+    const result = await resolveVoteReply(supabase, { from, subject, body });
+    res.json({ ok: true, result });
+  } catch (err) {
+    console.error('[board_motions] parse-reply failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/board-motions/motion/:motionId/close   — finalize the result now
 //   (a chair/staff closing the vote before every seat has weighed in)
 // ---------------------------------------------------------------------------
