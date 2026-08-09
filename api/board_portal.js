@@ -303,6 +303,7 @@ router.get('/community/:id/properties', async (req, res) => {
     const communityId = req.params.id;
     if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
     const openOnly = req.query.open_only === '1';
+    const balanceOnly = req.query.balance_only === '1'; // AR view: only accounts that owe
     const limit = Math.max(1, Math.min(2000, parseInt(req.query.limit || '500', 10)));
     const orderBy = req.query.order_by || 'open_violations_desc';
 
@@ -314,17 +315,22 @@ router.get('/community/:id/properties', async (req, res) => {
         lifetime_violations, violations_last_12mo, last_violation_at,
         arc_decisions_count, arc_approved_count, arc_denied_count,
         last_arc_decided_at, interactions_count, last_interaction_at,
-        substrate_doc_count, inspections_count, last_inspected_at
+        substrate_doc_count, inspections_count, last_inspected_at,
+        current_balance
       `)
       .eq('community_id', communityId)
       .limit(limit);
 
     if (openOnly) q = q.gt('open_violations', 0);
+    if (balanceOnly) q = q.gt('current_balance', 0);
 
     // Order
     switch (orderBy) {
       case 'address':
         q = q.order('street_address', { ascending: true });
+        break;
+      case 'balance_desc':
+        q = q.order('current_balance', { ascending: false, nullsFirst: false });
         break;
       case 'last_violation_desc':
         q = q.order('last_violation_at', { ascending: false, nullsFirst: false });

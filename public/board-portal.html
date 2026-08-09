@@ -531,6 +531,37 @@
     }
   }
 
+  // Accounts Receivable drill-in — accounts that OWE, sorted by balance. This
+  // is money owed, kept distinct from the Violations tile (Ed 2026-08-09).
+  async function showAR() {
+    const wrap = document.getElementById('container');
+    wrap.innerHTML = '<div class="loading">Loading accounts receivable…</div>';
+    try {
+      const j = await fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/properties?balance_only=1&order_by=balance_desc&limit=2000`);
+      wrap.innerHTML = `${backBar()}${renderARList(j.properties || [])}`;
+    } catch (e) {
+      wrap.innerHTML = `${backBar()}<div class="err">Load failed: ${esc(e.message)}</div>`;
+    }
+  }
+  function renderARList(rows) {
+    const money = (v) => { const n = Number(v || 0); return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+    if (!rows.length) return '<div class="properties-header">Accounts Receivable</div><div class="empty">No outstanding balances. 🎉</div>';
+    const total = rows.reduce((a, r) => a + Number(r.current_balance || 0), 0);
+    const arrowSvg = '<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>';
+    return `<div class="properties-header">Accounts Receivable (${rows.length} owing · ${money(total)})</div>` +
+      rows.map((r) => `<div class="property-card" onclick="openProperty('${esc(r.property_id)}')">
+        <div class="main">
+          <div class="addr">${esc(r.street_address)}${r.unit ? ' #' + esc(r.unit) : ''}</div>
+          <div class="owner">${esc(r.owner_name || '— no owner on record —')}</div>
+          ${r.open_violations > 0 ? `<div class="badges"><span class="badge ${stageBadgeKind(r.worst_open_stage)}">${r.open_violations} open · ${esc(stageLabel(r.worst_open_stage))}</span></div>` : ''}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">
+          <div style="font-weight:800;color:${Number(r.current_balance) > 0 ? '#b42318' : '#1a7a3c'};font-size:15px;">${money(r.current_balance)}</div>
+          <div class="arrow">${arrowSvg}</div>
+        </div>
+      </div>`).join('');
+  }
+
   // Projects drill-in (uses the stash from the landing; no re-fetch).
   function showProjects() {
     const wrap = document.getElementById('container');
@@ -1116,7 +1147,7 @@
     // ── Financial health row ────────────────────────────────────────
     const ar = s.ar_aging;
     const arTile = !ar ? '' : `
-      <a class="board-tile" href="javascript:showProperties('open_only')">
+      <a class="board-tile" href="javascript:showAR()">
         <div class="tile-icon">💵</div>
         <div class="tile-title">Accounts Receivable</div>
         <div class="tile-desc">Outstanding balances, payment plans, and accounts approaching legal action.</div>
@@ -1144,15 +1175,17 @@
         <div class="tile-cta">Open reserve map →</div>
       </a>`;
 
-    // ── Compliance + ARC row ────────────────────────────────────────
-    const drv = s.drv_by_stage;
-    const drvTotal = drv ? Object.values(drv).reduce((a, b) => a + b, 0) : 0;
-    const drvSevere = drv ? (drv.certified_209 + drv.fine_assessed) : 0;
-    const drvTile = !drv ? '' : `
+    // ── Violations + ARC row ────────────────────────────────────────
+    // Violations is its OWN tile (distinct from Accounts Receivable, which is
+    // money owed). Always rendered so the board can always see compliance.
+    const drv = s.drv_by_stage || {};
+    const drvTotal = Object.values(drv).reduce((a, b) => a + (b || 0), 0);
+    const drvSevere = (drv.certified_209 || 0) + (drv.fine_assessed || 0);
+    const drvTile = `
       <a class="board-tile" href="javascript:showProperties('open_only')">
         <div class="tile-icon">🚨</div>
-        <div class="tile-title">Compliance</div>
-        <div class="tile-desc">Open violations by enforcement stage. Click through to the property list.</div>
+        <div class="tile-title">Violations</div>
+        <div class="tile-desc">Open violations by enforcement stage, and who is at §209 or fine.</div>
         <div class="tile-metric">
           <div>
             <div class="metric-value ${drvSevere > 0 ? 'bad' : drvTotal > 0 ? 'warn' : 'good'}">${drvTotal}</div>
