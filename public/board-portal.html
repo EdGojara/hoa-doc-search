@@ -1065,6 +1065,15 @@
   }
 
   // ----- Boot ---------------------------------------------------------------
+  // If arriving from the manager-view "Board View →" switch, the URL carries
+  // ?view_as=<email>. Adopt it so the board portal opens DOWN-SCOPED to that
+  // board member's own view (read-only preview banner), not staff god-mode.
+  // Staff-only: a board member's own session ignores this (the API only honors
+  // view_as for a staff viewer).
+  try {
+    const _va = new URLSearchParams(location.search).get('view_as');
+    if (_va && _va.includes('@')) viewAsEmail = _va.trim().toLowerCase();
+  } catch (_) { /* no-op */ }
   initAuth().then(loadCommunities);
 </script>
 </body>

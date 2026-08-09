@@ -1580,6 +1580,10 @@ router.get('/me', async (req, res) => {
     //   - Staff/admin/manager on their OWN portal: broad (all their communities).
     //   - Everyone else: their own email's active seats — the one authority.
     let boardCommunities = [];
+    // In manager view, the email that actually holds the seat — passed as
+    // ?view_as on the board switch so staff land on the board member's OWN
+    // scoped board view, not staff god-mode (all communities).
+    let boardAsEmail = null;
     const mirrorEmails = req._managerView
       ? (req._managerView.owner_emails || [])
       : (['admin', 'staff', 'manager'].includes(user.role) ? null : [user.email]);
@@ -1598,6 +1602,7 @@ router.get('/me', async (req, res) => {
         const seatIds = new Set();
         for (const em of mirrorEmails) {
           const s = await boardCommunitiesForEmail(em); // is_active seats only
+          if (s.size && !boardAsEmail) boardAsEmail = em; // first seat-holder
           s.forEach((id) => seatIds.add(id));
         }
         if (seatIds.size) {
@@ -1716,6 +1721,11 @@ router.get('/me', async (req, res) => {
       // Board-portal switcher hints (consumed by portal.html header)
       is_board_member: isBoardMember,
       board_communities: boardCommunities,
+      // Manager-view only: the seat-holder email to pass as ?view_as so the
+      // board switch lands on the board member's OWN scoped view (not staff
+      // god-mode). Null outside manager view (a real board member's own portal
+      // cookie already carries their scope).
+      board_as_email: req._managerView ? boardAsEmail : null,
       // Mimic block — present (with active:true) ONLY when a staff member
       // is rendering the portal as this homeowner via /mimic/start. Frontend
       // uses this to render the persistent "you are in mimic mode" banner.
