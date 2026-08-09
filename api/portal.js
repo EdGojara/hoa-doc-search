@@ -1544,48 +1544,59 @@ router.get('/me', async (req, res) => {
     } catch (_) { /* skip if schema differs */ }
 
     // Board-member determination — supports the dual-portal pattern
-    // (project_board_portal memory note). A portal user with role
-    // 'board_member' / 'admin' / 'staff' can switch to the Board View.
-    // For 'board_member' specifically, only show communities where their
-    // email appears in board_members (so a board member of community A
-    // doesn't see community B's board portal).
-    const isBoardCapable = ['board_member', 'admin', 'staff'].includes(user.role);
+    // (project_board_portal memory note). Drives the "🏛️ Board View →" switch
+    // in the homeowner portal header.
+    //
+    // SINGLE SOURCE OF TRUTH: board access is an ACTIVE board_members seat by
+    // email — the *exact* signal lib/portal/board_access.js uses to admit a
+    // session to the board portal. We compute the switch off that same signal
+    // (not off portal_users.role) so the two can never diverge: the button
+    // appears iff the board portal would actually let them in, and it vanishes
+    // the instant the seat is deactivated. That makes board_members.is_active
+    // the ONE on/off toggle — add a seat → both access and switch light up;
+    // set is_active=false when they leave the board → both disappear next
+    // request, no token to expire, no portal role to keep in sync.
+    //
+    // Why this matters concretely: a board member who is ALSO a homeowner is
+    // typically onboarded via a homeowner invite, which stamps role='renter'
+    // (api/contacts.js). Gating the switch on role would leave them with board
+    // access but no visible way to reach it. Alexis Geissler is exactly this
+    // case.
     let boardCommunities = [];
-    if (isBoardCapable) {
-      if (user.role === 'board_member') {
-        // Match by email against board_members for the communities this
-        // user has portal access to.
-        const accessibleCommunityIds = props.map(p => p.community_id).filter(Boolean);
-        if (accessibleCommunityIds.length) {
-          try {
-            const { data: rosterRows } = await supabase
-              .from('board_members')
-              .select('community_id, position, term_end')
-              .in('community_id', accessibleCommunityIds)
-              .eq('is_active', true)
-              .eq('email', user.email);
-            const communityById = {};
-            props.forEach(p => {
-              if (p.communities) communityById[p.communities.id] = p.communities;
-            });
-            boardCommunities = (rosterRows || []).map(r => ({
-              id: r.community_id,
-              name: communityById[r.community_id]?.name || '',
-              slug: communityById[r.community_id]?.slug || '',
-              position: r.position,
-              term_end: r.term_end,
-            }));
-          } catch (_) { /* board_members table optional */ }
+    if (['admin', 'staff', 'manager'].includes(user.role)) {
+      // Staff/admin/manager — broad access (their board view scope is
+      // determined inside the board portal endpoints, not here).
+      boardCommunities = props.map(p => p.communities).filter(Boolean).map(c => ({
+        id: c.id, name: c.name, slug: c.slug,
+      }));
+    } else {
+      // Any homeowner/renter/board_member session — the seat is the authority.
+      try {
+        const { boardCommunitiesForEmail } = require('../lib/portal/board_access');
+        const seatIds = await boardCommunitiesForEmail(user.email); // Set<communityId>, is_active only
+        if (seatIds.size) {
+          // Enrich with name/slug. A board member need not own property in the
+          // community they serve, so fall back to a direct communities lookup
+          // for any seat community not covered by their properties.
+          const communityById = {};
+          props.forEach(p => { if (p.communities) communityById[p.communities.id] = p.communities; });
+          const missing = [...seatIds].filter((id) => !communityById[id]);
+          if (missing.length) {
+            const { data: comms } = await supabase
+              .from('communities').select('id, name, slug').in('id', missing);
+            (comms || []).forEach((c) => { communityById[c.id] = c; });
+          }
+          boardCommunities = [...seatIds].map((id) => ({
+            id,
+            name: communityById[id]?.name || '',
+            slug: communityById[id]?.slug || '',
+          }));
         }
-      } else {
-        // admin / staff — broad access (their board view scope is
-        // determined inside the board portal endpoints, not here)
-        boardCommunities = props.map(p => p.communities).filter(Boolean).map(c => ({
-          id: c.id, name: c.name, slug: c.slug,
-        }));
+      } catch (e) {
+        console.warn('[portal /me] board-seat lookup failed (non-fatal):', e.message);
       }
     }
-    const isBoardMember = isBoardCapable && boardCommunities.length > 0;
+    const isBoardMember = boardCommunities.length > 0;
 
     // Owner of record for the focus property — used for the greeting so a joint
     // owner ("Brett & Alexis Geissler") is never reduced to one name. This is
