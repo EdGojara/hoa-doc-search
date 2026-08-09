@@ -38,7 +38,9 @@
 </div>
 <script>
 'use strict';
-var TOKEN = new URLSearchParams(location.search).get('token') || '';
+var PARAMS = new URLSearchParams(location.search);
+var TOKEN = PARAMS.get('token') || '';
+var PRECHOICE = (function(){ var c = (PARAMS.get('choice')||'').toLowerCase(); return ['for','against','abstain'].indexOf(c) >= 0 ? c : null; })();
 var CTX = null, chosen = null;
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function el(id){return document.getElementById(id);}
@@ -49,7 +51,7 @@ async function load() {
     var r = await fetch('/api/board-vote/context?token=' + encodeURIComponent(TOKEN));
     var j = await r.json();
     if (!r.ok || !j.ok) { el('body').innerHTML = '<div class="who err">' + reason(j.error) + '</div>'; return; }
-    CTX = j; chosen = j.my_vote; render();
+    CTX = j; chosen = PRECHOICE || j.my_vote; render();
   } catch (e) { el('body').innerHTML = '<div class="who err">Could not load this ballot. Please try again.</div>'; }
 }
 function reason(code) {
@@ -60,9 +62,11 @@ function reason(code) {
 function render() {
   var m = CTX.motion, t = CTX.tally || {};
   var closed = !CTX.votable;
+  var hint = (!closed && PRECHOICE && CTX.my_vote !== PRECHOICE)
+    ? '<div class="status">You selected <b>' + esc(PRECHOICE) + '</b> from your email. Tap it below to confirm.</div>' : '';
   var voteRow = closed
     ? '<div class="status">Voting is closed on this motion. Result: <b>' + esc((m.status||'').toUpperCase()) + '</b>.</div>'
-    : '<div class="btns">'
+    : hint + '<div class="btns">'
       + btn('for','For','vfor') + btn('against','Against','vagainst') + btn('abstain','Abstain','vabstain')
       + '</div><textarea id="cmt" rows="2" placeholder="Comment (optional)"></textarea>'
       + '<div id="msg" class="status"></div>';
