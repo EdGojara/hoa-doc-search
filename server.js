@@ -524,6 +524,7 @@ const _STAFF_GATE_PUBLIC = [
   // Board motions/voting — every handler enforces requireBoardViewer +
   // canSeeCommunity, and WRITES require a real actor (a staff "view as" preview
   // is read-only). Same cookie-gated-inside pattern; listed per-endpoint.
+  /^\/api\/board-motions\/portfolio$/,                   // cross-community roll-up
   /^\/api\/board-motions\/community\/[^/]+\/motions$/,    // list + create motions
   /^\/api\/board-motions\/motion\/[^/]+$/,               // motion detail
   /^\/api\/board-motions\/motion\/[^/]+\/(vote|close|withdraw|remind)$/, // cast vote / finalize / pull / nudge non-voters

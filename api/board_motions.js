@@ -26,7 +26,7 @@
 
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const { requireBoardViewer, canSeeCommunity, boardCommunitiesForEmail } = require('../lib/portal/board_access');
+const { requireBoardViewer, canSeeCommunity, scopeCommunityIds, boardCommunitiesForEmail } = require('../lib/portal/board_access');
 const { enqueueMotionNotifications } = require('../lib/board/motion_notify');
 const { safeErrorMessage } = require('./_safe_error');
 
@@ -137,6 +137,68 @@ router.get('/community/:id/motions', async (req, res) => {
     res.json({ motions: out, can_write: !!actor, is_staff: !!(actor && actor.is_staff) });
   } catch (err) {
     console.error('[board_motions] list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/board-motions/portfolio
+//   Cross-community roll-up so a manager sees board status everywhere at once,
+//   without a community picker or email. Scoped: staff → all communities; a
+//   board member → the communities they sit on. Motions needing attention
+//   (open, no quorum yet, or past deadline) surface first.
+// ---------------------------------------------------------------------------
+router.get('/portfolio', async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const scope = scopeCommunityIds(viewer); // 'all' | [ids]
+
+    // Resolve the community id → name map within scope.
+    let commQ = supabase.from('communities')
+      .select('id, name').eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    if (scope !== 'all') {
+      if (!scope.length) return res.json({ communities: 0, motions: [] });
+      commQ = commQ.in('id', scope);
+    }
+    const { data: comms, error: ce } = await commQ;
+    if (ce) throw ce;
+    const nameById = {};
+    for (const c of (comms || [])) nameById[c.id] = c.name;
+    const ids = Object.keys(nameById);
+    if (!ids.length) return res.json({ communities: 0, motions: [] });
+
+    const { data: motions, error } = await supabase.from('board_motions')
+      .select('*').in('community_id', ids)
+      .order('opened_at', { ascending: false }).limit(500);
+    if (error) throw error;
+
+    const mIds = (motions || []).map((m) => m.id);
+    const votesByMotion = {};
+    if (mIds.length) {
+      const { data: votes, error: ve } = await supabase.from('board_motion_votes')
+        .select('motion_id, vote').in('motion_id', mIds);
+      if (ve) throw ve;
+      for (const v of (votes || [])) (votesByMotion[v.motion_id] = votesByMotion[v.motion_id] || []).push(v);
+    }
+
+    // now (as ms since epoch) for deadline checks — Date.now() is fine here (API
+    // runtime, not a workflow script).
+    const now = Date.now();
+    const out = (motions || []).map((m) => {
+      const tally = evaluateMotion(m, votesByMotion[m.id] || []);
+      const pastDeadline = m.status === 'open' && m.voting_deadline && new Date(m.voting_deadline).getTime() < now;
+      const needsAttention = m.status === 'open' && (tally.quorum_met === false || !!pastDeadline);
+      return {
+        id: m.id, community_id: m.community_id, community_name: nameById[m.community_id] || '',
+        title: m.title, motion_type: m.motion_type, status: m.status,
+        voting_deadline: m.voting_deadline, opened_at: m.opened_at, closed_at: m.closed_at,
+        tally, past_deadline: !!pastDeadline, needs_attention: needsAttention,
+      };
+    });
+    res.json({ communities: ids.length, motions: out });
+  } catch (err) {
+    console.error('[board_motions] portfolio failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

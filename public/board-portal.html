@@ -267,6 +267,7 @@
       <select id="communitySelect" class="community-select" onchange="handleCommunityChange(this.value)">
         <option value="">Loading…</option>
       </select>
+      <a id="portfolioLink" href="javascript:showPortfolioMotions()" style="display:none;margin-left:16px;font-size:12.5px;color:#0B1D34;font-weight:600;text-decoration:none;white-space:nowrap;">🗳️ All board motions →</a>
       <span id="staffPreview" style="margin-left:auto;"></span>
     </div>
   </div>
@@ -427,6 +428,10 @@
       boardViewer = j.viewer || null;
       // Staff get the "View as" tool; when actively viewing-as, a banner + exit.
       renderActingBanner(boardViewer);
+      // Cross-community motions roll-up is only useful when the viewer spans
+      // more than one community (a manager, or a multi-board member).
+      const pl = document.getElementById('portfolioLink');
+      if (pl) pl.style.display = (j.communities || []).length > 1 ? '' : 'none';
       // Deep link: ?community=..&view=year&year=YYYY jumps straight to the year
       // snapshot (the shareable "Copy link"). Only if allowed to see it.
       const params = new URLSearchParams(location.search);
@@ -797,6 +802,56 @@
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.message || j.error || (r.status + ' ' + r.statusText));
     return j;
+  }
+  // ----- Portfolio: motions across all the viewer's communities -------------
+  async function showPortfolioMotions() {
+    const wrap = document.getElementById('container');
+    wrap.innerHTML = '<div class="loading">Loading motions across communities…</div>';
+    try {
+      const j = await fetchJSON('/api/board-motions/portfolio');
+      wrap.innerHTML = renderPortfolio(j);
+    } catch (e) {
+      wrap.innerHTML = `<div class="err">Load failed: ${esc(e.message)}${/not|404/i.test(e.message) ? '<br><span style="font-size:12px;color:#64748b;">If this just went live, apply migrations 352 + 353 and Manual Deploy.</span>' : ''}</div>`;
+    }
+  }
+  function renderPortfolio(j) {
+    const motions = j.motions || [];
+    const open = motions.filter((m) => m.status === 'open');
+    const attention = open.filter((m) => m.needs_attention);
+    const okOpen = open.filter((m) => !m.needs_attention);
+    const prior = motions.filter((m) => m.status !== 'open').slice(0, 40);
+    const header = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px;flex-wrap:wrap;">
+      <h2 style="margin:0;color:#0B1D34;font-size:17px;">Board motions, all communities</h2>
+      <span style="font-size:12px;color:#64748b;">${open.length} open across ${j.communities} communit${j.communities === 1 ? 'y' : 'ies'}${attention.length ? ` · <b style="color:#b42318;">${attention.length} need attention</b>` : ''}</span></div>`;
+    if (!motions.length) return `${header}<div class="empty">No motions on record yet.</div>`;
+    const row = (m) => {
+      const t = m.tally || {};
+      const voted = `${t.cast || 0}/${t.seats != null ? t.seats : '?'} voted`;
+      const flags = [];
+      if (m.status === 'open' && t.quorum_met === false) flags.push('<span style="color:#b45309;font-weight:700;">no quorum yet</span>');
+      if (m.past_deadline) flags.push('<span style="color:#b42318;font-weight:700;">past deadline</span>');
+      return `<div onclick="openPortfolioMotion('${esc(m.id)}','${esc(m.community_id)}')" style="border:1px solid #e2e8f0;border-radius:10px;padding:11px 13px;margin-bottom:8px;background:#fff;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;">
+        <div style="min-width:220px;flex:1;">
+          <div style="font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.3px;">${esc(m.community_name)}</div>
+          <div style="font-weight:700;color:#0B1D34;font-size:14px;">${esc(m.title)}</div>
+          <div style="font-size:11.5px;color:#64748b;">${voted} · ${tallyLine(t)}${flags.length ? ' · ' + flags.join(' · ') : ''}</div>
+        </div>
+        ${motionStatusBadge(m.status)}
+      </div>`;
+    };
+    const sect = (title, arr) => arr.length ? `<div class="tile-section-label" style="margin:12px 0 8px;">${title}</div>${arr.map(row).join('')}` : '';
+    return `${header}
+      ${sect('⚠ Needs attention', attention)}
+      ${sect('Open, on track', okOpen)}
+      ${sect('Recent decisions', prior)}`;
+  }
+  // Drill from the portfolio into one motion; set the community context so the
+  // back-nav (← All motions) and picker stay consistent.
+  function openPortfolioMotion(id, communityId) {
+    currentCommunityId = communityId;
+    const sel = document.getElementById('communitySelect'); if (sel) sel.value = communityId;
+    applyDemoBanner(communityId);
+    showMotion(id);
   }
   // ===== end Motions ========================================================
 
