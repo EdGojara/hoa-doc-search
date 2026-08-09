@@ -588,6 +588,27 @@ router.post('/parse-reply', express.json({ limit: '64kb' }), async (req, res) =>
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/board-motions/poll-inbox
+//   Reply-to-vote auto-ingest: read unread mail in vote@ via Graph and record
+//   each clear vote. Staff-gated; also safe to call from a scheduler. No-ops
+//   (with a clear reason) until GRAPH_* is set + vote@ is in the app's Mail.Read
+//   policy.
+// ---------------------------------------------------------------------------
+router.post('/poll-inbox', express.json({ limit: '2kb' }), async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    if (viewer.kind !== 'staff') return res.status(403).json({ error: 'staff_only' });
+    const { pollVoteInbox } = require('../lib/board/vote_inbox');
+    const stats = await pollVoteInbox({ max: 50 });
+    res.json({ ok: true, stats });
+  } catch (err) {
+    console.error('[board_motions] poll-inbox failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/board-motions/motion/:motionId/close   — finalize the result now
 //   (a chair/staff closing the vote before every seat has weighed in)
 // ---------------------------------------------------------------------------
