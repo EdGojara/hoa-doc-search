@@ -2469,6 +2469,7 @@ router.get('/balance', async (req, res) => {
         street_address: prop.street_address,
       },
       community: {
+        id: prop.community_id,
         name: community.name,
         slug: community.slug,
         hoa_legal_name: community.hoa_legal_name,

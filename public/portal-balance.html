@@ -664,23 +664,50 @@ function renderHero(ctx) {
 }
 
 function renderPayCard(ctx) {
-  // For v0, point at a generic placeholder OR a community-specific payment_portal_url if added later.
-  // Most associations have Vantaca portal access — link is typically community-specific.
-  const portalUrl = ctx.community?.payment_portal_url
-                 || `mailto:accounting@bedrocktx.com?subject=${encodeURIComponent('Payment link for ' + (ctx.community?.name || 'my account'))}`;
-  const usesEmailFallback = !ctx.community?.payment_portal_url;
-
+  // Real online payment via the association's Stripe Connect account. The button
+  // starts a secure checkout; if online payment isn't live yet for this community
+  // the endpoint returns 503 and we fall back to mail-a-check inline (no dead
+  // link). Charges nothing until Stripe is configured + the community onboarded.
+  const cid = ctx.community?.id || '';
+  const pid = (ctx.property?.id) || propertyId || '';
   return `
     <div class="pay-card">
       <h2><span class="ic">💳</span>Pay your assessment</h2>
-      <p>Assessments are processed through your association's accounting system. Bedrock can email you a direct payment link, or you can mail a check to the address below.</p>
-      <a class="pay-btn" href="${escapeHtml(portalUrl)}" target="_blank" rel="noopener">
-        ${usesEmailFallback ? '✉️ Request a payment link' : '💳 Pay online →'}
-      </a>
+      <p>Pay your balance securely online, or mail a check to the address below.</p>
+      <button class="pay-btn" onclick="payOnline(this)" data-community="${escapeHtml(cid)}" data-property="${escapeHtml(pid)}" ${(!cid || !pid) ? 'style="display:none;"' : ''}>💳 Pay online →</button>
+      <div id="payMsg" style="display:none; margin-top:10px; font-size:13px; color: var(--ink);"></div>
       <p style="margin-top:14px; font-size:12.5px; color: var(--ink-faint);">
-        Mail check to: <strong style="color: var(--ink);">${escapeHtml(ctx.community?.hoa_legal_name || 'Your association')}</strong>, c/o Bedrock Association Management, 12808 W Airport Blvd Ste 253, Sugar Land, TX 77478.
+        Or mail a check to: <strong style="color: var(--ink);">${escapeHtml(ctx.community?.hoa_legal_name || 'Your association')}</strong>, c/o Bedrock Association Management, 12808 W Airport Blvd Ste 253, Sugar Land, TX 77478.
       </p>
     </div>`;
+}
+
+// Start a secure Stripe checkout for the current balance. Degrades gracefully:
+// on 503 (Stripe not live / community not onboarded) or nothing-due, it hides the
+// button and explains, leaving the mail-a-check option. (Ed 2026-08-08.)
+async function payOnline(btn) {
+  const cid = btn.getAttribute('data-community');
+  const pid = btn.getAttribute('data-property');
+  const msg = document.getElementById('payMsg');
+  const show = (t) => { if (msg) { msg.textContent = t; msg.style.display = 'block'; } };
+  if (!cid || !pid) { show('Online payment isn’t available for this account yet. Please mail a check below.'); btn.style.display = 'none'; return; }
+  const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Starting secure checkout…';
+  try {
+    const origin = location.origin;
+    const r = await fetch('/api/payments/assessment/create-checkout', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+      body: JSON.stringify({ community_id: cid, property_id: pid, payment_method: 'ach', success_url: origin + '/portal/balance?paid=1', cancel_url: location.href }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.checkout_url) { location.href = j.checkout_url; return; }
+    btn.style.display = 'none';
+    show(j.error === 'nothing_due'
+      ? 'Your balance is $0 — nothing to pay online.'
+      : 'Online payment isn’t available yet for your community. Please mail a check below.');
+  } catch (e) {
+    btn.disabled = false; btn.textContent = orig;
+    show('We couldn’t start checkout just now. Please try again, or mail a check below.');
+  }
 }
 
 function bucketHtml(label, value, agedFlag) {
