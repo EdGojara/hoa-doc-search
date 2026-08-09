@@ -263,11 +263,13 @@ router.get('/portfolio', async (req, res) => {
     const out = (motions || []).map((m) => {
       const tally = evaluateMotion(m, votesByMotion[m.id] || []);
       const pastDeadline = m.status === 'open' && m.voting_deadline && new Date(m.voting_deadline).getTime() < now;
-      const needsAttention = m.status === 'open' && (tally.quorum_met === false || !!pastDeadline);
+      // Proposed motions need attention too — they're waiting on a director to move them.
+      const needsAttention = m.status === 'proposed' || (m.status === 'open' && (tally.quorum_met === false || !!pastDeadline));
       return {
         id: m.id, community_id: m.community_id, community_name: nameById[m.community_id] || '',
         title: m.title, motion_type: m.motion_type, status: m.status,
         voting_deadline: m.voting_deadline, opened_at: m.opened_at, closed_at: m.closed_at,
+        requested_mover_name: m.requested_mover_name || null,
         tally, past_deadline: !!pastDeadline, needs_attention: needsAttention,
       };
     });
@@ -315,6 +317,20 @@ router.post('/community/:id/motions', express.json({ limit: '32kb' }), async (re
       if (proj && proj.community_id === communityId) related_project_id = proj.id;
     }
 
+    // Lifecycle: 'propose' (manager keys it up, a director must MOVE it before
+    // voting — the parliamentary default) vs 'open' (put straight to a vote,
+    // e.g. recording a motion already moved in a meeting).
+    const mode = b.mode === 'open' ? 'open' : 'propose';
+    const rosterByEmail = {};
+    for (const m of roster) rosterByEmail[m.email] = m;
+
+    // Optional: the director the manager is asking to move it.
+    let requested_mover_email = null, requested_mover_name = null;
+    if (mode === 'propose' && b.requested_mover_email) {
+      const rm = String(b.requested_mover_email).trim().toLowerCase();
+      if (rosterByEmail[rm]) { requested_mover_email = rm; requested_mover_name = rosterByEmail[rm].name || rm; }
+    }
+
     const insert = {
       management_company_id: BEDROCK_MGMT_CO_ID,
       community_id: communityId,
@@ -323,22 +339,31 @@ router.post('/community/:id/motions', express.json({ limit: '32kb' }), async (re
       motion_type,
       threshold,
       related_project_id,
-      status: 'open',
+      status: mode === 'open' ? 'open' : 'proposed',
       seats_at_open: roster.length,
       voting_deadline,
       created_via: actor.via,
       created_by_email: actor.email,
       created_by_name: actor.name || actor.email,
+      requested_mover_email,
+      requested_mover_name,
     };
     const { data, error } = await supabase.from('board_motions').insert(insert).select('*').single();
     if (error) throw error;
-    // Notify the board a vote is needed (everyone but the person who moved it).
-    // Best-effort + kill-switched — never blocks the create.
-    const notifyList = roster.filter((m) => m.email !== String(actor.email || '').trim().toLowerCase());
-    const notif = await enqueueMotionNotifications(data, 'opened', notifyList);
+
+    // Notify. Open-now → tell the board a vote is needed. Proposed → if a
+    // specific director was asked, nudge just them to move it. Best-effort +
+    // kill-switched, never blocks the create.
+    let notif;
+    if (mode === 'open') {
+      const notifyList = roster.filter((m) => m.email !== String(actor.email || '').trim().toLowerCase());
+      notif = await enqueueMotionNotifications(data, 'opened', notifyList);
+    } else if (requested_mover_email) {
+      notif = await enqueueMotionNotifications(data, 'to_move', [{ email: requested_mover_email, name: requested_mover_name }]);
+    }
     // If linked to a project, reflect "out for board vote" on the project.
     if (data.related_project_id) await markProjectOutForVote(data);
-    res.json({ ok: true, motion: { ...data, tally: evaluateMotion(data, []), my_vote: null }, notified: notif });
+    res.json({ ok: true, motion: { ...data, tally: evaluateMotion(data, []), my_vote: null }, notified: notif || null });
   } catch (err) {
     console.error('[board_motions] create failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -578,6 +603,97 @@ router.post('/motion/:motionId/remind', express.json({ limit: '4kb' }), async (r
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/board-motions/motion/:motionId/move
+//   A director MOVES a proposed motion (self, or staff records on their behalf),
+//   optionally naming a seconder. This is the parliamentary step that turns a
+//   manager-keyed draft into a live vote — status 'proposed' → 'open'.
+// ---------------------------------------------------------------------------
+router.post('/motion/:motionId/move', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const motion = await loadAuthorizedMotion(req, res, viewer);
+    if (!motion) return;
+    const actor = writeActor(viewer);
+    if (!actor) return res.status(403).json({ error: 'read_only_preview', message: 'Exit the board-member preview to move a motion.' });
+    if (motion.status !== 'proposed') return res.status(409).json({ error: 'not_proposed', message: 'Only a proposed motion can be moved.' });
+
+    const roster = await activeRoster(motion.community_id);
+    const rosterByEmail = {};
+    for (const m of roster) rosterByEmail[m.email] = m;
+
+    // Who moves it? A director moves as themselves; staff records a named director.
+    let moverEmail, moverName, recordedBy = null;
+    if (actor.is_staff) {
+      moverEmail = String((req.body && req.body.mover_email) || '').trim().toLowerCase();
+      if (!moverEmail) return res.status(400).json({ error: 'mover_required', message: 'Pick which board member moved it.' });
+      if (!rosterByEmail[moverEmail]) return res.status(400).json({ error: 'not_a_board_member', message: 'That email is not on this active board.' });
+      moverName = rosterByEmail[moverEmail].name || moverEmail;
+      recordedBy = actor.email;
+    } else {
+      moverEmail = String(viewer.email).trim().toLowerCase();
+      if (!rosterByEmail[moverEmail]) return res.status(403).json({ error: 'not_a_board_member' });
+      moverName = rosterByEmail[moverEmail].name || actor.name || moverEmail;
+    }
+
+    const nowIso = new Date().toISOString();
+    const patch = {
+      status: 'open',
+      moved_by_email: moverEmail, moved_by_name: moverName, moved_at: nowIso, moved_recorded_by: recordedBy,
+      // Voting truly opens now — re-snapshot the clock + quorum base.
+      opened_at: nowIso, seats_at_open: roster.length,
+    };
+    // Optional seconder (a DIFFERENT active director).
+    const sec = String((req.body && req.body.seconded_by_email) || '').trim().toLowerCase();
+    if (sec && rosterByEmail[sec] && sec !== moverEmail) {
+      patch.seconded_by_email = sec; patch.seconded_by_name = rosterByEmail[sec].name || sec; patch.seconded_at = nowIso;
+    }
+    const { data, error } = await supabase.from('board_motions')
+      .update(patch).eq('id', motion.id).eq('status', 'proposed').select('*').single();
+    if (error) throw error;
+
+    // Now open for voting → notify the board (except the mover).
+    const notifyList = roster.filter((m) => m.email !== moverEmail);
+    const notif = await enqueueMotionNotifications(data, 'opened', notifyList);
+    res.json({ ok: true, motion: data, notified: notif });
+  } catch (err) {
+    console.error('[board_motions] move failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/board-motions/motion/:motionId/request-mover
+//   Staff asks a specific director to move a proposed motion (records + nudges).
+// ---------------------------------------------------------------------------
+router.post('/motion/:motionId/request-mover', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const motion = await loadAuthorizedMotion(req, res, viewer);
+    if (!motion) return;
+    const actor = writeActor(viewer);
+    if (!actor) return res.status(403).json({ error: 'read_only_preview' });
+    if (motion.status !== 'proposed') return res.status(409).json({ error: 'not_proposed' });
+    const roster = await activeRoster(motion.community_id);
+    const rosterByEmail = {};
+    for (const m of roster) rosterByEmail[m.email] = m;
+    const rm = String((req.body && req.body.requested_mover_email) || '').trim().toLowerCase();
+    if (!rm || !rosterByEmail[rm]) return res.status(400).json({ error: 'not_a_board_member', message: 'Pick a board member to ask.' });
+    const name = rosterByEmail[rm].name || rm;
+    const { data, error } = await supabase.from('board_motions')
+      .update({ requested_mover_email: rm, requested_mover_name: name })
+      .eq('id', motion.id).eq('status', 'proposed').select('*').single();
+    if (error) throw error;
+    const notif = await enqueueMotionNotifications(data, 'to_move', [{ email: rm, name }]);
+    res.json({ ok: true, motion: data, notified: notif });
+  } catch (err) {
+    console.error('[board_motions] request-mover failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/board-motions/motion/:motionId/withdraw  — pull a motion
 // ---------------------------------------------------------------------------
 router.post('/motion/:motionId/withdraw', express.json({ limit: '8kb' }), async (req, res) => {
@@ -588,10 +704,10 @@ router.post('/motion/:motionId/withdraw', express.json({ limit: '8kb' }), async 
     if (!motion) return;
     const actor = writeActor(viewer);
     if (!actor) return res.status(403).json({ error: 'read_only_preview' });
-    if (motion.status !== 'open') return res.status(409).json({ error: 'not_open' });
+    if (!['open', 'proposed'].includes(motion.status)) return res.status(409).json({ error: 'not_open' });
     const { data, error } = await supabase.from('board_motions')
       .update({ status: 'withdrawn', closed_at: new Date().toISOString(), closed_by: actor.email, outcome_note: `Withdrawn by ${actor.name || actor.email}.` })
-      .eq('id', motion.id).eq('status', 'open').select('*').single();
+      .eq('id', motion.id).in('status', ['open', 'proposed']).select('*').single();
     if (error) throw error;
     res.json({ ok: true, motion: data });
   } catch (err) {

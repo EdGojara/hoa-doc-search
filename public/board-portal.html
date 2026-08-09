@@ -545,6 +545,7 @@
 
   function motionStatusBadge(status) {
     const S = {
+      proposed: { bg: '#eef2ff', fg: '#4338ca', label: 'Proposed, needs a motion' },
       open: { bg: '#fdf6dc', fg: '#8a6d00', label: 'Open for voting' },
       passed: { bg: '#e7f6ec', fg: '#1a7a3c', label: 'Passed' },
       failed: { bg: '#fde8e8', fg: '#b42318', label: 'Failed' },
@@ -593,10 +594,12 @@
     }
     const card = (m) => {
       const t = m.tally || {};
-      const mine = m.my_vote ? `<span style="font-size:11.5px;color:${VOTE_STYLE[m.my_vote].fg};font-weight:700;">You voted: ${VOTE_STYLE[m.my_vote].label}</span>`
-        : (m.status === 'open' ? '<span style="font-size:11.5px;color:#b45309;font-weight:700;">Awaiting your vote</span>' : '');
-      const decided = m.status !== 'open' && m.closed_at ? ` · ${esc(fmtDate(m.closed_at))}` : '';
+      const decided = m.status !== 'open' && m.status !== 'proposed' && m.closed_at ? ` · ${esc(fmtDate(m.closed_at))}` : '';
       const deadline = m.status === 'open' && m.voting_deadline ? ` · closes ${esc(fmtDate(m.voting_deadline))}` : '';
+      // Proposed motions aren't a vote yet — show the awaiting-a-motion state.
+      const body = m.status === 'proposed'
+        ? `<div style="margin-top:8px;font-size:12px;color:#4338ca;font-weight:600;">Awaiting a board member to move it${m.requested_mover_name ? ` · asked ${esc(m.requested_mover_name)}` : ''}</div>`
+        : `${tallyBar(t)}<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:12px;"><span>${tallyLine(t)}</span>${m.my_vote ? `<span style="font-size:11.5px;color:${VOTE_STYLE[m.my_vote].fg};font-weight:700;">You voted: ${VOTE_STYLE[m.my_vote].label}</span>` : (m.status === 'open' ? '<span style="font-size:11.5px;color:#b45309;font-weight:700;">Awaiting your vote</span>' : '')}</div>`;
       return `<div onclick="showMotion('${esc(m.id)}')" style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:9px;background:#fff;cursor:pointer;">
         <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
           <div style="min-width:220px;flex:1;">
@@ -605,14 +608,11 @@
           </div>
           ${motionStatusBadge(m.status)}
         </div>
-        ${tallyBar(t)}
-        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:12px;">
-          <span>${tallyLine(t)}</span>${mine}
-        </div>
+        ${body}
       </div>`;
     };
-    const open = motions.filter((m) => m.status === 'open');
-    const prior = motions.filter((m) => m.status !== 'open');
+    const open = motions.filter((m) => m.status === 'open' || m.status === 'proposed');
+    const prior = motions.filter((m) => m.status !== 'open' && m.status !== 'proposed');
     const label = (txt) => `<div class="tile-section-label" style="margin:6px 0 8px;">${txt}</div>`;
     const openBlock = `${label('Active — open for voting')}${open.length ? open.map(card).join('') : '<div class="empty" style="margin-bottom:14px;">Nothing open right now.</div>'}`;
     const priorBlock = prior.length ? `${label('Prior decisions')}${prior.map(card).join('')}` : '';
@@ -646,9 +646,38 @@
       ? `<div style="margin-top:10px;font-size:11.5px;color:#94a3b8;">Also on record (no longer on the active board): ${j.off_roster_votes.map((v) => `${esc(v.name)} — ${esc((VOTE_STYLE[v.vote] || {}).label || v.vote)}`).join(', ')}</div>`
       : '';
 
-    // Action area — only for a real board member or staff, and only while open.
+    // Action area.
     let actions = '';
-    if (m.status === 'open' && j.can_write) {
+    const rosterOpts = (j.roster_votes || []).map((r) => `<option value="${esc(r.email)}">${esc(r.name || r.email)}</option>`).join('');
+    if (m.status === 'proposed') {
+      // The parliamentary step: a director must MOVE it before it's a live vote.
+      if (!j.can_write) {
+        actions = `<div style="margin-top:12px;font-size:12px;color:#64748b;">Awaiting a board member to move this motion. Exit the preview to act.</div>`;
+      } else if (j.is_staff) {
+        actions = `<div style="background:#eef2ff;border:1px solid #dfe3fb;border-radius:10px;padding:13px;margin-top:14px;">
+          <div style="font-weight:700;color:#312e81;font-size:13px;margin-bottom:8px;">Record the motion${m.requested_mover_name ? ` <span style="font-weight:400;color:#64748b;">(asked ${esc(m.requested_mover_name)})</span>` : ''}</div>
+          <label style="font-size:11.5px;color:#475569;">Moved by</label>
+          <select id="mm-mover" style="width:100%;padding:7px;border:1px solid #cbd5e1;border-radius:7px;font-size:13px;margin:3px 0 8px;">${rosterOpts}</select>
+          <label style="font-size:11.5px;color:#475569;">Seconded by (optional)</label>
+          <select id="mm-second" style="width:100%;padding:7px;border:1px solid #cbd5e1;border-radius:7px;font-size:13px;margin:3px 0 10px;"><option value="">— none —</option>${rosterOpts}</select>
+          <div style="display:flex;gap:7px;flex-wrap:wrap;">
+            <button onclick="moveMotion('${esc(m.id)}',true)" style="${voteBtn('#4338ca')}">Record motion, open for voting</button>
+            <button onclick="withdrawMotion('${esc(m.id)}')" style="padding:8px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#64748b;font-size:12.5px;font-weight:600;cursor:pointer;">Withdraw</button>
+          </div>
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid #dfe3fb;">
+            <div style="font-size:11.5px;color:#475569;margin-bottom:4px;">Or ask a board member to move it:</div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap;"><select id="mm-ask" style="flex:1;min-width:150px;padding:7px;border:1px solid #cbd5e1;border-radius:7px;font-size:13px;">${rosterOpts}</select>
+              <button onclick="requestMover('${esc(m.id)}')" style="padding:7px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#0B1D34;font-size:12.5px;font-weight:600;cursor:pointer;">Ask to move</button></div>
+          </div>
+        </div>`;
+      } else {
+        actions = `<div style="background:#eef2ff;border:1px solid #dfe3fb;border-radius:10px;padding:13px;margin-top:14px;">
+          <div style="font-weight:700;color:#312e81;font-size:13px;margin-bottom:6px;">Move this motion</div>
+          ${m.requested_mover_name ? `<div style="font-size:12px;color:#475569;margin-bottom:8px;">The manager asked ${esc(m.requested_mover_name)} to move this.</div>` : ''}
+          <button onclick="moveMotion('${esc(m.id)}',false)" style="${voteBtn('#4338ca')}">I move this motion</button>
+        </div>`;
+      }
+    } else if (m.status === 'open' && j.can_write) {
       if (j.is_staff) {
         const opts = (j.roster_votes || []).map((r) => `<option value="${esc(r.email)}">${esc(r.name || r.email)}${r.vote ? ' (voted ' + esc((VOTE_STYLE[r.vote] || {}).label) + ')' : ''}</option>`).join('');
         actions = `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:13px;margin-top:14px;">
@@ -703,7 +732,7 @@
     return `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px;">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;">
         <div style="min-width:0;flex:1;"><h2 style="margin:0 0 3px;color:#0B1D34;font-size:19px;">${esc(m.title)}</h2>
-          <div style="font-size:12px;color:#64748b;">${esc(MOTION_TYPE_LABELS[m.motion_type] || m.motion_type)} · ${esc(THRESHOLD_LABELS[m.threshold] || m.threshold)}${m.created_by_name ? ' · moved by ' + esc(m.created_by_name) : ''}${m.voting_deadline ? ' · closes ' + esc(fmtDate(m.voting_deadline)) : ''}</div></div>
+          <div style="font-size:12px;color:#64748b;">${esc(MOTION_TYPE_LABELS[m.motion_type] || m.motion_type)} · ${esc(THRESHOLD_LABELS[m.threshold] || m.threshold)}${m.created_by_name ? ' · keyed up by ' + esc(m.created_by_name) : ''}${m.moved_by_name ? ' · moved by ' + esc(m.moved_by_name) + (m.seconded_by_name ? ', seconded by ' + esc(m.seconded_by_name) : '') : ''}${m.status === 'open' && m.voting_deadline ? ' · closes ' + esc(fmtDate(m.voting_deadline)) : ''}</div></div>
         ${motionStatusBadge(m.status)}
       </div>
       ${m.description ? `<div style="margin-top:10px;font-size:13.5px;color:#334155;line-height:1.5;white-space:pre-wrap;">${esc(m.description)}</div>` : ''}
@@ -741,6 +770,28 @@
     try { await fetchPost(`/api/board-motions/motion/${encodeURIComponent(motionId)}/withdraw`, {}); showMotion(motionId); }
     catch (e) { alert('Could not withdraw: ' + e.message); }
   }
+  async function moveMotion(motionId, isStaff) {
+    const body = {};
+    if (isStaff) {
+      const mv = document.getElementById('mm-mover');
+      if (!mv || !mv.value) { alert('Pick which board member moved it.'); return; }
+      body.mover_email = mv.value;
+      const sec = document.getElementById('mm-second');
+      if (sec && sec.value) body.seconded_by_email = sec.value;
+    }
+    try { await fetchPost(`/api/board-motions/motion/${encodeURIComponent(motionId)}/move`, body); showMotion(motionId); }
+    catch (e) { alert('Could not move the motion: ' + e.message); }
+  }
+  async function requestMover(motionId) {
+    const sel = document.getElementById('mm-ask');
+    if (!sel || !sel.value) { alert('Pick a board member to ask.'); return; }
+    try {
+      const j = await fetchPost(`/api/board-motions/motion/${encodeURIComponent(motionId)}/request-mover`, { requested_mover_email: sel.value });
+      const n = j.notified || {};
+      alert(n.sent ? 'Asked, an email was sent.' : 'Request recorded. (Email sending is currently off.)');
+      showMotion(motionId);
+    } catch (e) { alert('Could not send the request: ' + e.message); }
+  }
   async function remindMotion(motionId) {
     try {
       const j = await fetchPost(`/api/board-motions/motion/${encodeURIComponent(motionId)}/remind`, {});
@@ -776,6 +827,12 @@
         <input id="nm-title" placeholder="e.g. Approve the Versatex sidewalk estimate ($82,640)" style="${fld};margin-bottom:12px;">
         <label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">Details (optional)</label>
         <textarea id="nm-desc" rows="4" placeholder="Context the board should have when voting…" style="${fld};margin-bottom:12px;resize:vertical;"></textarea>
+        <label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">How to start</label>
+        <select id="nm-mode" style="${fld};margin-bottom:2px;">
+          <option value="propose" selected>Proposed, a board member moves it first</option>
+          <option value="open">Open for voting now</option>
+        </select>
+        <div style="font-size:11px;color:#94a3b8;margin-bottom:12px;">Proposed is the usual path: you key it up, a director moves it, then the board votes. Use “open now” to record a motion already moved in a meeting.</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
           <div style="flex:1;min-width:160px;"><label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">Type</label><select id="nm-type" style="${fld}">${typeOpts}</select></div>
           <div style="flex:1;min-width:160px;"><label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">To pass</label><select id="nm-threshold" style="${fld}">${threshOpts}</select></div>
@@ -799,6 +856,7 @@
       description: document.getElementById('nm-desc').value || '',
       motion_type: document.getElementById('nm-type').value,
       threshold: document.getElementById('nm-threshold').value,
+      mode: (document.getElementById('nm-mode') || {}).value || 'propose',
     };
     const dl = document.getElementById('nm-deadline').value;
     if (dl) body.voting_deadline = dl + 'T23:59:00';
@@ -833,25 +891,30 @@
   }
   function renderPortfolio(j) {
     const motions = j.motions || [];
-    const open = motions.filter((m) => m.status === 'open');
-    const attention = open.filter((m) => m.needs_attention);
-    const okOpen = open.filter((m) => !m.needs_attention);
-    const prior = motions.filter((m) => m.status !== 'open').slice(0, 40);
+    const active = motions.filter((m) => m.status === 'open' || m.status === 'proposed');
+    const attention = active.filter((m) => m.needs_attention);
+    const okOpen = active.filter((m) => !m.needs_attention);
+    const prior = motions.filter((m) => m.status !== 'open' && m.status !== 'proposed').slice(0, 40);
     const header = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px;flex-wrap:wrap;">
       <h2 style="margin:0;color:#0B1D34;font-size:17px;">Board motions, all communities</h2>
-      <span style="font-size:12px;color:#64748b;">${open.length} open across ${j.communities} communit${j.communities === 1 ? 'y' : 'ies'}${attention.length ? ` · <b style="color:#b42318;">${attention.length} need attention</b>` : ''}</span></div>`;
+      <span style="font-size:12px;color:#64748b;">${active.length} active across ${j.communities} communit${j.communities === 1 ? 'y' : 'ies'}${attention.length ? ` · <b style="color:#b42318;">${attention.length} need attention</b>` : ''}</span></div>`;
     if (!motions.length) return `${header}<div class="empty">No motions on record yet.</div>`;
     const row = (m) => {
       const t = m.tally || {};
-      const voted = `${t.cast || 0}/${t.seats != null ? t.seats : '?'} voted`;
-      const flags = [];
-      if (m.status === 'open' && t.quorum_met === false) flags.push('<span style="color:#b45309;font-weight:700;">no quorum yet</span>');
-      if (m.past_deadline) flags.push('<span style="color:#b42318;font-weight:700;">past deadline</span>');
+      let detail;
+      if (m.status === 'proposed') {
+        detail = `<span style="color:#4338ca;font-weight:600;">Awaiting a board member to move it${m.requested_mover_name ? ' · asked ' + esc(m.requested_mover_name) : ''}</span>`;
+      } else {
+        const flags = [];
+        if (m.status === 'open' && t.quorum_met === false) flags.push('<span style="color:#b45309;font-weight:700;">no quorum yet</span>');
+        if (m.past_deadline) flags.push('<span style="color:#b42318;font-weight:700;">past deadline</span>');
+        detail = `${t.cast || 0}/${t.seats != null ? t.seats : '?'} voted · ${tallyLine(t)}${flags.length ? ' · ' + flags.join(' · ') : ''}`;
+      }
       return `<div onclick="openPortfolioMotion('${esc(m.id)}','${esc(m.community_id)}')" style="border:1px solid #e2e8f0;border-radius:10px;padding:11px 13px;margin-bottom:8px;background:#fff;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;">
         <div style="min-width:220px;flex:1;">
           <div style="font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.3px;">${esc(m.community_name)}</div>
           <div style="font-weight:700;color:#0B1D34;font-size:14px;">${esc(m.title)}</div>
-          <div style="font-size:11.5px;color:#64748b;">${voted} · ${tallyLine(t)}${flags.length ? ' · ' + flags.join(' · ') : ''}</div>
+          <div style="font-size:11.5px;color:#64748b;">${detail}</div>
         </div>
         ${motionStatusBadge(m.status)}
       </div>`;

@@ -527,7 +527,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/board-motions\/portfolio$/,                   // cross-community roll-up
   /^\/api\/board-motions\/community\/[^/]+\/motions$/,    // list + create motions
   /^\/api\/board-motions\/motion\/[^/]+$/,               // motion detail
-  /^\/api\/board-motions\/motion\/[^/]+\/(vote|close|withdraw|remind)$/, // cast vote / finalize / pull / nudge non-voters
+  /^\/api\/board-motions\/motion\/[^/]+\/(vote|close|withdraw|remind|move|request-mover)$/, // vote / finalize / pull / nudge / move / ask-to-move
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   // Twilio voice webhooks — same pattern as Stripe: outside-service webhooks,
   // never carry a staff cookie. The voice router handles them. Long-term,
