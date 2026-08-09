@@ -252,6 +252,7 @@ function cardHtml(p){
       '</div>'+
     '</div>'+
     '<div class="rowbtns">'+
+      ((p.next_action_effective==='board_vote'||p.stage==='board_deciding')?'<button class="btn gold sm" onclick="putToVote(\''+p.id+'\')" title="Create a board motion linked to this project. If it passes, the project is approved automatically.">&#128499; Put to a board vote</button>':'')+
       (p.stage!=='closed'&&p.stage!=='cancelled'?'<button class="btn ghost sm" onclick="advance(\''+p.id+'\')">Advance &rarr;</button>':'')+
       '<button class="btn ghost sm" onclick="openEdit(\''+p.id+'\')">Edit</button>'+
     '</div></div>'+
@@ -264,6 +265,50 @@ function cardHtml(p){
 async function advance(id){
   if(!confirm('Advance this project to the next stage?')) return;
   try{ const r=await af(API+'/'+id+'/advance',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); if(!r.ok){const j=await r.json();alert(j.detail||j.error||'Failed');return;} reload(); }catch(_){ alert('Failed to advance.'); }
+}
+
+// Initiate a board vote FROM the project that needs it — pre-filled + linked, so
+// a passing vote authorizes this exact project (Ed 2026-08-09).
+async function putToVote(id){
+  let p;
+  try{ const r=await af(API+'/'+id); const j=await r.json(); if(!r.ok) throw 0; p=j.project||j; }catch(_){ alert('Could not load the project.'); return; }
+  if(!p||!p.community_id){ alert('This project has no community set.'); return; }
+  const cents=p.approved_cost_cents||p.estimated_cost_cents;
+  const costStr=cents?(' ($'+Math.round(cents/100).toLocaleString('en-US')+')'):'';
+  const defTitle=('Approve: '+(p.title||'project')+costStr).slice(0,200);
+  const ov=document.createElement('div'); ov.className='modal'; ov.style.display='flex';
+  const fld='width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-size:13.5px;';
+  ov.innerHTML='<div style="max-width:520px;width:100%;background:#fff;border-radius:12px;padding:22px;">'
+    +'<h2 style="margin:0 0 12px;color:var(--navy);font-size:18px;">Put to a board vote</h2>'
+    +'<label style="font-size:12px;font-weight:600;color:#475569;">Motion</label>'
+    +'<input id="pv_title" style="'+fld+'margin:4px 0 12px;" value="'+esc(defTitle).replace(/"/g,'&quot;')+'">'
+    +'<div style="display:flex;gap:12px;flex-wrap:wrap;">'
+    +'<div style="flex:1;min-width:160px;"><label style="font-size:12px;font-weight:600;color:#475569;">To pass</label>'
+    +'<select id="pv_thr" style="'+fld+'margin:4px 0 12px;"><option value="simple_majority">Simple majority</option><option value="two_thirds">Two-thirds</option><option value="unanimous">Unanimous</option></select></div>'
+    +'<div style="flex:1;min-width:160px;"><label style="font-size:12px;font-weight:600;color:#475569;">How to start</label>'
+    +'<select id="pv_mode" style="'+fld+'margin:4px 0 12px;"><option value="propose">Proposed, a director moves it</option><option value="open">Open for voting now</option></select></div></div>'
+    +'<div style="font-size:11px;color:#94a3b8;margin-bottom:14px;">Links the motion to &ldquo;'+esc(p.title||'this project')+'.&rdquo; If it passes, the project is approved automatically.</div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;"><button class="btn ghost" id="pv_cancel">Cancel</button><button class="btn gold" id="pv_go">Create board vote</button></div>'
+    +'</div>';
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  ov.addEventListener('click',e=>{ if(e.target===ov) close(); });
+  ov.querySelector('#pv_cancel').onclick=close;
+  ov.querySelector('#pv_go').onclick=async()=>{
+    const title=(document.getElementById('pv_title').value||'').trim();
+    if(!title){ alert('Give the motion a title.'); return; }
+    const mode=document.getElementById('pv_mode').value;
+    const body={ title, motion_type:'project', threshold:document.getElementById('pv_thr').value, mode, related_project_id:p.id };
+    try{
+      const r=await af('/api/board-motions/community/'+encodeURIComponent(p.community_id)+'/motions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const j=await r.json();
+      if(!r.ok||!j.ok){ alert((j&&(j.message||j.error))||'Could not create the board vote.'); return; }
+      close();
+      const ref=(j.motion&&j.motion.ref_code)?(' ['+j.motion.ref_code+']'):'';
+      alert('Board vote created'+ref+'.\n'+(mode==='open'?'It is open — ballots go to the board.':'It is ready for a director to move it, then voting opens.'));
+      reload();
+    }catch(_){ alert('Could not create the board vote.'); }
+  };
 }
 
 // ---- New / edit ----
