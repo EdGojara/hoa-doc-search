@@ -25,6 +25,7 @@
 // =============================================================================
 
 const express = require('express');
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { requireBoardViewer, canSeeCommunity, scopeCommunityIds, boardCommunitiesForEmail } = require('../lib/portal/board_access');
 const { enqueueMotionNotifications } = require('../lib/board/motion_notify');
@@ -38,6 +39,14 @@ const router = express.Router();
 const MOTION_TYPES = ['general', 'project', 'vendor', 'budget', 'arc', 'policy', 'contract', 'other'];
 const THRESHOLDS = ['simple_majority', 'two_thirds', 'unanimous'];
 const VOTES = ['for', 'against', 'abstain'];
+
+// Short human reference stamped into the vote email subject "[WAT-3F9A]" so a
+// reply matches the exact motion deterministically. Abbrev from the community
+// name + 4 random hex.
+function makeRefCode(communityName) {
+  const abbr = String(communityName || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3) || 'BRD';
+  return `${abbr}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+}
 
 // The actor for a WRITE. Returns null when the caller may only read (a staff
 // "view as" preview). See the authorization note above.
@@ -302,6 +311,11 @@ router.post('/community/:id/motions', express.json({ limit: '32kb' }), async (re
     // it stood when the motion opened, not a roster that shifts mid-vote.
     const roster = await activeRoster(communityId);
 
+    // Community name → the ref-code abbreviation stamped in vote-email subjects.
+    let communityName = null;
+    try { const { data } = await supabase.from('communities').select('name').eq('id', communityId).maybeSingle(); communityName = data?.name || null; } catch (_) {}
+    const ref_code = makeRefCode(communityName);
+
     let voting_deadline = null;
     if (b.voting_deadline) {
       const d = new Date(b.voting_deadline);
@@ -347,6 +361,7 @@ router.post('/community/:id/motions', express.json({ limit: '32kb' }), async (re
       created_by_name: actor.name || actor.email,
       requested_mover_email,
       requested_mover_name,
+      ref_code,
     };
     const { data, error } = await supabase.from('board_motions').insert(insert).select('*').single();
     if (error) throw error;
