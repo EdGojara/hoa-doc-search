@@ -914,19 +914,30 @@
   function renderOverview(s) {
     // Modules that aren't yet writing to the substrate get a "coming soon"
     // label instead of a "0" so the surface reads as in-progress not broken.
-    const inProgress = '<span style="color:var(--ink-muted); font-style:italic; font-size:12px;">under construction · module connecting soon</span>';
+    // Honest states, never "coming soon": these fields ARE wired (v_property_summary).
+    // A clean property legitimately reads $0 / none — that's good standing, not broken.
+    const muted = (t) => `<span style="color:var(--ink-muted); font-style:italic; font-size:12px;">${t}</span>`;
+    const fmtMoney = (v) => { if (v == null || v === '') return null; const n = Number(v); if (!isFinite(n)) return null; return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+    const balDisp = (() => {
+      const m = fmtMoney(s.current_balance);
+      if (m == null) return muted('no balance on file');
+      const n = Number(s.current_balance);
+      if (n > 0) return `<strong style="color:#b45309;">Owes ${m}</strong>`;
+      if (n < 0) return `<span style="color:#166534;">Credit ${fmtMoney(-n)}</span>`;
+      return `<span style="color:#166534;">Current</span>`;
+    })();
     return `
       <div class="drawer-section">
         <div class="drawer-section-title">Snapshot</div>
         <dl class="kv">
           <dt>Residency</dt><dd>${esc(s.residency_type ? s.residency_type.replace(/_/g, ' ') : '— unknown —')}${s.lease_end_date ? ` · lease ends ${esc(fmtDate(s.lease_end_date))}` : ''}</dd>
           <dt>Owner since</dt><dd>${esc(fmtDate(s.owned_since))}</dd>
-          <dt>Account balance</dt><dd>${inProgress}</dd>
-          <dt>Open violations</dt><dd>${s.open_violations > 0 ? `${s.open_violations}${s.worst_open_stage ? ' · ' + esc(stageLabel(s.worst_open_stage)) : ''}` : inProgress}</dd>
-          <dt>Lifetime violations</dt><dd>${s.lifetime_violations > 0 ? `${s.lifetime_violations} · ${s.violations_last_12mo || 0} in last 12mo` : inProgress}</dd>
-          <dt>ARC decisions</dt><dd>${s.arc_decisions_count > 0 ? `${s.arc_decisions_count} · ${s.arc_approved_count || 0} approved · ${s.arc_denied_count || 0} denied` : '<span style="color:var(--ink-muted); font-style:italic; font-size:12px;">none on file</span>'}</dd>
-          <dt>Substrate docs</dt><dd>${s.substrate_doc_count > 0 ? s.substrate_doc_count : '<span style="color:var(--ink-muted); font-style:italic; font-size:12px;">none linked yet</span>'}</dd>
-          <dt>Last inspected</dt><dd>${s.last_inspected_at ? esc(fmtDate(s.last_inspected_at)) : inProgress}</dd>
+          <dt>Account balance</dt><dd>${balDisp}</dd>
+          <dt>Open violations</dt><dd>${s.open_violations > 0 ? `${s.open_violations}${s.worst_open_stage ? ' · ' + esc(stageLabel(s.worst_open_stage)) : ''}` : muted('none open')}</dd>
+          <dt>Lifetime violations</dt><dd>${s.lifetime_violations > 0 ? `${s.lifetime_violations} · ${s.violations_last_12mo || 0} in last 12mo` : muted('none on record')}</dd>
+          <dt>ARC decisions</dt><dd>${s.arc_decisions_count > 0 ? `${s.arc_decisions_count} · ${s.arc_approved_count || 0} approved · ${s.arc_denied_count || 0} denied` : muted('none on file')}</dd>
+          <dt>Substrate docs</dt><dd>${s.substrate_doc_count > 0 ? s.substrate_doc_count : muted('none linked yet')}</dd>
+          <dt>Last inspected</dt><dd>${s.last_inspected_at ? esc(fmtDate(s.last_inspected_at)) : muted('not yet inspected')}</dd>
         </dl>
       </div>`;
   }
