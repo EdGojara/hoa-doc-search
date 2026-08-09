@@ -93,6 +93,81 @@ function evaluateMotion(motion, votes) {
   };
 }
 
+// Stages a project can be in BEFORE the board has approved it — the only ones a
+// vote should advance or reflect. Never touch a project already approved/further.
+const PRE_APPROVAL_STAGES = ['requested', 'bid_requested', 'bid_received', 'board_deciding', 'on_hold'];
+
+// When a motion is LINKED to a project and opened for a vote, reflect that on
+// the project dashboard: it's now before the board. Best-effort; never throws.
+async function markProjectOutForVote(motion) {
+  try {
+    if (!motion || !motion.related_project_id) return;
+    const { data: proj } = await supabase.from('vendor_projects')
+      .select('id, community_id, stage').eq('id', motion.related_project_id).maybeSingle();
+    if (!proj || !PRE_APPROVAL_STAGES.includes(proj.stage) || proj.stage === 'board_deciding') return;
+    await supabase.from('vendor_projects').update({
+      stage: 'board_deciding', stage_since: new Date().toISOString(),
+      next_action: 'board_vote', next_action_owner: 'board',
+      next_action_note: `Out for board vote: "${motion.title}".`,
+    }).eq('id', proj.id);
+    await supabase.from('vendor_project_events').insert({
+      project_id: proj.id, community_id: proj.community_id, event_type: 'stage_change',
+      from_stage: proj.stage, to_stage: 'board_deciding',
+      note: `Sent to the board for a vote via motion "${motion.title}".`, by_user: 'board vote',
+    });
+  } catch (e) { console.warn('[board_motions] markProjectOutForVote failed (non-fatal):', e.message); }
+}
+
+// When a linked motion is DECIDED, drive the project: a pass authorizes it
+// (advance to 'approved', carry the estimate to approved_cost, next step =
+// sign the contract); a fail is logged, stage left for a human. This is where
+// a board vote stops being a record and starts moving operations. Never throws.
+async function applyMotionEffect(motion, tally) {
+  try {
+    if (!motion || !motion.related_project_id) return null;
+    if (motion.status !== 'passed' && motion.status !== 'failed') return null;
+    const { data: proj } = await supabase.from('vendor_projects')
+      .select('id, community_id, stage, estimated_cost_cents, approved_cost_cents')
+      .eq('id', motion.related_project_id).maybeSingle();
+    if (!proj) return null;
+    const summary = `${tally.for} for, ${tally.against} against, ${tally.abstain} abstain`;
+
+    if (motion.status === 'passed') {
+      if (!PRE_APPROVAL_STAGES.includes(proj.stage)) {
+        // Already approved or beyond — record the board's decision, don't move it back.
+        await supabase.from('vendor_project_events').insert({
+          project_id: proj.id, community_id: proj.community_id, event_type: 'note',
+          note: `Board passed motion "${motion.title}" (${summary}); project already at "${proj.stage}".`, by_user: 'board vote',
+        });
+        return { advanced: false, project_id: proj.id };
+      }
+      const patch = {
+        stage: 'approved', stage_since: new Date().toISOString(),
+        next_action: 'sign_contract', next_action_owner: 'staff',
+        next_action_note: `Board approved via vote (${summary}). Proceed to contract.`,
+        status_note: `Board-approved via motion: "${motion.title}".`,
+      };
+      if (proj.approved_cost_cents == null && proj.estimated_cost_cents != null) patch.approved_cost_cents = proj.estimated_cost_cents;
+      await supabase.from('vendor_projects').update(patch).eq('id', proj.id);
+      await supabase.from('vendor_project_events').insert({
+        project_id: proj.id, community_id: proj.community_id, event_type: 'stage_change',
+        from_stage: proj.stage, to_stage: 'approved',
+        note: `Board approved via motion "${motion.title}" (${summary}).`, by_user: 'board vote',
+      });
+      return { advanced: true, project_id: proj.id, to_stage: 'approved' };
+    }
+    // failed — log, leave the stage for a manager to decide next steps.
+    await supabase.from('vendor_project_events').insert({
+      project_id: proj.id, community_id: proj.community_id, event_type: 'note',
+      note: `Board did NOT approve motion "${motion.title}" (${summary}).`, by_user: 'board vote',
+    });
+    return { advanced: false, declined: true, project_id: proj.id };
+  } catch (e) {
+    console.warn('[board_motions] applyMotionEffect failed (non-fatal):', e.message);
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/board-motions/community/:id/motions
 //   List motions for a community (open first), each with its tally + result.
@@ -231,6 +306,15 @@ router.post('/community/:id/motions', express.json({ limit: '32kb' }), async (re
       if (!Number.isNaN(d.getTime())) voting_deadline = d.toISOString();
     }
 
+    // A linked project must belong to THIS community (never let a motion point
+    // at another community's project). Silently drop a mismatched id.
+    let related_project_id = null;
+    if (b.related_project_id) {
+      const { data: proj } = await supabase.from('vendor_projects')
+        .select('id, community_id').eq('id', b.related_project_id).maybeSingle();
+      if (proj && proj.community_id === communityId) related_project_id = proj.id;
+    }
+
     const insert = {
       management_company_id: BEDROCK_MGMT_CO_ID,
       community_id: communityId,
@@ -238,7 +322,7 @@ router.post('/community/:id/motions', express.json({ limit: '32kb' }), async (re
       description: b.description ? String(b.description) : null,
       motion_type,
       threshold,
-      related_project_id: b.related_project_id || null,
+      related_project_id,
       status: 'open',
       seats_at_open: roster.length,
       voting_deadline,
@@ -252,6 +336,8 @@ router.post('/community/:id/motions', express.json({ limit: '32kb' }), async (re
     // Best-effort + kill-switched — never blocks the create.
     const notifyList = roster.filter((m) => m.email !== String(actor.email || '').trim().toLowerCase());
     const notif = await enqueueMotionNotifications(data, 'opened', notifyList);
+    // If linked to a project, reflect "out for board vote" on the project.
+    if (data.related_project_id) await markProjectOutForVote(data);
     res.json({ ok: true, motion: { ...data, tally: evaluateMotion(data, []), my_vote: null }, notified: notif });
   } catch (err) {
     console.error('[board_motions] create failed:', err.message);
@@ -321,10 +407,19 @@ router.get('/motion/:motionId', async (req, res) => {
       .filter((v) => !rosterEmails.has(String(v.voter_email).trim().toLowerCase()))
       .map((v) => ({ name: v.voter_name || v.voter_email, email: v.voter_email, vote: v.vote, comment: v.comment, voted_at: v.voted_at, off_roster: true }));
 
+    // Linked project (so the UI can say "approving this authorizes X").
+    let related_project = null;
+    if (motion.related_project_id) {
+      const { data: p } = await supabase.from('vendor_projects')
+        .select('id, title, stage').eq('id', motion.related_project_id).maybeSingle();
+      if (p) related_project = p;
+    }
+
     const actor = writeActor(viewer);
     const myEmail = viewer.email ? String(viewer.email).trim().toLowerCase() : null;
     res.json({
       motion,
+      related_project,
       tally: evaluateMotion(motion, votes || []),
       roster_votes,
       off_roster_votes,
@@ -406,7 +501,7 @@ router.post('/motion/:motionId/vote', express.json({ limit: '16kb' }), async (re
         .update({ status: result, closed_at: new Date().toISOString(), closed_by: 'auto (all voted)', outcome_note: 'Auto-finalized: every active board member voted.' })
         .eq('id', motion.id).eq('status', 'open').select('*').maybeSingle();
       if (cerr) throw cerr;
-      if (u) { updated = u; await enqueueMotionNotifications(u, 'result', roster, { tally }); }
+      if (u) { updated = u; await enqueueMotionNotifications(u, 'result', roster, { tally }); await applyMotionEffect(u, tally); }
     }
     res.json({ ok: true, motion: updated, tally, your_vote: actor.is_staff ? null : vote });
   } catch (err) {
@@ -443,7 +538,8 @@ router.post('/motion/:motionId/close', express.json({ limit: '8kb' }), async (re
     if (error) throw error;
     const roster = await activeRoster(motion.community_id);
     const notif = await enqueueMotionNotifications(data, 'result', roster, { tally });
-    res.json({ ok: true, motion: data, tally, notified: notif });
+    const effect = await applyMotionEffect(data, tally);
+    res.json({ ok: true, motion: data, tally, notified: notif, project_effect: effect });
   } catch (err) {
     console.error('[board_motions] close failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

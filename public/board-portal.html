@@ -691,6 +691,10 @@
       if (ns.reminders) parts.push(`${ns.reminders} reminder${ns.reminders === 1 ? '' : 's'}`);
       if (parts.length) notifyLine = `<div style="margin-top:8px;font-size:11.5px;color:#94a3b8;">🔔 ${parts.join(' · ')}</div>`;
     }
+    // Linked project — a passing vote authorizes it automatically.
+    const rp = j.related_project;
+    const linkedProject = rp ? `<div style="margin-top:10px;padding:9px 12px;background:#f0f6ff;border:1px solid #d5e4fb;border-radius:8px;font-size:12.5px;color:#1a3050;">🔧 Linked project: <b>${esc(rp.title)}</b> <span style="color:#64748b;">(${esc((rp.stage || '').replace(/_/g, ' '))})</span>${m.status === 'open' ? ' · a passing vote approves it and moves it to “sign contract.”' : (m.status === 'passed' ? ' · <b style="color:#1a7a3c;">approved by this vote.</b>' : '')}</div>` : '';
+
     // Nudge non-voters (chair/manager or any board member) while open.
     const remindBtn = (m.status === 'open' && j.can_write)
       ? `<button onclick="remindMotion('${esc(m.id)}')" style="padding:7px 13px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#0B1D34;font-size:12.5px;font-weight:600;cursor:pointer;margin-top:12px;">🔔 Remind members who haven't voted</button>`
@@ -703,6 +707,7 @@
         ${motionStatusBadge(m.status)}
       </div>
       ${m.description ? `<div style="margin-top:10px;font-size:13.5px;color:#334155;line-height:1.5;white-space:pre-wrap;">${esc(m.description)}</div>` : ''}
+      ${linkedProject}
       <div style="margin-top:14px;">${tallyBar(t)}<div style="font-size:12.5px;">${tallyLine(t)}</div>${outcome}${notifyLine}</div>
       <div style="margin-top:16px;"><div style="font-weight:700;color:#0B1D34;font-size:13px;margin-bottom:2px;">How the board voted</div>${rosterRows || '<div style="color:#64748b;font-size:12.5px;padding:6px 0;">No active board members on record.</div>'}${offRoster}</div>
       ${remindBtn}
@@ -756,6 +761,13 @@
       .sort((a, b) => a.label.localeCompare(b.label))
       .map((o) => `<option value="${o.k}"${o.k === 'general' ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
     const threshOpts = Object.keys(THRESHOLD_LABELS).map((k) => `<option value="${k}">${esc(THRESHOLD_LABELS[k])}</option>`).join('');
+    // Projects awaiting board approval, alphabetical — link one so a passing
+    // vote authorizes it automatically.
+    const PRE = ['requested', 'bid_requested', 'bid_received', 'board_deciding', 'on_hold'];
+    const projs = (((_lastProjects && _lastProjects.projects) || []))
+      .filter((p) => PRE.includes(p.stage))
+      .slice().sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+    const projectOpts = projs.map((p) => `<option value="${esc(p.id)}">${esc(p.title)}</option>`).join('');
     const fld = 'width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:7px;font-size:13.5px;box-sizing:border-box;';
     wrap.innerHTML = `<div style="margin-bottom:14px;"><a href="javascript:showMotions()" style="color:#0B1D34;font-size:13px;font-weight:600;text-decoration:none;">← All motions</a></div>
       <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px;max-width:640px;">
@@ -768,6 +780,9 @@
           <div style="flex:1;min-width:160px;"><label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">Type</label><select id="nm-type" style="${fld}">${typeOpts}</select></div>
           <div style="flex:1;min-width:160px;"><label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">To pass</label><select id="nm-threshold" style="${fld}">${threshOpts}</select></div>
         </div>
+        ${projs.length ? `<label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">Link to a project (optional)</label>
+        <select id="nm-project" style="${fld};margin-bottom:4px;"><option value="">— none —</option>${projectOpts}</select>
+        <div style="font-size:11px;color:#94a3b8;margin-bottom:12px;">If the vote passes, the linked project is approved automatically and moves to “sign contract.”</div>` : ''}
         <label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">Voting deadline (optional)</label>
         <input id="nm-deadline" type="date" style="${fld};margin-bottom:16px;max-width:220px;">
         <div style="display:flex;gap:8px;">
@@ -787,6 +802,8 @@
     };
     const dl = document.getElementById('nm-deadline').value;
     if (dl) body.voting_deadline = dl + 'T23:59:00';
+    const pjEl = document.getElementById('nm-project');
+    if (pjEl && pjEl.value) body.related_project_id = pjEl.value;
     try {
       const j = await fetchPost(`/api/board-motions/community/${encodeURIComponent(currentCommunityId)}/motions`, body);
       if (j.motion && j.motion.id) showMotion(j.motion.id); else showMotions();
