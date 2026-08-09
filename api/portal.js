@@ -1331,10 +1331,11 @@ router.get('/me', async (req, res) => {
       // preview misleading.
       // contacts has full_name + preferred_name only; no first_name column.
       let homeownerName = null;
+      let ownerEmails = [];
       try {
         const { data: ownerRows, error: ownerErr } = await supabase
           .from('property_ownerships')
-          .select('is_primary, contacts:contact_id (full_name, preferred_name)')
+          .select('is_primary, contacts:contact_id (full_name, preferred_name, primary_email)')
           .eq('property_id', pickedProp.id)
           .is('end_date', null)
           .limit(5);
@@ -1347,6 +1348,14 @@ router.get('/me', async (req, res) => {
         if (c) {
           homeownerName = c.preferred_name || c.full_name || null;
         }
+        // Collect ALL current owner emails so the board-lens mirror reflects
+        // whichever owner (e.g. a joint owner) actually holds a board seat.
+        ownerEmails = [...new Set(
+          (ownerRows || [])
+            .map((r) => r.contacts?.primary_email)
+            .filter(Boolean)
+            .map((e) => String(e).trim().toLowerCase())
+        )];
       } catch (e) {
         console.warn('[portal /me manager] owner lookup failed (non-fatal):', e.message);
       }
@@ -1355,6 +1364,7 @@ router.get('/me', async (req, res) => {
         synthetic_property: pickedProp,
         portfolio_wide: portfolioWide,
         homeowner_name: homeownerName,
+        owner_emails: ownerEmails,
         staff_email: user.email,
       };
     }
@@ -1562,18 +1572,34 @@ router.get('/me', async (req, res) => {
     // (api/contacts.js). Gating the switch on role would leave them with board
     // access but no visible way to reach it. Alexis Geissler is exactly this
     // case.
+    // WHOSE board membership does this view reflect?
+    //   - Manager view: the VIEWED HOMEOWNER's — a TRUE mirror, so staff can
+    //     tell whether that owner would see a board lens (and catch issues).
+    //     Show it iff an owner of the viewed property actually holds a seat;
+    //     mirroring a non-board homeowner correctly shows nothing.
+    //   - Staff/admin/manager on their OWN portal: broad (all their communities).
+    //   - Everyone else: their own email's active seats — the one authority.
     let boardCommunities = [];
-    if (['admin', 'staff', 'manager'].includes(user.role)) {
-      // Staff/admin/manager — broad access (their board view scope is
-      // determined inside the board portal endpoints, not here).
+    const mirrorEmails = req._managerView
+      ? (req._managerView.owner_emails || [])
+      : (['admin', 'staff', 'manager'].includes(user.role) ? null : [user.email]);
+
+    if (mirrorEmails === null) {
+      // Staff/admin/manager viewing their own portal — broad access (board view
+      // scope is determined inside the board portal endpoints, not here).
       boardCommunities = props.map(p => p.communities).filter(Boolean).map(c => ({
         id: c.id, name: c.name, slug: c.slug,
       }));
     } else {
-      // Any homeowner/renter/board_member session — the seat is the authority.
+      // Seat-based: the SAME active-seat signal the board portal uses to grant
+      // access, so the switch can never diverge from actual access.
       try {
         const { boardCommunitiesForEmail } = require('../lib/portal/board_access');
-        const seatIds = await boardCommunitiesForEmail(user.email); // Set<communityId>, is_active only
+        const seatIds = new Set();
+        for (const em of mirrorEmails) {
+          const s = await boardCommunitiesForEmail(em); // is_active seats only
+          s.forEach((id) => seatIds.add(id));
+        }
         if (seatIds.size) {
           // Enrich with name/slug. A board member need not own property in the
           // community they serve, so fall back to a direct communities lookup
