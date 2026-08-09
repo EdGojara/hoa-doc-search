@@ -87,7 +87,8 @@ router.post('/cast', express.json({ limit: '8kb' }), async (req, res) => {
       const first = String(member.name || '').split(' ')[0] || 'there';
       sendEmail({
         to: member.email,
-        bcc: process.env.BOARD_RECORDS_EMAIL || undefined,
+        replyTo: process.env.BOARD_VOTE_INBOX || 'vote@bedrocktx.com',
+        bcc: process.env.BOARD_RECORDS_EMAIL || process.env.BOARD_VOTE_INBOX || 'vote@bedrocktx.com',
         subject: `Vote recorded, ${label}: ${motion.title}`,
         html: `<div style="font-family:Inter,-apple-system,sans-serif;color:#1a2230;max-width:520px;">
           <p>Hi ${escapeHtml(first)},</p>
