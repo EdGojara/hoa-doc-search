@@ -725,10 +725,22 @@ router.post('/motion/:motionId/move', express.json({ limit: '8kb' }), async (req
       .update(patch).eq('id', motion.id).eq('status', 'proposed').select('*').single();
     if (error) throw error;
 
-    // Now open for voting → notify the board (except the mover).
+    // The mover is presumed in favor — auto-record their YES so they don't have
+    // to vote again (Ed 2026-08-09). Goes through the same recordMotionVote path
+    // (tally, auto-finalize if that completes the board).
+    let finalMotion = data, moverTally = null;
+    try {
+      const rv = await recordMotionVote({
+        motion: data, voterEmail: moverEmail, voterName: moverName, vote: 'for',
+        comment: 'Moved this motion.', source: recordedBy ? 'staff_recorded' : 'portal', recordedBy,
+      });
+      finalMotion = rv.motion; moverTally = rv.tally;
+    } catch (e) { console.warn('[board_motions] mover auto-vote failed:', e.message); }
+
+    // Now open for voting → notify the board (except the mover, who has voted).
     const notifyList = roster.filter((m) => m.email !== moverEmail);
-    const notif = await enqueueMotionNotifications(data, 'opened', notifyList);
-    res.json({ ok: true, motion: data, notified: notif });
+    const notif = await enqueueMotionNotifications(finalMotion, 'opened', notifyList);
+    res.json({ ok: true, motion: finalMotion, tally: moverTally, notified: notif });
   } catch (err) {
     console.error('[board_motions] move failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

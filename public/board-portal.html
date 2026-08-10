@@ -888,10 +888,10 @@
         <textarea id="nm-desc" rows="4" placeholder="Context the board should have when voting…" style="${fld};margin-bottom:12px;resize:vertical;"></textarea>
         <label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">How to start</label>
         <select id="nm-mode" style="${fld};margin-bottom:2px;">
-          <option value="propose" selected>Proposed, a board member moves it first</option>
-          <option value="open">Open for voting now</option>
+          <option value="propose" selected>Send to the board — a director moves it, then everyone votes</option>
+          <option value="open">Open for voting now (already moved in a meeting)</option>
         </select>
-        <div style="font-size:11px;color:#94a3b8;margin-bottom:12px;">Proposed is the usual path: you key it up, a director moves it, then the board votes. Use “open now” to record a motion already moved in a meeting.</div>
+        <div style="font-size:11px;color:#94a3b8;margin-bottom:12px;">You're starting this on behalf of the board, you don't cast a vote. “Send to the board” is the usual path: a director moves it (and is recorded as a Yes), then the rest of the board votes. Pick “Open for voting now” only when it was already moved in a meeting.</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
           <div style="flex:1;min-width:160px;"><label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">Type</label><select id="nm-type" style="${fld}">${typeOpts}</select></div>
           <div style="flex:1;min-width:160px;"><label style="display:block;font-size:12px;color:#475569;font-weight:600;margin-bottom:4px;">To pass</label><select id="nm-threshold" style="${fld}">${threshOpts}</select></div>

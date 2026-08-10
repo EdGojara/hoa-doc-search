@@ -286,8 +286,8 @@ async function putToVote(id){
     +'<div style="flex:1;min-width:160px;"><label style="font-size:12px;font-weight:600;color:#475569;">To pass</label>'
     +'<select id="pv_thr" style="'+fld+'margin:4px 0 12px;"><option value="simple_majority">Simple majority</option><option value="two_thirds">Two-thirds</option><option value="unanimous">Unanimous</option></select></div>'
     +'<div style="flex:1;min-width:160px;"><label style="font-size:12px;font-weight:600;color:#475569;">How to start</label>'
-    +'<select id="pv_mode" style="'+fld+'margin:4px 0 12px;"><option value="propose">Proposed, a director moves it</option><option value="open">Open for voting now</option></select></div></div>'
-    +'<div style="font-size:11px;color:#94a3b8;margin-bottom:14px;">Links the motion to &ldquo;'+esc(p.title||'this project')+'.&rdquo; If it passes, the project is approved automatically.</div>'
+    +'<select id="pv_mode" style="'+fld+'margin:4px 0 12px;"><option value="propose">Send to the board — a director moves it</option><option value="open">Open for voting now</option></select></div></div>'
+    +'<div style="font-size:11px;color:#94a3b8;margin-bottom:14px;">You start this on behalf of the board (you don\'t vote). A director moves it (recorded as a Yes), then the board votes. Links the motion to &ldquo;'+esc(p.title||'this project')+'&rdquo; — if it passes, the project is approved automatically.</div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;"><button class="btn ghost" id="pv_cancel">Cancel</button><button class="btn gold" id="pv_go">Create board vote</button></div>'
     +'</div>';
   document.body.appendChild(ov);
