@@ -508,14 +508,16 @@
     const wrap = document.getElementById('container');
     wrap.innerHTML = '<div class="loading">Loading…</div>';
     try {
-      const [summary, projects, motions] = await Promise.all([
+      const [summary, projects, motions, threads] = await Promise.all([
         fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/summary`),
         fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/projects`).catch(() => ({ projects: [], summary: {} })),
         // Motions may 404 until migration 352 is applied — degrade gracefully.
         fetchJSON(`/api/board-motions/community/${encodeURIComponent(currentCommunityId)}/motions`).catch(() => ({ motions: [], can_write: false })),
+        // Discussion may 404 until migration 358 is applied — degrade gracefully.
+        fetchJSON(`/api/board-threads/community/${encodeURIComponent(currentCommunityId)}/threads`).catch(() => ({ threads: [] })),
       ]);
       _lastSummary = summary; _lastProjects = projects; _lastMotions = motions;
-      wrap.innerHTML = renderDashboardCards(summary, projects, motions);
+      wrap.innerHTML = renderDashboardCards(summary, projects, motions, threads);
     } catch (e) {
       wrap.innerHTML = `<div class="err">Load failed: ${esc(e.message)}</div>`;
     }
@@ -675,6 +677,7 @@
     try {
       const j = await fetchJSON(`/api/board-motions/motion/${encodeURIComponent(id)}`);
       wrap.innerHTML = `<div style="margin-bottom:14px;"><a href="javascript:showMotions()" style="color:#0B1D34;font-size:13px;font-weight:600;text-decoration:none;">← All motions</a></div>${renderMotionDetail(j)}`;
+      loadMotionDiscussion(id);
     } catch (e) {
       wrap.innerHTML = `${backBar()}<div class="err">Load failed: ${esc(e.message)}</div>`;
     }
@@ -792,6 +795,7 @@
       <div style="margin-top:16px;"><div style="font-weight:700;color:#0B1D34;font-size:13px;margin-bottom:2px;">How the board voted</div>${rosterRows || '<div style="color:#64748b;font-size:12.5px;padding:6px 0;">No active board members on record.</div>'}${offRoster}</div>
       ${remindBtn}
       ${actions}
+      <div id="motion-discussion" style="margin-top:18px;border-top:1px solid #e2e8f0;padding-top:14px;"></div>
     </div>`;
   }
   function voteBtn(color, active) {
@@ -1078,6 +1082,75 @@
     applyDemoBanner(communityId);
     showMotion(id);
   }
+  // ===== Board Discussion ===================================================
+  let _threadReload = null;
+  function firstName(name, email) {
+    const n = String(name || '').trim();
+    if (n) return n.split(/\s+/)[0];
+    return (String(email || '').split('@')[0]) || 'Member';
+  }
+  function fmtDateTime(d) {
+    if (!d) return '';
+    try { const dt = new Date(d); if (Number.isNaN(dt.getTime())) return String(d);
+      return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' + dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    } catch (_) { return String(d); }
+  }
+  function renderThreadMessages(messages, myEmail) {
+    if (!messages || !messages.length) return '<div style="color:#94a3b8;font-size:12.5px;padding:8px 0;">No messages yet. Start the conversation.</div>';
+    const me = String(myEmail || '').toLowerCase();
+    return messages.map((m) => {
+      const mine = me && String(m.author_email).toLowerCase() === me;
+      const who = firstName(m.author_name, m.author_email);
+      const tag = m.author_role === 'manager' ? ' · Bedrock' : (m.author_role === 'admin' ? ' · admin' : '');
+      return `<div style="display:flex;flex-direction:column;align-items:${mine ? 'flex-end' : 'flex-start'};margin-bottom:9px;">
+        <div style="font-size:10.5px;color:#94a3b8;margin:0 4px 2px;">${esc(who)}${tag} · ${esc(fmtDateTime(m.created_at))}</div>
+        <div style="max-width:82%;background:${mine ? '#0B1D34' : '#f1f5f9'};color:${mine ? '#fff' : '#1a2230'};padding:8px 12px;border-radius:13px;font-size:13.5px;line-height:1.45;white-space:pre-wrap;">${esc(m.body)}</div>
+      </div>`;
+    }).join('');
+  }
+  function renderComposer(threadId, canPost) {
+    if (!canPost) return '<div style="margin-top:8px;font-size:11.5px;color:#94a3b8;">Read-only preview — exit to post.</div>';
+    return `<div style="display:flex;gap:8px;margin-top:10px;">
+      <textarea id="bd-input" rows="2" placeholder="Write a message…" style="flex:1;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13.5px;font-family:inherit;resize:vertical;box-sizing:border-box;"></textarea>
+      <button onclick="postBoardMessage('${esc(threadId)}')" style="padding:8px 16px;border-radius:8px;border:1px solid #0B1D34;background:#0B1D34;color:#fff;font-size:13px;font-weight:600;cursor:pointer;align-self:flex-end;">Send</button>
+    </div>`;
+  }
+  async function postBoardMessage(threadId) {
+    const el = document.getElementById('bd-input');
+    const body = el ? el.value.trim() : '';
+    if (!body) return;
+    try {
+      await fetchPost(`/api/board-threads/thread/${encodeURIComponent(threadId)}/messages`, { body });
+      if (_threadReload) _threadReload();
+    } catch (e) { alert('Could not send: ' + e.message); }
+  }
+  // Motion discussion — embedded at the bottom of a motion's detail.
+  async function loadMotionDiscussion(motionId) {
+    const box = document.getElementById('motion-discussion');
+    if (!box) return;
+    box.innerHTML = '<div style="color:#94a3b8;font-size:12px;padding:6px 0;">Loading discussion…</div>';
+    try {
+      const j = await fetchJSON(`/api/board-threads/motion/${encodeURIComponent(motionId)}`);
+      _threadReload = () => loadMotionDiscussion(motionId);
+      box.innerHTML = `<div style="font-weight:700;color:#0B1D34;font-size:13px;margin-bottom:8px;">💬 Discussion</div>
+        <div style="max-height:340px;overflow:auto;padding-right:4px;">${renderThreadMessages(j.messages, j.my_email)}</div>
+        ${renderComposer(j.thread.id, j.can_post)}`;
+    } catch (e) { box.innerHTML = `<div style="color:#94a3b8;font-size:12px;">Discussion unavailable: ${esc(e.message)}${/not|404/i.test(e.message) ? ' (apply migration 358)' : ''}</div>`; }
+  }
+  // General board thread — full view.
+  async function showGeneralThread() {
+    const wrap = document.getElementById('container');
+    wrap.innerHTML = '<div class="loading">Loading board discussion…</div>';
+    try {
+      const j = await fetchJSON(`/api/board-threads/community/${encodeURIComponent(currentCommunityId)}/general`);
+      _threadReload = () => showGeneralThread();
+      wrap.innerHTML = `${backBar()}<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px;">
+        <h2 style="margin:0 0 4px;color:#0B1D34;font-size:17px;">💬 Board discussion</h2>
+        <div style="font-size:12px;color:#64748b;margin-bottom:12px;">A secure place for the board and manager to talk. History is kept — no email or texting needed.</div>
+        <div style="max-height:52vh;overflow:auto;padding-right:4px;">${renderThreadMessages(j.messages, j.my_email)}</div>
+        ${renderComposer(j.thread.id, j.can_post)}</div>`;
+    } catch (e) { wrap.innerHTML = `${backBar()}<div class="err">Load failed: ${esc(e.message)}${/not|404/i.test(e.message) ? '<br><span style="font-size:12px;color:#64748b;">Apply migration 358 and Manual Deploy.</span>' : ''}</div>`; }
+  }
   // ===== end Motions ========================================================
 
   function renderSummary(s) {
@@ -1247,7 +1320,7 @@
   // Each tile is an entry point: icon + title + short description + one
   // headline metric. Click → detail. Boards see the curated landing, drill
   // in for the data.
-  function renderDashboardCards(s, projects, motions) {
+  function renderDashboardCards(s, projects, motions, threads) {
     const fmtMoney = (cents) => {
       if (cents == null) return '—';
       const dollars = Number(cents) / 100;
@@ -1392,6 +1465,23 @@
         <div class="tile-cta">${awaitingMe > 0 ? 'Cast your vote →' : 'View motions →'}</div>
       </a>`;
 
+    // Board Discussion — secure in-platform messaging, unread from the threads list.
+    const thr = (threads && threads.threads) || [];
+    const discUnread = thr.reduce((a, t) => a + (t.unread || 0), 0);
+    const discussionTile = `
+      <a class="board-tile" href="javascript:showGeneralThread()">
+        <div class="tile-icon">💬</div>
+        <div class="tile-title">Board Discussion</div>
+        <div class="tile-desc">Talk with the board and manager in a secure place. History is kept, no email or texting.</div>
+        <div class="tile-metric">
+          <div>
+            <div class="metric-value ${discUnread > 0 ? 'warn' : ''}">${discUnread || 0}</div>
+            <div class="metric-label">${discUnread > 0 ? 'unread' : 'messages'}</div>
+          </div>
+        </div>
+        <div class="tile-cta">${discUnread > 0 ? 'Catch up →' : 'Open discussion →'}</div>
+      </a>`;
+
     return `
       <div class="tile-section-label">Financial health</div>
       <div class="board-tile-grid">
@@ -1403,6 +1493,7 @@
       <div class="tile-section-label">Governance</div>
       <div class="board-tile-grid">
         ${motionsTile}
+        ${discussionTile}
         ${projectsTile}
       </div>
 
