@@ -1486,7 +1486,7 @@
 
     const rh = s.reserve_health;
     const rhTile = !rh ? '' : `
-      <a class="board-tile" href="/reserve-map.html${slug ? '?community=' + encodeURIComponent(slug) : ''}" target="_blank" rel="noopener">
+      <a class="board-tile" href="/reserve-map.html?id=${encodeURIComponent(currentCommunityId || '')}" target="_blank" rel="noopener">
         <div class="tile-icon">🏦</div>
         <div class="tile-title">Reserve Study</div>
         <div class="tile-desc">Components, urgency, projected vs. actual spending across the community.</div>

@@ -77,7 +77,7 @@ router.get('/community/:id/summary', async (req, res) => {
 
     const { data: community, error: cErr } = await supabase
       .from('communities')
-      .select('id, name, legal_name')
+      .select('id, name, legal_name, slug')
       .eq('id', communityId)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
