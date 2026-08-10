@@ -597,4 +597,29 @@ router.get('/community/:id/projects', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// GET /api/board-portal/community/:id/arc
+//   Read-only ARC decisions for the board — "see what was approved," oversight
+//   without touching management's processing. From arc_historical_decisions.
+// ----------------------------------------------------------------------------
+router.get('/community/:id/arc', async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const communityId = req.params.id;
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+    const { data, error } = await supabase
+      .from('arc_historical_decisions')
+      .select('id, property_address, homeowner_name, project_type, project_description, decision_type, decided_at, conditions, summary')
+      .eq('community_id', communityId)
+      .order('decided_at', { ascending: false, nullsFirst: false })
+      .limit(300);
+    if (error) throw error;
+    res.json({ decisions: data || [] });
+  } catch (err) {
+    console.error('[board_portal] arc failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };
