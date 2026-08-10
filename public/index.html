@@ -45125,6 +45125,72 @@ ${questionsPage}
     };
     window.apCloseDetail = function () { document.getElementById('ap-detail-modal').style.display = 'none'; };
 
+    // Edit-at-source: this invoice screen only DISPLAYS the vendor; the canonical
+    // record is the vendors master. Editing here pops the source editor (PATCH
+    // /api/vendors/:id) so the change flows to every invoice, payment, and the
+    // Vendor 360 at once — never a local copy that drifts. (Ed 2026-08-10 — SSOT:
+    // "open a pop-up to the source so they can edit it".)
+    window.apEditVendor = async function (vendorId, invoiceId) {
+      let ov = document.getElementById('ap-vendedit-ov');
+      if (!ov) { ov = document.createElement('div'); ov.id = 'ap-vendedit-ov'; ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;'; document.body.appendChild(ov); }
+      ov.style.display = 'flex';
+      ov.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:560px;width:92%;"><div style="padding:22px;color:#888;">Loading vendor…</div></div>';
+      let v;
+      try { const r = await (window._authFetch || fetch)('/api/vendors/' + encodeURIComponent(vendorId)); const j = await r.json(); v = j.vendor || j; if (!v || !v.id) throw new Error('not found'); }
+      catch (e) { ov.firstChild.innerHTML = '<div style="padding:22px;color:#b00;">Could not load the vendor.</div>'; return; }
+      const val = (x) => apEsc(x == null ? '' : String(x));
+      const inp = 'width:100%;padding:6px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;margin-top:3px;box-sizing:border-box;';
+      const lbl = 'font-size:11.5px;color:#475569;font-weight:600;';
+      ov.innerHTML = `<div style="background:#fff;border-radius:12px;max-width:560px;width:92%;max-height:88vh;overflow:auto;">
+        <div style="position:sticky;top:0;background:#0B1D34;color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;border-radius:12px 12px 0 0;z-index:2;">
+          <div><div style="font-weight:700;">Edit vendor — source of truth</div><div style="font-size:11.5px;opacity:0.85;">Saving here updates every invoice, payment &amp; the Vendor 360.</div></div>
+          <button onclick="document.getElementById('ap-vendedit-ov').style.display='none'" style="background:rgba(255,255,255,0.15);color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;">×</button>
+        </div>
+        <div style="padding:18px 20px;display:grid;grid-template-columns:1fr 1fr;gap:11px;">
+          <label style="grid-column:1/3;${lbl}">Vendor name<input id="ve-name" value="${val(v.name)}" style="${inp}"></label>
+          <label style="${lbl}">Pay to the order of<input id="ve-payee" value="${val(v.payee_name)}" style="${inp}"></label>
+          <label style="${lbl}">DBA<input id="ve-dba" value="${val(v.dba)}" style="${inp}"></label>
+          <label style="${lbl}">Contact name<input id="ve-cname" value="${val(v.contact_name)}" style="${inp}"></label>
+          <label style="${lbl}">Contact email<input id="ve-cemail" value="${val(v.contact_email || v.email)}" style="${inp}"></label>
+          <label style="${lbl}">Phone<input id="ve-phone" value="${val(v.contact_phone || v.phone)}" style="${inp}"></label>
+          <label style="${lbl}">Payment terms (days)<input id="ve-terms" type="number" value="${val(v.payment_terms_days)}" style="${inp}"></label>
+          <div style="grid-column:1/3;font-weight:700;color:#0B1D34;font-size:12.5px;margin-top:4px;">Remit-to address (where the check goes)</div>
+          <label style="grid-column:1/3;${lbl}">Address line 1<input id="ve-r1" value="${val(v.remit_address_line1)}" style="${inp}"></label>
+          <label style="grid-column:1/3;${lbl}">Address line 2<input id="ve-r2" value="${val(v.remit_address_line2)}" style="${inp}"></label>
+          <label style="${lbl}">City<input id="ve-city" value="${val(v.remit_city)}" style="${inp}"></label>
+          <label style="${lbl}">State<input id="ve-state" value="${val(v.remit_state)}" style="${inp}"></label>
+          <label style="${lbl}">ZIP<input id="ve-zip" value="${val(v.remit_zip)}" style="${inp}"></label>
+          <label style="font-size:12.5px;color:#0B1D34;display:flex;align-items:center;gap:6px;margin-top:6px;"><input type="checkbox" id="ve-1099" ${v.is_1099_vendor ? 'checked' : ''}> 1099 vendor</label>
+          <label style="font-size:12.5px;color:#0B1D34;display:flex;align-items:center;gap:6px;margin-top:6px;"><input type="checkbox" id="ve-w9" ${v.w9_on_file ? 'checked' : ''}> W-9 on file</label>
+        </div>
+        <div style="padding:0 20px 18px;display:flex;gap:8px;align-items:center;">
+          <button onclick="apSaveVendor('${vendorId}','${invoiceId || ''}')" style="background:#0B1D34;color:#fff;border:none;padding:8px 16px;border-radius:7px;font-weight:600;cursor:pointer;">Save to source</button>
+          <button onclick="document.getElementById('ap-vendedit-ov').style.display='none'" style="background:#fff;border:1px solid #cbd5e1;padding:8px 14px;border-radius:7px;cursor:pointer;">Cancel</button>
+          <span id="ve-status" style="font-size:12px;color:#5a7390;"></span>
+        </div></div>`;
+    };
+    window.apSaveVendor = async function (vendorId, invoiceId) {
+      const g = (id) => { const e = document.getElementById(id); return e ? e.value.trim() : ''; };
+      const body = {
+        name: g('ve-name'), payee_name: g('ve-payee'), dba: g('ve-dba'),
+        contact_name: g('ve-cname'), contact_email: g('ve-cemail'), contact_phone: g('ve-phone'),
+        payment_terms_days: parseInt(g('ve-terms'), 10) || null,
+        remit_address_line1: g('ve-r1'), remit_address_line2: g('ve-r2'),
+        remit_city: g('ve-city'), remit_state: g('ve-state'), remit_zip: g('ve-zip'),
+        is_1099_vendor: document.getElementById('ve-1099').checked,
+        w9_on_file: document.getElementById('ve-w9').checked,
+      };
+      if (!body.name) { alert('Vendor name is required.'); return; }
+      const st = document.getElementById('ve-status'); if (st) st.textContent = 'Saving…';
+      try {
+        const r = await (window._authFetch || fetch)('/api/vendors/' + encodeURIComponent(vendorId), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const j = await r.json(); if (!r.ok) throw new Error(j.error || 'save failed');
+        document.getElementById('ap-vendedit-ov').style.display = 'none';
+        if (invoiceId && window.apOpenInvoice) apOpenInvoice(invoiceId);
+        if (window.apLoadList) apLoadList();
+      } catch (e) { if (st) st.innerHTML = '<span style="color:#b00">' + apEsc(e.message) + '</span>'; }
+    };
+
     // Attach a source PDF to an EXISTING bill and re-run extraction + coding.
     // For invoices whose PDF never arrived on the email (it sat behind a
     // "click to download" link), so the header was created but there are no
@@ -45237,7 +45303,7 @@ ${questionsPage}
       body.innerHTML = `
         <div style="position:sticky; top:0; background:#0B1D34; color:white; padding:14px 20px; display:flex; justify-content:space-between; align-items:center; border-radius:10px 10px 0 0; z-index:2;">
           <div>
-            <div style="font-weight:700; font-size:16px;">${apEsc(vendorName)}</div>
+            <div style="font-weight:700; font-size:16px;">${apEsc(vendorName)}${inv.vendor_id ? ` <a href="#" onclick="apEditVendor('${inv.vendor_id}','${inv.id}');return false;" title="Edit this vendor at the source — the change flows to every invoice, payment, and the Vendor 360." style="font-size:11px; font-weight:600; color:#9fc0e8; text-decoration:none; margin-left:8px;">✎ edit vendor</a>` : ''}</div>
             <div style="font-size:12px; opacity:0.85;">${apEsc(inv.vendor_invoice_number || '(no #)')} · ${apEsc(apFmtDate(inv.invoice_date))} · ${apEsc(inv.terms || '')} · ${apStatusBadge(inv.status)}</div>
           </div>
           <button onclick="apCloseDetail()" style="background:rgba(255,255,255,0.15); color:white; border:none; padding:8px 14px; border-radius:6px; font-weight:600; cursor:pointer;">× Close</button>
