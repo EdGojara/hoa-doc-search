@@ -1454,16 +1454,27 @@
   };
 
   async function chkLoadPayable() {
-    const j = await fetch(`/api/checks/payable?community_id=${CID}`).then((r)=>r.json()).catch(()=>({invoices:[]}));
+    const [j, cp] = await Promise.all([
+      fetch(`/api/checks/payable?community_id=${CID}`).then((r)=>r.json()).catch(()=>({invoices:[]})),
+      window._chkAcct ? fetch(`/api/checks/cash-position?bank_account_id=${window._chkAcct}&community_id=${CID}`).then((r)=>r.json()).catch(()=>null) : Promise.resolve(null),
+    ]);
+    window._chkCash = (cp && !cp.error) ? cp : null;
+    const cpv = window._chkCash;
+    const lbl = 'font-size:11px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:0.05em;';
+    const cashBanner = cpv ? `<div class="card" style="margin-bottom:12px; display:flex; gap:26px; flex-wrap:wrap; align-items:center; padding:14px 18px;">
+      <div><div style="${lbl}">Account</div><div style="font-weight:700;">${esc(cpv.account_nickname||'—')}${cpv.account_last4?' ••'+esc(cpv.account_last4):''}</div></div>
+      <div><div style="${lbl}">Cash on hand</div><div style="font-weight:700; font-size:18px;">${cpv.cash_balance_cents!=null?fmt(cpv.cash_balance_cents):'<span class="muted" style="font-size:12px; font-weight:400;">not linked to a GL cash account</span>'}</div>${cpv.has_gl_link?`<div class="muted" style="font-size:11px;">book balance · ${esc(cpv.gl_account_number)} ${esc(cpv.gl_account_name||'')}</div>`:''}</div>
+      <div><div style="${lbl}">Next check #</div><div style="font-weight:700; font-family:ui-monospace,monospace; font-size:18px;">${cpv.next_check_number!=null?esc(cpv.next_check_number):'—'}</div></div>
+    </div>` : '';
     const invs = j.invoices||[];
-    if (!invs.length) { $('chkPay').innerHTML = '<div class="card muted" style="padding:20px;">No approved bills waiting to be paid. Enter and approve bills in Bills (AP), then come back to print checks.</div>'; return; }
+    if (!invs.length) { $('chkPay').innerHTML = cashBanner + '<div class="card muted" style="padding:20px;">No approved bills waiting to be paid. Enter and approve bills in Bills (AP), then come back to print checks.</div>'; return; }
     const rows = invs.map((i)=>`<tr>
       <td><input type="checkbox" class="chk-inv" value="${i.id}" data-amt="${i.balance_cents}" checked onchange="chkUpdateBar()"></td>
       <td>${esc(i.vendor_name)}</td><td>${esc(i.vendor_invoice_number||'—')}</td>
       <td>${esc(fmtDate(i.invoice_date))}</td><td>${esc(i.description||'')}</td>
       <td>${i.support_doc_url?`<a href="${i.support_doc_url}" target="_blank" rel="noopener" title="Open the invoice">📎 View</a>`:'<span class="muted">—</span>'}</td>
       <td class="num">${fmt(i.balance_cents)}</td></tr>`).join('');
-    $('chkPay').innerHTML = `<div class="card" style="margin-bottom:14px;">
+    $('chkPay').innerHTML = cashBanner + `<div class="card" style="margin-bottom:14px;">
       <h2 class="sec" style="margin-bottom:8px;">Bills ready to pay</h2>
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
         <span class="muted" style="font-size:12px;">Payment date</span>${dateInput('chk-date',dToday())}
@@ -1479,12 +1490,35 @@
     const sel=[...document.querySelectorAll('.chk-inv:checked')];
     const total=sel.reduce((s,c)=>s+Number(c.dataset.amt||0),0);
     const vendors=new Set(sel.map(c=>c.closest('tr').children[1].textContent)).size;
-    const bar=$('chk-bar'); if(bar) bar.textContent = sel.length? `${sel.length} bill(s) → ${vendors} check(s), ${fmt(total)}` : 'none selected';
+    const cp=window._chkCash;
+    const bar=$('chk-bar');
+    if(bar){
+      if(!sel.length){ bar.textContent='none selected'; }
+      else {
+        let txt = `${sel.length} bill(s) → ${vendors} check(s), ${fmt(total)}`;
+        if(cp && cp.next_check_number!=null && vendors>0){
+          const start=Number(cp.next_check_number), end=start+vendors-1;
+          txt += ` · check${vendors>1?'s':''} #${start}${vendors>1?'–#'+end:''}`;
+        }
+        if(cp && cp.cash_balance_cents!=null){
+          const after = cp.cash_balance_cents - total;
+          txt += after>=0
+            ? ` · <span style="color:#166534;">leaves ${fmt(after)}</span>`
+            : ` · <span style="color:var(--err); font-weight:700;">⚠ exceeds cash on hand by ${fmt(-after)}</span>`;
+        }
+        bar.innerHTML = txt;
+      }
+    }
     const btn=$('chk-print'); if(btn) btn.disabled = !sel.length;
   };
   window.chkPrintRun = async function() {
     const ids=[...document.querySelectorAll('.chk-inv:checked')].map(c=>c.value);
     if (!ids.length) return;
+    const total=[...document.querySelectorAll('.chk-inv:checked')].reduce((s,c)=>s+Number(c.dataset.amt||0),0);
+    const cp=window._chkCash;
+    if (cp && cp.cash_balance_cents!=null && total > cp.cash_balance_cents) {
+      if (!confirm(`These checks total ${fmt(total)} but cash on hand in ${cp.account_nickname||'this account'} is only ${fmt(cp.cash_balance_cents)} — printing them overdraws the account by ${fmt(total-cp.cash_balance_cents)}.\n\nPrint anyway?`)) return;
+    }
     if (!window._chkConfig || !window._chkConfig.ready_for_print) {
       if (!confirm('This account isn’t marked ready (no account number on file), so checks will print as NON-NEGOTIABLE drafts. Continue for a test print?')) return;
     }

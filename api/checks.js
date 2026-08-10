@@ -42,6 +42,56 @@ router.get('/payable', async (req, res) => {
   } catch (err) { handleErr(res, 'payable', err); }
 });
 
+// GET /cash-position?bank_account_id&community_id — pre-flight for a check run:
+// the next check number the run will use, and the book cash-on-hand of the GL
+// account this bank account ties to, so staff can confirm there's money to cover
+// the checks before printing. (Ed 2026-08-10 — "so we know there is money in the
+// bank".) Book balance = posted debits - credits on the cash account; it can lead
+// the bank by uncleared items, so it's a coverage guide, not a bank feed.
+router.get('/cash-position', async (req, res) => {
+  try {
+    const { bank_account_id } = req.query;
+    if (!bank_account_id) return res.status(400).json({ error: 'bank_account_id_required' });
+    const { data: ba, error: baErr } = await supabase.from('bank_accounts')
+      .select('id, community_id, account_nickname, account_last4, gl_account_number, next_check_number')
+      .eq('id', bank_account_id).maybeSingle();
+    if (baErr) throw baErr;
+    if (!ba) return res.status(404).json({ error: 'bank_account_not_found' });
+    const cid = req.query.community_id || ba.community_id;
+
+    let cash_balance_cents = null, gl_account_name = null, has_gl_link = false;
+    if (ba.gl_account_number) {
+      const { data: acct, error: acctErr } = await supabase.from('chart_of_accounts')
+        .select('id, account_name, normal_balance')
+        .eq('community_id', cid).eq('account_number', ba.gl_account_number).maybeSingle();
+      if (acctErr) throw acctErr;
+      if (acct) {
+        has_gl_link = true;
+        gl_account_name = acct.account_name;
+        const today = new Date().toISOString().slice(0, 10);
+        const { fetchAllQuery } = require('../lib/db/fetch_all');
+        const lines = await fetchAllQuery(() => supabase
+          .from('journal_entry_lines')
+          .select('debit_cents, credit_cents, journal_entries!inner ( community_id, posting_date, status )')
+          .eq('account_id', acct.id)
+          .eq('journal_entries.community_id', cid)
+          .neq('journal_entries.status', 'voided')
+          .lte('journal_entries.posting_date', today), { orderBy: 'id' });
+        let d = 0, c = 0;
+        for (const l of lines) { d += Number(l.debit_cents) || 0; c += Number(l.credit_cents) || 0; }
+        cash_balance_cents = acct.normal_balance === 'credit' ? (c - d) : (d - c);
+      }
+    }
+    res.json({
+      next_check_number: ba.next_check_number || null,
+      account_nickname: ba.account_nickname || null,
+      account_last4: ba.account_last4 || null,
+      gl_account_number: ba.gl_account_number || null,
+      gl_account_name, has_gl_link, cash_balance_cents,
+    });
+  } catch (err) { handleErr(res, 'cash-position', err); }
+});
+
 // GET /payable/:invoiceId/document — open the supporting invoice PDF for a
 // payable, from the CHECK module's own auth (the staff cookie), so the "View"
 // link works as a plain navigation. The AP module's /api/ap-intake/:id/invoice-file
