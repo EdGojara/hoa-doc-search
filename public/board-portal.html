@@ -1366,50 +1366,73 @@
     // money owed). Always rendered so the board can always see compliance.
     const drv = s.drv_by_stage || {};
     const drvTotal = Object.values(drv).reduce((a, b) => a + (b || 0), 0);
+    const drvCourtesy = (drv.courtesy_1 || 0) + (drv.courtesy_2 || 0);
     const drvSevere = (drv.certified_209 || 0) + (drv.fine_assessed || 0);
+    const drvBreakdown = drvTotal === 0 ? 'all clear 🎉' : [
+      drvCourtesy ? `${drvCourtesy} courtesy` : '',
+      (drv.certified_209 || 0) ? `${drv.certified_209} at §209` : '',
+      (drv.fine_assessed || 0) ? `${drv.fine_assessed} fined` : '',
+    ].filter(Boolean).join(' · ');
     const drvTile = `
       <a class="board-tile" href="javascript:showProperties('open_only')">
         <div class="tile-icon">🚨</div>
         <div class="tile-title">Violations</div>
-        <div class="tile-desc">Open violations by enforcement stage, and who is at §209 or fine.</div>
+        <div class="tile-desc">Open violations by enforcement stage. Click any to drill into the property.</div>
         <div class="tile-metric">
           <div>
             <div class="metric-value ${drvSevere > 0 ? 'bad' : drvTotal > 0 ? 'warn' : 'good'}">${drvTotal}</div>
-            <div class="metric-label">open${drvSevere > 0 ? ` · ${drvSevere} at §209/fine` : drvTotal === 0 ? ' · all clear 🎉' : ''}</div>
+            <div class="metric-label">open · ${drvBreakdown}</div>
           </div>
         </div>
         <div class="tile-cta">View violations →</div>
       </a>`;
 
-    const arc = s.arc_pipeline;
-    const arcTile = !arc ? '' : `
+    // ARC — architectural applications + approvals (Ed 2026-08-09). Headline is
+    // total applications decided; sub shows approved/denied + any still pending.
+    const arc = s.arc_pipeline || {};
+    const cCounts = s.counts || {};
+    const arcDecided = cCounts.arc_decisions_total || 0;
+    const arcApproved = cCounts.arc_approved_total || 0;
+    const arcDenied = cCounts.arc_denied_total || 0;
+    const arcPending = arc.open_total || 0;
+    const arcSub = [
+      `${arcApproved} approved`,
+      arcDenied ? `${arcDenied} denied` : '',
+      arcPending ? `${arcPending} pending` : '',
+    ].filter(Boolean).join(' · ');
+    const arcTile = `
       <a class="board-tile" href="/arc-review.html" target="_blank" rel="noopener">
         <div class="tile-icon">🏗️</div>
-        <div class="tile-title">ARC Pipeline</div>
-        <div class="tile-desc">Architectural review applications awaiting board or staff decision.</div>
+        <div class="tile-title">ARC</div>
+        <div class="tile-desc">Architectural applications and approvals across the community.</div>
         <div class="tile-metric">
           <div>
-            <div class="metric-value ${arc.open_total > 0 ? 'warn' : 'good'}">${arc.open_total}</div>
-            <div class="metric-label">${arc.open_resident} resident · ${arc.open_builder} builder${arc.oldest_age_days != null ? ` · oldest ${arc.oldest_age_days}d` : ''}</div>
+            <div class="metric-value ${arcPending > 0 ? 'warn' : ''}">${arcDecided}</div>
+            <div class="metric-label">applications · ${arcSub}</div>
           </div>
         </div>
         <div class="tile-cta">Review applications →</div>
       </a>`;
 
     // ── Properties + Meetings row ───────────────────────────────────
+    // Properties = the ownership/residency ROSTER (distinct from Violations,
+    // which is enforcement). Rental ratio is a real board metric — it drives
+    // insurance, lending, and rental caps. Drill = look up any home.
     const c = s.counts || {};
+    const totalHomes = c.total_properties || 0;
+    const rentalPct = totalHomes ? Math.round(((c.renters || 0) / totalHomes) * 100) : 0;
     const propsTile = `
       <a class="board-tile" href="javascript:showProperties('all')">
         <div class="tile-icon">🏘️</div>
         <div class="tile-title">Properties</div>
-        <div class="tile-desc">Every lot in the community — ownership, residency, recent history.</div>
+        <div class="tile-desc">Ownership and residency mix across the community. Look up any home.</div>
         <div class="tile-metric">
           <div>
-            <div class="metric-value">${c.total_properties || 0}</div>
-            <div class="metric-label">${c.owner_occupied || 0} owner-occupied · ${c.renters || 0} renter${c.renters === 1 ? '' : 's'}</div>
+            <div class="metric-value">${totalHomes}</div>
+            <div class="metric-label">${c.owner_occupied || 0} owner-occupied · ${c.renters || 0} renter${c.renters === 1 ? '' : 's'}${totalHomes ? ` (${rentalPct}% rentals)` : ''}</div>
           </div>
         </div>
-        <div class="tile-cta">View property list →</div>
+        <div class="tile-cta">Look up a home →</div>
       </a>`;
 
     const meetings = s.recent_meetings || [];

@@ -87,7 +87,7 @@ router.get('/community/:id/summary', async (req, res) => {
     // Aggregate over v_property_summary — single trip, no N+1
     const { data: rows, error: rErr } = await supabase
       .from('v_property_summary')
-      .select('property_id, open_violations, worst_open_stage, owner_occupied, residency_type, arc_decisions_count, interactions_count')
+      .select('property_id, open_violations, worst_open_stage, owner_occupied, residency_type, arc_decisions_count, arc_approved_count, arc_denied_count, interactions_count')
       .eq('community_id', communityId);
     if (rErr) throw rErr;
 
@@ -101,6 +101,8 @@ router.get('/community/:id/summary', async (req, res) => {
     const propertiesWithOpenViolations = safeRows.filter((r) => r.open_violations > 0).length;
     const certifiedOrFine = safeRows.filter((r) => ['certified_209', 'fine_assessed'].includes(r.worst_open_stage)).length;
     const totalArc = safeRows.reduce((s, r) => s + (r.arc_decisions_count || 0), 0);
+    const totalArcApproved = safeRows.reduce((s, r) => s + (r.arc_approved_count || 0), 0);
+    const totalArcDenied = safeRows.reduce((s, r) => s + (r.arc_denied_count || 0), 0);
 
     // Phase 2 — board dashboard data (curated > comprehensive principle).
     // All of these are best-effort: if a sub-source fails, we still return
@@ -275,6 +277,8 @@ router.get('/community/:id/summary', async (req, res) => {
         residency_known: occupiedKnown,
         residency_unknown: total - occupiedKnown,
         arc_decisions_total: totalArc,
+        arc_approved_total: totalArcApproved,
+        arc_denied_total: totalArcDenied,
       },
       // Phase 2 dashboard cards
       ar_aging: arAging,
