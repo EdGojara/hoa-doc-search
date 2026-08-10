@@ -47,7 +47,8 @@ Analyze this scanned mail document and extract the information. Respond ONLY wit
   "bannerTitle": "one-line what-to-do headline",
   "bannerText": "1-2 sentence instruction per the BAM Operations Standard",
   "fields": [ { "label": "string", "value": "string", "conf": 0-100, "unknown": boolean } ],
-  "routing": { "owner": "Ed | Martha | Celina | Alicia | Lori | Community Manager", "sla": "string", "system": "which trustEd module/file to log in" },
+  "routing": { "owner": "Ed | Payables (Emma) | Community Manager | info@", "sla": "string", "system": "which trustEd module/file to log in" },
+  "addressedTo": "the Bedrock staff member this mail is personally addressed to, if the document names one (else empty)",
   "summary": "2-4 sentence plain-English summary",
   "homeownerName": "the specific homeowner this mail is addressed to or about, if any (else empty)",
   "propertyAddress": "the property street address this mail concerns, if any (else empty)",
@@ -58,7 +59,7 @@ Analyze this scanned mail document and extract the information. Respond ONLY wit
 }
 
 Urgency: critical = legal demand/attorney/subpoena/lawsuit; high = government/tax/collections/NSF/financial with a deadline; normal = invoices, owner correspondence, insurance certs, board; discard = junk/marketing.
-Routing: legal/critical -> Ed immediate; government/financial-with-deadline -> Ed same day; invoices -> Martha (AP) EOD; owner correspondence -> Community Manager EOD; insurance -> Martha EOD; board -> Community Manager EOD.
+Routing owner (who picks it up on the Status board): legal/critical -> Ed immediate; government/financial-with-deadline -> Ed same day; invoices -> Payables (Emma) EOD (they auto-file to Payables); owner correspondence -> Community Manager EOD; board -> Community Manager EOD; insurance and anything without a clear owner -> info@ EOD (the shared team inbox, so the team can see it and pick up who handles it). Never route to an individual staffer by name. Exception: if the mail is personally addressed to Ed Gojara (set addressedTo), route owner -> Ed.
 Always include a "Community" field (value "Unknown — review required" + unknown:true if you cannot tell). Extract 6-8 fields. conf: 90+ clearly readable, 70-89 inferred, 50-69 uncertain, <50 set unknown:true. Include 4-6 action items.
 When the mail concerns a SPECIFIC homeowner or property (owner correspondence, a collections/legal notice about an owner, a violation, an ARC matter, an estoppel, a check from an owner), set homeownerName + propertyAddress so the scan can be filed onto that homeowner's record. Leave both empty for vendor invoices, government/regulatory, insurance, and general mail not tied to one owner.
 If this is a HOMEOWNER INFORMATION / CONTACT SHEET (a form giving an owner's name, email, phone, sometimes their property address), set isContactInfoSheet:true, put the owner in homeownerName, their address in propertyAddress, and their email/phone in homeownerEmail/homeownerPhone so the system can update that homeowner's contact record — the way a person would if they saw a contact sheet.`;
@@ -160,6 +161,21 @@ router.post('/log', upload.single('file'), async (req, res) => {
     let meta = {};
     try { meta = JSON.parse(req.body.meta || '{}'); } catch (_) { meta = {}; }
     if (!req.file) return res.status(400).json({ error: 'file_required' });
+
+    // Canonical routing owner — derived from the ONE routing matrix (sla.js), not
+    // whatever a client/cached classification carried, so nothing lands on an
+    // individual staffer's desk (no more "sent to Martha") and stale scans re-file
+    // correctly. Invoices -> Payables (Emma); insurance/unowned -> info@ (shared
+    // team queue). Personally addressed to Ed overrides to Ed. (Ed 2026-08-10.)
+    const { defaultRoute } = require('../lib/ops/sla');
+    const _cls = meta.classification || {};
+    const _addressedTo = String(meta.addressedTo || _cls.addressedTo || '').trim().toLowerCase();
+    let _routeOwner = defaultRoute(meta.type || '').owner;
+    if (/^ed$|ed\s+gojara|egojara/.test(_addressedTo)) _routeOwner = 'Ed';
+    meta.routing_owner = _routeOwner;
+    if (meta.classification) {
+      meta.classification.routing = { ...(meta.classification.routing || {}), owner: _routeOwner };
+    }
 
     const sha = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
     const { data: existing } = await supabase.from('library_documents').select('id').eq('file_hash', sha).maybeSingle();
