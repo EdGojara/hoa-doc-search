@@ -220,7 +220,7 @@ async function assemble(contactId) {
 
   // Violations (+ category label), newest first
   let violations = propIds.length ? await safe(() => supabase.from('violations')
-    .select('id, current_stage, opened_at, resolved_at, resolved_via, quality_status, primary_category_id, property_id, opened_from_observation_id')
+    .select('id, current_stage, opened_at, resolved_at, resolved_via, resolved_notes, quality_status, primary_category_id, property_id, opened_from_observation_id')
     .in('property_id', propIds).order('opened_at', { ascending: false }).limit(50)) : [];
   const catIds = [...new Set(violations.map((v) => v.primary_category_id).filter(Boolean))];
   const cats = catIds.length ? await safe(() => supabase.from('enforcement_categories').select('id, label').in('id', catIds)) : [];
@@ -768,6 +768,37 @@ router.post('/import-file', express.json({ limit: '2mb' }), async (req, res) => 
     res.json({ ok: true, filed });
   } catch (err) {
     console.error('[homeowner360] import-file failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /violations/:id/resolve — mark a violation cured from Homeowner 360, e.g.
+// when the owner sends in completion photos. Sets resolved_at (the universal
+// "open" flag every surface keys on — board portal, community map, email intake,
+// enforcement, packets — so the cure flows through everywhere), resolved_via, a
+// note, and current_stage='cured'. Idempotent on an already-resolved row.
+// (Ed 2026-08-10 — "resolve button next to the violations for when pictures are
+// sent in, with a drop down of notes".)
+router.post('/violations/:id/resolve', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const b = req.body || {};
+    // resolved_via CHECK is ('cured','fine','withdrawn','voided'); a photo-proof
+    // resolution is 'cured' — the only via reachable from this button.
+    const via = ['cured', 'withdrawn', 'voided'].includes(b.resolved_via) ? b.resolved_via : 'cured';
+    const note = (b.note == null ? '' : String(b.note)).slice(0, 1000).trim() || null;
+    const { data: v, error: ve } = await supabase.from('violations')
+      .select('id, resolved_at, current_stage').eq('id', id).maybeSingle();
+    if (ve) throw ve;
+    if (!v) return res.status(404).json({ error: 'not_found' });
+    if (v.resolved_at) return res.json({ ok: true, already_resolved: true });
+    const { error: ue } = await supabase.from('violations').update({
+      resolved_at: new Date().toISOString(), resolved_via: via, resolved_notes: note, current_stage: 'cured',
+    }).eq('id', id);
+    if (ue) throw ue;
+    res.json({ ok: true, resolved_via: via, note });
+  } catch (err) {
+    console.error('[homeowner360] resolve violation failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

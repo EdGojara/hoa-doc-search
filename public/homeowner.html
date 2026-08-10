@@ -153,6 +153,39 @@ async function verifyIdentity(id1,id2,result){
 }
 window.verifyIdentity=verifyIdentity;
 
+// ── Resolve a violation (owner sent proof / cured) ──────────────────────────
+// Preset notes, most-common first, + free-text "Other". Marks the violation
+// cured in the DRV store; resolved_at flows the cure through every surface.
+const RESOLVE_NOTES=['Photo proof received — cured','Verified cured in field','Owner corrected — resolved','No longer observed — resolved','Cured per management (proof on file)'];
+function resolveCtrl(v){
+  const opts=RESOLVE_NOTES.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('')+'<option value="__other__">Other (type below)…</option>';
+  return `<div style="margin-top:7px;">
+    <button onclick="showResolve('${v.id}')" style="font-size:11.5px;padding:3px 11px;border:1px solid #bbf7d0;border-radius:6px;background:#f0fdf4;color:#166534;cursor:pointer;font-weight:700;">✓ Resolve</button>
+    <div id="rv-${v.id}" style="display:none;margin-top:7px;padding:9px 11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;">
+      <div style="font-size:11px;color:#5a7390;margin-bottom:4px;font-weight:600;">Resolution note</div>
+      <select id="rv-note-${v.id}" onchange="rvToggleOther('${v.id}')" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:5px;font-size:12px;">${opts}</select>
+      <input id="rv-free-${v.id}" placeholder="Add a note…" style="display:none;width:100%;margin-top:6px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:5px;font-size:12px;box-sizing:border-box;">
+      <div style="margin-top:8px;display:flex;gap:7px;align-items:center;">
+        <button onclick="doResolve('${v.id}')" style="font-size:11.5px;padding:4px 12px;border:none;border-radius:6px;background:#0B1D34;color:#fff;cursor:pointer;font-weight:600;">Mark cured</button>
+        <button onclick="document.getElementById('rv-${v.id}').style.display='none'" style="font-size:11.5px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer;">Cancel</button>
+        <span id="rv-status-${v.id}" style="font-size:11px;color:#5a7390;"></span>
+      </div>
+    </div></div>`;
+}
+window.showResolve=function(id){const el=document.getElementById('rv-'+id);if(el)el.style.display=el.style.display==='none'?'block':'none';};
+window.rvToggleOther=function(id){const sel=document.getElementById('rv-note-'+id);const free=document.getElementById('rv-free-'+id);if(sel&&free){const other=sel.value==='__other__';free.style.display=other?'block':'none';if(other)free.focus();}};
+window.doResolve=async function(id){
+  const sel=document.getElementById('rv-note-'+id);const free=document.getElementById('rv-free-'+id);
+  let note=sel?sel.value:'';if(note==='__other__')note=(free&&free.value.trim())||'';
+  if(!note){alert('Pick or type a resolution note.');return;}
+  const st=document.getElementById('rv-status-'+id);if(st)st.textContent='Saving…';
+  try{
+    const r=await fetch(API+'/violations/'+encodeURIComponent(id)+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resolved_via:'cured',note})});
+    const j=await r.json();if(!r.ok)throw new Error(j.error||'failed');
+    if(window._ho&&window._ho.cid)openProfile(window._ho.cid);
+  }catch(e){if(st)st.textContent='';alert('Could not resolve: '+e.message);}
+};
+
 async function openProfile(cid){
   document.getElementById('results').innerHTML='';
   document.getElementById('profile').innerHTML='<div class="spin">Loading homeowner…</div>';
@@ -243,7 +276,7 @@ async function openProfile(cid){
       </div>`:''}
       <div class="card">
         <div class="sec-title">⚠️ Violations (${(d.violations||[]).length})</div>
-        ${(d.violations||[]).slice(0,10).map(v=>`<div class="li">${esc(v.category)} <span class="badge ${v.open?'b-open':'b-res'}">${v.open?esc(String(v.current_stage).replace(/_/g,' ')):esc(v.status_label||'resolved')}</span>${v.detail?`<div style="font-size:12.5px;color:#33414f;margin-top:3px;">${esc(v.detail)}</div>`:''}<div class="t">opened ${d10(v.opened_at)}${v.resolved_at?' · resolved '+d10(v.resolved_at):''}${v.photo_path?` · <a href="/api/homeowner/file?kind=photo&path=${encodeURIComponent(v.photo_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📷 Photo</a>`:''}${(v.letters&&v.letters.length)?v.letters.map(L=>` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(L.path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter${L.sent_at?' sent '+d10(L.sent_at):''}</a>`).join(''):(v.letter_path?` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(v.letter_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter</a>`:'')}</div></div>`).join('')||'<div class="empty">No violations.</div>'}
+        ${(d.violations||[]).slice(0,10).map(v=>`<div class="li">${esc(v.category)} <span class="badge ${v.open?'b-open':'b-res'}">${v.open?esc(String(v.current_stage).replace(/_/g,' ')):esc(v.status_label||'resolved')}</span>${v.detail?`<div style="font-size:12.5px;color:#33414f;margin-top:3px;">${esc(v.detail)}</div>`:''}<div class="t">opened ${d10(v.opened_at)}${v.resolved_at?' · resolved '+d10(v.resolved_at)+(v.resolved_notes?' — '+esc(v.resolved_notes):''):''}${v.photo_path?` · <a href="/api/homeowner/file?kind=photo&path=${encodeURIComponent(v.photo_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📷 Photo</a>`:''}${(v.letters&&v.letters.length)?v.letters.map(L=>` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(L.path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter${L.sent_at?' sent '+d10(L.sent_at):''}</a>`).join(''):(v.letter_path?` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(v.letter_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter</a>`:'')}</div>${v.open&&v.id?resolveCtrl(v):''}</div>`).join('')||'<div class="empty">No violations.</div>'}
       </div>
       <div class="card">
         ${(()=>{
