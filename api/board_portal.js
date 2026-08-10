@@ -648,6 +648,84 @@ router.get('/community/:id/arc', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /api/board-portal/community/:id/violations
+//   Board violations view: what was issued last month, who's at legal, and the
+//   open cases grouped by stage (certified §209 / fined / courtesy). Summary +
+//   openable groupings, not a flat 368-row list.
+// ----------------------------------------------------------------------------
+router.get('/community/:id/violations', async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const communityId = req.params.id;
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+
+    const byId = {};
+    // Open-violation properties, grouped by worst stage.
+    const groups = { certified_209: [], fine_assessed: [], courtesy: [] };
+    try {
+      const { data: props, error } = await supabase.from('v_property_summary')
+        .select('property_id, street_address, owner_name, open_violations, worst_open_stage')
+        .eq('community_id', communityId).gt('open_violations', 0)
+        .order('open_violations', { ascending: false }).limit(2000);
+      if (error) throw error;
+      for (const p of (props || [])) {
+        byId[p.property_id] = p;
+        const it = { property_id: p.property_id, address: p.street_address, owner: p.owner_name, open: p.open_violations, stage: p.worst_open_stage };
+        if (p.worst_open_stage === 'certified_209') groups.certified_209.push(it);
+        else if (p.worst_open_stage === 'fine_assessed') groups.fine_assessed.push(it);
+        else groups.courtesy.push(it);
+      }
+    } catch (e) { console.warn('[board_portal] violations props skipped:', e.message); }
+
+    // At legal — active attorney referrals.
+    let atLegal = [];
+    try {
+      const { data: pes, error } = await supabase.from('property_enforcement_states')
+        .select('property_id, effective_at, attorney_firm, attorney_name')
+        .eq('community_id', communityId).eq('state', 'at_legal').is('ended_at', null).limit(300);
+      if (error) throw error;
+      const missing = (pes || []).map((r) => r.property_id).filter((id) => id && !byId[id]);
+      if (missing.length) {
+        const { data: extra } = await supabase.from('v_property_summary').select('property_id, street_address, owner_name').in('property_id', missing);
+        (extra || []).forEach((p) => { byId[p.property_id] = byId[p.property_id] || p; });
+      }
+      atLegal = (pes || []).map((r) => ({ property_id: r.property_id, address: (byId[r.property_id] || {}).street_address, owner: (byId[r.property_id] || {}).owner_name, since: r.effective_at, attorney: r.attorney_firm || r.attorney_name }));
+    } catch (e) { console.warn('[board_portal] violations at-legal skipped:', e.message); }
+
+    // Issued in the last month — stage changes (letters/notices) in 30 days.
+    let recent = [];
+    try {
+      const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+      const { data: vs, error } = await supabase.from('violations')
+        .select('property_id, current_stage, current_stage_started_at, opened_at, enforcement_categories:primary_category_id(label)')
+        .eq('community_id', communityId).gte('current_stage_started_at', cutoff)
+        .order('current_stage_started_at', { ascending: false }).limit(400);
+      if (error) throw error;
+      const missing = (vs || []).map((r) => r.property_id).filter((id) => id && !byId[id]);
+      if (missing.length) {
+        const { data: extra } = await supabase.from('v_property_summary').select('property_id, street_address').in('property_id', missing);
+        (extra || []).forEach((p) => { byId[p.property_id] = byId[p.property_id] || p; });
+      }
+      recent = (vs || []).map((r) => ({ property_id: r.property_id, address: (byId[r.property_id] || {}).street_address, category: (r.enforcement_categories || {}).label, stage: r.current_stage, date: r.current_stage_started_at || r.opened_at }));
+    } catch (e) { console.warn('[board_portal] violations recent skipped:', e.message); }
+
+    res.json({
+      summary: {
+        open_properties: groups.certified_209.length + groups.fine_assessed.length + groups.courtesy.length,
+        certified: groups.certified_209.length, fined: groups.fine_assessed.length, courtesy: groups.courtesy.length,
+        at_legal: atLegal.length, issued_last_month: recent.length,
+      },
+      groups: { at_legal: atLegal, certified_209: groups.certified_209, fine_assessed: groups.fine_assessed, courtesy: groups.courtesy },
+      recent,
+    });
+  } catch (err) {
+    console.error('[board_portal] violations failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/board-portal/community/:id/meetings
 //   Read-only board view of minutes + agendas on file. Each source best-effort.
 // ----------------------------------------------------------------------------
