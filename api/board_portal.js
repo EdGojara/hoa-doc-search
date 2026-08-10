@@ -608,14 +608,39 @@ router.get('/community/:id/arc', async (req, res) => {
     if (!viewer) return;
     const communityId = req.params.id;
     if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
-    const { data, error } = await supabase
-      .from('arc_historical_decisions')
-      .select('id, property_address, homeowner_name, project_type, project_description, decision_type, decided_at, conditions, summary')
-      .eq('community_id', communityId)
-      .order('decided_at', { ascending: false, nullsFirst: false })
-      .limit(300);
-    if (error) throw error;
-    res.json({ decisions: data || [] });
+
+    // Decided — imported ARC history. Each source is best-effort so a missing
+    // or oddly-shaped table can't 500 the whole board view.
+    let decided = [];
+    try {
+      const { data, error } = await supabase.from('arc_historical_decisions')
+        .select('property_address, homeowner_name, project_type, project_description, decision_type, decided_at, conditions')
+        .eq('community_id', communityId).order('decided_at', { ascending: false, nullsFirst: false }).limit(300);
+      if (error) throw error;
+      decided = (data || []).map((r) => ({ address: r.property_address, who: r.homeowner_name, project: r.project_type || r.project_description, decision: r.decision_type, date: r.decided_at, conditions: r.conditions }));
+    } catch (e) { console.warn('[board_portal] arc decided skipped:', e.message); }
+
+    // Pending — resident ACC in review + builder applications not yet decided.
+    let pending = [];
+    try {
+      const { data: acc, error } = await supabase.from('acc_decisions')
+        .select('homeowner_address, homeowner_name, project_summary, created_at')
+        .eq('community_id', communityId).eq('status', 'pending_review').limit(200);
+      if (error) throw error;
+      for (const r of (acc || [])) pending.push({ address: r.homeowner_address, who: r.homeowner_name, project: r.project_summary, date: r.created_at, kind: 'resident' });
+    } catch (e) { console.warn('[board_portal] arc pending acc skipped:', e.message); }
+    try {
+      const { data: bld, error } = await supabase.from('builder_applications')
+        .select('street_address, submitter_name, plan_name, plan_number, submitted_at, created_at')
+        .eq('community_id', communityId).eq('status', 'received').limit(200);
+      if (error) throw error;
+      for (const r of (bld || [])) pending.push({ address: r.street_address, who: r.submitter_name, project: r.plan_name || (r.plan_number ? `Plan ${r.plan_number}` : 'New construction'), date: r.submitted_at || r.created_at, kind: 'builder' });
+    } catch (e) { console.warn('[board_portal] arc pending builder skipped:', e.message); }
+    pending.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+
+    const approved = decided.filter((d) => /approv/i.test(d.decision || '')).length;
+    const denied = decided.filter((d) => /deni/i.test(d.decision || '')).length;
+    res.json({ pending, decided, summary: { pending: pending.length, decided: decided.length, approved, denied } });
   } catch (err) {
     console.error('[board_portal] arc failed:', err.message);
     res.status(500).json({ error: err.message });
