@@ -278,6 +278,36 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       });
     }
 
+    // 5b. Duplicate guard — the SAME dedup the email/scan door uses, so a bill
+    // can't slip in twice regardless of which door it arrives through. Before
+    // this, upload relied only on the per-community UNIQUE(community,vendor,
+    // invoice#) constraint, which NULL invoice numbers and cross-community
+    // filings both slip past. Certain (same file, or same vendor+invoice# in any
+    // community) and suspected (same amount+date) both stop here with the match
+    // shown; staff can confirm a genuine separate bill and re-send with
+    // allow_duplicate. (Ed 2026-08-10 — "we should never have duplicate bills".)
+    stage = 'dedup';
+    if (req.body?.allow_duplicate !== 'true' && req.body?.allow_duplicate !== true) {
+      const { findDuplicates } = require('../lib/ap/dedup');
+      const dup = await findDuplicates(supabase, {
+        communityId: community.id, vendorId: vendorResult.vendor.id,
+        invoiceNumber: extracted.vendor_invoice_number, totalCents: extracted.total_cents,
+        invoiceDate: extracted.invoice_date, fileSha256: sha,
+        accountNumber: extracted.account_number,
+        servicePeriodStart: extracted.service_period_start, servicePeriodEnd: extracted.service_period_end,
+      });
+      if (dup.verdict !== 'unique' && dup.matches.length) {
+        const m = dup.matches[0];
+        return res.status(409).json({
+          status: dup.verdict === 'certain' ? 'duplicate_invoice' : 'suspected_duplicate',
+          message: `${m.reason}${m.invoice && m.invoice.total_cents != null ? ` ($${(m.invoice.total_cents / 100).toFixed(2)})` : ''}.`,
+          duplicate_of: m.invoice ? m.invoice.id : null,
+          matches: dup.matches.map((x) => ({ id: x.invoice.id, reason: x.reason, confidence: x.confidence, total_cents: x.invoice.total_cents, invoice_date: x.invoice.invoice_date, status: x.invoice.status })),
+          extraction: extracted,
+        });
+      }
+    }
+
     // 6. Create the invoice via the engine — auto-codes + posts JE
     stage = 'create_invoice';
     try {

@@ -45062,13 +45062,23 @@ ${questionsPage}
           fd.append('community_id', apCommunityId);
           r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#315A87;"> — extracting + auto-coding (~30s)…</span>`;
           const resp = await fetch('/api/ap/invoices/upload', { method: 'POST', body: fd });
-          const j = await resp.json();
+          let j = await resp.json();
           if (!resp.ok) {
             if (resp.status === 409 && j.status === 'duplicate_invoice') {
-              r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#d97706;"> — duplicate: ${apEsc(j.message || '')}</span>`;
+              r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#d97706;"> — already in payables: ${apEsc(j.message || '')}</span>`;
               continue;
             }
-            throw new Error((j.error || 'upload failed') + (j.stage ? ` (step: ${j.stage})` : ''));
+            if (resp.status === 409 && j.status === 'suspected_duplicate') {
+              const ok = confirm(`Possible duplicate of a bill already in payables:\n\n${j.message || ''}\n\nAdd it anyway?`);
+              if (!ok) { r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#d97706;"> — skipped (possible duplicate: ${apEsc(j.message || '')})</span>`; continue; }
+              const fd2 = new FormData();
+              fd2.append('pdf', r.file); fd2.append('community_id', apCommunityId); fd2.append('allow_duplicate', 'true');
+              const resp2 = await fetch('/api/ap/invoices/upload', { method: 'POST', body: fd2 });
+              j = await resp2.json();
+              if (!resp2.ok) throw new Error((j.error || 'upload failed') + (j.stage ? ` (step: ${j.stage})` : ''));
+            } else {
+              throw new Error((j.error || 'upload failed') + (j.stage ? ` (step: ${j.stage})` : ''));
+            }
           }
           if (j.status === 'needs_community') {
             r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#dc2626;"> — could not match community; retry with community pre-selected</span>`;
