@@ -352,6 +352,23 @@ router.get('/inbox', async (req, res) => {
   } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// GET /sent — mail Tessa has actually sent (as Ed or as Tessa). Logged to
+// email_messages on every /send. Owner-only. (Ed 2026-08-10 — "how do I see
+// Tessa's sent mail".)
+router.get('/sent', async (req, res) => {
+  const admin = await requireOwner(req, res); if (!admin) return;
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const { data, error } = await supabase.from('email_messages')
+      .select('id, mailbox, sender_name, recipients, subject, body_preview, ai_summary, created_at')
+      .eq('persona', 'tessa').eq('direction', 'outbound')
+      .order('created_at', { ascending: false }).limit(limit);
+    if (error) throw error;
+    const ed = graphSend.ED_MAILBOX;
+    res.json({ sent: (data || []).map((m) => ({ ...m, as_ed: m.mailbox === ed })) });
+  } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // PATCH /inbox/:id — edit the draft, or mark replied / dismissed.
 router.patch('/inbox/:id', express.json(), async (req, res) => {
   const admin = await requireOwner(req, res); if (!admin) return;

@@ -100,11 +100,22 @@ function render(){
       <div class="card">
         <div class="row" style="justify-content:space-between;">
           <h2 style="margin:0;">Forwarded to Tessa</h2>
-          <button class="btn ghost sm" id="pollBtn" onclick="pollInbox()">Check for new</button>
+          <div class="row" style="gap:6px;">
+            <div class="modewrap"><button id="ibtab-review" class="on" onclick="ibSetStatus('needs_review')">Needs review</button><button id="ibtab-all" onclick="ibSetStatus('all')">All</button></div>
+            <button class="btn ghost sm" id="pollBtn" onclick="pollInbox()">Check for new</button>
+          </div>
         </div>
         <div class="note">Forward or BCC any email to <b>tessa@bedrocktx.com</b>. She drafts a reply here for you to review, edit, and send, as you or as Tessa.</div>
         <div id="pollMsg" class="result"></div>
         <div id="inboxList" style="margin-top:10px;"><div class="note">Loading&hellip;</div></div>
+      </div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between;">
+          <h2 style="margin:0;">Sent by Tessa</h2>
+          <button class="btn ghost sm" onclick="loadSent()">Refresh</button>
+        </div>
+        <div class="note">Emails Tessa has sent — as you, or on your behalf.</div>
+        <div id="sentList" style="margin-top:10px;"><div class="note">Loading&hellip;</div></div>
       </div>
     </div>
     <div>
@@ -138,6 +149,7 @@ function render(){
   </div>`;
   loadFu();
   loadInbox();
+  loadSent();
   loadRecipients();
   cbLoad();
   stLoad();
@@ -390,12 +402,18 @@ async function pollInbox(){
   }catch(e){ $('pollMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
   finally{ btn.disabled=false; }
 }
+let _inboxStatus='needs_review';
+function ibSetStatus(s){ _inboxStatus=s; const v=$('ibtab-review'),a=$('ibtab-all'); if(v)v.className=(s==='needs_review'?'on':''); if(a)a.className=(s==='all'?'on':''); loadInbox(); }
 async function loadInbox(){
   try{
-    const r=await af('/api/tessa/inbox?status=needs_review'); const j=await r.json();
+    const r=await af('/api/tessa/inbox?status='+_inboxStatus); const j=await r.json();
     const list=j.inbox||[];
-    if(!list.length){ $('inboxList').innerHTML='<div class="note">Nothing waiting. Forward an email to tessa@bedrocktx.com, then Check for new.</div>'; return; }
+    if(!list.length){ $('inboxList').innerHTML='<div class="note">'+(_inboxStatus==='all'?'No forwarded emails yet.':'Nothing waiting. Forward an email to tessa@bedrocktx.com, then Check for new.')+'</div>'; return; }
     $('inboxList').innerHTML=list.map(it=>{
+      if(it.status&&it.status!=='needs_review'){
+        const badge=it.status==='replied'?'<span style="color:#166534;font-weight:700;">✓ replied</span>':'<span class="note">dismissed</span>';
+        return `<div class="fu"><div class="t">${esc(it.subject||'(no subject)')} · ${badge}</div><div class="note">from ${esc(it.from_name||it.from_email||'unknown')}${it.received_at?' · '+new Date(it.received_at).toLocaleString():''}</div></div>`;
+      }
       _ibmode[it.id]=it.draft_mode==='tessa'?'tessa':'ed';
       const snip=esc((it.body_preview||'').slice(0,240))+((it.body_preview||'').length>240?'…':'');
       return `<div class="fu" id="ib-${it.id}">
@@ -423,6 +441,18 @@ async function loadInbox(){
       </div>`;
     }).join('');
   }catch(e){ $('inboxList').innerHTML='<div class="err note">Could not load the inbox.</div>'; }
+}
+async function loadSent(){
+  try{
+    const r=await af('/api/tessa/sent'); const j=await r.json();
+    const list=j.sent||[];
+    if(!list.length){ $('sentList').innerHTML='<div class="note">Nothing sent yet.</div>'; return; }
+    $('sentList').innerHTML=list.map(m=>{
+      const to=(m.recipients||[]).join(', ');
+      const snip=esc((m.body_preview||'').slice(0,220))+((m.body_preview||'').length>220?'…':'');
+      return `<div class="fu"><div class="t">${esc(m.subject||'(no subject)')} <span style="font-size:11px;color:${m.as_ed?'#0B1D34':'#7c3aed'};font-weight:700;">${m.as_ed?'as you':'as Tessa'}</span></div><div class="note">to ${esc(to||'—')}${m.created_at?' · '+new Date(m.created_at).toLocaleString():''}</div><details style="margin-top:4px;"><summary class="note" style="cursor:pointer;">Show</summary><div class="note" style="white-space:pre-wrap;margin-top:4px;">${snip}</div></details></div>`;
+    }).join('');
+  }catch(e){ $('sentList').innerHTML='<div class="err note">Could not load sent mail.</div>'; }
 }
 function ibMode(id,m){ _ibmode[id]=m; $('ibm-ed-'+id).className=m==='ed'?'on':''; $('ibm-t-'+id).className=m==='tessa'?'on':''; }
 // "Handle it": Ed's one-line instruction -> Tessa drafts a reply or a forward.
