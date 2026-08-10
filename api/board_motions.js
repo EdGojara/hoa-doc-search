@@ -385,6 +385,115 @@ router.post('/community/:id/motions', express.json({ limit: '32kb' }), async (re
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/board-motions/community/:id/roster
+//   The active board roster — used by the "record a meeting vote" grid.
+// ---------------------------------------------------------------------------
+router.get('/community/:id/roster', async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    if (!canSeeCommunity(viewer, req.params.id)) return res.status(403).json({ error: 'forbidden' });
+    res.json({ roster: await activeRoster(req.params.id) });
+  } catch (err) {
+    console.error('[board_motions] roster failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/board-motions/community/:id/record
+//   Record a decision ALREADY made — a vote taken at a board meeting, or by
+//   unanimous consent. Creates the motion already closed with each director's
+//   vote on record; quorum is assumed (the meeting happened), so the result is
+//   the vote itself. A passing motion still authorizes its linked project.
+// ---------------------------------------------------------------------------
+router.post('/community/:id/record', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const communityId = req.params.id;
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden' });
+    const actor = writeActor(viewer);
+    if (!actor) return res.status(403).json({ error: 'read_only_preview', message: 'Exit the board-member preview to record a decision.' });
+
+    const b = req.body || {};
+    const title = String(b.title || '').trim();
+    if (!title) return res.status(400).json({ error: 'title_required' });
+    const motion_type = MOTION_TYPES.includes(b.motion_type) ? b.motion_type : 'general';
+    const threshold = THRESHOLDS.includes(b.threshold) ? b.threshold : 'simple_majority';
+
+    const roster = await activeRoster(communityId);
+    const rosterByEmail = {};
+    for (const m of roster) rosterByEmail[m.email] = m;
+
+    let communityName = null;
+    try { const { data } = await supabase.from('communities').select('name').eq('id', communityId).maybeSingle(); communityName = data?.name || null; } catch (_) {}
+    const ref_code = makeRefCode(communityName);
+
+    let related_project_id = null;
+    if (b.related_project_id) {
+      const { data: proj } = await supabase.from('vendor_projects').select('id, community_id').eq('id', b.related_project_id).maybeSingle();
+      if (proj && proj.community_id === communityId) related_project_id = proj.id;
+    }
+
+    const moverEmail = String(b.moved_by_email || '').trim().toLowerCase();
+    const mover = rosterByEmail[moverEmail] || null;
+    const secEmail = String(b.seconded_by_email || '').trim().toLowerCase();
+    const seconder = (secEmail && secEmail !== moverEmail) ? (rosterByEmail[secEmail] || null) : null;
+
+    // Votes: unanimous → every active director is a Yes; else the provided grid.
+    let votes;
+    if (b.unanimous) {
+      votes = roster.map((m) => ({ email: m.email, name: m.name, vote: 'for' }));
+    } else {
+      votes = (Array.isArray(b.votes) ? b.votes : [])
+        .map((v) => ({ email: String(v && v.email || '').trim().toLowerCase(), vote: String(v && v.vote || '').trim().toLowerCase() }))
+        .filter((v) => rosterByEmail[v.email] && VOTES.includes(v.vote))
+        .map((v) => ({ email: v.email, name: rosterByEmail[v.email].name, vote: v.vote }));
+    }
+    if (!votes.length) return res.status(400).json({ error: 'no_votes', message: 'Record at least one vote, or mark it unanimous.' });
+
+    const meetingDate = b.meeting_date ? String(b.meeting_date) : null;
+    const nowIso = new Date().toISOString();
+
+    const insert = {
+      management_company_id: BEDROCK_MGMT_CO_ID, community_id: communityId, title,
+      description: b.description ? String(b.description) : null, motion_type, threshold,
+      related_project_id, status: 'open', seats_at_open: roster.length,
+      created_via: 'staff_recorded', created_by_email: actor.email, created_by_name: actor.name || actor.email,
+      moved_by_email: mover ? mover.email : null, moved_by_name: mover ? (mover.name || mover.email) : null,
+      moved_at: mover ? nowIso : null, moved_recorded_by: mover ? actor.email : null,
+      seconded_by_email: seconder ? seconder.email : null, seconded_by_name: seconder ? (seconder.name || seconder.email) : null, seconded_at: seconder ? nowIso : null,
+      ref_code,
+    };
+    const { data, error } = await supabase.from('board_motions').insert(insert).select('*').single();
+    if (error) throw error;
+
+    for (const v of votes) {
+      const { error: ue } = await supabase.from('board_motion_votes').upsert({
+        motion_id: data.id, voter_email: v.email, voter_name: v.name, vote: v.vote,
+        recorded_by_email: actor.email, source: 'staff_recorded', voted_at: nowIso,
+      }, { onConflict: 'motion_id,voter_email' });
+      if (ue) throw ue;
+    }
+
+    const { data: allVotes } = await supabase.from('board_motion_votes').select('vote').eq('motion_id', data.id);
+    const tally = evaluateMotion(data, allVotes || []);
+    // Meeting vote: quorum was present, so the result is the vote itself.
+    const result = tally.would_pass ? 'passed' : 'failed';
+    const note = `Recorded from the board meeting${meetingDate ? ` on ${meetingDate}` : ''}${b.unanimous ? ' (unanimous consent)' : ''}. ${tally.for} for, ${tally.against} against, ${tally.abstain} abstain${mover ? `; moved by ${mover.name || mover.email}` : ''}${seconder ? `, seconded by ${seconder.name || seconder.email}` : ''}.`;
+    const { data: closed, error: cerr } = await supabase.from('board_motions')
+      .update({ status: result, closed_at: nowIso, closed_by: actor.email, outcome_note: note }).eq('id', data.id).select('*').single();
+    if (cerr) throw cerr;
+    await applyMotionEffect(closed, tally);
+    res.json({ ok: true, motion: closed, tally });
+  } catch (err) {
+    console.error('[board_motions] record failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // Load a motion + authorize the caller against ITS community. Returns the
 // motion or sends the response and returns null.
 async function loadAuthorizedMotion(req, res, viewer) {

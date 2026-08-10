@@ -525,7 +525,7 @@ const _STAFF_GATE_PUBLIC = [
   // canSeeCommunity, and WRITES require a real actor (a staff "view as" preview
   // is read-only). Same cookie-gated-inside pattern; listed per-endpoint.
   /^\/api\/board-motions\/portfolio$/,                   // cross-community roll-up
-  /^\/api\/board-motions\/community\/[^/]+\/motions$/,    // list + create motions
+  /^\/api\/board-motions\/community\/[^/]+\/(motions|record|roster)$/, // list/create, record-a-meeting-vote, roster
   /^\/api\/board-motions\/motion\/[^/]+$/,               // motion detail
   /^\/api\/board-motions\/motion\/[^/]+\/(vote|close|withdraw|remind|move|request-mover)$/, // vote / finalize / pull / nudge / move / ask-to-move
   // No-login email ballot — auth is the HMAC-signed token, verified inside.
