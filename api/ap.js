@@ -794,6 +794,41 @@ router.post('/invoices/:id/change-community', express.json(), async (req, res) =
   } catch (err) { console.error('[ap] change-community failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// POST /invoices/:id/payment-method — switch a bill between check (manual) and
+// ACH autopay. Autopay bills are EXCLUDED from check runs and can only be
+// "recorded as auto-drafted", so a vendor wrongly flagged auto_pay_ach makes
+// every one of its bills unpayable-by-check with no way for staff to correct it
+// (Superior LawnCare — "we cut checks to Superior", Ed 2026-08-10). The flag
+// lives on both the invoice (is_ach_autopay) and the vendor default
+// (auto_pay_ach); a bill that already paid must not be re-routed. By default the
+// correction also fixes the vendor default so future bills follow — autopay is a
+// vendor-level reality, and correcting one bill without the source just repeats.
+router.post('/invoices/:id/payment-method', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const b = req.body || {};
+    const autopay = b.autopay === true || b.autopay === 'true';
+    const applyToVendor = b.apply_to_vendor !== false; // default: also fix the vendor default
+    const { data: inv } = await supabase.from('ap_invoices')
+      .select('id, vendor_id, status, amount_paid_cents, is_ach_autopay').eq('id', id).maybeSingle();
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    if ((inv.amount_paid_cents || 0) > 0 || ['paid', 'void', 'cancelled'].includes(inv.status)) {
+      return res.status(409).json({ error: 'already_settled', detail: 'This bill is already paid or closed — its payment method is locked.' });
+    }
+    const { data, error } = await supabase.from('ap_invoices')
+      .update({ is_ach_autopay: autopay, updated_at: new Date().toISOString() })
+      .eq('id', id).select('id, is_ach_autopay').maybeSingle();
+    if (error) throw error;
+    let vendor_updated = false;
+    if (applyToVendor && inv.vendor_id) {
+      const { error: ve } = await supabase.from('vendors').update({ auto_pay_ach: autopay }).eq('id', inv.vendor_id);
+      if (ve) console.warn('[ap] payment-method vendor default update skipped:', ve.message);
+      else vendor_updated = true;
+    }
+    res.json({ ok: true, invoice: data, vendor_updated });
+  } catch (err) { console.error('[ap] payment-method failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 router.post('/invoices/:id/code', express.json(), async (req, res) => {
   try {
     const { id } = req.params;
