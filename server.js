@@ -531,6 +531,12 @@ const _STAFF_GATE_PUBLIC = [
   // No-login email ballot — auth is the HMAC-signed token, verified inside.
   /^\/board-vote$/,                            // the ballot page
   /^\/api\/board-vote\/(context|cast)$/,       // ballot data + record vote
+  // Board discussion — each handler enforces requireBoardViewer + canSeeCommunity.
+  /^\/api\/board-threads\/unread$/,
+  /^\/api\/board-threads\/community\/[^/]+\/(threads|general)$/,
+  /^\/api\/board-threads\/motion\/[^/]+$/,
+  /^\/api\/board-threads\/thread\/[^/]+$/,
+  /^\/api\/board-threads\/thread\/[^/]+\/messages$/,
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   // Twilio voice webhooks — same pattern as Stripe: outside-service webhooks,
   // never carry a staff cookie. The voice router handles them. Long-term,
@@ -1105,6 +1111,8 @@ const { router: boardMotionsRouter } = require('./api/board_motions');
 app.use('/api/board-motions', boardMotionsRouter);
 const { router: boardVoteRouter } = require('./api/board_vote');
 app.use('/api/board-vote', boardVoteRouter);
+const { router: boardThreadsRouter } = require('./api/board_threads');
+app.use('/api/board-threads', boardThreadsRouter);
 
 // Owner Receivables — Vantaca AR ingest + snapshot store + portfolio view
 // (project_owner_receivables.md). Bridge to full accounting integration.
