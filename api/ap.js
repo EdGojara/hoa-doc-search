@@ -1058,7 +1058,7 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
       jeId = await postAccrualForInvoice({
         invoiceId: id, communityId: inv.community_id, vendorId: inv.vendor_id,
         glLines: lines.map((l) => ({ accountId: l.gl_account_id, cents: l.amount_cents, memo: l.description })),
-        totalCents: inv.total_cents, invoiceDate: inv.invoice_date,
+        totalCents: inv.total_cents, taxCents: inv.tax_cents, invoiceDate: inv.invoice_date,
         vendorInvoiceNumber: inv.vendor_invoice_number, vendorName: (inv.vendors && inv.vendors.name) || inv.vendor_name,
         sourceDocumentPath: inv.source_storage_path || null,
         classificationReason: `Coded line by line from the invoice — ${lines.length} lines across ${new Set(lines.map((l) => l.gl_account_id)).size} account(s).`,
@@ -1078,6 +1078,94 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
     }
     res.json({ ok: true, gl_account: `${acct.account_number} ${acct.account_name}`, posting_journal_entry_id: jeId, posted: !!jeId, previous_gl_account: prevLabel, warning: auditWarning });
   } catch (err) { console.error('[ap] line code failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /invoices/:id/lines/:lineId/split — break ONE line into several, each with
+// its own GL account, when the extractor lumped multiple charges into one line or
+// couldn't read the line-item table at all. The parts must sum to the original
+// line's pre-tax amount, so the invoice total never moves; header tax reconciles
+// at post time. Reuses the recode repost path. (Ed 2026-08-10 — High Tech Lawn
+// #34006 lumped monthly landscape (5200) + bi-weekly MUD (5205) into one line.)
+router.post('/invoices/:id/lines/:lineId/split', express.json(), async (req, res) => {
+  try {
+    const { id, lineId } = req.params;
+    const parts = Array.isArray((req.body || {}).parts) ? req.body.parts : [];
+    const reason = String(((req.body || {}).reason) || '').trim();
+    if (parts.length < 2) return res.status(400).json({ error: 'need_two_parts', detail: 'A split needs at least two lines.' });
+
+    const { data: inv } = await supabase.from('ap_invoices').select('*, vendors(name)').eq('id', id).maybeSingle();
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    if (inv.status === 'voided') return res.status(400).json({ error: 'voided' });
+    const { data: line } = await supabase.from('ap_invoice_lines').select('*').eq('id', lineId).eq('invoice_id', id).maybeSingle();
+    if (!line) return res.status(404).json({ error: 'line_not_found' });
+
+    // Validate each part: positive amount, description, a valid account on this chart.
+    const clean = [];
+    for (const p of parts) {
+      const cents = Math.round(Number(p.amount_cents));
+      if (!Number.isFinite(cents) || cents <= 0) return res.status(400).json({ error: 'bad_amount', detail: 'Every split line needs a positive amount.' });
+      const desc = String(p.description || '').trim();
+      if (!desc) return res.status(400).json({ error: 'description_required', detail: 'Every split line needs a description.' });
+      const acctId = p.gl_account_id || null;
+      if (acctId) {
+        const { data: acct } = await supabase.from('chart_of_accounts').select('id').eq('id', acctId).eq('community_id', inv.community_id).maybeSingle();
+        if (!acct) return res.status(400).json({ error: 'invalid_account', detail: "A chosen account is not on this community's chart." });
+      }
+      clean.push({ description: desc, amount_cents: cents, gl_account_id: acctId });
+    }
+    const sum = clean.reduce((s, p) => s + p.amount_cents, 0);
+    if (Math.abs(sum - line.amount_cents) > 0) {
+      return res.status(400).json({ error: 'sum_mismatch', detail: `The split lines must add up to $${(line.amount_cents / 100).toFixed(2)} (they add to $${(sum / 100).toFixed(2)}).` });
+    }
+
+    const posted = !!inv.posting_journal_entry_id;
+    let ctx = null;
+    if (posted) {
+      if (!reason) return res.status(400).json({ error: 'reason_required', detail: "This bill's accrual is already posted. Splitting a line reverses that entry and posts a new one — say why." });
+      const { resolveUserRole } = require('./users');
+      ctx = await resolveUserRole(req);
+      if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required' });
+    }
+    const who = (ctx && ctx.user && (ctx.user.full_name || ctx.user.email)) || 'Staff';
+
+    // Replace the original line with the parts, then renumber every line 1..N.
+    await supabase.from('ap_invoice_lines').delete().eq('id', lineId);
+    const ins = clean.map((p, i) => ({ invoice_id: id, line_number: 10000 + i, description: p.description, quantity: 1, unit_price_cents: p.amount_cents, amount_cents: p.amount_cents, gl_account_id: p.gl_account_id, tax_amount_cents: 0, is_taxable: false }));
+    await supabase.from('ap_invoice_lines').insert(ins);
+    const { data: allRows } = await supabase.from('ap_invoice_lines').select('id, line_number').eq('invoice_id', id).order('line_number');
+    let n = 1; for (const l of (allRows || [])) { await supabase.from('ap_invoice_lines').update({ line_number: n++ }).eq('id', l.id); }
+
+    // Re-post the JE from all lines (same path as a line re-code).
+    const { data: lines } = await supabase.from('ap_invoice_lines').select('*').eq('invoice_id', id).order('line_number');
+    const allCoded = (lines || []).length > 0 && lines.every((l) => l.gl_account_id);
+    let jeId = inv.posting_journal_entry_id;
+    if (posted) {
+      try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: jeId, void_reason: `Line ${line.line_number} split into ${clean.length} by ${who}: ${reason}` }); }
+      catch (e) { console.error('[ap] split reversal FAILED — refusing to re-post:', e.message); return res.status(500).json({ error: 'reversal_failed', detail: 'Could not reverse the existing journal entry, so nothing was posted (re-posting would double-count the expense).' }); }
+      jeId = null;
+    }
+    if (allCoded) {
+      const { postAccrualForInvoice } = require('../lib/ap/intake');
+      jeId = await postAccrualForInvoice({
+        invoiceId: id, communityId: inv.community_id, vendorId: inv.vendor_id,
+        glLines: lines.map((l) => ({ accountId: l.gl_account_id, cents: l.amount_cents, memo: l.description })),
+        totalCents: inv.total_cents, taxCents: inv.tax_cents, invoiceDate: inv.invoice_date,
+        vendorInvoiceNumber: inv.vendor_invoice_number, vendorName: (inv.vendors && inv.vendors.name) || inv.vendor_name,
+        classificationReason: `Line split — ${lines.length} lines across ${new Set(lines.map((l) => l.gl_account_id)).size} account(s).`,
+      });
+    }
+    const biggest = (lines || []).filter((l) => l.amount_cents > 0).sort((a, b) => b.amount_cents - a.amount_cents)[0];
+    await supabase.from('ap_invoices').update({ coded_gl_account_id: biggest ? biggest.gl_account_id : null, posting_journal_entry_id: jeId || null, auto_coded: allCoded, updated_at: new Date().toISOString() }).eq('id', id);
+
+    if (posted) {
+      await supabase.from('ap_invoice_approvals').insert({
+        invoice_id: id, action: 'recoded', user_id: (ctx.user && ctx.user.id) || null, user_name: who,
+        amount_at_time_cents: line.amount_cents,
+        notes: `Line ${line.line_number} ("${String(line.description || '').slice(0, 100)}") split into ${clean.length} lines after posting. Entry reversed and re-posted. Reason: ${reason}`,
+      });
+    }
+    res.json({ ok: true, parts: clean.length, posting_journal_entry_id: jeId, posted: !!jeId });
+  } catch (err) { console.error('[ap] line split failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // GET /invoices/:id/suggest-code — infer the expense account for an uncoded bill
