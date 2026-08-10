@@ -1362,6 +1362,52 @@
   // Each tile is an entry point: icon + title + short description + one
   // headline metric. Click → detail. Boards see the curated landing, drill
   // in for the data.
+  // The comfort banner (Ed 2026-08-09): overview + assurance first. Green when
+  // all's well; only raises a flag when something genuinely needs a board
+  // decision. "The board wants comfort things are handled, not the detail."
+  function comfortBanner(s, projects, motions) {
+    const ar = s.ar_aging || {};
+    const drv = s.drv_by_stage || {};
+    const pj = (projects && projects.summary) || {};
+    const ms = (motions && motions.motions) || [];
+    const name = (communityIndex[currentCommunityId] && communityIndex[currentCommunityId].name) || (s.community && s.community.name) || 'Your community';
+
+    const atLegal = ar.owners_at_legal || 0;
+    const severe = (drv.certified_209 || 0) + (drv.fine_assessed || 0);
+    const projIssues = (pj.needs_attention || 0) + (pj.over_budget || 0);
+    const openMotions = ms.filter((m) => m.status === 'open' || m.status === 'proposed');
+    const myUnvoted = openMotions.filter((m) => m.status === 'open' && !m.my_vote);
+
+    // Assurance clauses — each flips to amber if there's an issue.
+    const clauses = [
+      atLegal > 0 ? { ok: false, t: `${atLegal} account${atLegal === 1 ? '' : 's'} at legal` } : { ok: true, t: 'finances current' },
+      severe > 0 ? { ok: false, t: `${severe} at §209/fine` } : { ok: true, t: 'no accounts at §209' },
+      projIssues > 0 ? { ok: false, t: `${projIssues} project${projIssues === 1 ? '' : 's'} need attention` } : { ok: true, t: 'projects on track' },
+    ];
+
+    // What genuinely needs the board (a decision).
+    const needs = [];
+    if (openMotions.length) {
+      const label = myUnvoted.length ? `${myUnvoted.length} vote${myUnvoted.length === 1 ? '' : 's'} awaiting your vote` : `${openMotions.length} open board vote${openMotions.length === 1 ? '' : 's'}`;
+      needs.push({ text: label, action: 'showMotions()' });
+    }
+
+    const allGood = clauses.every((c) => c.ok) && needs.length === 0;
+    const clauseHtml = clauses.map((c) => `<span style="color:${c.ok ? '#1a7a3c' : '#b45309'};">${c.ok ? '' : '⚠ '}${esc(c.t)}</span>`).join(' <span style="color:#cbd5e1;">·</span> ');
+
+    if (allGood) {
+      return `<div style="background:#e7f6ec;border:1px solid #b7e4c7;border-radius:12px;padding:14px 18px;margin-bottom:18px;">
+        <div style="font-size:15px;font-weight:700;color:#0B1D34;">✅ ${esc(name)} is in good shape.</div>
+        <div style="font-size:12.5px;margin-top:3px;">${clauseHtml}</div>
+      </div>`;
+    }
+    const needHtml = needs.map((n) => `<a href="javascript:${n.action}" style="color:#0B1D34;font-weight:700;text-decoration:underline;">${esc(n.text)} →</a>`).join(' &nbsp; ');
+    return `<div style="background:#fdf6e3;border:1px solid #ecd9a0;border-radius:12px;padding:14px 18px;margin-bottom:18px;">
+      ${needs.length ? `<div style="font-size:15px;font-weight:700;color:#0B1D34;">⚠️ Needs the board: ${needHtml}</div>` : `<div style="font-size:15px;font-weight:700;color:#0B1D34;">${esc(name)} — a couple things to note</div>`}
+      <div style="font-size:12.5px;margin-top:4px;">${clauseHtml}</div>
+    </div>`;
+  }
+
   function renderDashboardCards(s, projects, motions, threads) {
     const fmtMoney = (cents) => {
       if (cents == null) return '—';
@@ -1548,6 +1594,7 @@
       </a>`;
 
     return `
+      ${comfortBanner(s, projects, motions)}
       <div class="tile-section-label">Financial health</div>
       <div class="board-tile-grid">
         ${arTile}
