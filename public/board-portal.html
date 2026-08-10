@@ -252,7 +252,7 @@
         <div class="brand-cs"></div>
         <div class="brand-text">Bedrock<em>Association Management</em></div>
       </div>
-      <div class="topbar-title">Board Portal</div>
+      <div class="topbar-title" onclick="boardHome()" title="Back to the board overview" style="cursor:pointer;">🏛️ Board Portal</div>
       <!-- Switch back to homeowner view. Visible whenever the user is on
            the board portal — they got here either by clicking the Board
            View pill in the homeowner header, or by direct nav. Either
@@ -512,6 +512,15 @@
     } catch (e) {
       wrap.innerHTML = `<div class="err">Load failed: ${esc(e.message)}</div>`;
     }
+  }
+
+  // Persistent "back to the board overview" — the header title is clickable, so
+  // from any detail you can always return to the board (not just to the
+  // homeowner view). Ed 2026-08-09.
+  function boardHome() {
+    if (currentCommunityId) { renderCommunityView(); return; }
+    const c = document.getElementById('container');
+    if (c) c.innerHTML = '<div class="loading">Pick a community above to see the board overview.</div>';
   }
 
   // "← Overview" affordance shown on every drill-in so a board member is never
@@ -1259,7 +1268,7 @@
 
     const rh = s.reserve_health;
     const rhTile = !rh ? '' : `
-      <a class="board-tile" href="/reserve-map.html${slug ? '?community=' + encodeURIComponent(slug) : ''}">
+      <a class="board-tile" href="/reserve-map.html${slug ? '?community=' + encodeURIComponent(slug) : ''}" target="_blank" rel="noopener">
         <div class="tile-icon">🏦</div>
         <div class="tile-title">Reserve Study</div>
         <div class="tile-desc">Components, urgency, projected vs. actual spending across the community.</div>
@@ -1294,7 +1303,7 @@
 
     const arc = s.arc_pipeline;
     const arcTile = !arc ? '' : `
-      <a class="board-tile" href="/arc-review.html">
+      <a class="board-tile" href="/arc-review.html" target="_blank" rel="noopener">
         <div class="tile-icon">🏗️</div>
         <div class="tile-title">ARC Pipeline</div>
         <div class="tile-desc">Architectural review applications awaiting board or staff decision.</div>
@@ -1326,7 +1335,7 @@
     const meetings = s.recent_meetings || [];
     const lastMeeting = meetings[0];
     const meetingsTile = `
-      <a class="board-tile" href="/portal/meetings${slug ? '?community=' + encodeURIComponent(slug) : ''}">
+      <a class="board-tile" href="/portal/meetings${slug ? '?community=' + encodeURIComponent(slug) : ''}" target="_blank" rel="noopener">
         <div class="tile-icon">📅</div>
         <div class="tile-title">Meetings & Minutes</div>
         <div class="tile-desc">Board meeting minutes, agendas, and recent decisions on file.</div>
