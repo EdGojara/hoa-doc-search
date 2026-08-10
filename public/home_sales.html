@@ -59,6 +59,7 @@
   <div class="row" style="margin-bottom:16px;">
     <button class="btn gold" id="btnRequest">＋ Log resale request</button>
     <button class="btn" id="btnScan">📄 Scan closing packet</button>
+    <button class="btn" id="btnProrate">🧮 Prorate assessment</button>
   </div>
   <div id="panel"></div>
   <div id="list"><div class="muted" style="padding:30px; text-align:center;">Loading…</div></div>
@@ -88,6 +89,7 @@
     $('commSel').addEventListener('change', (e)=>{ CID = e.target.value; clearPanel(); loadList(); });
     $('btnRequest').addEventListener('click', openRequestFlow);
     $('btnScan').addEventListener('click', openScanFlow);
+    $('btnProrate').addEventListener('click', openProrateFlow);
     if (CID) loadList(); else $('list').innerHTML = '<div class="card muted">No managed communities found.</div>';
   }
 
@@ -174,6 +176,13 @@
       const snap = await fetchSnapshot(property_id);
       $('sc-prop-chosen').innerHTML = snap ? ('Matched: <b>'+esc(snap.property.street_address)+'</b> — seller of record <b>'+esc(snap.owner?snap.owner.owner_name:'unknown')+'</b>') : '';
       renderSellerCheck(snap);
+    } else if (ctx === 'pr') {
+      // proration flow property pick
+      window._prProp = property_id;
+      $('pr-results').innerHTML = '';
+      const snap = await fetchSnapshot(property_id);
+      $('pr-prop-chosen').innerHTML = snap ? ('Selected: <b>'+esc(snap.property.street_address)+'</b> — current owner <b>'+esc(snap.owner?snap.owner.owner_name:'unknown')+'</b>') : '';
+      prPreview();
     }
   };
 
@@ -323,6 +332,105 @@
     </div>`;
     window.scrollTo({top:0, behavior:'smooth'});
   };
+
+  // ── Prorated assessments at transfer ──────────────────────────────────────
+  const PR_TYPES = [
+    ['builder_to_homeowner','Builder → homeowner (first sale)'],
+    ['developer_to_builder','Developer → builder'],
+    ['owner_resale','Owner → owner (resale)'],
+  ];
+  async function openProrateFlow(){
+    if (!CID) { alert('Pick a community first.'); return; }
+    clearPanel();
+    const rates = await fetch(`/api/assessment-proration/rates?community_id=${CID}`).then(r=>r.json()).catch(()=>({rates:[]}));
+    const rateOf = (cls)=>{ const r=(rates.rates||[]).find(x=>x.owner_class===cls); return r? (r.annual_amount_cents/100).toFixed(2):''; };
+    const typeOpts = PR_TYPES.map(([v,l])=>`<option value="${v}">${esc(l)}</option>`).join('');
+    $('panel').innerHTML = `
+      <div class="card" style="margin-bottom:14px;">
+        <h2 class="sec">Assessment rates <span class="muted" style="font-size:12px;">— annual, per owner class</span></h2>
+        <div class="grid2" style="margin-top:8px;">
+          <div class="field"><label>Builder rate ($/yr)</label><input type="text" id="pr-rate-builder" value="${rateOf('builder')}" placeholder="e.g. 400.00"></div>
+          <div class="field"><label>Homeowner rate ($/yr)</label><input type="text" id="pr-rate-homeowner" value="${rateOf('homeowner')}" placeholder="e.g. 600.00"></div>
+        </div>
+        <button class="btn" id="pr-save-rates" style="margin-top:8px;">Save rates</button>
+        <span id="pr-rate-status" class="muted" style="font-size:12px; margin-left:10px;"></span>
+      </div>
+      <div class="card" style="margin-bottom:14px;">
+        <h2 class="sec">Prorate a transfer</h2>
+        <div class="muted" style="font-size:12.5px; margin:2px 0 10px;">Daily proration (days remaining ÷ days in the year) from the transfer date to Dec 31. A resale posts no charge — ownership and balance transfer only.</div>
+        <div class="field"><label>Property</label><input type="text" id="pr-search" placeholder="Street address or owner…" autocomplete="off"></div>
+        <div id="pr-results"></div>
+        <div id="pr-prop-chosen" class="muted" style="font-size:12.5px; margin:6px 0;"></div>
+        <div class="grid2">
+          <div class="field"><label>Transfer type</label><select id="pr-type" onchange="prPreview()">${typeOpts}</select></div>
+          <div class="field"><label>Transfer / closing date</label><input type="date" id="pr-date" onchange="prPreview()"></div>
+        </div>
+        <div id="pr-preview" style="margin-top:10px;"></div>
+      </div>
+      <div class="card"><h2 class="sec">Recent prorations</h2><div id="pr-history" class="muted" style="font-size:12.5px;">Loading…</div></div>`;
+    window._prProp = null;
+    let t; $('pr-search').addEventListener('input',(e)=>{ clearTimeout(t); t=setTimeout(()=>propSearch(e.target.value,'pr'),250); });
+    $('pr-save-rates').addEventListener('click', prSaveRates);
+    prLoadHistory();
+  }
+  async function prSaveRates(){
+    const st = $('pr-rate-status'); st.textContent='Saving…';
+    try {
+      for (const cls of ['builder','homeowner']){
+        const cents = dollarsToCents($('pr-rate-'+cls).value);
+        if (cents==null) continue;
+        const r = await fetch('/api/assessment-proration/rates',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:CID, owner_class:cls, annual_amount_cents:cents})});
+        if (!r.ok){ const j=await r.json(); throw new Error(j.error||'save failed'); }
+      }
+      st.textContent='Saved.'; prPreview();
+    } catch(e){ st.innerHTML='<span style="color:#b00">'+esc(e.message)+'</span>'; }
+  }
+  window.prPreview = async function(){
+    const box = $('pr-preview'); if (!box) return;
+    const property_id = window._prProp; const transfer_type = ($('pr-type')||{}).value; const effective_date = ($('pr-date')||{}).value;
+    if (!property_id || !effective_date){ box.innerHTML = '<div class="muted" style="font-size:12.5px;">Pick a property, transfer type, and date to preview.</div>'; return; }
+    box.innerHTML = '<div class="muted" style="font-size:12.5px;">Calculating…</div>';
+    const j = await fetch('/api/assessment-proration/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:CID, property_id, transfer_type, effective_date})}).then(r=>r.json()).catch(()=>({error:'preview_failed'}));
+    if (j.error==='no_rate'){ box.innerHTML = '<div class="card" style="background:#fff7ed; border-color:#fed7aa; font-size:12.5px; padding:10px 12px;">⚠ '+esc(j.note||'No rate set.')+' Set it above and save.</div>'; return; }
+    if (j.error){ box.innerHTML = '<div style="color:#b00; font-size:12.5px;">Could not preview: '+esc(j.detail||j.error)+'</div>'; return; }
+    if (!j.charge){
+      box.innerHTML = `<div class="card" style="background:#f0f9ff; border-color:#bae6fd; padding:12px 14px;">
+        <div style="font-weight:600;">No HOA charge for this transfer</div>
+        <div class="muted" style="font-size:12.5px; margin-top:3px;">${esc(j.note||'')}</div>
+        <button class="btn" style="margin-top:8px;" onclick="prPost(false)">Log transfer (no charge)</button>
+        <span id="pr-post-status" class="muted" style="font-size:12px; margin-left:8px;"></span></div>`;
+      return;
+    }
+    box.innerHTML = `<div class="card" style="background:#f0fdf4; border-color:#bbf7d0; padding:12px 14px;">
+      <div style="font-size:20px; font-weight:700;">${fmt(j.prorated_amount_cents)}</div>
+      <div class="muted" style="font-size:12.5px; margin-top:3px;">${esc(j.note||'')}</div>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <button class="btn gold" onclick="prPost(false)">Post to owner's account</button>
+        <span id="pr-post-status" class="muted" style="font-size:12px;"></span>
+      </div></div>`;
+  };
+  window.prPost = async function(force){
+    const property_id = window._prProp; const transfer_type = $('pr-type').value; const effective_date = $('pr-date').value;
+    const st = $('pr-post-status'); if (st) st.textContent='Posting…';
+    const r = await fetch('/api/assessment-proration/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:CID, property_id, transfer_type, effective_date, allow_duplicate:!!force})});
+    const j = await r.json();
+    if (r.status===409 && j.error==='already_prorated'){
+      if (confirm((j.detail||'Already prorated.')+'\n\nPost it again anyway?')) return prPost(true);
+      if (st) st.textContent=''; return;
+    }
+    if (!r.ok || !j.ok){ if (st) st.innerHTML='<span style="color:#b00">'+esc(j.detail||j.error||'failed')+'</span>'; else alert(j.detail||j.error||'failed'); return; }
+    if (st) st.innerHTML='<span style="color:#166534">✓ '+(j.charge?('charged '+fmt(j.prorated_amount_cents)):'transfer logged')+'</span>';
+    prLoadHistory();
+  };
+  async function prLoadHistory(){
+    const box = $('pr-history'); if (!box) return;
+    const j = await fetch(`/api/assessment-proration/history?community_id=${CID}`).then(r=>r.json()).catch(()=>({history:[]}));
+    const h = j.history||[];
+    if (!h.length){ box.innerHTML = 'No prorations yet.'; return; }
+    box.innerHTML = '<table style="width:100%; font-size:12.5px;"><thead><tr><th style="text-align:left;">Property</th><th style="text-align:left;">Type</th><th style="text-align:left;">Effective</th><th style="text-align:right;">Days</th><th style="text-align:right;">Amount</th></tr></thead><tbody>'
+      + h.map(x=>`<tr><td>${esc(x.properties?x.properties.street_address:'—')}</td><td>${esc(String(x.transfer_type||'').replace(/_/g,' '))}</td><td>${esc(fmtDate(x.effective_date))}</td><td style="text-align:right;">${x.prorated_amount_cents>0?(x.days_prorated+'/'+x.days_in_year):'—'}</td><td style="text-align:right;">${x.prorated_amount_cents>0?fmt(x.prorated_amount_cents):'<span class="muted">no charge</span>'}</td></tr>`).join('')
+      + '</tbody></table>';
+  }
 
   init();
 </script>

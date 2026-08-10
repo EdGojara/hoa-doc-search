@@ -1152,6 +1152,9 @@ app.use('/api/home-sales', homeSalesRouter);
 const checksRouter = require('./api/checks');
 app.use('/api/checks', checksRouter);
 
+const assessmentProrationRouter = require('./api/assessment_proration');
+app.use('/api/assessment-proration', assessmentProrationRouter);
+
 // Banks master — management-company-level bank registry. bank_accounts
 // FK to this table. Migration 173. Bedrock's three banks (First Citizens,
 // NewFirst, Columbia transitioning) seeded by the migration.
