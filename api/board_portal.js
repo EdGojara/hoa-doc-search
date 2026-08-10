@@ -647,4 +647,52 @@ router.get('/community/:id/arc', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// GET /api/board-portal/community/:id/meetings
+//   Read-only board view of minutes + agendas on file. Each source best-effort.
+// ----------------------------------------------------------------------------
+router.get('/community/:id/meetings', async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const communityId = req.params.id;
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+
+    let minutes = [];
+    // Minutes drafted/finalized in-platform.
+    try {
+      const { data, error } = await supabase.from('meeting_minutes')
+        .select('id, meeting_date, meeting_type, title, status, rendered_document_id')
+        .eq('community_id', communityId).eq('status', 'final')
+        .order('meeting_date', { ascending: false, nullsFirst: false }).limit(100);
+      if (error) throw error;
+      for (const r of (data || [])) minutes.push({ date: r.meeting_date, type: (r.meeting_type || 'regular').replace(/_/g, ' '), title: r.title || 'Meeting minutes', doc_id: r.rendered_document_id, source: 'minutes' });
+    } catch (e) { console.warn('[board_portal] meetings/minutes skipped:', e.message); }
+    // Imported minutes docs.
+    try {
+      const { data, error } = await supabase.from('library_documents')
+        .select('id, title, effective_date, category')
+        .eq('community_id', communityId).in('category', ['regular_meeting_minutes', 'annual_board_meeting_minutes', 'special_meeting_minutes', 'board_meeting_minutes'])
+        .order('effective_date', { ascending: false, nullsFirst: false }).limit(100);
+      if (error) throw error;
+      for (const r of (data || [])) minutes.push({ date: r.effective_date, type: String(r.category || '').replace(/_/g, ' ').replace(/minutes$/, '').trim() || 'meeting', title: r.title || 'Meeting minutes', doc_id: r.id, source: 'document' });
+    } catch (e) { console.warn('[board_portal] meetings/library skipped:', e.message); }
+    minutes.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+
+    let agendas = [];
+    try {
+      const { data, error } = await supabase.from('meeting_agendas')
+        .select('id, meeting_date, title, status')
+        .eq('community_id', communityId).order('meeting_date', { ascending: false, nullsFirst: false }).limit(50);
+      if (error) throw error;
+      agendas = (data || []).map((r) => ({ date: r.meeting_date, title: r.title || 'Agenda', status: r.status }));
+    } catch (e) { console.warn('[board_portal] meetings/agendas skipped:', e.message); }
+
+    res.json({ minutes, agendas });
+  } catch (err) {
+    console.error('[board_portal] meetings failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };

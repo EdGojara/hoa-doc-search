@@ -519,7 +519,7 @@ const _STAFF_GATE_PUBLIC = [
   // accident. Same cookie-gated-inside pattern as /api/portal/* above.
   /^\/api\/board-portal\/communities$/,        // GET the caller's communities
   /^\/api\/board-portal\/board-members$/,      // GET roster (scoped inside)
-  /^\/api\/board-portal\/community\/[^/]+\/(summary|properties|year|projects|arc)$/, // community oversight panels
+  /^\/api\/board-portal\/community\/[^/]+\/(summary|properties|year|projects|arc|meetings)$/, // community oversight panels
   /^\/api\/board-portal\/property\/[^/]+$/,    // property detail (authorized by the property's own community)
   // Board motions/voting — every handler enforces requireBoardViewer +
   // canSeeCommunity, and WRITES require a real actor (a staff "view as" preview

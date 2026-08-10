@@ -675,6 +675,35 @@
     return `${header}${pendingSection}${decidedSection || (pending.length ? '' : '<div class="empty">No architectural decisions on record yet.</div>')}`;
   }
 
+  // Meetings & Minutes — board-native, read-only. Not the homeowner page.
+  async function showMeetings() {
+    const wrap = document.getElementById('container');
+    wrap.innerHTML = '<div class="loading">Loading meetings…</div>';
+    try {
+      const j = await fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/meetings`);
+      wrap.innerHTML = `${backBar()}${renderMeetings(j)}`;
+    } catch (e) { wrap.innerHTML = `${backBar()}<div class="err">Load failed: ${esc(e.message)}</div>`; }
+  }
+  function renderMeetings(j) {
+    const minutes = j.minutes || [];
+    const agendas = j.agendas || [];
+    const good = minutes.length > 0;
+    const header = `<div style="background:${good ? '#e7f6ec' : '#eef2f7'};border:1px solid ${good ? '#b7e4c7' : '#e2e8f0'};border-radius:12px;padding:14px 18px;margin-bottom:16px;">
+      <div style="font-size:15px;font-weight:700;color:#0B1D34;">📅 Meetings &amp; Minutes</div>
+      <div style="font-size:12.5px;color:#475569;margin-top:3px;">${good ? `${minutes.length} set${minutes.length === 1 ? '' : 's'} of minutes on file${agendas.length ? ` · ${agendas.length} agenda${agendas.length === 1 ? '' : 's'}` : ''}.` : 'No minutes on file yet — they appear here after each meeting is finalized.'}</div>
+    </div>`;
+    const row = (r, badge) => `<div style="border:1px solid #e2e8f0;border-radius:10px;padding:11px 13px;margin-bottom:8px;background:#fff;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;">
+      <div style="min-width:0;flex:1;">
+        <div style="font-weight:700;color:#0B1D34;font-size:14px;">${esc(r.title || 'Meeting')}</div>
+        <div style="font-size:12px;color:#64748b;">${esc((r.type || '').trim())}${r.date ? ' · ' + esc(fmtDate(r.date)) : ''}</div>
+      </div>${badge || ''}
+    </div>`;
+    const minutesSection = minutes.length ? `<div class="tile-section-label" style="margin:4px 0 8px;">Minutes on file</div>${minutes.map((r) => row(r)).join('')}` : '';
+    const agendaSection = agendas.length ? `<div class="tile-section-label" style="margin:12px 0 8px;">Agendas</div>${agendas.map((r) => row(r)).join('')}` : '';
+    const empty = (!minutes.length && !agendas.length) ? '<div class="empty">Nothing on file yet.</div>' : '';
+    return `${header}${minutesSection}${agendaSection}${empty}`;
+  }
+
   // Projects drill-in (uses the stash from the landing; no re-fetch).
   function showProjects() {
     const wrap = document.getElementById('container');
@@ -1486,7 +1515,7 @@
 
     const rh = s.reserve_health;
     const rhTile = !rh ? '' : `
-      <a class="board-tile" href="/reserve-map.html?id=${encodeURIComponent(currentCommunityId || '')}" target="_blank" rel="noopener">
+      <a class="board-tile" href="/reserve-map.html?id=${encodeURIComponent(currentCommunityId || '')}&board=1" target="_blank" rel="noopener">
         <div class="tile-icon">🏦</div>
         <div class="tile-title">Reserve Study</div>
         <div class="tile-desc">Components, urgency, projected vs. actual spending across the community.</div>
@@ -1576,7 +1605,7 @@
     const meetings = s.recent_meetings || [];
     const lastMeeting = meetings[0];
     const meetingsTile = `
-      <a class="board-tile" href="/portal/meetings${slug ? '?community=' + encodeURIComponent(slug) : ''}" target="_blank" rel="noopener">
+      <a class="board-tile" href="javascript:showMeetings()">
         <div class="tile-icon">📅</div>
         <div class="tile-title">Meetings & Minutes</div>
         <div class="tile-desc">Board meeting minutes, agendas, and recent decisions on file.</div>

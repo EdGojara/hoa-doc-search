@@ -110,6 +110,11 @@
     font-size: 12.5px;
   }
   .module-subnav a.secondary:hover { border-color: var(--gold); color: var(--gold); background: transparent; }
+  /* Board mode (?board=1): hide staff tooling — the board sees the map + health,
+     not Components / Invoice review / Import / the Platform link. */
+  html.board-only .module-subnav,
+  html.board-only .back-link { display: none !important; }
+  html.board-only .brand { pointer-events: none; }
 
   /* ---- Summary strip ---- */
   .summary-strip {
@@ -687,6 +692,11 @@
 </style>
 </head>
 <body>
+<script>
+  // Board mode: opened from the board portal with ?board=1 → strip the staff
+  // chrome so the board sees the reserve map + health, not management tooling.
+  try { if (new URLSearchParams(location.search).get('board') === '1') document.documentElement.classList.add('board-only'); } catch (_) {}
+</script>
 
 <header class="top">
   <a class="brand" href="/" id="brandLink">
