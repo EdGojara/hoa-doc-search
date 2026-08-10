@@ -268,6 +268,7 @@
         <option value="">Loading…</option>
       </select>
       <a id="portfolioLink" href="javascript:showPortfolioMotions()" style="display:none;margin-left:16px;font-size:12.5px;color:#0B1D34;font-weight:600;text-decoration:none;white-space:nowrap;">🗳️ All board motions →</a>
+      <button id="startVoteBtn" onclick="newMotionFromCockpit()" style="display:none;margin-left:12px;padding:6px 13px;border-radius:8px;border:1px solid #0B1D34;background:#0B1D34;color:#fff;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;">+ Start a board vote</button>
       <span id="staffPreview" style="margin-left:auto;"></span>
     </div>
   </div>
@@ -432,6 +433,12 @@
       // more than one community (a manager, or a multi-board member).
       const pl = document.getElementById('portfolioLink');
       if (pl) pl.style.display = (j.communities || []).length > 1 ? '' : 'none';
+      // "+ Start a board vote" is for anyone who can actually act — staff, or a
+      // real board member. Hidden in the staff "view as" read-only preview
+      // (acting_as), which is exactly why the create buttons "disappear" there.
+      const canWrite = !!boardViewer && (boardViewer.kind === 'staff' || (boardViewer.kind === 'board' && !boardViewer.acting_as));
+      const sv = document.getElementById('startVoteBtn');
+      if (sv) sv.style.display = canWrite ? '' : 'none';
       // Deep link: ?view=motions opens the cross-community motions cockpit
       // (the trustEd "Board Votes" entry lands here).
       const params = new URLSearchParams(location.search);
