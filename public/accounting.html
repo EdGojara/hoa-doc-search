@@ -512,10 +512,10 @@
     $('body').innerHTML = `<div class="card">
       <h2 class="sec" style="margin-bottom:8px;">Budget</h2>
       <div style="margin-bottom:12px;"><button onclick="renderBudgetPlanner()" style="padding:9px 16px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:600; cursor:pointer; font-size:13px;">➕ Plan a budget from actuals →</button></div>
-      <div class="muted" style="margin-bottom:12px; font-size:13px;">Or upload an approved annual budget (PDF) — trustEd extracts the line items and matches them to your chart of accounts.</div>
+      <div class="muted" style="margin-bottom:12px; font-size:13px;">Or upload an approved annual budget (PDF or Excel) — trustEd extracts the line items and matches them to your chart of accounts.</div>
       <div id="bdg-drop" style="border:2px dashed var(--rule); border-radius:10px; padding:26px; text-align:center; cursor:pointer; background:#fafbfc;">
-        <div style="font-size:13px; color:var(--ink-soft);">📄 Drop a budget PDF here or <strong>click to choose</strong></div>
-        <input type="file" id="bdg-file" accept=".pdf" style="display:none;">
+        <div style="font-size:13px; color:var(--ink-soft);">📄 Drop a budget PDF or Excel file here or <strong>click to choose</strong></div>
+        <input type="file" id="bdg-file" accept=".pdf,.xlsx,.xls,.csv" style="display:none;">
       </div>
       <div id="bdg-preview"></div>
       <div id="bdg-list" style="margin-top:14px;" class="muted">Loading…</div></div>`;
