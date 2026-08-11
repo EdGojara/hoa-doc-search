@@ -659,7 +659,7 @@
       if (!_bdgPlanRows.length) { $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">No revenue/expense history to plan from yet. Post some GL activity, or upload an approved budget PDF instead.</div>'; return; }
       const rowHtml=(r,i)=>`<tr>
         <td style="font-family:ui-monospace,monospace; font-size:11.5px; color:var(--ink-soft); vertical-align:top;">${esc(r.account_number)}</td>
-        <td style="font-size:12px; vertical-align:top;">${esc(r.account_name)}${r.rationale?`<div class="muted" style="font-size:11px; margin-top:2px; line-height:1.35;">✨ ${esc(r.rationale)}</div>`:''}</td>
+        <td style="font-size:12px; vertical-align:top;">${esc(r.account_name)}${r.flag_large_variance?` <span title="Big move vs last year — review" style="display:inline-block; font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; background:#fef3c7; color:#92400e; white-space:nowrap;">${r.variance_pct>0?'▲':'▼'} ${Math.abs(r.variance_pct)}% vs FY-1</span>`:''}${r.rationale?`<div class="muted" style="font-size:11px; margin-top:2px; line-height:1.35;">✨ ${esc(r.rationale)}</div>`:''}</td>
         <td style="vertical-align:top;"><span class="pill">${esc(r.fund_code||'—')}</span></td>
         <td class="num" style="font-size:11px; color:#94a3b8; vertical-align:top;">${fmt(r.fy2_actual_cents)}</td>
         <td class="num" style="font-size:11.5px; color:#64748b; vertical-align:top;">${fmt(r.prior_actual_cents)}</td>
@@ -667,7 +667,7 @@
       const idx=_bdgPlanRows.map((r,i)=>({r,i}));
       const rev=idx.filter(x=>x.r.account_type==='revenue'), exp=idx.filter(x=>x.r.account_type==='expense');
       $('bp-grid').innerHTML=`
-        <div class="muted" style="font-size:12px; margin-bottom:8px;">✨ ${esc(j.source_label||'Generated plan')} · edit any line, then save.${(j.contracts&&j.contracts.length)?` · ${j.contracts.length} operating contract(s) considered`:''}</div>
+        <div class="muted" style="font-size:12px; margin-bottom:8px;">✨ ${esc(j.source_label||'Generated plan')} · edit any line, then save.${(j.contracts&&j.contracts.length)?` · ${j.contracts.length} operating contract(s) considered`:''}${(()=>{const n=_bdgPlanRows.filter(r=>r.flag_large_variance).length; return n?` · <span style="color:#92400e; font-weight:600;">⚠ ${n} line${n===1?'':'s'} moved >15% vs last year — review</span>`:'';})()}</div>
         <table><thead><tr><th style="width:64px;">Acct</th><th>Account &amp; reasoning</th><th>Fund</th><th class="num">FY-2</th><th class="num">FY-1</th><th class="num">FY ${esc(String(j.fiscal_year))} proposed</th></tr></thead>
         <tbody>
           <tr class="total"><td colspan="6" style="background:#f0f7ff;">Revenue</td></tr>

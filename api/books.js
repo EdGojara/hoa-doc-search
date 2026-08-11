@@ -812,13 +812,36 @@ router.get('/budgets/ai-plan', async (req, res) => {
       contracts = (am || []).map((x) => `${x.name}: $${((x.management_annual_cost_cents || 0) / 100).toLocaleString()}/yr operating contract${x.management_contract_end_date ? ` (through ${x.management_contract_end_date})` : ''}`);
     } catch (_) { /* amenity contracts optional */ }
 
+    // Recurring vendor commitments per expense account (prior-year GL): the
+    // concrete "this line is $X to vendor Y" signal so a proposal is grounded in
+    // actual vendor relationships, not just a trend line. Reflects real contracts
+    // by their run-rate even when no contract PDF is on file.
+    const vendorByAcct = {};
+    try {
+      const { fetchAllQuery } = require('../lib/db/fetch_all');
+      const jel = await fetchAllQuery(() => supabase.from('journal_entry_lines')
+        .select('account_id, vendor_id, debit_cents, credit_cents, journal_entries!inner ( community_id, posting_date, status )')
+        .eq('journal_entries.community_id', community_id)
+        .gte('journal_entries.posting_date', `${fy - 1}-01-01`).lte('journal_entries.posting_date', `${fy - 1}-12-31`)
+        .not('vendor_id', 'is', null), { orderBy: 'id' });
+      const agg = {};
+      for (const l of jel) { if (!l.vendor_id) continue; const net = Number(l.debit_cents || 0) - Number(l.credit_cents || 0); (agg[l.account_id] = agg[l.account_id] || {}); agg[l.account_id][l.vendor_id] = (agg[l.account_id][l.vendor_id] || 0) + net; }
+      const vids = [...new Set(Object.values(agg).flatMap((v) => Object.keys(v)))];
+      const vnames = {};
+      for (let i = 0; i < vids.length; i += 300) { const { data } = await supabase.from('vendors').select('id, name').in('id', vids.slice(i, i + 300)); (data || []).forEach((v) => { vnames[v.id] = v.name; }); }
+      for (const [aid, vmap] of Object.entries(agg)) {
+        const top = Object.entries(vmap).filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([vid, c]) => `${vnames[vid] || 'vendor'} $${Math.round(c / 100)}`);
+        if (top.length) vendorByAcct[aid] = top.join(', ');
+      }
+    } catch (_) { /* vendor history optional */ }
+
     const d = (c) => (Number(c || 0) / 100).toFixed(0);
-    const table = rows.map((r) => `${r.account_number}\t${r.account_name}\t${r.account_type}\tFY${fy - 2}=$${d(r.fy2)}\tFY${fy - 1}=$${d(r.fy1)}\tYTD-annualized=$${d(r.ytd_annualized)}`).join('\n');
+    const table = rows.map((r) => `${r.account_number}\t${r.account_name}\t${r.account_type}\tFY${fy - 2}=$${d(r.fy2)}\tFY${fy - 1}=$${d(r.fy1)}\tYTD-annualized=$${d(r.ytd_annualized)}\trecurring vendors (FY${fy - 1}): ${vendorByAcct[r.account_id] || '—'}`).join('\n');
     const prompt = `You are a CPA preparing the FY ${fy} operating budget for a Texas HOA. For each account below, propose a next-year budget amount in whole dollars and a one-sentence rationale.
 
 Rules:
 - Base it on the 2-3 year trend AND the current-year run-rate; do not just copy last year.
-- If an account clearly maps to a known operating contract (listed below), budget it at the contract amount and say so in the rationale.
+- If an account clearly maps to a known operating contract (listed below), or its recurring-vendors column shows a steady annual vendor commitment, budget at that commitment (allowing a reasonable renewal increase) and name the vendor/contract in the rationale.
 - Fixed obligations (insurance, management fee, utilities, reserve contribution) should reflect known/expected increases; discretionary lines can hold roughly flat unless the trend says otherwise.
 - Round to sensible round numbers.
 - Revenue accounts: budget assessment/other income realistically against the trend, not inflated.
@@ -842,11 +865,15 @@ Return ONLY a JSON array, one object per account, no prose:
     const out = rows.map((r) => {
       const s = byNum.get(String(r.account_number));
       const ai_suggested_cents = (s && Number.isFinite(Number(s.suggested_annual_dollars))) ? Math.round(Number(s.suggested_annual_dollars) * 100) : (r.fy1 || r.ytd_annualized || 0);
+      // Variance vs last year — flag any line that jumps materially so a big move
+      // can't slip through unreviewed. Only meaningful once there's a prior figure.
+      const variance_pct = r.fy1 ? Math.round(((ai_suggested_cents - r.fy1) / Math.abs(r.fy1)) * 100) : null;
       return {
         account_id: r.account_id, account_number: r.account_number, account_name: r.account_name,
         account_type: r.account_type, fund_id: r.fund_id, fund_code: r.fund_code,
         prior_actual_cents: r.fy1, fy2_actual_cents: r.fy2, ytd_annualized_cents: r.ytd_annualized,
         ai_suggested_cents, rationale: (s && s.rationale) || null,
+        variance_pct, flag_large_variance: variance_pct != null && Math.abs(variance_pct) >= 15,
       };
     });
     const sv = out.filter((r) => r.account_type === 'revenue').reduce((s, r) => s + r.ai_suggested_cents, 0);
