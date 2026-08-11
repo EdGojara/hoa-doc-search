@@ -311,44 +311,74 @@ router.get('/community/:id/properties', async (req, res) => {
     const limit = Math.max(1, Math.min(2000, parseInt(req.query.limit || '500', 10)));
     const orderBy = req.query.order_by || 'open_violations_desc';
 
-    let q = supabase
-      .from('v_property_summary')
-      .select(`
-        property_id, street_address, unit, owner_name, residency_type,
-        owner_occupied, open_violations, worst_open_stage,
-        lifetime_violations, violations_last_12mo, last_violation_at,
-        arc_decisions_count, arc_approved_count, arc_denied_count,
-        last_arc_decided_at, interactions_count, last_interaction_at,
-        substrate_doc_count, inspections_count, last_inspected_at,
-        current_balance
-      `)
-      .eq('community_id', communityId)
-      .limit(limit);
+    // Canonical current balance lives in v_homeowner_current_balance (cents) —
+    // the SAME source the summary rollup uses. v_property_summary.current_balance
+    // is NULL for native-ledger (Vantaca-migrated) communities like Waterview, so
+    // the board AR view read $0 while $265k was actually owed. Source the balance
+    // from the canonical view and overlay it (cents -> dollars, matching the
+    // display), so every community's AR is correct and consistent. (Ed 2026-08-10
+    // SSOT: one balance source, not a per-view copy that drifts.)
+    const { fetchAllQuery } = require('../lib/db/fetch_all');
+    const balRows = await fetchAllQuery(() => supabase
+      .from('v_homeowner_current_balance')
+      .select('property_id, balance_cents')
+      .eq('community_id', communityId), { orderBy: 'property_id' });
+    // Drop rows with no property_id (unmatched transactions can surface a null
+    // key in the balance view — a null in a later .in() throws a uuid error).
+    const balValid = balRows.filter((b) => b.property_id);
+    const balByProp = new Map(balValid.map((b) => [b.property_id, Number(b.balance_cents) || 0]));
+    const balanceDollars = (r) => {
+      const cents = balByProp.has(r.property_id)
+        ? balByProp.get(r.property_id)
+        : (r.current_balance != null ? Math.round(Number(r.current_balance) * 100) : 0);
+      return cents / 100;
+    };
 
-    if (openOnly) q = q.gt('open_violations', 0);
-    if (balanceOnly) q = q.gt('current_balance', 0);
+    const COLS = `
+      property_id, street_address, unit, owner_name, residency_type,
+      owner_occupied, open_violations, worst_open_stage,
+      lifetime_violations, violations_last_12mo, last_violation_at,
+      arc_decisions_count, arc_approved_count, arc_denied_count,
+      last_arc_decided_at, interactions_count, last_interaction_at,
+      substrate_doc_count, inspections_count, last_inspected_at,
+      current_balance`;
 
-    // Order
-    switch (orderBy) {
-      case 'address':
-        q = q.order('street_address', { ascending: true });
-        break;
-      case 'balance_desc':
-        q = q.order('current_balance', { ascending: false, nullsFirst: false });
-        break;
-      case 'last_violation_desc':
-        q = q.order('last_violation_at', { ascending: false, nullsFirst: false });
-        break;
-      case 'open_violations_desc':
-      default:
-        q = q.order('open_violations', { ascending: false })
-             .order('last_violation_at', { ascending: false, nullsFirst: false });
-        break;
+    let rows;
+    if (balanceOnly) {
+      // Drive the AR view off the canonical owing set so nothing is missed at
+      // scale (never off v_property_summary's stale balance).
+      const owingIds = balValid.filter((b) => (Number(b.balance_cents) || 0) > 0).map((b) => b.property_id);
+      rows = [];
+      for (let i = 0; i < owingIds.length; i += 300) {
+        const { data, error } = await supabase.from('v_property_summary').select(COLS)
+          .eq('community_id', communityId).in('property_id', owingIds.slice(i, i + 300));
+        if (error) throw error;
+        rows.push(...(data || []));
+      }
+      rows = rows.map((r) => ({ ...r, current_balance: balanceDollars(r) }))
+        .filter((r) => Number(r.current_balance) > 0);
+      rows.sort((a, b) => Number(b.current_balance) - Number(a.current_balance));
+    } else {
+      let q = supabase.from('v_property_summary').select(COLS).eq('community_id', communityId).limit(2000);
+      if (openOnly) q = q.gt('open_violations', 0);
+      switch (orderBy) {
+        case 'address': q = q.order('street_address', { ascending: true }); break;
+        case 'last_violation_desc': q = q.order('last_violation_at', { ascending: false, nullsFirst: false }); break;
+        case 'balance_desc': break; // sorted after the overlay below
+        case 'open_violations_desc':
+        default:
+          q = q.order('open_violations', { ascending: false }).order('last_violation_at', { ascending: false, nullsFirst: false });
+          break;
+      }
+      const { data, error } = await q;
+      if (error) throw error;
+      // Overlay the canonical balance on every view so the number shown is
+      // correct everywhere it appears (Properties search, etc.), not just AR.
+      rows = (data || []).map((r) => ({ ...r, current_balance: balanceDollars(r) }));
+      if (orderBy === 'balance_desc') rows.sort((a, b) => Number(b.current_balance) - Number(a.current_balance));
     }
 
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json({ properties: data || [] });
+    res.json({ properties: rows.slice(0, limit) });
   } catch (err) {
     console.error('[board_portal] community properties failed:', err.message);
     res.status(500).json({ error: err.message });
