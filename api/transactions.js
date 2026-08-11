@@ -347,11 +347,19 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     let superseded = [];
     let held = null;
     try {
-      const { data: priors } = await supabase.from('transaction_upload_batches')
-        .select('id, period_label, as_of_date, account_count')
-        .eq('community_id', communityId).eq('status', 'committed')
-        .eq('source_format', 'csv').neq('id', batch.id);
-      const maxPrior = (priors || []).reduce((m, p) => Math.max(m, p.account_count || 0), 0);
+      // Identify a prior FULL SNAPSHOT by COVERAGE, not source_format: existing
+      // Vantaca AR snapshots are stored as source_format 'manual' — the SAME value
+      // single-charge prorations use — so keying on 'csv' would miss the real
+      // snapshot (double-count) OR reverting all 'manual' would wipe prorations.
+      // A snapshot covers a comparable set of accounts to this load; a proration
+      // covers 1. Threshold at half this load's account count (floor 25), and
+      // never touch the incremental proration batches. (Ed 2026-08-10.)
+      const { data: allPriors } = await supabase.from('transaction_upload_batches')
+        .select('id, period_label, as_of_date, account_count, uploaded_by')
+        .eq('community_id', communityId).eq('status', 'committed').neq('id', batch.id);
+      const snapThreshold = Math.max(25, Math.floor((batch.account_count || 0) * 0.5));
+      const priors = (allPriors || []).filter((p) => p.uploaded_by !== 'transfer_proration' && (p.account_count || 0) >= snapThreshold);
+      const maxPrior = priors.reduce((m, p) => Math.max(m, p.account_count || 0), 0);
       const force = req.body.force === '1' || req.body.force === true;
       if (priors && priors.length && !force && batch.account_count < maxPrior * 0.9) {
         // Partial-load guard: hold this batch, keep the existing snapshot live.
@@ -386,6 +394,73 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     });
   } catch (err) {
     console.error('[transactions/upload] failed:', err.stack || err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /batches/:id/reconcile — does this snapshot TIE OUT, and what needs to be
+// addressed? Compares account count to the community's home count (Ed's cross-
+// check: Waterview is 1,171 homes but the file had 1,296 accounts), confirms each
+// account's summed transactions equal the file's own running balance, and lists
+// the accounts that carry a balance but don't map to a home. (Ed 2026-08-10 —
+// "make sure everything ties out and we know what needs to be addressed".)
+// ----------------------------------------------------------------------------
+router.get('/batches/:id/reconcile', async (req, res) => {
+  try {
+    const { fetchAllQuery } = require('../lib/db/fetch_all');
+    const { data: batch, error: bErr } = await supabase.from('transaction_upload_batches')
+      .select('id, community_id, period_label, as_of_date, account_count, status').eq('id', req.params.id).maybeSingle();
+    if (bErr) throw bErr;
+    if (!batch) return res.status(404).json({ error: 'batch_not_found' });
+
+    const { count: homeCount } = await supabase.from('properties')
+      .select('id', { count: 'exact', head: true }).eq('community_id', batch.community_id);
+
+    const rows = await fetchAllQuery(() => supabase.from('homeowner_transactions')
+      .select('vantaca_account_id, property_id, amount_cents, running_balance_cents, source_row_index')
+      .eq('source_batch_id', batch.id), { orderBy: 'source_row_index' });
+
+    // Roll each account up to summed balance + the file's last running balance.
+    const byAcct = new Map();
+    for (const r of rows) {
+      const k = r.vantaca_account_id || `__row_${r.source_row_index}`;
+      let a = byAcct.get(k);
+      if (!a) { a = { sum: 0, last: null, lastIdx: -1, property_id: r.property_id }; byAcct.set(k, a); }
+      a.sum += Number(r.amount_cents || 0);
+      if (r.source_row_index > a.lastIdx) { a.lastIdx = r.source_row_index; a.last = r.running_balance_cents; a.property_id = r.property_id; }
+    }
+
+    let tieMismatch = 0, totalNet = 0, matchedNet = 0, matchedCount = 0;
+    const unmatchedWithBalance = [];
+    let unmatchedZero = 0;
+    for (const [acct, a] of byAcct) {
+      totalNet += a.sum;
+      if (a.last != null && Math.abs(a.sum - Number(a.last)) > 1) tieMismatch++;
+      if (a.property_id) { matchedCount++; matchedNet += a.sum; }
+      else if (Math.abs(a.last || a.sum || 0) > 1) unmatchedWithBalance.push({ vantaca_account_id: acct, balance_cents: Number(a.last != null ? a.last : a.sum) });
+      else unmatchedZero++;
+    }
+    unmatchedWithBalance.sort((x, y) => Math.abs(y.balance_cents) - Math.abs(x.balance_cents));
+    const unmatchedBalanceTotal = unmatchedWithBalance.reduce((s, u) => s + u.balance_cents, 0);
+
+    res.json({
+      batch: { id: batch.id, period_label: batch.period_label, as_of_date: batch.as_of_date, status: batch.status },
+      home_count: homeCount || 0,
+      account_count: byAcct.size,
+      accounts_over_homes: byAcct.size - (homeCount || 0),
+      matched_to_home: matchedCount,
+      unmatched_with_balance: unmatchedWithBalance.length,
+      unmatched_zero_balance: unmatchedZero,
+      unmatched_balance_total_cents: unmatchedBalanceTotal,
+      ties_out: tieMismatch === 0,
+      tie_mismatches: tieMismatch,               // accounts where summed txns != file running balance
+      total_net_cents: totalNet,                 // whole ledger (all accounts)
+      matched_net_cents: matchedNet,             // only what maps to a home (what the board sees)
+      unmatched_accounts: unmatchedWithBalance.slice(0, 500),
+    });
+  } catch (err) {
+    console.error('[transactions/reconcile] failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
