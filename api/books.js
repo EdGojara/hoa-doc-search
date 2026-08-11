@@ -943,6 +943,48 @@ router.get('/budgets/living-lines', async (req, res) => {
       }
     } catch (_) { /* optional */ }
 
+    // Contract-VERIFIED source: amenity management contracts are already extracted
+    // (vendor, annual cost, end date, linked PDF). Match them to the account by
+    // vendor name, budget at the contract amount, and attach the contract PDF as
+    // evidence — the number literally IS the contract. (Ed 2026-08-10.)
+    const normV = (s) => String(s || '').toLowerCase().replace(/\b(llc|inc|co|corp|ltd|company|the|services?|management|pool|pools|,|\.)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+    const contracts = [];
+    try {
+      const { data: am } = await supabase.from('amenities')
+        .select('management_vendor_name, management_annual_cost_cents, management_contract_end_date, management_contract_doc_id, name')
+        .eq('community_id', community_id).gt('management_annual_cost_cents', 0);
+      for (const a of (am || [])) {
+        let url = null;
+        if (a.management_contract_doc_id) {
+          const { data: doc } = await supabase.from('library_documents').select('file_path').eq('id', a.management_contract_doc_id).maybeSingle();
+          if (doc && doc.file_path) { try { const { data: s } = await supabase.storage.from('documents').createSignedUrl(doc.file_path, 3600); if (s) url = s.signedUrl; } catch (_) { /* signed url optional */ } }
+        }
+        contracts.push({ norm: normV(a.management_vendor_name), first: normV(a.management_vendor_name).split(' ')[0], vendor_name: a.management_vendor_name, cents: Number(a.management_annual_cost_cents) || 0, end_date: a.management_contract_end_date, amenity: a.name, url });
+      }
+    } catch (_) { /* amenity contracts optional */ }
+    const vendorMatches = (vendors, c) => (vendors || []).some((v) => { const nv = normV(v.name); return nv && c.norm && (nv === c.norm || (c.first.length >= 4 && nv.includes(c.first))); });
+    // Bind each contract to exactly ONE account. A vendor (e.g. Swim Houston)
+    // can appear on several accounts; without this, the full contract amount
+    // would be proposed on every one of them and multiply a single obligation.
+    // Prefer the account whose name matches the amenity (pool → pool line,
+    // splash pad → splash line); break ties by the vendor's spend on it.
+    const contractByAccount = {};
+    const expenseAccts = [...acc.values()].filter((a) => a.account_type === 'expense');
+    const claimed = new Set();
+    for (const c of [...contracts].sort((a, b) => b.cents - a.cents)) {
+      const words = String(c.amenity || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4);
+      const cands = expenseAccts.filter((a) => !claimed.has(a.account_id) && vendorMatches(vendorByAcct[a.account_id], c));
+      if (!cands.length) continue;
+      const score = (a) => {
+        const nm = String(a.account_name || '').toLowerCase();
+        const nameHit = words.some((w) => nm.includes(w)) ? 1e12 : 0;
+        return nameHit + (vendorByAcct[a.account_id] || []).reduce((s, v) => s + v.cents, 0);
+      };
+      const best = cands.sort((x, y) => score(y) - score(x))[0];
+      contractByAccount[best.account_id] = c;
+      claimed.add(best.account_id);
+    }
+
     const ESC = 0.04; // default renewal escalation for vendor-committed lines
     const INFL = 0.03; // default inflation on trend lines
     // fy-1 is the CURRENT year and is still in progress, so budget off the
@@ -953,8 +995,18 @@ router.get('/budgets/living-lines', async (req, res) => {
     const rows = [...acc.values()].sort((a, b) => String(a.account_number).localeCompare(String(b.account_number))).map((a) => {
       const vendors = vendorByAcct[a.account_id] || [];
       const committedAnnual = Math.round(vendors.reduce((s, v) => s + v.cents, 0) * partialAnnualize);
-      let source_type; let confidence; let proposed_cents; let built_from;
-      if (a.account_type === 'expense' && committedAnnual > 0 && committedAnnual >= a.forecast * 0.6) {
+      let source_type; let confidence; let proposed_cents; let built_from; let evidence = [];
+      const contract = contractByAccount[a.account_id] || null;
+      if (contract) {
+        // The number literally IS the contract. Budget at the contracted annual
+        // amount; the contract expires mid-year, so the post-renewal months carry
+        // the default renewal escalation.
+        source_type = 'contract'; confidence = 'high';
+        proposed_cents = Math.round(contract.cents * (1 + ESC));
+        const endTxt = contract.end_date ? ` through ${contract.end_date}, +${Math.round(ESC * 100)}% on renewal` : '';
+        built_from = `Contract — ${contract.vendor_name}: $${Math.round(contract.cents / 100).toLocaleString()}/yr${endTxt}`;
+        if (contract.url) evidence = [{ label: `${contract.vendor_name} contract`, url: contract.url }];
+      } else if (a.account_type === 'expense' && committedAnnual > 0 && committedAnnual >= a.forecast * 0.6) {
         source_type = 'vendor_commitment'; confidence = 'high';
         proposed_cents = Math.round(committedAnnual * (1 + ESC));
         built_from = `${vendors[0].name}${vendors.length > 1 ? ` + ${vendors.length - 1} more` : ''} — $${Math.round(committedAnnual / 100).toLocaleString()}/yr + ${Math.round(ESC * 100)}% renewal`;
@@ -972,7 +1024,7 @@ router.get('/budgets/living-lines', async (req, res) => {
         fund_id: a.fund_id, fund_code: a.fund_code,
         prior_budget_cents: priorBudget[a.account_id] || 0,
         forecast_cents: a.forecast, actual_ytd_cents: a.ytd_actual, fy1_actual_cents: a.fy1, fy2_actual_cents: a.fy2,
-        proposed_cents, source_type, confidence, built_from, vendors,
+        proposed_cents, source_type, confidence, built_from, vendors, evidence,
       };
     });
 
