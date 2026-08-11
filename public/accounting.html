@@ -538,7 +538,12 @@
     try {
       const ex = ((await (await fetch(`/api/books/budgets?community_id=${CID}`)).json()).budgets) || [];
       $('bdg-list').innerHTML = ex.length
-        ? `<div class="sec" style="font-size:13px; margin-bottom:6px;">Existing budgets</div>` + ex.map((b)=>`<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 10px; background:#f5f8fc; border-radius:6px; margin-bottom:6px; font-size:12.5px;"><span>FY ${esc(String(b.fiscal_year))} — ${esc(b.status)}${b.source_filename?' · '+esc(b.source_filename):''}</span><span style="display:flex; align-items:center; gap:12px;"><span class="muted">${b.approved_at?'Approved '+fmtDate(b.approved_at.slice(0,10)):'Draft'}</span><button onclick="bdgDelete('${b.id}','${esc(String(b.fiscal_year))}')" title="Delete this budget" style="border:1px solid #fecaca; background:#fff; color:var(--err); border-radius:6px; padding:3px 10px; cursor:pointer; font-weight:600; font-size:12px;">🗑 Delete</button></span></div>`).join('')
+        ? `<div class="sec" style="font-size:13px; margin-bottom:6px;">Existing budgets</div>` + ex.map((b)=>{
+            const isApproved = b.status==='approved';
+            const statusTxt = isApproved ? ('Approved'+(b.approved_at?' '+fmtDate(b.approved_at.slice(0,10)):'')) : 'Draft';
+            const statusColor = isApproved ? 'var(--ok)' : 'var(--ink-faint)';
+            return `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 10px; background:#f5f8fc; border-radius:6px; margin-bottom:6px; font-size:12.5px;"><span>FY ${esc(String(b.fiscal_year))}${b.source_filename?' · '+esc(b.source_filename):''}</span><span style="display:flex; align-items:center; gap:12px;"><span style="color:${statusColor}; font-weight:600;">${statusTxt}</span><button onclick="bdgDelete('${b.id}','${esc(String(b.fiscal_year))}')" title="Delete this budget" style="border:1px solid #fecaca; background:#fff; color:var(--err); border-radius:6px; padding:3px 10px; cursor:pointer; font-weight:600; font-size:12px;">🗑 Delete</button></span></div>`;
+          }).join('')
         : '<div class="muted">No budgets uploaded yet.</div>';
     } catch (e) { $('bdg-list').innerHTML = ''; }
   }
