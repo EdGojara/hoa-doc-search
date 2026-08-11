@@ -885,6 +885,114 @@ Return ONLY a JSON array, one object per account, no prose:
   }
 });
 
+// GET /api/books/budgets/living-lines?community_id=&fiscal_year=  (Ed 2026-08-10)
+// The differentiated budget: each account is a LIVING, SOURCED line, not a
+// spreadsheet cell. Per line: last year's adopted budget, the current-year
+// FORECAST (run-rate), the YTD ACTUAL, a data-derived proposed amount, the
+// DERIVATION it was built from (a vendor commitment vs a spend/revenue trend), a
+// confidence grade, and the vendor evidence. Everything traces to a source — the
+// exact thing an exported spreadsheet severs. Deterministic (no model call), so
+// it's auditable. The assessment math (revenue requirement / homes) rides along.
+router.get('/budgets/living-lines', async (req, res) => {
+  try {
+    const { community_id, fiscal_year } = req.query;
+    if (!community_id || !fiscal_year) return res.status(400).json({ error: 'community_id_and_fiscal_year_required' });
+    const fy = parseInt(fiscal_year, 10);
+    const { fetchAllQuery } = require('../lib/db/fetch_all');
+
+    const isFor = (y) => incomeStatement({ community_id, period_start: `${y}-01-01`, period_end: `${y}-12-31` });
+    const [is1, is2] = await Promise.all([isFor(fy - 1), isFor(fy - 2)]);
+    const today = new Date(); const cy = today.getUTCFullYear(); const monthsElapsed = today.getUTCMonth() + 1;
+    const isYtd = await incomeStatement({ community_id, period_start: `${cy}-01-01`, period_end: today.toISOString().slice(0, 10) });
+    const annualize = monthsElapsed > 0 ? 12 / monthsElapsed : 1;
+
+    // Prior-year adopted budget (the "Budget" column).
+    const priorBudget = {};
+    const { data: pb } = await supabase.from('community_budgets').select('id').eq('community_id', community_id).eq('fiscal_year', fy - 1).maybeSingle();
+    if (pb) { const { data: bl } = await supabase.from('budget_line_items').select('account_id, annual_amount_cents').eq('budget_id', pb.id); (bl || []).forEach((l) => { priorBudget[l.account_id] = Number(l.annual_amount_cents) || 0; }); }
+
+    const acc = new Map();
+    const merge = (is, key, mult = 1) => {
+      for (const type of ['revenue', 'expenses']) {
+        for (const r of (is.sections?.[type] || [])) {
+          let a = acc.get(r.account_id);
+          if (!a) { a = { account_id: r.account_id, account_number: r.account_number, account_name: r.account_name, account_type: type === 'revenue' ? 'revenue' : 'expense', fund_id: r.fund_id || null, fund_code: r.fund_code || null, fy2: 0, fy1: 0, ytd_actual: 0, forecast: 0 }; acc.set(r.account_id, a); }
+          if (key === 'ytd') { a.ytd_actual = Math.round(r.ytd_amount_cents || 0); a.forecast = Math.round((r.ytd_amount_cents || 0) * mult); }
+          else a[key] = Math.round(r.ytd_amount_cents || 0);
+        }
+      }
+    };
+    merge(is2, 'fy2'); merge(is1, 'fy1'); merge(isYtd, 'ytd', annualize);
+
+    // Vendor commitments per expense account (prior year) — the "built from" source.
+    const vendorByAcct = {};
+    try {
+      const jel = await fetchAllQuery(() => supabase.from('journal_entry_lines')
+        .select('account_id, vendor_id, debit_cents, credit_cents, journal_entries!inner ( community_id, posting_date, status )')
+        .eq('journal_entries.community_id', community_id)
+        .gte('journal_entries.posting_date', `${fy - 1}-01-01`).lte('journal_entries.posting_date', `${fy - 1}-12-31`)
+        .not('vendor_id', 'is', null), { orderBy: 'id' });
+      const agg = {};
+      for (const l of jel) { if (!l.vendor_id) continue; const net = Number(l.debit_cents || 0) - Number(l.credit_cents || 0); (agg[l.account_id] = agg[l.account_id] || {}); agg[l.account_id][l.vendor_id] = (agg[l.account_id][l.vendor_id] || 0) + net; }
+      const vids = [...new Set(Object.values(agg).flatMap((v) => Object.keys(v)))];
+      const vmeta = {};
+      for (let i = 0; i < vids.length; i += 300) { const { data } = await supabase.from('vendors').select('id, name').in('id', vids.slice(i, i + 300)); (data || []).forEach((v) => { vmeta[v.id] = v.name; }); }
+      for (const [aid, vmap] of Object.entries(agg)) {
+        const top = Object.entries(vmap).filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([vid, c]) => ({ vendor_id: vid, name: vmeta[vid] || 'vendor', cents: Math.round(c) }));
+        if (top.length) vendorByAcct[aid] = top;
+      }
+    } catch (_) { /* optional */ }
+
+    const ESC = 0.04; // default renewal escalation for vendor-committed lines
+    const INFL = 0.03; // default inflation on trend lines
+    // fy-1 is the CURRENT year and is still in progress, so budget off the
+    // annualized FORECAST (run-rate), never the partial current-year total (which
+    // would understate every line). Vendor commitments are annualized the same way.
+    const currentYearIsPartial = (fy - 1) === cy;
+    const partialAnnualize = currentYearIsPartial ? annualize : 1;
+    const rows = [...acc.values()].sort((a, b) => String(a.account_number).localeCompare(String(b.account_number))).map((a) => {
+      const vendors = vendorByAcct[a.account_id] || [];
+      const committedAnnual = Math.round(vendors.reduce((s, v) => s + v.cents, 0) * partialAnnualize);
+      let source_type; let confidence; let proposed_cents; let built_from;
+      if (a.account_type === 'expense' && committedAnnual > 0 && committedAnnual >= a.forecast * 0.6) {
+        source_type = 'vendor_commitment'; confidence = 'high';
+        proposed_cents = Math.round(committedAnnual * (1 + ESC));
+        built_from = `${vendors[0].name}${vendors.length > 1 ? ` + ${vendors.length - 1} more` : ''} — $${Math.round(committedAnnual / 100).toLocaleString()}/yr + ${Math.round(ESC * 100)}% renewal`;
+      } else if (a.forecast > 0 || a.fy1 > 0) {
+        source_type = 'trend'; confidence = (a.fy2 > 0) ? 'medium' : 'low';
+        const base = a.forecast || a.fy1;
+        proposed_cents = Math.round(base * (1 + INFL));
+        built_from = `${cy} run-rate $${Math.round(a.forecast / 100).toLocaleString()} + ${Math.round(INFL * 100)}% inflation${a.fy2 > 0 ? ` (${cy - 1} actual $${Math.round(a.fy2 / 100).toLocaleString()})` : ''}`;
+      } else {
+        source_type = 'estimate'; confidence = 'low'; proposed_cents = priorBudget[a.account_id] || 0;
+        built_from = 'no history — carried the prior budget';
+      }
+      return {
+        account_id: a.account_id, account_number: a.account_number, account_name: a.account_name, account_type: a.account_type,
+        fund_id: a.fund_id, fund_code: a.fund_code,
+        prior_budget_cents: priorBudget[a.account_id] || 0,
+        forecast_cents: a.forecast, actual_ytd_cents: a.ytd_actual, fy1_actual_cents: a.fy1, fy2_actual_cents: a.fy2,
+        proposed_cents, source_type, confidence, built_from, vendors,
+      };
+    });
+
+    const { count: homeCount } = await supabase.from('properties').select('id', { count: 'exact', head: true }).eq('community_id', community_id);
+    const sum = (arr, k) => arr.reduce((s, r) => s + (r[k] || 0), 0);
+    const rev = rows.filter((r) => r.account_type === 'revenue'); const exp = rows.filter((r) => r.account_type === 'expense');
+    res.json({
+      community_id, fiscal_year: fy, forecast_year: cy, months_elapsed: monthsElapsed, home_count: homeCount || 0, rows,
+      totals: {
+        revenue_proposed_cents: sum(rev, 'proposed_cents'), expense_proposed_cents: sum(exp, 'proposed_cents'),
+        revenue_forecast_cents: sum(rev, 'forecast_cents'), expense_forecast_cents: sum(exp, 'forecast_cents'),
+        net_proposed_cents: sum(rev, 'proposed_cents') - sum(exp, 'proposed_cents'),
+      },
+    });
+  } catch (err) {
+    console.error('[books] living-lines failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // ----------------------------------------------------------------------------
 // Undeposited Funds workflow (Ed 2026-06-30)
 // A received check posts Dr Undeposited Funds / Cr AR. It's NOT in the bank yet,

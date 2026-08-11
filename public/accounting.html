@@ -587,8 +587,9 @@
         <div><div class="muted" style="font-size:11px;">Fiscal year</div><input id="bp-fy" type="number" value="${nextYear}" style="width:90px; padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"></div>
         <div><div class="muted" style="font-size:11px;">Seed from</div><select id="bp-basis" style="padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"><option value="prior_actual">Prior-year actual</option><option value="ytd_annualized">This year annualized (YTD)</option></select></div>
         <div><div class="muted" style="font-size:11px;">Bump %</div><input id="bp-bump" type="number" value="0" step="0.5" style="width:70px; padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"></div>
-        <button onclick="bdgPlanLoad()" style="padding:8px 16px; border:1px solid var(--rule); border-radius:8px; background:#fff; font-weight:600; cursor:pointer;">Seed from actuals</button>
-        <button onclick="bdgAiLoad()" style="padding:8px 16px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:600; cursor:pointer;">✨ Generate budget</button>
+        <button onclick="bdgLivingLoad()" style="padding:8px 18px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:700; cursor:pointer;">🧬 Build living budget →</button>
+        <button onclick="bdgPlanLoad()" style="padding:8px 14px; border:1px solid var(--rule); border-radius:8px; background:#fff; font-weight:600; cursor:pointer;">Seed from actuals</button>
+        <button onclick="bdgAiLoad()" style="padding:8px 14px; border:1px solid var(--rule); border-radius:8px; background:#fff; font-weight:600; cursor:pointer;">✨ Generate</button>
       </div>
       <div class="muted" style="font-size:12px; margin-bottom:12px;">✨ Reads the last 2-3 years of actuals, this year's run-rate, and known operating contracts, and proposes each line with a reason — then you adjust and save.</div>
       <div id="bp-grid" class="muted">Pick the year, then <strong>Generate budget</strong> (or seed from actuals).</div>
@@ -630,9 +631,25 @@
   };
   function bdgPlanVal(i){ const el=document.querySelector('#bp-grid input[data-i="'+i+'"]'); return el ? Math.round((parseFloat(el.value)||0)*100) : 0; }
   window.bdgPlanRecalc = function(){
-    let rev=0, exp=0;
-    _bdgPlanRows.forEach((r,i)=>{ const c=bdgPlanVal(i); if(r.account_type==='revenue') rev+=c; else exp+=c; });
+    let rev=0, exp=0, otherIncome=0, assessIncome=0;
+    _bdgPlanRows.forEach((r,i)=>{ const c=bdgPlanVal(i);
+      if(r.account_type==='revenue'){ rev+=c; if(/assessment|dues|maintenance fee/i.test(r.account_name||'')) assessIncome+=c; else otherIncome+=c; }
+      else exp+=c; });
     const el=$('bp-totals'); if(el) el.innerHTML=`<span>Revenue: <strong>${fmt(rev)}</strong></span><span>Expenses: <strong>${fmt(exp)}</strong></span><span>Net: <strong style="color:${rev-exp>=0?'#166534':'#991b1b'};">${fmt(rev-exp)}</strong></span>`;
+    // Assessment summary (living-budget view): revenue requirement / homes.
+    const as=$('bl-assess'); const homes=window._blHomes||0;
+    if(as){
+      const required=exp-otherIncome;                       // what assessments must cover
+      const perHome=homes? Math.round(required/homes):0;     // annual $/home
+      const curPerHome=homes? Math.round(assessIncome/homes):0; // current proposed assessment/home
+      const pct=curPerHome? Math.round(((perHome-curPerHome)/curPerHome)*100):null;
+      const D=c=>'$'+Math.round(c/100).toLocaleString();
+      as.innerHTML=`
+        <div><div style="font-size:10px; opacity:.75; text-transform:uppercase; letter-spacing:.05em;">Required assessment / home</div><div style="font-size:24px; font-weight:800;">${D(perHome)}<span style="font-size:12px; font-weight:500; opacity:.8;">/yr</span></div></div>
+        ${pct!=null?`<div><div style="font-size:10px; opacity:.75; text-transform:uppercase; letter-spacing:.05em;">Change vs budgeted assessment</div><div style="font-size:18px; font-weight:700; color:${pct>0?'#fca5a5':'#86efac'};">${pct>0?'+':''}${pct}%</div></div>`:''}
+        <div><div style="font-size:10px; opacity:.75; text-transform:uppercase; letter-spacing:.05em;">Operating requirement</div><div style="font-size:16px; font-weight:600;">${D(required)}</div></div>
+        <div><div style="font-size:10px; opacity:.75; text-transform:uppercase; letter-spacing:.05em;">Homes</div><div style="font-size:16px; font-weight:600;">${homes.toLocaleString()}</div></div>`;
+    }
   };
   window.bdgPlanSave = async function(status){
     const fy=parseInt($('bp-fy').value,10);
@@ -682,6 +699,57 @@
         </div>`;
       bdgPlanRecalc();
     } catch(e){ $('bp-grid').innerHTML=`<div style="color:var(--err); padding:12px;">The system couldn't generate the budget: ${esc(e.message)}</div>`; }
+  };
+
+  // 🧬 The living budget: every line is a SOURCED object — Prior Budget / Forecast
+  // / YTD Actual / Proposed, with the derivation it was built from and a
+  // confidence grade. Not a spreadsheet cell; a number that traces to its source.
+  const _CONF={ high:{c:'#166534',bg:'#dcfce7',t:'Contract-verified'}, medium:{c:'#92400e',bg:'#fef3c7',t:'Trend'}, low:{c:'#64748b',bg:'#f1f5f9',t:'Estimate'} };
+  window.bdgLivingLoad = async function(){
+    const fy=$('bp-fy').value;
+    $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">🧬 Building the living budget — reading actuals, this year\'s run-rate, and vendor commitments…</div>';
+    try{
+      const r=await fetch(`/api/books/budgets/living-lines?community_id=${CID}&fiscal_year=${encodeURIComponent(fy)}`); const j=await r.json();
+      if(j.error) throw new Error(j.error);
+      _bdgPlanRows=(j.rows||[]).map(x=>({...x}));
+      if(!_bdgPlanRows.length){ $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">No revenue/expense history to build from yet — post some GL activity first.</div>'; return; }
+      const idx=_bdgPlanRows.map((x,i)=>({x,i}));
+      const rev=idx.filter(o=>o.x.account_type==='revenue'), exp=idx.filter(o=>o.x.account_type==='expense');
+      const rowHtml=(x,i)=>{
+        const cf=_CONF[x.confidence]||_CONF.low;
+        const move=x.prior_budget_cents? Math.round(((x.proposed_cents-x.prior_budget_cents)/Math.abs(x.prior_budget_cents))*100):null;
+        const vend=(x.vendors||[]).map(v=>`${esc(v.name)} $${Math.round(v.cents/100).toLocaleString()}`).join(' · ');
+        return `<div style="border-bottom:1px solid #f1f5f9;">
+          <div style="display:grid; grid-template-columns:56px 1fr 96px 96px 96px 120px; gap:8px; align-items:center; padding:7px 6px; font-size:12.5px;">
+            <span style="font-family:ui-monospace,monospace; color:#94a3b8; font-size:11px;">${esc(x.account_number)}</span>
+            <span><a onclick="const d=document.getElementById('bl-d-${i}'); d.style.display=d.style.display==='none'?'block':'none';" style="cursor:pointer; color:#0B1D34; font-weight:600;">${esc(x.account_name)}</a>
+              <span style="margin-left:6px; font-size:9.5px; font-weight:700; padding:1px 6px; border-radius:7px; background:${cf.bg}; color:${cf.c};" title="${cf.t}">${cf.t.toUpperCase()}</span></span>
+            <span class="num" style="color:#94a3b8;" title="prior adopted budget">${fmt(x.prior_budget_cents)}</span>
+            <span class="num" style="color:#475569;" title="this year annualized run-rate">${fmt(x.forecast_cents)}</span>
+            <span class="num" style="color:#94a3b8;" title="actual so far this year">${fmt(x.actual_ytd_cents)}</span>
+            <span class="num"><input data-i="${i}" oninput="bdgPlanRecalc()" value="${(x.proposed_cents/100).toFixed(2)}" style="width:108px; text-align:right; padding:5px 7px; border:1px solid var(--rule); border-radius:5px; background:#f0f7ff; font-variant-numeric:tabular-nums;"></span>
+          </div>
+          <div id="bl-d-${i}" style="display:none; padding:2px 12px 10px 62px; font-size:11.5px; color:#5a7390; background:#fafbfc;">
+            <div><strong>Built from:</strong> ${esc(x.built_from||'')}${move!=null?` · <span style="color:${Math.abs(move)>=15?'#b45309':'#64748b'};">${move>0?'+':''}${move}% vs last year's budget</span>`:''}</div>
+            ${vend?`<div style="margin-top:2px;"><strong>Vendors:</strong> ${vend}</div>`:''}
+          </div></div>`;
+      };
+      const hdr=`<div style="display:grid; grid-template-columns:56px 1fr 96px 96px 96px 120px; gap:8px; padding:4px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:#94a3b8; font-weight:700; border-bottom:2px solid #e5e7eb;">
+        <span>Acct</span><span>Account</span><span class="num">Prior budget</span><span class="num">Forecast</span><span class="num">YTD actual</span><span class="num">FY ${esc(String(j.fiscal_year))}</span></div>`;
+      $('bp-grid').innerHTML=`
+        <div id="bl-assess" style="padding:14px 16px; background:#0B1D34; color:#fff; border-radius:10px; margin-bottom:14px; display:flex; gap:26px; flex-wrap:wrap; align-items:center;"></div>
+        ${hdr}
+        <div style="font-weight:700; color:#166534; padding:6px; background:#f0fdf4;">Revenue</div>${rev.map(o=>rowHtml(o.x,o.i)).join('')||'<div class="muted" style="padding:8px;">—</div>'}
+        <div style="font-weight:700; color:#991b1b; padding:6px; background:#fef7f0; margin-top:6px;">Expenses</div>${exp.map(o=>rowHtml(o.x,o.i)).join('')||'<div class="muted" style="padding:8px;">—</div>'}
+        <div id="bp-totals" style="margin-top:12px; padding:12px; background:#f5f8fc; border-radius:8px; display:flex; gap:24px; flex-wrap:wrap; font-weight:600;"></div>
+        <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button onclick="bdgPlanSave('draft')" style="padding:9px 18px; border:1px solid var(--rule); border-radius:8px; background:#fff; cursor:pointer; font-weight:600;">💾 Save draft</button>
+          <button onclick="bdgPlanSave('approved')" style="padding:9px 18px; border:none; border-radius:8px; background:#166534; color:#fff; cursor:pointer; font-weight:600;">✓ Save &amp; approve</button>
+        </div>
+        <div class="muted" style="font-size:11px; margin-top:8px;">Every line traces to its source — click an account name to see what it was built from. Forecast = ${esc(String(j.forecast_year))} run-rate (annualized from ${j.months_elapsed} months).</div>`;
+      window._blHomes=j.home_count||0;
+      bdgPlanRecalc();
+    } catch(e){ $('bp-grid').innerHTML=`<div style="color:var(--err); padding:12px;">Couldn't build the living budget: ${esc(e.message)}</div>`; }
   };
 
   async function renderTrial() {
