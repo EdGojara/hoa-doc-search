@@ -32,6 +32,8 @@ const { onboardCommunityToGL, openInitialPeriods } = require('../lib/accounting/
 const { balanceSheet, incomeStatement, equityStatement, budgetVsActual } = require('../lib/accounting/financial_statements');
 const { extractBudget } = require('../lib/accounting/budget_pdf_extractor');
 const { safeErrorMessage } = require('./_safe_error');
+const Anthropic = require('@anthropic-ai/sdk');
+const _anthropic = new Anthropic();
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -765,6 +767,93 @@ router.get('/budgets/plan-seed', async (req, res) => {
     });
   } catch (err) {
     console.error('[books] plan-seed failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /api/books/budgets/ai-plan?community_id=&fiscal_year=  (Ed 2026-08-10)
+// AI-generated draft budget: reasons over 2-3 years of actuals + the current-year
+// run-rate + known operating contracts, and proposes a next-year amount PER
+// account with a one-line rationale — the CPA-quality first pass, not prior*bump.
+// Returns the plan-seed row shape plus ai_suggested_cents + rationale, so the
+// planner grid renders it and staff adjust + save (which flows into
+// Budget-vs-Actual and the board packet).
+router.get('/budgets/ai-plan', async (req, res) => {
+  try {
+    const { community_id, fiscal_year } = req.query;
+    if (!community_id || !fiscal_year) return res.status(400).json({ error: 'community_id_and_fiscal_year_required' });
+    const fy = parseInt(fiscal_year, 10);
+
+    const isFor = (y) => incomeStatement({ community_id, period_start: `${y}-01-01`, period_end: `${y}-12-31` });
+    const [is1, is2] = await Promise.all([isFor(fy - 1), isFor(fy - 2)]);
+    const today = new Date(); const cy = today.getUTCFullYear(); const monthsElapsed = today.getUTCMonth() + 1;
+    const isYtd = await incomeStatement({ community_id, period_start: `${cy}-01-01`, period_end: today.toISOString().slice(0, 10) });
+    const annualize = monthsElapsed > 0 ? 12 / monthsElapsed : 1;
+
+    const acc = new Map();
+    const merge = (is, key, mult = 1) => {
+      for (const type of ['revenue', 'expenses']) {
+        for (const r of (is.sections?.[type] || [])) {
+          let a = acc.get(r.account_id);
+          if (!a) { a = { account_id: r.account_id, account_number: r.account_number, account_name: r.account_name, account_type: type === 'revenue' ? 'revenue' : 'expense', fund_id: r.fund_id || null, fund_code: r.fund_code || null, fy2: 0, fy1: 0, ytd_annualized: 0 }; acc.set(r.account_id, a); }
+          a[key] = Math.round((r.ytd_amount_cents || 0) * mult);
+        }
+      }
+    };
+    merge(is2, 'fy2'); merge(is1, 'fy1'); merge(isYtd, 'ytd_annualized', annualize);
+    const rows = [...acc.values()].sort((a, b) => String(a.account_number).localeCompare(String(b.account_number)));
+    if (!rows.length) return res.json({ community_id, fiscal_year: fy, rows: [], note: 'No revenue/expense history to plan from yet.' });
+
+    let contracts = [];
+    try {
+      const { data: am } = await supabase.from('amenities')
+        .select('name, management_annual_cost_cents, management_contract_end_date')
+        .eq('community_id', community_id).gt('management_annual_cost_cents', 0);
+      contracts = (am || []).map((x) => `${x.name}: $${((x.management_annual_cost_cents || 0) / 100).toLocaleString()}/yr operating contract${x.management_contract_end_date ? ` (through ${x.management_contract_end_date})` : ''}`);
+    } catch (_) { /* amenity contracts optional */ }
+
+    const d = (c) => (Number(c || 0) / 100).toFixed(0);
+    const table = rows.map((r) => `${r.account_number}\t${r.account_name}\t${r.account_type}\tFY${fy - 2}=$${d(r.fy2)}\tFY${fy - 1}=$${d(r.fy1)}\tYTD-annualized=$${d(r.ytd_annualized)}`).join('\n');
+    const prompt = `You are a CPA preparing the FY ${fy} operating budget for a Texas HOA. For each account below, propose a next-year budget amount in whole dollars and a one-sentence rationale.
+
+Rules:
+- Base it on the 2-3 year trend AND the current-year run-rate; do not just copy last year.
+- If an account clearly maps to a known operating contract (listed below), budget it at the contract amount and say so in the rationale.
+- Fixed obligations (insurance, management fee, utilities, reserve contribution) should reflect known/expected increases; discretionary lines can hold roughly flat unless the trend says otherwise.
+- Round to sensible round numbers.
+- Revenue accounts: budget assessment/other income realistically against the trend, not inflated.
+
+Known operating contracts:
+${contracts.length ? contracts.join('\n') : '(none on file)'}
+
+Accounts (tab-separated: number, name, type, three history points):
+${table}
+
+Return ONLY a JSON array, one object per account, no prose:
+[{"account_number":"5200","suggested_annual_dollars":12345,"rationale":"..."}]`;
+
+    const resp = await _anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 4000, messages: [{ role: 'user', content: prompt }] });
+    let text = (resp.content && resp.content[0] && resp.content[0].text || '').trim();
+    const mm = text.match(/\[[\s\S]*\]/); if (mm) text = mm[0];
+    let ai;
+    try { ai = JSON.parse(text); } catch (e) { return res.status(502).json({ error: 'ai_parse_failed', detail: text.slice(0, 300) }); }
+    const byNum = new Map((ai || []).map((x) => [String(x.account_number), x]));
+
+    const out = rows.map((r) => {
+      const s = byNum.get(String(r.account_number));
+      const ai_suggested_cents = (s && Number.isFinite(Number(s.suggested_annual_dollars))) ? Math.round(Number(s.suggested_annual_dollars) * 100) : (r.fy1 || r.ytd_annualized || 0);
+      return {
+        account_id: r.account_id, account_number: r.account_number, account_name: r.account_name,
+        account_type: r.account_type, fund_id: r.fund_id, fund_code: r.fund_code,
+        prior_actual_cents: r.fy1, fy2_actual_cents: r.fy2, ytd_annualized_cents: r.ytd_annualized,
+        ai_suggested_cents, rationale: (s && s.rationale) || null,
+      };
+    });
+    const sv = out.filter((r) => r.account_type === 'revenue').reduce((s, r) => s + r.ai_suggested_cents, 0);
+    const se = out.filter((r) => r.account_type === 'expense').reduce((s, r) => s + r.ai_suggested_cents, 0);
+    res.json({ community_id, fiscal_year: fy, source_label: `Generated from FY${fy - 2}/FY${fy - 1} actuals + run-rate + contracts`, rows: out, contracts, suggested_totals: { revenue_cents: sv, expense_cents: se, net_income_cents: sv - se } });
+  } catch (err) {
+    console.error('[books] ai-plan failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

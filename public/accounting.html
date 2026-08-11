@@ -587,9 +587,11 @@
         <div><div class="muted" style="font-size:11px;">Fiscal year</div><input id="bp-fy" type="number" value="${nextYear}" style="width:90px; padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"></div>
         <div><div class="muted" style="font-size:11px;">Seed from</div><select id="bp-basis" style="padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"><option value="prior_actual">Prior-year actual</option><option value="ytd_annualized">This year annualized (YTD)</option></select></div>
         <div><div class="muted" style="font-size:11px;">Bump %</div><input id="bp-bump" type="number" value="0" step="0.5" style="width:70px; padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"></div>
-        <button onclick="bdgPlanLoad()" style="padding:8px 16px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:600; cursor:pointer;">Load starting point</button>
+        <button onclick="bdgPlanLoad()" style="padding:8px 16px; border:1px solid var(--rule); border-radius:8px; background:#fff; font-weight:600; cursor:pointer;">Seed from actuals</button>
+        <button onclick="bdgAiLoad()" style="padding:8px 16px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:600; cursor:pointer;">✨ Generate budget</button>
       </div>
-      <div id="bp-grid" class="muted">Set the year and click "Load starting point".</div>
+      <div class="muted" style="font-size:12px; margin-bottom:12px;">✨ Reads the last 2-3 years of actuals, this year's run-rate, and known operating contracts, and proposes each line with a reason — then you adjust and save.</div>
+      <div id="bp-grid" class="muted">Pick the year, then <strong>Generate budget</strong> (or seed from actuals).</div>
     </div>`;
   };
   window.bdgPlanLoad = async function(){
@@ -644,6 +646,42 @@
       alert(`Saved FY ${fy} budget — ${j.line_items_count} lines, status ${j.budget.status}.`);
       renderBudget();
     } catch(e){ alert('Save failed: '+e.message); }
+  };
+  // ✨ System-generate the whole budget from history + contracts, with a reason per line.
+  window.bdgAiLoad = async function(){
+    const fy=$('bp-fy').value;
+    if(!fy){ alert('Enter a fiscal year first.'); return; }
+    $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">✨ Generating the budget — reading 2-3 years of actuals, this year\'s run-rate, and contracts (~15-30s)…</div>';
+    try {
+      const j = await (await fetch(`/api/books/budgets/ai-plan?community_id=${CID}&fiscal_year=${encodeURIComponent(fy)}`)).json();
+      if (j.error) throw new Error(j.detail || j.error);
+      _bdgPlanRows = (j.rows||[]).map(r=>({ ...r, suggested_annual_cents: r.ai_suggested_cents }));
+      if (!_bdgPlanRows.length) { $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">No revenue/expense history to plan from yet. Post some GL activity, or upload an approved budget PDF instead.</div>'; return; }
+      const rowHtml=(r,i)=>`<tr>
+        <td style="font-family:ui-monospace,monospace; font-size:11.5px; color:var(--ink-soft); vertical-align:top;">${esc(r.account_number)}</td>
+        <td style="font-size:12px; vertical-align:top;">${esc(r.account_name)}${r.rationale?`<div class="muted" style="font-size:11px; margin-top:2px; line-height:1.35;">✨ ${esc(r.rationale)}</div>`:''}</td>
+        <td style="vertical-align:top;"><span class="pill">${esc(r.fund_code||'—')}</span></td>
+        <td class="num" style="font-size:11px; color:#94a3b8; vertical-align:top;">${fmt(r.fy2_actual_cents)}</td>
+        <td class="num" style="font-size:11.5px; color:#64748b; vertical-align:top;">${fmt(r.prior_actual_cents)}</td>
+        <td style="vertical-align:top;"><input data-i="${i}" oninput="bdgPlanRecalc()" value="${(r.suggested_annual_cents/100).toFixed(2)}" style="width:110px; text-align:right; padding:5px 7px; border:1px solid var(--rule); border-radius:5px; font-variant-numeric:tabular-nums; background:#f0f7ff;"></td></tr>`;
+      const idx=_bdgPlanRows.map((r,i)=>({r,i}));
+      const rev=idx.filter(x=>x.r.account_type==='revenue'), exp=idx.filter(x=>x.r.account_type==='expense');
+      $('bp-grid').innerHTML=`
+        <div class="muted" style="font-size:12px; margin-bottom:8px;">✨ ${esc(j.source_label||'Generated plan')} · edit any line, then save.${(j.contracts&&j.contracts.length)?` · ${j.contracts.length} operating contract(s) considered`:''}</div>
+        <table><thead><tr><th style="width:64px;">Acct</th><th>Account &amp; reasoning</th><th>Fund</th><th class="num">FY-2</th><th class="num">FY-1</th><th class="num">FY ${esc(String(j.fiscal_year))} proposed</th></tr></thead>
+        <tbody>
+          <tr class="total"><td colspan="6" style="background:#f0f7ff;">Revenue</td></tr>
+          ${rev.map(x=>rowHtml(x.r,x.i)).join('')||'<tr><td colspan="6" class="muted">— none —</td></tr>'}
+          <tr class="total"><td colspan="6" style="background:#fef7f0;">Expenses</td></tr>
+          ${exp.map(x=>rowHtml(x.r,x.i)).join('')||'<tr><td colspan="6" class="muted">— none —</td></tr>'}
+        </tbody></table>
+        <div id="bp-totals" style="margin-top:12px; padding:12px; background:#f5f8fc; border-radius:8px; display:flex; gap:24px; flex-wrap:wrap; font-weight:600;"></div>
+        <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button onclick="bdgPlanSave('draft')" style="padding:9px 18px; border:1px solid var(--rule); border-radius:8px; background:#fff; cursor:pointer; font-weight:600;">💾 Save draft</button>
+          <button onclick="bdgPlanSave('approved')" style="padding:9px 18px; border:none; border-radius:8px; background:#166534; color:#fff; cursor:pointer; font-weight:600;">✓ Save &amp; approve</button>
+        </div>`;
+      bdgPlanRecalc();
+    } catch(e){ $('bp-grid').innerHTML=`<div style="color:var(--err); padding:12px;">The system couldn't generate the budget: ${esc(e.message)}</div>`; }
   };
 
   async function renderTrial() {
