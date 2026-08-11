@@ -195,6 +195,8 @@ async function openProfile(cid){
   // Stash context so the "email this letter" composer can pre-fill recipient + community.
   window._ho={ cid, name:(c&&c.full_name)||'', email:(c&&(c.primary_email||c.secondary_email))||'', propertyId:(ps[0]&&ps[0].id)||null, communityId:(ps[0]&&ps[0].community_id)||null, balanceCents:(d.ar&&d.ar.balance_cents)||0 };
   const openV=(d.violations||[]).filter(v=>v.open);
+  // Drop voided violations from the record — they add no value and muddy the history. (Ed 2026-08-10)
+  const vios=(d.violations||[]).filter(v=>String(v.current_stage)!=='voided' && v.resolved_via!=='voided');
   const flagChips=(d.flags||[]).map(f=>`<span class="chip flag">${esc(String(f.state).replace(/_/g,' '))}</span>`).join('');
   const balChip = d.ar.balance_cents>0?`<span class="chip bal">Owes ${money(d.ar.balance_cents)}</span>`:(d.ar.balance_cents<0?`<span class="chip ok">Credit ${money(-d.ar.balance_cents)}</span>`:`<span class="chip ok">Current</span>`);
   const am=d.amenity;
@@ -275,8 +277,8 @@ async function openProfile(cid){
         </div>`).join('')}
       </div>`:''}
       <div class="card">
-        <div class="sec-title">⚠️ Violations (${(d.violations||[]).length})</div>
-        ${(d.violations||[]).slice(0,10).map(v=>`<div class="li">${esc(v.category)} <span class="badge ${v.open?'b-open':'b-res'}">${v.open?esc(String(v.current_stage).replace(/_/g,' ')):esc(v.status_label||'resolved')}</span>${v.detail?`<div style="font-size:12.5px;color:#33414f;margin-top:3px;">${esc(v.detail)}</div>`:''}<div class="t">opened ${d10(v.opened_at)}${v.resolved_at?' · resolved '+d10(v.resolved_at)+(v.resolved_notes?' — '+esc(v.resolved_notes):''):''}${v.photo_path?` · <a href="/api/homeowner/file?kind=photo&path=${encodeURIComponent(v.photo_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📷 Photo</a>`:''}${(v.letters&&v.letters.length)?v.letters.map(L=>` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(L.path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter${L.sent_at?' sent '+d10(L.sent_at):''}</a>`).join(''):(v.letter_path?` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(v.letter_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter</a>`:'')}</div>${v.open&&v.id?resolveCtrl(v):''}</div>`).join('')||'<div class="empty">No violations.</div>'}
+        <div class="sec-title">⚠️ Violations (${vios.length})</div>
+        ${vios.slice(0,10).map(v=>`<div class="li">${esc(v.category)} ${v.open?`<span class="badge" style="background:#dbeafe;color:#1e40af;font-weight:700;">OPEN</span> <span class="badge b-open">${esc(String(v.current_stage).replace(/_/g,' '))}</span>`:`<span class="badge b-res">${esc(v.status_label||'resolved')}</span>`}${v.detail?`<div style="font-size:12.5px;color:#33414f;margin-top:3px;">${esc(v.detail)}</div>`:''}<div class="t">opened ${d10(v.opened_at)}${v.resolved_at?' · resolved '+d10(v.resolved_at)+(v.resolved_notes?' — '+esc(v.resolved_notes):''):''}${v.photo_path?` · <a href="/api/homeowner/file?kind=photo&path=${encodeURIComponent(v.photo_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📷 Photo</a>`:''}${(v.letters&&v.letters.length)?v.letters.map(L=>` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(L.path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter${L.sent_at?' sent '+d10(L.sent_at):''}</a>`).join(''):(v.letter_path?` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(v.letter_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter</a>`:'')}</div>${v.open&&v.id?resolveCtrl(v):''}</div>`).join('')||'<div class="empty">No violations.</div>'}
       </div>
       <div class="card">
         ${(()=>{
