@@ -752,7 +752,7 @@
   // / YTD Actual / Proposed, with the derivation it was built from and a
   // confidence grade. Not a spreadsheet cell; a number that traces to its source.
   // Badge = WHERE the number came from (source), not just how sure we are.
-  const _SRC={ contract:{c:'#166534',bg:'#dcfce7',t:'📄 Contract-verified'}, vendor_commitment:{c:'#166534',bg:'#dcfce7',t:'Vendor commitment'}, trend:{c:'#92400e',bg:'#fef3c7',t:'Trend'}, estimate:{c:'#64748b',bg:'#f1f5f9',t:'Estimate'} };
+  const _SRC={ contract:{c:'#166534',bg:'#dcfce7',t:'📄 Contract-verified'}, vendor_commitment:{c:'#166534',bg:'#dcfce7',t:'Vendor commitment'}, trend:{c:'#92400e',bg:'#fef3c7',t:'Trend'}, one_time_adjusted:{c:'#9a3412',bg:'#ffedd5',t:'One-time removed'}, estimate:{c:'#64748b',bg:'#f1f5f9',t:'Estimate'} };
   window.bdgLivingLoad = async function(){
     const fy=$('bp-fy').value;
     $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">🧬 Building the living budget — reading actuals, this year\'s run-rate, and vendor commitments…</div>';
@@ -768,11 +768,14 @@
         const move=x.prior_budget_cents? Math.round(((x.proposed_cents-x.prior_budget_cents)/Math.abs(x.prior_budget_cents))*100):null;
         const vend=(x.vendors||[]).map(v=>`${esc(v.name)} $${Math.round(v.cents/100).toLocaleString()}`).join(' · ');
         const eviden=(x.evidence||[]).map(e=>`<a href="${esc(e.url)}" target="_blank" rel="noopener" style="color:#166534; font-weight:700; text-decoration:underline;">📄 ${esc(e.label)}</a>`).join(' · ');
+        const flags=(x.flags||[]);
+        const flagChip=flags.length?`<span style="margin-left:6px; font-size:9.5px; font-weight:700; padding:1px 6px; border-radius:7px; background:${flags.some(f=>f.severity==='high')?'#fee2e2':'#fef3c7'}; color:${flags.some(f=>f.severity==='high')?'#991b1b':'#92400e'};" title="${esc(flags.map(f=>f.msg).join(' · '))}">⚠ REVIEW</span>`:'';
+        const flagDetail=flags.length?flags.map(f=>`<div style="margin-top:3px; color:${f.severity==='high'?'#991b1b':'#92400e'};"><strong>⚠ ${f.type==='one_time'?'Likely one-time':f.type==='below_approved'?'Below approved budget':'Check postings'}:</strong> ${esc(f.msg)}</div>`).join(''):'';
         return `<div style="border-bottom:1px solid #f1f5f9;">
           <div style="display:grid; grid-template-columns:56px 1fr 96px 96px 96px 120px; gap:8px; align-items:center; padding:7px 6px; font-size:12.5px;">
             <span style="font-family:ui-monospace,monospace; color:#94a3b8; font-size:11px;">${esc(x.account_number)}</span>
             <span><a onclick="const d=document.getElementById('bl-d-${i}'); d.style.display=d.style.display==='none'?'block':'none';" style="cursor:pointer; color:#0B1D34; font-weight:600;">${esc(x.account_name)}</a>
-              <span style="margin-left:6px; font-size:9.5px; font-weight:700; padding:1px 6px; border-radius:7px; background:${cf.bg}; color:${cf.c};" title="${cf.t}">${cf.t.toUpperCase()}</span></span>
+              <span style="margin-left:6px; font-size:9.5px; font-weight:700; padding:1px 6px; border-radius:7px; background:${cf.bg}; color:${cf.c};" title="${cf.t}">${cf.t.toUpperCase()}</span>${flagChip}</span>
             <span class="num" style="color:#94a3b8;" title="prior adopted budget">${fmt(x.prior_budget_cents)}</span>
             <span class="num" style="color:#475569;" title="this year annualized run-rate">${fmt(x.forecast_cents)}</span>
             <span class="num" style="color:#94a3b8;" title="actual so far this year">${fmt(x.actual_ytd_cents)}</span>
@@ -782,6 +785,7 @@
             <div><strong>Built from:</strong> ${esc(x.built_from||'')}${move!=null?` · <span style="color:${Math.abs(move)>=15?'#b45309':'#64748b'};">${move>0?'+':''}${move}% vs last year's budget</span>`:''}</div>
             ${vend?`<div style="margin-top:2px;"><strong>Vendors:</strong> ${vend}</div>`:''}
             ${eviden?`<div style="margin-top:3px;"><strong>Source document:</strong> ${eviden} <span style="color:#94a3b8;">— the number is the contract</span></div>`:''}
+            ${flagDetail}
           </div></div>`;
       };
       const hdr=`<div style="display:grid; grid-template-columns:56px 1fr 96px 96px 96px 120px; gap:8px; padding:4px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:#94a3b8; font-weight:700; border-bottom:2px solid #e5e7eb;">
@@ -796,6 +800,7 @@
           <button onclick="bdgPlanSave('draft')" style="padding:9px 18px; border:1px solid var(--rule); border-radius:8px; background:#fff; cursor:pointer; font-weight:600;">💾 Save draft</button>
           <button onclick="bdgPlanSave('approved')" style="padding:9px 18px; border:none; border-radius:8px; background:#166534; color:#fff; cursor:pointer; font-weight:600;">✓ Save &amp; approve</button>
         </div>
+        ${(()=>{const n=_bdgPlanRows.filter(r=>(r.flags||[]).length).length; return n?`<div style="margin-top:10px; padding:9px 13px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; font-size:12px; color:#92400e;"><strong>⚠ ${n} line${n===1?'':'s'} flagged for review</strong> — one-time spikes were reset to their recurring level; lines below the approved budget may be understated by a partial-year run-rate. Click any ⚠&nbsp;REVIEW line to see why.</div>`:'';})()}
         <div class="muted" style="font-size:11px; margin-top:8px;">Every line traces to its source — click an account name to see what it was built from. Forecast = ${esc(String(j.forecast_year))} run-rate (annualized from ${j.months_elapsed} months).</div>`;
       window._blHomes=j.home_count||0;
       bdgPlanRecalc();

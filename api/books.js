@@ -1042,12 +1042,48 @@ router.get('/budgets/living-lines', async (req, res) => {
         source_type = 'estimate'; confidence = 'low'; proposed_cents = priorBudget[a.account_id] || 0;
         built_from = 'no history — carried the prior budget';
       }
+
+      // Reason about WHY the run-rate and the approved budget disagree — every
+      // other tool blindly trusts the annualized run-rate. Two failure modes:
+      // (1) a one-time cost this year (a repair, a legal matter) gets annualized
+      // into the recurring base; (2) a partial-year run-rate underfunds a fixed
+      // contract that's below its approved budget. Catch both, and for a clear
+      // one-time spike RESET the proposal to the recurring level instead of
+      // baking the spike in — the right default, flagged so Ed can override.
+      const flags = [];
+      if (a.account_type === 'expense') {
+        const priorB = priorBudget[a.account_id] || 0;
+        const prevYr = a.fy2; // full prior-year actual
+        // One-time spike: only fire on MATERIAL spikes ($20k+). Migrated
+        // communities have thin prior-year history, so "no prior data" alone is
+        // not one-time — a small recurring line (utilities, supplies) that just
+        // lacks a prior budget must NOT be zeroed. Large + far-above-prior is the
+        // real capital-event signal (monument replacement, wall/fence work).
+        const ONE_TIME_FLOOR = 2000000; // $20k
+        const isSpike = a.forecast > ONE_TIME_FLOOR && a.forecast > priorB * 3 && prevYr < a.forecast * 0.25 && priorB < a.forecast * 0.4;
+        if (isSpike && source_type !== 'vendor_commitment') {
+          const recurring = Math.max(priorB, prevYr);
+          flags.push({ type: 'one_time', severity: 'high', msg: `Spending here ran ~$${Math.round(a.forecast / 100).toLocaleString()} this year with little prior history — likely a one-time capital cost, not recurring. Reset to the recurring level ($${Math.round(recurring / 100).toLocaleString()}); raise it if it truly repeats.` });
+          proposed_cents = Math.round(recurring * (1 + INFL));
+          source_type = 'one_time_adjusted'; confidence = 'low';
+          built_from = `one-time spike removed — recurring base $${Math.round(recurring / 100).toLocaleString()} + ${Math.round(INFL * 100)}%`;
+        }
+        // Below the approved budget — only flag when it's MATERIAL (a $5k+ line
+        // with a $3k+ gap), so trivial lines don't create review noise.
+        if (priorB >= 500000 && (priorB - proposed_cents) >= 300000 && proposed_cents < priorB * 0.7) {
+          flags.push({ type: 'below_approved', severity: 'medium', msg: `Proposed is ${Math.round((1 - proposed_cents / priorB) * 100)}% below this year's approved budget ($${Math.round(priorB / 100).toLocaleString()}). If this is a fixed contract, the partial-year run-rate is understating it — confirm before adopting.` });
+        }
+        if (source_type === 'vendor_commitment' && a.forecast > 0 && proposed_cents > a.forecast * 2) {
+          flags.push({ type: 'vendor_above_runrate', severity: 'medium', msg: `Vendor commitments here ($${Math.round(committedAnnual / 100).toLocaleString()}) run well above this account's own spend rate ($${Math.round(a.forecast / 100).toLocaleString()}) — verify the vendor postings landed on the right account.` });
+        }
+      }
+
       return {
         account_id: a.account_id, account_number: a.account_number, account_name: a.account_name, account_type: a.account_type,
         fund_id: a.fund_id, fund_code: a.fund_code,
         prior_budget_cents: priorBudget[a.account_id] || 0,
         forecast_cents: a.forecast, actual_ytd_cents: a.ytd_actual, fy1_actual_cents: a.fy1, fy2_actual_cents: a.fy2,
-        proposed_cents, source_type, confidence, built_from, vendors, evidence,
+        proposed_cents, source_type, confidence, built_from, vendors, evidence, flags,
       };
     });
 
