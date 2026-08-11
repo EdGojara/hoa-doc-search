@@ -121,66 +121,48 @@ router.get('/community/:id/summary', async (req, res) => {
       // balance on the same snapshot date were silently collapsed,
       // undercounting AR aging numbers shown to boards. Added property_id
       // to the SELECT and the dedupe key.
-      const { data: arRows } = await supabase
-        .from('owner_ar_snapshots')
-        .select('property_id, balance_total, enforcement_stage, at_legal, in_collections, payment_plan_active, snapshot_date')
-        .eq('community_id', communityId)
-        .order('snapshot_date', { ascending: false })
-        .limit(5000);
-      const ar = arRows || [];
-      // Keep most recent snapshot per property (rows are sorted desc above)
-      const seen = new Set();
-      const latest = [];
-      for (const r of ar) {
-        const k = r.property_id;
-        if (!k || seen.has(k)) continue;
-        seen.add(k);
-        latest.push(r);
-      }
-      const cur = latest.filter(r => (r.balance_total || 0) <= 0).length;
-      const pastDue = latest.filter(r => (r.balance_total || 0) > 0).length;
-      const atLegal = latest.filter(r => r.at_legal === true).length;
-      const inColl = latest.filter(r => r.in_collections === true).length;
-      const planActive = latest.filter(r => r.payment_plan_active === true).length;
-      const totalOutstanding = latest.reduce((s, r) => s + (Number(r.balance_total) > 0 ? Number(r.balance_total) : 0), 0);
-      arAging = {
-        owners_current: cur,
-        owners_past_due: pastDue,
-        owners_at_legal: atLegal,
-        owners_in_collections: inColl,
-        owners_with_payment_plan: planActive,
-        total_outstanding_cents: Math.round(totalOutstanding * 100), // dollars→cents
-      };
-
-      // Migrated communities have NO owner_ar_snapshots — their AR lives in the
-      // subledger + GL. Derive the same rollup from v_homeowner_current_balance
-      // (balances) + ar_account_collections (enforcement flags), so the board
-      // portal matches the accounting AR screens instead of showing zeros.
-      if (!latest.length) {
-        const bals = [];
-        for (let f = 0; ; f += 1000) {
-          // eslint-disable-next-line no-await-in-loop
-          const { data, error } = await supabase.from('v_homeowner_current_balance')
-            .select('property_id, balance_cents').eq('community_id', communityId)
-            .order('property_id', { ascending: true, nullsFirst: false }).range(f, f + 999);
-          if (error) break;
-          bals.push(...(data || []));
-          if (!data || data.length < 1000) break;
-        }
-        const current = bals.filter((b) => b.property_id);            // roster only
-        const owing = current.filter((b) => Number(b.balance_cents) > 0);
-        // Enforcement flags from the SSOT (property_enforcement_states), OPEN
-        // states only (ended_at null). ar_account_collections is empty for these.
+      // AR aging rollup. CANONICAL source = v_homeowner_current_balance — the
+      // SAME ledger the AR detail list and the accounting screens read. The old
+      // code read owner_ar_snapshots FIRST and only fell back to the ledger when
+      // there were ZERO snapshot rows. But a Vantaca-migrated community can have
+      // a few legacy collections rows in owner_ar_snapshots (Waterview had 3, at
+      // $31,567.56), so the board's Financial Health card showed "$32K · 3 past-
+      // due · 1 at legal" while the real AR was $251,838 across 290 accounts.
+      // Prefer the ledger; use owner_ar_snapshots ONLY when the ledger is empty.
+      // At-legal / collections flags come from the enforcement SSOT
+      // (property_enforcement_states), not the stale snapshot. (Ed 2026-08-10.)
+      const { fetchAllQuery } = require('../lib/db/fetch_all');
+      const bals = await fetchAllQuery(() => supabase.from('v_homeowner_current_balance')
+        .select('property_id, balance_cents').eq('community_id', communityId), { orderBy: 'property_id' });
+      const ledger = bals.filter((b) => b.property_id);   // roster only (drop null-property rows)
+      if (ledger.length) {
+        const owing = ledger.filter((b) => Number(b.balance_cents) > 0);
         const { data: esRows } = await supabase.from('property_enforcement_states')
           .select('property_id, state').eq('community_id', communityId).is('ended_at', null).limit(5000);
         const es = esRows || [];
         arAging = {
-          owners_current: current.filter((b) => Number(b.balance_cents) <= 0).length,
+          owners_current: ledger.filter((b) => Number(b.balance_cents) <= 0).length,
           owners_past_due: owing.length,
-          owners_at_legal: es.filter((c) => ['at_legal', 'lien_filed', 'judgment'].includes(c.state)).length,
+          owners_at_legal: es.filter((c) => ['at_legal', 'lien_filed', 'judgment', 'foreclosure'].includes(c.state)).length,
           owners_in_collections: es.filter((c) => c.state === 'in_collections').length,
           owners_with_payment_plan: es.filter((c) => c.state === 'on_payment_plan').length,
           total_outstanding_cents: owing.reduce((s, b) => s + Number(b.balance_cents || 0), 0), // already cents
+        };
+      } else {
+        // No transaction ledger for this community — legacy owner_ar_snapshots.
+        const { data: arRows } = await supabase.from('owner_ar_snapshots')
+          .select('property_id, balance_total, at_legal, in_collections, payment_plan_active, snapshot_date')
+          .eq('community_id', communityId).order('snapshot_date', { ascending: false }).limit(5000);
+        const seen = new Set(); const latest = [];
+        for (const r of (arRows || [])) { if (!r.property_id || seen.has(r.property_id)) continue; seen.add(r.property_id); latest.push(r); }
+        const owing = latest.filter((r) => (r.balance_total || 0) > 0);
+        arAging = {
+          owners_current: latest.filter((r) => (r.balance_total || 0) <= 0).length,
+          owners_past_due: owing.length,
+          owners_at_legal: latest.filter((r) => r.at_legal === true).length,
+          owners_in_collections: latest.filter((r) => r.in_collections === true).length,
+          owners_with_payment_plan: latest.filter((r) => r.payment_plan_active === true).length,
+          total_outstanding_cents: Math.round(latest.reduce((s, r) => s + (Number(r.balance_total) > 0 ? Number(r.balance_total) : 0), 0) * 100),
         };
       }
     } catch (e) {
