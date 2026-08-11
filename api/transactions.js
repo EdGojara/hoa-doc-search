@@ -329,8 +329,51 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       }
     }
 
+    // ── Single-snapshot invariant ────────────────────────────────────────────
+    // A Vantaca AR import is a FULL SNAPSHOT of owner balances, and the balance
+    // view SUMS every committed batch — so leaving a prior snapshot committed
+    // next to this one DOUBLES every balance the board sees. When a new snapshot
+    // commits, supersede the prior committed SNAPSHOT(s) for this community so
+    // there is always exactly one. Incremental 'manual' batches (transfer
+    // prorations etc.) are left alone — they legitimately add to the balance.
+    // (Ed 2026-08-10 — final 7/31 cutover load; correctness must be structural,
+    // not "remember to revert the old one".)
+    //
+    // Cross-check first (Preview cross-check scar): a new snapshot covering far
+    // fewer accounts than the one it replaces is probably a truncated/partial
+    // file. Never silently swap a complete snapshot for a partial one and halve
+    // the board's AR — HOLD the new load (do not let it affect balances) and tell
+    // the operator, unless they pass force=1.
+    let superseded = [];
+    let held = null;
+    try {
+      const { data: priors } = await supabase.from('transaction_upload_batches')
+        .select('id, period_label, as_of_date, account_count')
+        .eq('community_id', communityId).eq('status', 'committed')
+        .eq('source_format', 'csv').neq('id', batch.id);
+      const maxPrior = (priors || []).reduce((m, p) => Math.max(m, p.account_count || 0), 0);
+      const force = req.body.force === '1' || req.body.force === true;
+      if (priors && priors.length && !force && batch.account_count < maxPrior * 0.9) {
+        // Partial-load guard: hold this batch, keep the existing snapshot live.
+        await supabase.from('transaction_upload_batches')
+          .update({ status: 'reverted', notes: `HELD — covers ${batch.account_count} accounts vs the current snapshot's ${maxPrior}. Looks like a partial/truncated file, so it was not applied. Re-upload the full ledger, or resubmit with force=1 if intentional.` })
+          .eq('id', batch.id);
+        held = { new_account_count: batch.account_count, current_snapshot_account_count: maxPrior };
+      } else {
+        for (const p of (priors || [])) {
+          await supabase.from('transaction_upload_batches')
+            .update({ status: 'reverted', notes: `Superseded by "${periodLabel}" (batch ${batch.id}) on ${new Date().toISOString().slice(0, 10)}.` })
+            .eq('id', p.id);
+          superseded.push({ id: p.id, period_label: p.period_label, as_of_date: p.as_of_date, account_count: p.account_count });
+        }
+      }
+    } catch (e) { console.warn('[transactions/upload] snapshot supersede failed:', e.message); }
+
     res.json({
       batch,
+      superseded,   // prior snapshot(s) reverted so balances don't double
+      held,         // set when the load was NOT applied (partial-load guard); resubmit with force=1 to override
+      warning: held ? `NOT applied: this file covers ${held.new_account_count} accounts but the current snapshot has ${held.current_snapshot_account_count}. It looks partial, so the board still shows the prior snapshot. Re-upload the full ledger, or resubmit with force to override.` : null,
       stats: {
         rows_inserted: inserted,
         row_errors: errors.length,

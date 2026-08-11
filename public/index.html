@@ -15974,7 +15974,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     });
   })();
 
-  async function txnUpload() {
+  async function txnUpload(force) {
     const communityId = document.getElementById('txn-community').value;
     const status = document.getElementById('txn-upload-status');
     if (!communityId) {
@@ -15999,10 +15999,19 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (period) fd.append('period_label', period);
       if (asof)   fd.append('as_of_date', asof);
       if (notes)  fd.append('notes', notes);
+      if (force)  fd.append('force', '1');
       const r = await fetch('/api/transactions/upload', { method: 'POST', body: fd });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      status.innerHTML = `<span style="color:#15803d;">✓ Committed — ${j.stats.rows_inserted} rows, ${j.stats.accounts_resolved_to_property} of ${j.batch.account_count} accounts matched a property.</span>`;
+      if (j.held) {
+        // Partial-load guard fired — the new file was NOT applied; the board still shows the prior snapshot.
+        status.innerHTML = `<span style="color:#b91c1c;">⚠ NOT applied — ${escapeHtml(j.warning || 'looks like a partial load')}</span> <button class="secondary-btn" style="margin-left:8px; font-size:12px; padding:3px 10px;" onclick="txnUpload(true)">Apply anyway (force)</button>`;
+      } else {
+        const sup = (j.superseded && j.superseded.length)
+          ? ` · replaced the prior snapshot${j.superseded[0].period_label ? ' (' + escapeHtml(j.superseded[0].period_label) + ')' : ''} so balances don’t double`
+          : '';
+        status.innerHTML = `<span style="color:#15803d;">✓ Committed — ${j.stats.rows_inserted} rows, ${j.stats.accounts_resolved_to_property} of ${j.batch.account_count} accounts matched a property.${sup}</span>`;
+      }
       txnRenderResult(j);
       txnLoadBatches();
     } catch (e) {
