@@ -706,6 +706,29 @@ router.post('/budgets', express.json({ limit: '1mb' }), async (req, res) => {
   }
 });
 
+// Delete a budget (e.g. one uploaded to the wrong community). Community-scoped:
+// the caller must pass the community_id it belongs to, and we verify it before
+// deleting so one community can't delete another's budget by guessing an id.
+router.delete('/budgets/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const community_id = req.query.community_id;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { data: bud, error: findErr } = await supabase
+      .from('community_budgets').select('id, community_id, fiscal_year').eq('id', id).maybeSingle();
+    if (findErr) throw findErr;
+    if (!bud) return res.status(404).json({ error: 'budget_not_found' });
+    if (bud.community_id !== community_id) return res.status(403).json({ error: 'budget_belongs_to_a_different_community' });
+    await supabase.from('budget_line_items').delete().eq('budget_id', id);
+    const { error: delErr } = await supabase.from('community_budgets').delete().eq('id', id).eq('community_id', community_id);
+    if (delErr) throw delErr;
+    res.json({ deleted: true, fiscal_year: bud.fiscal_year });
+  } catch (err) {
+    console.error('[books] delete budget failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // ----------------------------------------------------------------------------
 // GET /api/books/budgets/plan-seed  (Ed 2026-06-30 — budget PLANNING)
 // Seed next year's budget from what actually happened — the CPA default, not a

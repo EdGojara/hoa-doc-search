@@ -14,6 +14,11 @@
   header.page h1 em { color:var(--gold); font-style:italic; }
   .wrap { max-width:1100px; margin:0 auto; padding:22px 26px 60px; }
   select { padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.3); background:#fff; color:var(--ink); font-size:14px; min-width:200px; }
+  /* Community selector — moved out of the header, front and center above the
+     nav so the active community is unmissable (wrong-community uploads). */
+  .commbar { display:flex; align-items:center; gap:12px; background:#fff; border:1px solid var(--rule); border-left:5px solid var(--gold); border-radius:12px; padding:12px 18px; margin-bottom:4px; box-shadow:0 1px 2px rgba(0,0,0,0.03); }
+  .commbar-label { font-size:11px; font-weight:800; letter-spacing:0.09em; color:var(--ink-faint); }
+  .commbar select { min-width:280px; font-size:16px; font-weight:700; color:var(--navy); border:1px solid var(--rule); padding:9px 14px; }
   .tabs { display:flex; gap:6px; margin:18px 0 16px; flex-wrap:wrap; }
   .tab { padding:8px 16px; border:1px solid var(--rule); border-radius:999px; background:#fff; cursor:pointer; font-size:13px; font-weight:600; color:var(--ink-soft); }
   .tab.active { background:var(--navy); color:#fff; border-color:var(--navy); }
@@ -50,9 +55,12 @@
     </div>
     <h1>Bedrock <em>Accounting</em></h1>
   </div>
-  <select id="commSel"></select>
 </header>
 <div class="wrap">
+  <div class="commbar">
+    <span class="commbar-label">COMMUNITY</span>
+    <select id="commSel"></select>
+  </div>
   <div class="groupnav" id="groupnav"></div>
   <div class="subnav" id="subnav"></div>
   <div id="body"><div class="muted" style="padding:30px; text-align:center;">Loading…</div></div>
@@ -509,6 +517,7 @@
   // Budget upload → extract → match-to-CoA → save (draft/approve)
   let _coaCache = [], _pendingBudget = null;
   async function renderBudget() {
+    _acctCommName = null; acctCommunityName(); // refresh for the wrong-community guard on the CURRENT community
     $('body').innerHTML = `<div class="card">
       <h2 class="sec" style="margin-bottom:8px;">Budget</h2>
       <div style="margin-bottom:12px;"><button onclick="renderBudgetPlanner()" style="padding:9px 16px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:600; cursor:pointer; font-size:13px;">➕ Plan a budget from actuals →</button></div>
@@ -529,7 +538,7 @@
     try {
       const ex = ((await (await fetch(`/api/books/budgets?community_id=${CID}`)).json()).budgets) || [];
       $('bdg-list').innerHTML = ex.length
-        ? `<div class="sec" style="font-size:13px; margin-bottom:6px;">Existing budgets</div>` + ex.map((b)=>`<div style="display:flex; justify-content:space-between; padding:6px 10px; background:#f5f8fc; border-radius:6px; margin-bottom:6px; font-size:12.5px;"><span>FY ${esc(String(b.fiscal_year))} — ${esc(b.status)}${b.source_filename?' · '+esc(b.source_filename):''}</span><span class="muted">${b.approved_at?'Approved '+fmtDate(b.approved_at.slice(0,10)):'Draft'}</span></div>`).join('')
+        ? `<div class="sec" style="font-size:13px; margin-bottom:6px;">Existing budgets</div>` + ex.map((b)=>`<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 10px; background:#f5f8fc; border-radius:6px; margin-bottom:6px; font-size:12.5px;"><span>FY ${esc(String(b.fiscal_year))} — ${esc(b.status)}${b.source_filename?' · '+esc(b.source_filename):''}</span><span style="display:flex; align-items:center; gap:12px;"><span class="muted">${b.approved_at?'Approved '+fmtDate(b.approved_at.slice(0,10)):'Draft'}</span><button onclick="bdgDelete('${b.id}','${esc(String(b.fiscal_year))}')" title="Delete this budget" style="border:1px solid #fecaca; background:#fff; color:var(--err); border-radius:6px; padding:3px 10px; cursor:pointer; font-weight:600; font-size:12px;">🗑 Delete</button></span></div>`).join('')
         : '<div class="muted">No budgets uploaded yet.</div>';
     } catch (e) { $('bdg-list').innerHTML = ''; }
   }
@@ -541,23 +550,56 @@
       if (j.error) throw new Error(j.error); _pendingBudget = j; renderBudgetPreview(j);
     } catch (e) { $('bdg-preview').innerHTML = `<div style="margin-top:12px; color:var(--err); padding:12px;">Extraction failed: ${esc(e.message)}</div>`; }
   }
+  window.bdgDelete = async function(id, fy){
+    const cn = _acctCommName || 'this community';
+    if (!confirm(`Delete the FY ${fy} budget from ${cn}?\n\nThis removes the budget and all its line items. This can't be undone.`)) return;
+    try {
+      const r = await fetch(`/api/books/budgets/${id}?community_id=${encodeURIComponent(CID)}`, { method:'DELETE' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      renderBudget();
+    } catch(e){ alert('Could not delete: '+e.message); }
+  };
   function renderBudgetPreview(payload) {
     const ex = payload.extraction;
     const byV={}, byN={}; (_coaCache||[]).forEach((a)=>{ if(a.vantaca_account_number) byV[a.vantaca_account_number]=a; if(a.account_number) byN[a.account_number]=a; });
     let matched=0, unmatched=0;
     const lines = (ex.line_items||[]).map((li)=>{ const a=byV[li.account_number]||byN[li.account_number]||null; if(a)matched++; else unmatched++; return {...li,_a:a}; });
     const tr = lines.map((li)=>`<tr><td style="font-family:ui-monospace,monospace; font-size:11.5px;">${esc(li.account_number)}</td><td style="font-size:11.5px;">${esc(li.account_name)}</td><td style="font-size:11.5px;">${esc(li.account_type||'')}</td><td class="num" style="font-size:11.5px;">${fmt(li.annual_amount_cents)}</td><td style="font-size:11.5px; color:${li._a?'#166534':'#991b1b'};">${li._a?'✓ '+esc(li._a.account_number):'⚠ no match'}</td></tr>`).join('');
+    // Wrong-community guard: a budget for THIS community's chart of accounts
+    // should match most of its accounts. A low match rate (or an extracted
+    // community name that doesn't match the selected one) means this file is
+    // almost certainly someone else's budget. Flag loudly and require an
+    // explicit confirmation before it can be saved.
+    const total = matched + unmatched;
+    const matchRate = total ? matched/total : 0;
+    const norm = (s)=>String(s||'').toLowerCase().replace(/\b(hoa|homeowners?|association|community|estates?|the|of|at|inc|llc)\b/g,'').replace(/[^a-z0-9]+/g,'').trim();
+    const selName = _acctCommName || '';
+    const exName = ex.community_name || '';
+    const nA = norm(selName), nB = norm(exName);
+    const nameMismatch = !!(nA && nB && !(nA.includes(nB) || nB.includes(nA)));
+    const wrongComm = (total >= 5 && matchRate < 0.5) || nameMismatch;
+    const guardBanner = wrongComm ? `<div style="padding:12px 14px; background:#fee2e2; border:1px solid #fca5a5; border-radius:8px; margin-bottom:12px; color:#991b1b; font-size:13px;">
+        <div style="font-weight:800; font-size:14px; margin-bottom:4px;">🛑 This may be the wrong community's budget</div>
+        <div>You're uploading into <strong>${esc(selName||'the selected community')}</strong>${exName?`, but this file's header reads <strong>${esc(exName)}</strong>`:''}. Only <strong>${matched} of ${total}</strong> accounts match ${esc(selName||'this community')}'s chart of accounts (${Math.round(matchRate*100)}%).</div>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:9px; font-weight:600; cursor:pointer;"><input type="checkbox" id="bdg-override"> I confirm this really is ${esc(selName||'this community')}'s budget — save anyway.</label>
+      </div>` : '';
     $('bdg-preview').innerHTML = `<div class="card" style="margin-top:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
-        <div><strong>Preview — FY ${esc(String(ex.fiscal_year||'?'))}</strong> · ${matched+unmatched} lines<div class="muted" style="font-size:12px;">${matched} matched, ${unmatched} unmatched</div></div>
-        <div style="display:flex; gap:8px;"><button id="bdg-draft" style="padding:7px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer;">💾 Save Draft</button><button id="bdg-approve" style="padding:7px 12px; border:none; border-radius:6px; background:#166534; color:#fff; cursor:pointer;">✓ Save & Approve</button></div>
+        <div><strong>Preview — FY ${esc(String(ex.fiscal_year||'?'))}</strong> · ${total} lines<div class="muted" style="font-size:12px;">${matched} matched, ${unmatched} unmatched${exName?` · file says: ${esc(exName)}`:''}</div></div>
+        <div style="display:flex; gap:8px;"><button id="bdg-draft" style="padding:7px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer;">💾 Save Draft</button><button id="bdg-approve" style="padding:7px 12px; border:none; border-radius:6px; background:#166534; color:#fff; cursor:pointer;">✓ Save &amp; Approve</button></div>
       </div>
+      ${guardBanner}
       ${ex.warnings&&ex.warnings.length?`<div style="padding:8px 12px; background:#fef3c7; border-radius:6px; font-size:12px; color:#92400e; margin-bottom:10px;">⚠ ${ex.warnings.map(esc).join('<br>⚠ ')}</div>`:''}
       <table><thead><tr><th>Source #</th><th>Account</th><th>Type</th><th class="num">Annual</th><th>Match</th></tr></thead><tbody>${tr}</tbody></table>
       ${unmatched>0?`<div class="muted" style="margin-top:10px; font-size:12px;">⚠ Unmatched accounts are skipped on save. Add the Vantaca account number to your CoA to map them.</div>`:''}
     </div>`;
-    $('bdg-draft').addEventListener('click',()=>commitBudget('draft'));
-    $('bdg-approve').addEventListener('click',()=>commitBudget('approved'));
+    const draftBtn=$('bdg-draft'), apprBtn=$('bdg-approve');
+    const applyGuard=()=>{ const ok = !wrongComm || ($('bdg-override') && $('bdg-override').checked); [draftBtn,apprBtn].forEach((b)=>{ b.disabled=!ok; b.style.opacity=ok?'1':'.45'; b.style.cursor=ok?'pointer':'not-allowed'; }); };
+    if (wrongComm && $('bdg-override')) $('bdg-override').addEventListener('change', applyGuard);
+    applyGuard();
+    draftBtn.addEventListener('click',()=>{ if(!draftBtn.disabled) commitBudget('draft'); });
+    apprBtn.addEventListener('click',()=>{ if(!apprBtn.disabled) commitBudget('approved'); });
   }
   async function commitBudget(status) {
     if (!_pendingBudget) return; const ex = _pendingBudget.extraction;
