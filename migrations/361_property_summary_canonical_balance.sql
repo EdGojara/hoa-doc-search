@@ -17,8 +17,11 @@
 -- row per property so it can't fan out this single-row-per-property view;
 -- balance_cents -> dollars to match the existing column) ahead of the legacy
 -- snapshot. Snapshot stays as the fallback for any community with no ledger.
--- CREATE OR REPLACE keeps the exact column list, so grants + dependents are
--- preserved (no DROP-VIEW grant-loss scar). Aging buckets + at_legal still come
+-- DROP + CREATE (not CREATE OR REPLACE): current_balance changes numeric type
+-- (COALESCE with balance_cents/100.0), and CREATE OR REPLACE refuses a column
+-- type change — the reason a first attempt failed. Migration 077 has no dependent
+-- objects on this view (it used a plain DROP), so DROP is safe; re-issue the
+-- GRANT after (DROP-VIEW grant-loss scar). Aging buckets + at_legal still come
 -- from the snapshot here; consumers that need the legal flag should read the
 -- enforcement SSOT (property_enforcement_states) — a follow-up.
 --
@@ -26,7 +29,9 @@
 -- ============================================================================
 BEGIN;
 
-CREATE OR REPLACE VIEW v_property_summary AS
+DROP VIEW IF EXISTS v_property_summary;
+
+CREATE VIEW v_property_summary AS
 WITH
   vio_open AS (
     SELECT
