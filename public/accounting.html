@@ -527,13 +527,30 @@
         <input type="file" id="bdg-file" accept=".pdf,.xlsx,.xls,.csv" style="display:none;">
       </div>
       <div id="bdg-preview"></div>
-      <div id="bdg-list" style="margin-top:14px;" class="muted">Loading…</div></div>`;
+      <div id="bdg-list" style="margin-top:14px;" class="muted">Loading…</div></div>
+      <div class="card" style="margin-top:16px;">
+        <h2 class="sec" style="margin-bottom:4px;">Vendor contracts</h2>
+        <div class="muted" style="margin-bottom:12px; font-size:13px;">Upload a signed vendor contract (security, landscaping, pool, management). The system reads the term, amount, and escalation — and the living budget proposes that line at the contracted number, with the PDF one click away.</div>
+        <div id="vc-drop" style="border:2px dashed var(--rule); border-radius:10px; padding:22px; text-align:center; cursor:pointer; background:#fafbfc;">
+          <div style="font-size:13px; color:var(--ink-soft);">📄 Drop a contract PDF or Excel here or <strong>click to choose</strong></div>
+          <input type="file" id="vc-file" accept=".pdf,.xlsx,.xls,.csv" style="display:none;">
+        </div>
+        <div id="vc-preview"></div>
+        <div id="vc-list" style="margin-top:14px;" class="muted">Loading…</div>
+      </div>`;
     const drop=$('bdg-drop'), file=$('bdg-file');
     drop.addEventListener('click',()=>file.click());
     drop.addEventListener('dragover',(e)=>{e.preventDefault(); drop.style.background='#eef4fb';});
     drop.addEventListener('dragleave',()=>{drop.style.background='#fafbfc';});
     drop.addEventListener('drop',(e)=>{e.preventDefault(); drop.style.background='#fafbfc'; if(e.dataTransfer.files[0]) uploadBudget(e.dataTransfer.files[0]);});
     file.addEventListener('change',()=>{ if(file.files[0]) uploadBudget(file.files[0]); });
+    const vdrop=$('vc-drop'), vfile=$('vc-file');
+    vdrop.addEventListener('click',()=>vfile.click());
+    vdrop.addEventListener('dragover',(e)=>{e.preventDefault(); vdrop.style.background='#eef4fb';});
+    vdrop.addEventListener('dragleave',()=>{vdrop.style.background='#fafbfc';});
+    vdrop.addEventListener('drop',(e)=>{e.preventDefault(); vdrop.style.background='#fafbfc'; if(e.dataTransfer.files[0]) vcUpload(e.dataTransfer.files[0]);});
+    vfile.addEventListener('change',()=>{ if(vfile.files[0]) vcUpload(vfile.files[0]); });
+    vcLoad();
     try { _coaCache = (await (await fetch(`/api/books/coa?community_id=${CID}`)).json()).accounts || []; } catch (e) { _coaCache = []; }
     try {
       const ex = ((await (await fetch(`/api/books/budgets?community_id=${CID}`)).json()).budgets) || [];
@@ -564,6 +581,72 @@
       if (j.error) throw new Error(j.error);
       renderBudget();
     } catch(e){ alert('Could not delete: '+e.message); }
+  };
+
+  // ── Vendor contracts — feed the living budget as contract-verified lines ──
+  const _VC_CATS=[['accounting','Accounting'],['engineer_inspection','Engineer / Inspection'],['insurance','Insurance'],['irrigation','Irrigation'],['janitorial','Janitorial'],['landscape_construction','Landscape Construction'],['landscape_maintenance','Landscape Maintenance'],['legal','Legal'],['management','Management'],['other','Other'],['painting','Painting'],['pest_control','Pest Control'],['pool_management','Pool Management'],['pressure_washing','Pressure Washing'],['repair','Repair'],['reserve_study','Reserve Study'],['security','Security'],['tree_service','Tree Service']];
+  let _pendingVC=null;
+  window.vcLoad = async function(){
+    try{
+      const j=await (await fetch(`/api/books/vendor-contracts?community_id=${CID}`)).json();
+      const cs=j.contracts||[];
+      const catLabel=(c)=>{const m=_VC_CATS.find(x=>x[0]===c); return m?m[1]:(c||'—');};
+      $('vc-list').innerHTML = cs.length
+        ? `<div class="sec" style="font-size:13px; margin-bottom:6px;">On file</div>`+cs.map(c=>`<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:7px 10px; background:#f5f8fc; border-radius:6px; margin-bottom:6px; font-size:12.5px;"><span><strong>${esc(c.vendor_name_raw||'Vendor')}</strong> · ${esc(catLabel(c.service_category))} · $${Math.round((c.annualized_amount||0)).toLocaleString()}/yr${c.escalator_pct?` +${c.escalator_pct}%`:''}${c.end_date?` · through ${esc(c.end_date)}`:''}</span><span style="display:flex; align-items:center; gap:12px;">${c.view_url?`<a href="${esc(c.view_url)}" target="_blank" rel="noopener" style="color:#166534; font-weight:600;">📄 View</a>`:''}<button onclick="vcDelete('${c.id}','${esc((c.vendor_name_raw||'').replace(/'/g,''))}')" style="border:1px solid #fecaca; background:#fff; color:var(--err); border-radius:6px; padding:3px 10px; cursor:pointer; font-weight:600; font-size:12px;">🗑</button></span></div>`).join('')
+        : '<div class="muted">No vendor contracts on file yet — upload one above and the living budget will propose that line at the contracted amount.</div>';
+    }catch(e){ $('vc-list').innerHTML=`<div class="muted">Couldn't load contracts: ${esc(e.message)}</div>`; }
+  };
+  window.vcUpload = async function(f){
+    $('vc-preview').innerHTML=`<div style="margin-top:12px; padding:14px; background:#f5f8fc; border-radius:8px; color:#315A87;">⏳ Reading <strong>${esc(f.name)}</strong> (~20s)…</div>`;
+    try{
+      const fd=new FormData(); fd.append('file',f); fd.append('community_id',CID);
+      const j=await (await fetch('/api/books/vendor-contracts/extract',{method:'POST',body:fd})).json();
+      if(j.error) throw new Error(j.error);
+      _pendingVC=j; const x=j.extraction;
+      const opts=_VC_CATS.map(c=>`<option value="${c[0]}"${c[0]===x.service_category?' selected':''}>${c[1]}</option>`).join('');
+      const fld=(lbl,html)=>`<div style="display:flex; flex-direction:column; gap:3px;"><span class="muted" style="font-size:11px;">${lbl}</span>${html}</div>`;
+      const inp=(id,val,extra='')=>`<input id="${id}" value="${esc(val==null?'':String(val))}" style="padding:6px 9px; border:1px solid var(--rule); border-radius:6px; ${extra}">`;
+      $('vc-preview').innerHTML=`<div class="card" style="margin-top:14px;">
+        <div style="font-weight:700; margin-bottom:8px;">Confirm contract terms</div>
+        ${x.warnings&&x.warnings.length?`<div style="padding:8px 12px; background:#fef3c7; border-radius:6px; font-size:12px; color:#92400e; margin-bottom:10px;">⚠ ${x.warnings.map(esc).join('<br>⚠ ')}</div>`:''}
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          ${fld('Vendor',inp('vc-vendor',x.vendor_name))}
+          ${fld('Service category',`<select id="vc-cat" style="padding:6px 9px; border:1px solid var(--rule); border-radius:6px;">${opts}</select>`)}
+          ${fld('Annual amount ($/yr)',inp('vc-annual',x.annual_amount,'text-align:right;'))}
+          ${fld('Escalation (% / yr)',inp('vc-esc',x.escalator_pct==null?'':x.escalator_pct,'text-align:right;'))}
+          ${fld('Effective date',inp('vc-eff',x.effective_date))}
+          ${fld('End date',inp('vc-end',x.end_date))}
+        </div>
+        ${fld('Scope',`<div class="muted" style="font-size:12px; margin-top:8px;">${esc(x.service_description||'')}</div>`)}
+        <div style="margin-top:12px; display:flex; gap:8px;">
+          <button onclick="vcSave()" style="padding:8px 16px; border:none; border-radius:6px; background:#166534; color:#fff; cursor:pointer; font-weight:600;">✓ Save contract</button>
+          <button onclick="document.getElementById('vc-preview').innerHTML='';_pendingVC=null;" style="padding:8px 16px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer;">Cancel</button>
+        </div></div>`;
+    }catch(e){ $('vc-preview').innerHTML=`<div style="margin-top:12px; color:var(--err); padding:12px;">Couldn't read the contract: ${esc(e.message)}</div>`; }
+  };
+  window.vcSave = async function(){
+    if(!_pendingVC) return; const x=_pendingVC.extraction;
+    const vendor=$('vc-vendor').value.trim(); if(!vendor){alert('Vendor name required.');return;}
+    const body={ community_id:CID, vendor_name:vendor, service_category:$('vc-cat').value, service_description:x.service_description,
+      annual_amount:Number($('vc-annual').value.replace(/[$,\s]/g,''))||0, total_amount:x.total_amount,
+      escalator_pct:$('vc-esc').value===''?null:Number($('vc-esc').value), escalator_kind:($('vc-esc').value!==''&&Number($('vc-esc').value)>0)?'fixed_pct':'none',
+      term_months:x.term_months, effective_date:$('vc-eff').value||null, end_date:$('vc-end').value||null,
+      payment_terms:x.payment_terms, auto_renews:x.auto_renews, renewal_notice_days:x.renewal_notice_days,
+      file_path:_pendingVC.file_path, file_hash:_pendingVC.file_hash, file_size_bytes:_pendingVC.file_size_bytes,
+      extracted_data:x, extraction_confidence:'medium' };
+    try{
+      const j=await (await fetch('/api/books/vendor-contracts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+      if(j.error) throw new Error(j.error);
+      $('vc-preview').innerHTML=''; _pendingVC=null; vcLoad();
+    }catch(e){ alert('Save failed: '+e.message); }
+  };
+  window.vcDelete = async function(id,name){
+    if(!confirm(`Delete the ${name||'vendor'} contract?`)) return;
+    try{
+      const j=await (await fetch(`/api/books/vendor-contracts/${id}?community_id=${encodeURIComponent(CID)}`,{method:'DELETE'})).json();
+      if(j.error) throw new Error(j.error);
+      vcLoad();
+    }catch(e){ alert('Could not delete: '+e.message); }
   };
   function renderBudgetPreview(payload) {
     const ex = payload.extraction;

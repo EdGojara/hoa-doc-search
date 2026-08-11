@@ -729,6 +729,109 @@ router.delete('/budgets/:id', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Vendor SERVICE contracts — upload the signed PDF, extract the terms, store
+// them structured in `vendor_contracts`, and let the living budget propose that
+// line at the CONTRACTED amount + real escalation, with the PDF as evidence.
+// Turns a flagged "below-approved" trend guess (e.g. Security $161k) into a
+// green contract-verified number. (Ed 2026-08-11.)
+// ============================================================================
+const { extractVendorContract } = require('../lib/accounting/vendor_contract_extractor');
+
+// Preview: extract terms + stash the PDF in storage; nothing committed yet.
+router.post('/vendor-contracts/extract', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    const community_id = req.body.community_id;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const extraction = await extractVendorContract(req.file.buffer, req.file.mimetype, req.file.originalname);
+    const file_hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    const ext = /\.(pdf|xlsx|xls|csv)$/i.exec(req.file.originalname || '');
+    const file_path = `vendor-contracts/${community_id}/${file_hash}${ext ? ext[0].toLowerCase() : '.pdf'}`;
+    const { error: upErr } = await supabase.storage.from('documents').upload(file_path, req.file.buffer, { contentType: req.file.mimetype || 'application/pdf', upsert: true });
+    if (upErr) console.warn('[books] vendor-contract storage upload warning:', upErr.message);
+    res.json({ extraction, file_path, file_hash, file_size_bytes: req.file.size, filename: req.file.originalname });
+  } catch (err) {
+    console.error('[books] vendor-contract extract failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Commit the confirmed contract.
+router.post('/vendor-contracts', express.json({ limit: '512kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (!b.vendor_name) return res.status(400).json({ error: 'vendor_name_required' });
+    const { data: mc } = await supabase.from('management_companies').select('id').limit(1).maybeSingle();
+    if (!mc) return res.status(500).json({ error: 'no_management_company' });
+    // Best-effort vendor link by name.
+    let vendor_id = null;
+    try { const { data: v } = await supabase.from('vendors').select('id').ilike('name', b.vendor_name).limit(1).maybeSingle(); vendor_id = v ? v.id : null; } catch (_) { /* optional */ }
+    const row = {
+      management_company_id: mc.id, community_id: b.community_id, vendor_id, vendor_name_raw: b.vendor_name,
+      service_category: b.service_category || 'other', service_description: b.service_description || null,
+      total_amount: Number(b.total_amount) || null, annualized_amount: Number(b.annual_amount) || null,
+      term_months: b.term_months != null ? parseInt(b.term_months, 10) : null,
+      effective_date: b.effective_date || null, end_date: b.end_date || null,
+      escalator_kind: b.escalator_kind || 'none', escalator_pct: b.escalator_pct != null ? Number(b.escalator_pct) : null,
+      payment_terms: b.payment_terms || null, auto_renews: !!b.auto_renews,
+      renewal_notice_days: b.renewal_notice_days != null ? parseInt(b.renewal_notice_days, 10) : null,
+      file_path: b.file_path || null, file_hash: b.file_hash || null, file_size_bytes: b.file_size_bytes || null,
+      extracted_data: b.extracted_data || null, extraction_model: 'claude-sonnet-4-5',
+      extraction_confidence: b.extraction_confidence || null, status: 'active',
+    };
+    const { data: ins, error } = await supabase.from('vendor_contracts').insert(row).select('id').single();
+    if (error) throw error;
+    res.json({ id: ins.id, saved: true });
+  } catch (err) {
+    console.error('[books] vendor-contract save failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// List a community's vendor contracts (with a short-lived view link).
+router.get('/vendor-contracts', async (req, res) => {
+  try {
+    const { community_id } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { data, error } = await supabase.from('vendor_contracts')
+      .select('id, vendor_name_raw, service_category, service_description, annualized_amount, escalator_kind, escalator_pct, effective_date, end_date, status, file_path')
+      .eq('community_id', community_id).neq('status', 'superseded').order('annualized_amount', { ascending: false, nullsFirst: false });
+    if (error) throw error;
+    const rows = [];
+    for (const c of (data || [])) {
+      let url = null;
+      if (c.file_path) { try { const { data: s } = await supabase.storage.from('documents').createSignedUrl(c.file_path, 3600); if (s) url = s.signedUrl; } catch (_) { /* optional */ } }
+      rows.push({ ...c, view_url: url });
+    }
+    res.json({ contracts: rows });
+  } catch (err) {
+    console.error('[books] vendor-contracts list failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Delete a vendor contract (community-scoped).
+router.delete('/vendor-contracts/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const community_id = req.query.community_id;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { data: c, error: findErr } = await supabase.from('vendor_contracts').select('id, community_id, file_path').eq('id', id).maybeSingle();
+    if (findErr) throw findErr;
+    if (!c) return res.status(404).json({ error: 'contract_not_found' });
+    if (c.community_id !== community_id) return res.status(403).json({ error: 'contract_belongs_to_a_different_community' });
+    if (c.file_path) { try { await supabase.storage.from('documents').remove([c.file_path]); } catch (_) { /* optional */ } }
+    const { error: delErr } = await supabase.from('vendor_contracts').delete().eq('id', id).eq('community_id', community_id);
+    if (delErr) throw delErr;
+    res.json({ deleted: true });
+  } catch (err) {
+    console.error('[books] vendor-contract delete failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // ----------------------------------------------------------------------------
 // GET /api/books/budgets/plan-seed  (Ed 2026-06-30 — budget PLANNING)
 // Seed next year's budget from what actually happened — the CPA default, not a
@@ -970,7 +1073,14 @@ router.get('/budgets/living-lines', async (req, res) => {
     // (vendor, annual cost, end date, linked PDF). Match them to the account by
     // vendor name, budget at the contract amount, and attach the contract PDF as
     // evidence — the number literally IS the contract. (Ed 2026-08-10.)
+    const ESC = 0.04; // default renewal escalation for vendor-committed lines
+    const INFL = 0.03; // default inflation on trend lines
+    // Contract-VERIFIED source. Two feeds, one shape: amenity operating
+    // contracts (pool, splash) already extracted on the amenities table, and
+    // vendor SERVICE contracts (security, landscaping, mgmt) uploaded + parsed
+    // into vendor_contracts. The number IS the contract; the PDF is evidence.
     const normV = (s) => String(s || '').toLowerCase().replace(/\b(llc|inc|co|corp|ltd|company|the|services?|management|pool|pools|,|\.)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+    const tokfn = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4);
     const contracts = [];
     try {
       const { data: am } = await supabase.from('amenities')
@@ -982,20 +1092,32 @@ router.get('/budgets/living-lines', async (req, res) => {
           const { data: doc } = await supabase.from('library_documents').select('file_path').eq('id', a.management_contract_doc_id).maybeSingle();
           if (doc && doc.file_path) { try { const { data: s } = await supabase.storage.from('documents').createSignedUrl(doc.file_path, 3600); if (s) url = s.signedUrl; } catch (_) { /* signed url optional */ } }
         }
-        contracts.push({ norm: normV(a.management_vendor_name), first: normV(a.management_vendor_name).split(' ')[0], vendor_name: a.management_vendor_name, cents: Number(a.management_annual_cost_cents) || 0, end_date: a.management_contract_end_date, amenity: a.name, url });
+        contracts.push({ norm: normV(a.management_vendor_name), first: normV(a.management_vendor_name).split(' ')[0], vendor_name: a.management_vendor_name, cents: Number(a.management_annual_cost_cents) || 0, escPct: ESC, words: tokfn(a.name), end_date: a.management_contract_end_date, url });
       }
     } catch (_) { /* amenity contracts optional */ }
+    try {
+      const { data: vcs } = await supabase.from('vendor_contracts')
+        .select('vendor_name_raw, annualized_amount, escalator_kind, escalator_pct, end_date, service_category, file_path')
+        .eq('community_id', community_id).eq('status', 'active');
+      for (const c of (vcs || [])) {
+        const cents = Math.round((Number(c.annualized_amount) || 0) * 100);
+        if (cents <= 0) continue;
+        let url = null;
+        if (c.file_path) { try { const { data: s } = await supabase.storage.from('documents').createSignedUrl(c.file_path, 3600); if (s) url = s.signedUrl; } catch (_) { /* optional */ } }
+        const escPct = (c.escalator_kind !== 'none' && c.escalator_pct != null) ? Number(c.escalator_pct) / 100 : ESC;
+        contracts.push({ norm: normV(c.vendor_name_raw), first: normV(c.vendor_name_raw).split(' ')[0], vendor_name: c.vendor_name_raw, cents, escPct, words: tokfn(String(c.service_category || '').replace(/_/g, ' ')), end_date: c.end_date, url });
+      }
+    } catch (_) { /* vendor contracts optional */ }
     const vendorMatches = (vendors, c) => (vendors || []).some((v) => { const nv = normV(v.name); return nv && c.norm && (nv === c.norm || (c.first.length >= 4 && nv.includes(c.first))); });
-    // Bind each contract to exactly ONE account. A vendor (e.g. Swim Houston)
-    // can appear on several accounts; without this, the full contract amount
-    // would be proposed on every one of them and multiply a single obligation.
-    // Prefer the account whose name matches the amenity (pool → pool line,
-    // splash pad → splash line); break ties by the vendor's spend on it.
+    // Bind each contract to exactly ONE account. A vendor can appear on several
+    // accounts; without this the full contract amount would be proposed on each
+    // and multiply a single obligation. Prefer the account whose name matches
+    // the contract's own words (service category / amenity); tie-break by spend.
     const contractByAccount = {};
     const expenseAccts = [...acc.values()].filter((a) => a.account_type === 'expense');
     const claimed = new Set();
     for (const c of [...contracts].sort((a, b) => b.cents - a.cents)) {
-      const words = String(c.amenity || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4);
+      const words = c.words || [];
       const cands = expenseAccts.filter((a) => !claimed.has(a.account_id) && vendorMatches(vendorByAcct[a.account_id], c));
       if (!cands.length) continue;
       const score = (a) => {
@@ -1007,9 +1129,6 @@ router.get('/budgets/living-lines', async (req, res) => {
       contractByAccount[best.account_id] = c;
       claimed.add(best.account_id);
     }
-
-    const ESC = 0.04; // default renewal escalation for vendor-committed lines
-    const INFL = 0.03; // default inflation on trend lines
     // fy-1 is the CURRENT year and is still in progress, so budget off the
     // annualized FORECAST (run-rate), never the partial current-year total (which
     // would understate every line). Vendor commitments are annualized the same way.
@@ -1025,8 +1144,9 @@ router.get('/budgets/living-lines', async (req, res) => {
         // amount; the contract expires mid-year, so the post-renewal months carry
         // the default renewal escalation.
         source_type = 'contract'; confidence = 'high';
-        proposed_cents = Math.round(contract.cents * (1 + ESC));
-        const endTxt = contract.end_date ? ` through ${contract.end_date}, +${Math.round(ESC * 100)}% on renewal` : '';
+        const escP = (typeof contract.escPct === 'number') ? contract.escPct : ESC;
+        proposed_cents = Math.round(contract.cents * (1 + escP));
+        const endTxt = contract.end_date ? ` through ${contract.end_date}, +${Math.round(escP * 100)}% on renewal` : ` +${Math.round(escP * 100)}% escalation`;
         built_from = `Contract — ${contract.vendor_name}: $${Math.round(contract.cents / 100).toLocaleString()}/yr${endTxt}`;
         if (contract.url) evidence = [{ label: `${contract.vendor_name} contract`, url: contract.url }];
       } else if (a.account_type === 'expense' && committedAnnual > 0 && committedAnnual >= a.forecast * 0.6) {
