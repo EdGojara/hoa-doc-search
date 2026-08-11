@@ -368,6 +368,91 @@ router.get('/community/:id/properties', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /community/:id/ar-categorized — owing accounts grouped by escalation stage:
+//   1) At legal      — with collections counsel (enforcement SSOT)
+//   2) Certified §209 — certified demand sent, with a 30-day clock: eligible for
+//                       legal once >30 days have passed, "not yet" under 30
+//   3) Remaining      — past-due, not yet escalated
+// Each category totals its balances. Balance is the canonical ledger; stage comes
+// from property_enforcement_states (legal) + ar_account_collections (certified).
+// (Ed 2026-08-10.)
+// ----------------------------------------------------------------------------
+router.get('/community/:id/ar-categorized', async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const communityId = req.params.id;
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+    const { fetchAllQuery } = require('../lib/db/fetch_all');
+
+    // Owing accounts from the canonical ledger.
+    const bals = await fetchAllQuery(() => supabase.from('v_homeowner_current_balance')
+      .select('property_id, balance_cents').eq('community_id', communityId), { orderBy: 'property_id' });
+    const owing = new Map();
+    for (const b of bals) { if (b.property_id && Number(b.balance_cents) > 0) owing.set(b.property_id, Number(b.balance_cents)); }
+    const ids = [...owing.keys()];
+
+    // Address + owner for those properties.
+    const meta = new Map();
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data } = await supabase.from('v_property_summary')
+        .select('property_id, street_address, unit, owner_name, open_violations, worst_open_stage')
+        .eq('community_id', communityId).in('property_id', ids.slice(i, i + 300));
+      for (const r of (data || [])) meta.set(r.property_id, r);
+    }
+
+    // Enforcement state (legal) + collections status (certified) per property.
+    const { data: esRows } = await supabase.from('property_enforcement_states')
+      .select('property_id, state, effective_at, attorney_firm').eq('community_id', communityId).is('ended_at', null).limit(5000);
+    const esByProp = new Map((esRows || []).map((e) => [e.property_id, e]));
+    let collByProp = new Map();
+    try {
+      const { data: coll } = await supabase.from('ar_account_collections')
+        .select('property_id, collection_status, status_since').eq('community_id', communityId).neq('collection_status', 'none').limit(5000);
+      collByProp = new Map((coll || []).map((c) => [c.property_id, c]));
+    } catch (_) { /* table may be empty */ }
+
+    const LEGAL_STATES = new Set(['at_legal', 'lien_filed', 'judgment']);
+    const today = new Date();
+    const daysSince = (d) => { if (!d) return null; const t = new Date(d + (String(d).length === 10 ? 'T00:00:00Z' : '')); return isNaN(t) ? null : Math.floor((today - t) / 86400000); };
+
+    const atLegal = [], certified = [], remaining = [];
+    for (const pid of ids) {
+      const m = meta.get(pid) || {};
+      const es = esByProp.get(pid); const c = collByProp.get(pid);
+      const base = { property_id: pid, street_address: m.street_address || null, unit: m.unit || null, owner_name: m.owner_name || null, balance_cents: owing.get(pid), open_violations: m.open_violations || 0, worst_open_stage: m.worst_open_stage || null };
+      const legal = (es && LEGAL_STATES.has(es.state)) || (c && c.collection_status === 'with_attorney');
+      const isCertified = c && c.collection_status === 'certified_demand';
+      if (legal) {
+        atLegal.push({ ...base, legal_state: (es && es.state) || 'with_attorney', attorney_firm: (es && es.attorney_firm) || null });
+      } else if (isCertified) {
+        const days = daysSince(c.status_since);
+        certified.push({ ...base, certified_date: c.status_since || null, days_since_certified: days, eligible_for_legal: days != null && days > 30 });
+      } else {
+        remaining.push(base);
+      }
+    }
+    const sortBal = (a, b) => b.balance_cents - a.balance_cents;
+    atLegal.sort(sortBal); certified.sort(sortBal); remaining.sort(sortBal);
+    const total = (arr) => arr.reduce((s, x) => s + x.balance_cents, 0);
+
+    res.json({
+      categories: [
+        { key: 'at_legal', label: 'At legal', count: atLegal.length, total_cents: total(atLegal), accounts: atLegal },
+        { key: 'certified', label: 'Certified §209 sent', count: certified.length, total_cents: total(certified),
+          eligible_count: certified.filter((x) => x.eligible_for_legal).length, accounts: certified },
+        { key: 'remaining', label: 'Remaining past-due', count: remaining.length, total_cents: total(remaining), accounts: remaining },
+      ],
+      grand_total_cents: total(atLegal) + total(certified) + total(remaining),
+      total_owing_accounts: ids.length,
+    });
+  } catch (err) {
+    console.error('[board_portal] ar-categorized failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/board-portal/property/:id
 // Single property detail: summary + recent ARC + recent interactions + linked docs
 // ----------------------------------------------------------------------------

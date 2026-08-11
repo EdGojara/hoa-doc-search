@@ -600,29 +600,62 @@
     const wrap = document.getElementById('container');
     wrap.innerHTML = '<div class="loading">Loading accounts receivable…</div>';
     try {
-      const j = await fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/properties?balance_only=1&order_by=balance_desc&limit=2000`);
-      wrap.innerHTML = `${backBar()}${renderARList(j.properties || [])}`;
+      const j = await fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/ar-categorized`);
+      wrap.innerHTML = `${backBar()}${renderARCategories(j)}`;
     } catch (e) {
       wrap.innerHTML = `${backBar()}<div class="err">Load failed: ${esc(e.message)}</div>`;
     }
   }
-  function renderARList(rows) {
-    const money = (v) => { const n = Number(v || 0); return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
-    if (!rows.length) return '<div class="properties-header">Accounts Receivable</div><div class="empty">No outstanding balances. 🎉</div>';
-    const total = rows.reduce((a, r) => a + Number(r.current_balance || 0), 0);
+  // AR grouped by escalation stage: At legal / Certified §209 (30-day clock) /
+  // Remaining. Each collapsible with its own total; legal + certified expanded
+  // (the accounts that need attention), the big Remaining list collapsed.
+  const _arMoneyC = (c) => '$' + (Number(c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const _AR_CATMETA = {
+    at_legal:  { icon: '⚖️', color: '#b42318' },
+    certified: { icon: '📜', color: '#b45309' },
+    remaining: { icon: '•',  color: '#475569' },
+  };
+  function renderARCategories(j) {
+    if (!j.total_owing_accounts) return '<div class="properties-header">Accounts Receivable</div><div class="empty">No outstanding balances. 🎉</div>';
     const arrowSvg = '<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>';
-    return `<div class="properties-header">Accounts Receivable (${rows.length} owing · ${money(total)})</div>` +
-      rows.map((r) => `<div class="property-card" onclick="openProperty('${esc(r.property_id)}')">
-        <div class="main">
-          <div class="addr">${esc(r.street_address)}${r.unit ? ' #' + esc(r.unit) : ''}</div>
-          <div class="owner">${esc(r.owner_name || '— no owner on record —')}</div>
-          ${r.open_violations > 0 ? `<div class="badges"><span class="badge ${stageBadgeKind(r.worst_open_stage)}">${r.open_violations} open · ${esc(stageLabel(r.worst_open_stage))}</span></div>` : ''}
+    const header = `<div class="properties-header">Accounts Receivable (${j.total_owing_accounts} owing · ${_arMoneyC(j.grand_total_cents)})</div>`;
+    const sections = (j.categories || []).map((cat) => {
+      const cm = _AR_CATMETA[cat.key] || {};
+      const acctRows = (cat.accounts || []).map((a) => {
+        let sub = '';
+        if (cat.key === 'certified') {
+          sub = a.eligible_for_legal
+            ? `<span class="badge bad">Eligible for legal · ${a.days_since_certified}d since certified</span>`
+            : `<span class="badge" style="background:#fef3c7;color:#92400e;">Not yet · ${a.days_since_certified != null ? (30 - a.days_since_certified) + ' days to go' : 'add certified date'}</span>`;
+          if (a.certified_date) sub += `<span class="owner" style="margin-left:6px;">certified ${esc(a.certified_date)}</span>`;
+        } else if (cat.key === 'at_legal' && a.attorney_firm) {
+          sub = `<span class="owner">${esc(a.attorney_firm)}</span>`;
+        } else if (a.open_violations > 0) {
+          sub = `<span class="badge ${stageBadgeKind(a.worst_open_stage)}">${a.open_violations} open · ${esc(stageLabel(a.worst_open_stage))}</span>`;
+        }
+        return `<div class="property-card" onclick="openProperty('${esc(a.property_id)}')">
+          <div class="main">
+            <div class="addr">${esc(a.street_address || '—')}${a.unit ? ' #' + esc(a.unit) : ''}</div>
+            <div class="owner">${esc(a.owner_name || '— no owner on record —')}</div>
+            ${sub ? `<div class="badges">${sub}</div>` : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">
+            <div style="font-weight:800;color:#b42318;font-size:15px;">${_arMoneyC(a.balance_cents)}</div>
+            <div class="arrow">${arrowSvg}</div>
+          </div>
+        </div>`;
+      }).join('') || '<div class="empty" style="padding:14px;">None in this category.</div>';
+      const openByDefault = cat.key !== 'remaining';   // legal + certified expanded; remaining collapsed
+      const extra = (cat.key === 'certified' && cat.eligible_count) ? ` · <span style="color:#b42318;font-weight:600;">${cat.eligible_count} eligible for legal</span>` : '';
+      return `<div style="margin-bottom:12px;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
+        <div onclick="const b=this.nextElementSibling;b.style.display=(b.style.display==='none'?'block':'none');" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:13px 16px;background:#f8fafc;">
+          <div style="font-weight:700;color:${cm.color};">${cm.icon} ${esc(cat.label)} <span style="font-weight:500;color:#64748b;font-size:13px;">· ${cat.count} account${cat.count === 1 ? '' : 's'}${extra}</span></div>
+          <div style="font-weight:800;">${_arMoneyC(cat.total_cents)}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">
-          <div style="font-weight:800;color:${Number(r.current_balance) > 0 ? '#b42318' : '#1a7a3c'};font-size:15px;">${money(r.current_balance)}</div>
-          <div class="arrow">${arrowSvg}</div>
-        </div>
-      </div>`).join('');
+        <div style="display:${openByDefault ? 'block' : 'none'};">${acctRows}</div>
+      </div>`;
+    }).join('');
+    return header + sections;
   }
 
   // ARC — read-only board oversight. Summary + comfort first; anything PENDING
