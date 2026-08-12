@@ -1023,6 +1023,9 @@ app.use('/api/gl', glRouter);
 app.get('/admin/accounting', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'accounting.html'));
 });
+app.get('/admin/chamber', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'chamber-console.html'));
+});
 app.get('/admin/communications', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'communications.html'));
 });

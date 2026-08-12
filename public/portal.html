@@ -653,6 +653,9 @@
 <!-- Welcome banner (optional, community-controlled) -->
 <div id="welcomeBanner" class="welcome-banner" style="display:none;"></div>
 
+<!-- Chamber live-meeting banner (shown only when a meeting is live/upcoming) -->
+<div id="chamberBanner" style="display:none; margin-bottom:16px;"></div>
+
 <!-- Tile grid -->
 <div class="section-label" id="tileSectionLabel">Your community</div>
 <div class="tile-grid" id="tileGrid"></div>
@@ -1413,6 +1416,10 @@ function renderPortal(ctx) {
   // Tiles
   renderTiles(ctx);
 
+  // Chamber — surface a live/upcoming board meeting at the top of the portal.
+  checkChamberLive();
+  if (!window._chamberPoll) window._chamberPoll = setInterval(checkChamberLive, 30000);
+
   // Footer
   $('footerHoa').textContent = `${ctx.community.hoa_legal_name || ctx.community.name} · administered by Bedrock Association Management`;
 
@@ -1439,6 +1446,30 @@ function renderPortal(ctx) {
     // on top of a fully-loaded page rather than a flash of empty state.
     setTimeout(() => showTutorialOverlay({ updateDismissed: true }), 600);
   }
+}
+
+async function checkChamberLive() {
+  const el = document.getElementById('chamberBanner'); if (!el) return;
+  const pid = getStoredPropertyId();
+  const qs = pid ? ('?property_id=' + encodeURIComponent(pid)) : '';
+  try {
+    const j = await (await fetch('/api/portal/chamber' + qs, { credentials: 'same-origin' })).json();
+    const b = j && j.broadcast;
+    if (b && b.status === 'live') {
+      el.style.display = '';
+      el.innerHTML = `<a href="/portal-chamber.html${qs}" style="display:flex; align-items:center; gap:14px; text-decoration:none; color:#fff; background:#dc2626; border-radius:12px; padding:14px 18px; box-shadow:0 2px 8px rgba(220,38,38,.25);">
+        <span style="display:inline-flex; align-items:center; gap:6px; font-weight:800; font-size:12px; letter-spacing:.04em;"><span style="width:8px;height:8px;border-radius:50%;background:#fff;"></span>LIVE</span>
+        <span style="flex:1;"><strong style="font-size:15px;">${escapeHtml(b.title || 'Board Meeting')} is live now</strong><br><span style="opacity:.9; font-size:13px;">Tap to watch in the Chamber →</span></span>
+      </a>`;
+    } else if (b && b.status === 'scheduled' && b.scheduled_at) {
+      const when = new Date(b.scheduled_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      el.style.display = '';
+      el.innerHTML = `<a href="/portal-chamber.html${qs}" style="display:flex; align-items:center; gap:12px; text-decoration:none; color:#1e40af; background:#eff6ff; border:1px solid #bfdbfe; border-radius:12px; padding:12px 16px;">
+        <span style="font-size:18px;">🗓️</span><span><strong>Upcoming board meeting</strong> — ${escapeHtml(when)}. You can watch it live here.</span></a>`;
+    } else {
+      el.style.display = 'none'; el.innerHTML = '';
+    }
+  } catch (_) { /* banner is best-effort */ }
 }
 
 function renderTiles(ctx) {
