@@ -520,8 +520,9 @@
     _acctCommName = null; acctCommunityName(); // refresh for the wrong-community guard on the CURRENT community
     $('body').innerHTML = `<div class="card">
       <h2 class="sec" style="margin-bottom:8px;">Budget</h2>
-      <div style="margin-bottom:12px;"><button onclick="renderBudgetPlanner()" style="padding:9px 16px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:600; cursor:pointer; font-size:13px;">➕ Plan a budget from actuals →</button></div>
-      <div class="muted" style="margin-bottom:12px; font-size:13px;">Or upload an approved annual budget (PDF or Excel) — trustEd extracts the line items and matches them to your chart of accounts.</div>
+      <div style="margin-bottom:6px;"><button onclick="renderBudgetPlanner()" style="padding:11px 20px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:700; cursor:pointer; font-size:14px;">🧬 Build the proposed FY ${(new Date().getFullYear())+1} budget →</button></div>
+      <div class="muted" style="margin-bottom:14px; font-size:12.5px;">Each line proposed from actuals, run-rate, and contracts — with the reasoning shown for every number.</div>
+      <div class="muted" style="margin-bottom:12px; font-size:13px; border-top:1px solid var(--rule); padding-top:12px;">Or upload an already-approved annual budget (PDF or Excel) — trustEd extracts the line items and matches them to your chart of accounts.</div>
       <div id="bdg-drop" style="border:2px dashed var(--rule); border-radius:10px; padding:26px; text-align:center; cursor:pointer; background:#fafbfc;">
         <div style="font-size:13px; color:var(--ink-soft);">📄 Drop a budget PDF or Excel file here or <strong>click to choose</strong></div>
         <input type="file" id="bdg-file" accept=".pdf,.xlsx,.xls,.csv" style="display:none;">
@@ -708,22 +709,25 @@
   window.renderBudgetPlanner = function(){
     const nextYear = (new Date().getFullYear()) + 1;
     $('body').innerHTML = `<div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
-        <h2 class="sec" style="margin:0;">Plan a Budget</h2>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:6px;">
+        <h2 class="sec" style="margin:0;">Proposed FY <span id="bp-fy-label">${nextYear}</span> Budget</h2>
         <button onclick="renderBudget()" style="padding:7px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer; font-size:12.5px;">← Back</button>
       </div>
-      <div class="muted" style="margin-bottom:12px; font-size:13px;">Start next year's budget from what actually happened. Pick the year, seed from prior-year actuals (or this year annualized), adjust each line, and save. Saved budgets flow into Budget&nbsp;vs&nbsp;Actual and the board packet.</div>
+      <div class="muted" style="margin-bottom:14px; font-size:13px;">Every line is proposed from your actuals, this year's run-rate, and the contracts on file — <strong>with the reasoning shown</strong>. Click any account name to see exactly how its number was built, adjust anything, then save. Saved budgets flow into Budget&nbsp;vs&nbsp;Actual and the board packet.</div>
       <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px;">
-        <div><div class="muted" style="font-size:11px;">Fiscal year</div><input id="bp-fy" type="number" value="${nextYear}" style="width:90px; padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"></div>
-        <div><div class="muted" style="font-size:11px;">Seed from</div><select id="bp-basis" style="padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"><option value="prior_actual">Prior-year actual</option><option value="ytd_annualized">This year annualized (YTD)</option></select></div>
-        <div><div class="muted" style="font-size:11px;">Bump %</div><input id="bp-bump" type="number" value="0" step="0.5" style="width:70px; padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"></div>
-        <button onclick="bdgLivingLoad()" style="padding:8px 18px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:700; cursor:pointer;">🧬 Build living budget →</button>
-        <button onclick="bdgPlanLoad()" style="padding:8px 14px; border:1px solid var(--rule); border-radius:8px; background:#fff; font-weight:600; cursor:pointer;">Seed from actuals</button>
-        <button onclick="bdgAiLoad()" style="padding:8px 14px; border:1px solid var(--rule); border-radius:8px; background:#fff; font-weight:600; cursor:pointer;">✨ Generate</button>
+        <div><div class="muted" style="font-size:11px;">Fiscal year</div><input id="bp-fy" type="number" value="${nextYear}" onchange="const l=document.getElementById('bp-fy-label'); if(l)l.textContent=this.value; bdgLivingLoad();" style="width:90px; padding:7px 9px; border:1px solid var(--rule); border-radius:6px;"></div>
+        <button onclick="bdgLivingLoad()" style="padding:8px 18px; border:none; border-radius:8px; background:var(--navy,#0B1D34); color:#fff; font-weight:700; cursor:pointer;">🔄 Rebuild proposal</button>
+        <span style="flex:1;"></span>
+        <div class="muted" style="font-size:11px; display:flex; gap:8px; align-items:center;">Other methods:
+          <button onclick="bdgPlanLoad()" style="padding:6px 12px; border:1px solid var(--rule); border-radius:7px; background:#fff; font-weight:600; cursor:pointer; font-size:12px;">Seed from actuals</button>
+          <button onclick="bdgAiLoad()" style="padding:6px 12px; border:1px solid var(--rule); border-radius:7px; background:#fff; font-weight:600; cursor:pointer; font-size:12px;">✨ Generate</button>
+        </div>
+        <select id="bp-basis" style="display:none;"><option value="prior_actual">prior</option></select>
+        <input id="bp-bump" type="hidden" value="0">
       </div>
-      <div class="muted" style="font-size:12px; margin-bottom:12px;">✨ Reads the last 2-3 years of actuals, this year's run-rate, and known operating contracts, and proposes each line with a reason — then you adjust and save.</div>
-      <div id="bp-grid" class="muted">Pick the year, then <strong>Generate budget</strong> (or seed from actuals).</div>
+      <div id="bp-grid" class="muted" style="padding:14px;">🧬 Building the proposed FY ${nextYear} budget…</div>
     </div>`;
+    bdgLivingLoad();
   };
   window.bdgPlanLoad = async function(){
     const fy=$('bp-fy').value, basis=$('bp-basis').value, bump=$('bp-bump').value||0;
