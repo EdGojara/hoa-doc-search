@@ -733,6 +733,59 @@ router.delete('/budgets/:id', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// Reserve budget — the planned capital-expenditure PROJECTS for the year (the
+// reserve side of the budget). Named projects without GL accounts, so they
+// live in reserve_budget_items, not budget_line_items. (Ed 2026-08-12.)
+// ----------------------------------------------------------------------------
+router.get('/reserve-budget', async (req, res) => {
+  try {
+    const { community_id, fiscal_year } = req.query;
+    if (!community_id || !fiscal_year) return res.status(400).json({ error: 'community_id_and_fiscal_year_required' });
+    const { data, error } = await supabase.from('reserve_budget_items')
+      .select('id, project_name, category, planned_amount_cents, note, sort_order')
+      .eq('community_id', community_id).eq('fiscal_year', parseInt(fiscal_year, 10))
+      .order('sort_order', { ascending: true }).order('created_at', { ascending: true });
+    if (error) throw error;
+    const items = data || [];
+    res.json({ items, total_cents: items.reduce((s, i) => s + (i.planned_amount_cents || 0), 0) });
+  } catch (err) {
+    console.error('[books] reserve-budget list failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Replace the whole reserve project list for (community, year) — the grid saves
+// the full set at once, so this is a clean delete-then-insert in one call.
+router.post('/reserve-budget', express.json({ limit: '512kb' }), async (req, res) => {
+  try {
+    const { community_id, fiscal_year, items } = req.body || {};
+    if (!community_id || !fiscal_year) return res.status(400).json({ error: 'community_id_and_fiscal_year_required' });
+    if (!Array.isArray(items)) return res.status(400).json({ error: 'items_required' });
+    const fy = parseInt(fiscal_year, 10);
+    const rows = items
+      .map((it, i) => ({
+        community_id,
+        fiscal_year: fy,
+        project_name: String(it.project_name || '').trim(),
+        category: it.category ? String(it.category).trim() : null,
+        planned_amount_cents: Math.round(Number(it.planned_amount_cents) || 0),
+        note: it.note ? String(it.note).trim() : null,
+        sort_order: Number.isFinite(Number(it.sort_order)) ? Number(it.sort_order) : i,
+      }))
+      .filter((r) => r.project_name);
+    await supabase.from('reserve_budget_items').delete().eq('community_id', community_id).eq('fiscal_year', fy);
+    if (rows.length) {
+      const { error } = await supabase.from('reserve_budget_items').insert(rows);
+      if (error) throw error;
+    }
+    res.json({ saved: true, count: rows.length, total_cents: rows.reduce((s, r) => s + r.planned_amount_cents, 0) });
+  } catch (err) {
+    console.error('[books] reserve-budget save failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // ============================================================================
 // Vendor SERVICE contracts — upload the signed PDF, extract the terms, store
 // them structured in `vendor_contracts`, and let the living budget propose that
@@ -1066,6 +1119,21 @@ router.get('/budgets/living-lines', async (req, res) => {
     };
     merge(is2, 'fy2'); merge(is1, 'fy1'); merge(isYtd, 'ytd', annualize);
 
+    // Include accounts that are BUDGETED but had no GL activity this year (e.g.
+    // a reserve contribution transfer) — a budgeted line belongs in next year's
+    // budget regardless of activity, and it would otherwise silently vanish.
+    const missingBudgeted = Object.keys(priorBudget).filter((aid) => !acc.has(aid));
+    if (missingBudgeted.length) {
+      const { data: metas, error: mErr } = await supabase.from('chart_of_accounts')
+        .select('id, account_number, account_name, account_type, fund_id, account_funds ( fund_code )')
+        .in('id', missingBudgeted);
+      if (mErr) throw mErr;
+      for (const m of (metas || [])) {
+        if (!['revenue', 'expense'].includes(m.account_type)) continue;
+        acc.set(m.id, { account_id: m.id, account_number: m.account_number, account_name: m.account_name, account_type: m.account_type, fund_id: m.fund_id || null, fund_code: (m.account_funds && m.account_funds.fund_code) || null, fy2: 0, fy1: 0, ytd_actual: 0, forecast: 0 });
+      }
+    }
+
     // Vendor commitments per expense account (prior year) — the "built from" source.
     const vendorByAcct = {};
     try {
@@ -1172,14 +1240,21 @@ router.get('/budgets/living-lines', async (req, res) => {
         const endTxt = contract.end_date ? ` through ${contract.end_date}, +${Math.round(escP * 100)}% on renewal` : ` +${Math.round(escP * 100)}% escalation`;
         built_from = `Contract — ${contract.vendor_name}: $${Math.round(contract.cents / 100).toLocaleString()}/yr${endTxt}`;
         if (contract.url) evidence = [{ label: `${contract.vendor_name} contract`, url: contract.url }];
-      } else if (priorB > 0) {
+      } else if (priorB !== 0) {
         // ANCHOR to the board-adopted prior budget — the complete, reliable
         // baseline. The current-year GL is a partial (often mid-cutover) window,
         // so its annualized run-rate is not trustworthy as the base. Assessment
         // revenue is a board decision, never a forecast.
+        const isReserveFund = String(a.fund_code || '').toUpperCase() === 'RES' || /\breserve\b/i.test(a.account_name || '');
         if (a.account_type === 'revenue') {
-          source_type = 'prior_budget'; confidence = 'high'; proposed_cents = priorB;
-          built_from = `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} — assessment income is set by the board, held flat. Change it here to propose a new rate.`;
+          // Reserve-fund contributions are sometimes booked as a NEGATIVE
+          // operating transfer (contra-revenue). In the budget they read as
+          // positive money INTO reserves.
+          source_type = 'prior_budget'; confidence = 'high';
+          proposed_cents = isReserveFund ? Math.abs(priorB) : priorB;
+          built_from = isReserveFund
+            ? `FY${fy - 1} adopted reserve contribution $${Math.round(Math.abs(priorB) / 100).toLocaleString()} — held flat; change it here to fund more or less into reserves.`
+            : `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} — assessment income is set by the board, held flat. Change it here to propose a new rate.`;
         } else {
           source_type = 'prior_budget'; confidence = 'medium'; proposed_cents = Math.round(priorB * (1 + INFL));
           built_from = `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} + ${Math.round(INFL * 100)}% inflation${a.forecast > 0 ? ` · this year pacing ~$${Math.round(a.forecast / 100).toLocaleString()} annualized` : ''}.`;

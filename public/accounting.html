@@ -682,6 +682,11 @@
       ${ex.warnings&&ex.warnings.length?`<div style="padding:8px 12px; background:#fef3c7; border-radius:6px; font-size:12px; color:#92400e; margin-bottom:10px;">⚠ ${ex.warnings.map(esc).join('<br>⚠ ')}</div>`:''}
       <table><thead><tr><th>Source #</th><th>Account</th><th>Type</th><th class="num">Annual</th><th>Match</th></tr></thead><tbody>${tr}</tbody></table>
       ${unmatched>0?`<div class="muted" style="margin-top:10px; font-size:12px;">⚠ Unmatched accounts are skipped on save. Add the Vantaca account number to your CoA to map them.</div>`:''}
+      ${(ex.reserve_projects&&ex.reserve_projects.length)?`<div style="margin-top:14px; border-top:1px solid var(--rule); padding-top:12px;">
+        <div style="font-weight:700; margin-bottom:6px;">Reserve budget — ${ex.reserve_projects.length} capital project${ex.reserve_projects.length===1?'':'s'} · ${fmt(ex.reserve_projects.reduce((s,p)=>s+(p.planned_amount_cents||0),0))}</div>
+        <div class="muted" style="font-size:12px; margin-bottom:6px;">Picked up from the reserve sheet — saved to the Reserve Budget alongside the operating lines.</div>
+        ${ex.reserve_projects.map(p=>`<div style="display:flex; justify-content:space-between; font-size:12px; padding:3px 0; border-bottom:1px solid #f5f5f0;"><span>${esc(p.project_name)}${p.note?` <span class="muted">— ${esc(p.note)}</span>`:''}</span><span style="font-variant-numeric:tabular-nums;">${fmt(p.planned_amount_cents)}</span></div>`).join('')}
+      </div>`:''}
     </div>`;
     const draftBtn=$('bdg-draft'), apprBtn=$('bdg-approve');
     const applyGuard=()=>{ const ok = !wrongComm || ($('bdg-override') && $('bdg-override').checked); [draftBtn,apprBtn].forEach((b)=>{ b.disabled=!ok; b.style.opacity=ok?'1':'.45'; b.style.cursor=ok?'pointer':'not-allowed'; }); };
@@ -695,9 +700,16 @@
     const byV={}, byN={}; (_coaCache||[]).forEach((a)=>{ if(a.vantaca_account_number) byV[a.vantaca_account_number]=a; if(a.account_number) byN[a.account_number]=a; });
     const matched = (ex.line_items||[]).map((li)=>{ const a=byV[li.account_number]||byN[li.account_number]; return a?{account_id:a.id,fund_id:a.fund_id||null,annual_amount_cents:li.annual_amount_cents,monthly_amounts_cents:li.monthly_amounts_cents}:null; }).filter(Boolean);
     if (!matched.length) { alert('No matched lines to save.'); return; }
+    const resvProjects=(ex.reserve_projects||[]).filter(p=>(p.project_name||'').trim());
     try {
       const j = await (await fetch('/api/books/budgets', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ community_id:CID, fiscal_year:ex.fiscal_year, status, source_filename:_pendingBudget.filename, line_items:matched }) })).json();
-      if (j.error) throw new Error(j.error); alert(`Saved budget — ${j.line_items_count} lines, status ${j.budget.status}.`); _pendingBudget=null; renderBudget();
+      if (j.error) throw new Error(j.error);
+      let resvMsg='';
+      if (resvProjects.length) {
+        const rj = await (await fetch('/api/books/reserve-budget', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ community_id:CID, fiscal_year:ex.fiscal_year, items:resvProjects }) })).json();
+        if (!rj.error) resvMsg = ` + ${rj.count} reserve project${rj.count===1?'':'s'}`;
+      }
+      alert(`Saved budget — ${j.line_items_count} operating lines${resvMsg}, status ${j.budget.status}.`); _pendingBudget=null; renderBudget();
     } catch (e) { alert('Save failed: '+e.message); }
   }
 
@@ -764,16 +776,32 @@
     } catch(e){ $('bp-grid').innerHTML=`<div style="color:var(--err); padding:12px;">Couldn't load: ${esc(e.message)}</div>`; }
   };
   function bdgPlanVal(i){ const el=document.querySelector('#bp-grid input[data-i="'+i+'"]'); return el ? Math.round((parseFloat(el.value)||0)*100) : 0; }
+  const _isResvRow=(r)=>{ const f=String(r.fund_code||'').toUpperCase(); if(f==='RES')return true; if(f==='OPR')return false; return /\breserve\b/i.test(r.account_name||''); };
+  window.bdgLivingRenderReserveProjects=function(){
+    const box=$('bl-reserve-projects'); if(!box) return; const ps=window._reserveProjects||[];
+    box.innerHTML = ps.length ? ps.map((p,i)=>`
+      <div style="display:grid; grid-template-columns:1.3fr 1.2fr 120px 34px; gap:8px; align-items:center; padding:4px 6px; border-bottom:1px solid #f1f5f9;">
+        <input value="${esc(p.project_name||'')}" placeholder="Project name" oninput="window._reserveProjects[${i}].project_name=this.value" style="padding:5px 8px; border:1px solid var(--rule); border-radius:5px; font-size:12.5px;">
+        <input value="${esc(p.note||'')}" placeholder="Note (optional)" oninput="window._reserveProjects[${i}].note=this.value" style="padding:5px 8px; border:1px solid var(--rule); border-radius:5px; font-size:12px; color:#5a7390;">
+        <input value="${((p.planned_amount_cents||0)/100).toFixed(2)}" oninput="window._reserveProjects[${i}].planned_amount_cents=Math.round((parseFloat(this.value)||0)*100); bdgPlanRecalc();" style="text-align:right; padding:5px 8px; border:1px solid var(--rule); border-radius:5px; font-variant-numeric:tabular-nums; font-size:12.5px;">
+        <button onclick="window._reserveProjects.splice(${i},1); bdgLivingRenderReserveProjects(); bdgPlanRecalc();" title="Remove" style="border:1px solid #fecaca; background:#fff; color:var(--err); border-radius:5px; cursor:pointer; font-size:12px;">🗑</button>
+      </div>`).join('') : '<div class="muted" style="padding:8px; font-size:12px;">No reserve projects yet — add one, or upload a budget workbook that has a reserve sheet.</div>';
+  };
+  window.bdgAddReserveProject=function(){ (window._reserveProjects=window._reserveProjects||[]).push({project_name:'',planned_amount_cents:0,note:null}); bdgLivingRenderReserveProjects(); };
   window.bdgPlanRecalc = function(){
-    let rev=0, exp=0, otherIncome=0, assessIncome=0;
+    let opRev=0, opExp=0, otherIncome=0, assessIncome=0, resvIncome=0;
     _bdgPlanRows.forEach((r,i)=>{ const c=bdgPlanVal(i);
-      if(r.account_type==='revenue'){ rev+=c; if(/assessment|dues|maintenance fee/i.test(r.account_name||'')) assessIncome+=c; else otherIncome+=c; }
-      else exp+=c; });
-    const el=$('bp-totals'); if(el) el.innerHTML=`<span>Revenue: <strong>${fmt(rev)}</strong></span><span>Expenses: <strong>${fmt(exp)}</strong></span><span>Net: <strong style="color:${rev-exp>=0?'#166534':'#991b1b'};">${fmt(rev-exp)}</strong></span>`;
-    // Assessment summary (living-budget view): revenue requirement / homes.
+      if(_isResvRow(r)){ if(r.account_type==='revenue') resvIncome+=c; }
+      else if(r.account_type==='revenue'){ opRev+=c; if(/assessment|dues|maintenance fee/i.test(r.account_name||'')) assessIncome+=c; else otherIncome+=c; }
+      else opExp+=c; });
+    const resvProjects=(window._reserveProjects||[]).reduce((s,p)=>s+(p.planned_amount_cents||0),0);
+    const resvNet=resvIncome-resvProjects;
+    const el=$('bp-totals'); if(el) el.innerHTML=`<span>Operating revenue: <strong>${fmt(opRev)}</strong></span><span>Operating expenses: <strong>${fmt(opExp)}</strong></span><span>Operating surplus: <strong style="color:${opRev-opExp>=0?'#166534':'#991b1b'};">${fmt(opRev-opExp)}</strong></span>`;
+    const rn=$('bl-reserve-net'); if(rn) rn.innerHTML=`<span>Reserve contributions: <strong>${fmt(resvIncome)}</strong></span><span>Reserve expenditures: <strong>${fmt(resvProjects)}</strong></span><span>Net to reserves: <strong style="color:${resvNet>=0?'#166534':'#991b1b'};">${fmt(resvNet)}</strong></span>`;
+    // Assessment summary (operating): revenue requirement / homes.
     const as=$('bl-assess'); const homes=window._blHomes||0;
     if(as){
-      const required=exp-otherIncome;                       // what assessments must cover
+      const required=opExp-otherIncome;                     // what assessments must cover
       const perHome=homes? Math.round(required/homes):0;     // annual $/home
       const curPerHome=homes? Math.round(assessIncome/homes):0; // current proposed assessment/home
       const pct=curPerHome? Math.round(((perHome-curPerHome)/curPerHome)*100):null;
@@ -790,11 +818,14 @@
     if(!fy){ alert('Enter a fiscal year.'); return; }
     const line_items=_bdgPlanRows.map((r,i)=>({account_id:r.account_id, fund_id:r.fund_id||null, annual_amount_cents:bdgPlanVal(i)})).filter(li=>li.account_id);
     if(!line_items.length){ alert('Nothing to save — load a starting point first.'); return; }
-    if(!confirm(`Save FY ${fy} budget — ${line_items.length} lines, status ${status}?`)) return;
+    const resvItems=(window._reserveProjects||[]).filter(p=>(p.project_name||'').trim());
+    if(!confirm(`Save FY ${fy} budget — ${line_items.length} operating lines + ${resvItems.length} reserve project${resvItems.length===1?'':'s'}, status ${status}?`)) return;
     try {
       const j = await (await fetch('/api/books/budgets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:CID, fiscal_year:fy, status, source_filename:'Planned in trustEd (from actuals)', line_items})})).json();
       if(j.error) throw new Error(j.error);
-      alert(`Saved FY ${fy} budget — ${j.line_items_count} lines, status ${j.budget.status}.`);
+      const rj = await (await fetch('/api/books/reserve-budget',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:CID, fiscal_year:fy, items:resvItems})})).json();
+      if(rj.error) throw new Error('Operating budget saved, but reserve projects failed: '+rj.error);
+      alert(`Saved FY ${fy} budget — ${j.line_items_count} operating lines, ${rj.count} reserve projects.`);
       renderBudget();
     } catch(e){ alert('Save failed: '+e.message); }
   };
@@ -844,8 +875,13 @@
     const fy=$('bp-fy').value;
     $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">🧬 Building the living budget — reading actuals, this year\'s run-rate, and vendor commitments…</div>';
     try{
-      const r=await fetch(`/api/books/budgets/living-lines?community_id=${CID}&fiscal_year=${encodeURIComponent(fy)}`); const j=await r.json();
+      const [r,rbR]=await Promise.all([
+        fetch(`/api/books/budgets/living-lines?community_id=${CID}&fiscal_year=${encodeURIComponent(fy)}`),
+        fetch(`/api/books/reserve-budget?community_id=${CID}&fiscal_year=${encodeURIComponent(fy)}`),
+      ]);
+      const j=await r.json();
       if(j.error) throw new Error(j.error);
+      let rbItems=[]; try{ const rb=await rbR.json(); if(!rb.error) rbItems=rb.items||[]; }catch(_){/* reserve optional */}
       _bdgPlanRows=(j.rows||[]).map(x=>({...x}));
       if(!_bdgPlanRows.length){ $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">No revenue/expense history to build from yet — post some GL activity first.</div>'; return; }
       const idx=_bdgPlanRows.map((x,i)=>({x,i}));
@@ -877,19 +913,42 @@
       };
       const hdr=`<div style="display:grid; grid-template-columns:56px 1fr 96px 96px 96px 120px; gap:8px; padding:4px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:#94a3b8; font-weight:700; border-bottom:2px solid #e5e7eb;">
         <span>Acct</span><span>Account</span><span class="num">Prior budget</span><span class="num">Forecast</span><span class="num">YTD actual</span><span class="num">FY ${esc(String(j.fiscal_year))}</span></div>`;
+      // Split by FUND: operating (OPR / unknown) vs reserve (RES). The reserve
+      // side pairs its contribution income with the planned capital projects.
+      const isResv=(x)=>{ const f=String(x.fund_code||'').toUpperCase(); if(f==='RES')return true; if(f==='OPR')return false; return /\breserve\b/i.test(x.account_name||''); };
+      const opRev=rev.filter(o=>!isResv(o.x)), opExp=exp.filter(o=>!isResv(o.x));
+      const resvGl=idx.filter(o=>isResv(o.x));
+      // Reserve projects (capital expenditure plan) — fetched alongside.
+      window._reserveProjects=(rbItems||[]).map(p=>({project_name:p.project_name,planned_amount_cents:p.planned_amount_cents,note:p.note||null}));
+      const sec=(t,c)=>`<div style="font-weight:700; color:${c}; padding:6px; background:${c==='#166534'?'#f0fdf4':'#fef7f0'}; margin-top:6px;">${t}</div>`;
       $('bp-grid').innerHTML=`
         <div id="bl-assess" style="padding:14px 16px; background:#0B1D34; color:#fff; border-radius:10px; margin-bottom:14px; display:flex; gap:26px; flex-wrap:wrap; align-items:center;"></div>
+
+        <div style="font-family:var(--font-serif); font-size:19px; color:var(--navy); font-weight:600; margin:6px 0 4px;">Operating Budget</div>
         ${hdr}
-        <div style="font-weight:700; color:#166534; padding:6px; background:#f0fdf4;">Revenue</div>${rev.map(o=>rowHtml(o.x,o.i)).join('')||'<div class="muted" style="padding:8px;">—</div>'}
-        <div style="font-weight:700; color:#991b1b; padding:6px; background:#fef7f0; margin-top:6px;">Expenses</div>${exp.map(o=>rowHtml(o.x,o.i)).join('')||'<div class="muted" style="padding:8px;">—</div>'}
+        ${sec('Revenue','#166534')}${opRev.map(o=>rowHtml(o.x,o.i)).join('')||'<div class="muted" style="padding:8px;">—</div>'}
+        ${sec('Expenses','#991b1b')}${opExp.map(o=>rowHtml(o.x,o.i)).join('')||'<div class="muted" style="padding:8px;">—</div>'}
         <div id="bp-totals" style="margin-top:12px; padding:12px; background:#f5f8fc; border-radius:8px; display:flex; gap:24px; flex-wrap:wrap; font-weight:600;"></div>
-        <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+
+        <div style="font-family:var(--font-serif); font-size:19px; color:var(--navy); font-weight:600; margin:22px 0 4px;">Reserve Budget</div>
+        <div class="muted" style="font-size:12px; margin-bottom:6px;">Contributions into reserves, less the planned capital projects, net to the change in your reserve balance.</div>
+        ${hdr}
+        ${sec('Reserve contributions','#166534')}${resvGl.length?resvGl.map(o=>rowHtml(o.x,o.i)).join(''):'<div class="muted" style="padding:8px;">No reserve contribution line in the ledger yet.</div>'}
+        <div style="font-weight:700; color:#991b1b; padding:6px; background:#fef7f0; margin-top:6px; display:flex; justify-content:space-between; align-items:center;"><span>Reserve expenditures — capital projects</span><button onclick="bdgAddReserveProject()" style="border:1px solid var(--rule); background:#fff; border-radius:6px; padding:3px 10px; cursor:pointer; font-size:11.5px; font-weight:600;">+ Add project</button></div>
+        <div style="display:grid; grid-template-columns:1.3fr 1.2fr 120px 34px; gap:8px; padding:3px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:#94a3b8; font-weight:700;"><span>Project</span><span>Note</span><span class="num">Amount</span><span></span></div>
+        <div id="bl-reserve-projects"></div>
+        <div id="bl-reserve-net" style="margin-top:10px; padding:12px; background:#f5f8fc; border-radius:8px; display:flex; gap:24px; flex-wrap:wrap; font-weight:600;"></div>
+
+        <div style="margin-top:18px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <button onclick="bdgPlanRecalc()" style="padding:9px 18px; border:2px solid var(--navy,#0B1D34); border-radius:8px; background:#fff; color:var(--navy,#0B1D34); cursor:pointer; font-weight:700;">🔄 Recalculate</button>
+          <span style="flex:1;"></span>
           <button onclick="bdgPlanSave('draft')" style="padding:9px 18px; border:1px solid var(--rule); border-radius:8px; background:#fff; cursor:pointer; font-weight:600;">💾 Save draft</button>
           <button onclick="bdgPlanSave('approved')" style="padding:9px 18px; border:none; border-radius:8px; background:#166534; color:#fff; cursor:pointer; font-weight:600;">✓ Save &amp; approve</button>
         </div>
-        ${(()=>{const n=_bdgPlanRows.filter(r=>(r.flags||[]).length).length; return n?`<div style="margin-top:10px; padding:9px 13px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; font-size:12px; color:#92400e;"><strong>⚠ ${n} line${n===1?'':'s'} flagged for review</strong> — one-time spikes were reset to their recurring level; lines below the approved budget may be understated by a partial-year run-rate. Click any ⚠&nbsp;REVIEW line to see why.</div>`:'';})()}
-        <div class="muted" style="font-size:11px; margin-top:8px;">Every line traces to its source — click an account name to see what it was built from. Forecast = ${esc(String(j.forecast_year))} run-rate (annualized from ${j.months_elapsed} months).</div>`;
+        ${(()=>{const n=_bdgPlanRows.filter(r=>(r.flags||[]).length).length; return n?`<div style="margin-top:10px; padding:9px 13px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; font-size:12px; color:#92400e;"><strong>⚠ ${n} line${n===1?'':'s'} flagged for review</strong> — click any ⚠&nbsp;REVIEW line to see why.</div>`:'';})()}
+        <div class="muted" style="font-size:11px; margin-top:8px;">Every line traces to its source — click an account name to see what it was built from. Adjust anything, then hit Recalculate (totals also update as you type). Forecast = ${esc(String(j.forecast_year))} run-rate.</div>`;
       window._blHomes=j.home_count||0;
+      bdgLivingRenderReserveProjects();
       bdgPlanRecalc();
     } catch(e){ $('bp-grid').innerHTML=`<div style="color:var(--err); padding:12px;">Couldn't build the living budget: ${esc(e.message)}</div>`; }
   };
