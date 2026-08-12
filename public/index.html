@@ -45325,6 +45325,9 @@ ${questionsPage}
       const isAdmin = _me.role === 'admin';
       const mgrApproval = approvals.find((a) => a.action === 'approved') || null;
       const released = approvals.find((a) => a.action === 'released_for_payment') || null;
+      // Attribution: Emma coded it (auto) vs a named staffer who coded/changed it.
+      const lastCodeActor = [...approvals].reverse().find((a) => (a.action === 'recoded' || a.action === 'coded') && a.user_name) || null;
+      const codedByTxt = inv.auto_coded ? 'coded by Emma' : (lastCodeActor ? 'coded by ' + lastCodeActor.user_name : 'coded by staff');
       const openForApproval = inv.status === 'awaiting_approval' && !!inv.posting_journal_entry_id;
       const canApprove = openForApproval;   // legacy name kept for the rest of the render
       const notFinal = inv.status !== 'paid' && inv.status !== 'voided';
@@ -45454,7 +45457,7 @@ ${questionsPage}
                       <div style="min-width:0;">
                         <span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-weight:700; color:#166534;">${apEsc(inv.coded_account.account_number)}</span>
                         <span style="color:#166534; font-weight:600;"> ${apEsc(inv.coded_account.account_name)}</span>
-                        <span style="color:#64748b; font-size:11px;"> · ${inv.auto_coded ? 'auto-coded from history' : 'coded by staff'}${inv.posting_journal_entry_id ? ' · JE posted' : ' · not posted'}</span>
+                        <span style="color:#64748b; font-size:11px;"> · ${codedByTxt}${inv.posting_journal_entry_id ? ' · JE posted' : ' · not posted'}</span>
                       </div>
                       <div style="display:flex; gap:6px; white-space:nowrap;">
                         ${!inv.posting_journal_entry_id ? `<button class="action-btn" style="background:#16a34a; border-color:#15803d; font-size:11px; padding:3px 11px;" onclick="apSetCode('${inv.id}','${inv.coded_gl_account_id}')" title="Post the journal entry with this account so it can be approved">Apply &amp; post</button>` : ''}
