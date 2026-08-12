@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chamber · Live Meeting</title>
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1f2430; --ink-soft:#475569; --ink-faint:#94a3b8;
+          --rule:#e7e3d8; --bg:#f7f5ef; --ok:#15803d; --err:#b91c1c; --live:#dc2626;
+          --font-serif:'Cormorant Garamond',Georgia,serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:Inter,system-ui,-apple-system,sans-serif; font-size:14px; }
+  header.page { background:var(--navy); color:#fff; padding:16px 22px; border-bottom:3px solid var(--gold); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  header.page a { color:#fff; opacity:.85; text-decoration:none; font-size:13px; }
+  h1 { font-family:var(--font-serif); font-weight:600; font-size:23px; margin:0; }
+  .wrap { max-width:1120px; margin:0 auto; padding:20px 22px 60px; }
+  .grid { display:grid; grid-template-columns:1fr 340px; gap:18px; }
+  @media (max-width:860px){ .grid { grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid var(--rule); border-radius:12px; padding:16px 18px; box-shadow:0 1px 2px rgba(0,0,0,.03); }
+  .stage { background:#0a0f17; border-radius:12px; overflow:hidden; position:relative; aspect-ratio:16/9; display:flex; align-items:center; justify-content:center; }
+  .stage iframe, .stage video { width:100%; height:100%; border:0; }
+  .stage .placeholder { color:#cbd5e1; text-align:center; padding:24px; }
+  .live-badge { display:inline-flex; align-items:center; gap:7px; background:var(--live); color:#fff; font-weight:800; font-size:12px; padding:4px 11px; border-radius:999px; letter-spacing:.03em; }
+  .live-dot { width:8px; height:8px; border-radius:50%; background:#fff; animation:pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.35;} }
+  .meta { color:var(--ink-faint); font-size:13px; }
+  .agenda-item { display:flex; gap:9px; align-items:flex-start; padding:7px 4px; border-bottom:1px solid #f1efe8; font-size:13.5px; }
+  .agenda-item.done { color:var(--ink-faint); } .agenda-item.done .dot { color:var(--ok); }
+  .agenda-item.current { font-weight:700; color:var(--navy); background:#fffdf5; border-radius:6px; }
+  .dot { width:16px; flex:0 0 16px; }
+  .sec { font-family:var(--font-serif); font-size:18px; color:var(--navy); margin:0 0 8px; font-weight:600; }
+  .btn { padding:10px 16px; border:none; border-radius:8px; background:var(--navy); color:#fff; font-weight:700; cursor:pointer; font-size:14px; }
+  .btn.gold { background:var(--gold); color:var(--navy); }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .doclink { display:block; padding:8px 10px; background:#f5f8fc; border-radius:7px; margin-bottom:6px; text-decoration:none; color:var(--navy); font-weight:600; font-size:13px; }
+  textarea { width:100%; border:1px solid var(--rule); border-radius:8px; padding:9px; font-family:inherit; font-size:13.5px; resize:vertical; }
+  .attend { font-size:13px; color:var(--ink-soft); }
+  .attend strong { color:var(--navy); }
+  .banner { padding:12px 15px; border-radius:10px; font-size:13.5px; margin-bottom:14px; }
+</style>
+</head>
+<body>
+<header class="page">
+  <div>
+    <a href="/portal">&larr; Portal home</a>
+    <h1 id="commName" style="margin-top:4px;">Chamber</h1>
+  </div>
+  <div id="liveState"></div>
+</header>
+<div class="wrap">
+  <div id="body"><div class="meta" style="padding:30px; text-align:center;">Loading the Chamber…</div></div>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let PROP = '';
+  try { PROP = sessionStorage.getItem('bedrock_portal_property_id') || ''; } catch (_) {}
+  PROP = new URLSearchParams(location.search).get('property_id') || PROP;
+  const qs = PROP ? ('?property_id=' + encodeURIComponent(PROP)) : '';
+  let _bid = null, _pollTimer = null, _beatTimer = null, _speakTimer = null;
+
+  async function load() {
+    try {
+      const j = await (await fetch('/api/portal/chamber' + qs, { credentials:'same-origin' })).json();
+      if (j.error) throw new Error(j.error);
+      render(j);
+    } catch (e) {
+      $('body').innerHTML = `<div class="card"><div class="meta">Couldn't load the meeting: ${esc(e.message)}. <a href="/portal-login.html">Sign in</a> if your session expired.</div></div>`;
+    }
+  }
+
+  function stageHtml(b) {
+    if (!b) return `<div class="placeholder">No meeting scheduled right now.</div>`;
+    if (b.status === 'ended') {
+      return b.recording_available && b.recording_url
+        ? `<iframe src="${esc(b.recording_url)}" allow="autoplay; fullscreen" allowfullscreen></iframe>`
+        : `<div class="placeholder"><div style="font-size:34px;">✓</div>This meeting has ended.${b.recording_available?'':'<br>A recording will be posted once available.'}</div>`;
+    }
+    if (b.status !== 'live') {
+      const when = b.scheduled_at ? new Date(b.scheduled_at).toLocaleString(undefined,{weekday:'long',month:'long',day:'numeric',hour:'numeric',minute:'2-digit'}) : 'soon';
+      return `<div class="placeholder"><div style="font-size:30px;">🗓️</div>Starts ${esc(when)}<br><span style="font-size:12px; opacity:.7;">This page will go live automatically.</span></div>`;
+    }
+    if (b.exec_session) {
+      return `<div class="placeholder"><div style="font-size:30px;">🔒</div><strong>The board is in executive session.</strong><br><span style="font-size:12px; opacity:.75;">Confidential matters (legal, personnel, delinquencies) are closed to members under Texas §209.0051. The stream resumes when the open meeting reconvenes.</span></div>`;
+    }
+    const src = b.room_url || b.player_embed_url;
+    if (src) return `<iframe src="${esc(src)}" allow="autoplay; camera; microphone; fullscreen; display-capture" allowfullscreen></iframe>`;
+    if (b.hls_url) return `<video src="${esc(b.hls_url)}" controls autoplay playsinline></video>`;
+    return `<div class="placeholder">Connecting to the meeting…</div>`;
+  }
+
+  function speakBox(b, my) {
+    if (!b || b.status !== 'live' || b.exec_session) return '';
+    if (my) {
+      const label = { requested:'✋ Your hand is raised — the moderator will call on you.', allowed:'🎤 You\'re up next — get ready.', speaking:'🔴 You have the floor.' }[my.status] || 'Request received.';
+      return `<div class="banner" style="background:#eef6ff; color:#1e40af;">${label}</div>`;
+    }
+    return `<div>
+      <textarea id="speak-topic" rows="2" placeholder="Optional: what would you like to speak about?"></textarea>
+      <button class="btn gold" style="margin-top:8px; width:100%;" onclick="requestSpeak()">✋ Request to speak</button>
+      <div class="meta" style="margin-top:6px;">You'll be muted until the moderator calls on you. Speakers get 3 minutes.</div>
+    </div>`;
+  }
+
+  function render(j) {
+    const b = j.broadcast; _bid = b && b.id;
+    $('commName').textContent = (j.agenda && j.agenda.title) || (b && b.title) || 'Board Meeting';
+    $('liveState').innerHTML = b && b.status === 'live'
+      ? `<span class="live-badge"><span class="live-dot"></span>LIVE</span>`
+      : (b && b.status === 'ended' ? `<span class="meta" style="color:#cbd5e1;">Ended</span>` : (b ? `<span class="meta" style="color:#cbd5e1;">Upcoming</span>` : ''));
+
+    const items = j.items || [];
+    const cur = b ? (b.current_item_index||0) : -1;
+    const agendaHtml = items.length ? items.map((it,i)=>`
+      <div class="agenda-item ${i<cur?'done':(i===cur&&b&&b.status==='live'?'current':'')}">
+        <span class="dot">${i<cur?'✓':(i===cur&&b&&b.status==='live'?'▸':'○')}</span>
+        <span>${esc(it.topic||it)}</span>
+      </div>`).join('') : '<div class="meta">Agenda will appear here.</div>';
+
+    const attending = (b && b.status==='live') ? `<div class="attend">👥 Attending online: <strong>${j.attending||0}</strong></div>` : '';
+    const started = (b && b.started_at) ? `<div class="meta">Started ${new Date(b.started_at).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</div>` : '';
+
+    $('body').innerHTML = `
+      <div class="grid">
+        <div>
+          <div class="stage">${stageHtml(b)}</div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; flex-wrap:wrap; gap:8px;">
+            ${attending}${started}
+          </div>
+          ${b && b.consent_notice && b.status==='live' ? `<div class="meta" style="margin-top:8px;">🔴 ${esc(b.consent_notice)}</div>`:''}
+        </div>
+        <div>
+          <div class="card" style="margin-bottom:16px;">
+            <div class="sec">Agenda</div>
+            ${agendaHtml}
+          </div>
+          <div class="card" style="margin-bottom:16px;">
+            <div class="sec">Meeting documents</div>
+            <a class="doclink" href="/portal-documents.html${qs}">📄 Board packet</a>
+            <a class="doclink" href="/portal-financials.html${qs}">📊 Financials</a>
+            <a class="doclink" href="/portal-meetings.html${qs}">🗓️ All meetings</a>
+          </div>
+          <div class="card">
+            <div class="sec">Homeowner forum</div>
+            ${speakBox(b, j.my_request)}
+            ${(!b || b.status!=='live') ? '<div class="meta">Requests to speak open when the meeting is live.</div>' : ''}
+          </div>
+        </div>
+      </div>`;
+
+    // Presence heartbeat while live.
+    clearInterval(_beatTimer);
+    if (b && b.status === 'live') { beat(); _beatTimer = setInterval(beat, 25000); }
+  }
+
+  async function beat() {
+    if (!_bid) return;
+    try { await fetch(`/api/portal/chamber/${_bid}/viewer${qs}`, { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:'{}' }); } catch(_){}
+  }
+  window.requestSpeak = async function() {
+    if (!_bid) return;
+    const topic = ($('speak-topic')||{}).value || '';
+    try {
+      const j = await (await fetch(`/api/portal/chamber/${_bid}/speak${qs}`, { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ topic }) })).json();
+      if (j.error) throw new Error(j.error);
+      load();
+    } catch(e){ alert('Could not submit: '+e.message); }
+  };
+
+  load();
+  _pollTimer = setInterval(load, 6000);   // pick up go-live / exec-session / agenda advance
+</script>
+</body>
+</html>

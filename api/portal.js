@@ -26,6 +26,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { sendEmail } = require('../lib/notifications/email');
+const { getLivePayload: chamberLive, submitSpeak: chamberSpeak, heartbeat: chamberHeartbeat } = require('./chamber');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
@@ -2662,6 +2663,44 @@ router.get('/transactions', async (req, res) => {
 // Returns upcoming meetings (from events table where event_type contains
 // 'meeting') + past meeting minutes (library_documents with meeting categories).
 // ============================================================================
+// ---- CHAMBER (live meetings) — member-only, community resolved server-side --
+// The homeowner never sees a stream link or a community_id in the client;
+// access + attendance are enforced here off the authenticated session.
+async function _portalChamberScope(req, res) {
+  const roleCheck = await assertOwnerLikeRole(req, res);   // renters refused (§209)
+  if (!roleCheck) return null;
+  const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+  if (scoped.error === 'property_outside_manager_scope') { res.status(403).json({ error: scoped.error }); return null; }
+  const prop = scoped.property;
+  if (!prop) { res.json({ broadcast: null }); return null; }
+  return { user: roleCheck.user, prop, community_id: prop.community_id };
+}
+router.get('/chamber', async (req, res) => {
+  try {
+    const s = await _portalChamberScope(req, res); if (!s) return;
+    res.json(await chamberLive({ community_id: s.community_id, contact_id: s.user.id }));
+  } catch (err) { console.error('[portal] chamber live failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+router.post('/chamber/:broadcastId/speak', express.json(), async (req, res) => {
+  try {
+    const s = await _portalChamberScope(req, res); if (!s) return;
+    const name = req.body?.display_name || s.prop.street_address || 'Homeowner';
+    res.json(await chamberSpeak({ broadcast_id: req.params.broadcastId, contact_id: s.user.id, display_name: name, property_address: s.prop.street_address, topic: req.body?.topic }));
+  } catch (err) {
+    if (err.code === 'notfound') return res.status(404).json({ error: err.message });
+    console.error('[portal] chamber speak failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+router.post('/chamber/:broadcastId/viewer', express.json(), async (req, res) => {
+  try {
+    const s = await _portalChamberScope(req, res); if (!s) return;
+    res.json(await chamberHeartbeat({ broadcast_id: req.params.broadcastId, contact_id: s.user.id, display_name: s.prop.street_address }));
+  } catch (err) {
+    if (err.code === 'notfound') return res.status(404).json({ error: err.message });
+    console.error('[portal] chamber viewer failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/meetings', async (req, res) => {
   try {
     // Renter sessions REFUSED — meetings are owner/member-only (statutory

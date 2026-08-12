@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chamber Console · Bedrock</title>
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1f2430; --ink-soft:#475569; --ink-faint:#94a3b8;
+          --rule:#e7e3d8; --bg:#f7f5ef; --ok:#15803d; --err:#b91c1c; --live:#dc2626; --font-serif:'Cormorant Garamond',Georgia,serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:Inter,system-ui,sans-serif; font-size:14px; }
+  header { background:var(--navy); color:#fff; padding:14px 22px; border-bottom:3px solid var(--gold); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  header h1 { font-family:var(--font-serif); font-weight:600; font-size:22px; margin:0; }
+  header a { color:#fff; opacity:.85; text-decoration:none; font-size:13px; }
+  .wrap { max-width:1080px; margin:0 auto; padding:18px 22px 60px; }
+  select, input, textarea { padding:8px 11px; border-radius:8px; border:1px solid var(--rule); background:#fff; color:var(--ink); font-size:14px; font-family:inherit; }
+  .card { background:#fff; border:1px solid var(--rule); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:0 1px 2px rgba(0,0,0,.03); }
+  .sec { font-family:var(--font-serif); font-size:19px; color:var(--navy); margin:0 0 10px; font-weight:600; }
+  .btn { padding:9px 15px; border:none; border-radius:8px; background:var(--navy); color:#fff; font-weight:700; cursor:pointer; font-size:13.5px; }
+  .btn.gold { background:var(--gold); color:var(--navy); } .btn.ghost { background:#fff; color:var(--navy); border:1px solid var(--rule); }
+  .btn.red { background:var(--live); } .btn.green { background:var(--ok); } .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .field { display:flex; flex-direction:column; gap:4px; } .field label { font-size:11px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.04em; }
+  .commbar { display:flex; align-items:center; gap:12px; background:#fff; border:1px solid var(--rule); border-left:5px solid var(--gold); border-radius:12px; padding:11px 16px; margin-bottom:16px; }
+  .commbar select { min-width:280px; font-size:16px; font-weight:700; color:var(--navy); }
+  .live-badge { display:inline-flex; align-items:center; gap:6px; background:var(--live); color:#fff; font-weight:800; font-size:11px; padding:3px 9px; border-radius:999px; }
+  .live-dot { width:7px; height:7px; border-radius:50%; background:#fff; animation:pulse 1.4s infinite; } @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .qitem { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 10px; background:#f5f8fc; border-radius:8px; margin-bottom:6px; font-size:13px; }
+  .agenda-line { display:flex; gap:8px; align-items:center; padding:6px 4px; border-bottom:1px solid #f1efe8; font-size:13px; }
+  .agenda-line.current { font-weight:700; color:var(--navy); background:#fffdf5; border-radius:6px; }
+  .muted { color:var(--ink-faint); font-size:12px; } .pill { font-size:11px; padding:2px 9px; border-radius:99px; background:#eef2f7; color:var(--ink-soft); }
+</style>
+</head>
+<body>
+<header>
+  <div><a href="/">&larr; trustEd Home</a><h1>Chamber Console</h1></div>
+  <div class="muted" style="color:#cbd5e1;">Run the meeting · homeowners watch in their portal</div>
+</header>
+<div class="wrap">
+  <div class="commbar"><span style="font-size:11px; font-weight:800; letter-spacing:.09em; color:var(--ink-faint);">COMMUNITY</span><select id="commSel"></select></div>
+  <div id="body"><div class="muted" style="padding:24px; text-align:center;">Loading…</div></div>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let CID = null, _sel = null, _items = [], _poll = null;
+
+  async function boot() {
+    const comms = (await (await fetch('/api/communities')).json());
+    const list = comms.communities || comms || [];
+    list.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+    $('commSel').innerHTML = list.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    CID = list[0] && list[0].id;
+    $('commSel').addEventListener('change', (e)=>{ CID=e.target.value; _sel=null; loadAll(); });
+    loadAll();
+  }
+
+  async function loadAll() {
+    clearInterval(_poll);
+    const [bl, lv] = await Promise.all([
+      fetch(`/api/chamber/broadcasts?community_id=${CID}`).then(r=>r.json()),
+      fetch(`/api/chamber/live?community_id=${CID}`).then(r=>r.json()),
+    ]);
+    const broadcasts = bl.broadcasts || [];
+    _items = lv.items || [];
+    if (!_sel) _sel = (lv.broadcast && lv.broadcast.id) || (broadcasts[0] && broadcasts[0].id) || null;
+    render(broadcasts, lv);
+    if (_sel) { refreshQueue(); _poll = setInterval(refreshQueue, 5000); }
+  }
+
+  function render(broadcasts, lv) {
+    const sel = broadcasts.find(b=>b.id===_sel) || null;
+    $('body').innerHTML = `
+      ${createCard()}
+      ${sel ? controlCard(sel, lv) : '<div class="card muted">No meeting selected. Create one above.</div>'}
+      ${listCard(broadcasts)}`;
+  }
+
+  function createCard() {
+    return `<div class="card">
+      <div class="sec">New meeting</div>
+      <div class="row" style="align-items:flex-end;">
+        <div class="field" style="flex:2; min-width:220px;"><label>Title</label><input id="nt" placeholder="Board Meeting — August 18, 2026"></div>
+        <div class="field"><label>Mode</label><select id="nmode">
+          <option value="broadcast">Broadcast (televised)</option>
+          <option value="meeting">Meeting (two-way)</option>
+          <option value="webinar">Webinar</option></select></div>
+        <div class="field"><label>Date / time</label><input id="nwhen" type="datetime-local"></div>
+      </div>
+      <div class="row" style="align-items:flex-end; margin-top:10px;">
+        <div class="field" style="flex:2; min-width:260px;"><label>Stream / room URL <span class="muted">(Daily room, Mux/Cloudflare player, or any embed)</span></label><input id="nurl" placeholder="https://…"></div>
+        <div class="field"><label>Retention</label><select id="nret">
+          <option value="delete_after_minutes_approved">Delete after minutes approved</option>
+          <option value="retain">Retain recording</option>
+          <option value="delete_after_days">Delete after 90 days</option></select></div>
+        <button class="btn" onclick="createMeeting()">Create</button>
+      </div>
+      <div class="muted" style="margin-top:6px;">The URL is the branded player/room. Broadcast mode fills the player; Meeting/Webinar fills the two-way room. You can add it now or before going live.</div>
+    </div>`;
+  }
+
+  function controlCard(b, lv) {
+    const isLive = b.status==='live';
+    const cur = b.current_item_index||0;
+    const agenda = _items.length ? _items.map((it,i)=>`<div class="agenda-line ${i===cur&&isLive?'current':''}"><span>${i<cur?'✓':(i===cur&&isLive?'▸':'○')}</span><span>${esc(it.topic||it)}</span></div>`).join('') : '<div class="muted">No agenda linked. Link a meeting agenda to sync items.</div>';
+    return `<div class="card" style="border-left:4px solid ${isLive?'var(--live)':'var(--gold)'};">
+      <div class="row" style="justify-content:space-between;">
+        <div><div class="sec" style="margin:0;">${esc(b.title||'Board Meeting')}</div>
+          <div class="muted"><span class="pill">${esc(b.mode)}</span> ${isLive?'<span class="live-badge"><span class="live-dot"></span>LIVE</span>':esc(b.status)} · 👥 ${(lv&&lv.broadcast&&lv.broadcast.id===b.id)?(lv.attending||0):0} watching</div>
+        </div>
+        <div class="row">
+          ${!isLive ? `<button class="btn green" onclick="setStatus('${b.id}','live')">● Go Live</button>` :
+            `<button class="btn ${b.exec_session?'gold':'ghost'}" onclick="toggleExec('${b.id}',${!b.exec_session})">${b.exec_session?'▶ Resume open session':'🔒 Executive session'}</button>
+             <button class="btn red" onclick="setStatus('${b.id}','ended')">■ End meeting</button>`}
+        </div>
+      </div>
+      ${b.exec_session?'<div class="muted" style="color:var(--live); margin-top:6px;">🔒 Stream + recording paused. Homeowners see an executive-session card.</div>':''}
+      <div class="row" style="margin-top:12px; gap:24px; align-items:flex-start;">
+        <div style="flex:1; min-width:240px;">
+          <div class="muted" style="margin-bottom:4px;">AGENDA${isLive?' — advance as you go':''}</div>
+          ${agenda}
+          ${isLive && _items.length ? `<div class="row" style="margin-top:8px;"><button class="btn ghost" onclick="advance('${b.id}',${Math.max(0,cur-1)})" ${cur<=0?'disabled':''}>← Prev</button><button class="btn ghost" onclick="advance('${b.id}',${Math.min(_items.length-1,cur+1)})" ${cur>=_items.length-1?'disabled':''}>Next item →</button></div>`:''}
+        </div>
+        <div style="flex:1; min-width:240px;">
+          <div class="muted" style="margin-bottom:4px;">HOMEOWNER FORUM — REQUESTS TO SPEAK</div>
+          <div id="queue"><div class="muted">Loading queue…</div></div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px; align-items:flex-end;">
+        <div class="field" style="flex:2; min-width:260px;"><label>Stream / room URL</label><input id="cu" value="${esc(b.player_embed_url||b.room_url||b.hls_url||'')}"></div>
+        <button class="btn ghost" onclick="saveUrl('${b.id}','${esc(b.mode)}')">Save URL</button>
+        <a class="btn ghost" href="/portal-chamber.html" target="_blank" style="text-decoration:none;">↗ Preview homeowner view</a>
+      </div>
+    </div>`;
+  }
+
+  function listCard(broadcasts) {
+    if (!broadcasts.length) return '';
+    return `<div class="card"><div class="sec">Meetings</div>${broadcasts.map(b=>`
+      <div class="qitem"><span>${esc(b.title||'Board Meeting')} <span class="pill">${esc(b.mode)}</span> <span class="muted">${esc(b.status)}${b.scheduled_at?' · '+new Date(b.scheduled_at).toLocaleString():''}</span></span>
+      <button class="btn ghost" onclick="_sel='${b.id}';loadAll();">Open</button></div>`).join('')}</div>`;
+  }
+
+  async function refreshQueue() {
+    if (!_sel) return;
+    try {
+      const [q, lv] = await Promise.all([
+        fetch(`/api/chamber/broadcasts/${_sel}/speak`).then(r=>r.json()),
+        fetch(`/api/chamber/live?community_id=${CID}`).then(r=>r.json()),
+      ]);
+      const box = $('queue'); if (!box) return;
+      const reqs = (q.requests||[]).filter(r=>['requested','allowed','speaking'].includes(r.status));
+      box.innerHTML = reqs.length ? reqs.map(r=>`<div class="qitem">
+        <span><strong>${esc(r.display_name)}</strong>${r.property_address?` <span class="muted">${esc(r.property_address)}</span>`:''}${r.topic?`<br><span class="muted">"${esc(r.topic)}"</span>`:''} <span class="pill">${esc(r.status)}</span></span>
+        <span class="row">
+          ${r.status==='requested'?`<button class="btn green" onclick="speak('${r.id}','allowed')">Allow</button><button class="btn ghost" onclick="speak('${r.id}','denied')">Skip</button>`:''}
+          ${r.status==='allowed'?`<button class="btn gold" onclick="speak('${r.id}','speaking')">🎤 On</button>`:''}
+          ${r.status==='speaking'?`<button class="btn red" onclick="speak('${r.id}','done')">Done</button>`:''}
+        </span></div>`).join('') : '<div class="muted">No requests yet.</div>';
+      // Keep the attending count / current item fresh without a full re-render.
+    } catch(_){}
+  }
+
+  async function createMeeting() {
+    const body = { community_id:CID, title:$('nt').value||null, mode:$('nmode').value, scheduled_at:$('nwhen').value?new Date($('nwhen').value).toISOString():null, retention_policy:$('nret').value };
+    const url=$('nurl').value.trim(); if(url){ if($('nmode').value==='broadcast') body.player_embed_url=url; else body.room_url=url; }
+    const j = await (await fetch('/api/chamber/broadcasts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+    if(j.error) return alert(j.error);
+    _sel = j.broadcast.id; loadAll();
+  }
+  async function patch(id, body){ const j=await (await fetch(`/api/chamber/broadcasts/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json(); if(j.error) alert(j.error); return j; }
+  window.setStatus = async (id,status)=>{ if(status==='ended'&&!confirm('End the meeting for all homeowners?'))return; await patch(id,{status}); loadAll(); };
+  window.toggleExec = async (id,on)=>{ await patch(id,{exec_session:on}); loadAll(); };
+  window.advance = async (id,idx)=>{ await patch(id,{current_item_index:idx}); loadAll(); };
+  window.saveUrl = async (id,mode)=>{ const u=$('cu').value.trim(); await patch(id, mode==='broadcast'?{player_embed_url:u}:{room_url:u}); loadAll(); };
+  window.speak = async (id,status)=>{ const j=await (await fetch(`/api/chamber/speak/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})})).json(); if(j.error)alert(j.error); refreshQueue(); };
+
+  boot();
+</script>
+</body>
+</html>

@@ -116,11 +116,10 @@ router.patch('/broadcasts/:id', express.json({ limit: '256kb' }), async (req, re
   }
 });
 
-// ---- Homeowner: the live (or next) meeting for the portal Chamber card ------
-router.get('/live', async (req, res) => {
-  try {
-    const { community_id, contact_id } = req.query;
-    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+// ---- Shared: the live (or next) meeting payload for a community's Chamber ---
+// Used by both the moderator route (community from query) and the portal route
+// (community resolved from the authenticated homeowner session).
+async function getLivePayload({ community_id, contact_id }) {
     // Prefer a live broadcast; else the soonest upcoming scheduled one.
     let { data: live } = await supabase.from('meeting_broadcasts')
       .select('*').eq('community_id', community_id).eq('status', 'live')
@@ -131,7 +130,7 @@ router.get('/live', async (req, res) => {
         .order('scheduled_at', { ascending: true, nullsFirst: false }).limit(1).maybeSingle();
       live = up || null;
     }
-    if (!live) return res.json({ broadcast: null });
+    if (!live) return { broadcast: null };
     const { items, agenda } = await agendaFor(live);
     const attending = live.status === 'live' ? await attendingCount(live.id) : 0;
     // The homeowner's own speak-request state, if any.
@@ -144,7 +143,7 @@ router.get('/live', async (req, res) => {
     }
     // Executive session (or non-live) hides the video source entirely.
     const canWatch = live.status === 'live' && !live.exec_session;
-    res.json({
+    return {
       broadcast: {
         id: live.id, title: live.title || (agenda && agenda.title) || 'Board Meeting',
         status: live.status, mode: live.mode, exec_session: !!live.exec_session,
@@ -159,35 +158,59 @@ router.get('/live', async (req, res) => {
       },
       agenda: agenda ? { id: agenda.id, title: agenda.title, location: agenda.location, meeting_time: agenda.meeting_time } : null,
       items, attending, my_request,
-    });
+    };
+}
+router.get('/live', async (req, res) => {
+  try {
+    if (!req.query.community_id) return res.status(400).json({ error: 'community_id_required' });
+    res.json(await getLivePayload({ community_id: req.query.community_id, contact_id: req.query.contact_id }));
   } catch (err) {
     console.error('[chamber] live failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
-// ---- Homeowner: request to speak -------------------------------------------
+// ---- Shared: submit a request to speak -------------------------------------
+async function submitSpeak({ broadcast_id, contact_id, display_name, property_address, topic }) {
+  if (!display_name) { const e = new Error('display_name_required'); e.code = 'bad'; throw e; }
+  const { data: bc } = await supabase.from('meeting_broadcasts').select('id, community_id, status').eq('id', broadcast_id).maybeSingle();
+  if (!bc) { const e = new Error('broadcast_not_found'); e.code = 'notfound'; throw e; }
+  if (contact_id) {
+    const { data: existing } = await supabase.from('meeting_speak_requests')
+      .select('id, status').eq('broadcast_id', broadcast_id).eq('contact_id', contact_id)
+      .in('status', ['requested', 'allowed', 'speaking']).maybeSingle();
+    if (existing) return { request: existing, already: true };
+  }
+  const { data, error } = await supabase.from('meeting_speak_requests').insert({
+    broadcast_id, community_id: bc.community_id, contact_id: contact_id || null,
+    display_name, property_address: property_address || null, topic: topic || null,
+  }).select('*').single();
+  if (error) throw error;
+  return { request: data };
+}
+
+// ---- Shared: viewer presence heartbeat -------------------------------------
+async function heartbeat({ broadcast_id, contact_id, display_name }) {
+  const { data: bc } = await supabase.from('meeting_broadcasts').select('id, community_id').eq('id', broadcast_id).maybeSingle();
+  if (!bc) { const e = new Error('broadcast_not_found'); e.code = 'notfound'; throw e; }
+  if (contact_id) {
+    await supabase.from('meeting_broadcast_viewers').upsert({
+      broadcast_id, community_id: bc.community_id, contact_id,
+      display_name: display_name || null, last_seen_at: new Date().toISOString(),
+    }, { onConflict: 'broadcast_id,contact_id' });
+  }
+  return { attending: await attendingCount(broadcast_id) };
+}
+
+// ---- Homeowner (staff/direct): request to speak ----------------------------
 router.post('/broadcasts/:id/speak', express.json(), async (req, res) => {
   try {
-    const { id } = req.params;
     const b = req.body || {};
-    if (!b.display_name) return res.status(400).json({ error: 'display_name_required' });
-    const { data: bc } = await supabase.from('meeting_broadcasts').select('id, community_id, status').eq('id', id).maybeSingle();
-    if (!bc) return res.status(404).json({ error: 'broadcast_not_found' });
-    // Don't duplicate an open request from the same person.
-    if (b.contact_id) {
-      const { data: existing } = await supabase.from('meeting_speak_requests')
-        .select('id').eq('broadcast_id', id).eq('contact_id', b.contact_id)
-        .in('status', ['requested', 'allowed', 'speaking']).maybeSingle();
-      if (existing) return res.json({ request: existing, already: true });
-    }
-    const { data, error } = await supabase.from('meeting_speak_requests').insert({
-      broadcast_id: id, community_id: bc.community_id, contact_id: b.contact_id || null,
-      display_name: b.display_name, property_address: b.property_address || null, topic: b.topic || null,
-    }).select('*').single();
-    if (error) throw error;
-    res.json({ request: data });
+    const out = await submitSpeak({ broadcast_id: req.params.id, contact_id: b.contact_id, display_name: b.display_name, property_address: b.property_address, topic: b.topic });
+    res.json(out);
   } catch (err) {
+    if (err.code === 'bad') return res.status(400).json({ error: err.message });
+    if (err.code === 'notfound') return res.status(404).json({ error: err.message });
     console.error('[chamber] speak request failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
@@ -229,25 +252,16 @@ router.patch('/speak/:id', express.json(), async (req, res) => {
   }
 });
 
-// ---- Homeowner: presence heartbeat -----------------------------------------
+// ---- Homeowner (staff/direct): presence heartbeat --------------------------
 router.post('/broadcasts/:id/viewer', express.json(), async (req, res) => {
   try {
-    const { id } = req.params;
     const b = req.body || {};
-    const { data: bc } = await supabase.from('meeting_broadcasts').select('id, community_id').eq('id', id).maybeSingle();
-    if (!bc) return res.status(404).json({ error: 'broadcast_not_found' });
-    const now = new Date().toISOString();
-    if (b.contact_id) {
-      await supabase.from('meeting_broadcast_viewers').upsert({
-        broadcast_id: id, community_id: bc.community_id, contact_id: b.contact_id,
-        display_name: b.display_name || null, last_seen_at: now,
-      }, { onConflict: 'broadcast_id,contact_id' });
-    }
-    res.json({ attending: await attendingCount(id) });
+    res.json(await heartbeat({ broadcast_id: req.params.id, contact_id: b.contact_id, display_name: b.display_name }));
   } catch (err) {
+    if (err.code === 'notfound') return res.status(404).json({ error: err.message });
     console.error('[chamber] viewer heartbeat failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
-module.exports = { router };
+module.exports = { router, getLivePayload, submitSpeak, heartbeat };
