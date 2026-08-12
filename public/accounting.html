@@ -808,6 +808,22 @@
     }
     bdgPlanRecalc();
   };
+  // Pre-fill the increase cap from the community's governing documents.
+  window.bdgLoadCap=async function(refresh){
+    const capEl=$('bl-rate-cap'), cite=$('bl-rate-cite'); if(!capEl) return;
+    if(cite) cite.textContent=refresh?'re-reading the declaration…':'reading the declaration for the cap…';
+    try{
+      const j=await (await fetch(`/api/books/assessment-cap?community_id=${CID}${refresh?'&refresh=1':''}`)).json();
+      if(j.error) throw new Error(j.error);
+      if(j.cap_pct!=null){ capEl.value=j.cap_pct; bdgApplyRate(); }
+      if(cite){
+        const reread=` · <a onclick="bdgLoadCap(true)" style="cursor:pointer; text-decoration:underline;">re-read</a>`;
+        if(j.no_cap) cite.innerHTML=`No board increase cap in the governing docs${j.source?` (${esc(j.source)})`:''} — the % above is your own guardrail.`+reread;
+        else if(j.cap_pct!=null) cite.innerHTML=`✓ Cap <strong>${j.cap_pct}%</strong> from your governing documents${j.source?` — ${esc(j.source)}`:''}${j.quote?` <span title="${esc(j.quote)}" style="cursor:help;">ⓘ</span>`:''}${j.needs_review?' <span style="color:#92400e;">· confirm against the doc</span>':''}`+reread;
+        else cite.innerHTML=`No cap found in the docs — using ${esc(capEl.value)}% (editable).`+reread;
+      }
+    }catch(e){ if(cite) cite.innerHTML=`Couldn't read the cap from docs — using ${esc(capEl.value)}%.`; }
+  };
   window.bdgPlanRecalc = function(){
     let opRev=0, opExp=0, otherIncome=0, assessIncome=0, resvIncome=0;
     _bdgPlanRows.forEach((r,i)=>{ const c=bdgPlanVal(i);
@@ -961,6 +977,7 @@
           <label class="muted" style="font-size:12px;">Max increase <input id="bl-rate-cap" type="number" step="1" value="10" oninput="bdgApplyRate()" style="width:54px; padding:5px 6px; border:1px solid var(--rule); border-radius:6px; text-align:right;">%</label>
         </div>
         <div id="bl-rate-warn" style="margin-top:7px; font-size:12px;"></div>
+        <div id="bl-rate-cite" class="muted" style="font-size:11px; margin-top:4px;"></div>
         <div class="muted" style="font-size:11px; margin-top:3px;">Prior rate $${priorRate.toLocaleString(undefined,{maximumFractionDigits:2})}/home (≈ $${(priorRate/12).toLocaleString(undefined,{maximumFractionDigits:2})}/mo). Assessment income = rate × homes; edit the rate to propose a new one.</div>
       </div>`:'';
       $('bp-grid').innerHTML=`
@@ -992,7 +1009,7 @@
         <div class="muted" style="font-size:11px; margin-top:8px;">Every line traces to its source — click an account name to see what it was built from. Adjust anything, then hit Recalculate (totals also update as you type). Forecast = ${esc(String(j.forecast_year))} run-rate.</div>`;
       window._blHomes=j.home_count||0;
       bdgLivingRenderReserveProjects();
-      if($('bl-rate-input')) bdgApplyRate(); else bdgPlanRecalc();
+      if($('bl-rate-input')){ bdgApplyRate(); bdgLoadCap(); } else bdgPlanRecalc();
     } catch(e){ $('bp-grid').innerHTML=`<div style="color:var(--err); padding:12px;">Couldn't build the living budget: ${esc(e.message)}</div>`; }
   };
 

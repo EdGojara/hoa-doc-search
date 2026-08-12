@@ -786,6 +786,70 @@ router.post('/reserve-budget', express.json({ limit: '512kb' }), async (req, res
   }
 });
 
+// ----------------------------------------------------------------------------
+// Assessment-increase cap, sourced from the community's governing documents and
+// cached in community_facts (the SSOT for community facts). The budget's
+// assessment-rate control pre-fills its max-increase % from this. (Ed 2026-08-12.)
+// ----------------------------------------------------------------------------
+router.get('/assessment-cap', async (req, res) => {
+  try {
+    const { community_id, refresh } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const FACT_KEY = 'assessment_increase_cap_pct';
+    if (!refresh) {
+      const { data: fact, error: fErr } = await supabase.from('community_facts')
+        .select('value, details, source_ref, needs_review, manual_override').eq('community_id', community_id).eq('key', FACT_KEY).maybeSingle();
+      if (fErr) throw fErr;
+      if (fact) {
+        const capNum = parseFloat(String(fact.value).replace(/[^0-9.]/g, ''));
+        return res.json({ cap_pct: Number.isFinite(capNum) ? capNum : null, no_cap: /no cap|no limit|unlimited/i.test(fact.value || ''), quote: fact.details || null, source: fact.source_ref || null, needs_review: !!fact.needs_review, manual_override: !!fact.manual_override, cached: true, found: true });
+      }
+    }
+    const { data: comm, error: cErr } = await supabase.from('communities').select('name').eq('id', community_id).maybeSingle();
+    if (cErr) throw cErr;
+    if (!comm) return res.status(404).json({ error: 'community_not_found' });
+    const { getRelevantChunks } = require('../lib/hybrid_retrieval');
+    const query = 'maximum annual increase cap on regular assessments the board may raise without a vote of the members percent';
+    let chunks = '';
+    try { chunks = await getRelevantChunks(query, comm.name); } catch (_) { /* retrieval optional */ }
+    if (!chunks || !String(chunks).trim()) return res.json({ cap_pct: null, no_cap: false, found: false, note: 'No governing documents indexed to read.' });
+    const prompt = `From the HOA governing-document excerpts below, find the CAP on how much the BOARD may increase the REGULAR annual assessment in a single year WITHOUT a vote of the members.
+
+Return ONLY JSON, no preamble:
+{ "found": true|false, "cap_pct": <number or null, e.g. 10 for ten percent>, "cap_basis": "percent|dollar|cpi|none", "no_cap": true|false, "quote": "the exact sentence(s), verbatim from the excerpts", "citation": "document name + article/section if identifiable" }
+
+Rules:
+- cap_pct is the PERCENT the board can raise regular assessments annually without owner approval. "shall not be increased by more than ten percent (10%)" -> 10.
+- If the cap is dollar- or CPI-based, set cap_basis and give cap_pct only if a percent is actually stated, else null.
+- If the documents explicitly state there is NO limit, set no_cap true and found true.
+- If the excerpts don't address a board increase cap, found false.
+- quote must be verbatim from the excerpts, never paraphrased.
+
+EXCERPTS:
+${String(chunks).slice(0, 12000)}
+
+Return ONLY the JSON.`;
+    const resp = await _anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 1200, messages: [{ role: 'user', content: prompt }] });
+    const rawTxt = (resp.content || []).map((b) => b.text || '').join('').trim();
+    console.log('[books] assessment-cap extracted:', rawTxt.slice(0, 400));
+    let ex; try { ex = JSON.parse(rawTxt.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()); } catch (_) { ex = { found: false }; }
+    if (ex.found) {
+      const valueStr = ex.no_cap ? 'No cap (unlimited)' : (ex.cap_pct != null ? `${ex.cap_pct}%` : (ex.cap_basis || 'see quote'));
+      const { error: upErr } = await supabase.from('community_facts').upsert({
+        community_id, key: FACT_KEY, category: 'financial',
+        label: 'Annual assessment increase cap (board, no member vote)',
+        value: valueStr, details: ex.quote || null, source_ref: ex.citation || null,
+        source_type: 'pulled_from', needs_review: true, last_updated_at: new Date().toISOString(),
+      }, { onConflict: 'community_id,key' });
+      if (upErr) console.warn('[books] assessment-cap cache write warning:', upErr.message);
+    }
+    res.json({ cap_pct: ex.cap_pct != null ? ex.cap_pct : null, no_cap: !!ex.no_cap, quote: ex.quote || null, source: ex.citation || null, found: !!ex.found, needs_review: true, cached: false });
+  } catch (err) {
+    console.error('[books] assessment-cap failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // ============================================================================
 // Vendor SERVICE contracts — upload the signed PDF, extract the terms, store
 // them structured in `vendor_contracts`, and let the living budget propose that
