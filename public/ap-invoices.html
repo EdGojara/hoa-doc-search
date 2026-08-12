@@ -73,6 +73,11 @@ function shell(){
     <div style="margin:4px 0 10px;"><button class="btn ghost" id="sweepBtn" style="font-size:12px;padding:5px 11px;" onclick="sweepInbox(this)" title="Pull vendor bills already sitting in Emma's inbox into Payables (or the needs-attention list) using the archived PDF">🧹 Pull vendor bills from Emma’s inbox</button> <span id="sweepMsg" style="font-size:12px;color:#64748b;"></span></div>
     <div id="exceptionsWrap"></div>
     <h2>Review queue</h2>
+    <div id="q-filter" style="display:none; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px;">
+      <select id="q-comm" onchange="renderQueue()" style="font-size:12.5px; padding:6px 9px; border:1px solid #e2e8f0; border-radius:7px;"><option value="">All associations</option></select>
+      <input id="q-search" oninput="renderQueue()" placeholder="Search vendor, invoice #, amount…" style="font-size:12.5px; padding:6px 10px; border:1px solid #e2e8f0; border-radius:7px; min-width:230px;">
+      <span id="q-count" style="font-size:12px; color:#64748b;"></span>
+    </div>
     <div id="queue"><div class="empty">Loading&hellip;</div></div>`;
   af('/api/ap-intake/communities').then(r=>r.json()).then(j=>{ window._comms=(j.communities||[]); const sel=document.getElementById('comm'); (j.communities||[]).forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;sel.appendChild(o);}); });
   const fileInput=document.getElementById('file'), drop=document.getElementById('drop'), analyze=document.getElementById('analyze'), dropText=document.getElementById('dropText');
@@ -247,25 +252,51 @@ async function loadQueue(){
   try{
     const r=await af('/api/ap-intake/queue'); const j=await r.json().catch(()=>({}));
     if(!j.ok){ el.innerHTML='<div class="empty">Could not load queue.</div>'; return; }
-    let h='';
-    if(j.suspected&&j.suspected.length){
-      h+='<div style="font-size:12.5px;color:#92400e;font-weight:700;margin-bottom:6px;">⚠️ '+j.suspected.length+' possible duplicate(s) on hold — decide before they can be paid:</div>';
-      h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Amount</th><th>Why held</th><th></th></tr></thead><tbody>';
-      for(const r0 of j.suspected){
-        h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')}</td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td class="m">${money(r0.total_cents)}</td><td style="font-size:11.5px;color:#78350f;">${esc((r0.notes||'').replace('Emma: ',''))}</td>
-          <td style="white-space:nowrap;">${r0.source_storage_path?`<a class="view" href="javascript:void(0)" onclick="openInvoice('${r0.id}')">📄</a> `:''}<button class="btn ghost" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','unique')">Not a dup</button> <button class="btn warn" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','duplicate')">It's a dup</button></td></tr>`;
-      }
-      h+='</tbody></table><div style="height:14px"></div>';
+    window._apQ = { queue:j.queue||[], suspected:j.suspected||[] };
+    // Populate the association filter once (union of communities in the queue).
+    const sel=document.getElementById('q-comm');
+    if(sel && sel.options.length<=1){
+      const seen={}; [...window._apQ.queue,...window._apQ.suspected].forEach(x=>{ if(x.community_id && !seen[x.community_id]){ seen[x.community_id]=x.community?x.community.name:x.community_id; } });
+      Object.entries(seen).sort((a,b)=>String(a[1]).localeCompare(String(b[1]))).forEach(([id,name])=>{ const o=document.createElement('option'); o.value=id; o.textContent=name; sel.appendChild(o); });
     }
-    h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Due</th><th>Amount</th><th>Invoice</th><th>Source</th></tr></thead><tbody>';
-    for(const r0 of (j.queue||[])){
-      const link = r0.source_storage_path?`<a class="view" href="javascript:void(0)" onclick="openInvoice('${r0.id}')">📄 View</a>`:'—';
-      h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')} <a href="javascript:void(0)" onclick="changeAssoc('${r0.id}',this)" title="Wrong association? Move it — the platform learns for next time." style="font-size:11px;color:#64748b;text-decoration:none;">✎</a></td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td>${d10(r0.due_date)}</td><td class="m">${money(r0.total_cents)}</td><td>${link}</td><td><span class="badge b-ok">${esc(r0.intake_method||'—')}</span></td></tr>`;
-    }
-    h+='</tbody></table>';
-    if(!(j.queue||[]).length && !(j.suspected||[]).length) h='<div class="empty">No invoices awaiting approval.</div>';
-    el.innerHTML=h;
+    document.getElementById('q-filter').style.display = (window._apQ.queue.length+window._apQ.suspected.length) ? 'flex' : 'none';
+    renderQueue();
   }catch(e){ el.innerHTML='<div class="empty">Could not load queue.</div>'; }
+}
+function renderQueue(){
+  const el=document.getElementById('queue'); const data=window._apQ; if(!el||!data) return;
+  const comm=(document.getElementById('q-comm')||{}).value||'';
+  const term=((document.getElementById('q-search')||{}).value||'').trim().toLowerCase();
+  const match=(r0)=>{
+    if(comm && String(r0.community_id)!==comm) return false;
+    if(!term) return true;
+    const hay=[r0.vendor&&r0.vendor.name, r0.vendor_invoice_number, r0.community&&r0.community.name, r0.total_cents!=null?(r0.total_cents/100).toFixed(2):'', money(r0.total_cents)].join(' ').toLowerCase();
+    return hay.includes(term);
+  };
+  const suspected=data.suspected.filter(match), queue=data.queue.filter(match);
+  let h='';
+  if(suspected.length){
+    h+='<div style="font-size:12.5px;color:#92400e;font-weight:700;margin-bottom:6px;">⚠️ '+suspected.length+' possible duplicate(s) on hold — decide before they can be paid:</div>';
+    h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Amount</th><th>Why held</th><th></th></tr></thead><tbody>';
+    for(const r0 of suspected){
+      h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')}</td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td class="m">${money(r0.total_cents)}</td><td style="font-size:11.5px;color:#78350f;">${esc((r0.notes||'').replace('Emma: ',''))}</td>
+        <td style="white-space:nowrap;">${r0.source_storage_path?`<a class="view" href="javascript:void(0)" onclick="openInvoice('${r0.id}')">📄</a> `:''}<button class="btn ghost" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','unique')">Not a dup</button> <button class="btn warn" style="padding:4px 8px;font-size:11.5px;" onclick="resolveDup('${r0.id}','duplicate')">It's a dup</button></td></tr>`;
+    }
+    h+='</tbody></table><div style="height:14px"></div>';
+  }
+  h+='<table><thead><tr><th>Vendor</th><th>Assoc</th><th>Inv #</th><th>Date</th><th>Due</th><th>Amount</th><th>Status</th><th>Invoice</th><th>Source</th></tr></thead><tbody>';
+  for(const r0 of queue){
+    const link = r0.source_storage_path?`<a class="view" href="javascript:void(0)" onclick="openInvoice('${r0.id}')">📄 View</a>`:'—';
+    const onHold = r0.status==='on_hold';
+    const statusBadge = onHold ? '<span class="badge" style="background:#fef3c7;color:#92400e;">on hold</span>' : '<span class="badge b-ok">awaiting approval</span>';
+    h+=`<tr><td><b>${esc(r0.vendor?r0.vendor.name:'—')}</b></td><td>${esc(r0.community?r0.community.name:'—')} <a href="javascript:void(0)" onclick="changeAssoc('${r0.id}',this)" title="Wrong association? Move it — the platform learns for next time." style="font-size:11px;color:#64748b;text-decoration:none;">✎</a></td><td>${esc(r0.vendor_invoice_number||'—')}</td><td>${d10(r0.invoice_date)}</td><td>${d10(r0.due_date)}</td><td class="m">${money(r0.total_cents)}</td><td>${statusBadge}</td><td>${link}</td><td><span class="badge b-ok">${esc(r0.intake_method||'—')}</span></td></tr>`;
+  }
+  h+='</tbody></table>';
+  const totalShown=suspected.length+queue.length, totalAll=data.suspected.length+data.queue.length;
+  const cnt=document.getElementById('q-count');
+  if(cnt) cnt.textContent = (comm||term) ? `${totalShown} of ${totalAll} shown` : `${totalAll} awaiting review${data.suspected.length?` · ${data.suspected.length} on hold`:''}`;
+  if(!totalShown) h = (comm||term) ? '<div class="empty">No bills match this filter.</div>' : '<div class="empty">No invoices awaiting approval.</div>';
+  el.innerHTML=h;
 }
 
 // Move a bill to the right association (the platform learns the map for next time).

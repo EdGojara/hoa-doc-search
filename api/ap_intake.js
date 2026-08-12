@@ -88,7 +88,7 @@ router.get('/queue', async (req, res) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   try {
     const { data, error } = await supabase.from('ap_invoices')
-      .select('id, vendor_invoice_number, invoice_date, due_date, total_cents, status, dedup_status, duplicate_of_invoice_id, source_storage_path, intake_method, notes, received_at, vendor:vendor_id(name), community:community_id(name)')
+      .select('id, vendor_invoice_number, invoice_date, due_date, total_cents, status, dedup_status, duplicate_of_invoice_id, source_storage_path, intake_method, notes, received_at, community_id, vendor:vendor_id(name), community:community_id(name)')
       .in('status', ['awaiting_approval', 'on_hold'])
       .order('received_at', { ascending: false }).limit(300);
     if (error) throw error;
