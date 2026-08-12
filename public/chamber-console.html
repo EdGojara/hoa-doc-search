@@ -116,6 +116,15 @@
         </div>
       </div>
       ${b.exec_session?'<div class="muted" style="color:var(--live); margin-top:6px;">🔒 Stream + recording paused. Homeowners see an executive-session card.</div>':''}
+      ${(b.mode==='meeting'||b.mode==='webinar') && b.room_url ? `
+        <div style="margin-top:12px; padding:12px 14px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px;">
+          <div style="font-weight:700; color:#166534; margin-bottom:7px;">🎥 Two-way room ready — join with your camera &amp; mic</div>
+          <div class="row" style="align-items:center;">
+            <a class="btn green" href="${esc(b.room_url)}" target="_blank" rel="noopener" style="text-decoration:none;">▶ Join the meeting</a>
+            <button class="btn ghost" onclick="navigator.clipboard.writeText('${esc(b.room_url)}'); this.textContent='✓ Link copied';">📋 Copy invite link</button>
+            <span class="muted">${isLive?'Members are joining from their portal now.':'Members join from their portal once you <strong>Go&nbsp;Live</strong>. Invite anyone else with the link.'}</span>
+          </div>
+        </div>`:''}
       <div class="row" style="margin-top:12px; gap:24px; align-items:flex-start;">
         <div style="flex:1; min-width:240px;">
           <div class="muted" style="margin-bottom:4px;">AGENDA${isLive?' — advance as you go':''}</div>

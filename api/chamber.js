@@ -18,6 +18,7 @@
 //     POST   /broadcasts/:id/viewer      presence heartbeat ("attending online")
 // ============================================================================
 const express = require('express');
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 
@@ -74,17 +75,30 @@ router.post('/broadcasts', express.json({ limit: '256kb' }), async (req, res) =>
     if (Array.isArray(b.agenda_items) && b.agenda_items.length) {
       agendaId = await ensureAgenda({ community_id: b.community_id, agenda_items: b.agenda_items, title: b.title, meeting_date: b.scheduled_at ? String(b.scheduled_at).slice(0, 10) : null, existingAgendaId: agendaId });
     }
+    const mode = ['broadcast', 'meeting', 'webinar'].includes(b.mode) ? b.mode : 'broadcast';
+    // Two-way modes need an actual room. If the operator didn't paste one, spin
+    // up a free, no-account, embeddable room now (Jitsi) so "Create" produces a
+    // working meeting immediately — members join two-way from the portal with
+    // their camera/mic. Swap to a branded Daily room later by pasting its URL.
+    let roomUrl = b.room_url || null;
+    let roomName = b.room_name || null;
+    let provider = ['daily', 'livekit', 'zoom', 'mux', 'cloudflare', 'youtube', 'other'].includes(b.provider) ? b.provider : 'other';
+    if ((mode === 'meeting' || mode === 'webinar') && !roomUrl) {
+      roomName = `BedrockChamber-${crypto.randomBytes(6).toString('hex')}`;
+      roomUrl = `https://meet.jit.si/${roomName}#config.prejoinPageEnabled=false`;
+      provider = 'other';
+    }
     const row = {
       community_id: b.community_id,
       meeting_agenda_id: agendaId,
       title: b.title || null,
       scheduled_at: b.scheduled_at || null,
-      mode: ['broadcast', 'meeting', 'webinar'].includes(b.mode) ? b.mode : 'broadcast',
-      provider: ['daily', 'livekit', 'zoom', 'mux', 'cloudflare', 'youtube', 'other'].includes(b.provider) ? b.provider : 'other',
+      mode,
+      provider,
       player_embed_url: b.player_embed_url || null,
       hls_url: b.hls_url || null,
-      room_url: b.room_url || null,
-      room_name: b.room_name || null,
+      room_url: roomUrl,
+      room_name: roomName,
       retention_policy: ['retain', 'delete_after_minutes_approved', 'delete_after_days'].includes(b.retention_policy) ? b.retention_policy : 'delete_after_minutes_approved',
       consent_notice: b.consent_notice || 'This meeting is recorded and streamed live to verified members of the association.',
       status: 'scheduled',
