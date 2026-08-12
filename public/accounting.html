@@ -788,6 +788,26 @@
       </div>`).join('') : '<div class="muted" style="padding:8px; font-size:12px;">No reserve projects yet — add one, or upload a budget workbook that has a reserve sheet.</div>';
   };
   window.bdgAddReserveProject=function(){ (window._reserveProjects=window._reserveProjects||[]).push({project_name:'',planned_amount_cents:0,note:null}); bdgLivingRenderReserveProjects(); };
+  // Assessment income = rate/home × homes, with a cap on the annual increase.
+  window.bdgApplyRate=function(){
+    const homes=window._blHomes||0; const inEl=$('bl-rate-input'); if(!homes||window._assessI==null||!inEl) return;
+    const rate=parseFloat(inEl.value)||0;                 // $/home/yr
+    const capPct=parseFloat(($('bl-rate-cap')||{}).value)||0;
+    const priorRate=window._priorAssessCents/100/homes;
+    const incomeCents=Math.round(rate*homes*100);
+    const el=document.querySelector('#bp-grid input[data-i="'+window._assessI+'"]'); if(el) el.value=(incomeCents/100).toFixed(2);
+    const incEl=$('bl-rate-income'); if(incEl) incEl.textContent=fmt(incomeCents);
+    const warn=$('bl-rate-warn');
+    if(warn){
+      const maxRate=priorRate*(1+capPct/100);
+      const incPct=priorRate? ((rate-priorRate)/priorRate*100):0;
+      const D=n=>'$'+n.toLocaleString(undefined,{maximumFractionDigits:0});
+      if(rate>maxRate+0.005){ warn.innerHTML=`🛑 <strong>+${incPct.toFixed(1)}% vs prior — over the ${capPct}% cap.</strong> The cap allows up to <strong>${D(maxRate)}/home</strong> (${fmt(Math.round(maxRate*homes*100))}). Board-only increases are usually limited to ${capPct}%; more needs an owner vote.`; warn.style.color='#991b1b'; }
+      else if(rate<priorRate-0.005){ warn.innerHTML=`${incPct.toFixed(1)}% vs prior (a decrease).`; warn.style.color='#166534'; }
+      else { warn.innerHTML=`+${incPct.toFixed(1)}% vs prior — within the ${capPct}% cap (max ${D(priorRate*(1+capPct/100))}/home).`; warn.style.color='#166534'; }
+    }
+    bdgPlanRecalc();
+  };
   window.bdgPlanRecalc = function(){
     let opRev=0, opExp=0, otherIncome=0, assessIncome=0, resvIncome=0;
     _bdgPlanRows.forEach((r,i)=>{ const c=bdgPlanVal(i);
@@ -921,8 +941,31 @@
       // Reserve projects (capital expenditure plan) — fetched alongside.
       window._reserveProjects=(rbItems||[]).map(p=>({project_name:p.project_name,planned_amount_cents:p.planned_amount_cents,note:p.note||null}));
       const sec=(t,c)=>`<div style="font-weight:700; color:${c}; padding:6px; background:${c==='#166534'?'#f0fdf4':'#fef7f0'}; margin-top:6px;">${t}</div>`;
+      // Assessment income = per-home RATE × number of homes, with a cap on the
+      // annual increase (declarations commonly limit board-only raises). The
+      // rate is the input; income follows.
+      const homesN=j.home_count||0;
+      const assessCand=idx.filter(o=>o.x.account_type==='revenue' && !isResv(o.x) && /assessment|dues|maintenance fee/i.test(o.x.account_name||'')).sort((a,b)=>b.x.proposed_cents-a.x.proposed_cents);
+      const pa=assessCand[0]||null;
+      window._assessI = pa?pa.i:null;
+      window._priorAssessCents = pa?(pa.x.prior_budget_cents||pa.x.proposed_cents||0):0;
+      const curRate = (homesN&&pa)? ((pa.x.proposed_cents||0)/100/homesN):0;
+      const priorRate = (homesN&&pa)? (window._priorAssessCents/100/homesN):0;
+      const ratePanel = pa?`<div id="bl-rate" style="border:1px solid var(--rule); border-left:4px solid var(--gold); border-radius:10px; padding:12px 16px; margin-bottom:14px; background:#fff;">
+        <div style="font-weight:700; margin-bottom:8px;">Assessment rate</div>
+        <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:center; font-size:13px;">
+          <label>$ <input id="bl-rate-input" type="number" step="1" value="${curRate.toFixed(2)}" oninput="bdgApplyRate()" style="width:110px; padding:6px 8px; border:1px solid var(--rule); border-radius:6px; text-align:right;"> / home / yr</label>
+          <span>× <strong>${homesN.toLocaleString()}</strong> homes =</span>
+          <strong id="bl-rate-income" style="font-size:15px;">${fmt(pa.x.proposed_cents||0)}</strong>
+          <span style="flex:1;"></span>
+          <label class="muted" style="font-size:12px;">Max increase <input id="bl-rate-cap" type="number" step="1" value="10" oninput="bdgApplyRate()" style="width:54px; padding:5px 6px; border:1px solid var(--rule); border-radius:6px; text-align:right;">%</label>
+        </div>
+        <div id="bl-rate-warn" style="margin-top:7px; font-size:12px;"></div>
+        <div class="muted" style="font-size:11px; margin-top:3px;">Prior rate $${priorRate.toLocaleString(undefined,{maximumFractionDigits:2})}/home (≈ $${(priorRate/12).toLocaleString(undefined,{maximumFractionDigits:2})}/mo). Assessment income = rate × homes; edit the rate to propose a new one.</div>
+      </div>`:'';
       $('bp-grid').innerHTML=`
         <div id="bl-assess" style="padding:14px 16px; background:#0B1D34; color:#fff; border-radius:10px; margin-bottom:14px; display:flex; gap:26px; flex-wrap:wrap; align-items:center;"></div>
+        ${ratePanel}
 
         <div style="font-family:var(--font-serif); font-size:19px; color:var(--navy); font-weight:600; margin:6px 0 4px;">Operating Budget</div>
         ${hdr}
@@ -949,7 +992,7 @@
         <div class="muted" style="font-size:11px; margin-top:8px;">Every line traces to its source — click an account name to see what it was built from. Adjust anything, then hit Recalculate (totals also update as you type). Forecast = ${esc(String(j.forecast_year))} run-rate.</div>`;
       window._blHomes=j.home_count||0;
       bdgLivingRenderReserveProjects();
-      bdgPlanRecalc();
+      if($('bl-rate-input')) bdgApplyRate(); else bdgPlanRecalc();
     } catch(e){ $('bp-grid').innerHTML=`<div style="color:var(--err); padding:12px;">Couldn't build the living budget: ${esc(e.message)}</div>`; }
   };
 
