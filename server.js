@@ -1042,6 +1042,9 @@ app.use('/api/operations', require('./api/operations'));
 app.get('/admin/operations', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'operations.html'));
 });
+app.get('/admin/chamber', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'chamber-console.html'));
+});
 app.get('/admin/errors', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'errors.html'));
 });
