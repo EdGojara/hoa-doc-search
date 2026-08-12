@@ -1140,6 +1140,8 @@ app.use('/api/bank-rec', bankRecRouter);
 // (migration target). Migration 170 + lib/accounting/* power it.
 const { router: booksRouter } = require('./api/books');
 app.use('/api/books', booksRouter);
+const { router: chamberRouter } = require('./api/chamber');
+app.use('/api/chamber', chamberRouter);
 
 // Homeowner AR — sub-ledger (charges, payments, §209.0063 application engine).
 // Phase 2A. Migration 172 + lib/accounting/ar_engine.js power it.
