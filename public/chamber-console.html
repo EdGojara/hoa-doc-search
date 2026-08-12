@@ -34,7 +34,7 @@
 <body>
 <header>
   <div><a href="/">&larr; trustEd Home</a><h1>Chamber Console</h1></div>
-  <div class="muted" style="color:#cbd5e1;">Run the meeting · homeowners watch in their portal <span style="opacity:.6;">· build 3</span></div>
+  <div class="muted" style="color:#cbd5e1;">Run the meeting · homeowners watch in their portal <span style="opacity:.6;">· build 4</span></div>
 </header>
 <div class="wrap">
   <div class="commbar"><span style="font-size:11px; font-weight:800; letter-spacing:.09em; color:var(--ink-faint);">COMMUNITY</span><select id="commSel"></select></div>
@@ -118,11 +118,16 @@
       ${b.exec_session?'<div class="muted" style="color:var(--live); margin-top:6px;">🔒 Stream + recording paused. Homeowners see an executive-session card.</div>':''}
       ${(b.mode==='meeting'||b.mode==='webinar') && b.room_url ? `
         <div style="margin-top:12px; padding:12px 14px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px;">
-          <div style="font-weight:700; color:#166534; margin-bottom:7px;">🎥 Two-way room ready — join with your camera &amp; mic</div>
+          <div style="font-weight:700; color:#166534; margin-bottom:7px;">🎥 Two-way room ready — join with your camera &amp; mic ${b.provider==='daily'?'<span class="pill">branded</span>':'<span class="pill" title="Free Jitsi room — add a Daily API key for the branded, no-login version">Jitsi</span>'}</div>
           <div class="row" style="align-items:center;">
-            <a class="btn green" href="${esc(b.room_url)}" target="_blank" rel="noopener" style="text-decoration:none;">▶ Join the meeting</a>
+            <button class="btn green" onclick="hostJoin('${b.id}')">▶ Join as host</button>
             <button class="btn ghost" onclick="navigator.clipboard.writeText('${esc(b.room_url)}'); this.textContent='✓ Link copied';">📋 Copy invite link</button>
-            <span class="muted">${isLive?'Members are joining from their portal now.':'Members join from their portal once you <strong>Go&nbsp;Live</strong>. Invite anyone else with the link.'}</span>
+            <span class="muted">${isLive?'Members are joining from their portal now.':'Members join from their portal once you <strong>Go&nbsp;Live</strong>.'}</span>
+          </div>
+          <div class="row" style="align-items:center; margin-top:9px;">
+            <input id="inv-emails" placeholder="Invite by email — comma or space separated" style="flex:1; min-width:240px; padding:7px 10px; border:1px solid var(--rule); border-radius:6px; font-size:12.5px;">
+            <button class="btn ghost" onclick="inviteEmails('${b.id}')">✉ Send invites</button>
+            <span id="inv-msg" class="muted"></span>
           </div>
         </div>`:''}
       <div class="row" style="margin-top:12px; gap:24px; align-items:flex-start;">
@@ -192,6 +197,18 @@
     } catch(e){ alert('Create error: '+((e&&e.message)||e)); }
   };
   async function patch(id, body){ const j=await (await fetch(`/api/chamber/broadcasts/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json(); if(j.error) alert(j.error); return j; }
+  window.hostJoin = async (id)=>{
+    try{ const j=await (await fetch(`/api/chamber/broadcasts/${id}/host-join`)).json(); if(j.error) throw new Error(j.error); window.open(j.url,'_blank','noopener'); }
+    catch(e){ alert('Could not open the room: '+e.message); }
+  };
+  window.inviteEmails = async (id)=>{
+    const el=document.getElementById('inv-emails'); const emails=(el&&el.value||'').trim(); const msg=document.getElementById('inv-msg');
+    if(!emails){ alert('Enter at least one email.'); return; }
+    if(msg) msg.textContent='Sending…';
+    try{ const j=await (await fetch(`/api/chamber/broadcasts/${id}/invite`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emails})})).json();
+      if(j.error) throw new Error(j.error); if(msg) msg.textContent=`✓ Invited ${j.sent}`; if(el) el.value=''; }
+    catch(e){ if(msg) msg.textContent='Failed: '+e.message; }
+  };
   window.setStatus = async (id,status)=>{ if(status==='ended'&&!confirm('End the meeting for all homeowners?'))return; await patch(id,{status}); loadAll(); };
   window.toggleExec = async (id,on)=>{ await patch(id,{exec_session:on}); loadAll(); };
   window.advance = async (id,idx)=>{ await patch(id,{current_item_index:idx}); loadAll(); };

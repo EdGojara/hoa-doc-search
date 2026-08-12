@@ -84,9 +84,18 @@ router.post('/broadcasts', express.json({ limit: '256kb' }), async (req, res) =>
     let roomName = b.room_name || null;
     let provider = ['daily', 'livekit', 'zoom', 'mux', 'cloudflare', 'youtube', 'other'].includes(b.provider) ? b.provider : 'other';
     if ((mode === 'meeting' || mode === 'webinar') && !roomUrl) {
-      roomName = `BedrockChamber-${crypto.randomBytes(6).toString('hex')}`;
-      roomUrl = `https://meet.jit.si/${roomName}#config.prejoinPageEnabled=false`;
-      provider = 'other';
+      // Prefer a branded Daily room (no login/moderator wall) when configured;
+      // otherwise a free Jitsi room so it still works with zero setup.
+      const { dailyEnabled, createRoom } = require('../lib/video/daily');
+      if (dailyEnabled()) {
+        try { const room = await createRoom({ webinar: mode === 'webinar' }); roomUrl = room.url; roomName = room.name; provider = 'daily'; }
+        catch (e) { console.warn('[chamber] Daily room create failed, falling back to Jitsi:', e.message); }
+      }
+      if (!roomUrl) {
+        roomName = `BedrockChamber-${crypto.randomBytes(6).toString('hex')}`;
+        roomUrl = `https://meet.jit.si/${roomName}#config.prejoinPageEnabled=false`;
+        provider = 'other';
+      }
     }
     const row = {
       community_id: b.community_id,
@@ -157,6 +166,41 @@ router.patch('/broadcasts/:id', express.json({ limit: '256kb' }), async (req, re
     console.error('[chamber] update broadcast failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
+});
+
+// ---- Moderator: host join URL (owner/moderator token on Daily) -------------
+router.get('/broadcasts/:id/host-join', async (req, res) => {
+  try {
+    const { data: b } = await supabase.from('meeting_broadcasts').select('provider, room_url, room_name').eq('id', req.params.id).maybeSingle();
+    if (!b) return res.status(404).json({ error: 'not_found' });
+    if (!b.room_url) return res.status(400).json({ error: 'no_room', detail: 'This meeting has no room yet.' });
+    if (b.provider !== 'daily' || !b.room_name) return res.json({ url: b.room_url });   // Jitsi/other: plain URL
+    const { meetingToken } = require('../lib/video/daily');
+    const token = await meetingToken({ roomName: b.room_name, isOwner: true, userName: 'Bedrock (host)' });
+    res.json({ url: `${b.room_url}?t=${token}` });
+  } catch (err) { console.error('[chamber] host-join failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// ---- Moderator: invite people by email (Zoom-style join links) --------------
+router.post('/broadcasts/:id/invite', express.json(), async (req, res) => {
+  try {
+    const rawEmails = (req.body && Array.isArray(req.body.emails)) ? req.body.emails : String((req.body && req.body.emails) || '').split(/[,;\s]+/);
+    const emails = [...new Set(rawEmails.map((e) => String(e).trim().toLowerCase()).filter((e) => /.+@.+\..+/.test(e)))];
+    if (!emails.length) return res.status(400).json({ error: 'no_valid_emails' });
+    const { data: b } = await supabase.from('meeting_broadcasts').select('room_url, title, scheduled_at, community:community_id(name)').eq('id', req.params.id).maybeSingle();
+    if (!b || !b.room_url) return res.status(400).json({ error: 'no_room' });
+    const { sendEmail } = require('../lib/notifications/email');
+    const when = b.scheduled_at ? new Date(b.scheduled_at).toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }) : 'Join when it begins';
+    const commName = (b.community && b.community.name) ? b.community.name : '';
+    const subject = `You're invited: ${b.title || 'Board Meeting'}${commName ? ' — ' + commName : ''}`;
+    const html = `<p>You've been invited to a meeting${commName ? ` for ${commName}` : ''}.</p>
+      <p><strong>${b.title || 'Board Meeting'}</strong><br>${when}</p>
+      <p style="margin:18px 0;"><a href="${b.room_url}" style="display:inline-block;padding:12px 20px;background:#0B1D34;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;">Join the meeting</a></p>
+      <p style="font-size:12px;color:#64748b;">Or paste this link into your browser:<br>${b.room_url}<br><br>You'll join with your camera and microphone right from your browser — no app or account needed.</p>`;
+    let sent = 0;
+    for (const to of emails) { try { await sendEmail({ to, subject, html }); sent += 1; } catch (e) { console.warn('[chamber] invite email failed for', to, e.message); } }
+    res.json({ sent, invited: emails });
+  } catch (err) { console.error('[chamber] invite failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // ---- Shared: the live (or next) meeting payload for a community's Chamber ---
