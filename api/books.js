@@ -480,9 +480,13 @@ router.get('/budgets', async (req, res) => {
   }
 });
 
-router.get('/budgets/:id', async (req, res) => {
+router.get('/budgets/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
+    // This parameterized route is registered before literal /budgets/<word>
+    // routes (plan-seed, ai-plan, living-lines). Without this guard it would
+    // capture them as an :id and 404. Only handle real UUIDs; fall through.
+    if (!/^[0-9a-fA-F-]{36}$/.test(id)) return next();
     const [{ data: budget }, { data: lines }] = await Promise.all([
       supabase.from('community_budgets').select('*').eq('id', id).maybeSingle(),
       supabase.from('budget_line_items')
