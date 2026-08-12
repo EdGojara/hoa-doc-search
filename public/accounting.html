@@ -839,7 +839,7 @@
   // / YTD Actual / Proposed, with the derivation it was built from and a
   // confidence grade. Not a spreadsheet cell; a number that traces to its source.
   // Badge = WHERE the number came from (source), not just how sure we are.
-  const _SRC={ contract:{c:'#166534',bg:'#dcfce7',t:'📄 Contract-verified'}, vendor_commitment:{c:'#166534',bg:'#dcfce7',t:'Vendor commitment'}, trend:{c:'#92400e',bg:'#fef3c7',t:'Trend'}, one_time_adjusted:{c:'#9a3412',bg:'#ffedd5',t:'One-time removed'}, estimate:{c:'#64748b',bg:'#f1f5f9',t:'Estimate'} };
+  const _SRC={ contract:{c:'#166534',bg:'#dcfce7',t:'📄 Contract-verified'}, vendor_commitment:{c:'#166534',bg:'#dcfce7',t:'Vendor commitment'}, prior_budget:{c:'#1e40af',bg:'#dbeafe',t:'Adopted budget'}, trend:{c:'#92400e',bg:'#fef3c7',t:'Trend'}, one_time_adjusted:{c:'#9a3412',bg:'#ffedd5',t:'One-time removed'}, excluded:{c:'#64748b',bg:'#f1f5f9',t:'Not budgeted'}, estimate:{c:'#64748b',bg:'#f1f5f9',t:'Estimate'} };
   window.bdgLivingLoad = async function(){
     const fy=$('bp-fy').value;
     $('bp-grid').innerHTML='<div class="muted" style="padding:14px;">🧬 Building the living budget — reading actuals, this year\'s run-rate, and vendor commitments…</div>';

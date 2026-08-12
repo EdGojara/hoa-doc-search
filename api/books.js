@@ -1034,7 +1034,19 @@ router.get('/budgets/living-lines', async (req, res) => {
     const [is1, is2] = await Promise.all([isFor(fy - 1), isFor(fy - 2)]);
     const today = new Date(); const cy = today.getUTCFullYear(); const monthsElapsed = today.getUTCMonth() + 1;
     const isYtd = await incomeStatement({ community_id, period_start: `${cy}-01-01`, period_end: today.toISOString().slice(0, 10) });
-    const annualize = monthsElapsed > 0 ? 12 / monthsElapsed : 1;
+    // Annualize the run-rate by the months the GL actually COVERS this year, not
+    // the calendar months elapsed. A mid-year cutover has fewer posted months
+    // than elapsed months; dividing partial data by elapsed months understates
+    // every line. Count the distinct months that actually have postings.
+    let coverageMonths = monthsElapsed;
+    try {
+      const jeCov = await fetchAllQuery(() => supabase.from('journal_entries')
+        .select('posting_date').eq('community_id', community_id)
+        .gte('posting_date', `${cy}-01-01`).lte('posting_date', `${cy}-12-31`), { orderBy: 'posting_date' });
+      const months = new Set((jeCov || []).map((e) => String(e.posting_date).slice(0, 7)));
+      if (months.size > 0) coverageMonths = months.size;
+    } catch (_) { /* fall back to calendar months */ }
+    const annualize = coverageMonths > 0 ? 12 / coverageMonths : 1;
 
     // Prior-year adopted budget (the "Budget" column).
     const priorBudget = {};
@@ -1143,7 +1155,14 @@ router.get('/budgets/living-lines', async (req, res) => {
       const committedAnnual = Math.round(vendors.reduce((s, v) => s + v.cents, 0) * partialAnnualize);
       let source_type; let confidence; let proposed_cents; let built_from; let evidence = [];
       const contract = contractByAccount[a.account_id] || null;
-      if (contract) {
+      const priorB = priorBudget[a.account_id] || 0;
+      const isNonCash = /unrealized|realized gain|market value|investment gain|gain\s*\/\s*loss|gains?\s+(?:and|&|or)\s+loss|mark[- ]to[- ]market/i.test(a.account_name || '');
+      if (isNonCash) {
+        // Non-cash market valuations (unrealized gains/losses) aren't budgeted —
+        // they can't be assessed for or spent, and annualizing them is nonsense.
+        source_type = 'excluded'; confidence = 'high'; proposed_cents = 0;
+        built_from = 'Non-cash market valuation — not budgeted (can\'t be assessed for or spent).';
+      } else if (contract) {
         // The number literally IS the contract. Budget at the contracted annual
         // amount; the contract expires mid-year, so the post-renewal months carry
         // the default renewal escalation.
@@ -1153,6 +1172,18 @@ router.get('/budgets/living-lines', async (req, res) => {
         const endTxt = contract.end_date ? ` through ${contract.end_date}, +${Math.round(escP * 100)}% on renewal` : ` +${Math.round(escP * 100)}% escalation`;
         built_from = `Contract — ${contract.vendor_name}: $${Math.round(contract.cents / 100).toLocaleString()}/yr${endTxt}`;
         if (contract.url) evidence = [{ label: `${contract.vendor_name} contract`, url: contract.url }];
+      } else if (priorB > 0) {
+        // ANCHOR to the board-adopted prior budget — the complete, reliable
+        // baseline. The current-year GL is a partial (often mid-cutover) window,
+        // so its annualized run-rate is not trustworthy as the base. Assessment
+        // revenue is a board decision, never a forecast.
+        if (a.account_type === 'revenue') {
+          source_type = 'prior_budget'; confidence = 'high'; proposed_cents = priorB;
+          built_from = `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} — assessment income is set by the board, held flat. Change it here to propose a new rate.`;
+        } else {
+          source_type = 'prior_budget'; confidence = 'medium'; proposed_cents = Math.round(priorB * (1 + INFL));
+          built_from = `FY${fy - 1} adopted budget $${Math.round(priorB / 100).toLocaleString()} + ${Math.round(INFL * 100)}% inflation${a.forecast > 0 ? ` · this year pacing ~$${Math.round(a.forecast / 100).toLocaleString()} annualized` : ''}.`;
+        }
       } else if (a.account_type === 'expense' && committedAnnual > 0 && committedAnnual >= a.forecast * 0.6) {
         source_type = 'vendor_commitment'; confidence = 'high';
         proposed_cents = Math.round(committedAnnual * (1 + ESC));
@@ -1163,8 +1194,8 @@ router.get('/budgets/living-lines', async (req, res) => {
         proposed_cents = Math.round(base * (1 + INFL));
         built_from = `${cy} run-rate $${Math.round(a.forecast / 100).toLocaleString()} + ${Math.round(INFL * 100)}% inflation${a.fy2 > 0 ? ` (${cy - 1} actual $${Math.round(a.fy2 / 100).toLocaleString()})` : ''}`;
       } else {
-        source_type = 'estimate'; confidence = 'low'; proposed_cents = priorBudget[a.account_id] || 0;
-        built_from = 'no history — carried the prior budget';
+        source_type = 'estimate'; confidence = 'low'; proposed_cents = 0;
+        built_from = 'No prior budget or spending history — enter a number.';
       }
 
       // Reason about WHY the run-rate and the approved budget disagree — every
@@ -1185,7 +1216,7 @@ router.get('/budgets/living-lines', async (req, res) => {
         // real capital-event signal (monument replacement, wall/fence work).
         const ONE_TIME_FLOOR = 2000000; // $20k
         const isSpike = a.forecast > ONE_TIME_FLOOR && a.forecast > priorB * 3 && prevYr < a.forecast * 0.25 && priorB < a.forecast * 0.4;
-        if (isSpike && source_type !== 'vendor_commitment') {
+        if (isSpike && source_type === 'trend') {
           const recurring = Math.max(priorB, prevYr);
           flags.push({ type: 'one_time', severity: 'high', msg: `Spending here ran ~$${Math.round(a.forecast / 100).toLocaleString()} this year with little prior history — likely a one-time capital cost, not recurring. Reset to the recurring level ($${Math.round(recurring / 100).toLocaleString()}); raise it if it truly repeats.` });
           proposed_cents = Math.round(recurring * (1 + INFL));
