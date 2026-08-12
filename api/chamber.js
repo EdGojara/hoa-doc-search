@@ -34,6 +34,26 @@ async function attendingCount(broadcastId) {
   return count || 0;
 }
 
+const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+
+// Create or update the meeting_agenda for a broadcast from a plain list of
+// item strings. We store it in the EXISTING meeting_agendas table (not a
+// silo) so a Chamber agenda also feeds the packet + minutes engine.
+async function ensureAgenda({ community_id, agenda_items, title, meeting_date, existingAgendaId }) {
+  const items = (agenda_items || []).map((s) => (typeof s === 'string' ? { topic: s.trim() } : s)).filter((x) => x && x.topic);
+  if (!items.length) return existingAgendaId || null;
+  if (existingAgendaId) {
+    await supabase.from('meeting_agendas').update({ items }).eq('id', existingAgendaId);
+    return existingAgendaId;
+  }
+  const { data, error } = await supabase.from('meeting_agendas').insert({
+    management_company_id: BEDROCK_MGMT_CO_ID, community_id, title: title || null,
+    meeting_date: meeting_date || null, items, status: 'draft',
+  }).select('id').single();
+  if (error) throw error;
+  return data.id;
+}
+
 // Resolve the agenda items for a broadcast (from the linked meeting_agenda).
 async function agendaFor(b) {
   if (!b || !b.meeting_agenda_id) return { items: [], agenda: null };
@@ -50,9 +70,13 @@ router.post('/broadcasts', express.json({ limit: '256kb' }), async (req, res) =>
   try {
     const b = req.body || {};
     if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
+    let agendaId = b.meeting_agenda_id || null;
+    if (Array.isArray(b.agenda_items) && b.agenda_items.length) {
+      agendaId = await ensureAgenda({ community_id: b.community_id, agenda_items: b.agenda_items, title: b.title, meeting_date: b.scheduled_at ? String(b.scheduled_at).slice(0, 10) : null, existingAgendaId: agendaId });
+    }
     const row = {
       community_id: b.community_id,
-      meeting_agenda_id: b.meeting_agenda_id || null,
+      meeting_agenda_id: agendaId,
       title: b.title || null,
       scheduled_at: b.scheduled_at || null,
       mode: ['broadcast', 'meeting', 'webinar'].includes(b.mode) ? b.mode : 'broadcast',
@@ -99,6 +123,11 @@ router.patch('/broadcasts/:id', express.json({ limit: '256kb' }), async (req, re
     const patch = {};
     const allowed = ['title', 'scheduled_at', 'mode', 'provider', 'player_embed_url', 'hls_url', 'room_url', 'room_name', 'current_item_index', 'exec_session', 'recording_url', 'recording_available', 'retention_policy', 'consent_notice', 'meeting_agenda_id'];
     for (const k of allowed) if (k in b) patch[k] = b[k];
+    // Inline agenda edit: create/update the linked meeting_agenda.
+    if (Array.isArray(b.agenda_items)) {
+      const { data: cur } = await supabase.from('meeting_broadcasts').select('community_id, meeting_agenda_id, title, scheduled_at').eq('id', id).maybeSingle();
+      if (cur) patch.meeting_agenda_id = await ensureAgenda({ community_id: cur.community_id, agenda_items: b.agenda_items, title: cur.title, meeting_date: cur.scheduled_at ? String(cur.scheduled_at).slice(0, 10) : null, existingAgendaId: cur.meeting_agenda_id });
+    }
     // Lifecycle transitions stamp timestamps.
     if (b.status && ['scheduled', 'live', 'ended', 'canceled'].includes(b.status)) {
       patch.status = b.status;
@@ -226,6 +255,34 @@ router.get('/broadcasts/:id/speak', async (req, res) => {
     res.json({ requests: data || [] });
   } catch (err) {
     console.error('[chamber] speak queue failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---- Moderator/board: attendance + engagement report -----------------------
+// The differentiator a Zoom link can't produce: who (which member/property)
+// attended, for how long, against the community roster — a §209-grade record.
+router.get('/broadcasts/:id/attendance', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: b } = await supabase.from('meeting_broadcasts').select('id, community_id, title, started_at, ended_at').eq('id', id).maybeSingle();
+    if (!b) return res.status(404).json({ error: 'broadcast_not_found' });
+    const { data: viewers } = await supabase.from('meeting_broadcast_viewers')
+      .select('display_name, joined_at, last_seen_at').eq('broadcast_id', id).order('joined_at', { ascending: true });
+    const rows = (viewers || []).map((v) => {
+      const mins = Math.max(1, Math.round((new Date(v.last_seen_at) - new Date(v.joined_at)) / 60000) + 1);
+      return { property: v.display_name || '—', joined_at: v.joined_at, last_seen_at: v.last_seen_at, minutes: mins };
+    });
+    const { count: roster } = await supabase.from('properties').select('id', { count: 'exact', head: true }).eq('community_id', b.community_id);
+    const totalMin = rows.reduce((s, r) => s + r.minutes, 0);
+    res.json({
+      broadcast: { id: b.id, title: b.title, started_at: b.started_at, ended_at: b.ended_at },
+      roster: roster || 0, attended: rows.length,
+      avg_minutes: rows.length ? Math.round(totalMin / rows.length) : 0,
+      rows,
+    });
+  } catch (err) {
+    console.error('[chamber] attendance failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

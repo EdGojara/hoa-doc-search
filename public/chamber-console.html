@@ -87,6 +87,7 @@
           <option value="webinar">Webinar</option></select></div>
         <div class="field"><label>Date / time</label><input id="nwhen" type="datetime-local"></div>
       </div>
+      <div class="field" style="margin-top:10px;"><label>Agenda — one item per line</label><textarea id="nagenda" rows="4" placeholder="Call to Order&#10;Financial Report&#10;Manager Report&#10;Old Business&#10;New Business&#10;Homeowner Forum&#10;Adjourn"></textarea></div>
       <div class="row" style="align-items:flex-end; margin-top:10px;">
         <div class="field" style="flex:2; min-width:260px;"><label>Stream / room URL <span class="muted">(Daily room, Mux/Cloudflare player, or any embed)</span></label><input id="nurl" placeholder="https://…"></div>
         <div class="field"><label>Retention</label><select id="nret">
@@ -126,12 +127,16 @@
           <div id="queue"><div class="muted">Loading queue…</div></div>
         </div>
       </div>
+      <div class="field" style="margin-top:14px;"><label>Agenda (one item per line)</label><textarea id="ca" rows="4">${_items.map(it=>esc(it.topic||it)).join('\n')}</textarea></div>
       <div class="row" style="margin-top:12px; align-items:flex-end;">
         <div class="field" style="flex:2; min-width:260px;"><label>Stream / room URL</label><input id="cu" value="${esc(b.player_embed_url||b.room_url||b.hls_url||'')}"></div>
+        <button class="btn ghost" onclick="saveAgenda('${b.id}')">Save agenda</button>
         <button class="btn ghost" onclick="saveUrl('${b.id}','${esc(b.mode)}')">Save URL</button>
+        <button class="btn ghost" onclick="showAttendance('${b.id}')">📊 Attendance report</button>
         <a class="btn ghost" href="/portal-chamber.html" target="_blank" style="text-decoration:none;">↗ Preview homeowner view</a>
       </div>
-    </div>`;
+    </div>
+    <div id="att-modal"></div>`;
   }
 
   function listCard(broadcasts) {
@@ -163,6 +168,7 @@
 
   async function createMeeting() {
     const body = { community_id:CID, title:$('nt').value||null, mode:$('nmode').value, scheduled_at:$('nwhen').value?new Date($('nwhen').value).toISOString():null, retention_policy:$('nret').value };
+    const ag=($('nagenda').value||'').split('\n').map(s=>s.trim()).filter(Boolean); if(ag.length) body.agenda_items=ag;
     const url=$('nurl').value.trim(); if(url){ if($('nmode').value==='broadcast') body.player_embed_url=url; else body.room_url=url; }
     const j = await (await fetch('/api/chamber/broadcasts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
     if(j.error) return alert(j.error);
@@ -173,6 +179,24 @@
   window.toggleExec = async (id,on)=>{ await patch(id,{exec_session:on}); loadAll(); };
   window.advance = async (id,idx)=>{ await patch(id,{current_item_index:idx}); loadAll(); };
   window.saveUrl = async (id,mode)=>{ const u=$('cu').value.trim(); await patch(id, mode==='broadcast'?{player_embed_url:u}:{room_url:u}); loadAll(); };
+  window.saveAgenda = async (id)=>{ const items=($('ca').value||'').split('\n').map(s=>s.trim()).filter(Boolean); await patch(id,{agenda_items:items}); loadAll(); };
+  window.showAttendance = async (id)=>{
+    const j = await (await fetch(`/api/chamber/broadcasts/${id}/attendance`)).json();
+    if(j.error) return alert(j.error);
+    const pct = j.roster ? Math.round(j.attended/j.roster*100) : 0;
+    const rows = (j.rows||[]).map(r=>`<div class="qitem"><span>${esc(r.property)}</span><span class="muted">${r.minutes} min · joined ${new Date(r.joined_at).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</span></div>`).join('') || '<div class="muted">No attendance recorded yet.</div>';
+    $('att-modal').innerHTML = `<div style="position:fixed; inset:0; background:rgba(11,29,52,.55); display:flex; align-items:center; justify-content:center; z-index:50;" onclick="if(event.target===this)this.innerHTML='';">
+      <div class="card" style="max-width:560px; width:92%; max-height:82vh; overflow:auto; margin:0;">
+        <div class="row" style="justify-content:space-between;"><div class="sec" style="margin:0;">Attendance & engagement</div><button class="btn ghost" onclick="document.getElementById('att-modal').innerHTML='';">Close</button></div>
+        <div class="muted" style="margin:4px 0 12px;">${esc(j.broadcast.title||'Board Meeting')}</div>
+        <div class="row" style="gap:22px; margin-bottom:12px;">
+          <div><div class="muted">Attended live</div><div style="font-size:24px; font-weight:800; color:var(--navy);">${j.attended}<span style="font-size:13px; font-weight:500; color:var(--ink-faint);"> of ${j.roster} (${pct}%)</span></div></div>
+          <div><div class="muted">Avg watch</div><div style="font-size:24px; font-weight:800; color:var(--navy);">${j.avg_minutes}<span style="font-size:13px; font-weight:500; color:var(--ink-faint);"> min</span></div></div>
+        </div>
+        ${rows}
+        <div class="muted" style="margin-top:10px;">A member-verified attendance record — proof of participation a Zoom link can't produce.</div>
+      </div></div>`;
+  };
   window.speak = async (id,status)=>{ const j=await (await fetch(`/api/chamber/speak/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})})).json(); if(j.error)alert(j.error); refreshQueue(); };
 
   boot();
