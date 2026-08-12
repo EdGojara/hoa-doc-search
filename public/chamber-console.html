@@ -34,7 +34,7 @@
 <body>
 <header>
   <div><a href="/">&larr; trustEd Home</a><h1>Chamber Console</h1></div>
-  <div class="muted" style="color:#cbd5e1;">Run the meeting · homeowners watch in their portal</div>
+  <div class="muted" style="color:#cbd5e1;">Run the meeting · homeowners watch in their portal <span style="opacity:.6;">· build 3</span></div>
 </header>
 <div class="wrap">
   <div class="commbar"><span style="font-size:11px; font-weight:800; letter-spacing:.09em; color:var(--ink-faint);">COMMUNITY</span><select id="commSel"></select></div>
@@ -175,14 +175,22 @@
     } catch(_){}
   }
 
-  async function createMeeting() {
-    const body = { community_id:CID, title:$('nt').value||null, mode:$('nmode').value, scheduled_at:$('nwhen').value?new Date($('nwhen').value).toISOString():null, retention_policy:$('nret').value };
-    const ag=($('nagenda').value||'').split('\n').map(s=>s.trim()).filter(Boolean); if(ag.length) body.agenda_items=ag;
-    const url=$('nurl').value.trim(); if(url){ if($('nmode').value==='broadcast') body.player_embed_url=url; else body.room_url=url; }
-    const j = await (await fetch('/api/chamber/broadcasts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
-    if(j.error) return alert(j.error);
-    _sel = j.broadcast.id; loadAll();
-  }
+  window.createMeeting = async function createMeeting() {
+    try {
+      if(!CID){ alert('Pick a community first (top of the page).'); return; }
+      const mode=$('nmode').value;
+      const body = { community_id:CID, title:$('nt').value||null, mode, scheduled_at:$('nwhen').value?new Date($('nwhen').value).toISOString():null, retention_policy:$('nret').value };
+      const ag=($('nagenda').value||'').split('\n').map(s=>s.trim()).filter(Boolean); if(ag.length) body.agenda_items=ag;
+      const url=$('nurl').value.trim(); if(url){ if(mode==='broadcast') body.player_embed_url=url; else body.room_url=url; }
+      const res = await fetch('/api/chamber/broadcasts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const raw = await res.text();
+      let j={}; try{ j=JSON.parse(raw); }catch(_){ alert('Create failed — HTTP '+res.status+'. The server did not return JSON (you may need to sign in again). First 300 chars:\n\n'+raw.slice(0,300)); return; }
+      if(!res.ok || j.error){ alert('Create failed (HTTP '+res.status+'): '+(j.error||'unknown error')); return; }
+      if(!j.broadcast || !j.broadcast.id){ alert('Create returned no meeting.'); return; }
+      _sel = j.broadcast.id;
+      await loadAll();
+    } catch(e){ alert('Create error: '+((e&&e.message)||e)); }
+  };
   async function patch(id, body){ const j=await (await fetch(`/api/chamber/broadcasts/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json(); if(j.error) alert(j.error); return j; }
   window.setStatus = async (id,status)=>{ if(status==='ended'&&!confirm('End the meeting for all homeowners?'))return; await patch(id,{status}); loadAll(); };
   window.toggleExec = async (id,on)=>{ await patch(id,{exec_session:on}); loadAll(); };
