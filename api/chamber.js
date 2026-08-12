@@ -55,9 +55,12 @@ router.post('/broadcasts', express.json({ limit: '256kb' }), async (req, res) =>
       meeting_agenda_id: b.meeting_agenda_id || null,
       title: b.title || null,
       scheduled_at: b.scheduled_at || null,
-      provider: ['zoom', 'mux', 'cloudflare', 'youtube', 'other'].includes(b.provider) ? b.provider : 'other',
+      mode: ['broadcast', 'meeting', 'webinar'].includes(b.mode) ? b.mode : 'broadcast',
+      provider: ['daily', 'livekit', 'zoom', 'mux', 'cloudflare', 'youtube', 'other'].includes(b.provider) ? b.provider : 'other',
       player_embed_url: b.player_embed_url || null,
       hls_url: b.hls_url || null,
+      room_url: b.room_url || null,
+      room_name: b.room_name || null,
       retention_policy: ['retain', 'delete_after_minutes_approved', 'delete_after_days'].includes(b.retention_policy) ? b.retention_policy : 'delete_after_minutes_approved',
       consent_notice: b.consent_notice || 'This meeting is recorded and streamed live to verified members of the association.',
       status: 'scheduled',
@@ -94,7 +97,7 @@ router.patch('/broadcasts/:id', express.json({ limit: '256kb' }), async (req, re
     const { id } = req.params;
     const b = req.body || {};
     const patch = {};
-    const allowed = ['title', 'scheduled_at', 'provider', 'player_embed_url', 'hls_url', 'current_item_index', 'exec_session', 'recording_url', 'recording_available', 'retention_policy', 'consent_notice', 'meeting_agenda_id'];
+    const allowed = ['title', 'scheduled_at', 'mode', 'provider', 'player_embed_url', 'hls_url', 'room_url', 'room_name', 'current_item_index', 'exec_session', 'recording_url', 'recording_available', 'retention_policy', 'consent_notice', 'meeting_agenda_id'];
     for (const k of allowed) if (k in b) patch[k] = b[k];
     // Lifecycle transitions stamp timestamps.
     if (b.status && ['scheduled', 'live', 'ended', 'canceled'].includes(b.status)) {
@@ -144,12 +147,13 @@ router.get('/live', async (req, res) => {
     res.json({
       broadcast: {
         id: live.id, title: live.title || (agenda && agenda.title) || 'Board Meeting',
-        status: live.status, exec_session: !!live.exec_session,
+        status: live.status, mode: live.mode, exec_session: !!live.exec_session,
         scheduled_at: live.scheduled_at || (agenda && agenda.meeting_date) || null,
         started_at: live.started_at, current_item_index: live.current_item_index,
         provider: live.provider,
         player_embed_url: canWatch ? live.player_embed_url : null,
         hls_url: canWatch ? live.hls_url : null,
+        room_url: canWatch ? live.room_url : null,
         consent_notice: live.consent_notice,
         recording_available: !!live.recording_available, recording_url: live.recording_available ? live.recording_url : null,
       },

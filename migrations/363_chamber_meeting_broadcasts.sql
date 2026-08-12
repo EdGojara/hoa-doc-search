@@ -25,13 +25,22 @@ CREATE TABLE IF NOT EXISTS meeting_broadcasts (
   scheduled_at           TIMESTAMPTZ,
   status                 TEXT NOT NULL DEFAULT 'scheduled'
                            CHECK (status IN ('scheduled', 'live', 'ended', 'canceled')),
-  -- Provider-agnostic playback: an iframe embed URL (Zoom web client, Mux /
-  -- Cloudflare Stream player, unlisted YouTube, etc.). hls_url optional for a
-  -- native player. We do not host the video.
+  -- Chamber has two modes, one engine:
+  --   broadcast — televised board meeting, one-way to many (watch + request to
+  --               speak). Uses hls_url / player_embed_url.
+  --   meeting   — two-way virtual meeting ("Zoom but ours"): board work
+  --               sessions, vendor/proposal presentations. Uses room_url.
+  --   webinar   — speakers two-way, the rest watch one-way.
+  mode                   TEXT NOT NULL DEFAULT 'broadcast'
+                           CHECK (mode IN ('broadcast', 'meeting', 'webinar')),
+  -- Provider-agnostic. Two-way rooms (Daily / LiveKit) join via room_url; a
+  -- one-way broadcast plays via hls_url / player_embed_url. We host no video.
   provider               TEXT DEFAULT 'other'
-                           CHECK (provider IN ('zoom', 'mux', 'cloudflare', 'youtube', 'other')),
+                           CHECK (provider IN ('daily', 'livekit', 'zoom', 'mux', 'cloudflare', 'youtube', 'other')),
   player_embed_url       TEXT,
   hls_url                TEXT,
+  room_url               TEXT,                                   -- two-way room join URL (meeting/webinar)
+  room_name              TEXT,
   -- Live agenda sync: which agenda item the board is on right now.
   current_item_index     INTEGER NOT NULL DEFAULT 0,
   -- Executive session: when TRUE the stream + recording are cut and viewers
