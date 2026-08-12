@@ -44970,52 +44970,79 @@ ${questionsPage}
         if (statusFilter) params.set('status', statusFilter);
         const r = await fetch('/api/ap/invoices?' + params.toString());
         const j = await r.json();
-        const rows = j.invoices || [];
-        if (rows.length === 0) {
-          const msg = apCurrentTab === 'awaiting'
-            ? 'No invoices awaiting approval. Drop a PDF above to start.'
-            : apCurrentTab === 'approved'
-              ? 'No approved invoices waiting for payment.'
-              : 'No invoices yet for this community.';
-          c.innerHTML = `<div style="padding:24px; color:#888; text-align:center;">${apEsc(msg)}</div>`;
-          return;
-        }
-        c.innerHTML = `
-          <table style="width:100%; border-collapse:collapse; font-size:13px;">
-            <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
-              <th style="padding:8px 10px; text-align:left;">Vendor</th>
-              <th style="padding:8px 10px; text-align:left;">Invoice #</th>
-              <th style="padding:8px 10px; text-align:left;">Date</th>
-              <th style="padding:8px 10px; text-align:left;">Due</th>
-              <th style="padding:8px 10px; text-align:right;">Amount</th>
-              <th style="padding:8px 10px; text-align:center;">Coding</th>
-              <th style="padding:8px 10px; text-align:center;">Status</th>
-            </tr></thead>
-            <tbody>
-              ${rows.map((inv) => {
-                const daysUntil = apDaysUntil(inv.due_date);
-                const dueColor = daysUntil != null && daysUntil < 0 ? '#dc2626'
-                               : daysUntil != null && daysUntil <= 7 ? '#d97706'
-                               : '#6b7280';
-                return `
-                  <tr style="border-bottom:1px solid #eee; cursor:pointer;" onclick="apOpenInvoice('${inv.id}')">
-                    <td style="padding:8px 10px;"><strong>${apEsc(inv.vendors?.name || '—')}</strong>${inv.vendors?.category ? ' <span style="font-size:10.5px; color:#888;">· ' + apEsc(inv.vendors.category) + '</span>' : ''}</td>
-                    <td style="padding:8px 10px; font-family:ui-monospace,monospace; font-size:12px;">${apEsc(inv.vendor_invoice_number || '—')}</td>
-                    <td style="padding:8px 10px;">${apEsc(apFmtDate(inv.invoice_date))}</td>
-                    <td style="padding:8px 10px; color:${dueColor};">${apEsc(apFmtDate(inv.due_date))}${daysUntil != null && daysUntil < 0 ? ` <strong>(${Math.abs(daysUntil)}d late)</strong>` : daysUntil != null && daysUntil <= 7 ? ` <strong>(${daysUntil}d)</strong>` : ''}</td>
-                    <td style="padding:8px 10px; text-align:right; font-family:ui-monospace,monospace; font-weight:600;">${apFmtCents(inv.total_cents)}</td>
-                    <td style="padding:8px 10px; text-align:center;">${apConfidenceBadge(inv.auto_coding_confidence)}</td>
-                    <td style="padding:8px 10px; text-align:center;">${apStatusBadge(inv.status)}${apApprovalBadge(inv)}</td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        `;
+        window._apRows = j.invoices || [];
+        apRenderList();
       } catch (e) {
         c.innerHTML = `<div style="color:#dc2626; padding:20px;">Failed: ${apEsc(e.message)}</div>`;
       }
     };
+
+    // Sortable payables table — click a header to sort (like Vendor Aging).
+    // Default: soonest due first, so the most overdue bills float to the top.
+    window.apSort = window.apSort || { key: 'due_date', dir: 'asc' };
+    window.apSortBy = function (key) {
+      if (window.apSort.key === key) window.apSort.dir = window.apSort.dir === 'asc' ? 'desc' : 'asc';
+      else window.apSort = { key, dir: (key === 'total_cents' || key === 'invoice_date' || key === 'due_date') ? 'desc' : 'asc' };
+      apRenderList();
+    };
+    function apRenderList() {
+      const c = document.getElementById('ap-list-container'); if (!c) return;
+      const rows = (window._apRows || []).slice();
+      if (!rows.length) {
+        const msg = apCurrentTab === 'awaiting' ? 'No invoices awaiting approval. Drop a PDF above to start.'
+          : apCurrentTab === 'approved' ? 'No approved invoices waiting for payment.' : 'No invoices yet for this community.';
+        c.innerHTML = `<div style="padding:24px; color:#888; text-align:center;">${apEsc(msg)}</div>`;
+        return;
+      }
+      const s = window.apSort; const dir = s.dir === 'asc' ? 1 : -1;
+      const val = (inv) => {
+        switch (s.key) {
+          case 'vendor': return (inv.vendors && inv.vendors.name || '').toLowerCase();
+          case 'vendor_invoice_number': return (inv.vendor_invoice_number || '').toLowerCase();
+          case 'invoice_date': return inv.invoice_date || '';
+          case 'due_date': return inv.due_date || '9999-99-99';
+          case 'total_cents': return inv.total_cents || 0;
+          default: return '';
+        }
+      };
+      rows.sort((a, b) => { const va = val(a), vb = val(b); return va < vb ? -1 * dir : va > vb ? 1 * dir : 0; });
+      const arrow = (key) => s.key === key ? (s.dir === 'asc' ? ' ▲' : ' ▼') : '';
+      const th = (key, label, align) => `<th style="padding:8px 10px; text-align:${align || 'left'}; cursor:pointer; user-select:none; white-space:nowrap;" onclick="apSortBy('${key}')" title="Sort by ${label.toLowerCase()}"><span style="border-bottom:1px dotted #94a3b8;">${label}</span><span style="color:#315A87;">${arrow(key)}</span></th>`;
+      const total = rows.reduce((sm, i) => sm + (i.total_cents || 0), 0);
+      c.innerHTML = `
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+            ${th('vendor', 'Vendor')}
+            ${th('vendor_invoice_number', 'Invoice #')}
+            ${th('invoice_date', 'Date')}
+            ${th('due_date', 'Due')}
+            ${th('total_cents', 'Amount', 'right')}
+            <th style="padding:8px 10px; text-align:center;">Coding</th>
+            <th style="padding:8px 10px; text-align:center;">Status</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map((inv) => {
+              const daysUntil = apDaysUntil(inv.due_date);
+              const dueColor = daysUntil != null && daysUntil < 0 ? '#dc2626' : daysUntil != null && daysUntil <= 7 ? '#d97706' : '#6b7280';
+              return `
+                <tr style="border-bottom:1px solid #eee; cursor:pointer;" onclick="apOpenInvoice('${inv.id}')">
+                  <td style="padding:8px 10px;"><strong>${apEsc(inv.vendors?.name || '—')}</strong>${inv.vendors?.category ? ' <span style="font-size:10.5px; color:#888;">· ' + apEsc(inv.vendors.category) + '</span>' : ''}</td>
+                  <td style="padding:8px 10px; font-family:ui-monospace,monospace; font-size:12px;">${apEsc(inv.vendor_invoice_number || '—')}</td>
+                  <td style="padding:8px 10px; white-space:nowrap;">${apEsc(apFmtDate(inv.invoice_date))}</td>
+                  <td style="padding:8px 10px; color:${dueColor}; white-space:nowrap;">${apEsc(apFmtDate(inv.due_date))}${daysUntil != null && daysUntil < 0 ? ` <strong>(${Math.abs(daysUntil)}d late)</strong>` : daysUntil != null && daysUntil <= 7 ? ` <strong>(${daysUntil}d)</strong>` : ''}</td>
+                  <td style="padding:8px 10px; text-align:right; font-family:ui-monospace,monospace; font-weight:600;">${apFmtCents(inv.total_cents)}</td>
+                  <td style="padding:8px 10px; text-align:center;">${apConfidenceBadge(inv.auto_coding_confidence)}</td>
+                  <td style="padding:8px 10px; text-align:center;">${apStatusBadge(inv.status)}${apApprovalBadge(inv)}</td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot><tr style="border-top:2px solid #0B1D34; font-weight:700;">
+            <td style="padding:9px 10px;" colspan="4">${rows.length} bill${rows.length === 1 ? '' : 's'}</td>
+            <td style="padding:9px 10px; text-align:right; font-family:ui-monospace,monospace;">${apFmtCents(total)}</td>
+            <td colspan="2"></td>
+          </tr></tfoot>
+        </table>`;
+    }
 
     async function apLoadAging() {
       const c = document.getElementById('ap-aging-container');
@@ -45734,7 +45761,7 @@ ${questionsPage}
                 ? 'Waiting on a manager. You can still release any of these directly — it gets recorded as released without one.'
                 : 'These are waiting on you. Open one to approve or reject it.'}</div>
             </div>
-            <div style="margin-top:8px; display:flex; flex-direction:column; gap:5px;">
+            ${(apMgrQueueShowAll || !picked) ? `<div style="margin-top:8px; display:flex; flex-direction:column; gap:5px;">
               ${rows.map((i) => `
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 9px; background:${i.credit_hold ? '#fef2f2' : '#fffbeb'}; border:1px solid ${i.credit_hold ? '#fecaca' : '#fde68a'}; border-radius:6px; cursor:pointer;" onclick="apOpenInvoice('${i.id}')">
                   <div style="min-width:0;">
@@ -45748,7 +45775,7 @@ ${questionsPage}
                     <div style="font-size:11px; color:#5a7390;">${i.due_date ? 'due ' + apFmtDate(i.due_date) : ''}</div>
                   </div>
                 </div>`).join('')}
-            </div>
+            </div>` : `<div style="margin-top:6px; font-size:12px; color:#5a7390;">These bills are in the <strong>Awaiting Approval</strong> list below (sort by any column). Open one to approve it.</div>`}
           </div>`;
       } catch (e) {
         // Never blank the queue on a transient failure — a manager seeing "0
