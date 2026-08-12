@@ -818,8 +818,9 @@
       if(j.cap_pct!=null){ capEl.value=j.cap_pct; bdgApplyRate(); }
       if(cite){
         const reread=` · <a onclick="bdgLoadCap(true)" style="cursor:pointer; text-decoration:underline;">re-read</a>`;
+        const noteLine=j.note?`<div style="margin-top:2px; color:#92400e;">⚠ ${esc(j.note)}${j.prior_cap_pct!=null?` (was ${j.prior_cap_pct}%)`:''}${j.over_cap_vote?` · above the cap needs ${esc(j.over_cap_vote)} approval`:''}</div>`:'';
         if(j.no_cap) cite.innerHTML=`No board increase cap in the governing docs${j.source?` (${esc(j.source)})`:''} — the % above is your own guardrail.`+reread;
-        else if(j.cap_pct!=null) cite.innerHTML=`✓ Cap <strong>${j.cap_pct}%</strong> from your governing documents${j.source?` — ${esc(j.source)}`:''}${j.quote?` <span title="${esc(j.quote)}" style="cursor:help;">ⓘ</span>`:''}${j.needs_review?' <span style="color:#92400e;">· confirm against the doc</span>':''}`+reread;
+        else if(j.cap_pct!=null) cite.innerHTML=`✓ Cap <strong>${j.cap_pct}%</strong> from your governing documents${j.source?` — ${esc(j.source)}`:''}${j.quote?` <span title="${esc(j.quote)}" style="cursor:help;">ⓘ</span>`:''}${j.needs_review?' <span style="color:#92400e;">· confirm against the doc</span>':''}${reread}${noteLine}`;
         else cite.innerHTML=`No cap found in the docs — using ${esc(capEl.value)}% (editable).`+reread;
       }
     }catch(e){ if(cite) cite.innerHTML=`Couldn't read the cap from docs — using ${esc(capEl.value)}%.`; }

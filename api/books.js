@@ -798,11 +798,11 @@ router.get('/assessment-cap', async (req, res) => {
     const FACT_KEY = 'assessment_increase_cap_pct';
     if (!refresh) {
       const { data: fact, error: fErr } = await supabase.from('community_facts')
-        .select('value, details, source_ref, needs_review, manual_override').eq('community_id', community_id).eq('key', FACT_KEY).maybeSingle();
+        .select('value, details, source_ref, review_note, needs_review, manual_override').eq('community_id', community_id).eq('key', FACT_KEY).maybeSingle();
       if (fErr) throw fErr;
       if (fact) {
         const capNum = parseFloat(String(fact.value).replace(/[^0-9.]/g, ''));
-        return res.json({ cap_pct: Number.isFinite(capNum) ? capNum : null, no_cap: /no cap|no limit|unlimited/i.test(fact.value || ''), quote: fact.details || null, source: fact.source_ref || null, needs_review: !!fact.needs_review, manual_override: !!fact.manual_override, cached: true, found: true });
+        return res.json({ cap_pct: Number.isFinite(capNum) ? capNum : null, no_cap: /no cap|no limit|unlimited/i.test(fact.value || ''), quote: fact.details || null, source: fact.source_ref || null, note: fact.review_note || null, amended: /amend|supersed|prior|original/i.test(fact.review_note || ''), needs_review: !!fact.needs_review, manual_override: !!fact.manual_override, cached: true, found: true });
       }
     }
     const { data: comm, error: cErr } = await supabase.from('communities').select('name').eq('id', community_id).maybeSingle();
@@ -816,17 +816,20 @@ router.get('/assessment-cap', async (req, res) => {
     const prompt = `From the HOA governing-document excerpts below, find the CAP on how much the BOARD may increase the REGULAR annual assessment in a single year WITHOUT a vote of the members.
 
 Return ONLY JSON, no preamble:
-{ "found": true|false, "cap_pct": <number or null, e.g. 10 for ten percent>, "cap_basis": "percent|dollar|cpi|none", "no_cap": true|false, "quote": "the exact sentence(s), verbatim from the excerpts", "citation": "document name + article/section if identifiable" }
+{ "found": true|false, "cap_pct": <number or null — the CONTROLLING cap>, "cap_basis": "percent|dollar|cpi|none", "no_cap": true|false, "amended": true|false, "prior_cap_pct": <number or null>, "effective_note": "e.g. '20% from Jan 1, 2001, amending the original 10%'", "over_cap_vote": "e.g. 'two-thirds (2/3) of each class' or null", "quote": "the exact sentence(s), verbatim from the excerpts, for the CONTROLLING provision", "citation": "document name + article/section" }
 
 Rules:
 - cap_pct is the PERCENT the board can raise regular assessments annually without owner approval. "shall not be increased by more than ten percent (10%)" -> 10.
-- If the cap is dollar- or CPI-based, set cap_basis and give cap_pct only if a percent is actually stated, else null.
-- If the documents explicitly state there is NO limit, set no_cap true and found true.
+- AMENDMENTS: declarations are often amended. If you find MORE THAN ONE increase cap (an original and a later/amended one, usually distinguished by an effective date like "From and after January 1, 2001"), the LATEST-dated provision CONTROLS — report it as cap_pct, set "amended": true, put the ORIGINAL percent in "prior_cap_pct", and explain the timeline in "effective_note". Do NOT silently pick one; surface both.
+- Do NOT confuse an increase cap with unrelated percentages — interest on unpaid assessments (e.g. "10% per annum" on delinquencies) is NOT an increase cap.
+- over_cap_vote: the member-approval threshold required to exceed the cap, if stated.
+- If the cap is dollar- or CPI-based, set cap_basis and give cap_pct only if a percent is stated, else null.
+- If the documents explicitly state NO limit, set no_cap true and found true.
 - If the excerpts don't address a board increase cap, found false.
 - quote must be verbatim from the excerpts, never paraphrased.
 
 EXCERPTS:
-${String(chunks).slice(0, 12000)}
+${String(chunks).slice(0, 14000)}
 
 Return ONLY the JSON.`;
     const resp = await _anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 1200, messages: [{ role: 'user', content: prompt }] });
@@ -839,11 +842,12 @@ Return ONLY the JSON.`;
         community_id, key: FACT_KEY, category: 'financial',
         label: 'Annual assessment increase cap (board, no member vote)',
         value: valueStr, details: ex.quote || null, source_ref: ex.citation || null,
+        review_note: ex.effective_note || null,
         source_type: 'pulled_from', needs_review: true, last_updated_at: new Date().toISOString(),
       }, { onConflict: 'community_id,key' });
       if (upErr) console.warn('[books] assessment-cap cache write warning:', upErr.message);
     }
-    res.json({ cap_pct: ex.cap_pct != null ? ex.cap_pct : null, no_cap: !!ex.no_cap, quote: ex.quote || null, source: ex.citation || null, found: !!ex.found, needs_review: true, cached: false });
+    res.json({ cap_pct: ex.cap_pct != null ? ex.cap_pct : null, no_cap: !!ex.no_cap, quote: ex.quote || null, source: ex.citation || null, found: !!ex.found, amended: !!ex.amended, prior_cap_pct: ex.prior_cap_pct != null ? ex.prior_cap_pct : null, note: ex.effective_note || null, over_cap_vote: ex.over_cap_vote || null, needs_review: true, cached: false });
   } catch (err) {
     console.error('[books] assessment-cap failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
