@@ -11053,12 +11053,16 @@ router.get('/attorney-update/candidates', async (req, res) => {
     const candidates = [];
     for (const v of (vios || [])) {
       const photo = v.property_id ? await _latestPhotoForProperty(v.property_id) : null;
+      let photoAgeDays = null;
+      if (photo && photo.captured_at) photoAgeDays = Math.floor((Date.now() - new Date(photo.captured_at).getTime()) / 86400000);
       candidates.push({
         id: v.id,
         address: v.properties ? `${v.properties.street_address || ''}${v.properties.unit ? ' #' + v.properties.unit : ''}`.trim() : '',
         category: v.enforcement_categories ? v.enforcement_categories.label : 'Violation',
         at_legal_since: v.sent_to_attorney_at ? new Date(v.sent_to_attorney_at).toLocaleDateString() : null,
         has_photo: !!photo, photo_taken_at: photo ? _fmtPhotoTime(photo.captured_at) : null,
+        photo_age_days: photoAgeDays,
+        photo_stale: photoAgeDays != null && photoAgeDays > 30,
       });
     }
     const { data: att } = await supabase.from('community_contacts').select('name, email').eq('community_id', community_id).eq('category', 'attorney').limit(1).maybeSingle();

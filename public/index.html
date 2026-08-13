@@ -19851,7 +19851,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <div style="flex:1;">
             <div style="font-weight:600; color:#0B1D34; font-size:13px;">${escapeHtml(c.address || 'Property')}</div>
             <div style="font-size:11.5px; color:#64748b; margin-top:2px;">${escapeHtml(c.category || 'Violation')}${c.at_legal_since ? ' · at legal since ' + escapeHtml(c.at_legal_since) : ''}</div>
-            <div style="font-size:11px; margin-top:2px; color:${c.has_photo ? '#15803d' : '#b91c1c'};">${c.has_photo ? '📷 photo on file' + (c.photo_taken_at ? ' — ' + escapeHtml(c.photo_taken_at) : '') : '⚠ no photo on file — use 📷 Legal picture on the case first'}</div>
+            <div style="font-size:11px; margin-top:2px; color:${!c.has_photo ? '#b91c1c' : (c.photo_stale ? '#b45309' : '#15803d')};">${!c.has_photo ? '⚠ no photo on file — use 📷 Legal picture on the case first' : (c.photo_stale ? `⚠ photo is ${c.photo_age_days} days old${c.photo_taken_at ? ' (' + escapeHtml(c.photo_taken_at) + ')' : ''} — retake with 📷 Legal picture` : '📷 photo on file' + (c.photo_taken_at ? ' — ' + escapeHtml(c.photo_taken_at) : ''))}</div>
           </div>
         </label>`).join('');
     ov.querySelector('div').innerHTML = `
@@ -19881,6 +19881,17 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     if (!ids.length) { alert('Select at least one case.'); return; }
     const recipient = (document.getElementById('auRecipient') || {}).value || '';
     if (send && !/.+@.+\..+/.test(recipient)) { alert('Enter a valid attorney email to send.'); return; }
+    if (send) {
+      const sel = (_attorneyUpdateData.candidates || []).filter((c) => ids.includes(c.id));
+      const missing = sel.filter((c) => !c.has_photo).length;
+      const stale = sel.filter((c) => c.has_photo && c.photo_stale).length;
+      if (missing || stale) {
+        const parts = [];
+        if (missing) parts.push(`${missing} with NO photo`);
+        if (stale) parts.push(`${stale} with a photo over 30 days old`);
+        if (!confirm(`Heads up — you're about to send the attorney a packet that includes ${parts.join(' and ')}.\n\nThe stamped date is what makes these defensible. Retake current photos with 📷 Legal picture, or send anyway?`)) return;
+      }
+    }
     const statusEl = document.getElementById('auStatus');
     if (statusEl) statusEl.textContent = send ? 'Building and emailing…' : 'Building preview…';
     try {
