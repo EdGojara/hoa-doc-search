@@ -184,6 +184,7 @@ router.get('/community/:id/summary', async (req, res) => {
 
     // DRV breakdown by stage — counts of currently-open violations per stage
     let drvByStage = null;
+    let drvAtAttorney = 0; // separate axis — a case at attorney is ALSO at a stage
     try {
       const { data: drv } = await supabase
         .from('interactions')
@@ -197,6 +198,20 @@ router.get('/community/:id/summary', async (req, res) => {
         if (r.current_stage in buckets) buckets[r.current_stage]++;
       });
       drvByStage = buckets;
+      // Deed-restriction cases referred to the association's attorney — the
+      // enforcement-side "at attorney", distinct from collections-at-legal above.
+      // Sourced from violations.sent_to_attorney_at (the SSOT). Kept OUT of the
+      // stage buckets: a case at attorney is also at a stage, so folding it in
+      // would double-count the drvTotal the board tile sums.
+      try {
+        const { count } = await supabase.from('violations')
+          .select('id', { count: 'exact', head: true })
+          .eq('community_id', communityId)
+          .not('sent_to_attorney_at', 'is', null)
+          .is('resolved_at', null)
+          .not('current_stage', 'in', '(cured,closed,voided)');
+        drvAtAttorney = count || 0;
+      } catch (e2) { console.warn('[board_portal] DRV at-attorney count skipped:', e2.message); }
     } catch (e) {
       console.warn('[board_portal] DRV breakdown skipped:', e.message);
     }
@@ -266,6 +281,7 @@ router.get('/community/:id/summary', async (req, res) => {
       ar_aging: arAging,
       reserve_health: reserveHealth,
       drv_by_stage: drvByStage,
+      drv_at_attorney: drvAtAttorney,
       arc_pipeline: arcPipeline,
       recent_meetings: recentMeetings,
     });

@@ -220,7 +220,7 @@ async function assemble(contactId) {
 
   // Violations (+ category label), newest first
   let violations = propIds.length ? await safe(() => supabase.from('violations')
-    .select('id, current_stage, opened_at, resolved_at, resolved_via, resolved_notes, quality_status, primary_category_id, property_id, opened_from_observation_id')
+    .select('id, current_stage, opened_at, resolved_at, resolved_via, resolved_notes, quality_status, primary_category_id, property_id, opened_from_observation_id, sent_to_attorney_at, attorney_firm, attorney_name')
     .in('property_id', propIds).order('opened_at', { ascending: false }).limit(50)) : [];
   const catIds = [...new Set(violations.map((v) => v.primary_category_id).filter(Boolean))];
   const cats = catIds.length ? await safe(() => supabase.from('enforcement_categories').select('id, label').in('id', catIds)) : [];
@@ -406,7 +406,23 @@ async function assemble(contactId) {
     letter_available: !!(it.content && /\.pdf$/i.test(it.content) && /letter/i.test(it.type || '') && letterWentOut(it)),
   }));
 
-  return { contact, properties, ar: { balance_cents, transactions: txns }, amenity, flags, collections, violations, arc, interactions: interactionsOut, emails, calls, poolAccess, paymentPlans, attachments, emailAttachments };
+  // At-attorney summary — spans BOTH tracks so no surface misses one:
+  //   • account/collections at legal → property_enforcement_states + ar_account_collections
+  //   • deed-restriction (DRV) at attorney → an open violation with sent_to_attorney_at
+  const drvAtAttorney = (violations || []).filter((v) => v.sent_to_attorney_at && !v.resolved_at && !['cured', 'closed', 'voided'].includes(v.current_stage));
+  const accountAtLegal = (flags || []).some((f) => ['at_legal', 'lien_filed', 'judgment'].includes(f.state))
+    || (collections || []).some((c) => ['with_attorney', 'lien_filed', 'foreclosure', 'bankruptcy'].includes(c.collection_status));
+  const at_attorney = {
+    any: drvAtAttorney.length > 0 || accountAtLegal,
+    collections: accountAtLegal,
+    drv: drvAtAttorney.length > 0,
+    drv_count: drvAtAttorney.length,
+    firm: (drvAtAttorney.find((v) => v.attorney_firm) || {}).attorney_firm
+      || ((collections || []).find((c) => c.collection_status === 'with_attorney') ? null : null),
+    drv_categories: drvAtAttorney.map((v) => catLabel[v.primary_category_id] || 'violation'),
+  };
+
+  return { contact, properties, ar: { balance_cents, transactions: txns }, amenity, flags, collections, violations, arc, interactions: interactionsOut, emails, calls, poolAccess, paymentPlans, attachments, emailAttachments, at_attorney };
 }
 
 // GET /profile/:contactId — the assembled 360 (fast, no AI)
@@ -528,6 +544,7 @@ Properties: ${d.properties.map((p) => p.address + (p.community ? ` (${p.communit
 Current balance: ${money(d.ar.balance_cents)} ${d.ar.balance_cents > 0 ? '(owes)' : d.ar.balance_cents < 0 ? '(credit)' : ''}
 Enforcement flags: ${d.flags.map((f) => f.state).join(', ') || 'none'}
 Legal / collection status (STAFF-ONLY, at attorney): ${(d.collections || []).map((c) => `${c.collection_status}${c.status_since ? ' since ' + String(c.status_since).slice(0, 10) : ''}${c.collection_status === 'bankruptcy' ? ' — AUTOMATIC STAY, do not attempt to collect or send notices' : ''}${c.notes ? ' — ' + String(c.notes).slice(0, 160) : ''}`).join(' | ') || 'none'}
+Deed-restriction cases at attorney (STAFF-ONLY): ${d.at_attorney && d.at_attorney.drv ? `${d.at_attorney.drv_count} case(s) with counsel — ${d.at_attorney.drv_categories.join(', ')}. Do NOT contact the homeowner directly on these; route through the attorney.` : 'none'}
 Payment plan: ${(d.paymentPlans || []).filter((p) => p.status === 'active').map((p) => `ACTIVE — ${p.installment_amount_cents ? money(p.installment_amount_cents) + '/' + (p.frequency || 'monthly') : 'installments'}${p.num_installments ? ' x' + p.num_installments : ''}${p.next_due_date ? ', next due ' + String(p.next_due_date).slice(0, 10) : ''}${p.terms_summary ? ' — ' + String(p.terms_summary).slice(0, 140) : ''}`).join(' | ') || 'none on file'}
 Open violations (${openV.length}): ${openV.map((v) => `${v.category} @ ${v.current_stage}, opened ${(v.opened_at || '').slice(0, 10)}`).join('; ') || 'none'}
 Violation history (${d.violations.length} total): ${d.violations.slice(0, 12).map((v) => `${v.category} [${v.open ? 'open ' + v.current_stage : 'resolved'}]`).join('; ')}

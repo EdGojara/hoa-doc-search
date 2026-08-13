@@ -213,6 +213,10 @@ async function openProfile(cid){
   const atLegal=colls.some(x=>LEGAL_STAGES.includes(x.collection_status));
   const legalChip = hasBk?`<span class="chip" style="background:#fee2e2;color:#991b1b;font-weight:700;">⚖️ Bankruptcy — hands off</span>`
     : atLegal?`<span class="chip" style="background:#fef3c7;color:#92400e;font-weight:700;">⚖️ At legal</span>`:'';
+  // Deed-restriction (DRV) at attorney — the enforcement track, separate from the
+  // account/collections legal status above. STAFF-ONLY; route through counsel.
+  const drvAtty = d.at_attorney && d.at_attorney.drv;
+  const drvAttyChip = drvAtty?`<span class="chip" style="background:#7f1d1d;color:#fff;font-weight:700;" title="A deed-restriction violation is with the association's attorney${d.at_attorney.drv_categories&&d.at_attorney.drv_categories.length?' — '+esc(d.at_attorney.drv_categories.join(', ')):''}. Do not contact the homeowner directly on these.">⚖️ At attorney · deed restriction${d.at_attorney.drv_count>1?' ('+d.at_attorney.drv_count+')':''}</span>`:'';
 
   // merged correspondence timeline — every channel in one consistent view:
   // letters/notes (interactions) + emails (hub) + phone calls (voice log).
@@ -243,7 +247,7 @@ async function openProfile(cid){
         </div>
         <div class="ct">${ps.map(p=>esc(p.address)+(p.community?' · '+esc(p.community):'')).join('<br>')||'no property on file'}</div>
         ${c.mailing_address?`<div class="ct" style="color:#64748b;">✉️ Mailing: ${esc(c.mailing_address)}</div>`:''}
-        <div class="chips">${balChip}${amenChip}${openChip}${legalChip}${flagChips}</div>
+        <div class="chips">${balChip}${amenChip}${openChip}${legalChip}${drvAttyChip}${flagChips}</div>
       </div>
     </div></div>
 

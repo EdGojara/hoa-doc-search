@@ -1616,10 +1616,12 @@
     const drvTotal = Object.values(drv).reduce((a, b) => a + (b || 0), 0);
     const drvCourtesy = (drv.courtesy_1 || 0) + (drv.courtesy_2 || 0);
     const drvSevere = (drv.certified_209 || 0) + (drv.fine_assessed || 0);
+    const drvAtAttorney = s.drv_at_attorney || 0;
     const drvBreakdown = drvTotal === 0 ? 'all clear 🎉' : [
       drvCourtesy ? `${drvCourtesy} courtesy` : '',
       (drv.certified_209 || 0) ? `${drv.certified_209} at §209` : '',
       (drv.fine_assessed || 0) ? `${drv.fine_assessed} fined` : '',
+      drvAtAttorney ? `${drvAtAttorney} at attorney ⚖️` : '',
     ].filter(Boolean).join(' · ');
     const drvTile = `
       <a class="board-tile" href="javascript:showViolations()">
