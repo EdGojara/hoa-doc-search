@@ -17803,6 +17803,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
         <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">💰 Fine Queue <span style="color:#64748b; font-weight:500;">— assessed, awaiting posting to Vantaca</span></h3>
         <div>
+          <button class="secondary-btn" onclick="attorneyUpdateOpen()" style="font-size:11px; padding:4px 10px; margin-right:4px; background:#7f1d1d; color:#fff; border-color:#7f1d1d;" title="Build the monthly Violation Update packet for the attorney — all at-legal cases, each with its latest date-stamped photo, current status, and how long it's been at legal. Preview the PDF or email it to the attorney on file.">⚖️ Attorney Update</button>
           <button class="secondary-btn" onclick="inspVViOpen()" style="font-size:11px; padding:4px 10px; margin-right:4px;" title="Import historical violations from a Vantaca export">📥 Import Vantaca history</button>
           <button class="secondary-btn" onclick="inspBulkLetterAttachOpen()" style="font-size:11px; padding:4px 10px; margin-right:4px;" title="Bulk-attach Vantaca letter PDFs to existing imported violations">📎 Bulk attach letters</button>
           <button class="secondary-btn" onclick="inspFineScheduleOpen()" style="font-size:11px; padding:4px 10px; margin-right:4px;">⚙ Fine schedule</button>
@@ -18939,6 +18940,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                      ${['courtesy_1','courtesy_2','certified_209'].includes(v.current_stage) ? `<button onclick="inspAdvanceStage('${v.id}','${v.current_stage}')" title="Advance to the next enforcement stage (Courtesy 2 → Certified §209, etc.). Deliberate staff action — you still generate + mail the certified notice; the cure clock starts when it goes out." style="background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↑ Advance</button>` : ''}
                      ${['courtesy_2','certified_209','fine_assessed'].includes(v.current_stage) ? `<button onclick="inspReduceStage('${v.id}','${v.current_stage}')" title="Reduce to the previous stage (Courtesy 2 → Courtesy 1, Certified → Courtesy 2). Use when a case was over-escalated — e.g. a deduped duplicate bumped a first occurrence up a level. Clears the cure clock; regenerate the lower-stage letter." style="background:#eff6ff; border:1px solid #93c5fd; color:#1e40af; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↓ Reduce</button>` : ''}
                      ${v.sent_to_attorney_at ? `<span title="Sent to the association's attorney on ${new Date(v.sent_to_attorney_at).toLocaleDateString()}${v.attorney_firm ? ' — ' + escapeHtml(v.attorney_firm) : ''}${v.attorney_matter_ref ? ' (ref ' + escapeHtml(v.attorney_matter_ref) + ')' : ''}. This §209's cure clock is now counsel's — it's off the Schedule calendar. If it comes back, mark it Cured." style="display:inline-block; background:#ede9fe; border:1px solid #c4b5fd; color:#5b21b6; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:700; margin-right:3px;">⚖ At attorney <button onclick="inspUnsetAttorney('${v.id}')" title="Undo — this was marked in error. Does not resolve the case." style="background:none; border:none; color:#7c3aed; cursor:pointer; font-size:10.5px; padding:0 0 0 3px; text-decoration:underline;">undo</button></span>` : (v.current_stage === 'certified_209' ? `<button onclick="inspSendToAttorney('${v.id}')" title="Hand this certified §209 to the association's attorney for enforcement. The case stays open but its cure deadline comes off the Schedule calendar — that clock is counsel's now. If it later comes back, mark it Cured." style="background:#f5f3ff; border:1px solid #c4b5fd; color:#5b21b6; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚖ To attorney</button>` : '')}
+                     ${v.sent_to_attorney_at ? `<button onclick="legalPhotoPick('${v.id}')" title="Take or upload a current photo for this at-legal case. It lands in the same place as the monthly drive photos, and the Attorney Update packet always uses the latest photo on file. The capture date + time + address are burned into the photo so it can't be disputed." style="background:#7f1d1d; border:1px solid #7f1d1d; color:#fff; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">📷 Legal picture</button>` : ''}
                      ${!['cured','closed','voided'].includes(v.current_stage) ? `<button onclick="inspMarkCured('${v.id}')" title="Close this violation (homeowner-confirmed cure, drive-by spot check, or board dismissal). Auto-resets any open repeat in this category back to Courtesy 1." style="background:#dcfce7; border:1px solid #86efac; color:#15803d; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Cure</button>` : ''}
                      ${(showLetterBtn && canDemote) ? `<button onclick="inspDemoteToPhotoPick('${v.id}')" title="Not a separate violation — attach this photo to another violation as its identifying/establishing shot (e.g. a front-of-house shot taken so a tight side-shot shows which house). Voids this one; the other letter then shows both photos." style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">📎 Just a photo for…</button>` : ''}
                      ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" title="Generate a NEW draft letter from today's data. This never touches a letter that was already sent — those stay sealed; use the 📄 Sent link to view what actually mailed." style="background:#0B1D34; color:#fff; border:none; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">＋ New letter</button>` : ''}
@@ -19769,6 +19771,134 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       }
     } catch (e) {
       alert('Could not undo: ' + e.message);
+    }
+  }
+
+  // "Legal picture" — take/upload a current photo for an at-legal case. Lands in
+  // inspection_photos exactly like a drive photo, so the Attorney Update packet
+  // always pulls the latest on file (drive OR legal upload — same store).
+  function legalPhotoPick(violationId) {
+    if (!violationId) return;
+    let inp = document.getElementById('legalPhotoInput');
+    if (!inp) {
+      inp = document.createElement('input');
+      inp.type = 'file'; inp.id = 'legalPhotoInput';
+      inp.accept = 'image/*'; inp.setAttribute('capture', 'environment');
+      inp.style.display = 'none';
+      inp.onchange = () => legalPhotoUpload(inp);
+      document.body.appendChild(inp);
+    }
+    inp.dataset.violationId = violationId;
+    inp.value = '';
+    inp.click();
+  }
+
+  async function legalPhotoUpload(inp) {
+    const violationId = inp.dataset.violationId;
+    const file = inp.files && inp.files[0];
+    if (!violationId || !file) return;
+    try {
+      const fd = new FormData();
+      fd.append('photo', file);
+      const r = await window._authFetch(`/api/enforcement/violations/${violationId}/legal-photo`, { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      alert('📷 Legal photo saved. The Attorney Update packet will use this as the latest photo on file for this address.');
+      if (typeof inspPDCurrentPropertyId !== 'undefined' && inspPDCurrentPropertyId) {
+        await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+      }
+    } catch (e) {
+      alert('Could not save the legal photo: ' + e.message);
+    }
+  }
+
+  // ── Attorney Update packet ────────────────────────────────────────────────
+  // Community-level: pick at-legal cases, build the date-stamped PDF, preview or
+  // email it to the attorney on file (editable recipient).
+  let _attorneyUpdateData = null;
+  async function attorneyUpdateOpen() {
+    const communityId = (document.getElementById('inspCommunity') || {}).value;
+    if (!communityId) { alert('Pick a community first.'); return; }
+    let ov = document.getElementById('attorneyUpdateOverlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'attorneyUpdateOverlay';
+      ov.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+      ov.onclick = (e) => { if (e.target === ov) attorneyUpdateClose(); };
+      document.body.appendChild(ov);
+    }
+    ov.innerHTML = '<div style="background:#fff; border-radius:14px; max-width:720px; width:100%; max-height:88vh; overflow:auto; padding:22px;"><div style="color:#64748b; font-size:13px; text-align:center; padding:30px;">Loading at-legal cases…</div></div>';
+    ov.style.display = 'flex';
+    try {
+      const r = await window._authFetch(`/api/enforcement/attorney-update/candidates?community_id=${encodeURIComponent(communityId)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      _attorneyUpdateData = { communityId, candidates: j.candidates || [], attorney: j.attorney || null };
+      attorneyUpdateRender();
+    } catch (e) {
+      ov.querySelector('div').innerHTML = `<div style="color:#b91c1c; font-size:13px; padding:20px;">Couldn't load: ${escapeHtml(e.message)}</div><div style="text-align:right;"><button onclick="attorneyUpdateClose()" style="background:#0B1D34; color:#fff; border:none; padding:8px 16px; border-radius:8px; cursor:pointer;">Close</button></div>`;
+    }
+  }
+
+  function attorneyUpdateRender() {
+    const { candidates, attorney } = _attorneyUpdateData;
+    const ov = document.getElementById('attorneyUpdateOverlay');
+    const rows = candidates.length === 0
+      ? '<div style="color:#94a3b8; font-size:13px; padding:20px; text-align:center;">No cases are currently at legal. Mark a certified §209 with the ⚖ To attorney button first.</div>'
+      : candidates.map((c, i) => `
+        <label style="display:flex; align-items:flex-start; gap:10px; padding:9px 4px; border-bottom:1px solid #f1f5f9; cursor:pointer;">
+          <input type="checkbox" class="auCand" data-id="${escapeHtml(c.id)}" checked style="margin-top:3px;">
+          <div style="flex:1;">
+            <div style="font-weight:600; color:#0B1D34; font-size:13px;">${escapeHtml(c.address || 'Property')}</div>
+            <div style="font-size:11.5px; color:#64748b; margin-top:2px;">${escapeHtml(c.category || 'Violation')}${c.at_legal_since ? ' · at legal since ' + escapeHtml(c.at_legal_since) : ''}</div>
+            <div style="font-size:11px; margin-top:2px; color:${c.has_photo ? '#15803d' : '#b91c1c'};">${c.has_photo ? '📷 photo on file' + (c.photo_taken_at ? ' — ' + escapeHtml(c.photo_taken_at) : '') : '⚠ no photo on file — use 📷 Legal picture on the case first'}</div>
+          </div>
+        </label>`).join('');
+    ov.querySelector('div').innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 style="margin:0; font-size:16px; color:#0B1D34;">⚖️ Attorney Violation Update</h3>
+        <button onclick="attorneyUpdateClose()" style="background:none; border:none; font-size:20px; color:#94a3b8; cursor:pointer;">×</button>
+      </div>
+      <div style="font-size:12px; color:#64748b; margin-bottom:10px;">Each selected case goes on the packet with its latest date-stamped photo and current status. Photos come from the monthly drive or the 📷 Legal picture button — whichever is newest on file.</div>
+      <div style="border:1px solid #e2e8f0; border-radius:10px; padding:6px 12px; margin-bottom:14px; max-height:44vh; overflow:auto;">${rows}</div>
+      <label style="display:block; font-size:11.5px; font-weight:600; color:#475569; margin-bottom:4px;">Send to attorney (editable)</label>
+      <input type="email" id="auRecipient" value="${escapeHtml(attorney && attorney.email ? attorney.email : '')}" placeholder="attorney@lawfirm.com" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px; margin-bottom:4px;">
+      <div style="font-size:11px; color:#94a3b8; margin-bottom:14px;">${attorney && attorney.name ? 'Attorney on file: ' + escapeHtml(attorney.name) : 'No attorney on file — add one under the community\'s contacts (category “attorney”), or type an address here.'}</div>
+      <div id="auStatus" style="font-size:12px; color:#64748b; min-height:16px; margin-bottom:8px;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button onclick="attorneyUpdateGenerate(false)" style="background:#fff; border:1px solid #cbd5e1; color:#0B1D34; padding:9px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">👁 Preview PDF</button>
+        <button onclick="attorneyUpdateGenerate(true)" style="background:#7f1d1d; border:none; color:#fff; padding:9px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">✉ Send to attorney</button>
+      </div>`;
+  }
+
+  function attorneyUpdateClose() {
+    const ov = document.getElementById('attorneyUpdateOverlay');
+    if (ov) ov.style.display = 'none';
+  }
+
+  async function attorneyUpdateGenerate(send) {
+    const ids = Array.from(document.querySelectorAll('.auCand:checked')).map((c) => c.dataset.id);
+    if (!ids.length) { alert('Select at least one case.'); return; }
+    const recipient = (document.getElementById('auRecipient') || {}).value || '';
+    if (send && !/.+@.+\..+/.test(recipient)) { alert('Enter a valid attorney email to send.'); return; }
+    const statusEl = document.getElementById('auStatus');
+    if (statusEl) statusEl.textContent = send ? 'Building and emailing…' : 'Building preview…';
+    try {
+      const r = await window._authFetch('/api/enforcement/attorney-update/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id: _attorneyUpdateData.communityId, violation_ids: ids, recipient: recipient.trim(), send }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (j.pdf_base64) {
+        const bytes = Uint8Array.from(atob(j.pdf_base64), (ch) => ch.charCodeAt(0));
+        const blob = new Blob([bytes], { type: 'application/pdf' });
+        window.open(URL.createObjectURL(blob), '_blank');
+      }
+      if (statusEl) statusEl.textContent = send ? (j.emailed ? `✓ Emailed to ${escapeHtml(recipient)} (${j.count} case${j.count === 1 ? '' : 's'}). PDF also opened.` : `Built ${j.count} case${j.count === 1 ? '' : 's'} — but email did not send.`) : `✓ Preview ready (${j.count} case${j.count === 1 ? '' : 's'}).`;
+    } catch (e) {
+      if (statusEl) statusEl.textContent = '⚠ ' + e.message;
     }
   }
 

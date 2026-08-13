@@ -10985,4 +10985,132 @@ function renderNotCuredBoardLetter({ community, rows }) {
 </div></body></html>`;
 }
 
+// ============================================================================
+// ATTORNEY UPDATE — the monthly "Violation Update" packet for at-legal cases.
+// Legal-picture upload lands in inspection_photos exactly like the drive, so
+// BOTH processes reach the same place and the packet just uses "latest on file".
+// (Ed 2026-08-12.)
+// ============================================================================
+const { burnTimestamp: _burnTimestamp, buildViolationUpdatePdf: _buildViolationUpdatePdf, fmtDate: _fmtPhotoTime } = require('../lib/enforcement/attorney_update');
+
+// A standing ad-hoc inspection to hang legal photos on (same store as drives).
+async function _adHocInspectionId(communityId) {
+  const { data: existing } = await supabase.from('inspections')
+    .select('id').eq('community_id', communityId).eq('route_label', 'Legal / ad-hoc photos').limit(1).maybeSingle();
+  if (existing) return existing.id;
+  const { data, error } = await supabase.from('inspections')
+    .insert({ community_id: communityId, mode: 'drive_by', status: 'captured', route_label: 'Legal / ad-hoc photos', started_at: new Date().toISOString() })
+    .select('id').single();
+  if (error) throw error;
+  return data.id;
+}
+
+// Latest on-file photo for a property — drive OR legal-picture, whichever is newer.
+async function _latestPhotoForProperty(propertyId) {
+  const { data: obs } = await supabase.from('property_observations')
+    .select('inspection_photos!inner(storage_path, captured_at)')
+    .eq('property_id', propertyId).order('created_at', { ascending: false }).limit(30);
+  let best = null;
+  for (const o of (obs || [])) {
+    const p = o.inspection_photos; if (!p || !p.storage_path) continue;
+    if (!best || new Date(p.captured_at || 0) > new Date(best.captured_at || 0)) best = { storage_path: p.storage_path, captured_at: p.captured_at };
+  }
+  return best;
+}
+
+// POST /violations/:id/legal-photo — capture/upload a current photo for an
+// at-legal case (the "Legal Picture" button + monthly catch-up).
+router.post('/violations/:id/legal-photo', upload.single('photo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'photo_required' });
+    const { data: v } = await supabase.from('violations').select('id, property_id, community_id').eq('id', req.params.id).maybeSingle();
+    if (!v || !v.property_id) return res.status(404).json({ error: 'violation_or_property_not_found' });
+    const inspectionId = await _adHocInspectionId(v.community_id);
+    const extM = (req.file.originalname || 'photo.jpg').match(/\.(jpe?g|png|webp)$/i);
+    const path = `inspections/${v.community_id}/legal/${Date.now()}-${Math.round(Math.random() * 1e6)}${extM ? extM[0].toLowerCase() : '.jpg'}`;
+    const { error: upErr } = await supabase.storage.from('documents').upload(path, req.file.buffer, { contentType: req.file.mimetype || 'image/jpeg', upsert: false });
+    if (upErr) throw upErr;
+    const capturedAt = req.body.captured_at || new Date().toISOString();
+    const { data: ph, error: phErr } = await supabase.from('inspection_photos')
+      .insert({ inspection_id: inspectionId, storage_path: path, captured_at: capturedAt, reviewer_confirmed_property_id: v.property_id, reviewed_at: new Date().toISOString(), notes: 'Legal photo' })
+      .select('id').single();
+    if (phErr) throw phErr;
+    await supabase.from('property_observations').insert({ property_id: v.property_id, inspection_photo_id: ph.id });
+    res.json({ ok: true, photo_id: ph.id, captured_at: capturedAt });
+  } catch (err) { console.error('[enforcement] legal-photo failed:', err.message); res.status(500).json({ error: err.message }); }
+});
+
+// GET /attorney-update/candidates?community_id= — at-legal violations + latest photo.
+router.get('/attorney-update/candidates', async (req, res) => {
+  try {
+    const { community_id } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { data: vios, error } = await supabase.from('violations')
+      .select('id, property_id, sent_to_attorney_at, current_stage, enforcement_categories(label), properties(street_address, unit)')
+      .eq('community_id', community_id).not('sent_to_attorney_at', 'is', null)
+      .not('current_stage', 'in', '(cured,closed,voided)').order('sent_to_attorney_at', { ascending: true });
+    if (error) throw error;
+    const candidates = [];
+    for (const v of (vios || [])) {
+      const photo = v.property_id ? await _latestPhotoForProperty(v.property_id) : null;
+      candidates.push({
+        id: v.id,
+        address: v.properties ? `${v.properties.street_address || ''}${v.properties.unit ? ' #' + v.properties.unit : ''}`.trim() : '',
+        category: v.enforcement_categories ? v.enforcement_categories.label : 'Violation',
+        at_legal_since: v.sent_to_attorney_at ? new Date(v.sent_to_attorney_at).toLocaleDateString() : null,
+        has_photo: !!photo, photo_taken_at: photo ? _fmtPhotoTime(photo.captured_at) : null,
+      });
+    }
+    const { data: att } = await supabase.from('community_contacts').select('name, email').eq('community_id', community_id).eq('category', 'attorney').limit(1).maybeSingle();
+    res.json({ candidates, attorney: att || null });
+  } catch (err) { console.error('[enforcement] attorney candidates failed:', err.message); res.status(500).json({ error: err.message }); }
+});
+
+// POST /attorney-update/generate — burn latest photos, build the PDF, optionally email.
+router.post('/attorney-update/generate', express.json({ limit: '512kb' }), async (req, res) => {
+  try {
+    const { community_id, violation_ids, recipient, statuses, send } = req.body || {};
+    if (!community_id || !Array.isArray(violation_ids) || !violation_ids.length) return res.status(400).json({ error: 'community_id_and_violations_required' });
+    const { data: comm } = await supabase.from('communities').select('name').eq('id', community_id).maybeSingle();
+    const { data: vios } = await supabase.from('violations')
+      .select('id, property_id, sent_to_attorney_at, enforcement_categories(label), properties(street_address, unit)').in('id', violation_ids);
+    const items = [];
+    for (const v of (vios || [])) {
+      const address = v.properties ? `${v.properties.street_address || ''}${v.properties.unit ? ' #' + v.properties.unit : ''}`.trim() : 'Property';
+      const photo = v.property_id ? await _latestPhotoForProperty(v.property_id) : null;
+      let imageBuffer = null; let photoTaken = null;
+      if (photo && photo.storage_path) {
+        try {
+          const { data: blob } = await supabase.storage.from('documents').download(photo.storage_path);
+          if (blob) {
+            const buf = Buffer.from(await blob.arrayBuffer());
+            photoTaken = _fmtPhotoTime(photo.captured_at);
+            imageBuffer = await _burnTimestamp(buf, `${photoTaken || ''}  ·  ${address}`.trim());
+          }
+        } catch (e) { console.warn('[enforcement] burn failed for', address, e.message); }
+      }
+      items.push({
+        address, category: v.enforcement_categories ? v.enforcement_categories.label : 'Violation',
+        status: (statuses && statuses[v.id]) || 'Still not cured',
+        at_legal_since: v.sent_to_attorney_at ? new Date(v.sent_to_attorney_at).toLocaleDateString() : null,
+        photo_taken_at: photoTaken, imageBuffer,
+      });
+    }
+    const generatedAt = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', dateStyle: 'long', timeStyle: 'short' }) + ' CT';
+    const pdf = await _buildViolationUpdatePdf({ communityName: comm ? comm.name : 'Association', generatedAt, items });
+    let emailed = false;
+    if (send && recipient && /.+@.+\..+/.test(recipient)) {
+      const nm = (comm ? comm.name : 'Association');
+      await sendEmail({
+        to: recipient,
+        subject: `Violation Update — ${nm}`,
+        html: `<p>Attached is the current violation update for ${nm} — ${items.length} propert${items.length === 1 ? 'y' : 'ies'} still in violation and referred to your office. Each photo is date- and time-stamped as of inspection.</p>`,
+        attachments: [{ filename: `Violation-Update-${nm.replace(/[^a-z0-9]+/gi, '-')}.pdf`, content: pdf.toString('base64') }],
+      });
+      emailed = true;
+    }
+    res.json({ ok: true, emailed, count: items.length, pdf_base64: pdf.toString('base64') });
+  } catch (err) { console.error('[enforcement] attorney generate failed:', err.message); res.status(500).json({ error: err.message }); }
+});
+
 module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations, _draftLetterForBumpedViolation, renderNotCuredBoardLetter, _assembleBundlePdf };
