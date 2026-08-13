@@ -5252,18 +5252,20 @@ router.post('/violations/:id/send-to-attorney', express.json(), async (req, res)
     if (v.resolved_at || ['cured', 'closed', 'voided'].includes(v.current_stage)) {
       return res.status(400).json({ error: 'violation already resolved/closed' });
     }
-    if (v.current_stage !== 'certified_209') {
-      return res.status(400).json({ error: 'only a certified §209 case can be sent to the attorney' });
-    }
+    // Any OPEN case can go to the attorney — not just certified §209. We inherit
+    // accounts already at legal that never ran through our certified-letter
+    // pipeline, and DRV cases can be referred to counsel at any stage. The stage
+    // stays as-is; the sent_to_attorney flag takes it off the Schedule calendar.
     if (v.sent_to_attorney_at) {
       return res.status(400).json({ error: 'already marked sent to the attorney' });
     }
     const { data: updated, error: uErr } = await supabase
       .from('violations')
       .update({
-        sent_to_attorney_at:        new Date().toISOString(),
+        sent_to_attorney_at:        (body.at_attorney_since ? new Date(body.at_attorney_since).toISOString() : new Date().toISOString()),
         sent_to_attorney_by_user_id: body.user_id || null,
         attorney_firm:              (body.firm || '').trim() || null,
+        attorney_name:              (body.attorney_name || '').trim() || null,
         attorney_matter_ref:        (body.matter_ref || '').trim() || null,
         attorney_notes:             (body.notes || '').trim() || null,
       })

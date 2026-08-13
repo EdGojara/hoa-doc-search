@@ -17100,6 +17100,13 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <div style="font-size: 11.5px; color: #64748b; margin-top: 6px; text-align: center; line-height: 1.4;">
           All at-legal cases → date-stamped photos + status → PDF to the attorney
         </div>
+        <button type="button" onclick="atLegalAddOpen()"
+                style="width: 100%; margin-top: 10px; padding: 11px; background: #fff; border: 1px solid #c4b5fd; color: #5b21b6; border-radius: 10px; font-size: 13.5px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
+          ＋ Mark a case at attorney (collections / DRV)
+        </button>
+        <div style="font-size: 11.5px; color: #64748b; margin-top: 6px; text-align: center; line-height: 1.4;">
+          For accounts you inherited that are already with counsel — no certified letter needed
+        </div>
       </div>
 
       <!-- Map setup admin row — one-time-per-community operation. Bulk
@@ -18950,7 +18957,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                      ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record (wrong house, duplicate, or void). To fix a wrong CATEGORY use ✎ Category instead." style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
                      ${['courtesy_1','courtesy_2','certified_209'].includes(v.current_stage) ? `<button onclick="inspAdvanceStage('${v.id}','${v.current_stage}')" title="Advance to the next enforcement stage (Courtesy 2 → Certified §209, etc.). Deliberate staff action — you still generate + mail the certified notice; the cure clock starts when it goes out." style="background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↑ Advance</button>` : ''}
                      ${['courtesy_2','certified_209','fine_assessed'].includes(v.current_stage) ? `<button onclick="inspReduceStage('${v.id}','${v.current_stage}')" title="Reduce to the previous stage (Courtesy 2 → Courtesy 1, Certified → Courtesy 2). Use when a case was over-escalated — e.g. a deduped duplicate bumped a first occurrence up a level. Clears the cure clock; regenerate the lower-stage letter." style="background:#eff6ff; border:1px solid #93c5fd; color:#1e40af; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">↓ Reduce</button>` : ''}
-                     ${v.sent_to_attorney_at ? `<span title="Sent to the association's attorney on ${new Date(v.sent_to_attorney_at).toLocaleDateString()}${v.attorney_firm ? ' — ' + escapeHtml(v.attorney_firm) : ''}${v.attorney_matter_ref ? ' (ref ' + escapeHtml(v.attorney_matter_ref) + ')' : ''}. This §209's cure clock is now counsel's — it's off the Schedule calendar. If it comes back, mark it Cured." style="display:inline-block; background:#ede9fe; border:1px solid #c4b5fd; color:#5b21b6; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:700; margin-right:3px;">⚖ At attorney <button onclick="inspUnsetAttorney('${v.id}')" title="Undo — this was marked in error. Does not resolve the case." style="background:none; border:none; color:#7c3aed; cursor:pointer; font-size:10.5px; padding:0 0 0 3px; text-decoration:underline;">undo</button></span>` : (v.current_stage === 'certified_209' ? `<button onclick="inspSendToAttorney('${v.id}')" title="Hand this certified §209 to the association's attorney for enforcement. The case stays open but its cure deadline comes off the Schedule calendar — that clock is counsel's now. If it later comes back, mark it Cured." style="background:#f5f3ff; border:1px solid #c4b5fd; color:#5b21b6; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚖ To attorney</button>` : '')}
+                     ${v.sent_to_attorney_at ? `<span title="Sent to the association's attorney on ${new Date(v.sent_to_attorney_at).toLocaleDateString()}${v.attorney_firm ? ' — ' + escapeHtml(v.attorney_firm) : ''}${v.attorney_matter_ref ? ' (ref ' + escapeHtml(v.attorney_matter_ref) + ')' : ''}. This §209's cure clock is now counsel's — it's off the Schedule calendar. If it comes back, mark it Cured." style="display:inline-block; background:#ede9fe; border:1px solid #c4b5fd; color:#5b21b6; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:700; margin-right:3px;">⚖ At attorney <button onclick="inspUnsetAttorney('${v.id}')" title="Undo — this was marked in error. Does not resolve the case." style="background:none; border:none; color:#7c3aed; cursor:pointer; font-size:10.5px; padding:0 0 0 3px; text-decoration:underline;">undo</button></span>` : (['courtesy_1','courtesy_2','certified_209','fine_assessed'].includes(v.current_stage) ? `<button onclick="inspSendToAttorney('${v.id}')" title="Refer this case to the association's attorney for enforcement — works at any stage, no certified letter required (use this for cases you inherited that are already at legal). The case stays open but its cure deadline comes off the Schedule calendar — that clock is counsel's now. If it later comes back, mark it Cured." style="background:#f5f3ff; border:1px solid #c4b5fd; color:#5b21b6; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚖ To attorney</button>` : '')}
                      ${v.sent_to_attorney_at ? `<button onclick="legalPhotoPick('${v.id}')" title="Take or upload a current photo for this at-legal case. It lands in the same place as the monthly drive photos, and the Attorney Update packet always uses the latest photo on file. The capture date + time + address are burned into the photo so it can't be disputed." style="background:#7f1d1d; border:1px solid #7f1d1d; color:#fff; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">📷 Legal picture</button>` : ''}
                      ${!['cured','closed','voided'].includes(v.current_stage) ? `<button onclick="inspMarkCured('${v.id}')" title="Close this violation (homeowner-confirmed cure, drive-by spot check, or board dismissal). Auto-resets any open repeat in this category back to Courtesy 1." style="background:#dcfce7; border:1px solid #86efac; color:#15803d; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Cure</button>` : ''}
                      ${(showLetterBtn && canDemote) ? `<button onclick="inspDemoteToPhotoPick('${v.id}')" title="Not a separate violation — attach this photo to another violation as its identifying/establishing shot (e.g. a front-of-house shot taken so a tight side-shot shows which house). Voids this one; the other letter then shows both photos." style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">📎 Just a photo for…</button>` : ''}
@@ -19921,6 +19928,212 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (statusEl) statusEl.textContent = send ? (j.emailed ? `✓ Emailed to ${escapeHtml(recipient)} (${j.count} case${j.count === 1 ? '' : 's'}). PDF also opened.` : `Built ${j.count} case${j.count === 1 ? '' : 's'} — but email did not send.`) : `✓ Preview ready (${j.count} case${j.count === 1 ? '' : 's'}).`;
     } catch (e) {
       if (statusEl) statusEl.textContent = '⚠ ' + e.message;
+    }
+  }
+
+  // ── Mark a case at attorney (inherited: collections OR DRV) ───────────────
+  // One place to record cases already with counsel that never ran through our
+  // certified-letter pipeline. Routes to the right SSOT per type:
+  //   • DRV        → creates a violation (no letters) + flags sent_to_attorney
+  //   • Collections→ writes property_enforcement_states (account legal status)
+  let _alaProps = [];
+  let _alaCategories = [];
+  let _alaType = 'drv';
+  async function atLegalAddOpen() {
+    let ov = document.getElementById('atLegalAddOverlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'atLegalAddOverlay';
+      ov.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+      ov.onclick = (e) => { if (e.target === ov) atLegalAddClose(); };
+      document.body.appendChild(ov);
+    }
+    _alaType = 'drv';
+    ov.innerHTML = `<div style="background:#fff; border-radius:14px; max-width:560px; width:100%; max-height:90vh; overflow:auto; padding:22px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <h3 style="margin:0; font-size:16px; color:#0B1D34;">＋ Mark a case at attorney</h3>
+        <button onclick="atLegalAddClose()" style="background:none; border:none; font-size:20px; color:#94a3b8; cursor:pointer;">×</button>
+      </div>
+      <div style="font-size:12px; color:#64748b; margin-bottom:14px;">For accounts you inherited that are already with counsel. No certified letter is generated or mailed.</div>
+
+      <div style="display:flex; gap:8px; margin-bottom:14px;">
+        <button type="button" id="alaTypeDrv" onclick="atLegalAddSetType('drv')" style="flex:1; padding:10px; border-radius:8px; border:2px solid #7f1d1d; background:#7f1d1d; color:#fff; font-size:13px; font-weight:600; cursor:pointer;">⚖ Deed restriction (DRV)</button>
+        <button type="button" id="alaTypeCol" onclick="atLegalAddSetType('collections')" style="flex:1; padding:10px; border-radius:8px; border:2px solid #cbd5e1; background:#fff; color:#475569; font-size:13px; font-weight:600; cursor:pointer;">💵 Collections</button>
+      </div>
+
+      <label style="display:block; font-size:11.5px; font-weight:600; color:#475569; margin-bottom:4px;">Community</label>
+      <select id="alaCommunity" onchange="atLegalAddLoadProps()" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px; margin-bottom:12px; background:#fff;"><option value="">Select…</option></select>
+
+      <label style="display:block; font-size:11.5px; font-weight:600; color:#475569; margin-bottom:4px;">Property</label>
+      <select id="alaProperty" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px; margin-bottom:12px; background:#fff;"><option value="">Pick a community first…</option></select>
+
+      <div id="alaDrvFields">
+        <label style="display:block; font-size:11.5px; font-weight:600; color:#475569; margin-bottom:4px;">Violation type</label>
+        <select id="alaCategory" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px; margin-bottom:12px; background:#fff;"><option value="">Loading…</option></select>
+        <label style="display:block; font-size:11.5px; font-weight:600; color:#475569; margin-bottom:4px;">Description (optional)</label>
+        <textarea id="alaDescription" rows="2" placeholder="e.g. Fence in disrepair — referred to counsel by prior manager" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px; margin-bottom:12px; resize:vertical;"></textarea>
+        <label style="display:block; font-size:11.5px; font-weight:600; color:#475569; margin-bottom:4px;">Current photo (optional — you can also add one later)</label>
+        <input type="file" id="alaPhoto" accept="image/*" capture="environment" style="width:100%; font-size:12px; margin-bottom:12px;">
+      </div>
+
+      <div id="alaColFields" style="display:none;">
+        <label style="display:block; font-size:11.5px; font-weight:600; color:#475569; margin-bottom:4px;">Account status</label>
+        <select id="alaColState" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px; margin-bottom:12px; background:#fff;">
+          <option value="at_legal">⚖ At legal (with attorney)</option>
+          <option value="in_collections">⚠ In collections</option>
+        </select>
+      </div>
+
+      <div style="border-top:1px solid #f1f5f9; margin:4px 0 12px 0;"></div>
+      <label style="display:block; font-size:11.5px; font-weight:600; color:#475569; margin-bottom:4px;">Attorney / firm <span style="color:#b91c1c;">*</span></label>
+      <input id="alaAttyName" placeholder="Attorney name" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px; margin-bottom:8px;">
+      <input id="alaAttyFirm" placeholder="Firm name" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px; margin-bottom:8px;">
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <input id="alaAttyEmail" type="email" placeholder="Email" style="flex:1; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px;">
+        <input id="alaAttyPhone" placeholder="Phone" style="flex:1; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px;">
+      </div>
+      <label style="display:block; font-size:11.5px; font-weight:600; color:#475569; margin-bottom:4px;">At attorney since (optional)</label>
+      <input id="alaSince" type="date" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px; margin-bottom:8px;">
+      <label style="display:block; font-size:11.5px; font-weight:600; color:#475569; margin-bottom:4px;" id="alaNotesLabel">Notes / reason (optional)</label>
+      <input id="alaNotes" placeholder="e.g. Inherited from prior manager; matter open at counsel" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:8px; font-size:13px; margin-bottom:14px;">
+
+      <div id="alaStatus" style="font-size:12px; color:#64748b; min-height:16px; margin-bottom:8px;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button onclick="atLegalAddClose()" style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:9px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">Cancel</button>
+        <button id="alaSubmitBtn" onclick="atLegalAddSubmit()" style="background:#7f1d1d; border:none; color:#fff; padding:9px 18px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">Save at-attorney case</button>
+      </div>
+    </div>`;
+    ov.style.display = 'flex';
+    // Populate communities from the Inspect selector + default to its value.
+    const insp = document.getElementById('inspCommunity');
+    const sel = document.getElementById('alaCommunity');
+    if (insp) { for (const o of insp.options) if (o.value) sel.appendChild(o.cloneNode(true)); if (insp.value) sel.value = insp.value; }
+    if (_alaCategories.length === 0) {
+      try { const r = await window._authFetch('/api/enforcement/categories'); if (r.ok) { const j = await r.json(); _alaCategories = j.categories || []; } } catch (_) {}
+    }
+    atLegalAddFillCategories();
+    if (sel.value) atLegalAddLoadProps();
+  }
+
+  function atLegalAddFillCategories() {
+    const catSel = document.getElementById('alaCategory');
+    if (!catSel) return;
+    const sorted = [..._alaCategories].sort((a, b) => (a.label || '').localeCompare(b.label || ''));
+    catSel.innerHTML = '<option value="">Select…</option>' + sorted.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label || c.name || 'Violation')}</option>`).join('');
+  }
+
+  function atLegalAddSetType(t) {
+    _alaType = t;
+    const drvBtn = document.getElementById('alaTypeDrv');
+    const colBtn = document.getElementById('alaTypeCol');
+    const on = 'flex:1; padding:10px; border-radius:8px; border:2px solid #7f1d1d; background:#7f1d1d; color:#fff; font-size:13px; font-weight:600; cursor:pointer;';
+    const off = 'flex:1; padding:10px; border-radius:8px; border:2px solid #cbd5e1; background:#fff; color:#475569; font-size:13px; font-weight:600; cursor:pointer;';
+    drvBtn.style.cssText = t === 'drv' ? on : off;
+    colBtn.style.cssText = t === 'collections' ? on : off;
+    document.getElementById('alaDrvFields').style.display = t === 'drv' ? 'block' : 'none';
+    document.getElementById('alaColFields').style.display = t === 'collections' ? 'block' : 'none';
+  }
+
+  async function atLegalAddLoadProps() {
+    const communityId = document.getElementById('alaCommunity').value;
+    const propSel = document.getElementById('alaProperty');
+    if (!communityId) { propSel.innerHTML = '<option value="">Pick a community first…</option>'; return; }
+    propSel.innerHTML = '<option value="">Loading…</option>';
+    try {
+      const r = await fetch(`/api/inspections/properties?community_id=${encodeURIComponent(communityId)}&include_no_geo=1`);
+      const j = await r.json();
+      _alaProps = (j.properties || []).map((p) => ({ id: p.id, label: `${p.street_address || p.address || 'Unit'}${p.unit ? ' #' + p.unit : ''}` }))
+        .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+      propSel.innerHTML = '<option value="">Select a property…</option>' + _alaProps.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`).join('');
+    } catch (e) {
+      propSel.innerHTML = '<option value="">Could not load properties</option>';
+    }
+  }
+
+  function atLegalAddClose() {
+    const ov = document.getElementById('atLegalAddOverlay');
+    if (ov) ov.style.display = 'none';
+  }
+
+  async function atLegalAddSubmit() {
+    const communityId = document.getElementById('alaCommunity').value;
+    const propertyId = document.getElementById('alaProperty').value;
+    const attyName = document.getElementById('alaAttyName').value.trim();
+    const attyFirm = document.getElementById('alaAttyFirm').value.trim();
+    const attyEmail = document.getElementById('alaAttyEmail').value.trim();
+    const attyPhone = document.getElementById('alaAttyPhone').value.trim();
+    const since = document.getElementById('alaSince').value || '';
+    const notes = document.getElementById('alaNotes').value.trim();
+    const statusEl = document.getElementById('alaStatus');
+    const btn = document.getElementById('alaSubmitBtn');
+    const setStatus = (m, err) => { if (statusEl) { statusEl.textContent = m; statusEl.style.color = err ? '#b91c1c' : '#64748b'; } };
+    if (!communityId) return setStatus('Pick a community.', true);
+    if (!propertyId) return setStatus('Pick a property.', true);
+    if (!attyName && !attyFirm) return setStatus('Enter the attorney name or firm.', true);
+
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      // auth header for endpoints behind requireActingUser
+      let authHeaders = {};
+      try { const { data: { session } } = await window.supa.auth.getSession(); if (session && session.access_token) authHeaders.Authorization = 'Bearer ' + session.access_token; } catch (_) {}
+
+      if (_alaType === 'collections') {
+        const r = await window._authFetch(`/api/contacts/property-enforcement-state/${encodeURIComponent(propertyId)}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            state: document.getElementById('alaColState').value,
+            reason: notes || 'Inherited account already at attorney',
+            performed_by: window.currentUserEmail || 'staff',
+            attorney_name: attyName || null, attorney_firm: attyFirm || null,
+            attorney_email: attyEmail || null, attorney_phone: attyPhone || null,
+            effective_at: since ? new Date(since).toISOString() : undefined,
+            notes: notes || null,
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        setStatus('✓ Recorded as a collections account at attorney.');
+        setTimeout(atLegalAddClose, 900);
+        return;
+      }
+
+      // DRV: create the violation (no letters), reusing an existing open case if one exists.
+      const categoryId = document.getElementById('alaCategory').value;
+      if (!categoryId) { btn.disabled = false; btn.textContent = 'Save at-attorney case'; return setStatus('Pick a violation type.', true); }
+      const fd = new FormData();
+      fd.append('community_id', communityId);
+      fd.append('property_id', propertyId);
+      fd.append('primary_category_id', categoryId);
+      fd.append('severity', 'moderate');
+      fd.append('source', 'manual_entry');
+      fd.append('description', document.getElementById('alaDescription').value.trim());
+      fd.append('override_stage', 'certified_209');
+      const photo = document.getElementById('alaPhoto').files[0];
+      if (photo) fd.append('photos', photo, photo.name);
+
+      let violationId = null;
+      const cr = await window._authFetch('/api/enforcement/violations/manual', { method: 'POST', body: fd, headers: authHeaders });
+      const cj = await cr.json().catch(() => ({}));
+      if (cr.ok) {
+        violationId = cj.violation_id;
+      } else if (cr.status === 409 && cj.existing_violation) {
+        violationId = cj.existing_violation.id; // flag the existing open case rather than duplicate
+      } else {
+        throw new Error(cj.error || `HTTP ${cr.status}`);
+      }
+
+      const sr = await window._authFetch(`/api/enforcement/violations/${violationId}/send-to-attorney`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firm: attyFirm, attorney_name: attyName, notes, at_attorney_since: since || null }),
+      });
+      const sj = await sr.json().catch(() => ({}));
+      if (!sr.ok && sj.error !== 'already marked sent to the attorney') throw new Error(sj.error || `HTTP ${sr.status}`);
+      setStatus('✓ DRV case recorded and marked at attorney. It will appear in the Attorney Update packet.');
+      setTimeout(atLegalAddClose, 1100);
+    } catch (e) {
+      setStatus('⚠ ' + e.message, true);
+    } finally {
+      btn.disabled = false; btn.textContent = 'Save at-attorney case';
     }
   }
 
