@@ -1727,8 +1727,14 @@
     const _checkable = accts.filter((a)=> String(a.account_type||'')==='operating' && !/\b(sweep|ics)\b/i.test(a.account_nickname||''));
     if (_checkable.length) accts = _checkable;
     if (!accts.length) { $('body').innerHTML = '<div class="card muted" style="padding:24px;">No check-writing (operating) account set up for this community yet.</div>'; return; }
-    // If the previously-selected account was filtered out (e.g. the sweep), snap to the operating account.
-    if (!window._chkAcct || !accts.find((a)=>a.id===window._chkAcct)) window._chkAcct = accts[0].id;
+    // Default to the DESIGNATED check-disbursement account, not just the first
+    // operating account. (Ed 2026-08-14: a Canyon Gate run issued 9 checks on the
+    // NewFirst operating account, but the page defaulted to Reserve Cash — so the
+    // register below showed "no checks issued" and the run looked lost.)
+    if (!window._chkAcct || !accts.find((a)=>a.id===window._chkAcct)) {
+      const disb = accts.find((a)=>a.is_check_disbursement===true);
+      window._chkAcct = (disb || accts[0]).id;
+    }
     const acctOpts = accts.map((a)=>`<option value="${a.id}" ${a.id===window._chkAcct?'selected':''}>${esc(a.account_nickname||a.bank_name||'Account')}${a.account_last4?(' ····'+a.account_last4):''}</option>`).join('');
     $('body').innerHTML = `
       <div class="card" style="margin-bottom:14px;">
@@ -1915,8 +1921,18 @@
     const body={community_id:CID, bank_account_id:window._chkAcct, payment_date:$('chk-date').value, invoice_ids:ids};
     const j = await fetch('/api/checks/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then((r)=>r.json());
     if (j.error) { alert('Couldn’t create the run: '+j.error); btn.disabled=false; btn.textContent='Print checks'; return; }
-    window.open(`/api/checks/run/${j.print_run_id}/pdf`, '_blank');
-    renderChecks();
+    const pdfUrl = `/api/checks/run/${j.print_run_id}/pdf`;
+    // Try to open the printable PDF, but popup blockers return null silently —
+    // so ALWAYS leave a persistent button on the page. The checks are issued and
+    // in the register regardless; they must never look "lost" behind a blocked tab.
+    const win = window.open(pdfUrl, '_blank');
+    const n = j.check_count || 0;
+    await renderChecks();
+    const pay = $('chkPay');
+    if (pay) pay.insertAdjacentHTML('afterbegin', `<div class="card" style="margin-bottom:12px; background:#f0fdf4; border:1px solid #86efac;">
+      <div style="font-weight:700; color:#166534;">✓ ${n?`${n} check${n===1?'':'s'} issued`:'Checks issued'}${j.total_cents!=null?' · '+fmt(j.total_cents):''}.</div>
+      <div class="muted" style="font-size:12.5px; margin:5px 0 10px;">The bills moved out of the pay list into the check register below.${win?'':' <b style="color:#92400e;">Your browser blocked the print window — use the button below.</b>'}</div>
+      <a href="${pdfUrl}" target="_blank" rel="noopener" style="${CHK_BTN} display:inline-block; text-decoration:none;">🖨 Open printable checks PDF</a></div>`);
   };
 
   async function chkLoadRegister() {
@@ -1925,14 +1941,18 @@
     const checks=j.checks||[];
     if (!checks.length) { $('chkRegister').innerHTML='<div class="card muted" style="padding:18px;">No checks issued yet.</div>'; return; }
     const badge=(s)=> s==='cleared'?'<span class="badge ok">cleared</span>':(s==='voided'?'<span class="badge err">voided</span>':'<span class="pill">'+esc(s)+'</span>');
-    const rows=checks.map((c)=>`<tr>
+    const liveTotal=checks.filter((c)=>c.status!=='voided').reduce((s,c)=>s+Number(c.amount_cents||0),0);
+    const rows=checks.map((c)=>`<tr${c.status==='voided'?' style="opacity:.55;"':''}>
       <td style="font-family:ui-monospace,monospace;">${esc(c.check_number)}</td>
       <td>${esc(fmtDate(c.issue_date))}</td><td>${esc(c.payee_name)}</td>
       <td class="num">${fmt(c.amount_cents)}</td><td>${badge(c.status)}</td>
-      <td>${c.status!=='voided'&&c.status!=='cleared'?`<a class="link" style="color:var(--err); cursor:pointer;" onclick="chkVoid('${c.id}')">void</a>`:''}</td></tr>`).join('');
-    $('chkRegister').innerHTML=`<div class="card"><h2 class="sec" style="margin-bottom:8px;">Check register</h2>
+      <td>${c.print_run_id?`<a class="link" href="/api/checks/run/${c.print_run_id}/pdf" target="_blank" rel="noopener" title="Re-open the printable PDF for this check run">🖨 Print</a>`:''}${c.status!=='voided'&&c.status!=='cleared'?` &nbsp;<a class="link" style="color:var(--err); cursor:pointer;" onclick="chkVoid('${c.id}')">void</a>`:''}</td></tr>`).join('');
+    $('chkRegister').innerHTML=`<div class="card"><div style="display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+        <h2 class="sec" style="margin:0;">Check register</h2>
+        <span class="muted" style="font-size:12.5px;">${checks.length} check${checks.length===1?'':'s'} · ${fmt(liveTotal)} outstanding (excl. voided)</span></div>
       <table><thead><tr><th>Check #</th><th>Date</th><th>Payee</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows}</tbody></table></div>`;
+      <tbody>${rows}</tbody></table>
+      <div class="muted" style="font-size:11.5px; margin-top:8px;">🖨 Print re-opens the printable PDF for that run — use it if the print window didn’t open. This register is for the account selected above.</div></div>`;
   }
   window.chkVoid = async function(id){
     const reason=prompt('Reason for voiding this check?'); if (reason===null) return;
