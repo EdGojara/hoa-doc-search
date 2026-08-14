@@ -607,6 +607,7 @@ router.post('/:contactId/note', express.json(), async (req, res) => {
     if (!body) return res.status(400).json({ error: 'content_required' });
     const props = await ownedProperties(req.params.contactId);
     const primary = props.find((p) => p.is_primary) || props[0] || null;
+    const { getAuthedUser } = require('./_require_admin');
     const actor = await getAuthedUser(req).catch(() => null); // who's writing it — for attribution
     const { data, error } = await supabase.from('interactions').insert({
       type: 'internal_note', direction: 'internal',
