@@ -47,6 +47,14 @@ function makeToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+// The name of the first granted community (for the invitation email header).
+async function _firstCommunityName(communityIds) {
+  const id = Array.isArray(communityIds) ? communityIds[0] : null;
+  if (!id) return null;
+  const { data } = await supabase.from('communities').select('name').eq('id', id).maybeSingle();
+  return data ? data.name : null;
+}
+
 function magicLinkUrl(req, token) {
   // Construct an absolute URL the email can carry. Render terminates SSL at
   // the edge; respect x-forwarded-proto.
@@ -108,7 +116,7 @@ router.get('/users', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.post('/users', async (req, res) => {
   try {
-    const { email, full_name, role, community_ids, property_ids, send_invite, invited_by } = req.body || {};
+    const { email, full_name, role, community_ids, property_ids, send_invite, email_invite, invited_by } = req.body || {};
     if (!email || !String(email).trim()) return res.status(400).json({ error: 'email is required' });
     if (!role) return res.status(400).json({ error: 'role is required' });
     const cleanEmail = String(email).toLowerCase().trim();
@@ -185,7 +193,20 @@ router.post('/users', async (req, res) => {
       await logAudit('magic_link_generated', { portal_user_id: user.id, performed_by: invited_by, notes: 'purpose=invite' });
     }
 
-    res.json({ user_id: user.id, magic_link: magicLink });
+    // One-click invite: email the magic link (the polished branded invitation)
+    // instead of leaving the operator to copy/paste it. (Ed 2026-08-14.)
+    let emailed = false;
+    if (magicLink && email_invite && email) {
+      try {
+        const communityName = await _firstCommunityName(community_ids);
+        const { sendPortalInvite } = require('../lib/email/portal_invite');
+        await sendPortalInvite({ toEmail: email, toName: full_name, communityName, magicLink, role });
+        emailed = true;
+        await logAudit('invite_emailed', { portal_user_id: user.id, performed_by: invited_by, notes: `to=${email}` });
+      } catch (e) { console.warn('[portal_admin] invite email failed:', e.message); }
+    }
+
+    res.json({ user_id: user.id, magic_link: magicLink, emailed });
   } catch (err) {
     console.error('[portal_admin] create user failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -279,7 +300,24 @@ router.post('/users/:id/magic-link', async (req, res) => {
     });
     await logAudit('magic_link_generated', { portal_user_id: req.params.id, performed_by: performedBy, notes: `purpose=${purpose}` });
 
-    res.json({ token, magic_link: magicLinkUrl(req, token), expires_at: expiresAt.toISOString() });
+    const magic_link = magicLinkUrl(req, token);
+    // Optionally email the invite instead of returning it for copy/paste.
+    let emailed = false;
+    if (req.body && req.body.email) {
+      try {
+        const { data: u } = await supabase.from('portal_users').select('email, full_name, role').eq('id', req.params.id).maybeSingle();
+        if (u && u.email) {
+          const { data: sc } = await supabase.from('portal_user_communities').select('communities:community_id(name)').eq('portal_user_id', req.params.id).is('revoked_at', null).limit(1).maybeSingle();
+          const communityName = sc && sc.communities ? sc.communities.name : null;
+          const { sendPortalInvite } = require('../lib/email/portal_invite');
+          await sendPortalInvite({ toEmail: u.email, toName: u.full_name, communityName, magicLink: magic_link, role: u.role });
+          emailed = true;
+          await logAudit('invite_emailed', { portal_user_id: req.params.id, performed_by: performedBy, notes: `to=${u.email}` });
+        }
+      } catch (e) { console.warn('[portal_admin] invite email failed:', e.message); }
+    }
+
+    res.json({ token, magic_link, expires_at: expiresAt.toISOString(), emailed });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

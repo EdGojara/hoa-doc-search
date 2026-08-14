@@ -15657,7 +15657,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
                 </div>
               </div>
               <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                ${u.status !== 'revoked' ? `<button class="pu-action-btn" onclick="puGenerateLink('${u.id}', '${escapeHtml(u.email)}')">📧 Get magic link</button>` : ''}
+                ${u.status !== 'revoked' ? `<button class="pu-action-btn" style="background:#0B1D34; color:#fff; border-color:#0B1D34;" onclick="puSendInvite('${u.id}', '${escapeHtml(u.email)}')">✉ Send invite</button>` : ''}
+                ${u.status !== 'revoked' ? `<button class="pu-action-btn" onclick="puGenerateLink('${u.id}', '${escapeHtml(u.email)}')">📧 Copy link</button>` : ''}
                 <button class="pu-action-btn" onclick="puManageScope('${u.id}', '${u.role}', '${escapeHtml(u.email)}')">Scope</button>
                 ${u.status !== 'revoked' ? `<button class="pu-action-btn danger" onclick="puRevokeUser('${u.id}', '${escapeHtml(u.email)}')">Revoke</button>` : ''}
               </div>
@@ -15735,6 +15736,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             role: puAddRole,
             community_ids: communityIds,
             send_invite: true,
+            email_invite: true,
           }),
         });
         const j = await r.json();
@@ -15742,7 +15744,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         const link = j.magic_link || '';
         document.getElementById('pu-add-result').innerHTML = `
           <div style="padding: 12px 14px; background: #dcfce7; border-left: 3px solid #15803d; border-radius: 0 6px 6px 0;">
-            <strong>✓ User created.</strong> Magic link below (valid 7 days). Copy and email to the user.
+            <strong>✓ User created.</strong> ${j.emailed ? `The invitation was emailed to <strong>${escapeHtml(email)}</strong>.` : 'Auto-email is off (or not configured) — copy the magic link below and send it manually (valid 7 days).'}
             ${link ? `<div style="margin-top: 8px; display: flex; gap: 6px; align-items: center;">
               <input type="text" readonly value="${escapeHtml(link)}" style="flex: 1; padding: 6px 8px; font-size: 11.5px; border: 1px solid #d0d7de; border-radius: 4px; font-family: monospace;" onclick="this.select();">
               <button class="action-btn" style="font-size: 11px; padding: 4px 10px;" onclick="navigator.clipboard.writeText('${link}'); this.textContent='✓ Copied';">Copy</button>
@@ -15775,6 +15777,24 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         } else {
           prompt(text, j.magic_link);
         }
+      } catch (e) {
+        alert('Failed: ' + e.message);
+      }
+    }
+
+    async function puSendInvite(userId, email) {
+      if (!confirm(`Email a fresh portal invitation to ${email}? Any existing pending link is replaced.`)) return;
+      try {
+        const r = await fetch(`/api/portal-admin/users/${userId}/magic-link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ purpose: 'invite', email: true }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        if (j.emailed) { alert(`✓ Invitation emailed to ${email}.`); }
+        else { alert(`Generated the link, but the email didn't send (email not configured?). Link:\n\n${j.magic_link}`); }
+        await puLoadUsers();
       } catch (e) {
         alert('Failed: ' + e.message);
       }
