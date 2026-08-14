@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Homeowner 360 — Bedrock</title>
 <link rel="stylesheet" href="/brand.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --muted:#5a7390; --line:#e2e8f0; --bg:#f5f7fa; }
   * { box-sizing:border-box; }
@@ -76,17 +77,28 @@ const dt=s=>{ if(!s) return ''; try { return new Date(s).toLocaleString('en-US',
 // Staff identity — so a note records WHO wrote it. Bootstraps the Supabase JWT
 // the same way the other admin screens do; degrades gracefully if unavailable.
 window.supa=null;
-// Bootstrap the login client so a note records WHO wrote it. Store the promise
-// so hoAuthHeader can AWAIT it — the first note-add used to fire before the
-// client finished loading (timing race → blank author). Create the client
-// whenever the keys are present (don't gate on the enforce flag). (Ed 2026-08-14.)
+// Bootstrap the login identity so a note records WHO wrote it. supabase-js is
+// loaded in <head> (matches index.html). We surface a small badge showing the
+// signed-in user — it's a live indicator AND a diagnostic: if it's red, notes
+// save without an author, and the reason tells us why. (Ed 2026-08-14.)
+function _hoWhoBadge(user,reason){
+  let el=document.getElementById('ho-whoami');
+  if(!el){ el=document.createElement('div'); el.id='ho-whoami'; el.style.cssText='position:fixed;top:8px;right:12px;z-index:99999;font:12px/1 -apple-system,Segoe UI,Arial;padding:6px 11px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.12);'; document.body.appendChild(el); }
+  if(user){ el.style.background='#dcfce7'; el.style.color='#166534'; el.textContent='✓ '+(user.full_name||user.email); el.title='Notes will be attributed to you.'; }
+  else { el.style.background='#fee2e2'; el.style.color='#991b1b'; el.textContent='⚠ not signed in'; el.title='Notes save without an author. Reason: '+(reason||'?'); }
+}
 window._hoAuthReady=(async function(){
   try{
     const cfg=await fetch('/api/auth/config').then(r=>r.json());
-    if(!cfg.supabase_url||!cfg.supabase_anon_key) return;
-    if(!window.supabase){ await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';s.onload=res;s.onerror=rej;document.head.appendChild(s);}); }
+    if(!cfg.supabase_url||!cfg.supabase_anon_key){ _hoWhoBadge(null,'auth-not-configured'); return; }
+    if(!window.supabase){ _hoWhoBadge(null,'library-blocked'); return; }
     window.supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
-  }catch(e){ console.warn('[ho360] auth bootstrap failed:',e.message); }
+    const {data:{session}}=await window.supa.auth.getSession();
+    if(!session||!session.access_token){ _hoWhoBadge(null,'no-session'); return; }
+    const me=await fetch('/api/me',{headers:{Authorization:'Bearer '+session.access_token}}).then(r=>r.ok?r.json():null).catch(()=>null);
+    if(me&&me.user){ window._hoUser=me.user; _hoWhoBadge(me.user); }
+    else { _hoWhoBadge(null,'token-not-accepted'); }
+  }catch(e){ _hoWhoBadge(null,'err:'+(e.message||e)); }
 })();
 async function hoAuthHeader(){ try{ await window._hoAuthReady; if(window.supa){ const {data:{session}}=await window.supa.auth.getSession(); if(session&&session.access_token) return {Authorization:'Bearer '+session.access_token}; } }catch(_){}; return {}; }
 
