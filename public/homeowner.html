@@ -76,16 +76,14 @@ const d10=s=>s?String(s).slice(0,10):'';
 const dt=s=>{ if(!s) return ''; try { return new Date(s).toLocaleString('en-US',{timeZone:'America/Chicago',year:'numeric',month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit'}); } catch(_){ return d10(s); } };
 // Staff identity — so a note records WHO wrote it. Bootstraps the Supabase JWT
 // the same way the other admin screens do; degrades gracefully if unavailable.
-window.supa=null;
-// Bootstrap the login identity so a note records WHO wrote it. supabase-js is
-// loaded in <head> (matches index.html). We surface a small badge showing the
-// signed-in user — it's a live indicator AND a diagnostic: if it's red, notes
-// save without an author, and the reason tells us why. (Ed 2026-08-14.)
+window.supa=null; window._hoToken=null;
+// The badge stamps this build tag so we can confirm which JS the browser loaded.
+const HO_BUILD='noteauth-9';
 function _hoWhoBadge(user,reason){
   let el=document.getElementById('ho-whoami');
   if(!el){ el=document.createElement('div'); el.id='ho-whoami'; el.style.cssText='position:fixed;top:8px;right:12px;z-index:99999;font:12px/1 -apple-system,Segoe UI,Arial;padding:6px 11px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.12);'; document.body.appendChild(el); }
-  if(user){ el.style.background='#dcfce7'; el.style.color='#166534'; el.textContent='✓ '+(user.full_name||user.email); el.title='Notes will be attributed to you.'; }
-  else { el.style.background='#fee2e2'; el.style.color='#991b1b'; el.textContent='⚠ not signed in'; el.title='Notes save without an author. Reason: '+(reason||'?'); }
+  if(user){ el.style.background='#dcfce7'; el.style.color='#166534'; el.textContent='✓ '+(user.full_name||user.email)+' · '+HO_BUILD; el.title='Notes will be attributed to you.'; }
+  else { el.style.background='#fee2e2'; el.style.color='#991b1b'; el.textContent='⚠ not signed in · '+HO_BUILD; el.title='Reason: '+(reason||'?'); }
 }
 window._hoAuthReady=(async function(){
   try{
@@ -95,12 +93,15 @@ window._hoAuthReady=(async function(){
     window.supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
     const {data:{session}}=await window.supa.auth.getSession();
     if(!session||!session.access_token){ _hoWhoBadge(null,'no-session'); return; }
-    const me=await fetch('/api/me',{headers:{Authorization:'Bearer '+session.access_token}}).then(r=>r.ok?r.json():null).catch(()=>null);
+    // Store the EXACT token we validate — hoAuthHeader reuses it (no second
+    // getSession that could race/return differently). (Ed 2026-08-14.)
+    window._hoToken=session.access_token;
+    const me=await fetch('/api/me',{headers:{Authorization:'Bearer '+window._hoToken}}).then(r=>r.ok?r.json():null).catch(()=>null);
     if(me&&me.user){ window._hoUser=me.user; _hoWhoBadge(me.user); }
     else { _hoWhoBadge(null,'token-not-accepted'); }
   }catch(e){ _hoWhoBadge(null,'err:'+(e.message||e)); }
 })();
-async function hoAuthHeader(){ try{ await window._hoAuthReady; if(window.supa){ const {data:{session}}=await window.supa.auth.getSession(); if(session&&session.access_token) return {Authorization:'Bearer '+session.access_token}; } }catch(_){}; return {}; }
+async function hoAuthHeader(){ try{ await window._hoAuthReady; if(window._hoToken) return {Authorization:'Bearer '+window._hoToken}; }catch(_){}; return {}; }
 
 // Inline edit of the homeowner's email / phone / name, right on the 360 — no
 // hunting through property records. Updates the canonical contact. (Ed 2026-07-14.)
