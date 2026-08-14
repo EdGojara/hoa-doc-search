@@ -1,0 +1,145 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Private Books</title>
+<style>
+  :root{ --navy:#0B1D34; --gold:#D4AF37; --ink:#334155; --faint:#94a3b8; --rule:#e6e9ee; --bg:#f4f5f7; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,Segoe UI,Arial,sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 20px 80px;}
+  .brand{font-family:Georgia,serif;color:var(--navy);font-size:15px;font-weight:700;letter-spacing:.2px;}
+  h1{font-family:Georgia,serif;color:var(--navy);font-size:26px;font-weight:700;margin:6px 0 2px;}
+  .sub{color:var(--faint);font-size:13px;margin-bottom:26px;}
+  .card{background:#fff;border:1px solid var(--rule);border-radius:14px;padding:22px;margin-bottom:18px;}
+  .card h2{font-size:14px;color:var(--navy);margin:0 0 14px;text-transform:uppercase;letter-spacing:.06em;}
+  .locked{max-width:440px;margin:12vh auto;text-align:center;background:#fff;border:1px solid var(--rule);border-radius:16px;padding:40px 30px;}
+  .locked .k{font-size:34px;}
+  label{display:block;font-size:11.5px;font-weight:600;color:#475569;margin:10px 0 4px;}
+  input,select,textarea{width:100%;padding:9px 11px;border:1px solid #d0d7de;border-radius:8px;font-size:13.5px;background:#fff;}
+  .btn{background:var(--gold);color:var(--navy);border:none;border-radius:9px;padding:10px 20px;font-weight:700;font-size:13.5px;cursor:pointer;}
+  .ghost{background:#fff;border:1px solid #cbd5e1;color:var(--navy);border-radius:8px;padding:8px 14px;font-weight:600;font-size:12.5px;cursor:pointer;}
+  .ent{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f1f5f9;cursor:pointer;}
+  .ent:last-child{border-bottom:none}
+  .ent .n{font-weight:700;color:var(--navy);font-size:14.5px;}
+  .ent .t{font-size:11.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em;}
+  .pill{display:inline-block;background:#eef2f7;color:#475569;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:600;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .muted{color:var(--faint);font-size:12.5px;}
+  .soon{opacity:.6;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:7px 6px;border-bottom:1px solid #f1f5f9;}
+  th{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em;font-weight:600;}
+  .row-actions{display:flex;gap:8px;margin-top:14px;}
+  a.back{color:var(--faint);text-decoration:none;font-size:12.5px;}
+</style>
+
+<div id="app"><div class="wrap"><div class="muted" style="padding:40px;text-align:center;">Unlocking…</div></div></div>
+
+<script>
+const V='/api/vault';
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const $=id=>document.getElementById(id);
+let SUPA=null, ENTITIES=[], CUR=null;
+
+async function boot(){
+  try{
+    const cfg=await fetch('/api/auth/config').then(r=>r.json());
+    if(cfg.enabled){
+      if(!window.supabase){ await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';s.onload=res;s.onerror=rej;document.head.appendChild(s);}); }
+      SUPA=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    }
+  }catch(_){}
+  // Prove the lock.
+  const r=await api('GET','/whoami');
+  if(!r||!r.ok){ renderLocked(); return; }
+  window._owner=r.owner;
+  await loadEntities();
+  renderVault();
+}
+async function authHeader(){ try{ if(SUPA){ const {data:{session}}=await SUPA.auth.getSession(); if(session&&session.access_token) return {Authorization:'Bearer '+session.access_token}; } }catch(_){}; return {}; }
+async function api(method,path,body){
+  const opts={method,headers:{...(await authHeader())}};
+  if(body){ opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
+  try{ const res=await fetch(V+path,opts); if(res.status===403) return null; return await res.json(); }catch(_){ return null; }
+}
+
+function renderLocked(){
+  $('app').innerHTML=`<div class="locked"><div class="k">🔒</div>
+    <h1 style="font-size:20px;">This workspace is private</h1>
+    <p class="muted">These are the owner's books. Access is limited to the account owner. If that's you, sign in with your owner account and reload.</p></div>`;
+}
+
+async function loadEntities(){ const r=await api('GET','/entities'); ENTITIES=(r&&r.entities)||[]; }
+
+const ETYPE={s_corp:'S-Corp',c_corp:'C-Corp',llc:'LLC',partnership:'Partnership',sole_prop:'Sole Proprietor',individual:'Individual'};
+
+function renderVault(){
+  $('app').innerHTML=`<div class="wrap">
+    <div class="brand">Bedrock — Private Books</div>
+    <h1>The Vault</h1>
+    <div class="sub">Owner-only accounting workspace · sealed to ${esc((window._owner&&window._owner.email)||'you')}</div>
+
+    <div class="card">
+      <h2>Companies</h2>
+      <div id="entList">${ENTITIES.length?ENTITIES.map(e=>`
+        <div class="ent" onclick="openEntity('${e.id}')">
+          <div><div class="n">${esc(e.name)}</div><div class="t">${ETYPE[e.entity_type]||e.entity_type}${e.ein?' · EIN '+esc(e.ein):''}</div></div>
+          <div class="pill">Open →</div>
+        </div>`).join(''):'<div class="muted">No companies yet. Add your first below (Bedrock is an S-Corp).</div>'}</div>
+      <div class="row-actions"><button class="ghost" onclick="toggleAdd()">＋ Add company</button></div>
+      <div id="addBox" style="display:none;margin-top:14px;border-top:1px solid var(--rule);padding-top:14px;">
+        <div class="grid2">
+          <div><label>Company name</label><input id="e-name" placeholder="Bedrock Association Management, Inc."></div>
+          <div><label>Type</label><select id="e-type">${Object.entries(ETYPE).map(([k,v])=>`<option value="${k}"${k==='s_corp'?' selected':''}>${v}</option>`).join('')}</select></div>
+          <div><label>EIN (optional)</label><input id="e-ein" placeholder="XX-XXXXXXX"></div>
+          <div><label>Fiscal year end</label><input id="e-fye" value="12-31" placeholder="MM-DD"></div>
+        </div>
+        <div class="row-actions"><button class="btn" onclick="addEntity()">Create company</button><span id="e-status" class="muted"></span></div>
+      </div>
+    </div>
+
+    <div class="card soon">
+      <h2>Reconstruction · coming next</h2>
+      <p class="muted">Statement import (bank + credit-card PDFs → extracted, categorized transactions), the ledger, bank reconciliation, and financial statements (P&L, balance sheet, trial balance) build on top of this. Payroll stays in QuickBooks Payroll and flows in as summary entries.</p>
+    </div>
+  </div>`;
+}
+
+window.toggleAdd=function(){ const b=$('addBox'); b.style.display=b.style.display==='none'?'block':'none'; };
+window.addEntity=async function(){
+  const name=$('e-name').value.trim(); if(!name){ $('e-status').textContent='Name is required.'; return; }
+  $('e-status').textContent='Creating…';
+  const r=await api('POST','/entities',{name,entity_type:$('e-type').value,ein:$('e-ein').value.trim(),fiscal_year_end:$('e-fye').value.trim()});
+  if(r&&r.entity){ await loadEntities(); renderVault(); } else { $('e-status').textContent='Could not create.'; }
+};
+
+window.openEntity=async function(id){
+  CUR=ENTITIES.find(e=>e.id===id); if(!CUR) return;
+  const r=await api('GET','/entities/'+id+'/accounts'); const accts=(r&&r.accounts)||[];
+  $('app').innerHTML=`<div class="wrap">
+    <a class="back" href="#" onclick="event.preventDefault();renderVault()">← All companies</a>
+    <h1 style="margin-top:8px;">${esc(CUR.name)}</h1>
+    <div class="sub">${ETYPE[CUR.entity_type]||CUR.entity_type}${CUR.ein?' · EIN '+esc(CUR.ein):''} · FYE ${esc(CUR.fiscal_year_end)}</div>
+    <div class="card">
+      <h2>Chart of accounts</h2>
+      ${accts.length?`<table><thead><tr><th>#</th><th>Account</th><th>Type</th></tr></thead><tbody>${accts.map(a=>`<tr><td style="font-family:ui-monospace,monospace;">${esc(a.account_number)}</td><td>${esc(a.account_name)}</td><td><span class="pill">${esc(a.account_type)}</span></td></tr>`).join('')}</tbody></table>`:'<div class="muted">No accounts yet. Add your cash, revenue, and expense accounts — or we\'ll seed a standard set when reconstruction starts.</div>'}
+      <div id="acctAdd" style="margin-top:14px;border-top:1px solid var(--rule);padding-top:14px;">
+        <div class="grid2">
+          <div><label>Account #</label><input id="a-num" placeholder="1000"></div>
+          <div><label>Name</label><input id="a-name" placeholder="Operating Cash"></div>
+          <div><label>Type</label><select id="a-type"><option value="asset">Asset</option><option value="liability">Liability</option><option value="equity">Equity</option><option value="revenue">Revenue</option><option value="expense">Expense</option></select></div>
+        </div>
+        <div class="row-actions"><button class="btn" onclick="addAccount('${id}')">Add account</button><span id="a-status" class="muted"></span></div>
+      </div>
+    </div>
+  </div>`;
+};
+window.addAccount=async function(id){
+  const account_number=$('a-num').value.trim(), account_name=$('a-name').value.trim();
+  if(!account_number||!account_name){ $('a-status').textContent='Number and name required.'; return; }
+  $('a-status').textContent='Adding…';
+  const r=await api('POST','/entities/'+id+'/accounts',{account_number,account_name,account_type:$('a-type').value});
+  if(r&&r.account){ openEntity(id); } else { $('a-status').textContent=(r&&r.error)==='account_number_exists'?'That account # already exists.':'Could not add.'; }
+};
+
+boot();
+</script>

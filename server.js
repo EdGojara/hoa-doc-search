@@ -1188,6 +1188,14 @@ app.use('/api/calls', callsRouter);
 const { router: portalAdminRouter } = require('./api/portal_admin');
 app.use('/api/portal-admin', portalAdminRouter);
 
+// The owner's private accounting vault — every API route is gated by
+// requireOwner (Ed only). The page itself is static; all its data is owner-
+// gated, so it renders a locked screen for anyone else. Deliberately NOT linked
+// from any staff nav. (Ed 2026-08-14.)
+const { router: vaultRouter } = require('./api/vault');
+app.use('/api/vault', vaultRouter);
+app.get('/admin/vault', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'vault.html')));
+
 const { router: usersRouter } = require('./api/users');
 app.use('/api/users', usersRouter);
 
