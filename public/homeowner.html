@@ -78,13 +78,11 @@ const dt=s=>{ if(!s) return ''; try { return new Date(s).toLocaleString('en-US',
 // the same way the other admin screens do; degrades gracefully if unavailable.
 window.supa=null; window._hoToken=null;
 // The badge stamps this build tag so we can confirm which JS the browser loaded.
-const HO_BUILD='noteauth-9';
-function _hoWhoBadge(user,reason){
-  let el=document.getElementById('ho-whoami');
-  if(!el){ el=document.createElement('div'); el.id='ho-whoami'; el.style.cssText='position:fixed;top:8px;right:12px;z-index:99999;font:12px/1 -apple-system,Segoe UI,Arial;padding:6px 11px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.12);'; document.body.appendChild(el); }
-  if(user){ el.style.background='#dcfce7'; el.style.color='#166534'; el.textContent='✓ '+(user.full_name||user.email)+' · '+HO_BUILD; el.title='Notes will be attributed to you.'; }
-  else { el.style.background='#fee2e2'; el.style.color='#991b1b'; el.textContent='⚠ not signed in · '+HO_BUILD; el.title='Reason: '+(reason||'?'); }
-}
+// Note attribution is PARKED (couldn't resolve why the token didn't reach the
+// note POST; revisit with the M365-SSO/identity work). The bootstrap below stays
+// harmless and still attempts attribution, so if identity starts flowing it
+// comes back for free — but the visible diagnostic badge is off. (Ed 2026-08-14.)
+function _hoWhoBadge(){ /* diagnostic badge removed */ }
 window._hoAuthReady=(async function(){
   try{
     const cfg=await fetch('/api/auth/config').then(r=>r.json());
@@ -472,14 +470,8 @@ async function openProfile(cid){
   window.addNote=async function(id){
     const inp=document.getElementById('noteInput'); const content=inp.value.trim(); if(!content)return;
     inp.disabled=true;
-    const hdr=await hoAuthHeader();
-    const r=await fetch(API+'/'+id+'/note',{method:'POST',headers:{'Content-Type':'application/json',...hdr},body:JSON.stringify({content})});
-    const j=await r.json().catch(()=>({}));
-    if(r.ok){
-      // Temporary diagnostic: if it saved but wasn't attributed, show exactly why.
-      if(!(j._auth&&j._auth.actor)){ alert('Saved, but no author recorded.\n\nClient sent auth header: '+(hdr&&hdr.Authorization?'YES':'NO')+'\nServer saw auth header: '+((j._auth&&j._auth.header)?'YES':'NO')+'\nServer resolved user: '+((j._auth&&j._auth.actor)||'none')); }
-      openProfile(id);
-    } else { inp.disabled=false; alert('Could not save note'); }
+    const r=await fetch(API+'/'+id+'/note',{method:'POST',headers:{'Content-Type':'application/json',...(await hoAuthHeader())},body:JSON.stringify({content})});
+    if(r.ok){ openProfile(id); } else { inp.disabled=false; alert('Could not save note'); }
   };
   // Draft an email to the homeowner with a letter attached (queued for review).
   window.emailLetter=function(pathEnc, label){
