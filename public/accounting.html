@@ -1942,17 +1942,33 @@
     if (!checks.length) { $('chkRegister').innerHTML='<div class="card muted" style="padding:18px;">No checks issued yet.</div>'; return; }
     const badge=(s)=> s==='cleared'?'<span class="badge ok">cleared</span>':(s==='voided'?'<span class="badge err">voided</span>':'<span class="pill">'+esc(s)+'</span>');
     const liveTotal=checks.filter((c)=>c.status!=='voided').reduce((s,c)=>s+Number(c.amount_cents||0),0);
-    const rows=checks.map((c)=>`<tr${c.status==='voided'?' style="opacity:.55;"':''}>
+    // A check can be reprinted ONLY on the day it was printed (created_at, Central)
+    // — after that the reprint is locked so an already-mailed check isn't re-cut.
+    const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Chicago'});
+    const printedDate=(c)=> c.created_at ? new Date(c.created_at).toLocaleDateString('en-CA',{timeZone:'America/Chicago'}) : null;
+    const reprintable=(c)=> c.status==='issued' && printedDate(c)===today;
+    const rows=checks.map((c)=>{
+      const box = reprintable(c)
+        ? `<input type="checkbox" class="chk-reprint" value="${c.id}" onchange="chkReprintBar()">`
+        : `<span title="Reprint locked — this check was printed ${printedDate(c)?fmtDate(printedDate(c)):'on a prior day'}. To re-cut it, void it and issue a new one." style="color:var(--ink-faint); cursor:help;">🔒</span>`;
+      return `<tr${c.status==='voided'?' style="opacity:.55;"':''}>
+      <td style="text-align:center;">${box}</td>
       <td style="font-family:ui-monospace,monospace;">${esc(c.check_number)}</td>
       <td>${esc(fmtDate(c.issue_date))}</td><td>${esc(c.payee_name)}</td>
       <td class="num">${fmt(c.amount_cents)}</td><td>${badge(c.status)}</td>
-      <td>${c.print_run_id?`<a class="link" href="/api/checks/run/${c.print_run_id}/pdf" target="_blank" rel="noopener" title="Re-open the printable PDF for this check run">🖨 Print</a>`:''}${c.status!=='voided'&&c.status!=='cleared'?` &nbsp;<a class="link" style="color:var(--err); cursor:pointer;" onclick="chkVoid('${c.id}')">void</a>`:''}</td></tr>`).join('');
-    $('chkRegister').innerHTML=`<div class="card"><div style="display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+      <td>${c.status!=='voided'&&c.status!=='cleared'?`<a class="link" style="color:var(--err); cursor:pointer;" onclick="chkVoid('${c.id}')">void</a>`:''}</td></tr>`;
+    }).join('');
+    $('chkRegister').innerHTML=`<div class="card"><div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
         <h2 class="sec" style="margin:0;">Check register</h2>
-        <span class="muted" style="font-size:12.5px;">${checks.length} check${checks.length===1?'':'s'} · ${fmt(liveTotal)} outstanding (excl. voided)</span></div>
-      <table><thead><tr><th>Check #</th><th>Date</th><th>Payee</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+        <div style="display:flex; gap:12px; align-items:center;">
+          <span class="muted" style="font-size:12.5px;">${checks.length} check${checks.length===1?'':'s'} · ${fmt(liveTotal)} outstanding</span>
+          <span id="chkReprintBar" class="muted" style="font-size:12.5px;"></span>
+          <button id="chkReprintBtn" onclick="chkReprintSelected()" disabled style="${CHK_GHOST}">🖨 Reprint selected</button>
+        </div></div>
+      <table><thead><tr><th style="width:28px;"></th><th>Check #</th><th>Date</th><th>Payee</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>
-      <div class="muted" style="font-size:11.5px; margin-top:8px;">🖨 Print re-opens the printable PDF for that run — use it if the print window didn’t open. This register is for the account selected above.</div></div>`;
+      <div class="muted" style="font-size:11.5px; margin-top:8px;">Tick the checks to reprint and hit <b>Reprint selected</b> for one combined PDF. Only checks printed <b>today</b> can be reprinted — 🔒 marks ones locked from an earlier day so an already-mailed check can’t be double-issued.</div></div>`;
+    chkReprintBar();
   }
   window.chkVoid = async function(id){
     const reason=prompt('Reason for voiding this check?'); if (reason===null) return;
@@ -1960,6 +1976,26 @@
     if (j.error){ alert('Couldn’t void: '+j.error); return; }
     if (j.note) alert(j.note);
     chkLoadRegister();
+  };
+  window.chkReprintBar = function(){
+    const n=document.querySelectorAll('.chk-reprint:checked').length;
+    const bar=$('chkReprintBar'); if(bar) bar.textContent = n?`${n} selected`:'';
+    const btn=$('chkReprintBtn'); if(btn){ btn.disabled=!n; btn.textContent = n>1?`🖨 Reprint ${n} checks`:'🖨 Reprint selected'; }
+  };
+  window.chkReprintSelected = async function(){
+    const ids=[...document.querySelectorAll('.chk-reprint:checked')].map((c)=>c.value);
+    if(!ids.length) return;
+    const btn=$('chkReprintBtn'); const orig=btn.textContent; btn.disabled=true; btn.textContent='Building…';
+    try{
+      const r=await fetch('/api/checks/reprint',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:CID, check_register_ids:ids})});
+      if(!r.ok){ let m='Reprint failed'; try{ m=(await r.json()).error||m; }catch(_){}; alert(m); btn.disabled=false; btn.textContent=orig; return; }
+      const url=URL.createObjectURL(await r.blob());
+      // popup-safe: anchor-click always survives blockers, unlike window.open.
+      const a=document.createElement('a'); a.href=url; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 60000);
+      document.querySelectorAll('.chk-reprint:checked').forEach((c)=>{c.checked=false;});
+    }catch(e){ alert('Reprint failed: '+(e.message||e)); }
+    finally{ btn.disabled=false; chkReprintBar(); }
   };
 
   // ── Online Payments (Stripe Connect) ───────────────────────────────────────

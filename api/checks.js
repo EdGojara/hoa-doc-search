@@ -12,7 +12,7 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const {
-  listPayableInvoices, createCheckRun, getRunForRender, voidCheck,
+  listPayableInvoices, createCheckRun, getRunForRender, getChecksForReprint, voidCheck,
   getBankCheckConfig, updateBankCheckConfig,
 } = require('../lib/accounting/check_run');
 const { renderChecksPDF, micrFontInstalled } = require('../lib/accounting/check_renderer');
@@ -505,7 +505,7 @@ router.get('/register', async (req, res) => {
     const { community_id, bank_account_id, limit = '500' } = req.query;
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
     let q = supabase.from('check_register')
-      .select('id, bank_account_id, check_number, issue_date, payee_name, amount_cents, status, memo, voided_reason, cleared_date, print_run_id')
+      .select('id, bank_account_id, check_number, issue_date, payee_name, amount_cents, status, memo, voided_reason, cleared_date, print_run_id, created_at')
       .eq('community_id', community_id)
       .order('issue_date', { ascending: false })
       .order('check_number', { ascending: false })
@@ -515,6 +515,25 @@ router.get('/register', async (req, res) => {
     if (error) throw error;
     res.json({ checks: data || [] });
   } catch (err) { handleErr(res, 'register', err); }
+});
+
+// Reprint a hand-picked set of checks into ONE combined PDF. Same-day locked
+// (see getChecksForReprint) so an already-mailed check can't be re-cut.
+router.post('/reprint', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
+    const data = await getChecksForReprint({ community_id: b.community_id, check_register_ids: b.check_register_ids });
+    if (!data || !data.checks.length) return res.status(404).json({ error: 'no_reprintable_checks' });
+    const pdf = await renderChecksPDF(data.checks, data.bankConfig);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="checks-reprint.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    if (err && err.code === 'reprint_locked') return res.status(409).json({ error: err.message });
+    if (err && err.code === 'invalid_state') return res.status(400).json({ error: err.message });
+    handleErr(res, 'reprint', err);
+  }
 });
 
 router.post('/void', express.json(), async (req, res) => {
