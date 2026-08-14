@@ -71,6 +71,20 @@ const API='/api/homeowner';
 const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const money=c=>{c=Number(c)||0;return (c<0?'-':'')+'$'+(Math.abs(c)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
 const d10=s=>s?String(s).slice(0,10):'';
+// Date + time (Central), for note/correspondence timestamps.
+const dt=s=>{ if(!s) return ''; try { return new Date(s).toLocaleString('en-US',{timeZone:'America/Chicago',year:'numeric',month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit'}); } catch(_){ return d10(s); } };
+// Staff identity — so a note records WHO wrote it. Bootstraps the Supabase JWT
+// the same way the other admin screens do; degrades gracefully if unavailable.
+window.supa=null;
+(async function bootHo360Supa(){
+  try{
+    const cfg=await fetch('/api/auth/config').then(r=>r.json());
+    if(!cfg.enabled) return;
+    if(!window.supabase){ await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';s.onload=res;s.onerror=rej;document.head.appendChild(s);}); }
+    window.supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+  }catch(e){ /* no identity — notes still save, just unattributed */ }
+})();
+async function hoAuthHeader(){ try{ if(window.supa){ const {data:{session}}=await window.supa.auth.getSession(); if(session&&session.access_token) return {Authorization:'Bearer '+session.access_token}; } }catch(_){}; return {}; }
 
 // Inline edit of the homeowner's email / phone / name, right on the 360 — no
 // hunting through property records. Updates the canonical contact. (Ed 2026-07-14.)
@@ -225,7 +239,7 @@ async function openProfile(cid){
     // enforcement activity, not correspondence — they clutter this view on
     // every account that ever changes stage. Keep them out; the actual letters
     // still show. (Ed 2026-07-14.)
-    ...(d.interactions||[]).filter(i=>!(i.type==='observation_note' && /^Stage (advanced|corrected|recalculated|reset|recomputed)/i.test(i.subject||''))).map(i=>({t:i.sent_at||i.created_at, dir:i.direction, kind:(i.type||'').replace(/_/g,' '), label:i.type==='internal_note'?(i.content||i.subject):(i.subject||i.type), id:i.id, note:i.type==='internal_note', letterPath:(i.letter_available && i.content)?i.content:null})),
+    ...(d.interactions||[]).filter(i=>!(i.type==='observation_note' && /^Stage (advanced|corrected|recalculated|reset|recomputed)/i.test(i.subject||''))).map(i=>({t:i.sent_at||i.created_at, dir:i.direction, kind:(i.type||'').replace(/_/g,' '), label:i.type==='internal_note'?(i.content||i.subject):(i.subject||i.type), id:i.id, note:i.type==='internal_note', author:i.author_name||null, letterPath:(i.letter_available && i.content)?i.content:null})),
     ...(d.emails||[]).map(e=>({t:e.received_at, dir:e.direction, kind:'email', label:e.ai_summary||e.subject||'email'})),
     ...(d.calls||[]).map(c=>({t:c.started_at, dir:'inbound', kind:'call', label:(c.brief||('phone call'+(c.status?' · '+c.status:'')))+(c.duration_seconds?' ('+Math.round(c.duration_seconds/60)+'m)':'')})),
   ].filter(x=>x.t).sort((a,b)=>String(b.t).localeCompare(String(a.t))).slice(0,30);
@@ -338,7 +352,7 @@ async function openProfile(cid){
       <div class="card">
         <div class="sec-title">✉️ Correspondence &amp; notes (${tl.length})</div>
         <div class="notebox"><input id="noteInput" placeholder="Add a note to this account…" onkeydown="if(event.key==='Enter')addNote('${cid}')"><button onclick="addNote('${cid}')">Add note</button></div>
-        <div class="timeline">${tl.map(x=>`<div class="li ${x.dir==='inbound'?'tl-in':(x.note?'tl-note':'tl-out')}"><span class="t">${d10(x.t)} · ${esc(x.kind)} ${x.dir==='inbound'?'↓':x.dir==='internal'?'•':'↑'}</span>${x.note?`<span onclick="deleteNote('${x.id}','${cid}')" title="Delete note" style="float:right;cursor:pointer;color:#b91c1c;font-weight:700;">✕</span>`:''}<br>${esc(String(x.label).slice(0,110))}${x.letterPath?` <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(x.letterPath)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:4px;">📄 View letter</a> <a href="/api/homeowner/file?kind=letter&download=1&name=${encodeURIComponent(((c&&c.full_name?c.full_name+' - ':'')+String(x.label||'letter')+' '+d10(x.t)))}&path=${encodeURIComponent(x.letterPath)}" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:6px;" title="Download the PDF to send to the homeowner">⬇ Download</a> <a href="#" onclick="event.preventDefault();emailLetter('${encodeURIComponent(x.letterPath)}','${esc(String(x.label||'Letter')).replace(/'/g,'&#39;')}')" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:6px;" title="Draft an email to the homeowner with this letter attached (queued for your review)">✉️ Email to homeowner</a>`:''}</div>`).join('')||'<div class="empty">No correspondence on file yet.</div>'}</div>
+        <div class="timeline">${tl.map(x=>`<div class="li ${x.dir==='inbound'?'tl-in':(x.note?'tl-note':'tl-out')}"><span class="t">${dt(x.t)} · ${esc(x.kind)} ${x.dir==='inbound'?'↓':x.dir==='internal'?'•':'↑'}${x.author?' · '+esc(x.author):''}</span>${x.note?`<span style="float:right;white-space:nowrap;"><span onclick="editNote('${x.id}','${cid}')" title="Edit note" style="cursor:pointer;color:#0B1D34;font-weight:700;margin-right:9px;">✎</span><span onclick="deleteNote('${x.id}','${cid}')" title="Delete note" style="cursor:pointer;color:#b91c1c;font-weight:700;">✕</span></span>`:''}<br>${x.note?`<span id="note-txt-${x.id}">${esc(x.label)}</span>`:esc(String(x.label).slice(0,110))}${x.letterPath?` <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(x.letterPath)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:4px;">📄 View letter</a> <a href="/api/homeowner/file?kind=letter&download=1&name=${encodeURIComponent(((c&&c.full_name?c.full_name+' - ':'')+String(x.label||'letter')+' '+d10(x.t)))}&path=${encodeURIComponent(x.letterPath)}" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:6px;" title="Download the PDF to send to the homeowner">⬇ Download</a> <a href="#" onclick="event.preventDefault();emailLetter('${encodeURIComponent(x.letterPath)}','${esc(String(x.label||'Letter')).replace(/'/g,'&#39;')}')" style="color:#0B1D34;font-weight:700;text-decoration:none;margin-left:6px;" title="Draft an email to the homeowner with this letter attached (queued for your review)">✉️ Email to homeowner</a>`:''}</div>`).join('')||'<div class="empty">No correspondence on file yet.</div>'}</div>
       </div>
     </div>`;
 
@@ -346,6 +360,16 @@ async function openProfile(cid){
     if(!confirm('Delete this note? This can’t be undone.'))return;
     const r=await fetch(API+'/note/'+id,{method:'DELETE'});
     if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(j.detail||'Could not delete'); }
+  };
+  window.editNote=async function(id,cid){
+    const el=document.getElementById('note-txt-'+id);
+    const cur=el?el.textContent:'';
+    const next=prompt('Edit note:',cur);
+    if(next===null) return;              // cancelled
+    if(!next.trim()){ alert('A note can’t be blank — use ✕ to delete it.'); return; }
+    if(next.trim()===cur.trim()) return; // unchanged
+    const r=await fetch(API+'/note/'+id,{method:'PATCH',headers:{'Content-Type':'application/json',...(await hoAuthHeader())},body:JSON.stringify({content:next.trim()})});
+    if(r.ok){ openProfile(cid); } else { const j=await r.json().catch(()=>({})); alert(j.detail||j.error||'Could not save'); }
   };
   // Upload a photo/PDF to the account. On a phone the file input opens the camera
   // (capture=environment). Grabs GPS for field photos (best-effort). (Ed 2026-07-14.)
@@ -431,7 +455,7 @@ async function openProfile(cid){
   window.addNote=async function(id){
     const inp=document.getElementById('noteInput'); const content=inp.value.trim(); if(!content)return;
     inp.disabled=true;
-    const r=await fetch(API+'/'+id+'/note',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content})});
+    const r=await fetch(API+'/'+id+'/note',{method:'POST',headers:{'Content-Type':'application/json',...(await hoAuthHeader())},body:JSON.stringify({content})});
     if(r.ok){ openProfile(id); } else { inp.disabled=false; alert('Could not save note'); }
   };
   // Draft an email to the homeowner with a letter attached (queued for review).

@@ -308,7 +308,7 @@ async function assemble(contactId) {
 
   // Correspondence: interactions (letters/calls/notes) + emails from the hub
   const interactions = await safe(() => supabase.from('interactions')
-    .select('id, type, direction, subject, content, delivery_method, status, sent_at, mailed_at, printed_at, created_at, violation_id')
+    .select('id, type, direction, subject, content, delivery_method, status, sent_at, mailed_at, printed_at, created_at, updated_at, violation_id, sent_by_user_id')
     .or(`contact_id.eq.${contactId}${propIds.length ? ',property_id.in.(' + propIds.join(',') + ')' : ''}`)
     .order('created_at', { ascending: false }).limit(60));
   // Match emails by resolved contact OR by any owned property — mirrors the
@@ -401,8 +401,16 @@ async function assemble(contactId) {
   // offers View / Download / Email only when this is true, so a caught letter
   // whose PDF was never written no longer shows a dead "View letter" link.
   // (Ed 2026-08-01 — the rejected wrong-homeowner courtesy_1 at 4731 Autumn Pine.)
+  // Resolve note authors → names (so the 360 shows WHO wrote each staff note).
+  const noteAuthorIds = [...new Set((interactions || []).filter((it) => it.sent_by_user_id).map((it) => it.sent_by_user_id))];
+  const authorNames = {};
+  if (noteAuthorIds.length) {
+    const us = await safe(() => supabase.from('user_profiles').select('id, full_name, email').in('id', noteAuthorIds));
+    (us || []).forEach((u) => { authorNames[u.id] = u.full_name || u.email || null; });
+  }
   const interactionsOut = (interactions || []).map((it) => ({
     ...it,
+    author_name: it.sent_by_user_id ? (authorNames[it.sent_by_user_id] || null) : null,
     letter_available: !!(it.content && /\.pdf$/i.test(it.content) && /letter/i.test(it.type || '') && letterWentOut(it)),
   }));
 
@@ -599,6 +607,7 @@ router.post('/:contactId/note', express.json(), async (req, res) => {
     if (!body) return res.status(400).json({ error: 'content_required' });
     const props = await ownedProperties(req.params.contactId);
     const primary = props.find((p) => p.is_primary) || props[0] || null;
+    const actor = await getAuthedUser(req).catch(() => null); // who's writing it — for attribution
     const { data, error } = await supabase.from('interactions').insert({
       type: 'internal_note', direction: 'internal',
       contact_id: req.params.contactId,
@@ -607,6 +616,7 @@ router.post('/:contactId/note', express.json(), async (req, res) => {
       subject: (req.body && req.body.subject) ? String(req.body.subject).slice(0, 200) : 'Note',
       content: body,
       source: 'manual',
+      sent_by_user_id: actor && actor.id ? actor.id : null,
       notes: 'via Homeowner 360',
     }).select('id, created_at').single();
     if (error) throw error;
@@ -665,6 +675,24 @@ router.delete('/attachment/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[homeowner360] attachment delete failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// PATCH /note/:id — edit a staff note's text. Only internal_note type; keeps the
+// original author (edit changes the words, not who logged it). (Ed 2026-08-14.)
+router.patch('/note/:id', express.json(), async (req, res) => {
+  try {
+    const content = (req.body && req.body.content ? String(req.body.content) : '').trim();
+    if (!content) return res.status(400).json({ error: 'content_required' });
+    const { data: row } = await supabase.from('interactions').select('id, type').eq('id', req.params.id).maybeSingle();
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    if (row.type !== 'internal_note') return res.status(403).json({ error: 'only_notes_editable', detail: 'Only staff notes can be edited here; correspondence records cannot.' });
+    const { error } = await supabase.from('interactions').update({ content, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('type', 'internal_note');
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[homeowner360] note edit failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
