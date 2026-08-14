@@ -1946,14 +1946,20 @@
       if (!confirm('This account isn’t marked ready (no account number on file), so checks will print as NON-NEGOTIABLE drafts. Continue for a test print?')) return;
     }
     const btn=$('chk-print'); btn.disabled=true; btn.textContent='Creating run…';
+    // Reserve the print tab NOW, synchronously on the click — a window opened
+    // AFTER the async run-creation call reads as an unsolicited pop-up and gets
+    // blocked. Opening it during the click, then pointing it at the PDF once the
+    // run exists, is the reliable pattern. (Ed 2026-08-14.)
+    const printWin = window.open('', '_blank');
     const body={community_id:CID, bank_account_id:window._chkAcct, payment_date:$('chk-date').value, invoice_ids:ids};
     const j = await fetch('/api/checks/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then((r)=>r.json());
-    if (j.error) { alert('Couldn’t create the run: '+j.error); btn.disabled=false; btn.textContent='Print checks'; return; }
+    if (j.error) { if(printWin) printWin.close(); alert('Couldn’t create the run: '+j.error); btn.disabled=false; btn.textContent='Print checks'; return; }
     const pdfUrl = `/api/checks/run/${j.print_run_id}/pdf`;
-    // Try to open the printable PDF, but popup blockers return null silently —
-    // so ALWAYS leave a persistent button on the page. The checks are issued and
-    // in the register regardless; they must never look "lost" behind a blocked tab.
-    const win = window.open(pdfUrl, '_blank');
+    // Point the reserved tab at the PDF. If the browser hard-blocked even the
+    // reserved open (printWin null), the on-page button below is the fallback —
+    // the checks are issued and in the register regardless.
+    const win = printWin;
+    if (win) win.location = pdfUrl;
     const n = j.check_count || 0;
     await renderChecks();
     const pay = $('chkPay');
@@ -2024,17 +2030,19 @@
     const useOverride = !!(window._isAdmin && window._chkOverride);
     if(useOverride && !confirm('You are overriding the reprint lock as admin.\n\nOnly do this if the original checks were DESTROYED and NOT mailed — reprinting a check that already went out double-pays the vendor.\n\nContinue?')) return;
     const btn=$('chkReprintBtn'); const orig=btn.textContent; btn.disabled=true; btn.textContent='Building…';
+    // Reserve the tab on the click (before the async build) so it isn't pop-up-blocked.
+    const rwin = window.open('', '_blank');
     try{
       const headers={'Content-Type':'application/json'};
       if(useOverride) Object.assign(headers, await chkAuthHeader());
       const r=await fetch('/api/checks/reprint',{method:'POST',headers,body:JSON.stringify({community_id:CID, check_register_ids:ids, override:useOverride})});
-      if(!r.ok){ let m='Reprint failed'; try{ m=(await r.json()).error||m; }catch(_){}; alert(m); btn.disabled=false; btn.textContent=orig; return; }
+      if(!r.ok){ if(rwin) rwin.close(); let m='Reprint failed'; try{ m=(await r.json()).error||m; }catch(_){}; alert(m); btn.disabled=false; btn.textContent=orig; return; }
       const url=URL.createObjectURL(await r.blob());
-      // popup-safe: anchor-click always survives blockers, unlike window.open.
-      const a=document.createElement('a'); a.href=url; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();
+      if(rwin){ rwin.location=url; }
+      else { const a=document.createElement('a'); a.href=url; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove(); }
       setTimeout(()=>URL.revokeObjectURL(url), 60000);
       document.querySelectorAll('.chk-reprint:checked').forEach((c)=>{c.checked=false;});
-    }catch(e){ alert('Reprint failed: '+(e.message||e)); }
+    }catch(e){ if(rwin) rwin.close(); alert('Reprint failed: '+(e.message||e)); }
     finally{ btn.disabled=false; chkReprintBar(); }
   };
 
