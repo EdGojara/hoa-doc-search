@@ -561,6 +561,10 @@
        Hidden for everyone but Ed via data-owner-only; every endpoint also
        hard-gates via requireOwner. Standalone page. -->
   <div class="tab" data-owner-only onclick="window.location.href='/admin/tessa'">💼 Tessa (my EA)</div>
+  <!-- 🔐 Sr Mgmt — the owner-only accounting Vault (Bedrock S-corp + Ed's other
+       companies). Hidden for everyone but Ed via data-owner-only; /api/vault
+       hard-gates via requireOwner too. Standalone page. (Ed 2026-08-14.) -->
+  <div class="tab" data-owner-only onclick="window.location.href='/admin/vault'">🔐 Sr Mgmt</div>
   <!-- ✉️ AI Team Email moved INTO Communications (the "New email" button there),
        with a Send-as picker for all four teammates (Claire / Emma / Annie /
        Miranda). Tessa composes from her own owner-only page. -->
