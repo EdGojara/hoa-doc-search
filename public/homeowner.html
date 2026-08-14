@@ -76,15 +76,19 @@ const dt=s=>{ if(!s) return ''; try { return new Date(s).toLocaleString('en-US',
 // Staff identity — so a note records WHO wrote it. Bootstraps the Supabase JWT
 // the same way the other admin screens do; degrades gracefully if unavailable.
 window.supa=null;
-(async function bootHo360Supa(){
+// Bootstrap the login client so a note records WHO wrote it. Store the promise
+// so hoAuthHeader can AWAIT it — the first note-add used to fire before the
+// client finished loading (timing race → blank author). Create the client
+// whenever the keys are present (don't gate on the enforce flag). (Ed 2026-08-14.)
+window._hoAuthReady=(async function(){
   try{
     const cfg=await fetch('/api/auth/config').then(r=>r.json());
-    if(!cfg.enabled) return;
+    if(!cfg.supabase_url||!cfg.supabase_anon_key) return;
     if(!window.supabase){ await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';s.onload=res;s.onerror=rej;document.head.appendChild(s);}); }
     window.supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
-  }catch(e){ /* no identity — notes still save, just unattributed */ }
+  }catch(e){ console.warn('[ho360] auth bootstrap failed:',e.message); }
 })();
-async function hoAuthHeader(){ try{ if(window.supa){ const {data:{session}}=await window.supa.auth.getSession(); if(session&&session.access_token) return {Authorization:'Bearer '+session.access_token}; } }catch(_){}; return {}; }
+async function hoAuthHeader(){ try{ await window._hoAuthReady; if(window.supa){ const {data:{session}}=await window.supa.auth.getSession(); if(session&&session.access_token) return {Authorization:'Bearer '+session.access_token}; } }catch(_){}; return {}; }
 
 // Inline edit of the homeowner's email / phone / name, right on the 360 — no
 // hunting through property records. Updates the canonical contact. (Ed 2026-07-14.)

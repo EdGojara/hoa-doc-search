@@ -43,7 +43,7 @@ let SUPA=null, ENTITIES=[], CUR=null;
 async function boot(){
   try{
     const cfg=await fetch('/api/auth/config').then(r=>r.json());
-    if(cfg.enabled){
+    if(cfg.supabase_url&&cfg.supabase_anon_key){   // create the client whenever keys exist (identity works even if the enforce flag is off)
       if(!window.supabase){ await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';s.onload=res;s.onerror=rej;document.head.appendChild(s);}); }
       SUPA=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
     }
