@@ -1876,10 +1876,29 @@
     }
   };
 
+  // Emailed bills Emma couldn't auto-place (missing community/vendor/total). This
+  // is the ONE thing that needs a human — surface it where checks are printed so
+  // it isn't buried on a separate page. Admin-gated endpoint. (Ed 2026-08-14.)
+  async function chkExceptionsBanner() {
+    if (!window._isAdmin) { await _adminReady; if (!window._isAdmin) return ''; }
+    try {
+      const r = await fetch('/api/ap-intake/exceptions', { headers: await chkAuthHeader() });
+      if (!r.ok) return '';
+      const j = await r.json();
+      const n = (j.exceptions || []).length;
+      if (!n) return '';
+      return `<div class="card" style="margin-bottom:12px; background:#fffbeb; border:1px solid #fbbf24; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <b style="color:#92400e;">⚠ ${n} emailed bill${n===1?'':'s'} couldn’t auto-file</b>
+        <span class="muted" style="font-size:12.5px;">Emma saved the invoice but couldn’t place it — usually a missing community. Pick the community and it goes to Payables.</span>
+        <a href="/admin/ap" target="_blank" rel="noopener" style="margin-left:auto; ${CHK_GHOST} text-decoration:none;">Resolve in Payables →</a></div>`;
+    } catch (_) { return ''; }
+  }
+
   async function chkLoadPayable() {
-    const [j, cp] = await Promise.all([
+    const [j, cp, excBanner] = await Promise.all([
       fetch(`/api/checks/payable?community_id=${CID}`).then((r)=>r.json()).catch(()=>({invoices:[]})),
       window._chkAcct ? fetch(`/api/checks/cash-position?bank_account_id=${window._chkAcct}&community_id=${CID}`).then((r)=>r.json()).catch(()=>null) : Promise.resolve(null),
+      chkExceptionsBanner(),
     ]);
     window._chkCash = (cp && !cp.error) ? cp : null;
     const cpv = window._chkCash;
@@ -1890,14 +1909,14 @@
       <div><div style="${lbl}">Next check #</div><div style="font-weight:700; font-family:ui-monospace,monospace; font-size:18px;">${cpv.next_check_number!=null?esc(cpv.next_check_number):'—'}</div></div>
     </div>` : '';
     const invs = j.invoices||[];
-    if (!invs.length) { $('chkPay').innerHTML = cashBanner + '<div class="card muted" style="padding:20px;">No approved bills waiting to be paid. Enter and approve bills in Bills (AP), then come back to print checks.</div>'; return; }
+    if (!invs.length) { $('chkPay').innerHTML = (excBanner||'') + cashBanner + '<div class="card muted" style="padding:20px;">No approved bills waiting to be paid. Enter and approve bills in Bills (AP), then come back to print checks.</div>'; return; }
     const rows = invs.map((i)=>`<tr>
       <td><input type="checkbox" class="chk-inv" value="${i.id}" data-amt="${i.balance_cents}" checked onchange="chkUpdateBar()"></td>
       <td>${esc(i.vendor_name)}</td><td>${esc(i.vendor_invoice_number||'—')}</td>
       <td>${esc(fmtDate(i.invoice_date))}</td><td>${esc(i.description||'')}</td>
       <td>${i.support_doc_url?`<a href="${i.support_doc_url}" target="_blank" rel="noopener" title="Open the invoice">📎 View</a>`:'<span class="muted">—</span>'}</td>
       <td class="num">${fmt(i.balance_cents)}</td></tr>`).join('');
-    $('chkPay').innerHTML = cashBanner + `<div class="card" style="margin-bottom:14px;">
+    $('chkPay').innerHTML = (excBanner||'') + cashBanner + `<div class="card" style="margin-bottom:14px;">
       <h2 class="sec" style="margin-bottom:8px;">Bills ready to pay</h2>
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
         <span class="muted" style="font-size:12px;">Payment date</span>${dateInput('chk-date',dToday())}
