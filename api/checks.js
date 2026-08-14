@@ -523,7 +523,15 @@ router.post('/reprint', express.json(), async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
-    const data = await getChecksForReprint({ community_id: b.community_id, check_register_ids: b.check_register_ids });
+    // The same-day lock can ONLY be waived by an admin (Ed is the sole admin).
+    // Non-admins never get the override even if they send override:true.
+    let allowLockedOverride = false;
+    if (b.override === true) {
+      const admin = await requireAdmin(req, res); // sends 403 if not admin
+      if (!admin) return;
+      allowLockedOverride = true;
+    }
+    const data = await getChecksForReprint({ community_id: b.community_id, check_register_ids: b.check_register_ids, allowLockedOverride });
     if (!data || !data.checks.length) return res.status(404).json({ error: 'no_reprintable_checks' });
     const pdf = await renderChecksPDF(data.checks, data.bankConfig);
     res.setHeader('Content-Type', 'application/pdf');

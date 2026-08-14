@@ -94,6 +94,27 @@
     }));
   }
 
+  // Admin bootstrap — resolves the operator's Supabase JWT + role so admin-only
+  // controls (e.g. the reprint-lock override) can show for Ed and send the token.
+  // Server enforces admin on the protected endpoint; this flag is visibility only.
+  window.supa = null; window._isAdmin = false;
+  const _adminReady = (async function bootAcctSupa(){
+    try {
+      const cfg = await fetch('/api/auth/config').then((r)=>r.json());
+      if (!cfg.enabled) return;
+      if (!window.supabase) {
+        await new Promise((resolve, reject)=>{ const s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'; s.onload=resolve; s.onerror=reject; document.head.appendChild(s); });
+      }
+      window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      const me = await fetch('/api/me', { headers: await chkAuthHeader() }).then((r)=>r.json()).catch(()=>null);
+      window._isAdmin = me?.user?.role === 'admin';
+    } catch (e) { console.warn('[accounting] admin bootstrap failed:', e.message); }
+  })();
+  async function chkAuthHeader(){
+    try { if (window.supa) { const { data:{ session } } = await window.supa.auth.getSession(); if (session?.access_token) return { Authorization: 'Bearer ' + session.access_token }; } } catch(_){}
+    return {};
+  }
+
   async function init() {
     renderNav();  // show the nav immediately — don't block on the data fetch
     const r = await fetch('/api/gl/communities'); const j = await r.json();
@@ -1946,28 +1967,36 @@
     // — after that the reprint is locked so an already-mailed check isn't re-cut.
     const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Chicago'});
     const printedDate=(c)=> c.created_at ? new Date(c.created_at).toLocaleDateString('en-CA',{timeZone:'America/Chicago'}) : null;
-    const reprintable=(c)=> c.status==='issued' && printedDate(c)===today;
+    const override = !!(window._isAdmin && window._chkOverride);
+    // Reprintable: issued + printed today. Admin override also unlocks prior-day
+    // issued checks (never voided/cleared — the server blocks those regardless).
+    const reprintable=(c)=> c.status==='issued' && (printedDate(c)===today || override);
     const rows=checks.map((c)=>{
+      const priorDay = c.status==='issued' && printedDate(c)!==today;
       const box = reprintable(c)
         ? `<input type="checkbox" class="chk-reprint" value="${c.id}" onchange="chkReprintBar()">`
         : `<span title="Reprint locked — this check was printed ${printedDate(c)?fmtDate(printedDate(c)):'on a prior day'}. To re-cut it, void it and issue a new one." style="color:var(--ink-faint); cursor:help;">🔒</span>`;
-      return `<tr${c.status==='voided'?' style="opacity:.55;"':''}>
+      return `<tr${c.status==='voided'?' style="opacity:.55;"':(override&&priorDay?' style="background:#fffbeb;"':'')}>
       <td style="text-align:center;">${box}</td>
       <td style="font-family:ui-monospace,monospace;">${esc(c.check_number)}</td>
       <td>${esc(fmtDate(c.issue_date))}</td><td>${esc(c.payee_name)}</td>
       <td class="num">${fmt(c.amount_cents)}</td><td>${badge(c.status)}</td>
       <td>${c.status!=='voided'&&c.status!=='cleared'?`<a class="link" style="color:var(--err); cursor:pointer;" onclick="chkVoid('${c.id}')">void</a>`:''}</td></tr>`;
     }).join('');
+    const overrideToggle = window._isAdmin
+      ? `<label style="font-size:12px; color:#92400e; display:flex; align-items:center; gap:5px; cursor:pointer;" title="Admin only. Reprint checks from a prior day — use ONLY if the originals were destroyed and NOT mailed. Reprinting an already-mailed check double-pays the vendor."><input type="checkbox" ${override?'checked':''} onchange="window._chkOverride=this.checked; chkLoadRegister();"> 🔓 override lock</label>`
+      : '';
     $('chkRegister').innerHTML=`<div class="card"><div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
         <h2 class="sec" style="margin:0;">Check register</h2>
         <div style="display:flex; gap:12px; align-items:center;">
           <span class="muted" style="font-size:12.5px;">${checks.length} check${checks.length===1?'':'s'} · ${fmt(liveTotal)} outstanding</span>
+          ${overrideToggle}
           <span id="chkReprintBar" class="muted" style="font-size:12.5px;"></span>
           <button id="chkReprintBtn" onclick="chkReprintSelected()" disabled style="${CHK_GHOST}">🖨 Reprint selected</button>
         </div></div>
       <table><thead><tr><th style="width:28px;"></th><th>Check #</th><th>Date</th><th>Payee</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table>
-      <div class="muted" style="font-size:11.5px; margin-top:8px;">Tick the checks to reprint and hit <b>Reprint selected</b> for one combined PDF. Only checks printed <b>today</b> can be reprinted — 🔒 marks ones locked from an earlier day so an already-mailed check can’t be double-issued.</div></div>`;
+      <div class="muted" style="font-size:11.5px; margin-top:8px;">Tick the checks to reprint and hit <b>Reprint selected</b> for one combined PDF. Only checks printed <b>today</b> can be reprinted — 🔒 marks ones locked from an earlier day so an already-mailed check can’t be double-issued.${window._isAdmin?' Admins can lift the lock with 🔓 override for a destroyed-but-not-mailed original.':''}</div></div>`;
     chkReprintBar();
   }
   window.chkVoid = async function(id){
@@ -1985,9 +2014,13 @@
   window.chkReprintSelected = async function(){
     const ids=[...document.querySelectorAll('.chk-reprint:checked')].map((c)=>c.value);
     if(!ids.length) return;
+    const useOverride = !!(window._isAdmin && window._chkOverride);
+    if(useOverride && !confirm('You are overriding the reprint lock as admin.\n\nOnly do this if the original checks were DESTROYED and NOT mailed — reprinting a check that already went out double-pays the vendor.\n\nContinue?')) return;
     const btn=$('chkReprintBtn'); const orig=btn.textContent; btn.disabled=true; btn.textContent='Building…';
     try{
-      const r=await fetch('/api/checks/reprint',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:CID, check_register_ids:ids})});
+      const headers={'Content-Type':'application/json'};
+      if(useOverride) Object.assign(headers, await chkAuthHeader());
+      const r=await fetch('/api/checks/reprint',{method:'POST',headers,body:JSON.stringify({community_id:CID, check_register_ids:ids, override:useOverride})});
       if(!r.ok){ let m='Reprint failed'; try{ m=(await r.json()).error||m; }catch(_){}; alert(m); btn.disabled=false; btn.textContent=orig; return; }
       const url=URL.createObjectURL(await r.blob());
       // popup-safe: anchor-click always survives blockers, unlike window.open.
