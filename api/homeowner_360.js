@@ -621,7 +621,9 @@ router.post('/:contactId/note', express.json(), async (req, res) => {
       notes: 'via Homeowner 360',
     }).select('id, created_at').single();
     if (error) throw error;
-    res.json({ ok: true, note: data });
+    // Diagnostic: report exactly what the endpoint saw for auth, so we can tell
+    // whether the header arrived and whether the token validated. (Ed 2026-08-14.)
+    res.json({ ok: true, note: data, _auth: { header: !!(req.headers && req.headers.authorization), actor: actor ? (actor.email || actor.id) : null } });
   } catch (err) {
     console.error('[homeowner360] note failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

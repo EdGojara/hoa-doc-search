@@ -471,8 +471,14 @@ async function openProfile(cid){
   window.addNote=async function(id){
     const inp=document.getElementById('noteInput'); const content=inp.value.trim(); if(!content)return;
     inp.disabled=true;
-    const r=await fetch(API+'/'+id+'/note',{method:'POST',headers:{'Content-Type':'application/json',...(await hoAuthHeader())},body:JSON.stringify({content})});
-    if(r.ok){ openProfile(id); } else { inp.disabled=false; alert('Could not save note'); }
+    const hdr=await hoAuthHeader();
+    const r=await fetch(API+'/'+id+'/note',{method:'POST',headers:{'Content-Type':'application/json',...hdr},body:JSON.stringify({content})});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){
+      // Temporary diagnostic: if it saved but wasn't attributed, show exactly why.
+      if(!(j._auth&&j._auth.actor)){ alert('Saved, but no author recorded.\n\nClient sent auth header: '+(hdr&&hdr.Authorization?'YES':'NO')+'\nServer saw auth header: '+((j._auth&&j._auth.header)?'YES':'NO')+'\nServer resolved user: '+((j._auth&&j._auth.actor)||'none')); }
+      openProfile(id);
+    } else { inp.disabled=false; alert('Could not save note'); }
   };
   // Draft an email to the homeowner with a letter attached (queued for review).
   window.emailLetter=function(pathEnc, label){
