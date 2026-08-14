@@ -74,6 +74,13 @@ router.post('/accounts', express.json(), async (req, res) => {
     const { community_id, account_nickname, bank_name, account_last4, account_type, gl_account_number } = req.body || {};
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
     if (!account_nickname) return res.status(400).json({ error: 'account_nickname_required' });
+    // Reject a GL link that isn't in this community's chart of accounts — a
+    // phantom number silently blanks cash-on-hand (Ed 2026-08-14).
+    if (gl_account_number) {
+      const { glAccountExists } = require('../lib/accounting/check_run');
+      const chk = await glAccountExists(community_id, gl_account_number);
+      if (!chk.ok) return res.status(400).json({ error: `GL account ${gl_account_number} isn't in this community's chart of accounts.` });
+    }
     const { data, error } = await supabase
       .from('bank_accounts')
       .insert({

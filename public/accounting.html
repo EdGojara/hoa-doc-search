@@ -1788,6 +1788,12 @@
         <div class="field"><label class="lbl">Account #</label><input type="text" id="cfg-account" placeholder="${c.account_last4?('•••• '+esc(c.account_last4)+' (on file — re-enter to change)'):'full account number'}"></div>
         <div class="field"><label class="lbl">Next check #</label><input type="text" id="cfg-next" value="${esc(c.next_check_number==null?'':c.next_check_number)}"></div>
         <div class="field"><label class="lbl">Dual-signature threshold ($, blank = none)</label><input type="text" id="cfg-dual" value="${dollars(c.dual_sig_threshold_cents)}"></div>
+        <div class="field" style="grid-column:1/-1;"><label class="lbl">GL cash account <span class="muted" style="font-weight:400;">— which ledger account this checkbook draws down (shows the book "cash on hand")</span></label>
+          <select id="cfg-gl">
+            <option value="">— not linked —</option>
+            ${(c.gl_accounts||[]).map((a)=>`<option value="${esc(a.account_number)}" ${String(c.gl_account_number||'')===String(a.account_number)?'selected':''}>${esc(a.account_number)} · ${esc(a.account_name)}</option>`).join('')}
+          </select>
+          ${c.gl_account_number && !c.gl_link_valid ? `<span style="color:var(--err); font-size:11px; margin-top:2px;">⚠ Current link ${esc(c.gl_account_number)} isn’t in the chart of accounts — pick a valid cash account.</span>` : ''}</div>
       </div>
       <div class="field" style="margin-top:10px; max-width:640px;">
         <label class="lbl">Authorized signature ${c.has_signature ? `<span class="badge ok" style="font-size:10px; vertical-align:middle;">on file${c.signature_source === 'master' ? ' (master)' : c.signature_source === 'account' ? ' (this account)' : ''}</span>` : ''}</label>
@@ -1844,6 +1850,7 @@
     const a=$('cfg-account').value.trim(); if (a) body.account_number=a;
     const n=$('cfg-next').value.trim(); if (n!=='') body.next_check_number=parseInt(n,10);
     const d=$('cfg-dual').value.trim(); body.dual_sig_threshold_cents = d==='' ? null : Math.round(parseFloat(d)*100);
+    const gl=$('cfg-gl'); if (gl) body.gl_account_number = gl.value; // '' clears the link
     // Authorized signature (optional) — auto-resized to a small PNG so any scan works.
     const sigInput = $('cfg-sig');
     const file = sigInput && sigInput.files && sigInput.files[0];
