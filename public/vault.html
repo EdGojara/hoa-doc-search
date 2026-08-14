@@ -112,33 +112,90 @@ window.addEntity=async function(){
   if(r&&r.entity){ await loadEntities(); renderVault(); } else { $('e-status').textContent='Could not create.'; }
 };
 
+let ACCTS=[], BANKS=[];
 window.openEntity=async function(id){
   CUR=ENTITIES.find(e=>e.id===id); if(!CUR) return;
-  const r=await api('GET','/entities/'+id+'/accounts'); const accts=(r&&r.accounts)||[];
+  const [ra,rb]=await Promise.all([api('GET','/entities/'+id+'/accounts'),api('GET','/entities/'+id+'/bank-accounts')]);
+  ACCTS=(ra&&ra.accounts)||[]; BANKS=(rb&&rb.bank_accounts)||[];
+  renderEntity(); loadLedger();
+};
+function acctOptions(sel){ return '<option value="">— uncategorized —</option>'+ACCTS.map(a=>`<option value="${a.id}"${a.id===sel?' selected':''}>${esc(a.account_number)} · ${esc(a.account_name)}</option>`).join(''); }
+function renderEntity(){
+  const id=CUR.id;
   $('app').innerHTML=`<div class="wrap">
     <a class="back" href="#" onclick="event.preventDefault();renderVault()">← All companies</a>
     <h1 style="margin-top:8px;">${esc(CUR.name)}</h1>
     <div class="sub">${ETYPE[CUR.entity_type]||CUR.entity_type}${CUR.ein?' · EIN '+esc(CUR.ein):''} · FYE ${esc(CUR.fiscal_year_end)}</div>
+
     <div class="card">
-      <h2>Chart of accounts</h2>
-      ${accts.length?`<table><thead><tr><th>#</th><th>Account</th><th>Type</th></tr></thead><tbody>${accts.map(a=>`<tr><td style="font-family:ui-monospace,monospace;">${esc(a.account_number)}</td><td>${esc(a.account_name)}</td><td><span class="pill">${esc(a.account_type)}</span></td></tr>`).join('')}</tbody></table>`:'<div class="muted">No accounts yet. Add your cash, revenue, and expense accounts — or we\'ll seed a standard set when reconstruction starts.</div>'}
-      <div id="acctAdd" style="margin-top:14px;border-top:1px solid var(--rule);padding-top:14px;">
-        <div class="grid2">
-          <div><label>Account #</label><input id="a-num" placeholder="1000"></div>
-          <div><label>Name</label><input id="a-name" placeholder="Operating Cash"></div>
-          <div><label>Type</label><select id="a-type"><option value="asset">Asset</option><option value="liability">Liability</option><option value="equity">Equity</option><option value="revenue">Revenue</option><option value="expense">Expense</option></select></div>
-        </div>
-        <div class="row-actions"><button class="btn" onclick="addAccount('${id}')">Add account</button><span id="a-status" class="muted"></span></div>
+      <h2>Import a statement</h2>
+      <p class="muted" style="margin-top:-8px;">Drop a bank or credit-card statement PDF. It extracts every transaction and lands them in the ledger below to categorize.</p>
+      <div class="grid2">
+        <div><label>Account (optional)</label><select id="imp-bank"><option value="">— unassigned —</option>${BANKS.map(b=>`<option value="${b.id}">${esc(b.name)}${b.last4?' ····'+esc(b.last4):''}</option>`).join('')}</select></div>
+        <div><label>Statement PDF</label><input type="file" id="imp-file" accept="application/pdf"></div>
       </div>
+      <div class="row-actions"><button class="btn" onclick="importStmt('${id}')">Extract transactions</button><span id="imp-status" class="muted"></span></div>
+    </div>
+
+    <div class="card"><h2>Ledger</h2><div id="ledger"><div class="muted">Loading…</div></div></div>
+
+    <div class="card">
+      <h2>Bank &amp; card accounts</h2>
+      <div id="bankList">${BANKS.length?BANKS.map(b=>`<div class="ent" style="cursor:default;"><div><div class="n">${esc(b.name)}</div><div class="t">${esc(b.kind)}${b.institution?' · '+esc(b.institution):''}${b.last4?' · ····'+esc(b.last4):''}</div></div></div>`).join(''):'<div class="muted">None yet.</div>'}</div>
+      <div class="grid2" style="margin-top:12px;">
+        <div><label>Name</label><input id="b-name" placeholder="Operating Checking"></div>
+        <div><label>Type</label><select id="b-kind"><option value="checking">Checking</option><option value="savings">Savings</option><option value="credit_card">Credit card</option><option value="loan">Loan</option><option value="other">Other</option></select></div>
+        <div><label>Institution</label><input id="b-inst" placeholder="Bank name"></div>
+        <div><label>Last 4</label><input id="b-l4" placeholder="1234"></div>
+      </div>
+      <div class="row-actions"><button class="ghost" onclick="addBank('${id}')">＋ Add account</button><span id="b-status" class="muted"></span></div>
+    </div>
+
+    <div class="card">
+      <h2>Chart of accounts (${ACCTS.length})</h2>
+      ${ACCTS.length?`<table><thead><tr><th>#</th><th>Account</th><th>Type</th></tr></thead><tbody>${ACCTS.map(a=>`<tr><td style="font-family:ui-monospace,monospace;">${esc(a.account_number)}</td><td>${esc(a.account_name)}</td><td><span class="pill">${esc(a.account_type)}</span></td></tr>`).join('')}</tbody></table>`:'<div class="muted">No accounts yet — seed a standard chart to get categorization targets.</div>'}
+      <div class="row-actions">${ACCTS.length?'':`<button class="btn" onclick="seedCoA('${id}')">Seed standard chart</button>`}<button class="ghost" onclick="document.getElementById('acctAddBox').style.display=document.getElementById('acctAddBox').style.display==='none'?'block':'none'">＋ Add account</button><span id="a-status" class="muted"></span></div>
+      <div id="acctAddBox" style="display:none;margin-top:12px;"><div class="grid2"><div><label>Account #</label><input id="a-num"></div><div><label>Name</label><input id="a-name"></div><div><label>Type</label><select id="a-type"><option value="asset">Asset</option><option value="liability">Liability</option><option value="equity">Equity</option><option value="revenue">Revenue</option><option value="expense">Expense</option></select></div></div><div class="row-actions"><button class="btn" onclick="addAccount('${id}')">Add</button></div></div>
     </div>
   </div>`;
+}
+async function loadLedger(){
+  const r=await api('GET','/entities/'+CUR.id+'/transactions'); const txns=(r&&r.transactions)||[];
+  const box=$('ledger'); if(!box) return;
+  if(!txns.length){ box.innerHTML='<div class="muted">No transactions yet. Import a statement above.</div>'; return; }
+  const nReview=txns.filter(t=>t.needs_review).length;
+  box.innerHTML=`<div class="muted" style="margin-bottom:8px;">${txns.length} transactions${nReview?` · <b style="color:#b45309;">${nReview} to categorize</b>`:' · all categorized ✓'}</div>
+    <table><thead><tr><th>Date</th><th>Description</th><th class="num" style="text-align:right;">Amount</th><th>Category</th></tr></thead><tbody>
+    ${txns.slice(0,400).map(t=>`<tr${t.needs_review?' style="background:#fffbeb;"':''}>
+      <td style="white-space:nowrap;">${esc(t.txn_date)}</td>
+      <td style="max-width:300px;">${esc((t.description||'').slice(0,90))}</td>
+      <td class="num" style="text-align:right;font-family:ui-monospace,monospace;color:${t.amount_cents<0?'#b91c1c':'#166534'};">${money(t.amount_cents)}</td>
+      <td><select onchange="categorize('${t.id}',this.value)" style="font-size:12px;padding:5px;max-width:220px;">${acctOptions(t.category_account_id)}</select></td>
+    </tr>`).join('')}</tbody></table>${txns.length>400?`<div class="muted" style="margin-top:6px;">Showing first 400 of ${txns.length}.</div>`:''}`;
+}
+window.categorize=async function(txnId,acctId){ await api('PATCH','/transactions/'+txnId,{category_account_id:acctId||null}); loadLedger(); };
+window.importStmt=async function(id){
+  const f=$('imp-file').files[0]; if(!f){ $('imp-status').textContent='Pick a PDF.'; return; }
+  $('imp-status').textContent='Extracting… (can take a moment)';
+  const fd=new FormData(); fd.append('file',f); const bank=$('imp-bank').value; if(bank) fd.append('bank_account_id',bank);
+  const r=await fetch(V+'/entities/'+id+'/import-statement',{method:'POST',headers:{...(await authHeader())},body:fd});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){ $('imp-status').textContent=(j.error||'Extraction failed'); return; }
+  const rec=j.reconciles===true?' · ✓ balances':(j.reconciles===false?` · ⚠ off by ${money(j.off_by_cents)} — review`:'');
+  $('imp-status').innerHTML=`✓ ${j.count} transactions${j.period&&j.period[0]?' ('+j.period[0]+' → '+j.period[1]+')':''}${rec}`;
+  $('imp-file').value=''; loadLedger();
+};
+window.seedCoA=async function(id){ const r=await api('POST','/entities/'+id+'/seed-accounts'); if(r&&r.ok){ const ra=await api('GET','/entities/'+id+'/accounts'); ACCTS=(ra&&ra.accounts)||[]; renderEntity(); loadLedger(); } };
+window.addBank=async function(id){
+  const name=$('b-name').value.trim(); if(!name){ $('b-status').textContent='Name required.'; return; }
+  const r=await api('POST','/entities/'+id+'/bank-accounts',{name,kind:$('b-kind').value,institution:$('b-inst').value.trim(),last4:$('b-l4').value.trim()});
+  if(r&&r.bank_account){ const rb=await api('GET','/entities/'+id+'/bank-accounts'); BANKS=(rb&&rb.bank_accounts)||[]; renderEntity(); loadLedger(); } else { $('b-status').textContent='Could not add.'; }
 };
 window.addAccount=async function(id){
   const account_number=$('a-num').value.trim(), account_name=$('a-name').value.trim();
   if(!account_number||!account_name){ $('a-status').textContent='Number and name required.'; return; }
-  $('a-status').textContent='Adding…';
   const r=await api('POST','/entities/'+id+'/accounts',{account_number,account_name,account_type:$('a-type').value});
-  if(r&&r.account){ openEntity(id); } else { $('a-status').textContent=(r&&r.error)==='account_number_exists'?'That account # already exists.':'Could not add.'; }
+  if(r&&r.account){ const ra=await api('GET','/entities/'+id+'/accounts'); ACCTS=(ra&&ra.accounts)||[]; renderEntity(); loadLedger(); } else { $('a-status').textContent=(r&&r.error)==='account_number_exists'?'That # exists.':'Could not add.'; }
 };
 
 boot();
