@@ -220,7 +220,7 @@ async function assemble(contactId) {
 
   // Violations (+ category label), newest first
   let violations = propIds.length ? await safe(() => supabase.from('violations')
-    .select('id, current_stage, opened_at, resolved_at, resolved_via, resolved_notes, quality_status, primary_category_id, property_id, opened_from_observation_id, sent_to_attorney_at, attorney_firm, attorney_name')
+    .select('id, current_stage, opened_at, resolved_at, resolved_via, resolved_notes, quality_status, primary_category_id, property_id, opened_from_observation_id, sent_to_attorney_at, attorney_firm')
     .in('property_id', propIds).order('opened_at', { ascending: false }).limit(50)) : [];
   const catIds = [...new Set(violations.map((v) => v.primary_category_id).filter(Boolean))];
   const cats = catIds.length ? await safe(() => supabase.from('enforcement_categories').select('id, label').in('id', catIds)) : [];

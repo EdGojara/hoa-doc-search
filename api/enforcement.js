@@ -5264,8 +5264,7 @@ router.post('/violations/:id/send-to-attorney', express.json(), async (req, res)
       .update({
         sent_to_attorney_at:        (body.at_attorney_since ? new Date(body.at_attorney_since).toISOString() : new Date().toISOString()),
         sent_to_attorney_by_user_id: body.user_id || null,
-        attorney_firm:              (body.firm || '').trim() || null,
-        attorney_name:              (body.attorney_name || '').trim() || null,
+        attorney_firm:              (body.firm || body.attorney_name || '').trim() || null,
         attorney_matter_ref:        (body.matter_ref || '').trim() || null,
         attorney_notes:             (body.notes || '').trim() || null,
       })
