@@ -19,9 +19,15 @@
 //   GET /api/bd/:slug           → one card, public-safe JSON
 //   GET /api/bd/:slug/card.vcf  → vCard download; phone offers "Add Contact"
 //   GET /api/bd/:slug/qr.svg    → QR code, SVG
-//        ?mode=url   (default)  → encodes the card URL — branded landing page
-//        ?mode=vcard            → encodes the vCard itself — works with NO
-//                                 signal, saves the contact directly
+//        ?mode=vcard (default)  → encodes the vCard itself. No server, no
+//                                 network, nothing to be down at the moment
+//                                 someone is standing there scanning.
+//        ?mode=url              → encodes the card URL instead, when you want
+//                                 them to land on the page rather than save
+//                                 the contact.
+//   GET /api/bd/:slug/scan.png  → full-screen QR image (hold this out)
+//   GET /api/bd/:slug/card.png  → branded card image (text or email this)
+//   GET /api/bd/:slug/cards.pdf → 10 printable 3.5x2in cards on US Letter
 //
 // ACCESS SCOPE: no community_id, no homeowner data, no DB read at all. The only
 // data this router can reach is lib/bd/people.js, which is a static allowlist
@@ -115,33 +121,35 @@ router.get('/:slug/card.vcf', (req, res) => {
 // -----------------------------------------------------------------------------
 // GET /api/bd/:slug/qr.svg — the thing people point a camera at
 // -----------------------------------------------------------------------------
-// mode=url (default): encodes https://<host>/c/<slug>. Scanning opens the
-//   branded card page. Best impression, and the page can change after the fact.
-// mode=vcard: encodes the vCard text directly. The camera offers to save the
-//   contact with no network at all. This is the fallback for a ballroom with
-//   no signal — which is most ballrooms.
+// mode=vcard (DEFAULT): encodes the vCard text directly, so the camera saves
+//   the contact with no network at all. This is the default because a QR that
+//   needs a page to load can fail at the exact moment it matters — a cold
+//   server or a dead ballroom wifi turns a smooth introduction into a spinner.
+// mode=url: encodes https://<host>/card/<slug> instead. Use when you want them
+//   to land on the branded page rather than save a contact.
 //
 // SVG (not PNG) so it stays razor sharp when it's blown up full-screen on a
-// phone held out for someone else to scan, and when it's printed on a flyer.
+// phone held out for someone else to scan, and when it's printed.
 // -----------------------------------------------------------------------------
 router.get('/:slug/qr.svg', async (req, res) => {
   try {
     const person = getPerson(cleanSlug(req.params.slug));
     if (!person) return res.status(404).json({ error: 'card_not_found' });
 
-    const mode = req.query.mode === 'vcard' ? 'vcard' : 'url';
-    const payload = mode === 'vcard'
-      ? buildVCard(person, { lean: true })
-      : `${baseUrlFor(req)}/card/${person.slug}`;
+    const mode = req.query.mode === 'url' ? 'url' : 'vcard';
+    const payload = mode === 'url'
+      ? `${baseUrlFor(req)}/card/${person.slug}`
+      : buildVCard(person, { scan: true });
 
     // Error correction level:
-    //   'M' for the vCard — the payload is ~400 chars, and pushing to 'H' would
-    //        force a denser grid that phone cameras struggle with across a table.
+    //   'M' for the vCard. Measured on the rendered images: raising it to H
+    //        adds modules and shrinks each one, and the smaller modules lost
+    //        more scans to blur and glare than the extra recovery won back.
     //   'H' for the short URL — cheap at that length, and survives glare,
     //        a fingerprint on the screen, and an off-angle scan.
     const svg = await QRCode.toString(payload, {
       type: 'svg',
-      errorCorrectionLevel: mode === 'vcard' ? 'M' : 'H',
+      errorCorrectionLevel: mode === 'url' ? 'H' : 'M',
       margin: 1,
       color: { dark: '#0B1D34', light: '#FFFFFF' },
     });
@@ -154,6 +162,44 @@ router.get('/:slug/qr.svg', async (req, res) => {
     return res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
+
+// -----------------------------------------------------------------------------
+// Rendered assets — scan.png / card.png / cards.pdf
+// -----------------------------------------------------------------------------
+// One roster entry produces the whole kit, so onboarding a new person to cards
+// is a roster edit rather than a design task. Each render spawns a headless
+// browser (a few seconds), which is why these are downloads and not something
+// the page loads inline.
+// -----------------------------------------------------------------------------
+// Three literal routes rather than one regex-constrained param. Express 5
+// parses routes with path-to-regexp v8, which dropped the `:p(a|b)` syntax
+// entirely — that pattern throws at boot, taking the whole server with it.
+// Same reasoning as card.vcf above: literal segments have nothing to get wrong.
+function serveAsset(renderFn, contentType, suffix) {
+  return async (req, res) => {
+    try {
+      const person = getPerson(cleanSlug(req.params.slug));
+      if (!person) return res.status(404).json({ error: 'card_not_found' });
+
+      const buffer = await renderFn(person);
+      const base = `${person.first}-${person.last}`.replace(/[^A-Za-z0-9-]/g, '');
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition',
+        `attachment; filename="${base}${suffix}"`);
+      return res.send(buffer);
+    } catch (err) {
+      // Rendering runs a headless browser, the most failure-prone thing in this
+      // router. Log loudly — a silent empty download is the worst outcome.
+      console.error(`[bd] render ${suffix} failed:`, err.message);
+      return res.status(500).json({ error: safeErrorMessage(err) });
+    }
+  };
+}
+
+const render = require('../lib/bd/render');
+router.get('/:slug/scan.png', serveAsset(render.renderScanPng, 'image/png', '-SCAN.png'));
+router.get('/:slug/card.png', serveAsset(render.renderCardPng, 'image/png', '-card.png'));
+router.get('/:slug/cards.pdf', serveAsset(render.renderPrintPdf, 'application/pdf', '-cards-print.pdf'));
 
 // -----------------------------------------------------------------------------
 // GET /api/bd/:slug — public-safe card JSON (drives public/card.html)

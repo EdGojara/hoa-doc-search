@@ -167,9 +167,12 @@
   <div id="presentQr"></div>
   <div class="present-name" id="presentName"></div>
   <div class="present-hint" id="presentHint">Point your camera here</div>
+  <!-- Save contact is the default: that QR carries the vCard itself, so it
+       works with no network. Link mode is the alternate, for when you want
+       them on the page rather than in their contacts. -->
   <div class="present-mode">
-    <button id="modeUrl" class="sel">Card page</button>
-    <button id="modeVcard">No signal</button>
+    <button id="modeVcard" class="sel">Save contact</button>
+    <button id="modeUrl">Link to card</button>
   </div>
 </div>
 
@@ -251,14 +254,18 @@
       +   row('tel:' + p.phoneDirectHref, '📞', 'Direct', p.phoneDirect)
       +   row('tel:' + p.phoneOfficeHref, '☎️', 'Office', p.phoneOffice)
       +   row('mailto:' + p.email, '✉️', 'Email', p.email)
-      +   row(p.mapsUrl, '📍', 'Office', p.addressInline, ' target="_blank" rel="noopener"')
+      +   row(p.mapsUrl, '📍', 'Address', p.addressInline, ' target="_blank" rel="noopener"')
       +   sites
       + '</div>'
 
+      /* The vCard QR, not the link QR. Someone already looking at this page
+         gains nothing from a code that reopens it; this code is here to be
+         shown to the person across the table, and it saves the contact with
+         no network. */
       + '<div class="qr-panel">'
-      +   '<div class="qr-box" id="qrBox"><img src="' + esc(p.qrUrl)
-      +     '" alt="QR code for this card" style="width:100%;max-width:260px;height:auto;display:block"></div>'
-      +   '<div class="qr-cap">Scan to open this card · '
+      +   '<div class="qr-box" id="qrBox"><img src="' + esc(p.qrVcardUrl)
+      +     '" alt="QR code that saves this contact" style="width:100%;max-width:260px;height:auto;display:block"></div>'
+      +   '<div class="qr-cap">Scan to save my contact · '
       +     '<a href="#" id="presentOpen" style="color:var(--gold)">show full screen</a></div>'
       + '</div>'
 
@@ -273,7 +280,9 @@
     if (open) {
       open.addEventListener('click', function (e) {
         e.preventDefault();
-        openPresent('url');
+        // No argument: take openPresent's default (vcard). Passing a mode here
+        // silently overrode the default when it changed.
+        openPresent();
       });
     }
   }
@@ -281,7 +290,7 @@
   /* --- Present mode ------------------------------------------------------- */
   function openPresent(mode) {
     if (!PERSON) return;
-    setPresentMode(mode || 'url');
+    setPresentMode(mode || 'vcard');
     el('present').classList.add('on');
     keepAwake(true);
   }
@@ -290,15 +299,15 @@
     keepAwake(false);
   }
   function setPresentMode(mode) {
-    var url = mode === 'vcard' ? PERSON.qrVcardUrl : PERSON.qrUrl;
+    var url = mode === 'url' ? PERSON.qrUrl : PERSON.qrVcardUrl;
     el('presentQr').innerHTML = '<img src="' + esc(url)
       + '" alt="QR code" style="width:min(84vw,84vh,460px);height:auto;display:block">';
     el('presentName').textContent = PERSON.displayName;
-    el('presentHint').textContent = mode === 'vcard'
-      ? 'Saves my contact, no internet needed'
-      : 'Point your camera here';
-    el('modeUrl').classList.toggle('sel', mode !== 'vcard');
-    el('modeVcard').classList.toggle('sel', mode === 'vcard');
+    el('presentHint').textContent = mode === 'url'
+      ? 'Opens my card in their browser'
+      : 'Saves my contact, no internet needed';
+    el('modeUrl').classList.toggle('sel', mode === 'url');
+    el('modeVcard').classList.toggle('sel', mode !== 'url');
   }
 
   /* Hold the screen on while presenting. A screen that sleeps mid-scan is the

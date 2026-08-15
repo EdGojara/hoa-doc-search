@@ -4326,10 +4326,31 @@
         any internet.
       </p>
 
+      <!-- Downloads. These are the files that go on a phone, into a text
+           message, or onto cardstock. Each render spawns a headless browser,
+           so they take a few seconds and the button says so rather than
+           looking dead. -->
+      <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#64748b; margin-bottom:8px;">Download the kit</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+        <button class="action-btn" id="bdDlScan" onclick="bdDownloadAsset('scan.png', this)" style="background:#0B5563;"
+                title="Full-screen QR. Save to your phone's Photos and hold it out.">⬇ Scan image (phone)</button>
+        <button class="secondary-btn" id="bdDlCard" onclick="bdDownloadAsset('card.png', this)"
+                title="Branded card with your details visible. Text or email this one.">⬇ Card image</button>
+        <button class="secondary-btn" id="bdDlPrint" onclick="bdDownloadAsset('cards.pdf', this)"
+                title="Ten 3.5x2in cards on a letter sheet, for printing on cardstock.">⬇ Print sheet (10 cards)</button>
+        <button class="secondary-btn" onclick="bdDownloadVcf()"
+                title="The contact file itself, to email or AirDrop to someone.">⬇ .vcf contact file</button>
+      </div>
+      <p style="font-size:12px; color:#64748b; margin:0 0 18px;">
+        The scan image is the one to keep on your phone. On iPhone you can put
+        it one tap away: Shortcuts app, add <em>Set Brightness 100%</em> then
+        <em>Quick Look</em> on the image, then Add to Home Screen.
+      </p>
+
+      <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#64748b; margin-bottom:8px;">Share the link</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px;">
         <button class="secondary-btn" onclick="bdCopyLink()">🔗 Copy card link</button>
         <button class="secondary-btn" onclick="bdOpenCard()">↗ Open card page</button>
-        <button class="secondary-btn" onclick="bdDownloadVcf()">⬇ Download .vcf</button>
         <button class="secondary-btn" onclick="bdCopySignature()">✉️ Copy email signature line</button>
       </div>
 
@@ -4457,6 +4478,50 @@
   function bdDownloadVcf() {
     if (!bdCurrent) return;
     window.location.href = bdCurrent.vcfUrl;
+  }
+
+  // Rendered assets take a few seconds (headless browser per request). Disable
+  // the button and say what's happening — a button that looks dead invites a
+  // second click, and a second click means a second browser launch.
+  function bdDownloadAsset(asset, btn) {
+    if (!bdCurrent) return;
+    const label = btn ? btn.innerHTML : null;
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Building…'; }
+    const url = '/api/bd/' + encodeURIComponent(bdCurrent.slug) + '/' + asset;
+
+    // Fetch rather than a plain location change so a server-side render
+    // failure surfaces as a message instead of a blank tab or a 0-byte file.
+    fetch(url)
+      .then(function (r) {
+        if (!r.ok) {
+          return r.json().catch(function () { return {}; }).then(function (d) {
+            throw new Error(d.error || ('HTTP ' + r.status));
+          });
+        }
+        return r.blob();
+      })
+      .then(function (blob) {
+        const cd = asset === 'cards.pdf' ? '-cards-print.pdf'
+          : (asset === 'scan.png' ? '-SCAN.png' : '-card.png');
+        const name = (bdCurrent.first + '-' + bdCurrent.last).replace(/[^A-Za-z0-9-]/g, '') + cd;
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () {
+          URL.revokeObjectURL(a.href);
+          a.remove();
+        }, 1000);
+        bdShowError('');
+      })
+      .catch(function (err) {
+        console.error('[bd] asset download failed:', err);
+        bdShowError('Couldn’t build ' + asset + ': ' + err.message);
+      })
+      .finally(function () {
+        if (btn) { btn.disabled = false; btn.innerHTML = label; }
+      });
   }
 
   async function bdCopy(text, label) {
