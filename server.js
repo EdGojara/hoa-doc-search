@@ -489,6 +489,20 @@ const _STAFF_GATE_PUBLIC = [
   /^\/board-portal$/,                       // board portal landing — auth checked inside via board/staff session (board member's own homeowner magic-link cookie is honored); every /api/board-portal route enforces requireBoardViewer + canSeeCommunity
   /^\/board-portal\.html$/,                 // same page at the static path (self-referencing year-view share links + portal-login hint use .html?community=…)
   /^\/clubhouse\/[^/]+$/,                   // /clubhouse/:slug — public clubhouse rental form (gated server-side by amenity_bookings_active)
+  // BD digital business cards. Public is the entire point: the person scanning
+  // the QR is a stranger at a conference with no login and no reason to get
+  // one. There is no data behind these routes to protect — api/bd.js reads a
+  // static staff roster (lib/bd/people.js) and never touches the database, so
+  // there is no community to scope and no homeowner record to leak. Listed
+  // per-endpoint rather than as a blanket /api/bd prefix to match the
+  // discipline used above: a future route added to this router should have to
+  // be opened deliberately, not inherit the exemption.
+  /^\/card\/[^/]+$/,                        // /card/:slug — the card page itself
+  /^\/brand\.css$/,                         // card page stylesheet (tokens only, no data)
+  /^\/api\/bd\/people$/,                    // roster for the BD tab
+  /^\/api\/bd\/[a-z0-9_-]+$/,               // one card, public-safe JSON
+  /^\/api\/bd\/[a-z0-9_-]+\/card\.vcf$/,    // the vCard download
+  /^\/api\/bd\/[a-z0-9_-]+\/qr\.svg$/,      // the QR image
   // Public API endpoints these pages call. Each verified against the
   // actual fetch() calls in the homeowner-facing HTML files.
   /^\/api\/nominations\/public\b/,
@@ -891,6 +905,20 @@ app.get('/f/:slug', async (req, res) => {
 // the schema this depends on.
 const { router: billingRouter } = require('./api/billing');
 app.use('/api/billing', billingRouter);
+
+// Bedrock Office > BD — digital business cards. Public by design: the whole
+// point of a business card is to be handed to strangers. Roster lives in
+// lib/bd/people.js; this router touches no DB and no community data.
+app.use('/api/bd', require('./api/bd'));
+// Short, human-sayable card URL: bedrocktx.com/card/ed. It goes in an email
+// signature, on a name badge, and inside a QR code, so it stays short.
+//
+// NOT /c/:slug — that is already the per-community public landing page (see
+// the app.get('/c/:slug') further down). Registering a card route there would
+// have shadowed it and served a business card for every community landing URL.
+app.get('/card/:slug', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'card.html'));
+});
 
 // Homes & Owners — properties, contacts, ownerships, residencies, Vantaca
 // upload/diff/apply workflow. Schema in migration 049.

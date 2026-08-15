@@ -4282,6 +4282,214 @@
   </div>
 </div>
 
+<!-- ===========================================================================
+     Bedrock Office — BD (Business Development)
+     Digital business cards. Paper cards run out at exactly the wrong moment and
+     the ones that survive get thrown away; a card that lives at a URL scans
+     straight into a prospect's phone, never runs out, and updates itself when a
+     number changes. Roster SSOT: lib/bd/people.js. API: api/bd.js.
+     ========================================================================= -->
+<div class="tab-content" id="tab-bd" style="overflow-y: auto; padding: 24px;">
+  <div style="margin-bottom:18px;">
+    <h2 style="margin:0 0 4px 0;">🤝 BD — Digital Business Card</h2>
+    <p style="color:#888; font-size:14px; margin:0;">
+      Show the QR, they scan it, your contact lands in their phone. Works at a
+      conference table with no paper and no signal.
+    </p>
+  </div>
+
+  <div id="bdError" style="display:none; background:#fef2f2; border:1px solid #fecaca; color:#991b1b; padding:12px 14px; border-radius:8px; font-size:14px; margin-bottom:16px;"></div>
+
+  <div style="display:flex; gap:22px; flex-wrap:wrap; align-items:flex-start;">
+
+    <!-- Left: the actions Ed uses in the room ---------------------------- -->
+    <div style="flex:1 1 380px; min-width:320px;">
+
+      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:18px; margin-bottom:16px;">
+        <label style="display:block; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#64748b; margin-bottom:6px;">Card</label>
+        <select id="bdPerson" onchange="bdSelectPerson(this.value)"
+                style="width:100%; padding:9px 10px; border:1px solid #cbd5e1; border-radius:7px; font-size:14px;">
+          <option value="">Loading…</option>
+        </select>
+      </div>
+
+      <!-- Primary action: this is the button he taps walking up to someone. -->
+      <button class="action-btn" onclick="bdPresent('url')"
+              style="width:100%; padding:16px; font-size:16px; font-weight:700; background:#0B1D34; margin-bottom:8px;"
+              title="Opens the card full screen with the QR ready to scan, and holds the screen awake.">
+        📱 Show my QR — full screen
+      </button>
+      <p style="font-size:12px; color:#64748b; margin:0 0 18px;">
+        Opens on this device. Hold it out, they point their camera at it.
+        In the full-screen view, tap <strong>No signal</strong> if the room's
+        wifi is dead — the QR then carries the contact itself and saves without
+        any internet.
+      </p>
+
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px;">
+        <button class="secondary-btn" onclick="bdCopyLink()">🔗 Copy card link</button>
+        <button class="secondary-btn" onclick="bdOpenCard()">↗ Open card page</button>
+        <button class="secondary-btn" onclick="bdDownloadVcf()">⬇ Download .vcf</button>
+        <button class="secondary-btn" onclick="bdCopySignature()">✉️ Copy email signature line</button>
+      </div>
+
+      <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:16px;">
+        <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#64748b; margin-bottom:8px;">Card link</div>
+        <div id="bdLink" style="font-family:ui-monospace,Menlo,monospace; font-size:14px; color:#0B1D34; overflow-wrap:anywhere;">—</div>
+        <div style="font-size:12px; color:#64748b; margin-top:10px; line-height:1.6;">
+          Short enough to say out loud and to print on a name badge. Everything
+          on the card comes from one place in the code, so a number changed there
+          updates every card already scanned into somebody's phone the next time
+          they open the link.
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: what the prospect sees ------------------------------------ -->
+    <div style="flex:0 1 340px; min-width:280px;">
+      <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#64748b; margin-bottom:8px;">Scan preview</div>
+      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:16px; text-align:center;">
+        <div id="bdQr" style="line-height:0;">
+          <div style="padding:40px 0; color:#94a3b8; font-size:13px; line-height:1.5;">Loading…</div>
+        </div>
+        <div id="bdQrCap" style="font-size:12px; color:#64748b; margin-top:10px;">Opens the card page</div>
+      </div>
+
+      <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#64748b; margin:18px 0 8px;">On their phone</div>
+      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:16px; font-size:14px; line-height:1.7; color:#0f172a;">
+        <div id="bdWhoName" style="font-weight:700; font-size:16px;">—</div>
+        <div id="bdWhoTitle" style="color:#64748b;"></div>
+        <div id="bdWhoContact" style="margin-top:10px; color:#334155;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BD tab controller. Separate script block, all functions global, matching
+     the convention of the other Bedrock Office modules in this file. -->
+<script>
+  // ============================================================
+  // BD — digital business cards
+  // ============================================================
+  // State is one selected person. Everything rendered here derives from the
+  // /api/bd payload — no contact detail is re-typed in this file, so there is
+  // exactly one place a phone number can be wrong (lib/bd/people.js).
+  let bdPeople = [];
+  let bdCurrent = null;
+
+  function bdShowError(msg) {
+    const box = document.getElementById('bdError');
+    if (!box) return;
+    if (!msg) { box.style.display = 'none'; box.textContent = ''; return; }
+    box.style.display = 'block';
+    box.textContent = msg;
+  }
+
+  async function bdInit() {
+    bdShowError('');
+    try {
+      // fetchWithRetry absorbs Render cold-starts; fall back to plain fetch if
+      // the helper hasn't been defined (script-order safety, not paranoia —
+      // this file has been bitten by definition-order before).
+      const f = (typeof fetchWithRetry === 'function') ? fetchWithRetry : fetch;
+      const r = await f('/api/bd/people');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      bdPeople = d.people || [];
+
+      const sel = document.getElementById('bdPerson');
+      if (!bdPeople.length) {
+        sel.innerHTML = '<option value="">No cards configured</option>';
+        bdShowError('No cards are configured. Add one in lib/bd/people.js.');
+        return;
+      }
+      sel.innerHTML = bdPeople
+        .map(p => '<option value="' + p.slug + '">' + p.displayName + '</option>')
+        .join('');
+      bdSelectPerson(bdPeople[0].slug);
+    } catch (err) {
+      console.error('[bd] init failed:', err);
+      bdShowError('Couldn’t load cards: ' + err.message);
+      const qr = document.getElementById('bdQr');
+      if (qr) qr.innerHTML = '<div style="padding:30px 0;color:#991b1b;font-size:13px;">Couldn’t load</div>';
+    }
+  }
+
+  function bdSelectPerson(slug) {
+    bdCurrent = bdPeople.find(p => p.slug === slug) || null;
+    if (!bdCurrent) return;
+    const p = bdCurrent;
+
+    document.getElementById('bdPerson').value = p.slug;
+    document.getElementById('bdLink').textContent = p.cardUrl;
+
+    // Cache-bust the QR so switching people can't show the previous person's
+    // code — a stale QR here means handing a prospect the wrong contact.
+    const qrSrc = p.qrUrl + (p.qrUrl.indexOf('?') > -1 ? '&' : '?') + '_=' + Date.now();
+    document.getElementById('bdQr').innerHTML =
+      '<img src="' + qrSrc + '" alt="QR code"'
+      + ' style="width:100%;max-width:240px;height:auto;display:block;margin:0 auto;">';
+
+    document.getElementById('bdWhoName').textContent = p.displayName;
+    document.getElementById('bdWhoTitle').textContent =
+      [p.title, p.org].filter(Boolean).join(' · ');
+    document.getElementById('bdWhoContact').innerHTML = [
+      p.phoneDirect ? 'Direct ' + p.phoneDirect : '',
+      p.phoneOffice ? 'Office ' + p.phoneOffice : '',
+      p.email || '',
+      p.addressInline || '',
+    ].filter(Boolean).join('<br>');
+  }
+
+  // Opens the public card in present mode on THIS device. He taps once and
+  // holds the phone out; the card page keeps the screen awake from there.
+  function bdPresent(mode) {
+    if (!bdCurrent) return;
+    window.open(bdCurrent.cardUrl + '?show=qr&mode=' + (mode || 'url'), '_blank');
+  }
+
+  function bdOpenCard() {
+    if (!bdCurrent) return;
+    window.open(bdCurrent.cardUrl, '_blank');
+  }
+
+  function bdDownloadVcf() {
+    if (!bdCurrent) return;
+    window.location.href = bdCurrent.vcfUrl;
+  }
+
+  async function bdCopy(text, label) {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert(label + ' copied.');
+    } catch (_) {
+      // Clipboard API needs a secure context and a user gesture; when it's
+      // unavailable, show the text so the copy is still possible by hand
+      // rather than failing silently.
+      window.prompt('Copy this:', text);
+    }
+  }
+
+  function bdCopyLink() {
+    if (!bdCurrent) return;
+    bdCopy(bdCurrent.cardUrl, 'Card link');
+  }
+
+  function bdCopySignature() {
+    if (!bdCurrent) return;
+    const p = bdCurrent;
+    const line = [
+      p.displayName,
+      [p.title, p.org].filter(Boolean).join(', '),
+      p.phoneDirect ? 'Direct ' + p.phoneDirect : '',
+      p.phoneOffice ? 'Office ' + p.phoneOffice : '',
+      p.email,
+      'Save my contact: ' + p.cardUrl,
+    ].filter(Boolean).join('\n');
+    bdCopy(line, 'Signature block');
+  }
+</script>
+
 <!-- Bedrock Office helpers (separate <script> so the existing main script
      block stays untouched). All functions are global. -->
 <script>
@@ -47067,6 +47275,7 @@ ${questionsPage}
     office: {
       label: '💼 Bedrock Office',
       children: [
+        { id: 'bd',             label: '🤝 BD' },
         { id: 'billing',        label: '💼 Billing' },
         { id: 'contracts',      label: '📄 Proposals & Contracts' },
         { id: 'presentations',  label: '🎬 Presentations' },
@@ -47306,6 +47515,7 @@ ${questionsPage}
     const orig = window.switchTab;
     if (typeof orig !== 'function') return;
     const initOnce = {
+      bd:       { done: false, run: () => { if (typeof bdInit === 'function') bdInit(); } },
       billing:  { done: false, run: () => { if (typeof billingLoadCommunities === 'function') billingLoadCommunities(); } },
       contracts: { done: false, run: () => { if (typeof defLoad === 'function') defLoad(); } },
       vendors:  { done: false, run: () => { if (typeof vendorsLoadCommunities === 'function') vendorsLoadCommunities(); } },

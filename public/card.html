@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bedrock — Contact Card</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0B1D34">
+<link rel="stylesheet" href="/brand.css">
+<link rel="icon" href="/brand-assets/bedrock-mark-email-1x.png">
+<style>
+  /* --------------------------------------------------------------------------
+     Public digital business card. Two audiences, one page:
+       1. A prospect who just scanned Ed's QR at a conference. They are standing
+          up, on a phone, on bad wifi. Their entire job is one tap: save the
+          contact. That button is the largest thing on the screen and it is
+          above the fold on a small phone.
+       2. Ed, holding his phone out for someone to scan. `?show=qr` opens
+          straight into a full-bleed QR with the screen kept awake.
+     Colors come from brand.css tokens — no hard-coded hex.
+     -------------------------------------------------------------------------- */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--navy);
+    color: var(--ink);
+    font-family: var(--font-body, system-ui, -apple-system, 'Segoe UI', sans-serif);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100%;
+  }
+  body {
+    /* Respect the notch/home indicator so nothing important sits under it. */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .wrap { max-width: 460px; margin: 0 auto; padding: 22px 20px 40px; }
+
+  /* ---- Masthead ---------------------------------------------------------- */
+  .mast { display: flex; align-items: center; gap: 11px; margin-bottom: 26px; }
+  .mast img { height: 34px; width: auto; display: block; }
+  .mast-txt { line-height: 1.15; }
+  .mast-name {
+    font-size: 15px; font-weight: 700; letter-spacing: .04em;
+    color: var(--ink);
+  }
+  .mast-sub {
+    font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--gold); margin-top: 3px;
+  }
+
+  /* ---- Identity ---------------------------------------------------------- */
+  .name {
+    font-size: 32px; font-weight: 700; letter-spacing: -.01em;
+    margin: 0 0 6px; line-height: 1.12;
+  }
+  .role { font-size: 15px; color: var(--gold); margin: 0 0 2px; font-weight: 600; }
+  .role-2 { font-size: 13px; color: var(--ink-soft); margin: 0; }
+  .blurb {
+    font-size: 14px; line-height: 1.55; color: var(--ink-soft);
+    margin: 16px 0 0;
+  }
+  .rule {
+    height: 1px; background: rgba(212,175,55,.28);
+    margin: 24px 0; border: 0;
+  }
+
+  /* ---- Primary action ---------------------------------------------------- */
+  /* One tap, unmissable. If the prospect does exactly one thing on this page,
+     it is this, so nothing else on screen competes with it visually. */
+  .save {
+    display: flex; align-items: center; justify-content: center; gap: 9px;
+    width: 100%; padding: 17px 18px;
+    background: var(--gold); color: var(--navy);
+    font-size: 17px; font-weight: 700; letter-spacing: .01em;
+    border: 0; border-radius: 12px; text-decoration: none;
+    box-shadow: 0 6px 20px rgba(212,175,55,.22);
+    cursor: pointer;
+  }
+  .save:active { transform: translateY(1px); }
+  .save-note {
+    text-align: center; font-size: 12px; color: var(--ink-faint);
+    margin-top: 9px;
+  }
+
+  /* ---- Contact rows ------------------------------------------------------ */
+  .rows { margin-top: 26px; display: flex; flex-direction: column; gap: 2px; }
+  .row {
+    display: flex; align-items: center; gap: 13px;
+    padding: 13px 4px; text-decoration: none; color: inherit;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .row:last-child { border-bottom: 0; }
+  .row-ico {
+    width: 34px; height: 34px; flex: 0 0 34px; border-radius: 9px;
+    background: var(--navy-soft); display: flex;
+    align-items: center; justify-content: center; font-size: 15px;
+  }
+  .row-body { min-width: 0; }
+  .row-label {
+    font-size: 10px; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 2px;
+  }
+  .row-val {
+    font-size: 15px; color: var(--ink); font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+
+  /* ---- QR panel ---------------------------------------------------------- */
+  .qr-panel { margin-top: 30px; text-align: center; }
+  .qr-box {
+    background: #fff; border-radius: 16px; padding: 14px;
+    display: inline-block; line-height: 0;
+  }
+  .qr-box svg { width: 100%; height: auto; max-width: 260px; display: block; }
+  .qr-cap { font-size: 12px; color: var(--ink-faint); margin-top: 11px; }
+
+  /* ---- Present mode (Ed holds the phone out) ----------------------------- */
+  /* Full-bleed white so a stranger's camera locks on instantly across a table
+     under bad ballroom lighting. Nothing else on screen. */
+  .present {
+    position: fixed; inset: 0; background: #fff; z-index: 90;
+    display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; padding: 22px;
+  }
+  .present.on { display: flex; }
+  .present svg {
+    width: min(84vw, 84vh, 460px); height: auto; display: block;
+  }
+  .present-name {
+    color: var(--navy); font-size: 19px; font-weight: 700; text-align: center;
+  }
+  .present-hint { color: var(--stone); font-size: 13px; text-align: center; }
+  .present-close {
+    position: absolute; top: calc(env(safe-area-inset-top) + 14px); right: 18px;
+    background: var(--light-gray); color: var(--navy); border: 0;
+    width: 40px; height: 40px; border-radius: 50%;
+    font-size: 21px; line-height: 1; cursor: pointer;
+  }
+  .present-mode {
+    position: absolute; bottom: calc(env(safe-area-inset-bottom) + 18px);
+    display: flex; gap: 8px;
+  }
+  .present-mode button {
+    background: var(--light-gray); color: var(--navy);
+    border: 1px solid rgba(11,29,52,.14); border-radius: 999px;
+    padding: 9px 15px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .present-mode button.sel { background: var(--navy); color: #fff; border-color: var(--navy); }
+
+  .foot {
+    margin-top: 34px; text-align: center;
+    font-size: 11px; color: var(--ink-faint); line-height: 1.7;
+  }
+  .foot a { color: var(--ink-faint); }
+  .state { padding: 60px 20px; text-align: center; color: var(--ink-soft); }
+</style>
+</head>
+<body>
+
+<div class="wrap" id="wrap">
+  <div class="state" id="state">Loading…</div>
+</div>
+
+<!-- Present mode overlay: built once, populated on open. -->
+<div class="present" id="present">
+  <button class="present-close" id="presentClose" aria-label="Close">×</button>
+  <div id="presentQr"></div>
+  <div class="present-name" id="presentName"></div>
+  <div class="present-hint" id="presentHint">Point your camera here</div>
+  <div class="present-mode">
+    <button id="modeUrl" class="sel">Card page</button>
+    <button id="modeVcard">No signal</button>
+  </div>
+</div>
+
+<script>
+/* ---------------------------------------------------------------------------
+   Card page controller.
+
+   The slug comes from the path (/c/<slug>) with a ?p= fallback so the page
+   also works if it's ever opened as a bare /card.html.
+   --------------------------------------------------------------------------- */
+(function () {
+  'use strict';
+
+  var m = location.pathname.match(/\/c\/([a-z0-9_-]+)/i);
+  var params = new URLSearchParams(location.search);
+  var slug = (m && m[1]) || params.get('p') || 'ed';
+  slug = slug.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+
+  var PERSON = null;
+  var wakeLock = null;
+
+  function el(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function row(href, ico, label, val, extra) {
+    if (!val) return '';
+    var tag = href ? 'a' : 'div';
+    var attrs = href ? ' href="' + esc(href) + '"' + (extra || '') : '';
+    return '<' + tag + ' class="row"' + attrs + '>'
+      + '<div class="row-ico">' + ico + '</div>'
+      + '<div class="row-body">'
+      + '<div class="row-label">' + esc(label) + '</div>'
+      + '<div class="row-val">' + esc(val) + '</div>'
+      + '</div></' + tag + '>';
+  }
+
+  function render(p) {
+    var roleLine2 = '';
+    if (p.titleSecondary && p.orgSecondary) {
+      roleLine2 = '<p class="role-2">' + esc(p.titleSecondary) + ' · '
+        + esc(p.orgSecondary) + '</p>';
+    }
+
+    var sites = (p.websites || []).map(function (w) {
+      return row(w.url, '🌐', 'Web', w.label, ' target="_blank" rel="noopener"');
+    }).join('');
+
+    var html = ''
+      + '<div class="mast">'
+      +   '<img src="/brand-assets/bedrock-mark-email-1x.png" alt="Bedrock">'
+      +   '<div class="mast-txt">'
+      +     '<div class="mast-name">BEDROCK</div>'
+      +     '<div class="mast-sub">Association Management</div>'
+      +   '</div>'
+      + '</div>'
+
+      + '<h1 class="name">' + esc(p.displayName) + '</h1>'
+      + (p.title ? '<p class="role">' + esc(p.title)
+          + (p.org ? ' · ' + esc(p.org) : '') + '</p>' : '')
+      + roleLine2
+      + (p.blurb ? '<p class="blurb">' + esc(p.blurb) + '</p>' : '')
+
+      + '<hr class="rule">'
+
+      /* Native anchor, not a fetch+blob: iOS Safari handles a direct link to a
+         text/vcard attachment correctly, and a blob download is exactly the
+         kind of thing that silently does nothing on a locked-down phone. */
+      + '<a class="save" href="' + esc(p.vcfUrl) + '">'
+      +   '<span>＋</span><span>Save to Contacts</span>'
+      + '</a>'
+      + '<div class="save-note">Adds ' + esc(p.name) + ' to your phone</div>'
+
+      + '<div class="rows">'
+      +   row('tel:' + p.phoneDirectHref, '📱', 'Direct', p.phoneDirect)
+      +   row('tel:' + p.phoneOfficeHref, '☎️', 'Office', p.phoneOffice)
+      +   row('mailto:' + p.email, '✉️', 'Email', p.email)
+      +   row(p.mapsUrl, '📍', 'Office', p.addressInline, ' target="_blank" rel="noopener"')
+      +   sites
+      + '</div>'
+
+      + '<div class="qr-panel">'
+      +   '<div class="qr-box" id="qrBox"><img src="' + esc(p.qrUrl)
+      +     '" alt="QR code for this card" style="width:100%;max-width:260px;height:auto;display:block"></div>'
+      +   '<div class="qr-cap">Scan to open this card · '
+      +     '<a href="#" id="presentOpen" style="color:var(--gold)">show full screen</a></div>'
+      + '</div>'
+
+      + '<div class="foot">'
+      +   esc(p.addressLine1) + '<br>' + esc(p.addressLine2)
+      + '</div>';
+
+    el('wrap').innerHTML = html;
+    document.title = p.displayName + ' — Bedrock';
+
+    var open = el('presentOpen');
+    if (open) {
+      open.addEventListener('click', function (e) {
+        e.preventDefault();
+        openPresent('url');
+      });
+    }
+  }
+
+  /* --- Present mode ------------------------------------------------------- */
+  function openPresent(mode) {
+    if (!PERSON) return;
+    setPresentMode(mode || 'url');
+    el('present').classList.add('on');
+    keepAwake(true);
+  }
+  function closePresent() {
+    el('present').classList.remove('on');
+    keepAwake(false);
+  }
+  function setPresentMode(mode) {
+    var url = mode === 'vcard' ? PERSON.qrVcardUrl : PERSON.qrUrl;
+    el('presentQr').innerHTML = '<img src="' + esc(url)
+      + '" alt="QR code" style="width:min(84vw,84vh,460px);height:auto;display:block">';
+    el('presentName').textContent = PERSON.displayName;
+    el('presentHint').textContent = mode === 'vcard'
+      ? 'Saves my contact, no internet needed'
+      : 'Point your camera here';
+    el('modeUrl').classList.toggle('sel', mode !== 'vcard');
+    el('modeVcard').classList.toggle('sel', mode === 'vcard');
+  }
+
+  /* Hold the screen on while presenting. A screen that sleeps mid-scan is the
+     small failure that turns a smooth introduction into fumbling. Wake Lock is
+     unsupported on plenty of browsers — degrade quietly, never throw. */
+  function keepAwake(on) {
+    try {
+      if (!('wakeLock' in navigator)) return;
+      if (on) {
+        navigator.wakeLock.request('screen').then(function (l) { wakeLock = l; })
+          .catch(function () { /* denied or unsupported — not worth surfacing */ });
+      } else if (wakeLock) {
+        wakeLock.release().catch(function () {});
+        wakeLock = null;
+      }
+    } catch (_) { /* no-op */ }
+  }
+
+  el('presentClose').addEventListener('click', closePresent);
+  el('modeUrl').addEventListener('click', function () { setPresentMode('url'); });
+  el('modeVcard').addEventListener('click', function () { setPresentMode('vcard'); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closePresent();
+  });
+  // Re-acquire the lock if the phone was backgrounded and brought back.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible'
+        && el('present').classList.contains('on')) keepAwake(true);
+  });
+
+  /* --- Load --------------------------------------------------------------- */
+  fetch('/api/bd/' + encodeURIComponent(slug))
+    .then(function (r) {
+      if (!r.ok) throw new Error(r.status === 404 ? 'not_found' : 'load_failed');
+      return r.json();
+    })
+    .then(function (d) {
+      PERSON = d.person;
+      render(PERSON);
+      // ?show=qr — Ed's own entry point. He opens this and holds the phone out.
+      if (params.get('show') === 'qr') openPresent(params.get('mode') || 'url');
+    })
+    .catch(function (err) {
+      el('state').innerHTML = err.message === 'not_found'
+        ? 'That card doesn’t exist.<br><br>'
+          + '<a href="https://bedrocktx.com" style="color:var(--gold)">bedrocktx.com</a>'
+        : 'Couldn’t load this card. Please try again.<br><br>'
+          + '<a href="https://bedrocktx.com" style="color:var(--gold)">bedrocktx.com</a>';
+    });
+})();
+</script>
+</body>
+</html>
