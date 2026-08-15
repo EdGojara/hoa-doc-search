@@ -247,7 +247,8 @@
       + '<div class="save-note">Adds ' + esc(p.name) + ' to your phone</div>'
 
       + '<div class="rows">'
-      +   row('tel:' + p.phoneDirectHref, '📱', 'Direct', p.phoneDirect)
+      +   row('tel:' + p.phoneCellHref, '📱', 'Cell', p.phoneCell)
+      +   row('tel:' + p.phoneDirectHref, '📞', 'Direct', p.phoneDirect)
       +   row('tel:' + p.phoneOfficeHref, '☎️', 'Office', p.phoneOffice)
       +   row('mailto:' + p.email, '✉️', 'Email', p.email)
       +   row(p.mapsUrl, '📍', 'Office', p.addressInline, ' target="_blank" rel="noopener"')
