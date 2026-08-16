@@ -557,6 +557,8 @@ const _STAFF_GATE_PUBLIC = [
   // 401s an anonymous request, and each one re-checks community scope. Claire
   // is never anonymous. (See lib/claire/scope.js.)
   /^\/claire$/,                                // the visit page
+  /^\/learn$/,                                 // public explainer library (no login by design)
+  /^\/api\/claire\/public\/explainers$/,       // portfolio-wide ready videos only, filter is in the query
   /^\/api\/claire\/(me|explainers)$/,
   /^\/api\/claire\/session\/start$/,
   /^\/api\/claire\/session\/[0-9a-f-]+\/(avatar-token|turn|heartbeat|handoff|end)$/,
@@ -1240,6 +1242,11 @@ app.get('/admin/vault', (req, res) => res.sendFile(require('path').join(__dirnam
 const { router: claireRouter, expireIdleSessions } = require('./api/claire');
 app.use('/api/claire', claireRouter);
 app.get('/claire', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'claire.html')));
+// The PUBLIC explainer library. No login, by design — this is the link that
+// goes in a newsletter, gets embedded by a distribution partner, and is handed
+// to a prospect. It serves only portfolio-wide videos; anything scoped to a
+// named community stays behind the portal.
+app.get('/learn', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'learn.html')));
 // Sweep visits whose tab was closed without ending them, so their metered
 // minutes still land in the cost ledger instead of sitting 'active' forever.
 setInterval(() => { expireIdleSessions().catch((e) => console.warn('[claire] sweep:', e.message)); }, 120000).unref();

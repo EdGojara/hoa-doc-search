@@ -497,6 +497,34 @@ router.get('/explainers', async (req, res) => {
   }
 });
 
+// ---- the public library ----------------------------------------------------
+// NO AUTH, deliberately. This is the surface a homeowner opens from a link in a
+// newsletter, a distribution partner embeds, and Ed sends to a prospect. Sign-in
+// would defeat the entire point.
+//
+// The safety line is what it returns, not who asks: ONLY explainers that are
+// `ready` AND portfolio-wide (community_id IS NULL). A community-scoped video
+// could name a community, a board or a dispute, so it never leaves the
+// authenticated surface. The filter is in the query, not in a caller's
+// parameter, so no request can widen it.
+router.get('/public/explainers', async (req, res) => {
+  try {
+    let q = supabase.from('claire_explainers')
+      .select('id, topic, language, title, video_url, duration_seconds')
+      .eq('status', 'ready')
+      .is('community_id', null)
+      .not('video_url', 'is', null)
+      .order('topic');
+    if (req.query.language) q = q.eq('language', String(req.query.language) === 'es' ? 'es' : 'en');
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ explainers: data || [] });
+  } catch (err) {
+    console.error('[claire] public explainers failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // ---- staff: pick the face --------------------------------------------------
 router.get('/avatars', async (req, res) => {
   try {
