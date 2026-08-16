@@ -102,6 +102,41 @@ function centsFor(seconds) {
   return Math.round((Math.max(0, seconds) / 60) * heygen.streamingCentsPerMinute());
 }
 
+// The `explainers` bucket is PUBLIC READ and is the only public bucket in this
+// project. Every other one (documents, violation-letters, evidence-archive,
+// sent-letters-archive, finalized-docs-archive, homeowner-interactions) holds
+// governing documents, owner-vault statements, evidence photos or sealed
+// correspondence and must stay private. Explainers are the one asset class whose
+// job is to be watched by people who are not logged in, so they get their own
+// bucket rather than a public policy cut into a private one.
+const EXPLAINER_BUCKET = 'explainers';
+
+/**
+ * Copy a finished render out of the provider's expiring URL into our storage.
+ * Returns { ok, public_url, path, bytes } or { ok:false, error }. Never throws:
+ * a failed copy must leave the row retryable rather than crash the poll.
+ */
+async function storeExplainer(row, st) {
+  try {
+    const r = await fetch(st.video_url);
+    if (!r.ok) return { ok: false, error: `provider fetch ${r.status}` };
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length) return { ok: false, error: 'provider returned an empty file' };
+
+    const safeTopic = String(row.topic || 'explainer').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40);
+    const path = `${safeTopic}/${row.language}/${row.id}.mp4`;
+    const { error } = await supabase.storage.from(EXPLAINER_BUCKET)
+      .upload(path, buf, { contentType: 'video/mp4', upsert: true });
+    if (error) return { ok: false, error: error.message };
+
+    const { data } = supabase.storage.from(EXPLAINER_BUCKET).getPublicUrl(path);
+    if (!data || !data.publicUrl) return { ok: false, error: 'no public url returned' };
+    return { ok: true, public_url: data.publicUrl, path, bytes: buf.length };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 // A teammate is available on video only if they have a live door AND a face
 // that is actually configured. Without the second half a hand-off would swap to
 // a blank screen, which is worse than staying with Claire.
@@ -558,7 +593,27 @@ router.get('/explainers/:id', async (req, res) => {
     const st = await heygen.videoStatus(row.provider_video_id);
     const patch = {};
     if (st.status === 'completed' && st.video_url) {
-      patch.status = 'ready'; patch.video_url = st.video_url; patch.duration_seconds = st.duration;
+      // Copy the file to OUR storage before recording it as ready. The provider
+      // URL is signed and expires in about a week, so storing it would produce
+      // an explainer that works in testing, gets linked from the portal and
+      // handed to a distribution partner, and then dies silently with the row
+      // still looking complete. Only our permanent URL is ever served.
+      const stored = await storeExplainer(row, st);
+      if (stored.ok) {
+        patch.status = 'ready';
+        patch.video_url = stored.public_url;
+        patch.storage_path = stored.path;
+        patch.provider_url = st.video_url;
+        patch.bytes = stored.bytes;
+        patch.stored_at = new Date().toISOString();
+        patch.duration_seconds = st.duration;
+      } else {
+        // Rendered but not copied. Stay in 'rendering' so the next poll retries
+        // while the provider link is still alive, and say why.
+        patch.render_error = `render finished but copy to storage failed: ${stored.error}`;
+        patch.provider_url = st.video_url;
+        console.error('[claire] explainer copy failed', row.id, stored.error);
+      }
     } else if (st.status === 'failed') {
       patch.status = 'failed'; patch.render_error = st.error || 'render failed';
     }
