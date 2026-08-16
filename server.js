@@ -816,9 +816,27 @@ app.get('/', (req, res, next) => {
   // ?state= in the query) — belt-and-suspenders against any future host
   // where the staff flow lands on a redirected root.
   const hasOAuthCallback = req.query && (req.query.code || req.query.state);
-  if (host.startsWith('my.') && !hasOAuthCallback) {
-    return res.redirect(302, '/portal-login.html');
-  }
+
+  // Ed 2026-08-16: the my.* → /portal-login.html redirect is REMOVED, and the
+  // reason is that it could only ever hurt the people it was meant to help.
+  //
+  // The homeowner portal is a PATH (app.bedrocktxai.com/portal), not the my.*
+  // subdomain, and homeowners arrive from a magic link that lands on
+  // /portal or /portal-login.html directly — both of which sit on the
+  // staff-gate public allowlist, so they never touch this route.
+  //
+  // The bare root, by contrast, IS behind the staff gate. So an
+  // unauthenticated visitor to my.* gets bounced to /staff-login.html before
+  // this line ever runs, and the ONLY request that can reach the redirect is
+  // one carrying a valid staff cookie. In other words it fired exclusively for
+  // staff who had just successfully signed in, and dropped them on a homeowner
+  // magic-link page with no way forward. Ed hit exactly this on his phone: the
+  // login worked, and the app then sent him somewhere he could not get in.
+  //
+  // Both hosts now serve the app. `hasOAuthCallback` is retained because the
+  // Microsoft 365 callback returns to / with ?code=/?state= and must never be
+  // intercepted by any future redirect added here.
+  void hasOAuthCallback;
   return next();
 });
 
