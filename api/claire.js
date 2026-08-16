@@ -467,17 +467,35 @@ router.get('/avatars', async (req, res) => {
   try {
     if (!await requireStaff(req, res)) return;
     if (!heygen.heygenEnabled()) return res.status(503).json({ error: 'heygen_not_configured' });
+
+    // What the plan actually supports. Pre-rendered video and live streaming
+    // are separate HeyGen products with separate gating, so a key that renders
+    // explainers fine may 403 on streaming. Probe rather than assume, and
+    // surface BOTH catalogues so a face can be picked either way.
+    const caps = await heygen.capabilities();
+    const [videoAvatars, streamAvatars] = await Promise.all([
+      caps.video ? heygen.listVideoAvatars().catch(() => []) : Promise.resolve([]),
+      caps.streaming ? heygen.listStreamingAvatars().catch(() => []) : Promise.resolve([]),
+    ]);
+
     // Every teammate with a door, and whether their face is picked yet. This is
     // the screen where the roster gets its cast, so it has to show the gaps as
     // plainly as the fills.
     const assigned = roster.visitPersonas().map((m) => ({
       ...publicPersona(m.persona),
       env_key: `${m.face}_AVATAR_ID`,
+      voice_env_key: `${m.face}_VOICE_ID`,
       avatar_id: heygen.avatarIdFor(m.persona) || null,
       voice_id: heygen.voiceIdFor(m.persona) || null,
       on_camera: canAppear(m.persona),
     }));
-    res.json({ avatars: await heygen.listStreamingAvatars(), team: assigned });
+    res.json({
+      capabilities: caps,
+      avatars: streamAvatars.length ? streamAvatars : videoAvatars,
+      video_avatars: videoAvatars,
+      streaming_avatars: streamAvatars,
+      team: assigned,
+    });
   } catch (err) {
     console.error('[claire] avatar list failed:', err.message);
     res.status(502).json({ error: safeErrorMessage(err) });
