@@ -1,0 +1,356 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claire · Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root{ --navy:#0B1D34; --gold:#D4AF37; --ink:#334155; --faint:#94a3b8; --rule:#1e3352; --bg:#071324; }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:#e2e8f0;font-family:-apple-system,Segoe UI,Arial,sans-serif;-webkit-font-smoothing:antialiased;}
+  .shell{max-width:960px;margin:0 auto;padding:20px 18px 28px;min-height:100%;display:flex;flex-direction:column;}
+  .top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;}
+  .brand{font-family:Georgia,serif;color:#fff;font-size:15px;font-weight:700;letter-spacing:.2px;}
+  .brand small{display:block;color:var(--faint);font-family:-apple-system,Segoe UI,Arial,sans-serif;font-size:11.5px;font-weight:400;letter-spacing:.02em;}
+
+  /* The honest-AI badge. Always on screen, never dismissible, never behind a
+     hover. Someone joining late must still be told what they are talking to. */
+  .ai-badge{display:inline-flex;align-items:center;gap:7px;background:rgba(212,175,55,.12);border:1px solid rgba(212,175,55,.45);
+    color:var(--gold);border-radius:99px;padding:6px 13px;font-size:11.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap;}
+  .ai-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--gold);}
+
+  .stage{position:relative;background:#0a1a2f;border:1px solid var(--rule);border-radius:18px;overflow:hidden;aspect-ratio:16/10;display:flex;align-items:center;justify-content:center;}
+  .stage video{width:100%;height:100%;object-fit:cover;display:block;background:#0a1a2f;}
+  .stage .resting{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:26px;}
+  .monogram{width:92px;height:92px;border-radius:50%;border:1px solid rgba(212,175,55,.5);display:flex;align-items:center;justify-content:center;
+    font-family:Georgia,serif;font-size:34px;color:var(--gold);background:rgba(212,175,55,.07);}
+  .stage .overlay-badge{position:absolute;top:14px;left:14px;z-index:3;}
+  .stage .timer{position:absolute;top:16px;right:16px;z-index:3;font-size:11.5px;color:var(--faint);background:rgba(7,19,36,.72);border-radius:99px;padding:5px 11px;}
+  .speaking{position:absolute;bottom:0;left:0;right:0;z-index:2;padding:18px 18px 16px;background:linear-gradient(transparent,rgba(7,19,36,.94) 55%);}
+  .caption{font-size:15.5px;line-height:1.5;color:#f1f5f9;max-height:5.4em;overflow:hidden;}
+  .caption:empty{display:none}
+
+  .bar{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap;}
+  .ask{flex:1 1 320px;display:flex;gap:8px;}
+  input[type=text],select{width:100%;padding:12px 14px;border:1px solid var(--rule);border-radius:11px;font-size:14.5px;background:#0d2038;color:#e2e8f0;}
+  input[type=text]::placeholder{color:#5b708f}
+  .btn{background:var(--gold);color:var(--navy);border:none;border-radius:11px;padding:12px 20px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap;}
+  .btn:disabled{opacity:.45;cursor:default}
+  .ghost{background:transparent;border:1px solid var(--rule);color:#cbd5e1;border-radius:11px;padding:11px 16px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap;}
+  .mic{width:48px;height:48px;border-radius:50%;border:1px solid var(--rule);background:#0d2038;color:#cbd5e1;font-size:19px;cursor:pointer;flex:0 0 auto;}
+  .mic.on{background:var(--gold);color:var(--navy);border-color:var(--gold);}
+  .muted{color:var(--faint);font-size:12.5px;}
+  .note{margin-top:12px;font-size:12.5px;color:var(--faint);line-height:1.55;}
+  .warn{margin-top:12px;background:rgba(180,83,9,.16);border:1px solid rgba(217,119,6,.45);color:#fcd9a4;border-radius:11px;padding:11px 14px;font-size:13px;}
+  .gate{max-width:430px;margin:14vh auto;text-align:center;background:#0a1a2f;border:1px solid var(--rule);border-radius:18px;padding:38px 30px;}
+  .transcript{margin-top:16px;border-top:1px solid var(--rule);padding-top:14px;display:none;}
+  .transcript.on{display:block}
+  .t-row{margin-bottom:11px;font-size:13.5px;line-height:1.5;}
+  .t-row .who{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);margin-bottom:2px;}
+  .t-row.claire .who{color:var(--gold);}
+  .t-row.blocked{border-left:2px solid rgba(217,119,6,.7);padding-left:10px;}
+</style>
+
+<div id="app"><div class="shell"><div class="muted" style="padding:48px;text-align:center;">Connecting…</div></div></div>
+
+<script>
+const A='/api/claire';
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const $=id=>document.getElementById(id);
+let ME=null, SESSION=null, AVATAR=null, LISTENING=false, RECOG=null, ELAPSED=0, TICK=null, BEAT=null, BUSY=false;
+
+// ---------------------------------------------------------------------------
+// Boot: who is at the door decides what this page even is.
+// ---------------------------------------------------------------------------
+async function boot(){
+  let r;
+  try{ r=await fetch(A+'/me',{credentials:'same-origin'}); }catch(_){ return renderGate('offline'); }
+  if(r.status===401) return renderGate('signin');
+  if(!r.ok) return renderGate('error');
+  ME=await r.json();
+  // Selection lists are alphabetical by label, always.
+  ME.communities=(ME.communities||[]).slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+  renderLobby();
+}
+
+function renderGate(kind){
+  const copy={
+    signin:['Sign in to see Claire','Claire answers questions about your own community and your own account, so she needs to know who you are. Sign in through your portal and come back.'],
+    offline:['Cannot reach Bedrock right now','Check your connection and reload. If it keeps happening, call the office and someone will pick up.'],
+    error:['Something went wrong opening this','Reload the page. If it happens again, let the team know and we will look at it.'],
+  }[kind]||['Unavailable',''];
+  $('app').innerHTML=`<div class="shell"><div class="gate">
+    <div class="monogram" style="margin:0 auto 18px;">C</div>
+    <h1 style="font-family:Georgia,serif;color:#fff;font-size:21px;margin:0 0 10px;">${esc(copy[0])}</h1>
+    <p class="muted" style="line-height:1.6;">${esc(copy[1])}</p></div></div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Lobby — pick the community (when the visitor holds more than one) and start.
+// ---------------------------------------------------------------------------
+function renderLobby(){
+  const v=ME.visitor, many=ME.communities.length>1, one=ME.communities[0];
+  const roleLine={homeowner:'your account and your community',board:'the communities you serve on',staff:'the whole portfolio'}[v.role]||'';
+  $('app').innerHTML=`<div class="shell">
+    <div class="top">
+      <div class="brand">Bedrock<small>Claire, live</small></div>
+      <span class="ai-badge"><span class="dot"></span>AI assistant</span>
+    </div>
+    <div class="stage">
+      <div class="resting">
+        <div class="monogram">C</div>
+        <div style="font-family:Georgia,serif;font-size:20px;color:#fff;">Talk to Claire</div>
+        <div class="muted" style="max-width:430px;line-height:1.6;">
+          Claire is Bedrock's AI assistant. She can answer questions about ${esc(roleLine)}, pull up what the governing documents actually say, and hand you to a person any time you want one.
+        </div>
+      </div>
+    </div>
+    <div class="bar">
+      ${many?`<select id="c-pick" style="flex:1 1 240px;">${ME.communities.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`
+             :`<div class="muted" style="flex:1 1 auto;">${one?esc(one.name):'No community linked to your account yet.'}</div>`}
+      <select id="lang" style="flex:0 0 130px;"><option value="en">English</option><option value="es">Español</option></select>
+      <button class="btn" id="go" ${ME.communities.length?'':'disabled'}>Start a visit</button>
+    </div>
+    ${ME.video.available?'':`<div class="warn">Claire is on voice and text right now, the video presenter is switched off. Everything else works the same.</div>`}
+    <div class="note">Visits are limited to ${Math.round(v.seconds_cap/60)} minutes and are recorded as part of your association's records. Claire does not decide violations, waive charges, approve requests, or give legal advice. For anything in that territory she brings in a person.</div>
+  </div>`;
+  $('go').onclick=startVisit;
+}
+
+// ---------------------------------------------------------------------------
+// The visit.
+// ---------------------------------------------------------------------------
+async function startVisit(){
+  const btn=$('go'); btn.disabled=true; btn.textContent='Connecting…';
+  const community_id=$('c-pick')?$('c-pick').value:(ME.communities[0]||{}).id;
+  const language=$('lang').value;
+  let j;
+  try{
+    const r=await fetch(A+'/session/start',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id,language})});
+    j=await r.json();
+    if(!r.ok) throw new Error(j.detail||j.error||'could not start');
+  }catch(e){ btn.disabled=false; btn.textContent='Start a visit'; alert('Could not start the visit: '+e.message); return; }
+
+  SESSION=j.session; SESSION.language=language;
+  renderRoom();
+  say('claire', j.opener);
+  await connectAvatar(j.opener);
+  startMeter();
+}
+
+function renderRoom(){
+  $('app').innerHTML=`<div class="shell">
+    <div class="top">
+      <div class="brand">Bedrock<small>${esc(SESSION.community.name)}</small></div>
+      <button class="ghost" id="end">End visit</button>
+    </div>
+    <div class="stage">
+      <video id="vid" autoplay playsinline></video>
+      <div class="resting" id="resting"><div class="monogram">C</div><div class="muted">Claire is listening</div></div>
+      <span class="ai-badge overlay-badge"><span class="dot"></span>AI assistant</span>
+      <div class="timer" id="timer"></div>
+      <div class="speaking"><div class="caption" id="cap"></div></div>
+    </div>
+    <div class="bar">
+      <button class="mic" id="mic" title="Speak to Claire">🎙</button>
+      <div class="ask">
+        <input type="text" id="q" placeholder="Ask Claire anything about ${esc(SESSION.community.name)}" autocomplete="off">
+        <button class="btn" id="send">Ask</button>
+      </div>
+      <button class="ghost" id="human">Talk to a person</button>
+      <button class="ghost" id="tt">Transcript</button>
+    </div>
+    <div id="banner"></div>
+    <div class="transcript" id="transcript"></div>
+  </div>`;
+  $('send').onclick=()=>ask($('q').value);
+  $('q').addEventListener('keydown',e=>{ if(e.key==='Enter') ask($('q').value); });
+  $('mic').onclick=toggleMic;
+  $('human').onclick=handoff;
+  $('end').onclick=()=>endVisit('visitor_ended');
+  $('tt').onclick=()=>$('transcript').classList.toggle('on');
+  window.addEventListener('beforeunload',()=>{ try{ navigator.sendBeacon(A+'/session/'+SESSION.id+'/end'); }catch(_){} });
+}
+
+function banner(html){ const b=$('banner'); if(b) b.innerHTML=html?`<div class="warn">${html}</div>`:''; }
+
+// ---------------------------------------------------------------------------
+// The avatar. Deliberately isolated behind start/speak/stop so the rest of the
+// page never talks to the vendor directly, and so a failure here degrades to
+// voice and text instead of a dead screen. The resting card stays visible
+// until a real video track arrives: never clear a working surface before its
+// replacement is confirmed in hand.
+// ---------------------------------------------------------------------------
+async function connectAvatar(opener){
+  if(!ME.video.available){ banner('Claire is on voice and text right now, the video presenter is switched off.'); return; }
+  try{
+    const r=await fetch(A+'/session/'+SESSION.id+'/avatar-token',{method:'POST',credentials:'same-origin'});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.detail||j.error||'no token');
+
+    const mod=await import('https://cdn.jsdelivr.net/npm/@heygen/streaming-avatar@2/lib/index.mjs');
+    const StreamingAvatar=mod.default||mod.StreamingAvatar;
+    const av=new StreamingAvatar({token:j.token});
+    const ready=new Promise((resolve,reject)=>{
+      const evt=mod.StreamingEvents||{};
+      av.on(evt.STREAM_READY||'stream_ready',e=>{
+        const stream=e&&(e.detail||e.stream)||e;
+        const vid=$('vid');
+        if(vid&&stream){ vid.srcObject=stream.stream||stream; vid.onloadedmetadata=()=>vid.play().catch(()=>{}); }
+        const rest=$('resting'); if(rest) rest.style.display='none';   // only now
+        resolve();
+      });
+      av.on(evt.STREAM_DISCONNECTED||'stream_disconnected',()=>{
+        const rest=$('resting'); if(rest) rest.style.display='';
+        banner('The video presenter dropped out. Claire is still here on voice and text, your visit did not end.');
+      });
+      setTimeout(()=>reject(new Error('avatar timed out')),25000);
+    });
+    await av.createStartAvatar({quality:'medium',avatarName:j.avatar_id,voice:j.voice_id?{voiceId:j.voice_id}:undefined});
+    await ready;
+    AVATAR=av;
+    if(opener) speakAvatar(opener);
+  }catch(e){
+    console.warn('[claire] avatar unavailable:',e.message);
+    AVATAR=null;
+    banner('Claire is on voice and text for this visit, her video would not connect. Everything else works the same.');
+  }
+}
+function speakAvatar(text){
+  if(!AVATAR||!text) return;
+  try{ AVATAR.speak({text,task_type:'repeat'}); }catch(e){ console.warn('[claire] speak failed:',e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// One exchange. Sentences stream back so Claire starts speaking on the first
+// clause rather than after the whole answer.
+// ---------------------------------------------------------------------------
+async function ask(text){
+  text=String(text||'').trim(); if(!text||BUSY) return;
+  BUSY=true; $('send').disabled=true; $('q').value=''; stopMic();
+  say('visitor',text);
+  $('cap').textContent='';
+  try{
+    const r=await fetch(A+'/session/'+SESSION.id+'/turn',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    const ct=r.headers.get('content-type')||'';
+    if(ct.includes('application/json')){                 // a blocked turn answers in one piece
+      const j=await r.json();
+      if(!r.ok) throw new Error(j.detail||j.error||'turn failed');
+      $('cap').textContent=j.reply; say('claire',j.reply,j.reason); speakAvatar(j.reply);
+    }else{
+      let full='';
+      await readSSE(r,(evt,data)=>{
+        if(evt==='sentence'){ full+=(full?' ':'')+data.text; $('cap').textContent=full; speakAvatar(data.text); }
+      });
+      if(full) say('claire',full);
+    }
+  }catch(e){
+    const msg='Sorry, that did not go through. Want me to get someone from the team to follow up?';
+    $('cap').textContent=msg; say('claire',msg);
+  }finally{ BUSY=false; $('send').disabled=false; $('q').focus(); }
+}
+
+async function readSSE(response,onEvent){
+  const reader=response.body.getReader(), dec=new TextDecoder();
+  let buf='';
+  for(;;){
+    const {done,value}=await reader.read(); if(done) break;
+    buf+=dec.decode(value,{stream:true});
+    let i;
+    while((i=buf.indexOf('\n\n'))>=0){
+      const block=buf.slice(0,i); buf=buf.slice(i+2);
+      let evt='message', data='';
+      for(const line of block.split('\n')){
+        if(line.startsWith('event:')) evt=line.slice(6).trim();
+        else if(line.startsWith('data:')) data+=line.slice(5).trim();
+      }
+      if(data){ try{ onEvent(evt,JSON.parse(data)); }catch(_){} }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Transcript. Kept on screen because a visitor should be able to see what was
+// said, including the moments Claire declined and why.
+// ---------------------------------------------------------------------------
+function say(who,text,blocked){
+  const box=$('transcript'); if(!box||!text) return;
+  const row=document.createElement('div');
+  row.className='t-row '+(who==='claire'?'claire':'you')+(blocked?' blocked':'');
+  row.innerHTML=`<span class="who">${who==='claire'?'Claire':'You'}${blocked?' · brought to a person':''}</span>${esc(text)}`;
+  box.appendChild(row); box.scrollTop=box.scrollHeight;
+}
+
+// ---------------------------------------------------------------------------
+// Speech in. Browser STT keeps this free and adds no server audio path. Where
+// the browser has no support the visitor types, and is told so plainly rather
+// than clicking a button that does nothing.
+// ---------------------------------------------------------------------------
+function toggleMic(){ LISTENING?stopMic():startMic(); }
+function startMic(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ banner('This browser will not let Claire hear you. Type your question instead, or open the visit in Chrome or Edge.'); return; }
+  RECOG=new SR();
+  RECOG.lang=SESSION.language==='es'?'es-US':'en-US';
+  RECOG.interimResults=true; RECOG.continuous=false;
+  RECOG.onresult=e=>{
+    let finalText='';
+    for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) finalText+=e.results[i][0].transcript; }
+    if(finalText.trim()){ stopMic(); ask(finalText); }
+    else $('q').value=e.results[e.resultIndex][0].transcript;
+  };
+  RECOG.onerror=()=>stopMic();
+  RECOG.onend=()=>stopMic();
+  try{ RECOG.start(); LISTENING=true; $('mic').classList.add('on'); }catch(_){ stopMic(); }
+}
+function stopMic(){ LISTENING=false; const m=$('mic'); if(m) m.classList.remove('on'); if(RECOG){ try{RECOG.stop();}catch(_){} RECOG=null; } }
+
+// ---------------------------------------------------------------------------
+// The meter. The browser counts, the SERVER decides. A client-side timer is a
+// suggestion and the thing being limited is money.
+// ---------------------------------------------------------------------------
+function startMeter(){
+  ELAPSED=0;
+  TICK=setInterval(()=>{
+    ELAPSED++;
+    const left=Math.max(0,SESSION.seconds_cap-ELAPSED);
+    const t=$('timer'); if(t) t.textContent=`${Math.floor(left/60)}:${String(left%60).padStart(2,'0')} left`;
+  },1000);
+  BEAT=setInterval(async()=>{
+    try{
+      const r=await fetch(A+'/session/'+SESSION.id+'/heartbeat',{method:'POST',credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({avatar_seconds:ELAPSED})});
+      const j=await r.json();
+      if(j&&j.active===false) endVisit(j.reason||'ended',true);
+    }catch(_){ /* a dropped heartbeat must not end a live visit */ }
+  },20000);
+}
+
+async function handoff(){
+  try{
+    const r=await fetch(A+'/session/'+SESSION.id+'/handoff',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:'visitor_requested'})});
+    const j=await r.json();
+    const msg=j.message||'I have passed this to the team.';
+    $('cap').textContent=msg; say('claire',msg); speakAvatar(msg);
+  }catch(_){ banner('Could not reach the team just now. Call the office and someone will pick up.'); }
+}
+
+async function endVisit(reason,capped){
+  clearInterval(TICK); clearInterval(BEAT); stopMic();
+  try{ if(AVATAR&&AVATAR.stopAvatar) await AVATAR.stopAvatar(); }catch(_){}
+  try{ await fetch(A+'/session/'+SESSION.id+'/end',{method:'POST',credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({avatar_seconds:ELAPSED,reason})}); }catch(_){}
+  $('app').innerHTML=`<div class="shell"><div class="gate">
+    <div class="monogram" style="margin:0 auto 18px;">C</div>
+    <h1 style="font-family:Georgia,serif;color:#fff;font-size:21px;margin:0 0 10px;">${capped?'That is the time limit':'Thanks for stopping by'}</h1>
+    <p class="muted" style="line-height:1.6;">${capped
+      ? 'Visits run to '+Math.round(SESSION.seconds_cap/60)+' minutes. If we did not finish, start another one or ask for a person and someone will pick it up with everything we covered.'
+      : 'Anything we discussed is saved to your association record, so nobody will ask you to repeat it.'}</p>
+    <div style="margin-top:18px;"><button class="btn" onclick="location.reload()">Start another visit</button></div>
+  </div></div>`;
+}
+
+boot();
+</script>

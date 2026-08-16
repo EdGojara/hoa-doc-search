@@ -551,6 +551,15 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/board-threads\/motion\/[^/]+$/,
   /^\/api\/board-threads\/thread\/[^/]+$/,
   /^\/api\/board-threads\/thread\/[^/]+\/messages$/,
+  // Virtual Claire — homeowners and board members arrive with a PORTAL cookie,
+  // never the staff-gate cookie, so the gate would bounce every one of them to
+  // a staff login. Safe to list: every handler calls resolveVisitor() first and
+  // 401s an anonymous request, and each one re-checks community scope. Claire
+  // is never anonymous. (See lib/claire/scope.js.)
+  /^\/claire$/,                                // the visit page
+  /^\/api\/claire\/(me|explainers)$/,
+  /^\/api\/claire\/session\/start$/,
+  /^\/api\/claire\/session\/[0-9a-f-]+\/(avatar-token|turn|heartbeat|handoff|end)$/,
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   // Twilio voice webhooks — same pattern as Stripe: outside-service webhooks,
   // never carry a staff cookie. The voice router handles them. Long-term,
@@ -1223,6 +1232,17 @@ app.use('/api/portal-admin', portalAdminRouter);
 const { router: vaultRouter } = require('./api/vault');
 app.use('/api/vault', vaultRouter);
 app.get('/admin/vault', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'vault.html')));
+
+// Virtual Claire — the embodied assistant. One door for homeowners, board
+// members and staff; lib/claire/scope.js decides which of them is standing
+// there. The reasoning core is the SAME one that answers the phone, so there is
+// no second Claire to keep in sync. (Ed 2026-08-16, migration 366.)
+const { router: claireRouter, expireIdleSessions } = require('./api/claire');
+app.use('/api/claire', claireRouter);
+app.get('/claire', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'claire.html')));
+// Sweep visits whose tab was closed without ending them, so their metered
+// minutes still land in the cost ledger instead of sitting 'active' forever.
+setInterval(() => { expireIdleSessions().catch((e) => console.warn('[claire] sweep:', e.message)); }, 120000).unref();
 
 const { router: usersRouter } = require('./api/users');
 app.use('/api/users', usersRouter);
