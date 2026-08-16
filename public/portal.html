@@ -774,6 +774,19 @@
 const MODULES = [
   // ── Row 1: Your account ───────────────────────────────────────────
   {
+    // Claire leads because she is the shortcut to every other tile: a
+    // homeowner who does not know which of these answers their question can
+    // just ask. The label says "AI" on the tile itself, not only once she is
+    // on screen.
+    key: 'claire',
+    title: 'Ask Claire',
+    description: 'Bedrock\'s AI assistant, live on video. Ask about your account, your notices, or the rules, and she brings in a person whenever you want one.',
+    icon: '💬',
+    section: 'home',
+    cta: 'Start a visit',
+    buildLink: (ctx) => `/claire`,
+  },
+  {
     key: 'balance',
     title: 'Account Balance',
     description: 'Current assessment balance, due dates, and recent payments.',
@@ -1189,6 +1202,7 @@ function buildDemoContext(communitySlug) {
 function defaultDemoModuleConfig(slug) {
   // Demo: tiles are live where Bedrock has functional backends, coming-soon otherwise.
   return {
+    claire:           { status: 'live' },  // degrades to voice + text when video is off
     property_summary: { status: 'live' },
     acc_reviews:      { status: 'live' },  // committee tile shown only when reviewer has reviews
     messages:         { status: 'live' },  // demo mode: links into Messages page (empty state)
