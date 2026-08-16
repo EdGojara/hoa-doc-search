@@ -48,6 +48,19 @@
   .t-row .who{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);margin-bottom:2px;}
   .t-row.claire .who{color:var(--gold);}
   .t-row.blocked{border-left:2px solid rgba(217,119,6,.7);padding-left:10px;}
+  /* Who is on screen. Named, always, because several teammates speak here. */
+  .whois{position:absolute;bottom:14px;left:14px;z-index:4;display:flex;align-items:center;gap:9px;
+    background:rgba(7,19,36,.8);border:1px solid var(--rule);border-radius:99px;padding:6px 14px 6px 10px;}
+  .whois .em{font-size:15px}
+  .whois .nm{font-size:12.5px;font-weight:700;color:#fff;line-height:1.25}
+  .whois .ti{font-size:10.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+  .swap{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;
+    background:rgba(7,19,36,.9);text-align:center;padding:26px;}
+  .swap .nm{font-family:Georgia,serif;font-size:19px;color:#fff;margin-top:12px}
+  .team{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+  .who-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--rule);border-radius:99px;
+    padding:5px 11px;font-size:11.5px;color:#cbd5e1;background:#0d2038;}
+  .who-chip.off{opacity:.45}
 </style>
 
 <div id="app"><div class="shell"><div class="muted" style="padding:48px;text-align:center;">Connecting…</div></div></div>
@@ -57,6 +70,8 @@ const A='/api/claire';
 const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const $=id=>document.getElementById(id);
 let ME=null, SESSION=null, AVATAR=null, LISTENING=false, RECOG=null, ELAPSED=0, TICK=null, BEAT=null, BUSY=false;
+// Who is on screen right now. The SERVER owns this; the page only reflects it.
+let PERSONA=null;
 
 // ---------------------------------------------------------------------------
 // Boot: who is at the door decides what this page even is.
@@ -99,9 +114,11 @@ function renderLobby(){
       <div class="resting">
         <div class="monogram">C</div>
         <div style="font-family:Georgia,serif;font-size:20px;color:#fff;">Talk to Claire</div>
-        <div class="muted" style="max-width:430px;line-height:1.6;">
-          Claire is Bedrock's AI assistant. She can answer questions about ${esc(roleLine)}, pull up what the governing documents actually say, and hand you to a person any time you want one.
+        <div class="muted" style="max-width:470px;line-height:1.6;">
+          Claire is the front office of Bedrock's AI team. She answers questions about ${esc(roleLine)} and pulls up what the governing documents actually say. If your question belongs to a specialist she brings them in by name, and a real person is one click away the whole time.
         </div>
+        ${(ME.team||[]).length?`<div class="team">${ME.team.map(t=>
+          `<span class="who-chip${t.on_camera?'':' off'}" title="${esc(t.domain)}">${t.emoji} ${esc(t.name)}<span style="color:var(--faint)"> · ${esc(t.title)}</span></span>`).join('')}</div>`:''}
       </div>
     </div>
     <div class="bar">
@@ -132,6 +149,7 @@ async function startVisit(){
   }catch(e){ btn.disabled=false; btn.textContent='Start a visit'; alert('Could not start the visit: '+e.message); return; }
 
   SESSION=j.session; SESSION.language=language;
+  PERSONA=SESSION.persona;
   renderRoom();
   say('claire', j.opener);
   await connectAvatar(j.opener);
@@ -146,9 +164,10 @@ function renderRoom(){
     </div>
     <div class="stage">
       <video id="vid" autoplay playsinline></video>
-      <div class="resting" id="resting"><div class="monogram">C</div><div class="muted">Claire is listening</div></div>
+      <div class="resting" id="resting"><div class="monogram" id="mono">${esc((SESSION.persona.name||'C')[0])}</div><div class="muted" id="restText">${esc(SESSION.persona.name)} is listening</div></div>
       <span class="ai-badge overlay-badge"><span class="dot"></span>AI assistant</span>
       <div class="timer" id="timer"></div>
+      <div class="whois" id="whois"><span class="em">${SESSION.persona.emoji||'💬'}</span><span><span class="nm">${esc(SESSION.persona.name)}</span><br><span class="ti">${esc(SESSION.persona.title)}</span></span></div>
       <div class="speaking"><div class="caption" id="cap"></div></div>
     </div>
     <div class="bar">
@@ -182,7 +201,8 @@ function banner(html){ const b=$('banner'); if(b) b.innerHTML=html?`<div class="
 // replacement is confirmed in hand.
 // ---------------------------------------------------------------------------
 async function connectAvatar(opener){
-  if(!ME.video.available){ banner('Claire is on voice and text right now, the video presenter is switched off.'); return; }
+  const nm=(PERSONA&&PERSONA.name)||'Claire';
+  if(!ME.video.available){ banner(`${nm} is on voice and text right now, the video presenter is switched off.`); return; }
   try{
     const r=await fetch(A+'/session/'+SESSION.id+'/avatar-token',{method:'POST',credentials:'same-origin'});
     const j=await r.json();
@@ -202,7 +222,7 @@ async function connectAvatar(opener){
       });
       av.on(evt.STREAM_DISCONNECTED||'stream_disconnected',()=>{
         const rest=$('resting'); if(rest) rest.style.display='';
-        banner('The video presenter dropped out. Claire is still here on voice and text, your visit did not end.');
+        banner(`The video presenter dropped out. ${(PERSONA&&PERSONA.name)||'Claire'} is still here on voice and text, your visit did not end.`);
       });
       setTimeout(()=>reject(new Error('avatar timed out')),25000);
     });
@@ -213,7 +233,7 @@ async function connectAvatar(opener){
   }catch(e){
     console.warn('[claire] avatar unavailable:',e.message);
     AVATAR=null;
-    banner('Claire is on voice and text for this visit, her video would not connect. Everything else works the same.');
+    banner(`${nm} is on voice and text for this visit, the video would not connect. Everything else works the same.`);
   }
 }
 function speakAvatar(text){
@@ -239,10 +259,18 @@ async function ask(text){
       if(!r.ok) throw new Error(j.detail||j.error||'turn failed');
       $('cap').textContent=j.reply; say('claire',j.reply,j.reason); speakAvatar(j.reply);
     }else{
-      let full='';
+      let full='', pending=Promise.resolve();
       await readSSE(r,(evt,data)=>{
-        if(evt==='sentence'){ full+=(full?' ':'')+data.text; $('cap').textContent=full; speakAvatar(data.text); }
+        // The swap is async and the answer streams right behind it, so each
+        // sentence waits its turn rather than being spoken by the face that is
+        // already on its way out.
+        if(evt==='handoff'){ pending=pending.then(()=>swapPersona(data)).catch(()=>{}); }
+        else if(evt==='sentence'){
+          full+=(full?' ':'')+data.text; $('cap').textContent=full;
+          const line=data.text; pending=pending.then(()=>speakAvatar(line)).catch(()=>{});
+        }
       });
+      await pending;
       if(full) say('claire',full);
     }
   }catch(e){
@@ -274,12 +302,43 @@ async function readSSE(response,onEvent){
 // Transcript. Kept on screen because a visitor should be able to see what was
 // said, including the moments Claire declined and why.
 // ---------------------------------------------------------------------------
-function say(who,text,blocked){
+function say(who,text,blocked,nameOverride){
   const box=$('transcript'); if(!box||!text) return;
+  const speaker = who==='claire' ? (nameOverride||(PERSONA&&PERSONA.name)||'Claire') : 'You';
   const row=document.createElement('div');
   row.className='t-row '+(who==='claire'?'claire':'you')+(blocked?' blocked':'');
-  row.innerHTML=`<span class="who">${who==='claire'?'Claire':'You'}${blocked?' · brought to a person':''}</span>${esc(text)}`;
+  row.innerHTML=`<span class="who">${esc(speaker)}${blocked?' · brought to a person':''}</span>${esc(text)}`;
   box.appendChild(row); box.scrollTop=box.scrollHeight;
+}
+
+// A teammate takes over. Announced out loud and on screen BEFORE the face
+// changes: a visitor whose screen swaps mid conversation with no explanation
+// has been tricked, not helped.
+async function swapPersona(h){
+  const stage=document.querySelector('.stage');
+  const card=document.createElement('div');
+  card.className='swap';
+  card.innerHTML=`<div><div class="monogram" style="margin:0 auto;">${esc((h.persona.name||'?')[0])}</div>
+    <div class="nm">${h.persona.emoji||''} ${esc(h.persona.name)}</div>
+    <div class="muted" style="margin-top:4px;">${esc(h.persona.title)} is joining</div></div>`;
+  stage.appendChild(card);
+
+  say('claire', h.line, false, (PERSONA&&PERSONA.name)||'Claire');
+  speakAvatar(h.line);
+
+  PERSONA=h.persona;
+  const w=$('whois');
+  if(w) w.innerHTML=`<span class="em">${h.persona.emoji||'💬'}</span><span><span class="nm">${esc(h.persona.name)}</span><br><span class="ti">${esc(h.persona.title)}</span></span>`;
+  const mono=$('mono'); if(mono) mono.textContent=(h.persona.name||'?')[0];
+  const rt=$('restText'); if(rt) rt.textContent=`${h.persona.name} is listening`;
+  const q=$('q'); if(q) q.placeholder=`Ask ${h.persona.name} about ${SESSION.community.name}`;
+
+  // The new face needs its own avatar session. Tear the old one down first so
+  // two metered streams never run at once.
+  try{ if(AVATAR&&AVATAR.stopAvatar) await AVATAR.stopAvatar(); }catch(_){}
+  AVATAR=null;
+  await connectAvatar(null);
+  card.remove();
 }
 
 // ---------------------------------------------------------------------------

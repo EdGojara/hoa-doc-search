@@ -36,7 +36,9 @@ const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { requireStaff } = require('./_require_admin');
 const { resolveVisitor, resolveVisitCommunity } = require('../lib/claire/scope');
-const { screen, honestOpener } = require('../lib/claire/guardrails');
+const { screen } = require('../lib/claire/guardrails');
+const roster = require('../lib/team/roster');
+const { routeSpecialist } = require('../lib/email/route_specialist');
 const heygen = require('../lib/video/heygen');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -86,6 +88,9 @@ async function nextSeq(sessionId) {
 }
 
 async function logTurn(sessionId, speaker, text, extra = {}) {
+  // `persona` records WHO said it. On a surface where several named teammates
+  // speak for the association, a transcript with one undifferentiated voice
+  // cannot answer "which of your people told my client that."
   const row = { session_id: sessionId, seq: await nextSeq(sessionId), speaker, text: text || null, ...extra };
   const { error } = await supabase.from('claire_session_turns').insert(row);
   // A transcript that silently fails to write is worse than none: it looks
@@ -95,6 +100,21 @@ async function logTurn(sessionId, speaker, text, extra = {}) {
 
 function centsFor(seconds) {
   return Math.round((Math.max(0, seconds) / 60) * heygen.streamingCentsPerMinute());
+}
+
+// A teammate is available on video only if they have a live door AND a face
+// that is actually configured. Without the second half a hand-off would swap to
+// a blank screen, which is worse than staying with Claire.
+function canAppear(persona) {
+  const m = roster.get(persona);
+  return !!(m && m.visit && heygen.avatarIdFor(persona));
+}
+
+// Public shape for a teammate — never leak the internal env key names.
+function publicPersona(persona) {
+  const m = roster.get(persona);
+  if (!m) return null;
+  return { persona: m.persona, name: m.name, title: m.title, emoji: m.emoji, tier: m.tier, domain: m.domain };
 }
 
 // ---- who is at the door ----------------------------------------------------
@@ -121,7 +141,13 @@ router.get('/me', async (req, res) => {
       communities,
       // The page degrades honestly rather than showing a dead "start video"
       // button: no key or the switch off means voice-and-text Claire.
-      video: { available: heygen.streamingEnabled(), avatar_configured: !!heygen.claireAvatarId() },
+      video: { available: heygen.streamingEnabled(), avatar_configured: !!heygen.avatarIdFor('claire') },
+      // The team a visitor could meet in a visit. owner_only teammates are
+      // excluded outright rather than gated on "is staff" — Tessa is Ed's
+      // private EA, and "any active staffer" is not Ed.
+      team: roster.visitPersonas()
+        .filter((m) => !m.owner_only)
+        .map((m) => ({ ...publicPersona(m.persona), on_camera: canAppear(m.persona) })),
     });
   } catch (err) {
     console.error('[claire] /me failed:', err);
@@ -149,6 +175,15 @@ router.post('/session/start', async (req, res) => {
     const language = (req.body || {}).language === 'es' ? 'es' : 'en';
     const surface = ['visit', 'chamber', 'kiosk'].includes((req.body || {}).surface) ? (req.body || {}).surface : 'visit';
 
+    // Who opens the door. Spanish starts with Isabella; otherwise Claire is the
+    // front office. A visitor may also ask for a specific teammate by name, but
+    // only one who actually has a door.
+    const asked = String((req.body || {}).persona || '').trim();
+    const askedFor = asked ? roster.get(asked) : null;
+    const startPersona = (askedFor && askedFor.visit && !askedFor.owner_only)
+      ? asked
+      : (language === 'es' ? 'isabella' : 'claire');
+
     const row = {
       community_id: communityId,
       role: visitor.role,
@@ -162,23 +197,25 @@ router.post('/session/start', async (req, res) => {
       language,
       status: 'active',
       avatar_provider: heygen.streamingEnabled() ? 'heygen' : 'none',
-      avatar_id: heygen.claireAvatarId(),
+      avatar_id: heygen.avatarIdFor(startPersona),
+      active_persona: startPersona,
       seconds_cap: visitor.secondsCap,
     };
     const { data: s, error } = await supabase.from('claire_sessions').insert(row).select('*').single();
     if (error) throw error;
 
     const firstName = (visitor.name || '').trim().split(/\s+/)[0] || null;
-    const opener = honestOpener(community.name, firstName, language);
-    await logTurn(s.id, 'claire', opener);
+    const opener = roster.opener(startPersona, community.name, firstName);
+    await logTurn(s.id, 'claire', opener, { persona: startPersona });
 
     res.json({
       session: {
         id: s.id, role: s.role, language: s.language, surface: s.surface,
         seconds_cap: s.seconds_cap, community: { id: community.id, name: community.name },
+        persona: publicPersona(startPersona),
       },
       opener,
-      video: { available: heygen.streamingEnabled(), avatar_id: heygen.claireAvatarId() },
+      video: { available: heygen.streamingEnabled(), on_camera: canAppear(startPersona) },
     });
   } catch (err) {
     console.error('[claire] session start failed:', err);
@@ -194,11 +231,22 @@ router.post('/session/:id/avatar-token', async (req, res) => {
     const ctx = await loadOwnedSession(req, res);
     if (!ctx) return;
     if (ctx.session.status !== 'active') return res.status(409).json({ error: 'session_not_active' });
-    if (!heygen.streamingEnabled()) return res.status(503).json({ error: 'video_unavailable', detail: 'Claire is available by voice and text right now.' });
-    if (!heygen.claireAvatarId()) return res.status(503).json({ error: 'avatar_not_configured', detail: 'No Claire avatar has been selected yet.' });
+    if (!heygen.streamingEnabled()) return res.status(503).json({ error: 'video_unavailable', detail: 'The team is available by voice and text right now.' });
+
+    // The SERVER decides whose face this token opens. If the browser named the
+    // persona, a visitor could mint a metered session as anyone on the roster.
+    const who = ctx.session.active_persona || 'claire';
+    const avatar_id = heygen.avatarIdFor(who);
+    if (!avatar_id) {
+      const m = roster.get(who);
+      return res.status(503).json({ error: 'avatar_not_configured', detail: `No face has been selected for ${m ? m.name : who} yet.` });
+    }
 
     const token = await heygen.createStreamingToken();
-    res.json({ token, avatar_id: heygen.claireAvatarId(), voice_id: heygen.claireVoiceId(ctx.session.language), seconds_cap: ctx.session.seconds_cap });
+    res.json({
+      token, avatar_id, voice_id: heygen.voiceIdFor(who),
+      persona: publicPersona(who), seconds_cap: ctx.session.seconds_cap,
+    });
   } catch (err) {
     console.error('[claire] avatar token failed:', err.message);
     res.status(502).json({ error: safeErrorMessage(err) });
@@ -217,12 +265,15 @@ router.post('/session/:id/turn', async (req, res) => {
   if (!text) return res.status(400).json({ error: 'text_required' });
   if (session.status !== 'active') return res.status(409).json({ error: 'session_not_active' });
 
-  await logTurn(session.id, 'visitor', text);
+  let who = session.active_persona || 'claire';
+  await logTurn(session.id, 'visitor', text, { persona: who });
 
-  // THE GATE — before the model, every turn, no exceptions.
+  // THE GATE — before the model, every turn, no exceptions. It does not matter
+  // which teammate is on screen: a specialist knows the rule, they still do not
+  // get to decide it.
   const verdict = screen(text, session.role);
   if (!verdict.allow) {
-    await logTurn(session.id, 'claire', verdict.reply, { blocked_reason: verdict.reason });
+    await logTurn(session.id, 'claire', verdict.reply, { blocked_reason: verdict.reason, persona: who });
     await supabase.from('claire_sessions')
       .update({ handoff_requested: true, handoff_reason: verdict.reason })
       .eq('id', session.id);
@@ -234,6 +285,29 @@ router.post('/session/:id/turn', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
   const send = (event, data) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+
+  // ---- who should take this ------------------------------------------------
+  // The same deterministic router the email board uses to name a specialist,
+  // reused here rather than a second one written for video. If it names a
+  // teammate who is not already on screen and who actually has a face
+  // configured, we say so out loud and swap. A face that changes mid
+  // conversation with no explanation has tricked the visitor, not helped them.
+  let handoff = null;
+  try {
+    const suggested = routeSpecialist({ subject: '', bodyText: text });
+    const target = suggested ? roster.get(suggested.persona) : null;
+    if (target && !target.owner_only && suggested.persona !== who && canAppear(suggested.persona)) {
+      handoff = {
+        from: who, to: suggested.persona,
+        line: roster.handoffLine(who, suggested.persona, suggested.reason),
+        persona: publicPersona(suggested.persona),
+      };
+    }
+  } catch (e) {
+    // A router failure must never cost the visitor their answer; they just stay
+    // with whoever they were already talking to.
+    console.warn('[claire] specialist routing failed:', e.message);
+  }
 
   let full = '';
   try {
@@ -253,10 +327,20 @@ router.post('/session/:id/turn', async (req, res) => {
       .filter((t) => t.text && t.speaker !== 'system' && t.text !== text)
       .map((t) => ({ role: t.speaker === 'visitor' ? 'user' : 'assistant', content: t.text }));
 
+    // The hand-off happens BEFORE the answer, so the specialist is the one who
+    // answers rather than Claire answering and then introducing someone.
+    if (handoff) {
+      await supabase.from('claire_sessions')
+        .update({ active_persona: handoff.to, avatar_id: heygen.avatarIdFor(handoff.to) })
+        .eq('id', session.id);
+      await logTurn(session.id, 'system', handoff.line, { persona: handoff.from });
+      who = handoff.to;
+      send('handoff', handoff);
+    }
+
     const { streamTurn } = require('../lib/voice/reason');
-    const personaPack = session.language === 'es'
-      ? (() => { try { const p = require('../lib/voice/reason_isabella'); return p.personaPack || p; } catch (_) { return undefined; } })()
-      : undefined;
+    const { packFor } = require('../lib/team/persona_pack');
+    const personaPack = packFor(who) || undefined;
 
     for await (const chunk of streamTurn({ utterance: text, history, community, caller, personaPack })) {
       if (typeof chunk !== 'string') continue;  // control objects (passthrough tools) don't apply on video
@@ -267,13 +351,13 @@ router.post('/session/:id/turn', async (req, res) => {
       full = 'Sorry, I lost that one. Could you say it again?';
       send('sentence', { text: full });
     }
-    await logTurn(session.id, 'claire', full);
-    send('done', { reply: full });
+    await logTurn(session.id, 'claire', full, { persona: who });
+    send('done', { reply: full, persona: publicPersona(who) });
     res.end();
   } catch (err) {
     console.error('[claire] turn failed:', err.stack || err.message);
     const fallback = 'Sorry, I am having trouble on my end right now. Want me to get someone from the team to follow up?';
-    await logTurn(session.id, 'claire', fallback, { blocked_reason: 'turn_error' });
+    await logTurn(session.id, 'claire', fallback, { blocked_reason: 'turn_error', persona: who });
     send('sentence', { text: fallback });
     send('done', { reply: fallback, error: true });
     res.end();
@@ -383,7 +467,17 @@ router.get('/avatars', async (req, res) => {
   try {
     if (!await requireStaff(req, res)) return;
     if (!heygen.heygenEnabled()) return res.status(503).json({ error: 'heygen_not_configured' });
-    res.json({ avatars: await heygen.listStreamingAvatars(), current: heygen.claireAvatarId() });
+    // Every teammate with a door, and whether their face is picked yet. This is
+    // the screen where the roster gets its cast, so it has to show the gaps as
+    // plainly as the fills.
+    const assigned = roster.visitPersonas().map((m) => ({
+      ...publicPersona(m.persona),
+      env_key: `${m.face}_AVATAR_ID`,
+      avatar_id: heygen.avatarIdFor(m.persona) || null,
+      voice_id: heygen.voiceIdFor(m.persona) || null,
+      on_camera: canAppear(m.persona),
+    }));
+    res.json({ avatars: await heygen.listStreamingAvatars(), team: assigned });
   } catch (err) {
     console.error('[claire] avatar list failed:', err.message);
     res.status(502).json({ error: safeErrorMessage(err) });
@@ -402,16 +496,24 @@ router.post('/explainers', async (req, res) => {
     if (!topic || !title || !script) return res.status(400).json({ error: 'topic_title_and_script_required' });
     if (!heygen.heygenEnabled()) return res.status(503).json({ error: 'heygen_not_configured' });
 
+    // An explainer is presented by whichever teammate owns the topic: Annie
+    // explains architectural review, Miranda explains a compliance notice.
+    // Defaults to the front office in the requested language.
+    const asked = String(b.persona || '').trim();
+    const presenter = (asked && roster.get(asked) && roster.get(asked).face)
+      ? asked
+      : (language === 'es' ? 'isabella' : 'claire');
+
     const { data: row, error } = await supabase.from('claire_explainers').insert({
       topic, title, script, language,
       community_id: b.community_id || null,
-      avatar_id: heygen.claireAvatarId(),
+      avatar_id: heygen.avatarIdFor(presenter),
       status: 'rendering',
     }).select('*').single();
     if (error) throw error;
 
     try {
-      const videoId = await heygen.renderExplainer({ script, language });
+      const videoId = await heygen.renderExplainer({ script, language, persona: presenter });
       await supabase.from('claire_explainers').update({ provider_video_id: videoId }).eq('id', row.id);
       res.json({ explainer: { ...row, provider_video_id: videoId } });
     } catch (e) {
