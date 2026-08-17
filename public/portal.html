@@ -964,6 +964,9 @@ function fmtAsOf(bal) {
 window.openPayModal = function () {
   const c = window._payCtx || {};
   if (!c.property_id || !(c.amount_cents > 0)) return;
+  // Guard the ACTION, not just the button's visibility — a stale render or a
+  // direct call must not open a modal the server will refuse.
+  if (!c.payments_enabled) return;
   const amt = c.amount_cents;
   const cardFee = Math.max(0, Math.round((amt + 30) / (1 - 0.029)) - amt);
   const usd = (cents) => '$' + (cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1393,8 +1396,20 @@ function renderPortal(ctx) {
     payer_name: (ctx.property && ctx.property.owner_name) || (ctx.user && ctx.user.name) || '',
     payer_email: (ctx.user && ctx.user.email) || '',
   };
+  // Only offer "Pay now" when the community can actually TAKE the payment.
+  // ctx.community.payments_enabled is false until Stripe Connect onboarding
+  // completes for that community; without this gate the button renders for
+  // every owner with a balance and dead-ends at a 503 from
+  // /api/payments/assessment/create-checkout — after the homeowner has already
+  // picked ACH-or-card and committed. Balance still displays either way.
+  window._payCtx.payments_enabled = !!(ctx.community && ctx.community.payments_enabled);
   const payBtn = $('payNowBtn');
-  if (payBtn) payBtn.style.display = (window._payCtx.amount_cents > 0 && window._payCtx.property_id) ? 'inline-block' : 'none';
+  if (payBtn) {
+    const canPay = window._payCtx.amount_cents > 0
+      && window._payCtx.property_id
+      && window._payCtx.payments_enabled;
+    payBtn.style.display = canPay ? 'inline-block' : 'none';
+  }
 
   const compVal = $('complianceValue');
   const comp = ctx.compliance || {};

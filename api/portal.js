@@ -1454,7 +1454,7 @@ router.get('/me', async (req, res) => {
       try {
         const { data: cRows, error: cErr } = await supabase
           .from('communities')
-          .select('id, name, slug, hoa_legal_name, portal_active, portal_module_config, portal_welcome_message')
+          .select('id, name, slug, hoa_legal_name, portal_active, portal_module_config, portal_welcome_message, stripe_connected_account_id')
           .in('id', uniqueCommunityIds);
         if (cErr) console.warn('[portal /me] communities batch fetch failed:', cErr.message);
         (cRows || []).forEach(c => { communitiesById[c.id] = c; });
@@ -1715,6 +1715,14 @@ router.get('/me', async (req, res) => {
         // Demo community flag — drives watermark ribbon. Migration 184
         // adds Drama Creek Estates as the canonical demo community.
         is_demo: community.is_demo === true,
+        // Can this community actually ACCEPT an online payment right now?
+        // The homeowner-facing "Pay now" button gates on this. Without it the
+        // portal offers a payment path the server refuses at
+        // api/payments.js createAssessmentCheckout (503
+        // community_stripe_not_onboarded) — the homeowner commits to paying and
+        // hits a wall. Same shape as amenities.js `stripe_ready`. Boolean only;
+        // the account id never goes to the browser.
+        payments_enabled: !!community.stripe_connected_account_id,
       },
       balance,
       compliance,

@@ -2094,17 +2094,27 @@
         : '<span class="badge err">Not started</span>';
       const act = c.onboarded ? 'Manage' : (c.has_account ? 'Finish' : 'Set up');
       const here = c.id === CID ? ' style="font-weight:700;"' : '';
-      return `<tr${here}><td style="padding:6px 8px;">${esc(c.name)}${c.id===CID?' <span class="muted">(current)</span>':''}</td>
+      // Homeowners are looking at a balance they have no way to pay.
+      const deadEnd = c.portal_live_without_payments
+        ? ' <span class="badge err" title="Portal is live and showing owners a balance, but this community has no connected account — the Pay now button is hidden and there is no online way to pay.">portal live · can\'t take payment</span>'
+        : '';
+      return `<tr${here}><td style="padding:6px 8px;">${esc(c.name)}${c.id===CID?' <span class="muted">(current)</span>':''}${deadEnd}</td>
         <td style="padding:6px 8px;">${b}</td>
         <td style="padding:6px 8px; text-align:right;"><button style="${GHOST}" onclick="opConnectFor('${c.id}','${esc((c.name||'').replace(/'/g,''))}')">${act} →</button></td></tr>`;
     }).join('');
+    // Loud when a live portal is showing owners a balance it can't collect.
+    const deadEndCount = (pf && pf.summary && pf.summary.portal_live_without_payments) || 0;
+    const deadEndBanner = deadEndCount ? `<div class="card" style="margin-bottom:14px; background:#fef2f2; border:1px solid #fecaca;">
+      <b style="color:#991b1b;">${deadEndCount} ${deadEndCount===1?'community has':'communities have'} a live portal with no way to pay</b>
+      <div class="muted" style="margin-top:4px;">Owners there see their balance but get no Pay-now button, because the association has no connected account yet. Set it up below to close the gap.</div>
+    </div>` : '';
     const pfCard = (pf && pf.communities && pf.communities.length) ? `
       <div class="card" style="margin-bottom:14px;">
         <h2 class="sec" style="margin-bottom:4px;">All communities <span class="muted" style="font-size:13px;">· ${pf.summary.enabled}/${pf.summary.total} ready</span></h2>
         <div class="sub muted" style="margin-bottom:8px;">Onboard any community from here — each connects its own bank. The board treasurer can complete the Stripe form from the link that opens.</div>
         <table style="width:100%; border-collapse:collapse; font-size:13px;"><tbody>${pfRows}</tbody></table>
       </div>` : '';
-    $('body').innerHTML = modeBanner + pfCard + `
+    $('body').innerHTML = modeBanner + deadEndBanner + pfCard + `
       <div class="card" style="margin-bottom:14px;">
         <h2 class="sec">Online payments <span class="muted" style="font-size:13px;">· Stripe</span></h2>
         <div class="sub muted" style="margin-bottom:12px;">Each community has its own Stripe connected account, so assessment payments settle to that association's own bank — never pooled.</div>

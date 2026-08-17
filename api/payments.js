@@ -462,21 +462,36 @@ router.get('/connect/portfolio-status', async (req, res) => {
     const key = process.env.STRIPE_SECRET_KEY || '';
     const mode = /^sk_live_/.test(key) ? 'live' : (/^sk_test_/.test(key) ? 'test' : 'unconfigured');
     const { data, error } = await supabase.from('communities')
-      .select('id, name, stripe_connected_account_id, stripe_onboarding_status')
+      .select('id, name, stripe_connected_account_id, stripe_onboarding_status, portal_active, portal_module_config')
       .order('name');
     if (error) return res.status(500).json({ error: error.message });
-    const communities = (data || []).map((c) => ({
-      id: c.id,
-      name: c.name,
-      has_account: !!c.stripe_connected_account_id,
-      onboarded: c.stripe_onboarding_status === 'enabled',
-      status: c.stripe_onboarding_status || (c.stripe_connected_account_id ? 'in_progress' : 'not_started'),
-    }));
+    const communities = (data || []).map((c) => {
+      const hasAccount = !!c.stripe_connected_account_id;
+      const balanceTile = ((c.portal_module_config || {}).balance || {}).status === 'live';
+      const portalLive = c.portal_active === true;
+      return {
+        id: c.id,
+        name: c.name,
+        has_account: hasAccount,
+        onboarded: c.stripe_onboarding_status === 'enabled',
+        status: c.stripe_onboarding_status || (hasAccount ? 'in_progress' : 'not_started'),
+        portal_active: portalLive,
+        balance_tile_live: balanceTile,
+        // Cross-check, per the CLAUDE.md "preview must verify against truth"
+        // rule: a community showing homeowners a balance while it cannot accept
+        // a payment is a dead end the operator would otherwise never see. The
+        // portal now hides the Pay-now button in this state, so without this
+        // flag the gap is SILENT — owners simply have no way to pay and nobody
+        // is told why.
+        portal_live_without_payments: portalLive && balanceTile && !hasAccount,
+      };
+    });
     const summary = {
       total: communities.length,
       enabled: communities.filter((c) => c.onboarded).length,
       in_progress: communities.filter((c) => c.has_account && !c.onboarded).length,
       not_started: communities.filter((c) => !c.has_account).length,
+      portal_live_without_payments: communities.filter((c) => c.portal_live_without_payments).length,
     };
     res.json({ ok: true, mode, summary, communities });
   } catch (err) {
