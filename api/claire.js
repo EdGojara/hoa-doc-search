@@ -146,10 +146,23 @@ function canAppear(persona) {
 }
 
 // Public shape for a teammate — never leak the internal env key names.
+// `portrait` is the still image the visit shows. Live streaming avatars are
+// deliberately NOT used here: a real-time face trades realism for latency and a
+// slightly-wrong talking mouth reads as fake, whereas a still portrait with a
+// real voice never can, because it is not pretending to move. Same restraint
+// that settled Claire's eyes. (Ed 2026-08-16.)
+function portraitUrl(persona) {
+  const { data } = supabase.storage.from(EXPLAINER_BUCKET).getPublicUrl(`faces/${persona}.webp`);
+  return (data && data.publicUrl) || null;
+}
+
 function publicPersona(persona) {
   const m = roster.get(persona);
   if (!m) return null;
-  return { persona: m.persona, name: m.name, title: m.title, emoji: m.emoji, tier: m.tier, domain: m.domain };
+  return {
+    persona: m.persona, name: m.name, title: m.title, emoji: m.emoji,
+    tier: m.tier, domain: m.domain, portrait: portraitUrl(m.persona),
+  };
 }
 
 // ---- who is at the door ----------------------------------------------------
@@ -396,6 +409,42 @@ router.post('/session/:id/turn', async (req, res) => {
     send('sentence', { text: fallback });
     send('done', { reply: fallback, error: true });
     res.end();
+  }
+});
+
+// ---- her voice -------------------------------------------------------------
+// One sentence of speech, as mp3, in the SAME ElevenLabs voice that answers the
+// phone. That consistency is the point: a homeowner who calls and then opens a
+// visit should meet one person, not two. The browser requests a clip per
+// sentence as they stream in, so she starts talking on the first clause rather
+// than after the whole answer — the same pacing trick the phone bridge uses.
+router.post('/session/:id/speak', async (req, res) => {
+  try {
+    const ctx = await loadOwnedSession(req, res);
+    if (!ctx) return;
+    const text = String((req.body || {}).text || '').trim();
+    if (!text) return res.status(400).json({ error: 'text_required' });
+    if (text.length > 800) return res.status(400).json({ error: 'text_too_long' });
+
+    const { speakOnce } = require('../lib/voice/speak');
+    const { PERSONA } = require('../lib/voice/persona');
+    // Spanish gets Isabella's own voice; everything else is Claire's, which is
+    // the persona voice the phone already uses.
+    const voiceId = ctx.session.language === 'es'
+      ? (process.env.ISABELLA_TTS_VOICE_ID || PERSONA.tts.voice_id)
+      : PERSONA.tts.voice_id;
+
+    const audio = await speakOnce(text, { voiceId, outputFormat: 'mp3_44100_128' });
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(audio);
+  } catch (err) {
+    // Voice is an enhancement, never a dependency. A TTS outage must leave the
+    // visit fully usable in text rather than breaking the turn, so this returns
+    // a clean 503 the page is built to ignore.
+    const missing = err && err.code === 'ELEVENLABS_NOT_CONFIGURED';
+    if (!missing) console.error('[claire] speak failed:', err.message);
+    res.status(503).json({ error: missing ? 'voice_not_configured' : safeErrorMessage(err) });
   }
 });
 

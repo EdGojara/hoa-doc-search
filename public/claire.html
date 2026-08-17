@@ -20,6 +20,7 @@
 
   .stage{position:relative;background:#0a1a2f;border:1px solid var(--rule);border-radius:18px;overflow:hidden;aspect-ratio:16/10;display:flex;align-items:center;justify-content:center;}
   .stage video{width:100%;height:100%;object-fit:cover;display:block;background:#0a1a2f;}
+  .portrait{width:190px;height:190px;border-radius:50%;object-fit:cover;border:1px solid rgba(212,175,55,.45);}
   .stage .resting{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:26px;}
   .monogram{width:92px;height:92px;border-radius:50%;border:1px solid rgba(212,175,55,.5);display:flex;align-items:center;justify-content:center;
     font-family:Georgia,serif;font-size:34px;color:var(--gold);background:rgba(212,175,55,.07);}
@@ -164,7 +165,9 @@ function renderRoom(){
     </div>
     <div class="stage">
       <video id="vid" autoplay playsinline></video>
-      <div class="resting" id="resting"><div class="monogram" id="mono">${esc((SESSION.persona.name||'C')[0])}</div><div class="muted" id="restText">${esc(SESSION.persona.name)} is listening</div></div>
+      <div class="resting" id="resting">${SESSION.persona.portrait
+        ? `<img class="portrait" id="mono" src="${esc(SESSION.persona.portrait)}" alt="${esc(SESSION.persona.name)}">`
+        : `<div class="monogram" id="mono">${esc((SESSION.persona.name||'C')[0])}</div>`}<div class="muted" id="restText">${esc(SESSION.persona.name)} is listening</div></div>
       <span class="ai-badge overlay-badge"><span class="dot"></span>AI assistant</span>
       <div class="timer" id="timer"></div>
       <div class="whois" id="whois"><span class="em">${SESSION.persona.emoji||'💬'}</span><span><span class="nm">${esc(SESSION.persona.name)}</span><br><span class="ti">${esc(SESSION.persona.title)}</span></span></div>
@@ -192,6 +195,36 @@ function renderRoom(){
 }
 
 function banner(html){ const b=$('banner'); if(b) b.innerHTML=html?`<div class="warn">${html}</div>`:''; }
+
+// ---------------------------------------------------------------------------
+// Her voice. Requested per sentence as the answer streams, so she starts
+// speaking on the first clause instead of after the whole paragraph. Queued
+// rather than fired in parallel, because two overlapping clips is worse than a
+// short silence. Voice is an enhancement: a 503 leaves the visit fully usable
+// in text and says nothing to the visitor.
+// ---------------------------------------------------------------------------
+let AUDIO_Q=Promise.resolve(), AUDIO_EL=null, VOICE_OK=true;
+function playLine(text){
+  if(!VOICE_OK||!text||!SESSION) return;
+  AUDIO_Q=AUDIO_Q.then(async()=>{
+    try{
+      const r=await fetch(A+'/session/'+SESSION.id+'/speak',{method:'POST',credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+      if(r.status===503){ VOICE_OK=false; return; }   // not configured: stop asking
+      if(!r.ok) return;
+      const url=URL.createObjectURL(await r.blob());
+      await new Promise(res=>{
+        AUDIO_EL=new Audio(url);
+        AUDIO_EL.onended=AUDIO_EL.onerror=()=>{ URL.revokeObjectURL(url); res(); };
+        const p=AUDIO_EL.play();
+        // Autoplay can be blocked until the visitor interacts. Not an error,
+        // and never a reason to break the turn.
+        if(p&&p.catch) p.catch(()=>{ URL.revokeObjectURL(url); res(); });
+      });
+    }catch(_){ /* silence beats a broken visit */ }
+  });
+}
+function stopSpeaking(){ try{ if(AUDIO_EL){ AUDIO_EL.pause(); AUDIO_EL=null; } }catch(_){} AUDIO_Q=Promise.resolve(); }
 
 // ---------------------------------------------------------------------------
 // The avatar. Deliberately isolated behind start/speak/stop so the rest of the
@@ -237,8 +270,12 @@ async function connectAvatar(opener){
   }
 }
 function speakAvatar(text){
-  if(!AVATAR||!text) return;
-  try{ AVATAR.speak({text,task_type:'repeat'}); }catch(e){ console.warn('[claire] speak failed:',e.message); }
+  if(!text) return;
+  if(AVATAR){
+    try{ AVATAR.speak({text,task_type:'repeat'}); return; }
+    catch(e){ console.warn('[claire] avatar speak failed, falling back to voice:',e.message); }
+  }
+  playLine(text);   // portrait + her real voice
 }
 
 // ---------------------------------------------------------------------------
@@ -247,7 +284,7 @@ function speakAvatar(text){
 // ---------------------------------------------------------------------------
 async function ask(text){
   text=String(text||'').trim(); if(!text||BUSY) return;
-  BUSY=true; $('send').disabled=true; $('q').value=''; stopMic();
+  BUSY=true; $('send').disabled=true; $('q').value=''; stopMic(); stopSpeaking();
   say('visitor',text);
   $('cap').textContent='';
   try{
@@ -329,7 +366,11 @@ async function swapPersona(h){
   PERSONA=h.persona;
   const w=$('whois');
   if(w) w.innerHTML=`<span class="em">${h.persona.emoji||'💬'}</span><span><span class="nm">${esc(h.persona.name)}</span><br><span class="ti">${esc(h.persona.title)}</span></span>`;
-  const mono=$('mono'); if(mono) mono.textContent=(h.persona.name||'?')[0];
+  const mono=$('mono');
+  if(mono){
+    if(h.persona.portrait&&mono.tagName==='IMG'){ mono.src=h.persona.portrait; mono.alt=h.persona.name; }
+    else if(mono.tagName!=='IMG'){ mono.textContent=(h.persona.name||'?')[0]; }
+  }
   const rt=$('restText'); if(rt) rt.textContent=`${h.persona.name} is listening`;
   const q=$('q'); if(q) q.placeholder=`Ask ${h.persona.name} about ${SESSION.community.name}`;
 
@@ -397,7 +438,7 @@ async function handoff(){
 }
 
 async function endVisit(reason,capped){
-  clearInterval(TICK); clearInterval(BEAT); stopMic();
+  clearInterval(TICK); clearInterval(BEAT); stopMic(); stopSpeaking();
   try{ if(AVATAR&&AVATAR.stopAvatar) await AVATAR.stopAvatar(); }catch(_){}
   try{ await fetch(A+'/session/'+SESSION.id+'/end',{method:'POST',credentials:'same-origin',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({avatar_seconds:ELAPSED,reason})}); }catch(_){}
