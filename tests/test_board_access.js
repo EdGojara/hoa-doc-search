@@ -42,5 +42,30 @@ const ok = (d, c) => { assert.ok(c, d); pass++; };
   const blank = await boardCommunitiesForEmail('');
   ok('blank email gets an empty scope', blank.size === 0);
 
+  // -------------------------------------------------------------------------
+  // MIMIC ORDERING (Ed 2026-08-16)
+  // -------------------------------------------------------------------------
+  // Staff "view as" must constrain EVERY board surface, not just the one that
+  // happened to get noticed. resolveBoardViewer is shared by the board portal,
+  // board motions and board threads, and it resolved STAFF identity before the
+  // mimic cookie -- so a staffer in mimic mode kept scope 'all' everywhere.
+  //
+  // This asserts the ORDERING in the source rather than the behaviour, because
+  // the behaviour only diverges when a real signed mimic cookie is present and
+  // a unit test has no cookie jar. A refactor that moves the staff branch back
+  // above the mimic branch fails here instead of silently restoring the bug --
+  // and the bug is false confidence, since view-as is used exactly when someone
+  // is trying to verify a boundary.
+  {
+    const src = require('fs').readFileSync(require.resolve('../lib/portal/board_access.js'), 'utf8');
+    const mimicAt = src.indexOf('portalUserId && mimic');
+    const staffAt = src.indexOf('getActingUser(req)');
+    ok('mimic branch is present', mimicAt > -1);
+    ok('staff branch is present', staffAt > -1);
+    ok('mimic resolves BEFORE staff identity', mimicAt > -1 && staffAt > -1 && mimicAt < staffAt);
+    ok('mimicking a non-board user denies rather than widening',
+      /if \(!scope\.size\) return null/.test(src));
+  }
+
   console.log(`board_access: ${pass} assertions passed`);
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });
