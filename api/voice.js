@@ -86,7 +86,7 @@ router.post('/incoming', async (req, res) => {
       // Media Stream, just speaks and hangs up gracefully.
       const fallbackTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="Polly.Joanna-Neural">Hey, this is Claire from Bedrock. The voice system is still being set up, so I'm not able to take a real call yet. Please try again in a day or two, or email info at bedrock t x dot com. Thanks for your patience.</Say>
+  <Say voice="Polly.Joanna-Neural">Hey, this is Claire Bennett from Bedrock. The voice system is still being set up, so I'm not able to take a real call yet. Please try again in a day or two, or email info at bedrock t x dot com. Thanks for your patience.</Say>
   <Hangup/>
 </Response>`;
       return res.set('Content-Type', 'text/xml').send(fallbackTwiml);
@@ -1231,12 +1231,12 @@ router.post('/vapi-llm-webhook-es/chat/completions', express.json({ limit: '256k
 //      get a synthesized read on the caller — name, property, recent
 //      activity, what they're likely calling about. The opener becomes:
 //
-//        "Hey John, this is Claire from Bedrock for Waterview —
+//        "Hey John, this is Claire Bennett from Bedrock for Waterview —
 //         saw you called yesterday about the fob, did you get the
 //         application?"
 //
 //      Instead of the generic:
-//        "Hey, this is Claire from Bedrock for Waterview Estates —
+//        "Hey, this is Claire Bennett from Bedrock for Waterview Estates —
 //         what can I help with?"
 //
 //      That's the encode-Ed difference: Ed never opens with "what can I
@@ -1424,7 +1424,7 @@ router.post('/vapi-tools/caller-context', express.json({ limit: '64kb' }), async
       return res.json({
         result: {
           found: false,
-          recommended_opener_context: 'Hey, this is Claire from Bedrock — what can I help with today?',
+          recommended_opener_context: 'Hey, this is Claire Bennett from Bedrock — what can I help with today?',
           note: 'No caller phone provided; falling back to generic opener.',
         },
       });
@@ -1440,8 +1440,8 @@ router.post('/vapi-tools/caller-context', express.json({ limit: '64kb' }), async
         result: {
           found: false,
           recommended_opener_context: community
-            ? `Hey, this is Claire from Bedrock for ${community.name} — what can I help with today?`
-            : 'Hey, this is Claire from Bedrock — what can I help with today?',
+            ? `Hey, this is Claire Bennett from Bedrock for ${community.name} — what can I help with today?`
+            : 'Hey, this is Claire Bennett from Bedrock — what can I help with today?',
           note: 'Caller phone not in contacts. Treat as unknown caller; verify identity before sharing account-specific info.',
         },
       });
@@ -1463,13 +1463,13 @@ router.post('/vapi-tools/caller-context', express.json({ limit: '64kb' }), async
     // opens with "saw you called yesterday about X, did you get the Y?"
     let opener;
     if (recentActivity.most_recent_call_summary) {
-      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — saw you called ${recentActivity.most_recent_call_when || 'recently'} about ${recentActivity.most_recent_call_summary}. Did you get what you needed?`;
+      opener = `Hey ${firstName}, this is Claire Bennett from Bedrock for ${community?.name || 'your community'} — saw you called ${recentActivity.most_recent_call_when || 'recently'} about ${recentActivity.most_recent_call_summary}. Did you get what you needed?`;
     } else if (recentActivity.open_violation_summary) {
-      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — calling about the ${recentActivity.open_violation_summary} notice we sent over, or something else?`;
+      opener = `Hey ${firstName}, this is Claire Bennett from Bedrock for ${community?.name || 'your community'} — calling about the ${recentActivity.open_violation_summary} notice we sent over, or something else?`;
     } else if (recentActivity.open_acc_summary) {
-      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — calling about your ${recentActivity.open_acc_summary} submission, or something else I can help with?`;
+      opener = `Hey ${firstName}, this is Claire Bennett from Bedrock for ${community?.name || 'your community'} — calling about your ${recentActivity.open_acc_summary} submission, or something else I can help with?`;
     } else {
-      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — what can I help with today?`;
+      opener = `Hey ${firstName}, this is Claire Bennett from Bedrock for ${community?.name || 'your community'} — what can I help with today?`;
     }
 
     return res.json({
@@ -1506,7 +1506,7 @@ router.post('/vapi-tools/caller-context', express.json({ limit: '64kb' }), async
     return res.json({
       result: {
         found: false,
-        recommended_opener_context: 'Hey, this is Claire from Bedrock — what can I help with today?',
+        recommended_opener_context: 'Hey, this is Claire Bennett from Bedrock — what can I help with today?',
         note: 'Context lookup failed; falling back to generic opener.',
       },
     });
