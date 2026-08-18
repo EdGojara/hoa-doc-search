@@ -564,10 +564,24 @@ router.get('/public/explainers', async (req, res) => {
       .is('community_id', null)
       .not('video_url', 'is', null)
       .order('topic');
+    // NOTE: display order is applied after the fetch (see FEATURED below), not
+    // here, because a plain .order('topic') puts "acc" ahead of everything
+    // alphabetically and buries the one video that explains what any of this is.
     if (req.query.language) q = q.eq('language', String(req.query.language) === 'es' ? 'es' : 'en');
     const { data, error } = await q;
     if (error) throw error;
-    res.json({ explainers: data || [] });
+    // "What is Bedrock AI?" leads. (Ed 2026-08-18.) Someone landing on /learn
+    // cold needs the explanation of what this company is before a walkthrough of
+    // one process inside it; alphabetical order gave them the ACC video first.
+    // Ordering lives here rather than in a display column so a new explainer
+    // cannot silently outrank it by being named "aardvark".
+    const FEATURED = ['bedrock_ai'];
+    const rows = (data || []).slice().sort((a, b) => {
+      const ai = FEATURED.indexOf(a.topic), bi = FEATURED.indexOf(b.topic);
+      if (ai !== bi) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      return String(a.topic).localeCompare(String(b.topic));
+    });
+    res.json({ explainers: rows });
   } catch (err) {
     console.error('[claire] public explainers failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
