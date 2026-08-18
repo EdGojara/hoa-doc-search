@@ -950,12 +950,26 @@ function fmtAsOf(bal) {
     const dt = (typeof d === 'string' && d.length === 10) ? new Date(d + 'T00:00:00') : new Date(d);
     return dt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   };
-  // Live trustEd GL (book of record) — the balance is real-time, current
-  // through today. Vantaca snapshot (not live) — show the date it was last
-  // updated, since we can't claim it's current as of today.
-  if (bal.source === 'transactions') return 'As of ' + fmt(new Date());
-  if (bal.as_of) return 'Updated ' + fmt(bal.as_of);
-  return 'No recent snapshot';
+  // NEVER stamp today's date on this. (Ed 2026-08-18.)
+  //
+  // This used to return 'As of <today>' whenever source === 'transactions', on
+  // the assumption that a live-GL balance is real-time. That assumption is only
+  // true while transactions are actually being imported, and on 2026-08-18 they
+  // were not: every community's newest transaction was weeks old, and Waterview
+  // — portal ON, 1,171 homes — had properties whose data ended 2026-03-01 while
+  // the portal told those owners "As of August 18, 2026". A five-month-old
+  // balance wearing today's date is the worst kind of wrong: it is confident,
+  // it is plausible, and nothing about it looks broken.
+  //
+  // The honest label is the date the data actually ends. Always.
+  if (!bal.as_of) return 'No recent snapshot';
+  const asOf = (typeof bal.as_of === 'string' && bal.as_of.length === 10)
+    ? new Date(bal.as_of + 'T00:00:00') : new Date(bal.as_of);
+  const days = Math.floor((Date.now() - asOf.getTime()) / 86400000);
+  // Assessments post monthly, so ~5 weeks is the point where "current" stops
+  // being a fair description and the owner deserves to be told.
+  if (days > 35) return 'Reflects activity through ' + fmt(bal.as_of);
+  return 'As of ' + fmt(bal.as_of);
 }
 
 // Pay-your-balance flow → Stripe Checkout. ACH (no fee) or card (+ fee). The
@@ -975,7 +989,8 @@ window.openPayModal = function () {
   modal.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:3000; display:flex; align-items:center; justify-content:center; padding:20px;';
   modal.innerHTML = `<div style="background:#fff; border-radius:14px; max-width:440px; width:100%; padding:24px; box-shadow:0 16px 50px rgba(0,0,0,0.3);">
     <h3 style="margin:0 0 4px; color:#0B1D34; font-size:19px;">Pay your balance</h3>
-    <p style="margin:0 0 16px; color:#475569; font-size:13.5px;">Amount due: <b>${usd(amt)}</b></p>
+    <p style="margin:0 0 4px; color:#475569; font-size:13.5px;">Amount due: <b>${usd(amt)}</b></p>
+    <p style="margin:0 0 16px; color:#64748b; font-size:12px;">${c.as_of_label || ''}${/through/.test(c.as_of_label || '') ? '. Anything posted since then is not included.' : ''}</p>
     <label style="display:block; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:10px; cursor:pointer;">
       <input type="radio" name="_payMethod" value="ach" checked> <b>Bank transfer (ACH)</b>
       <div style="color:#15803d; font-size:12.5px; margin-left:22px;">No processing fee · ${usd(amt)}</div>
@@ -1391,6 +1406,10 @@ function renderPortal(ctx) {
   // Show "Pay now" when there's a balance due. Stores context for the modal.
   window._payCtx = {
     amount_cents: Number(bal.amount_cents) || 0,
+    // The pay modal is the moment of commitment, so it repeats how current this
+    // figure actually is. Paying a balance that is weeks stale is how an owner
+    // ends up short without knowing it. (Ed 2026-08-18.)
+    as_of_label: (typeof fmtAsOf === 'function') ? fmtAsOf(bal) : '',
     community_id: (ctx.community && ctx.community.id) || (ctx.property && ctx.property.community_id) || null,
     property_id: (ctx.property && ctx.property.id) || null,
     payer_name: (ctx.property && ctx.property.owner_name) || (ctx.user && ctx.user.name) || '',
