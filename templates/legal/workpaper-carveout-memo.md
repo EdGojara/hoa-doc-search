@@ -15,7 +15,7 @@ To do that defensibly I need our management agreement to (a) define exactly what
 
 ## 2. The framework I'd like the agreement to reflect
 
-The CPA / attorney parallel is clean: the client owns the original documents and the deliverables; the professional owns the workpaper. I want the same logic codified for our HOA work.
+The CPA / attorney parallel is clean: the client owns the original documents and the deliverables; the professional owns the workpaper. I want the same logic codified for our HOA work. <!-- credential-ok: cites the established CPA/attorney workpaper-ownership doctrine as legal precedent in a memo to our own counsel. Not Bedrock holding out a credential in advertising. -->
 
 **Association records — Bedrock returns to the Association on termination:**
 
