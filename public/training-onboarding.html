@@ -202,6 +202,28 @@
     max-width: 900px; width: 100%; margin: 32px auto 0;
   }
   @media (max-width: 720px) { .pillars { grid-template-columns: 1fr; } }
+
+  /* The nine teammates (Ed 2026-08-18). Same portraits as the board deck and
+     the board-facing page, so a new hire meets the exact faces a homeowner
+     does. Nine across on a wide screen, wrapping down on narrow. */
+  .team-grid {
+    display: grid; grid-template-columns: repeat(9, 1fr); gap: 14px;
+    max-width: 940px; width: 100%; margin: 30px auto 0;
+  }
+  @media (max-width: 900px) { .team-grid { grid-template-columns: repeat(5, 1fr); } }
+  @media (max-width: 520px) { .team-grid { grid-template-columns: repeat(3, 1fr); } }
+  .team-member img {
+    width: 100%; aspect-ratio: 1/1; object-fit: cover; display: block;
+    border-radius: 6px; border: 1px solid rgba(212,175,55,0.45);
+  }
+  .team-member .t-name {
+    font-family: var(--font-serif); font-size: clamp(11px, 1.05vw, 14px);
+    color: #fff; margin-top: 8px; line-height: 1.2;
+  }
+  .team-member .t-role {
+    font-size: clamp(8px, 0.75vw, 10px); letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--gold); margin-top: 2px; line-height: 1.25;
+  }
   .pillar {
     background: rgba(212,175,55,0.05);
     border: 1px solid rgba(212,175,55,0.25);
@@ -525,6 +547,92 @@
     </p>
     <p class="body" style="margin-top: 32px; max-width: 720px; font-size: clamp(14px, 1.3vw, 17px); opacity: 0.6; font-style: italic;">
       Read that carefully. What disappears is the waiting, not the people. The bank still employs humans, just not to read a balance out loud.
+    </p>
+  </section>
+
+  <!-- NEW SCENE — The model, stated as an org chart (Ed 2026-08-18).
+       Same beat as slide 04 of the board deck, cast for staff. A new hire needs
+       to know where they sit in this before they are shown nine AI teammates,
+       or they will spend the rest of the day quietly working out whether they
+       are being replaced. Answer: they sit ABOVE it, not after it. -->
+  <section class="scene dark" data-scene="9">
+    <div class="label">The Model</div>
+    <h1 class="headline" style="margin-bottom: 22px;">
+      Everyone else runs people on software.<br>
+      <span style="color: var(--gold);">We built it the other way around.</span>
+    </h1>
+    <p class="body" style="margin-top: 12px; max-width: 720px; font-size: clamp(17px, 1.7vw, 21px); line-height: 1.55;">
+      In every other management company, the software sits underneath and a person carries the work. Everything the association needs has to fit inside somebody's day, which is why boards wait and why managers burn out.
+    </p>
+    <p class="body" style="margin-top: 28px; max-width: 720px; font-size: clamp(17px, 1.7vw, 21px); line-height: 1.55;">
+      Here it runs the other direction. <strong>Our people set the policy, and the team does the work to it.</strong> Not people checking the machine's homework afterward. People deciding what good looks like, and owning every call that carries legal or financial weight.
+    </p>
+    <p class="body" style="margin-top: 28px; max-width: 720px; font-size: clamp(18px, 1.9vw, 23px); color: var(--gold);">
+      <strong>You are not behind the AI team. You are above it.</strong>
+    </p>
+    <p class="body" style="margin-top: 32px; max-width: 720px; font-size: clamp(14px, 1.3vw, 17px); opacity: 0.6; font-style: italic;">
+      Which is why the next thing we show you is who they are.
+    </p>
+  </section>
+
+  <!-- NEW SCENE — Meet them (Ed 2026-08-18). The previous scene promises the
+       reveal, so it has to land here. Same nine portraits as the board deck and
+       the board-facing page: a new hire should meet the exact faces a homeowner
+       and a board member meet. -->
+  <section class="scene navy" data-scene="9">
+    <div class="label">The Team</div>
+    <h2 class="title" style="font-size: clamp(24px, 3.2vw, 38px);">
+      Nine teammates. <span style="color: var(--gold);">None of them go home.</span>
+    </h2>
+    <div class="team-grid">
+        <div class="team-member">
+          <img src="/assets/presentations/team/claire.jpg" alt="Claire, a Bedrock AI teammate" />
+          <div class="t-name">Claire</div>
+          <div class="t-role">Front office</div>
+        </div>
+        <div class="team-member">
+          <img src="/assets/presentations/team/isabella.jpg" alt="Isabella, a Bedrock AI teammate" />
+          <div class="t-name">Isabella</div>
+          <div class="t-role">Español</div>
+        </div>
+        <div class="team-member">
+          <img src="/assets/presentations/team/amanda.jpg" alt="Amanda, a Bedrock AI teammate" />
+          <div class="t-name">Amanda</div>
+          <div class="t-role">Sr community mgr</div>
+        </div>
+        <div class="team-member">
+          <img src="/assets/presentations/team/annie.jpg" alt="Annie, a Bedrock AI teammate" />
+          <div class="t-name">Annie</div>
+          <div class="t-role">Architectural</div>
+        </div>
+        <div class="team-member">
+          <img src="/assets/presentations/team/paige.jpg" alt="Paige, a Bedrock AI teammate" />
+          <div class="t-name">Paige</div>
+          <div class="t-role">Relationships</div>
+        </div>
+        <div class="team-member">
+          <img src="/assets/presentations/team/kat.jpg" alt="Kat, a Bedrock AI teammate" />
+          <div class="t-name">Kat</div>
+          <div class="t-role">Accounting</div>
+        </div>
+        <div class="team-member">
+          <img src="/assets/presentations/team/miranda.jpg" alt="Miranda, a Bedrock AI teammate" />
+          <div class="t-name">Miranda</div>
+          <div class="t-role">Compliance</div>
+        </div>
+        <div class="team-member">
+          <img src="/assets/presentations/team/reese.jpg" alt="Reese, a Bedrock AI teammate" />
+          <div class="t-name">Reese</div>
+          <div class="t-role">Resale</div>
+        </div>
+        <div class="team-member">
+          <img src="/assets/presentations/team/emma.jpg" alt="Emma, a Bedrock AI teammate" />
+          <div class="t-name">Emma</div>
+          <div class="t-role">Accounts payable</div>
+        </div>
+    </div>
+    <p class="body" style="margin-top: 28px; max-width: 760px; font-size: clamp(14px, 1.35vw, 17px);">
+      You will work with these nine every day. They are AI, they say so on every call and every email, and they do not get tired, quit, or forget what happened last March.
     </p>
   </section>
 
