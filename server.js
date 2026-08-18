@@ -939,6 +939,7 @@ app.use('/api/billing', billingRouter);
 // point of a business card is to be handed to strangers. Roster lives in
 // lib/bd/people.js; this router touches no DB and no community data.
 app.use('/api/bd', require('./api/bd'));
+app.use('/api/system', require('./api/system'));  // env-status: what the RUNNING instance actually has configured (Ed 2026-08-18)
 // Short, human-sayable card URL: bedrocktx.com/card/ed. It goes in an email
 // signature, on a name badge, and inside a QR code, so it stays short.
 //
