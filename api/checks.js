@@ -544,12 +544,37 @@ router.post('/reprint', express.json(), async (req, res) => {
   }
 });
 
+// Void a check — ADMIN ONLY. This reverses posted money: it unwinds the AP
+// payment, reverses its GL entry, and reopens the bill. Every other mutating
+// route in this file is admin-gated; this one rewrites a sealed financial
+// record, so it is the last one that should have been open.
+//
+// The actor is taken from the verified Bearer token, NEVER from the body — an
+// audit trail the caller can write its own name into is not an audit trail.
 router.post('/void', express.json(), async (req, res) => {
   try {
+    const admin = await requireAdmin(req, res); if (!admin) return;
     const b = req.body || {};
     if (!b.check_register_id) return res.status(400).json({ error: 'check_register_id_required' });
-    res.json(await voidCheck({ check_register_id: b.check_register_id, reason: b.reason, user: b.user || null }));
-  } catch (err) { handleErr(res, 'void', err); }
+    if (!b.reason || !String(b.reason).trim()) {
+      return res.status(400).json({ error: 'reason_required', detail: 'A void is a permanent audit record. Say why.' });
+    }
+    res.json(await voidCheck({
+      check_register_id: b.check_register_id,
+      reason: b.reason,
+      disposition: b.disposition || 'reissue',
+      user: admin.user.id,
+    }));
+  } catch (err) {
+    if (err && err.code === 'invalid_state') return res.status(409).json({ error: err.message });
+    if (err && err.code === 'invalid_input') return res.status(400).json({ error: err.message });
+    // The reversal posts into today's period. If the books are closed with no
+    // open period, nothing was written — say so plainly instead of a 500.
+    if (err && err.code === 'period_closed') {
+      return res.status(409).json({ error: 'period_closed', detail: 'No open accounting period for today, so the reversing entry cannot post. Open the current period, then void.' });
+    }
+    handleErr(res, 'void', err);
+  }
 });
 
 module.exports = router;

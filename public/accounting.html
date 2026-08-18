@@ -1993,8 +1993,14 @@
     if (j.error) { $('chkRegister').innerHTML = `<div class="card" style="color:var(--err)">Check register unavailable: ${esc(j.error)}${/permission/i.test(j.error)?' — apply migration 244.':''}</div>`; return; }
     const checks=j.checks||[];
     if (!checks.length) { $('chkRegister').innerHTML='<div class="card muted" style="padding:18px;">No checks issued yet.</div>'; return; }
-    const badge=(s)=> s==='cleared'?'<span class="badge ok">cleared</span>':(s==='voided'?'<span class="badge err">voided</span>':'<span class="pill">'+esc(s)+'</span>');
-    const liveTotal=checks.filter((c)=>c.status!=='voided').reduce((s,c)=>s+Number(c.amount_cents||0),0);
+    const badge=(s)=> s==='cleared'?'<span class="badge ok">cleared</span>'
+      :(s==='voided'?'<span class="badge err">voided</span>'
+      :(s==='stop_payment'?'<span class="badge err">stop payment</span>'
+      :'<span class="pill">'+esc(s)+'</span>'));
+    // A stop-paid check is no more live money than a voided one — both had their
+    // payment reversed. Counting only voids here would overstate outstanding checks.
+    const isDead=(c)=> c.status==='voided' || c.status==='stop_payment';
+    const liveTotal=checks.filter((c)=>!isDead(c)).reduce((s,c)=>s+Number(c.amount_cents||0),0);
     // A check can be reprinted ONLY on the day it was printed (created_at, Central)
     // — after that the reprint is locked so an already-mailed check isn't re-cut.
     const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Chicago'});
@@ -2008,12 +2014,12 @@
       const box = reprintable(c)
         ? `<input type="checkbox" class="chk-reprint" value="${c.id}" onchange="chkReprintBar()">`
         : `<span title="Reprint locked — this check was printed ${printedDate(c)?fmtDate(printedDate(c)):'on a prior day'}. To re-cut it, void it and issue a new one." style="color:var(--ink-faint); cursor:help;">🔒</span>`;
-      return `<tr${c.status==='voided'?' style="opacity:.55;"':(override&&priorDay?' style="background:#fffbeb;"':'')}>
+      return `<tr${isDead(c)?' style="opacity:.55;"':(override&&priorDay?' style="background:#fffbeb;"':'')}>
       <td style="text-align:center;">${box}</td>
       <td style="font-family:ui-monospace,monospace;">${esc(c.check_number)}</td>
       <td>${esc(fmtDate(c.issue_date))}</td><td>${esc(c.payee_name)}</td>
       <td class="num">${fmt(c.amount_cents)}</td><td>${badge(c.status)}</td>
-      <td>${c.status!=='voided'&&c.status!=='cleared'?`<a class="link" style="color:var(--err); cursor:pointer;" onclick="chkVoid('${c.id}')">void</a>`:''}</td></tr>`;
+      <td>${(window._isAdmin && c.status!=='voided' && c.status!=='stop_payment' && c.status!=='cleared')?`<a class="link" style="color:var(--err); cursor:pointer;" onclick="chkVoid('${c.id}','${esc(String(c.check_number||''))}',${Number(c.amount_cents)||0},'${esc((c.payee_name||'').replace(/'/g,''))}')">void</a>`:''}</td></tr>`;
     }).join('');
     const overrideToggle = window._isAdmin
       ? `<label style="font-size:12px; color:#92400e; display:flex; align-items:center; gap:5px; cursor:pointer;" title="Admin only. Reprint checks from a prior day — use ONLY if the originals were destroyed and NOT mailed. Reprinting an already-mailed check double-pays the vendor."><input type="checkbox" ${override?'checked':''} onchange="window._chkOverride=this.checked; chkLoadRegister();"> 🔓 override lock</label>`
@@ -2031,12 +2037,66 @@
       <div class="muted" style="font-size:11.5px; margin-top:8px;">Tick the checks to reprint and hit <b>Reprint selected</b> for one combined PDF. Only checks printed <b>today</b> can be reprinted — 🔒 marks ones locked from an earlier day so an already-mailed check can’t be double-issued.${window._isAdmin?' Admins can lift the lock with 🔓 override for a destroyed-but-not-mailed original.':''}</div></div>`;
     chkReprintBar();
   }
-  window.chkVoid = async function(id){
-    const reason=prompt('Reason for voiding this check?'); if (reason===null) return;
-    const j=await fetch('/api/checks/void',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({check_register_id:id,reason})}).then((r)=>r.json());
-    if (j.error){ alert('Couldn’t void: '+j.error); return; }
-    if (j.note) alert(j.note);
-    chkLoadRegister();
+  // Voiding a check reverses posted money — the AP payment, its GL entry, and
+  // the bill it settled. That consequence is stated on screen BEFORE the
+  // operator confirms, and the reason is mandatory because the void is a
+  // permanent audit record. Admin-only (the server enforces it too).
+  window.chkVoid = async function(id, checkNumber, amountCents, payeeName){
+    const usd = (cents)=>'$'+((Number(cents)||0)/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+    const m=document.createElement('div');
+    m.style.cssText='position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:4000; display:flex; align-items:center; justify-content:center; padding:20px;';
+    m.innerHTML=`<div style="background:#fff; border-radius:14px; max-width:520px; width:100%; padding:24px; box-shadow:0 16px 50px rgba(0,0,0,0.3);">
+      <h3 style="margin:0 0 4px; color:var(--navy); font-size:19px;">Void check #${esc(String(checkNumber||''))}</h3>
+      <p style="margin:0 0 14px; color:#475569; font-size:13.5px;">${esc(payeeName||'')} · <b>${usd(amountCents)}</b></p>
+      <div style="background:#fffbeb; border:1px solid #fbbf24; border-radius:9px; padding:11px 13px; margin-bottom:16px; font-size:12.5px; color:#92400e;">
+        This reverses the payment on the books: the cash goes back, and the bill reopens so it can be paid again. The check number stays in the register permanently — voids never leave a gap.
+      </div>
+      <label style="display:block; font-size:12.5px; font-weight:700; color:var(--navy); margin-bottom:6px;">What happened to this check?</label>
+      <label style="display:block; border:1px solid #e2e8f0; border-radius:9px; padding:10px 12px; margin-bottom:7px; cursor:pointer; font-size:13px;">
+        <input type="radio" name="_vd" value="reissue" checked> <b>Reissue</b>
+        <div style="color:#64748b; font-size:12px; margin-left:22px;">Damaged, lost, or wrong details. The vendor is still owed.</div>
+      </label>
+      <label style="display:block; border:1px solid #e2e8f0; border-radius:9px; padding:10px 12px; margin-bottom:7px; cursor:pointer; font-size:13px;">
+        <input type="radio" name="_vd" value="cancel"> <b>Cancel the payment</b>
+        <div style="color:#64748b; font-size:12px; margin-left:22px;">Shouldn't have been paid. The bill reopens; void the bill separately if it isn't owed at all.</div>
+      </label>
+      <label style="display:block; border:1px solid #e2e8f0; border-radius:9px; padding:10px 12px; margin-bottom:14px; cursor:pointer; font-size:13px;">
+        <input type="radio" name="_vd" value="stop_payment"> <b>Stop payment</b>
+        <div style="color:#64748b; font-size:12px; margin-left:22px;">Already mailed. Call the bank too — this records it, it doesn't place the stop.</div>
+      </label>
+      <label style="display:block; font-size:12.5px; font-weight:700; color:var(--navy); margin-bottom:6px;">Reason <span style="color:var(--err);">*</span></label>
+      <textarea id="_vdReason" rows="2" placeholder="e.g. printer jammed, check destroyed" style="width:100%; border:1px solid #cbd5e1; border-radius:9px; padding:9px 11px; font-size:13px; font-family:inherit; resize:vertical;"></textarea>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px;">
+        <button id="_vdCancel" style="padding:9px 16px; border:1px solid #cbd5e1; background:#fff; border-radius:8px; cursor:pointer; font-weight:600;">Keep it</button>
+        <button id="_vdGo" style="padding:9px 18px; border:none; background:var(--err); color:#fff; font-weight:700; border-radius:8px; cursor:pointer;">Void check</button>
+      </div>
+      <div id="_vdErr" style="color:var(--err); font-size:12.5px; margin-top:10px;"></div>
+    </div>`;
+    document.body.appendChild(m);
+    const close=()=>m.remove();
+    m.addEventListener('click',(e)=>{ if(e.target===m) close(); });
+    m.querySelector('#_vdCancel').onclick=close;
+    m.querySelector('#_vdGo').onclick=async function(){
+      const reason=(m.querySelector('#_vdReason').value||'').trim();
+      if(!reason){ m.querySelector('#_vdErr').textContent='Give a reason — it goes on the permanent record.'; return; }
+      const disposition=m.querySelector('input[name="_vd"]:checked').value;
+      this.disabled=true; this.textContent='Voiding…';
+      try{
+        const r=await fetch('/api/checks/void',{
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', ...(await chkAuthHeader()) },
+          body:JSON.stringify({ check_register_id:id, reason, disposition }),
+        });
+        const j=await r.json();
+        if(!r.ok||j.error) throw new Error(j.detail||j.error||'Could not void');
+        close();
+        alert(j.note||'Check voided.');
+        chkLoadRegister();
+      }catch(e){
+        m.querySelector('#_vdErr').textContent=e.message;
+        this.disabled=false; this.textContent='Void check';
+      }
+    };
   };
   window.chkReprintBar = function(){
     const n=document.querySelectorAll('.chk-reprint:checked').length;
