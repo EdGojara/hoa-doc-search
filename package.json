@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node scripts/check_constraint_values.js && node tests/test_vantaca_extraction.js && node tests/test_retrieval_regression.js && node tests/test_builder_letter_validate.js && node tests/test_forward_note_voice.js && node tests/test_persona_knows_team.js && node tests/test_vendor_master.js && node tests/test_forward_hygiene.js && node tests/test_payment_dedup.js && node tests/test_community_jurisdiction.js && node tests/test_board_package_registry.js && node tests/test_bill_classifier.js && node tests/test_property_resolution.js && node tests/test_reply_recipient.js && node tests/test_reply_learning.js && node tests/test_acc_application_matching.js && node tests/test_recurrence_escalation.js && node tests/test_route_specialist.js && node tests/test_board_access.js && node tests/test_board_motions.js && node tests/test_board_vote_token.js && node tests/test_board_vote_reply.js && node tests/test_statement_lines.js && node tests/test_gl_concept.js && node tests/test_letter_batch.js && node tests/test_bd_card.js && node tests/test_claire_guardrails.js && node tests/test_team_roster.js && node tests/test_claire_scope.js && node scripts/check_owner_concentration.js && node scripts/check_pagination.js && node scripts/check_credential_claims.js && node tests/test_balance_asof.js",
+    "test": "node scripts/run_all_tests.js",
     "test:constraints": "node scripts/check_constraint_values.js",
     "test:vantaca": "node tests/test_vantaca_extraction.js",
     "test:retrieval": "node tests/test_retrieval_regression.js",
