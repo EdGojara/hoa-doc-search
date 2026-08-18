@@ -86,6 +86,44 @@ async function resolveRecipient(hint) {
   return { best, matches: cands.slice(0, 5), hint };
 }
 
+// GET /mail-search?q= — Tessa searches ED'S OWN mailbox, live. (Ed 2026-08-18.)
+//
+// Ed: "is there a way tessa can have access to my email history and addresses
+// so she can look up in search — i tried to search ramsey but she couldn't find
+// it." She could not, because searchContacts reads email_messages and Ed's
+// mailbox has never been ingested into it.
+//
+// The tempting fix is to point the ingest at egojara@. That is the wrong one:
+// it copies Ed's entire correspondence into the shared Communications table
+// that every staff surface reads. Tessa is owner-only ("tessa only works for
+// me, no one else here") and this keeps that true — the search runs against the
+// live mailbox at request time and stores nothing, so there is no second copy
+// to leak from.
+router.get('/mail-search', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const q = String(req.query.q || '').trim();
+    if (!q) return res.status(400).json({ error: 'q_required' });
+    const { searchMailbox, contactsFromMessages } = require('../lib/email/graph_search');
+    const r = await searchMailbox(graphSend.ED_MAILBOX, q, { top: Math.min(Number(req.query.top) || 25, 50) });
+    res.json({ ok: true, query: r.query, count: r.count, messages: r.messages, people: contactsFromMessages(r.messages) });
+  } catch (err) {
+    // The tenant can block app-only access per mailbox (Exchange
+    // ApplicationAccessPolicy). That is a configuration answer, not a bug, and
+    // it must not read as "no results" — which is exactly how it would look if
+    // this returned an empty list. (Ed 2026-08-18: egojara@ is blocked while
+    // info@ and tessa@ are allowed.)
+    if (/AppOnly AccessPolicy|Access to OData is disabled|RAOP/i.test(String(err.message))) {
+      return res.status(403).json({
+        error: 'mailbox_not_permitted',
+        detail: "Microsoft 365 is blocking app access to this mailbox. Add it to the Exchange ApplicationAccessPolicy for the trustEd app registration, then try again.",
+      });
+    }
+    console.error('[tessa] mail search failed:', err.message);
+    res.status(500).json({ error: 'mail_search_failed' });
+  }
+});
+
 // GET /contacts?q= — Tessa's address book search. (Ed 2026-08-01.)
 router.get('/contacts', async (req, res) => {
   const owner = await requireOwner(req, res); if (!owner) return;
