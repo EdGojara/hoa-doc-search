@@ -24,7 +24,8 @@
     "test:claire": "node tests/test_claire_guardrails.js",
     "test:roster": "node tests/test_team_roster.js",
     "test:claire-scope": "node tests/test_claire_scope.js",
-    "test:directives": "node tests/test_staff_directives.js"
+    "test:directives": "node tests/test_staff_directives.js",
+    "test:amanda-review": "node tests/test_amanda_review.js"
   },
   "keywords": [],
   "author": "",

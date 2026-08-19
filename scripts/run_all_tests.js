@@ -71,6 +71,7 @@ const CHECKS = [
   'scripts/check_pagination.js',
   'scripts/check_credential_claims.js',
   'tests/test_balance_asof.js',
+  'tests/test_amanda_review.js',
   'tests/test_staff_directives.js',
 ];
 

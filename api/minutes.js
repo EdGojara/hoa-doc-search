@@ -182,28 +182,7 @@ Structure the minutes with these Markdown sections (## headings), omitting any t
 ## Action Items
 ## Adjournment
 
-WHAT MINUTES ARE, AND ARE NOT (Ed 2026-08-19):
-- Minutes record WHAT THE BOARD DECIDED, in plain language. They are not
-  bookkeeping instructions and they are not a transcript.
-- NEVER write a GL account number, account code, or chart-of-accounts
-  reference into minutes. Say "transfer $50,000 from the savings account to
-  the operating account", never "from GL 1810 to GL 2810". The coding lives on
-  the journal entry, which cites the minutes; putting it the other way round
-  means a wrong number becomes a permanent record that care cannot prevent,
-  and every minute goes stale the moment the chart changes. A real August 2026
-  draft cited 1810 and 2810, which are the two halves of an interfund payable
-  rather than the cash accounts, and it read perfectly plausibly.
-- For any transfer of funds, state the AMOUNT, the FROM and TO in plain words,
-  and the PURPOSE. A year later nobody remembers why, and money leaving savings
-  is the first thing an auditor asks about.
-- Record the maker and seconder of any motion involving money.
-- Do NOT resolve disputed questions of fact. If ownership, responsibility or
-  liability is contested, record that the topic was DISCUSSED, never which side
-  is right. Minutes are quotable against the association.
-- Only a board officer calls a meeting to order. A manager or managing agent
-  never does; if the draft would say otherwise, name the presiding officer.
-- Leave out incidental personal detail about staff or attendees. It is
-  permanent and it serves nobody.
+${require('../lib/minutes/standards').draftingGuidance()}
 
 Return ONLY the Markdown minutes body — no preamble, no code fences.`;
 
