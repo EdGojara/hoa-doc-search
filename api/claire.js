@@ -575,7 +575,9 @@ router.get('/public/explainers', async (req, res) => {
     // one process inside it; alphabetical order gave them the ACC video first.
     // Ordering lives here rather than in a display column so a new explainer
     // cannot silently outrank it by being named "aardvark".
-    const FEATURED = ['bedrock_ai'];
+    // Order: what the company IS, then who it is for. Anything not listed
+    // falls back to alphabetical. (Ed 2026-08-18.)
+    const FEATURED = ['bedrock_ai', 'for_boards'];
     const rows = (data || []).slice().sort((a, b) => {
       const ai = FEATURED.indexOf(a.topic), bi = FEATURED.indexOf(b.topic);
       if (ai !== bi) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
