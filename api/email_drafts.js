@@ -222,6 +222,21 @@ router.post('/:id/send', async (req, res) => {
       approved_by: req.body.approved_by || 'staff', send_error: null,
       record_ownership: 'association_record',
     }).eq('id', d.id);
+    // A staff review only becomes MEMORY once the person actually received it.
+    // staff_document_reviews rows are written at draft time with sent_at null;
+    // stamping it here is what lets Amanda say "this came back" next month.
+    // Without this the history filter would be permanently empty and she would
+    // never remember anything. (Ed 2026-08-19.)
+    if (d.persona === 'amanda' && d.to_email) {
+      try {
+        const { error: revErr } = await supabase.from('staff_document_reviews')
+          .update({ sent_at: new Date().toISOString() })
+          .eq('staff_email', String(d.to_email).toLowerCase())
+          .is('sent_at', null);
+        if (revErr) console.warn('[email_drafts] could not stamp review as sent:', revErr.message);
+      } catch (e) { console.warn('[email_drafts] review stamp failed:', e.message); }
+    }
+
     // Log the sent email onto the homeowner's 360 (resolved). Best-effort.
     const timeline = await logSentDraftToTimeline(d, from, subject);
     res.json({ ok: true, sent_from: from, to: d.to_email, timeline });
