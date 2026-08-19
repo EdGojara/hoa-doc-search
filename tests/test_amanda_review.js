@@ -112,5 +112,38 @@ check('the GL-code rule carries the real example that produced it', () => {
   assert(/1810/.test(st) && /2810/.test(st), 'the interfund-payable example was dropped');
 });
 
+
+console.log(); console.log('Memory'); console.log();
+
+check('history is passed as RULE IDS, never as old prose', () => {
+  assert(/finding_ids/.test(src), 'history does not use structured rule ids');
+  assert(/Never claim to have said something that is not on this list/i.test(src),
+    'missing the guard against inventing a prior conversation');
+});
+
+check('a first review must not imply a history', () => {
+  assert(/first draft of this type you have reviewed from her/i.test(src), 'no first-review framing');
+  assert(/Do not imply any history/i.test(src), 'missing the no-implied-history instruction');
+});
+
+check('memory failures degrade quietly and never break the review', () => {
+  assert(/history unavailable/.test(src), 'loadPriorReviews does not fail soft');
+  assert(/could not record review/.test(src), 'recordReview does not fail soft');
+  const load = src.slice(src.indexOf('async function loadPriorReviews'));
+  assert(/catch \(e\)\s*\{[^}]*return \[\]/.test(load), 'loadPriorReviews must return [] on error, not throw');
+});
+
+check('the review is recorded so the NEXT one can diff against it', () => {
+  const ing = fs.readFileSync(path.join(__dirname, '..', 'lib', 'email', 'graph_ingest.js'), 'utf8');
+  assert(/recordReview\(/.test(ing), 'ingest never records what Amanda found');
+});
+
+check('the reviews table is a workpaper, not an association record', () => {
+  const mig = fs.readFileSync(path.join(__dirname, '..', 'migrations', '370_staff_document_reviews.sql'), 'utf8');
+  assert(/DEFAULT 'workpaper'/.test(mig), 'record_ownership must default to workpaper');
+  assert(/GRANT SELECT, INSERT, UPDATE, DELETE ON staff_document_reviews TO service_role/.test(mig),
+    'missing service_role grant — every insert would fail with permission denied');
+});
+
 if (fail) { console.error(`\n✗ ${fail} check(s) failed.\n`); process.exit(1); }
 console.log(`\n✓ Amanda review: all ${pass} checks passed.\n`);
