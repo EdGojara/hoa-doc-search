@@ -93,6 +93,26 @@ function die(msg) { console.error('\n✗ ' + msg + '\n'); process.exit(1); }
   }).eq('id', row.id);
   if (fe) die('final update failed: ' + fe.message);
 
+  // 5) ARCHIVE IMMEDIATELY. The video now exists in exactly one place, and
+  //    Supabase database backups do NOT include Storage objects — restore the
+  //    project and this row comes back while the mp4 does not. Backing up at
+  //    the moment of publication, rather than on a timer, means the archive can
+  //    never be more than one publish stale and there is nothing to remember.
+  //    Set EXPLAINER_ARCHIVE_DIR to change where it lands.
+  const archiveDir = process.env.EXPLAINER_ARCHIVE_DIR
+    || 'C:/Users/edget/OneDrive - Bedrock Association Management, LLC/Bedrock AI Videos';
+  try {
+    fs.mkdirSync(archiveDir, { recursive: true });
+    const copyTo = path.join(archiveDir, topic + '__' + language + '__' + row.id + '.mp4');
+    fs.writeFileSync(copyTo, buf);
+    console.log('  archived ' + copyTo);
+  } catch (e) {
+    // Loud, never swallowed: the video IS live, but the second copy is the
+    // whole point, so a failed archive must be impossible to miss.
+    console.error('  ! ARCHIVE FAILED (' + e.message + ') - the video is live but exists in ONE place.');
+    console.error('    Fix with: node scripts/backup_explainers.js --to="' + archiveDir + '"');
+  }
+
   console.log('\n✓ live on /learn — ' + title);
   console.log('  ' + pub.publicUrl);
   if (args.feature) {
