@@ -16,6 +16,7 @@
 //   check_owner_concentration   — the guard added after the owner-collapse
 //   check_pagination            — the 1000-row truncation control
 //   check_credential_claims     — CPA/assurance language in customer copy
+//   check_stored_email_body     — a stored message that kept only its preview
 //   test_balance_asof           — stale balances shown as current
 //
 // Every one of those was silently inert, and the suite still looked like it
@@ -70,6 +71,7 @@ const CHECKS = [
   'scripts/check_owner_concentration.js',
   'scripts/check_pagination.js',
   'scripts/check_credential_claims.js',
+  'scripts/check_stored_email_body.js',
   'tests/test_balance_asof.js',
   'tests/test_amanda_review.js',
   'tests/test_staff_directives.js',

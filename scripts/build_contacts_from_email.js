@@ -65,10 +65,23 @@ const NOISE_ADDR = /(^|[.\-_])(no-?reply|do-?not-?reply|donotrespond|notificatio
 const NOISE_NAME = /\b(no.?reply|notification|alert|automated|do not reply|bot|daemon)\b/i;
 const NOISE_DOMAIN = /(^|\.)(mailchimp|sendgrid|constantcontact|hubspot|salesforce|docusign|zoom\.us|calendly|linkedin|facebook|twitter|instagram|amazonaws|google|microsoft|office365|apple|paypal|intuit|adobe|dropbox|slack|zendesk|atlassian|github|indeed|ziprecruiter|glassdoor|godaddy|namecheap|squarespace|wix|shopify|stripe|twilio|anthropic|openai)\./i;
 
+// People who have left Bedrock. A year of mail makes a departed staffer look
+// like one of Ed's closest contacts — Laurie is 37 sent messages, high enough
+// to rank above the bank — and an address book that suggests her is an address
+// book that gets her emailed. Frequency cannot tell "works here" from "worked
+// here", so it has to be stated.
+//
+// Hand-maintained because there is no staff roster table to ask. When one
+// exists, read is_active from it and delete this list.
+const DEPARTED = new Set([
+  'laurie@bedrocktx.com',   // departed 2026-08-13
+]);
+
 function isNoise(addr, name) {
   const a = String(addr || '').toLowerCase();
   if (!a || !a.includes('@')) return true;
   if (a === OWNER) return true;
+  if (DEPARTED.has(a)) return true;
   if (NOISE_ADDR.test(a)) return true;
   if (NOISE_DOMAIN.test(a.split('@')[1] || '')) return true;
   if (name && NOISE_NAME.test(name)) return true;

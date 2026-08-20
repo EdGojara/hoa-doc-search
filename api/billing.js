@@ -984,7 +984,8 @@ router.post('/invoices/:invoiceId/email-send', async (req, res) => {
     await supabase.from('email_messages').insert({
       mailbox: graphSend.TESSA_MAILBOX, direction: 'outbound', sender_email: graphSend.TESSA_MAILBOX,
       sender_name: 'Tessa McCall (Bedrock)', recipients: allRecipients, subject,
-      body_preview: body.slice(0, 2000), classification: 'outbound_reply', classification_confidence: 'high',
+      body_preview: body.slice(0, 2000), body_full: body,
+      classification: 'outbound_reply', classification_confidence: 'high',
       ai_summary: `Tessa emailed invoice ${invoice.invoice_number} to ${allRecipients.join(', ')}`,
       community_id: invoice.community_id, triage_status: 'handled', record_ownership: 'association_record',
       reviewed_at: new Date().toISOString(),

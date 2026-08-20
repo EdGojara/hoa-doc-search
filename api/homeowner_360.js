@@ -779,7 +779,10 @@ router.post('/import-review', upload.single('file'), async (req, res) => {
     const fa = await resolveFromAbout(parsed, ex.addresses);
     const isOut = (parsed.senderEmail && /@bedrocktx\.com$/i.test(parsed.senderEmail)) || (!parsed.senderEmail && /bedrock|violations|acc|admin|info|accounting/i.test(parsed.senderName || ''));
     res.json({
-      email: { subject: parsed.subject || '(no subject)', body_preview: String(parsed.body).replace(/\s+/g, ' ').trim().slice(0, 2000), sender_email: parsed.senderEmail, sender_name: parsed.senderName, received_at: parsed.dateISO, direction: isOut ? 'outbound' : 'inbound' },
+      // body_full carries the whole .msg through the preview so the import
+      // stores the real message, not a 2,000-character squashed-whitespace
+      // summary of it. (Ed 2026-08-20.)
+      email: { subject: parsed.subject || '(no subject)', body_full: String(parsed.body || '').trim().slice(0, 40000) || null, body_preview: String(parsed.body).replace(/\s+/g, ' ').trim().slice(0, 2000), sender_email: parsed.senderEmail, sender_name: parsed.senderName, received_at: parsed.dateISO, direction: isOut ? 'outbound' : 'inbound' },
       classification: ex.classification, summary: ex.summary || parsed.subject,
       from: fa.from, about: fa.about,
     });
@@ -804,6 +807,7 @@ router.post('/import-file', express.json({ limit: '2mb' }), async (req, res) => 
         mailbox: 'imported', direction: email.direction || 'inbound',
         sender_email: email.sender_email || null, sender_name: email.sender_name || null, recipients: [],
         subject: email.subject || '(no subject)', body_preview: (email.body_preview || '').slice(0, 2000),
+        body_full: email.body_full || email.body_preview || null,
         received_at: email.received_at || null, has_attachments: false,
         classification: classification || 'imported', classification_confidence: 'high',
         ai_summary: `Imported: ${(email.subject || '').slice(0, 120)}`,

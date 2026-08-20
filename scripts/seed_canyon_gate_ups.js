@@ -93,6 +93,7 @@ async function upsertContact(row) {
   else if (v && v.length) console.log(`  exists   vendor  ${v[0].name}`);
   else {
     const { error } = await supabase.from('vendors').insert({
+      management_company_id: '00000000-0000-0000-0000-000000000001',
       name: 'United Protective Services',
       contact_name: 'Haley Bellanger',
       contact_email: 'haley.bellanger@united-protective.com',

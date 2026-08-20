@@ -233,7 +233,10 @@ router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
       await supabase.from('email_messages').insert({
         mailbox: from, direction: 'outbound', sender_email: from,
         sender_name: asEd ? 'Ed Gojara' : 'Tessa McCall (Bedrock EA)',
-        recipients: [...to, ...cc], subject, body_preview: body.slice(0, 2000),
+        // body_full, not just the preview: what Tessa sent on Ed's behalf has to
+        // be readable in full afterwards, or the record of his own
+        // correspondence is a 2,000-character stub. (Ed 2026-08-20.)
+        recipients: [...to, ...cc], subject, body_preview: body.slice(0, 2000), body_full: body,
         classification: 'outbound_reply', classification_confidence: 'high', persona: 'tessa',
         ai_summary: `Tessa sent ${asEd ? 'as Ed' : 'as Tessa'} to ${[...to, ...cc].join(', ')}`,
         triage_status: 'handled', reviewed_at: new Date().toISOString(),
@@ -456,7 +459,10 @@ router.post('/inbox/:id/send', express.json({ limit: '64kb' }), async (req, res)
       await supabase.from('email_messages').insert({
         mailbox: from, direction: 'outbound', sender_email: from,
         sender_name: asEd ? 'Ed Gojara' : 'Tessa McCall (Bedrock EA)',
-        recipients: [...to, ...cc], subject, body_preview: body.slice(0, 2000),
+        // body_full, not just the preview: what Tessa sent on Ed's behalf has to
+        // be readable in full afterwards, or the record of his own
+        // correspondence is a 2,000-character stub. (Ed 2026-08-20.)
+        recipients: [...to, ...cc], subject, body_preview: body.slice(0, 2000), body_full: body,
         classification: 'outbound_reply', classification_confidence: 'high', persona: 'tessa',
         ai_summary: `Tessa reply ${asEd ? 'as Ed' : 'as Tessa'} to ${[...to, ...cc].join(', ')}`,
         triage_status: 'handled', reviewed_at: new Date().toISOString(),
