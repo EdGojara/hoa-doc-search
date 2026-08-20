@@ -260,6 +260,67 @@ router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
   }
 });
 
+// POST /meeting — Tessa books a Teams meeting on Ed's calendar and invites the
+// room. Returns the join link so it can go straight into the email that follows.
+//
+// Owner-gated, and deliberately NOT reachable from the mail pipeline: booking
+// mails an invitation to real board members and a real vendor, so Ed calling
+// this IS the approval. Tessa never books because an email told her to.
+//
+// Times are LOCAL WALL TIMES plus a zone ("2026-08-25T14:00:00" + Central).
+// A bare date or an absolute timestamp is refused rather than reinterpreted —
+// see the election-date scar in CLAUDE.md.
+router.post('/meeting', express.json({ limit: '32kb' }), async (req, res) => {
+  const admin = await requireOwner(req, res); if (!admin) return;
+  try {
+    if (!graphSend.isConfigured()) {
+      return res.status(400).json({ error: 'Email and calendar are not connected yet (Microsoft Graph credentials must be set up).' });
+    }
+    const b = req.body || {};
+    const attendees = parseAddrs([].concat(b.attendees || [], b.to || []).join(','));
+    if (!b.subject || !String(b.subject).trim()) return res.status(400).json({ error: 'Give the meeting a subject.' });
+    if (!b.start || !b.end) return res.status(400).json({ error: 'Give the meeting a start and end time.' });
+
+    const { createTeamsMeeting } = require('../lib/ea/tessa_meeting');
+    const meeting = await createTeamsMeeting({
+      organizer: b.organizer || graphSend.ED_MAILBOX,
+      subject: String(b.subject).trim(),
+      start: b.start, end: b.end,
+      timeZone: b.time_zone || undefined,
+      attendees,
+      body: String(b.body || b.agenda || ''),
+      optionalAttendees: !!b.optional,
+      location: b.location || null,
+    });
+
+    // A booking with no join link is a calendar block whose invitation says
+    // Teams and links nowhere. Say so instead of reporting a clean success.
+    if (meeting.warning) console.warn('[tessa] meeting booked without a join link:', meeting.warning);
+    console.log('[tessa] booked "' + meeting.subject + '" for ' + attendees.length + ' attendee(s)');
+    res.json({ booked: true, ...meeting });
+  } catch (err) {
+    console.error('[tessa] meeting failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// DELETE /meeting/:id — call it off. Graph notifies whoever was invited.
+router.delete('/meeting/:id', async (req, res) => {
+  const admin = await requireOwner(req, res); if (!admin) return;
+  try {
+    const { cancelMeeting } = require('../lib/ea/tessa_meeting');
+    const out = await cancelMeeting({
+      organizer: req.query.organizer || graphSend.ED_MAILBOX,
+      eventId: req.params.id,
+      comment: String(req.query.comment || ''),
+    });
+    res.json(out);
+  } catch (err) {
+    console.error('[tessa] meeting cancel failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /voice — Ed dictates; transcribe, then route into an email draft and/or
 // follow-up tasks. Nothing is sent or saved; the UI confirms. Owner-only.
 router.post('/voice', uploadAudio.single('audio'), async (req, res) => {
