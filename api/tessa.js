@@ -224,7 +224,16 @@ router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
     if (asEd) {
       html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">${body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
     } else {
-      ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(body));
+      // The thread goes out with the reply. Without it the recipient gets a
+      // sentence with no context, which is both unhelpful and the clearest
+      // tell that nobody read what they wrote.
+      const quoted = quotedOriginal({
+        fromName: item.from_name, fromEmail: item.from_email,
+        sentAt: item.received_at, to: 'Tessa McCall',
+        subject: item.subject,
+        bodyText: item.body_full || item.body_preview,
+      });
+      ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(body, null, quoted));
     }
     await graphSend.sendAs({ from, to, cc, subject, html, attachments });
 
@@ -499,7 +508,12 @@ router.post('/inbox/:id/send', express.json({ limit: '64kb' }), async (req, res)
     const b = req.body || {};
     const to = parseAddrs(b.to || item.from_email);
     const cc = parseAddrs(b.cc);
-    const subject = String(b.subject || item.draft_subject || item.subject || '').trim() || '(no subject)';
+    // replySubject() never produces "Re: (none)". Martha got exactly that,
+    // because the placeholder the screen uses for a blank subject was being
+    // sent as if it were one. (Ed 2026-08-20.)
+    const { quotedOriginal, replySubject } = require('../lib/email/quote_original');
+    const subject = String(b.subject || item.draft_subject || '').trim()
+      || replySubject(item.subject);
     const body = String(b.body || item.draft_body || '').trim();
     const asEd = false;  // Tessa sends as herself, always.
     if (!to.length) return res.status(400).json({ error: 'No recipient to reply to.' });
@@ -511,7 +525,16 @@ router.post('/inbox/:id/send', express.json({ limit: '64kb' }), async (req, res)
     if (asEd) {
       html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">${body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
     } else {
-      ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(body));
+      // The thread goes out with the reply. Without it the recipient gets a
+      // sentence with no context, which is both unhelpful and the clearest
+      // tell that nobody read what they wrote.
+      const quoted = quotedOriginal({
+        fromName: item.from_name, fromEmail: item.from_email,
+        sentAt: item.received_at, to: 'Tessa McCall',
+        subject: item.subject,
+        bodyText: item.body_full || item.body_preview,
+      });
+      ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(body, null, quoted));
     }
     await graphSend.sendAs({ from, to, cc, subject, html, attachments });
 

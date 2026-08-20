@@ -1272,38 +1272,48 @@ router.post('/:id/send', express.json(), async (req, res) => {
 
     // Send in the right voice: Emma from emma@ for vendor/AP, Claire from claire@
     // otherwise. Both carry the branded logo + their own honest-AI signature.
+    // The message being replied to travels with the reply. Ed 2026-08-20:
+    // 'we should be including the email history.' Every persona reply used to
+    // go out as a bare paragraph and a signature, so the recipient got an
+    // answer with no sign of what it answered.
+    const { quotedOriginal } = require('../lib/email/quote_original');
+    const quoted = quotedOriginal({
+      fromName: m.sender_name, fromEmail: m.sender_email,
+      sentAt: m.received_at, subject: m.subject,
+      bodyText: m.body_full || m.body_preview,
+    });
     let html, attachments, fromMailbox, senderLabel;
     if (persona === 'emma') {
       const { buildEmmaEmail } = require('../lib/email/emma_signature');
-      ({ html, attachments } = buildEmmaEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildEmmaEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.EMMA_MAILBOX; senderLabel = 'Emma Brooks (Bedrock AI)';
     } else if (persona === 'miranda') {
       const { buildMirandaEmail } = require('../lib/email/miranda_signature');
-      ({ html, attachments } = buildMirandaEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildMirandaEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.MIRANDA_MAILBOX; senderLabel = 'Miranda Pierce (Bedrock AI)';
     } else if (persona === 'annie') {
       const { buildAnnieEmail } = require('../lib/email/annie_signature');
-      ({ html, attachments } = buildAnnieEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildAnnieEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.ANNIE_MAILBOX; senderLabel = 'Annie Reeves (Bedrock AI)';
     } else if (persona === 'paige') {
       const { buildPaigeEmail } = require('../lib/email/paige_signature');
-      ({ html, attachments } = buildPaigeEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildPaigeEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.PAIGE_MAILBOX; senderLabel = 'Paige Chandler (Bedrock AI)';
     } else if (persona === 'kat') {
       const { buildKatEmail } = require('../lib/email/kat_signature');
-      ({ html, attachments } = buildKatEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildKatEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.KAT_MAILBOX; senderLabel = 'Kat Reed (Bedrock AI)';
     } else if (persona === 'amanda') {
       const { buildAmandaEmail } = require('../lib/email/amanda_signature');
-      ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.AMANDA_MAILBOX; senderLabel = 'Amanda Albright (Bedrock AI)';
     } else if (persona === 'reese') {
       const { buildReeseEmail } = require('../lib/email/reese_signature');
-      ({ html, attachments } = buildReeseEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildReeseEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.REESE_MAILBOX; senderLabel = 'Reese Calloway (Bedrock AI)';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
-      ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildClaireEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.CLAIRE_MAILBOX; senderLabel = 'Claire (Bedrock AI)';
     }
 
@@ -1872,39 +1882,60 @@ router.post('/compose', express.json(), async (req, res) => {
       } catch (_) { /* non-fatal — send anyway, just less linkage */ }
     }
 
+    // If this compose is answering something, it is a reply and carries the
+    // thread. /compose accepts source_email_id, so it is not always a fresh
+    // message, and the version of this that skipped quoting here would have
+    // sent context-free replies from every teammate. (Ed 2026-08-20.)
+    const { quotedOriginal } = require('../lib/email/quote_original');
+    let quoted = '';
+    try {
+      const _srcId = (req.body || {}).source_email_id;
+      if (_srcId) {
+        const { data: _src, error: _srcErr } = await supabase.from('email_messages')
+          .select('sender_name, sender_email, subject, received_at, body_full, body_preview')
+          .eq('id', _srcId).maybeSingle();
+        if (_srcErr) throw new Error(_srcErr.message);
+        if (_src) quoted = quotedOriginal({
+          fromName: _src.sender_name, fromEmail: _src.sender_email,
+          sentAt: _src.received_at, subject: _src.subject,
+          bodyText: _src.body_full || _src.body_preview,
+        });
+      }
+    } catch (e) { console.warn('[triage] compose quote skipped:', e.message); }
+
     // Send in each teammate's voice + from their own mailbox, all branded.
     let html, attachments, fromMailbox, senderLabel, personaName;
     if (P === 'emma') {
       const { buildEmmaEmail } = require('../lib/email/emma_signature');
-      ({ html, attachments } = buildEmmaEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildEmmaEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.EMMA_MAILBOX; senderLabel = 'Emma Brooks (Bedrock AI)'; personaName = 'Emma';
     } else if (P === 'annie') {
       const { buildAnnieEmail } = require('../lib/email/annie_signature');
-      ({ html, attachments } = buildAnnieEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildAnnieEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.ANNIE_MAILBOX; senderLabel = 'Annie Reeves (Bedrock AI)'; personaName = 'Annie';
     } else if (P === 'miranda') {
       const { buildMirandaEmail } = require('../lib/email/miranda_signature');
-      ({ html, attachments } = buildMirandaEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildMirandaEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.MIRANDA_MAILBOX; senderLabel = 'Miranda Pierce (Bedrock AI)'; personaName = 'Miranda';
     } else if (P === 'paige') {
       const { buildPaigeEmail } = require('../lib/email/paige_signature');
-      ({ html, attachments } = buildPaigeEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildPaigeEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.PAIGE_MAILBOX; senderLabel = 'Paige Chandler (Bedrock AI)'; personaName = 'Paige';
     } else if (P === 'kat') {
       const { buildKatEmail } = require('../lib/email/kat_signature');
-      ({ html, attachments } = buildKatEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildKatEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.KAT_MAILBOX; senderLabel = 'Kat Reed (Bedrock AI)'; personaName = 'Kat';
     } else if (P === 'amanda') {
       const { buildAmandaEmail } = require('../lib/email/amanda_signature');
-      ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.AMANDA_MAILBOX; senderLabel = 'Amanda Albright (Bedrock AI)'; personaName = 'Amanda';
     } else if (P === 'reese') {
       const { buildReeseEmail } = require('../lib/email/reese_signature');
-      ({ html, attachments } = buildReeseEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildReeseEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.REESE_MAILBOX; senderLabel = 'Reese Calloway (Bedrock AI)'; personaName = 'Reese';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
-      ({ html, attachments } = buildClaireEmail(String(body).trim(), commName));
+      ({ html, attachments } = buildClaireEmail(String(body).trim(), commName, quoted));
       fromMailbox = graphSend.CLAIRE_MAILBOX; senderLabel = 'Claire (Bedrock AI)'; personaName = 'Claire';
     }
 

@@ -76,6 +76,7 @@ const CHECKS = [
   'tests/test_contact_mining.js',
   'tests/test_persona_routing.js',
   'tests/test_signature_identity.js',
+  'tests/test_reply_includes_history.js',
   'tests/test_balance_asof.js',
   'tests/test_amanda_review.js',
   'tests/test_staff_directives.js',
