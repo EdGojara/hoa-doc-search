@@ -61,7 +61,7 @@ const OWNER = String(MAILBOX).toLowerCase();
 
 // Machines, not people. Matched on address AND display name, because plenty of
 // senders are "Chase Alerts" at a perfectly human-looking address.
-const NOISE_ADDR = /(^|[.\-_])(no-?reply|do-?not-?reply|donotrespond|notification|notifications|alerts?|mailer-daemon|postmaster|bounce|bounces|auto-?reply|newsletter|calendar-notification|automated)([.\-_]|@)/i;
+const NOISE_ADDR = /(^|[.\-_])(no-?reply|do-?not-?reply|donotrespond|notification|notifications|alerts?|mailer-daemon|postmaster|bounce|bounces|auto-?reply|newsletter|offers|deals|promotions|promo|specials|marketing|calendar-notification|automated)([.\-_]|@)/i;
 const NOISE_NAME = /\b(no.?reply|notification|alert|automated|do not reply|bot|daemon)\b/i;
 const NOISE_DOMAIN = /(^|\.)(mailchimp|sendgrid|constantcontact|hubspot|salesforce|docusign|zoom\.us|calendly|linkedin|facebook|twitter|instagram|amazonaws|google|microsoft|office365|apple|paypal|intuit|adobe|dropbox|slack|zendesk|atlassian|github|indeed|ziprecruiter|glassdoor|godaddy|namecheap|squarespace|wix|shopify|stripe|twilio|anthropic|openai)\./i;
 
@@ -96,7 +96,7 @@ function orgFromDomain(addr) {
   const parts = d.replace(/\.(com|net|org|us|co|io|biz|info)$/i, '').split('.');
   const base = parts[parts.length - 1];
   if (!base) return null;
-  return base.replace(/[-_]+/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+  return base.replace(/[-_]+/g, ' ').split(' ').map(function (w) { return w ? w[0].toUpperCase() + w.slice(1) : w; }).join(' ');
 }
 
 function categoryFor(addr, org, title) {
@@ -251,18 +251,29 @@ function displayName(p) {
   return entries.length ? entries[0][0] : null;
 }
 
+// Token-based rather than regex-based, on purpose.
+//
+// The word-boundary escape here was mangled into a literal control byte three
+// times by editing tooling, and it fails SILENTLY: the credential stripping
+// stops while the tests keep passing through the substring fallback beneath
+// it. Nothing throws. Matching on tokens has no escapes to mangle.
+
+const CREDENTIALS = new Set(['jr','sr','ii','iii','mr','mrs','ms','dr','cmca','ams','pcam','cpa','esq','phd','md']);
+
 function normName(s) {
   let t = String(s || '').toLowerCase();
-  // Exchange writes plenty of display names as "Hess,Melody". Flip those
-  // BEFORE punctuation is stripped, or the surname ends up first and the
-  // comparison below reads Melody Hess and Hess Melody as two people.
-  const comma = t.match(/^\s*([^,]+?)\s*,\s*([^,]+?)\s*$/);
-  if (comma && !/(jr|sr|ii|iii|cmca|ams|pcam|cpa|esq|phd|md)\.?$/.test(comma[2].trim())) {
-    t = comma[2] + ' ' + comma[1];
+  // Exchange writes plenty of display names as "Hess,Melody". Flip those before
+  // punctuation is stripped, or the surname ends up first and the comparison
+  // reads Melody Hess and Hess Melody as two different people.
+  const comma = t.match(/^([^,]+),([^,]+)$/);
+  if (comma) {
+    const tail = comma[2].replace(/[^a-z]/g, '').trim();
+    // "Hess, Melody" is a reversed name; "Hess, CPA" is a credential.
+    if (tail && !CREDENTIALS.has(tail)) t = comma[2] + ' ' + comma[1];
   }
-  return t
-    .replace(/(jr|sr|ii|iii|mr|mrs|ms|dr|cmca|ams|pcam|cpa|esq)\.?/g, '')
-    .replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  return t.replace(/[^a-z ]/g, ' ').split(' ')
+    .filter(function (w) { return w && !CREDENTIALS.has(w); })
+    .join(' ').trim();
 }
 
 /**
@@ -305,16 +316,33 @@ function tidyName(s) {
   return (m[2] + ' ' + m[1]).replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Outlook sometimes hands back the address itself as the display name, quotes
+ * and all: "'propertymanager@canyongatecincoranch.com'". That is not a name,
+ * and it is what voice search would have to match against.
+ */
+function looksLikeAddress(s) {
+  const t = String(s || '').replace(/^['\"\s]+|['\"\s]+$/g, '');
+  return !t || t.includes('@') || /^[a-z0-9._-]+$/i.test(t);
+}
+
+function prettyLocalPart(email) {
+  const local = String(email || '').split('@')[0].replace(/[._-]+/g, ' ').trim();
+  if (!local) return String(email || '');
+  return local.split(' ').map(function (w) { return w ? w[0].toUpperCase() + w.slice(1) : w; }).join(' ');
+}
+
 function bestName(p, sig) {
   const disp = displayName(p);
-  if (disp) return tidyName(disp);
-  if (sig && sig.name) return sig.name;
-  return p.email.split('@')[0];
+  if (disp && !looksLikeAddress(disp)) return tidyName(disp);
+  // Fall back to the signature only when the display name is unusable.
+  if (sig && sig.name && !looksLikeAddress(sig.name)) return tidyName(sig.name);
+  return prettyLocalPart(p.email);
 }
 
 // Exported so the identity-matching rule can be tested without a 20 minute
 // mailbox walk. main() only runs when this file is the entry point.
-module.exports = { signatureMatchesSender, normName, tidyName, categoryFor, orgFromDomain, isNoise };
+module.exports = { signatureMatchesSender, normName, tidyName, looksLikeAddress, prettyLocalPart, categoryFor, orgFromDomain, isNoise };
 
 if (require.main !== module) return;
 
@@ -344,6 +372,7 @@ if (require.main !== module) return;
 
   let added = 0, updated = 0, skipped = 0, withPhone = 0, withAddress = 0;
   let sigRejected = 0;
+  const written = new Map();
   for (const p of candidates) {
     let sig = sigs.get(p.email) || {};
     // Believe the signature only if it is about the person who sent the mail.
@@ -376,6 +405,7 @@ if (require.main !== module) return;
     };
     if (row.phone || row.mobile) withPhone++;
     if (row.address) withAddress++;
+    written.set(p.email, row);
 
     if (DRY) { added++; continue; }
 
@@ -402,11 +432,18 @@ if (require.main !== module) return;
   console.log('\n' + (DRY ? 'would add ' : 'added ') + added + ', updated ' + updated + ', skipped ' + skipped);
   console.log('  ' + withPhone + ' have a phone, ' + withAddress + ' have a street address');
   console.log('  ' + sigRejected + ' signature(s) discarded — belonged to someone else on a forwarded thread');
-  console.log('\nTop 15 by how often Ed writes to them:');
-  candidates.slice(0, 15).forEach(function (p) {
-    const s = sigs.get(p.email) || {};
-    const nm = bestName(p, s);
+  // Report what was WRITTEN, not what was parsed. This block read the raw
+  // signature map, so it printed phone numbers the identity check had already
+  // thrown away: it showed Martha's direct line against the Canyon Gate
+  // vice-president while the database correctly held null. This output is the
+  // surface used to judge whether a run was any good, so a summary that
+  // disagrees with the table is worse than no summary. Same family as the
+  // Preview-count scar in CLAUDE.md. (Ed 2026-08-20.)
+  console.log('\nTop 15 by how often Ed writes to them (as stored):');
+  for (const p of candidates.slice(0, 15)) {
+    const w = written.get(p.email) || {};
     console.log('  ' + String(p.sent_count).padStart(4) + ' sent  '
-      + nm.slice(0, 26).padEnd(28) + p.email.padEnd(38) + (s.phone || ''));
-  });
+      + String(w.name || '').slice(0, 26).padEnd(28)
+      + p.email.padEnd(42) + (w.phone || w.mobile || ''));
+  }
 })().catch(function (e) { console.error('contact build failed:', e.message); process.exit(1); });
