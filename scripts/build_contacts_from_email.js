@@ -245,12 +245,70 @@ async function parseSignatures(list) {
   return out;
 }
 
-function bestName(p, sig) {
-  if (sig && sig.name) return sig.name;
+/** The name Outlook itself shows for this address. Authoritative. */
+function displayName(p) {
   const entries = Object.entries(p.names).sort(function (a, b) { return b[1] - a[1]; });
-  if (entries.length) return entries[0][0];
+  return entries.length ? entries[0][0] : null;
+}
+
+function normName(s) {
+  let t = String(s || '').toLowerCase();
+  // Exchange writes plenty of display names as "Hess,Melody". Flip those
+  // BEFORE punctuation is stripped, or the surname ends up first and the
+  // comparison below reads Melody Hess and Hess Melody as two people.
+  const comma = t.match(/^\s*([^,]+?)\s*,\s*([^,]+?)\s*$/);
+  if (comma && !/(jr|sr|ii|iii|cmca|ams|pcam|cpa|esq|phd|md)\.?$/.test(comma[2].trim())) {
+    t = comma[2] + ' ' + comma[1];
+  }
+  return t
+    .replace(/(jr|sr|ii|iii|mr|mrs|ms|dr|cmca|ams|pcam|cpa|esq)\.?/g, '')
+    .replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Does the signature belong to the person who SENT this message?
+ *
+ * On a forwarded or replied thread the bottom of the body is the OLDEST
+ * message, so the signature down there is whoever started the thread. Martha
+ * forwards a vendor proposal, the vendor's signature is at the foot of it, and
+ * a parser that trusts position files the vendor's name and phone under
+ * Martha's address. That is exactly what happened on the first run:
+ * mbravo@bedrocktx.com came back as "Ramsey Gonzalez",
+ * president@canyongateatcincoranch.com came back as "Martha Bravo".
+ *
+ * Outlook's display name is not guessed — it is what the mailbox is called. So
+ * the display name wins, and the signature is only believed when it agrees
+ * about WHO it is. When it disagrees, the phone and address in it belong to a
+ * different person and are dropped with the name.
+ */
+function signatureMatchesSender(sigName, dispName) {
+  const a = normName(sigName), b = normName(dispName);
+  if (!a || !b) return false;
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+  const at = a.split(' ').filter(Boolean), bt = b.split(' ').filter(Boolean);
+  if (!at.length || !bt.length) return false;
+  // Same surname, and the first names agree or one is genuinely an initial of
+  // the other. Matching on first LETTER alone is too loose: John Smith and Jane
+  // Smith pass it, and married couples and siblings share both a surname and an
+  // inbox often enough that it would happen.
+  if (at[at.length - 1] !== bt[bt.length - 1]) return false;
+  if (at[0] === bt[0]) return true;
+  const oneIsInitial = at[0].length === 1 || bt[0].length === 1;
+  return oneIsInitial && at[0][0] === bt[0][0];
+}
+
+function bestName(p, sig) {
+  const disp = displayName(p);
+  if (disp) return disp;
+  if (sig && sig.name) return sig.name;
   return p.email.split('@')[0];
 }
+
+// Exported so the identity-matching rule can be tested without a 20 minute
+// mailbox walk. main() only runs when this file is the entry point.
+module.exports = { signatureMatchesSender, normName, categoryFor, orgFromDomain, isNoise };
+
+if (require.main !== module) return;
 
 (async function main() {
   if (!isConfigured()) { console.error('graph_not_configured'); process.exit(1); }
@@ -277,8 +335,13 @@ function bestName(p, sig) {
   const sigs = await parseSignatures(candidates);
 
   let added = 0, updated = 0, skipped = 0, withPhone = 0, withAddress = 0;
+  let sigRejected = 0;
   for (const p of candidates) {
-    const sig = sigs.get(p.email) || {};
+    let sig = sigs.get(p.email) || {};
+    // Believe the signature only if it is about the person who sent the mail.
+    // A phone number under the wrong name is worse than a blank field: it is
+    // the one Ed would actually dial.
+    if (sig.name && !signatureMatchesSender(sig.name, displayName(p))) { sig = {}; sigRejected++; }
     const org = sig.org || orgFromDomain(p.email);
     const row = {
       name: bestName(p, sig),
@@ -322,6 +385,7 @@ function bestName(p, sig) {
 
   console.log('\n' + (DRY ? 'would add ' : 'added ') + added + ', updated ' + updated + ', skipped ' + skipped);
   console.log('  ' + withPhone + ' have a phone, ' + withAddress + ' have a street address');
+  console.log('  ' + sigRejected + ' signature(s) discarded — belonged to someone else on a forwarded thread');
   console.log('\nTop 15 by how often Ed writes to them:');
   candidates.slice(0, 15).forEach(function (p) {
     const s = sigs.get(p.email) || {};
