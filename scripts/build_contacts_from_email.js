@@ -77,6 +77,23 @@ const DEPARTED = new Set([
   'laurie@bedrocktx.com',   // departed 2026-08-13
 ]);
 
+// Shared role accounts. These are real contacts when Ed writes TO them
+// (billing@vantaca.com is a person who answers), and pure notification streams
+// when they only ever write to him (Zoom, Amazon, Verizon, Supabase). Sending
+// is intent, so that is the test rather than a blanket ban on the word.
+const ROLE_LOCALPARTS = new Set([
+  'info', 'support', 'customersupport', 'customerservice', 'customercare', 'help', 'helpdesk',
+  'billing', 'accounting', 'acctrec', 'sales', 'admin', 'webmaster', 'security', 'abuse',
+  'updates', 'news', 'reminders', 'voicemail', 'scans', 'transitions', 'e-statements',
+  'estatements', 'documents', 'messenger', 'communications', 'communication', 'editor',
+  'devs', 'hello', 'hey', 'email', 'system', 'store news', 'welcome', 'archive1emails',
+]);
+
+function isRoleAccount(addr) {
+  const local = String(addr || '').split('@')[0].toLowerCase();
+  return ROLE_LOCALPARTS.has(local);
+}
+
 function isNoise(addr, name) {
   const a = String(addr || '').toLowerCase();
   if (!a || !a.includes('@')) return true;
@@ -322,8 +339,31 @@ function tidyName(s) {
  * and it is what voice search would have to match against.
  */
 function looksLikeAddress(s) {
-  const t = String(s || '').replace(/^['\"\s]+|['\"\s]+$/g, '');
-  return !t || t.includes('@') || /^[a-z0-9._-]+$/i.test(t);
+  const t = String(s || '').replace(/^['"s]+|['"s]+$/g, '');
+  // Only a real address counts. An earlier version also treated any
+  // single word as address-shaped, which flagged Zoom, Porsche and FedEx and
+  // would have renamed them to the local part of their marketing address:
+  // Zoom became Zoomtopia and Porsche became Info. A brand name is a name.
+  return !t || t.includes('@');
+}
+
+/**
+ * A display name that carries an address alongside real words keeps the words:
+ * "Vantaca Billing (billing@vantaca.com)" is Vantaca Billing, not the local
+ * part of the address, which would have renamed it to "System".
+ */
+function stripAddressFromName(s) {
+  let t = String(s || '').trim();
+  // Cut at the first bracket that opens an address. Done by hand rather than
+  // with a character class, because the escapes in this file have been mangled
+  // by tooling repeatedly and a broken pattern here fails silently.
+  for (const open of ['(', '<', '[']) {
+    const at = t.indexOf(open);
+    if (at > 0 && t.slice(at).includes('@')) t = t.slice(0, at);
+  }
+  t = t.split('').filter(function (c) { return c !== String.fromCharCode(39) && c !== String.fromCharCode(34); }).join('');
+  t = t.replace(/\s+/g, ' ').trim().replace(/^[,;-]+|[,;-]+$/g, '').trim();
+  return t.includes('@') ? '' : t;
 }
 
 function prettyLocalPart(email) {
@@ -337,12 +377,14 @@ function bestName(p, sig) {
   if (disp && !looksLikeAddress(disp)) return tidyName(disp);
   // Fall back to the signature only when the display name is unusable.
   if (sig && sig.name && !looksLikeAddress(sig.name)) return tidyName(sig.name);
+  const stripped = stripAddressFromName(disp);
+  if (stripped) return tidyName(stripped);
   return prettyLocalPart(p.email);
 }
 
 // Exported so the identity-matching rule can be tested without a 20 minute
 // mailbox walk. main() only runs when this file is the entry point.
-module.exports = { signatureMatchesSender, normName, tidyName, looksLikeAddress, prettyLocalPart, categoryFor, orgFromDomain, isNoise };
+module.exports = { isRoleAccount, stripAddressFromName, signatureMatchesSender, normName, tidyName, looksLikeAddress, prettyLocalPart, categoryFor, orgFromDomain, isNoise };
 
 if (require.main !== module) return;
 
@@ -360,6 +402,9 @@ if (require.main !== module) return;
   const droppedHomeowners = all.filter(function (p) { return homeowners.has(p.email); }).length;
   const candidates = all.filter(function (p) {
     if (homeowners.has(p.email)) return false;
+    // A shared role account earns its place only if Ed wrote TO it. Inbound-only
+    // means it is a notification stream, not a person.
+    if (isRoleAccount(p.email)) return p.sent_count > 0;
     return p.sent_count > 0 || p.message_count >= 2;
   }).sort(function (a, b) {
     return (b.sent_count - a.sent_count) || (b.message_count - a.message_count);
