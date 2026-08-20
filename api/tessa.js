@@ -196,7 +196,10 @@ router.post('/draft', express.json({ limit: '32kb' }), async (req, res) => {
   try {
     const { thought, mode, recipient_name } = req.body || {};
     if (!thought || !String(thought).trim()) return res.status(400).json({ error: 'thought_required' });
-    const draft = await draftEmail({ thought, mode: 'tessa', recipientName: recipient_name || null });
+    // Ed typed or dictated this, so the content came from him and she is
+    // PERMITTED to say so. She still decides whether the reader needs telling;
+    // a note that stands on its own does not get an 'Ed asked me to' opener.
+    const draft = await draftEmail({ thought, mode: 'tessa', recipientName: recipient_name || null, onEdsBehalf: true });
     if (draft.degraded) return res.status(503).json({ error: 'Tessa could not draft this right now. Try again or write it yourself.' });
     res.json({ subject: draft.subject, body: draft.body, mode: draft.mode });
   } catch (err) {
@@ -569,7 +572,7 @@ router.post('/inbox/:id/handle', express.json(), async (req, res) => {
     const { data: item, error } = await supabase.from('ea_inbox').select('*').eq('id', req.params.id).single();
     if (error || !item) return res.status(404).json({ error: 'not_found' });
     const instruction = String((req.body && req.body.instruction) || '').trim();
-    const mode = (req.body && req.body.mode) === 'ed' ? 'ed' : 'tessa';
+    const mode = 'tessa';   // she always sends as herself
     const { handleForwarded } = require('../lib/ea/tessa');
     const d = await handleForwarded({ incomingSubject: item.subject, incomingBody: item.body_full || item.body_preview, fromName: item.from_name || item.from_email, instruction, mode });
     if (!d || d.degraded) return res.status(502).json({ error: 'draft_failed', detail: 'Tessa couldn’t draft that one. Try rephrasing the instruction.' });
@@ -603,9 +606,9 @@ router.post('/standing/draft', express.json(), async (req, res) => {
   try {
     const thought = String((req.body && req.body.thought) || '').trim();
     if (!thought) return res.status(400).json({ error: 'thought_required' });
-    const mode = (req.body && req.body.mode) === 'ed' ? 'ed' : 'tessa';
+    const mode = 'tessa';   // she always sends as herself
     const { draftEmail } = require('../lib/ea/tessa');
-    const d = await draftEmail({ thought, mode });
+    const d = await draftEmail({ thought, mode, onEdsBehalf: true });   // a standing task is Ed's content
     res.json({ ok: true, subject: d.subject, body: d.body, mode });
   } catch (err) { console.error('[tessa] standing draft failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
@@ -620,7 +623,7 @@ router.post('/standing', express.json(), async (req, res) => {
     const row = {
       title: String(b.title).trim(), recipients_spec: b.recipients_spec === 'team' ? 'team' : 'custom',
       to_emails: b.recipients_spec === 'team' ? null : String(b.to_emails || '').trim() || null,
-      subject: String(b.subject).trim(), body: String(b.body).trim(), mode: b.mode === 'ed' ? 'ed' : 'tessa',
+      subject: String(b.subject).trim(), body: String(b.body).trim(), mode: 'tessa',
       freq, day_of_week: freq === 'weekly' ? (Number(b.day_of_week) || 1) : null,
       day_of_month: freq === 'monthly' ? Math.min(28, Math.max(1, Number(b.day_of_month) || 1)) : null,
       active: b.active !== false, created_by: owner.email || 'Ed',
