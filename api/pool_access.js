@@ -29,6 +29,11 @@ const { createClient } = require('@supabase/supabase-js');
 const { extractPoolForms } = require('../lib/pool_access/extract');
 const { resolveProperty, namesAreEquivalent } = require('../lib/entity_resolution');
 const { safeErrorMessage } = require('./_safe_error');
+// Staff gate. This router had NO authentication: /roster returned homeowner
+// names, addresses and fob numbers to anyone who could reach the server, and
+// PATCH let anyone rewrite a tag. Pool access is an association record and a
+// physical-access credential. (Ed 2026-08-20.)
+const { requireStaff } = require('./_require_admin');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 50 } });
@@ -154,6 +159,7 @@ async function activeTagHolder(communityId, tag, propertyId) {
 // write until /approve. Field name 'forms' (accepts several files).
 // ----------------------------------------------------------------------------
 router.post('/ingest', upload.array('forms', 50), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   const t0 = Date.now();
   try {
     const files = req.files || [];
@@ -227,6 +233,7 @@ router.post('/ingest', upload.array('forms', 50), async (req, res) => {
 // roster. Unmatched / unknown-type rows are skipped (surfaced in the count).
 // ----------------------------------------------------------------------------
 router.post('/ingest/:batch_id/approve', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const { data: batch, error: bErr } = await supabase
       .from('pool_access_batches').select('*').eq('id', req.params.batch_id).maybeSingle();
@@ -322,6 +329,7 @@ router.post('/ingest/:batch_id/approve', express.json(), async (req, res) => {
 // POST /ingest/:batch_id/discard
 // ----------------------------------------------------------------------------
 router.post('/ingest/:batch_id/discard', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     await supabase.from('pool_access_batches').update({ status: 'discarded' }).eq('id', req.params.batch_id);
     res.json({ ok: true });
@@ -335,6 +343,7 @@ router.post('/ingest/:batch_id/discard', async (req, res) => {
 // the row becomes fileable. No write. Body: { community_id, address?, homeowner_name? }
 // ----------------------------------------------------------------------------
 router.post('/resolve', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const b = req.body || {};
     if (!b.community_id) return res.status(400).json({ error: 'community_id required' });
@@ -369,7 +378,8 @@ router.post('/resolve', express.json(), async (req, res) => {
 // instead of the whole portfolio. Flag lives in the profile JSONB (single
 // canonical place); set via the seed, not hardcoded here.
 // ----------------------------------------------------------------------------
-router.get('/communities', async (_req, res) => {
+router.get('/communities', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const { data, error } = await supabase
       .from('communities')
@@ -390,6 +400,7 @@ router.get('/communities', async (_req, res) => {
 // GET /roster?community_id=&status=active — the tab's main list.
 // ----------------------------------------------------------------------------
 router.get('/roster', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const communityId = req.query.community_id;
     if (!communityId) return res.status(400).json({ error: 'community_id required' });
@@ -429,6 +440,7 @@ router.get('/roster', async (req, res) => {
 // GET /property/:id — pool access for one property (360 card).
 // ----------------------------------------------------------------------------
 router.get('/property/:id', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const { data, error } = await supabase.from('pool_access')
       .select('id, form_type, fob_tag_number, season_year, extended_hours_detail, authorized_persons, status, form_signed_date, source_storage_path')
@@ -442,6 +454,7 @@ router.get('/property/:id', async (req, res) => {
 // GET /batches?community_id= — upload history.
 // ----------------------------------------------------------------------------
 router.get('/batches', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     let q = supabase.from('pool_access_batches')
       .select('id, community_id, source_filename, total_forms, forms_matched, forms_unmatched, status, uploaded_at, approved_at')
@@ -460,6 +473,7 @@ router.get('/batches', async (req, res) => {
 // authorized_persons?, form_signed_date?, notes? }
 // ----------------------------------------------------------------------------
 router.post('/grant', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const b = req.body || {};
     if (!b.community_id) return res.status(400).json({ error: 'community_id required' });
@@ -512,12 +526,32 @@ router.post('/grant', express.json(), async (req, res) => {
 // PATCH /:id — edit status / tag / people / notes (allowedFields only).
 // ----------------------------------------------------------------------------
 router.patch('/:id', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const allowed = ['status', 'fob_tag_number', 'season_year', 'extended_hours_detail', 'authorized_persons', 'form_signed_date', 'notes'];
     const patch = {};
     for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
     if (patch.status && !['active', 'revoked', 'expired'].includes(patch.status)) return res.status(400).json({ error: 'bad status' });
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'no fields to update' });
+
+    // Changing a tag number APPENDS to notes rather than replacing them.
+    // A fob gets lost and reissued and the tag changes; the signed form behind
+    // the record does not, and neither should the history of what it used to
+    // be. The server writes this line because it is the side that knows the old
+    // value. (Ed 2026-08-20, from Martha needing to fix 519 Mesa Canyon.)
+    if ('fob_tag_number' in patch) {
+      const { data: before } = await supabase.from('pool_access')
+        .select('fob_tag_number, notes').eq('id', req.params.id).maybeSingle();
+      const old = before && before.fob_tag_number;
+      if (before && String(old || '') !== String(patch.fob_tag_number || '')) {
+        const line = (old ? `Tag changed from ${old} to ${patch.fob_tag_number || '(none)'}`
+                          : `Tag set to ${patch.fob_tag_number || '(none)'}`)
+          + ' on ' + new Date().toISOString().slice(0, 10)
+          + ' by ' + (staff.full_name || staff.email || 'staff');
+        patch.notes = before.notes ? (before.notes + '\n' + line) : line;
+      }
+    }
+
     const { error } = await supabase.from('pool_access').update(patch).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });

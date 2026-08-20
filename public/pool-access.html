@@ -123,7 +123,7 @@ function rowHtml(r){
     <td>${esc(r.address||'—')}</td>
     <td>${esc(r.homeowner||'—')}</td>
     <td>${typePill(r.form_type)}</td>
-    <td class="tag">${r.fob_tag_number?esc(r.fob_tag_number):'<span class="rel">—</span>'}</td>
+    <td class="tag">${r.form_type==='fob_registration'?`<span onclick="editTag('${r.id}',this)" title="Click to change the tag number" style="cursor:pointer;border-bottom:1px dashed var(--line);">${r.fob_tag_number?esc(r.fob_tag_number):'<span class="rel">set tag</span>'}</span>`:(r.fob_tag_number?esc(r.fob_tag_number):'<span class="rel">—</span>')}</td>
     <td>${peopleHtml(r.authorized_persons)}${r.extended_hours_detail?'<div class="rel">'+esc(r.extended_hours_detail)+'</div>':''}</td>
     <td>${r.season_year||'<span class="rel">—</span>'}</td>
     <td>${d10(r.form_signed_date)||'<span class="rel">—</span>'}</td>
@@ -131,6 +131,36 @@ function rowHtml(r){
     <td>${form}</td>
     <td>${revoke}</td>
   </tr>`;
+}
+
+/* Change a tag number in place.
+   Martha 2026-08-20, 519 Mesa Canyon: "We need to be able to change the pool
+   tag number from the Pool Access Module." The API already accepted it, and
+   the roster rendered the tag as plain text, so the only way to correct one was
+   to revoke the record and re-add it. That loses the signed form behind it,
+   which is the association's proof the homeowner agreed to the pool rules.
+   A tag gets replaced when a fob is lost or reissued; the authorization does
+   not change with it. So the tag is editable and the record stays intact. */
+async function editTag(id, el){
+  const current = el.innerText.trim() === 'set tag' ? '' : el.innerText.trim();
+  const next = prompt('Tag number for this record:', current);
+  if (next === null) return;
+  const tag = next.trim();
+  if (tag === current) return;
+  el.innerHTML = '<span class="rel">saving…</span>';
+  try{
+    const r = await fetch(`${API}/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'},
+      // Only the new tag. The server appends the audit line, because it is the
+      // side that knows the old value and the browser should not be trusted to
+      // describe a change it is making.
+      body: JSON.stringify({ fob_tag_number: tag || null }) });
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok || j.error) throw new Error(j.error||('HTTP '+r.status));
+    loadRoster();
+  }catch(e){
+    alert('Could not change the tag: ' + e.message);
+    loadRoster();
+  }
 }
 
 async function revoke(id){

@@ -335,7 +335,7 @@ async function stLoad(){
       return `<div style="padding:8px 0;border-bottom:1px solid #eef2f7;">
         <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start;">
           <div><div style="font-weight:600;color:var(--navy);font-size:13.5px;">${esc(t.title)}${t.active?'':' <span class="note">(paused)</span>'}</div>
-            <div class="note" style="font-size:11.5px;">${when} → ${esc(who)} · as ${t.mode==='ed'?'me':'Tessa'}${t.last_run_at?' · last sent '+new Date(t.last_run_at).toLocaleDateString():''}</div></div>
+            <div class="note" style="font-size:11.5px;">${when} → ${esc(who)} · as Tessa${t.last_run_at?' · last sent '+new Date(t.last_run_at).toLocaleDateString():''}</div></div>
           <div style="white-space:nowrap;">
             <button class="btn ghost sm" style="padding:3px 7px;" onclick="stEdit('${t.id}')">Edit</button>
             <button class="btn ghost sm" style="padding:3px 7px;" onclick="stToggleActive('${t.id}','${t.active?'false':'true'}')">${t.active?'Pause':'Resume'}</button>
@@ -350,7 +350,7 @@ function stFormHtml(t){ t=t||{};
   return `<input id="st-title" placeholder="Title (e.g. Monthly OOO reminder)" value="${esc(t.title||'')}">
     <div class="row" style="gap:6px;margin-top:6px;">
       <select id="st-rspec" onchange="stRspecChange()" style="flex:1;"><option value="team"${t.recipients_spec==='team'?' selected':''}>The whole team</option><option value="custom"${t.recipients_spec!=='team'?' selected':''}>Specific emails</option></select>
-      <select id="st-mode" style="flex:1;"><option value="tessa"${t.mode!=='ed'?' selected':''}>As Tessa</option><option value="ed"${t.mode==='ed'?' selected':''}>As me</option></select>
+      <input type="hidden" id="st-mode" value="tessa"><span class="note" style="flex:1;font-size:12px;">Sent as Tessa, on your behalf</span>
     </div>
     <input id="st-emails" placeholder="emails, comma separated" value="${esc(t.to_emails||'')}" style="margin-top:6px;display:${t.recipients_spec==='custom'?'block':'none'};">
     <div class="row" style="gap:6px;margin-top:6px;">
@@ -414,7 +414,7 @@ async function loadInbox(){
         const badge=it.status==='replied'?'<span style="color:#166534;font-weight:700;">✓ replied</span>':'<span class="note">dismissed</span>';
         return `<div class="fu"><div class="t">${esc(it.subject||'(no subject)')} · ${badge}</div><div class="note">from ${esc(it.from_name||it.from_email||'unknown')}${it.received_at?' · '+new Date(it.received_at).toLocaleString():''}</div></div>`;
       }
-      _ibmode[it.id]=it.draft_mode==='tessa'?'tessa':'ed';
+      _ibmode[it.id]='tessa';   // she signs as herself, always
       const snip=esc((it.body_preview||'').slice(0,240))+((it.body_preview||'').length>240?'…':'');
       return `<div class="fu" id="ib-${it.id}">
         <div class="t">${esc(it.subject||'(no subject)')}</div>
@@ -429,8 +429,8 @@ async function loadInbox(){
         <label>Tessa’s draft</label><textarea id="ib-body-${it.id}" rows="7">${esc(it.draft_body||'')}</textarea>
         <div class="row" style="justify-content:space-between;margin-top:8px;">
           <div class="modewrap">
-            <button id="ibm-ed-${it.id}" class="${_ibmode[it.id]==='ed'?'on':''}" onclick="ibMode('${it.id}','ed')">As me</button>
-            <button id="ibm-t-${it.id}" class="${_ibmode[it.id]==='tessa'?'on':''}" onclick="ibMode('${it.id}','tessa')">As Tessa</button>
+            <span class="note" style="font-size:11.5px;">Replies as Tessa, on your behalf</span>
+            
           </div>
           <div class="row">
             <button class="btn ghost sm" onclick="ibDismiss('${it.id}')">Dismiss</button>
@@ -454,7 +454,7 @@ async function loadSent(){
     }).join('');
   }catch(e){ $('sentList').innerHTML='<div class="err note">Could not load sent mail.</div>'; }
 }
-function ibMode(id,m){ _ibmode[id]=m; $('ibm-ed-'+id).className=m==='ed'?'on':''; $('ibm-t-'+id).className=m==='tessa'?'on':''; }
+function ibMode(id){ _ibmode[id]='tessa'; }   // voice is no longer switchable
 // "Handle it": Ed's one-line instruction -> Tessa drafts a reply or a forward.
 async function ibHandle(id){
   const instruction=(($('ib-instr-'+id)||{}).value||'').trim();
@@ -486,7 +486,7 @@ async function ibSend(id){
   try{
     const r=await af('/api/tessa/inbox/'+id+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to, subject:$('ib-subj-'+id).value, body:$('ib-body-'+id).value, mode:_ibmode[id]})});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||'send failed');
-    const el=$('ib-'+id); if(el){ el.style.opacity='.5'; el.innerHTML='<div class="ok">✅ Replied '+(_ibmode[id]==='ed'?'as you':'as Tessa')+'.</div>'; setTimeout(loadInbox,1200); }
+    const el=$('ib-'+id); if(el){ el.style.opacity='.5'; el.innerHTML='<div class="ok">✅ Replied as Tessa.</div>'; setTimeout(loadInbox,1200); }
   }catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; btn.disabled=false; }
 }
 async function ibDismiss(id){
@@ -495,7 +495,7 @@ async function ibDismiss(id){
 }
 function setMode(m){
   _mode=m; $('m-ed').className=m==='ed'?'on':''; $('m-tessa').className=m==='tessa'?'on':'';
-  $('mode-note').textContent = m==='ed'?'Ghostwritten in your voice, from your mailbox.':'Sent as Tessa, on your behalf.';
+  $('mode-note').textContent = 'Sent as Tessa, on your behalf. She says you asked her to write.';
   const sb=$('sendBtn'); if(sb) sb.textContent='Send '+(m==='ed'?'as me':'as Tessa');
   // If a draft is already on screen and it was written in a DIFFERENT voice,
   // re-draft so the BODY matches who it's sent as — not just the signature.
@@ -523,7 +523,7 @@ function showEmailDraft(subject, body){
     <label>Subject</label><input id="d-subj" value="${esc(subject)}">
     <label>Body</label><textarea id="d-body" rows="10">${esc(body)}</textarea>
     <label style="display:flex;gap:7px;align-items:center;font-weight:400;color:var(--ink);margin-top:10px;"><input type="checkbox" id="d-fu"> Track a follow-up on this</label>
-    <div class="row" style="margin-top:10px;"><button class="btn gold" id="sendBtn" onclick="doSend()">Send ${_mode==='ed'?'as me':'as Tessa'}</button><span id="sendMsg" class="result"></span></div>
+    <div class="row" style="margin-top:10px;"><button class="btn gold" id="sendBtn" onclick="doSend()">Send as Tessa</button><span id="sendMsg" class="result"></span></div>
   </div>`;
 }
 
@@ -619,7 +619,7 @@ async function doSend(){
   try{
     const r=await af('/api/tessa/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to, subject:$('d-subj').value, body:$('d-body').value, mode:_mode, create_followup:$('d-fu').checked, followup_title:'Follow up: '+$('d-subj').value})});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||'send failed');
-    $('sendMsg').innerHTML='<span class="ok">✅ Sent '+(_mode==='ed'?'as you':'as Tessa')+'.</span>';
+    $('sendMsg').innerHTML='<span class="ok">✅ Sent as Tessa.</span>';
     $('thought').value=''; $('to').value=''; $('rname').value=''; if($('rpick')) $('rpick').value=''; $('draftArea').innerHTML=''; if(j.followup_id) loadFu();
   }catch(e){ $('sendMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; btn.disabled=false; }
 }

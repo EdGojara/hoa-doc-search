@@ -196,7 +196,7 @@ router.post('/draft', express.json({ limit: '32kb' }), async (req, res) => {
   try {
     const { thought, mode, recipient_name } = req.body || {};
     if (!thought || !String(thought).trim()) return res.status(400).json({ error: 'thought_required' });
-    const draft = await draftEmail({ thought, mode: mode === 'ed' ? 'ed' : 'tessa', recipientName: recipient_name || null });
+    const draft = await draftEmail({ thought, mode: 'tessa', recipientName: recipient_name || null });
     if (draft.degraded) return res.status(503).json({ error: 'Tessa could not draft this right now. Try again or write it yourself.' });
     res.json({ subject: draft.subject, body: draft.body, mode: draft.mode });
   } catch (err) {
@@ -214,7 +214,7 @@ router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
     const to = parseAddrs(b.to), cc = parseAddrs(b.cc);
     const subject = String(b.subject || '').trim() || '(no subject)';
     const body = String(b.body || '').trim();
-    const asEd = String(b.mode || '') === 'ed';
+    const asEd = false;  // Tessa sends as herself, always.
     if (!to.length) return res.status(400).json({ error: 'Add at least one valid recipient.' });
     if (!body) return res.status(400).json({ error: 'The email body is empty.' });
 
@@ -423,7 +423,7 @@ router.patch('/followups/:id', express.json(), async (req, res) => {
 router.post('/poll-inbox', async (req, res) => {
   const admin = await requireOwner(req, res); if (!admin) return;
   try {
-    const out = await pollTessaInbox({ max: 25, mode: 'ed' });
+    const out = await pollTessaInbox({ max: 25, mode: 'tessa' });
     if (out.error) {
       const hint = out.error.startsWith('graph_read_failed_403')
         ? 'Tessa can’t read her mailbox yet. In Azure, add tessa@bedrocktx.com to the app’s Mail.Read access policy.'
@@ -501,7 +501,7 @@ router.post('/inbox/:id/send', express.json({ limit: '64kb' }), async (req, res)
     const cc = parseAddrs(b.cc);
     const subject = String(b.subject || item.draft_subject || item.subject || '').trim() || '(no subject)';
     const body = String(b.body || item.draft_body || '').trim();
-    const asEd = String(b.mode || item.draft_mode || 'ed') === 'ed';
+    const asEd = false;  // Tessa sends as herself, always.
     if (!to.length) return res.status(400).json({ error: 'No recipient to reply to.' });
     if (!body) return res.status(400).json({ error: 'The reply body is empty.' });
 

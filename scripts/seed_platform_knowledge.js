@@ -77,7 +77,7 @@ const FEATURES = [
   },
   {
     situation: 'Where do I register pool fobs or key tags and extended-hours swim forms, and how do I see who has pool access and their tag numbers?',
-    response: 'Pool Access is a top-nav tab (swimmer icon) at /admin/pool-access. Pick a pool community (Waterview, Eaglewood, Lakes of Pine Forest, or Canyon Gate), then drop a batch of fob-registration or extended-hours PDFs — the system reads each form, matches the homeowner, and you review before anything files. The roster lists everyone with access and their tag numbers, and it also appears on the homeowner’s 360.',
+    response: 'Pool Access is a top-nav tab (swimmer icon) at /admin/pool-access. Pick a pool community (Waterview, Eaglewood, Lakes of Pine Forest, or Canyon Gate), then drop a batch of fob-registration or extended-hours PDFs — the system reads each form, matches the homeowner, and you review before anything files. The roster lists everyone with access and their tag numbers, and it also appears on the homeowner’s 360. To CHANGE a tag number, click the tag in the roster and type the new one. Use that when a fob is lost or reissued: it keeps the signed form and the authorized people attached to the record, and it writes a note saying what the tag used to be and who changed it. Do not revoke and re-add a record just to correct a tag, because that detaches the signed form behind it.',
   },
   {
     situation: 'How do I do a field inspection, capture violation photos, and where do the violation letters get drafted and printed?',
