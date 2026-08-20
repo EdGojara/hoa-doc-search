@@ -841,6 +841,26 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     // Every other specialist (Kat, Amanda, Reese, Paige) replies in-voice to
     // ANYTHING in their queue via the general persona drafter. (Ed 2026-07-20:
     // "make Kat and all of them be able to reply to any emails in their que.")
+    // Amanda answering a COLLEAGUE goes through the same staff-assist path the
+    // ingest uses, not the general drafter. Two paths for one situation is how
+    // the good draft made at ingest gets replaced by a worse one the moment
+    // somebody presses Reply, and the operator has no way to tell which they
+    // are looking at. (Ed 2026-08-20 — same reasoning as the hybrid-retrieval
+    // rule: one situation, one code path.)
+    if (persona === 'amanda' && /@bedrocktx\.com$/i.test(String(m.sender_email || ''))) {
+      const { draftAmandaStaffAssist, isStaffAskingForHelp } = require('../lib/community/amanda_staff_assist');
+      if (isStaffAskingForHelp({ sender_email: m.sender_email })) {
+        const d = await draftAmandaStaffAssist({
+          email: { subject: m.subject, body_full: m.body_full, body_preview: m.body_preview,
+                   sender_name: m.sender_name, sender_email: m.sender_email },
+          communityName: m.community ? m.community.name : null,
+        });
+        if (d && d.draftable) {
+          return res.json({ subject: d.subject, body: d.body, careful: !!d.careful,
+                            persona: 'amanda', review_hint: d.review_hint, ...recipientOut });
+        }
+      }
+    }
     if (['kat', 'amanda', 'reese', 'paige'].includes(persona)) {
       // Kat is the accounting expert — like Emma grounds in the AP subledger,
       // Kat must answer with the homeowner's REAL balance / collections status,
