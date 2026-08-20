@@ -297,16 +297,24 @@ function signatureMatchesSender(sigName, dispName) {
   return oneIsInitial && at[0][0] === bt[0][0];
 }
 
+/** "Hess,Melody" is how Exchange stores it; "Melody Hess" is how Ed says it. */
+function tidyName(s) {
+  const m = String(s || '').match(/^\s*([^,]+?)\s*,\s*([^,]+?)\s*$/);
+  if (!m) return String(s || '').trim();
+  if (/^(jr|sr|ii|iii|cmca|ams|pcam|cpa|esq|phd|md)\.?$/i.test(m[2].trim())) return String(s).trim();
+  return (m[2] + ' ' + m[1]).replace(/\s+/g, ' ').trim();
+}
+
 function bestName(p, sig) {
   const disp = displayName(p);
-  if (disp) return disp;
+  if (disp) return tidyName(disp);
   if (sig && sig.name) return sig.name;
   return p.email.split('@')[0];
 }
 
 // Exported so the identity-matching rule can be tested without a 20 minute
 // mailbox walk. main() only runs when this file is the entry point.
-module.exports = { signatureMatchesSender, normName, categoryFor, orgFromDomain, isNoise };
+module.exports = { signatureMatchesSender, normName, tidyName, categoryFor, orgFromDomain, isNoise };
 
 if (require.main !== module) return;
 
@@ -341,7 +349,15 @@ if (require.main !== module) return;
     // Believe the signature only if it is about the person who sent the mail.
     // A phone number under the wrong name is worse than a blank field: it is
     // the one Ed would actually dial.
-    if (sig.name && !signatureMatchesSender(sig.name, displayName(p))) { sig = {}; sigRejected++; }
+    //
+    // An UNNAMED signature is not a pass. Guarding on `sig.name && !match` let
+    // every signature the model could not name through unchecked, and that is
+    // the common shape on a forwarded thread where the tail is a footer with a
+    // phone number and no person. It put Martha's direct line on both the
+    // Canyon Gate president and vice-president aliases. If there is nothing to
+    // verify against, the fields cannot be attributed, so they are dropped.
+    const hasDetail = !!(sig.phone || sig.mobile || sig.address || sig.title);
+    if (hasDetail && !signatureMatchesSender(sig.name || '', displayName(p))) { sig = {}; sigRejected++; }
     const org = sig.org || orgFromDomain(p.email);
     const row = {
       name: bestName(p, sig),

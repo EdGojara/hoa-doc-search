@@ -28,7 +28,7 @@
 //   node tests/test_contact_mining.js
 // ============================================================================
 const assert = require('assert');
-const { signatureMatchesSender, normName, categoryFor, isNoise } = require('../scripts/build_contacts_from_email');
+const { signatureMatchesSender, normName, tidyName, categoryFor, isNoise } = require('../scripts/build_contacts_from_email');
 
 let passed = 0;
 function check(name, fn) {
@@ -81,6 +81,23 @@ check('an empty side never counts as agreement', () => {
 check('normName is stable on punctuation and case', () => {
   assert.strictEqual(normName('  MARTHA   BRAVO '), 'martha bravo');
   assert.strictEqual(normName('Hess,Melody'), 'melody hess');
+});
+
+check('an unnamed signature cannot be attributed to anyone', () => {
+  // The leak after the first fix: guarding on `sig.name && !match` let every
+  // signature the model could not name through unchecked. On a forwarded
+  // thread the tail is often a bare footer with a phone and no person, which
+  // put Martha's direct line on both Canyon Gate board aliases.
+  assert.strictEqual(signatureMatchesSender('', 'President HOA'), false);
+  assert.strictEqual(signatureMatchesSender(null, 'Martha Bravo'), false);
+  assert.strictEqual(signatureMatchesSender(undefined, 'Vice President HOA'), false);
+});
+
+check('Exchange name order is tidied for display', () => {
+  assert.strictEqual(tidyName('Hess,Melody'), 'Melody Hess');
+  assert.strictEqual(tidyName('Martha Bravo'), 'Martha Bravo');
+  // Not a reversed name, just a credential. Leave it alone.
+  assert.strictEqual(tidyName('Melody Hess, CPA'), 'Melody Hess, CPA');
 });
 
 console.log('\nWho belongs in the book');
