@@ -1275,7 +1275,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
     let html, attachments, fromMailbox, senderLabel;
     if (persona === 'emma') {
       const { buildEmmaEmail } = require('../lib/email/emma_signature');
-      ({ html, attachments } = buildEmmaEmail(String(body).trim()));
+      ({ html, attachments } = buildEmmaEmail(String(body).trim(), commName));
       fromMailbox = graphSend.EMMA_MAILBOX; senderLabel = 'Emma Brooks (Bedrock AI)';
     } else if (persona === 'miranda') {
       const { buildMirandaEmail } = require('../lib/email/miranda_signature');
@@ -1292,7 +1292,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
     } else if (persona === 'kat') {
       const { buildKatEmail } = require('../lib/email/kat_signature');
       ({ html, attachments } = buildKatEmail(String(body).trim(), commName));
-      fromMailbox = graphSend.KAT_MAILBOX; senderLabel = 'Katherine Reed (Bedrock AI)';
+      fromMailbox = graphSend.KAT_MAILBOX; senderLabel = 'Kat Reed (Bedrock AI)';
     } else if (persona === 'amanda') {
       const { buildAmandaEmail } = require('../lib/email/amanda_signature');
       ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName));
@@ -1876,7 +1876,7 @@ router.post('/compose', express.json(), async (req, res) => {
     let html, attachments, fromMailbox, senderLabel, personaName;
     if (P === 'emma') {
       const { buildEmmaEmail } = require('../lib/email/emma_signature');
-      ({ html, attachments } = buildEmmaEmail(String(body).trim()));
+      ({ html, attachments } = buildEmmaEmail(String(body).trim(), commName));
       fromMailbox = graphSend.EMMA_MAILBOX; senderLabel = 'Emma Brooks (Bedrock AI)'; personaName = 'Emma';
     } else if (P === 'annie') {
       const { buildAnnieEmail } = require('../lib/email/annie_signature');
@@ -1893,7 +1893,7 @@ router.post('/compose', express.json(), async (req, res) => {
     } else if (P === 'kat') {
       const { buildKatEmail } = require('../lib/email/kat_signature');
       ({ html, attachments } = buildKatEmail(String(body).trim(), commName));
-      fromMailbox = graphSend.KAT_MAILBOX; senderLabel = 'Katherine Reed (Bedrock AI)'; personaName = 'Katherine';
+      fromMailbox = graphSend.KAT_MAILBOX; senderLabel = 'Kat Reed (Bedrock AI)'; personaName = 'Kat';
     } else if (P === 'amanda') {
       const { buildAmandaEmail } = require('../lib/email/amanda_signature');
       ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName));
