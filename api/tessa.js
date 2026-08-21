@@ -26,6 +26,40 @@ const parseAddrs = (v) => String(v || '').split(/[,;]/).map((s) => s.trim()).fil
 // Search Tessa's contacts across the saved EA book + vendor reps + per-community
 // contacts (bank / attorney / insurance). Returns [{name, org, email, phone,
 // role, source}], deduped by email. Shared by /contacts and the voice resolver.
+// Does this contact GENUINELY match what Ed said, or did the hint just happen
+// to appear inside a domain name?
+//
+// Ed 2026-08-21 asked Tessa to "copy ed and martha" and she came back asking
+// which of five people he meant, offering Hope Lloyd, HomeWiseDocs and a
+// RealPage rep. The query is an ILIKE %ed% across name, organization, email
+// and title, and "ed" appears inside b-ed-rocktx.com, homewis-ed-ocs.com,
+// f-ed-ex.com, inde-ed-email.com and the word "B-ed-rock" itself. 96 of 539
+// contacts "matched".
+//
+// So the database query stays broad (it is one indexed round trip) and this
+// decides what actually counts:
+//
+//   - the DOMAIN half of an email never counts. Nobody searches for a person
+//     by their mail provider, and it is the single biggest source of noise.
+//   - a SHORT hint (under 4 characters) must match a whole word. "ed" matches
+//     "Ed Gojara" and "Ed Hyde", not "Bedrock" or "Teddy".
+//   - a longer hint may match anywhere, which is what makes "waterv" or
+//     "protect" useful.
+function contactMatchesHint(c, q) {
+  const hint = String(q || '').toLowerCase().trim();
+  if (!hint) return true;
+  const local = String(c.email || '').toLowerCase().split('@')[0];
+  const fields = [c.name, c.org, c.role, local].map((s) => String(s || '').toLowerCase());
+
+  if (hint.length >= 4) return fields.some((f) => f.includes(hint));
+
+  // Whole-word match for short hints. Split on anything that is not a letter
+  // or digit so "ed.gojara", "ed-gojara" and "Ed Gojara" all tokenise the same.
+  const esc = hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`);
+  return fields.some((f) => re.test(f));
+}
+
 async function searchContacts(q) {
   q = String(q || '').trim();
   const like = `%${q.replace(/[%,]/g, ' ')}%`;
@@ -58,7 +92,11 @@ async function searchContacts(q) {
       add({ name: e.sender_name || addr, org: null, email: addr, role: 'from email', source: 'correspondent' });
     }
   }
-  return out.slice(0, 50);
+  // Drop the coincidences before ranking. See contactMatchesHint above.
+  const real = out.filter((c) => contactMatchesHint(c, q));
+  // If filtering leaves nothing but the broad query found something, the hint
+  // is probably a fragment worth showing rather than a dead end.
+  return (real.length ? real : out).slice(0, 50);
 }
 
 // Resolve a spoken recipient like "Melody at New First National Bank" to a real
