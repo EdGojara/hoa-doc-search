@@ -27,7 +27,7 @@
 require('dotenv').config();
 const assert = require('assert');
 
-const { parseGroupHint, tokens, matchCommunity } = require('../lib/ea/tessa_resolve');
+const { parseGroupHint, tokens, matchCommunity, resolveBoardGroup } = require('../lib/ea/tessa_resolve');
 const { findContext, resolveOne } = require('../lib/ea/tessa_request');
 
 let passed = 0;
@@ -80,6 +80,40 @@ check('Community matching', 'a name we do not have resolves to nothing', async (
   const r = await matchCommunity('Nonexistent Shores Estates');
   assert.strictEqual(r.community, null);
   assert.strictEqual(r.ambiguous.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+check('Board addressing', 'a community that publishes role addresses gets those', async () => {
+  // Ed 2026-08-21: Canyon Gate's board corresponds through president@ /
+  // secretary@ aliases "so they can keep a record of what happens in the
+  // community" — the alias survives a board turnover, the personal mailbox
+  // does not. Minutes later he added that the SAME board members will be in the
+  // board portal under their personal addresses, because portal login is tied
+  // to their homeowner account.
+  //
+  // Both true, different purposes. If the roster ever wins here, loading those
+  // board members for portal access silently redirects the association's
+  // correspondence to personal inboxes, with nothing on screen to show it.
+  const r = await resolveBoardGroup('canyon gate board');
+  assert.ok(r.ok, 'Canyon Gate must resolve');
+  assert.strictEqual(r.addressing, 'role_alias',
+    'correspondence must go to the association\'s own addresses, not personal ones');
+  assert.ok(r.people.every((p) => p.source === 'role_alias'));
+  assert.ok(r.people.length >= 3, 'expected the published board seats');
+});
+
+check('Board addressing', 'a community without aliases uses its roster', async () => {
+  const r = await resolveBoardGroup('waterview board');
+  assert.ok(r.ok, 'Waterview must resolve');
+  assert.strictEqual(r.addressing, 'roster');
+  assert.ok(r.people.length > 0);
+});
+
+check('Board addressing', 'no board on file asks instead of guessing', async () => {
+  const r = await resolveBoardGroup('eaglewood board');
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'no_board_on_file');
+  assert.ok(r.detail, 'she has to say what is missing');
 });
 
 // ---------------------------------------------------------------------------

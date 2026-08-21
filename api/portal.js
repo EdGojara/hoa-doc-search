@@ -60,6 +60,21 @@ const MIMIC_COOKIE_TTL_MIN = 30;
 
 const router = express.Router();
 
+// Presentation mode. OFF unless a request explicitly asks for it, in which case
+// homeowner names, emails, phones and per-account balances are masked SERVER
+// SIDE before the response leaves. Staff only, and a non-staff caller passing
+// the flag is refused rather than quietly served the real thing.
+//
+// Ed 2026-08-21: "i need to be able to maintain privacy for the homeowners if
+// we go that route" — the route being demoing on Waterview (real, convincing,
+// and mostly public information) instead of the fictional community, whose map
+// cannot be shown at all. See api/_presentation_mode.js for the reasoning.
+//
+// resolveUserWithRole is a hoisted function declaration further down this file,
+// so referencing it here is fine.
+const { presentationMode } = require('./_presentation_mode');
+router.use(presentationMode(resolveUserWithRole));
+
 // SINGLE SOURCE OF TRUTH for "which submission page does each builder land on."
 // Keyed on builder_companies.company_name; value MUST be a real route in
 // server.js. Used by /api/portal/me (real builder sessions) AND the builder
