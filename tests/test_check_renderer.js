@@ -92,5 +92,67 @@ check('no watermark when ready_for_print', () => {
   assert.ok(!html.includes('NON-NEGOTIABLE'), 'no watermark');
 });
 
+// --- Pre-encoded stock: the second MICR line Wells Fargo rejected ------------
+//
+// Some accounts buy stock from the bank with the MICR line already magnetically
+// printed on it. Printing our own on top gives the reader two overlapping
+// lines, which is unreadable — and reads to a teller exactly as "the MICR line
+// is incorrect and too large".
+//
+// bank_accounts.check_stock_micr_pre_encoded was stored, editable in the admin
+// UI, and returned by the API. The renderer never read it, and
+// getBankCheckConfig never even selected it. A setting nothing consumes is
+// worse than no setting: it says the case is handled.
+//
+// Quail Ridge Operating is the only disbursement account on pre-encoded stock,
+// and check #29 ($476.30, Superior LawnCare, 2026-08-14) is the only check ever
+// written on it. Every check the platform printed on pre-encoded stock was
+// rejected — a 100% failure rate that looked like a one-off.
+const preCfg = {
+  account_name: 'Quail Ridge Community Association, Inc.', bank_name: 'First Citizens',
+  routing: '111000025', account_number: '1234567890', ready_for_print: true,
+};
+const oneCheck = [{ check_number: '30', issue_date: '2026-08-21', amount_cents: 47630, payee_name: 'Superior LawnCare', invoices: [] }];
+
+check('pre-encoded stock prints NO MICR line', () => {
+  const html = renderChecksHTML(oneCheck, { ...preCfg, check_stock_micr_pre_encoded: true });
+  assert.strictEqual((html.match(/class="micr"/g) || []).length, 0,
+    'a second MICR line on top of the stock\'s own is what got check #29 refused');
+});
+
+check('blank stock still prints exactly one MICR line', () => {
+  const html = renderChecksHTML(oneCheck, { ...preCfg, check_stock_micr_pre_encoded: false });
+  assert.strictEqual((html.match(/class="micr"/g) || []).length, 1);
+  assert.ok(html.includes('A111000025A'), 'routing still bracketed by transit symbols');
+});
+
+check('a missing flag fails toward the VISIBLE mistake', () => {
+  // Printing a MICR line onto stock that turns out to be pre-encoded is a
+  // rejected check nobody can see coming. Omitting one from genuinely blank
+  // stock produces a check with an empty band, which is obvious on sight.
+  // Default must therefore be "print it".
+  const html = renderChecksHTML(oneCheck, { ...preCfg });
+  assert.strictEqual((html.match(/class="micr"/g) || []).length, 1,
+    'an absent flag must not silently suppress the MICR line');
+});
+
+check('the pre-encoded test print explains the empty band', () => {
+  // Without this an empty clear band reads as a broken renderer and somebody
+  // "fixes" it straight back to two lines.
+  const html = renderChecksHTML(oneCheck, { ...preCfg, check_stock_micr_pre_encoded: true, calibration: true });
+  assert.ok(/No MICR printed/.test(html), 'the alignment print must say why the band is blank');
+});
+
+check('the config loader actually selects the flag', () => {
+  // The renderer honouring a field it is never handed is not a fix. This is the
+  // half that was missing: getBankCheckConfig did not select the column, so
+  // bankConfig.check_stock_micr_pre_encoded was always undefined.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'accounting', 'check_run.js'), 'utf8');
+  assert.ok(/\.select\([^)]*check_stock_micr_pre_encoded/.test(src),
+    'getBankCheckConfig must SELECT check_stock_micr_pre_encoded');
+  assert.ok(/check_stock_micr_pre_encoded:\s*ba\.check_stock_micr_pre_encoded === true/.test(src),
+    'and must pass it through to the renderer as a real boolean');
+});
+
 console.log(`\ncheck_renderer: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
