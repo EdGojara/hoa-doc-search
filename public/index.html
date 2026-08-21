@@ -45983,7 +45983,12 @@ ${questionsPage}
                 + ' #' + (other.vendor_invoice_number || '?') + '. Check you are not paying it twice.';
             } else {
               status.style.color = '#166534';
-              status.textContent = 'Invoice filed against this bill. Nothing else changed. Reloading…';
+              // Say which of the two happened. "Invoice filed" on a bill that
+              // already had its invoice reads as though the original was
+              // replaced, which is the one thing this path never does.
+              status.textContent = j.additional
+                ? 'Filed against this bill alongside the invoice. Nothing else changed. Reloading…'
+                : 'Invoice filed against this bill. Nothing else changed. Reloading…';
             }
           } else if (j.total_mismatch) {
             status.style.color = '#b45309';
@@ -46219,10 +46224,29 @@ ${questionsPage}
                 // So: PDF present, show it. PDF missing, always offer to attach
                 // one. Posted bills take the document-only path, which files the
                 // PDF and touches nothing else.
+                // Everything filed against this bill, and a way to add more.
+                //
+                // Ed 2026-08-21, on a bill that already had its PDF: "is there a
+                // way to add invoice to this screen so it goes to this
+                // invoices?" A bill routinely carries more than one document —
+                // a two-page invoice sent as two files, the work order it
+                // references, the approved proposal, before-and-after photos.
+                const extras = (payload.documents || []).filter((d) => d.kind !== 'invoice');
+                const extraList = extras.length
+                  ? '<div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:10px;">'
+                    + extras.map((d) => `<a href="/api/ap/invoices/${inv.id}/documents/${d.id}" target="_blank" rel="noopener" style="color:#315A87; font-size:12px; text-decoration:none;">📎 ${apEsc(d.label || d.file_name || d.kind)}</a>`).join('')
+                    + '</div>'
+                  : '';
+                const addMore = notFinal
+                  ? ` <input type="file" id="ap-add-doc-${inv.id}" accept="application/pdf,image/*" style="display:none;" onchange="apAttachPdf('${inv.id}', this, true)">
+                      <button class="secondary-btn" style="font-size:11.5px; padding:3px 9px; margin-left:10px;" onclick="document.getElementById('ap-add-doc-${inv.id}').click()" title="File another document against this bill — a second page, the work order, the approved proposal, photos. The bill's own invoice and its numbers stay exactly as they are.">+ Add document</button>
+                      <span id="ap-attach-status-${inv.id}" style="font-size:12px; color:#5a7390; margin-left:8px;"></span>`
+                  : '';
+
                 if (pdfUrl) {
-                  return `<a href="#" onclick="apViewInvoicePdf('${inv.id}');return false;" style="color:#315A87; font-size:13px; text-decoration:none; font-weight:600;">📄 View original PDF</a>`;
+                  return `<a href="#" onclick="apViewInvoicePdf('${inv.id}');return false;" style="color:#315A87; font-size:13px; text-decoration:none; font-weight:600;">📄 View original PDF</a>${addMore}${extraList}`;
                 }
-                if (!notFinal) return '<span style="color:#888; font-size:12px;">No source PDF on file</span>';
+                if (!notFinal) return '<span style="color:#888; font-size:12px;">No source PDF on file</span>' + extraList;
                 const posted = !!inv.posting_journal_entry_id;
                 const label = posted ? '📎 Attach invoice' : '📎 Upload invoice PDF &amp; re-run';
                 const tip = posted

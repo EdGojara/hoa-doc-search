@@ -67,10 +67,50 @@ check('and it writes nothing but the document', () => {
   assert.ok(/source_storage_path: storagePath/.test(branch), 'it must record where the file went');
 });
 
-console.log('\nEvidence is appended, never replaced');
-check('a bill that already has a document refuses a second', () => {
-  assert.ok(/already_has_document/.test(ap),
-    'swapping the evidence under a posted entry is a silent rewrite of the record');
+console.log('\nAppend is not edit');
+check('a bill that already has its invoice takes MORE documents', () => {
+  // Ed 2026-08-21, on a bill showing "View original PDF": "is there a way to
+  // add invoice to this screen so it goes to this invoices?"
+  //
+  // The first cut refused with already_has_document, reasoning that swapping
+  // evidence under a posted entry is a silent rewrite. True of REPLACING the
+  // primary invoice; never an argument against ADDING to the file, which is
+  // the ordinary case — a two-page invoice, the work order it references, the
+  // approved proposal, before-and-after photos.
+  assert.ok(/const asAdditional = !!inv\.source_storage_path/.test(ap),
+    'a second document must be recognised as additional, not rejected');
+  assert.ok(/ap_invoice_documents/.test(ap), 'and filed in its own table');
+});
+check('but re-running extraction on it still refuses', () => {
+  assert.ok(/asAdditional && !documentOnly/.test(ap),
+    're-extraction would replace the lines the original produced');
+  assert.ok(/already_has_document/.test(ap));
+});
+check('only the FIRST document touches ap_invoices', () => {
+  // Every existing reader — check runs, the payables list, /invoice-file —
+  // reads source_storage_path. Moving it when a work order is filed would
+  // change what the check stub points at.
+  assert.ok(/if \(!asAdditional\) \{[\s\S]{0,400}source_storage_path: storagePath/.test(ap),
+    'the primary invoice must only be set when there was not one already');
+});
+
+console.log('\nA file already in the library is reused, not re-inserted');
+check('the unique file_hash index is handled', () => {
+  // library_documents has UNIQUE(file_hash). Attaching a PDF that is already
+  // in the library — the same file on another bill, or a second click — failed
+  // the insert and left the document with no library row behind it.
+  assert.ok(/\.eq\('file_hash', sha\)\.maybeSingle\(\)/.test(ap),
+    'look for the existing library row before inserting');
+  assert.ok(/if \(existingDoc\) \{\s*\n?\s*libDoc = existingDoc;/.test(ap),
+    'and reuse it — the document is already in the library, which is where it belongs');
+});
+
+console.log('\nThe new table is optional until its migration runs');
+check('a missing ap_invoice_documents does not break the detail screen', () => {
+  // Migration 381 has to be run by hand. Until then a bill with no extra
+  // documents is the normal case and the screen must still open.
+  assert.ok(/does not exist\|schema cache/.test(ap),
+    'the absence of the table must be tolerated, not logged as a fault');
 });
 
 console.log('\nDouble-payment warning');

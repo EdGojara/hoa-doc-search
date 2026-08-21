@@ -372,6 +372,37 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/ap/invoices/:id/documents/:docId — open one of the documents filed
+// against a bill.
+//
+// Keyed on the DOCUMENT ROW, never on a client-supplied storage path. Signing
+// whatever path arrives in a query string would hand out a signed URL for any
+// object in the bucket to anyone who can reach this route.
+// ---------------------------------------------------------------------------
+// Auth: /api/ap sits behind the app-wide staff gate in server.js (it is not in
+// the public allowlist), which is why no route in this file imports its own
+// guard. My first version called requireStaff, which this file never imports —
+// it would have thrown ReferenceError on the first request.
+router.get('/invoices/:id/documents/:docId', async (req, res) => {
+  try {
+    const { data: doc, error } = await supabase.from('ap_invoice_documents')
+      .select('storage_path, file_name')
+      .eq('id', req.params.docId).eq('invoice_id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!doc || !doc.storage_path) return res.status(404).json({ error: 'not_found' });
+    const { data, error: sErr } = await supabase.storage.from('documents')
+      .createSignedUrl(doc.storage_path, 60 * 60);
+    if (sErr || !data || !data.signedUrl) return res.status(404).json({ error: 'file_not_found' });
+    if (req.query.json) return res.json({ url: data.signedUrl, name: doc.file_name });
+    res.redirect(data.signedUrl);
+  } catch (err) {
+    console.error('[ap] invoice document fetch failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/ap/invoices/:id/attach-pdf — attach a source PDF to an EXISTING bill
 // and re-run extraction + coding. For bills whose invoice arrived without the
 // attachment (email "click to download" link), so intake made the header but no
@@ -413,13 +444,26 @@ router.post('/invoices/:id/attach-pdf', upload.single('pdf'), async (req, res) =
         detail: 'This bill\'s accrual is already on the books. Re-attaching and replacing its lines would desync the ledger — change the coding from the invoice detail instead.',
       });
     }
-    // Never overwrite a document that is already there. Swapping the evidence
-    // under a posted entry is exactly the kind of silent rewrite that makes a
-    // record untrustworthy; append, never edit.
-    if (inv.source_storage_path) {
+    // A bill that already has its invoice can still take MORE documents.
+    //
+    // Ed 2026-08-21, on a bill showing "View original PDF": "is there a way to
+    // add invoice to this screen so it goes to this invoices?"
+    //
+    // Earlier today this returned already_has_document, reasoning that swapping
+    // the evidence under a posted entry is a silent rewrite. That reasoning
+    // holds for REPLACING the primary invoice; it was never an argument against
+    // ADDING to the file, which is the ordinary case — a two-page invoice sent
+    // as two files, the work order the bill references, the approved proposal,
+    // before-and-after photos, a corrected copy.
+    //
+    // Append is not edit. The primary stays exactly where it is on ap_invoices,
+    // so every existing reader is untouched; extra documents go to
+    // ap_invoice_documents (migration 381).
+    const asAdditional = !!inv.source_storage_path;
+    if (asAdditional && !documentOnly) {
       return res.status(409).json({
         error: 'already_has_document',
-        detail: 'This bill already has an invoice on file. Open it with "View original PDF" — replacing it would rewrite the evidence behind a posted entry.',
+        detail: 'This bill already has its invoice. Re-running extraction would replace the lines it produced — add a supporting document instead.',
       });
     }
 
@@ -449,27 +493,70 @@ router.post('/invoices/:id/attach-pdf', upload.single('pdf'), async (req, res) =
     // rather than refuses — a vendor really can send one PDF covering two bills,
     // and a person looking at both can tell.
     if (documentOnly) {
+      // library_documents has a UNIQUE index on file_hash (ux_docs_file_hash),
+      // so a file already in the library cannot be inserted a second time —
+      // which happens whenever the same PDF is filed against another bill, or
+      // somebody clicks upload twice. The insert failed, libDoc came back null,
+      // and the document was left with no library row behind it.
+      //
+      // The right answer is to REUSE the existing row: the document is already
+      // in the library, and that is where it should stay. Look first, insert
+      // only if it is genuinely new.
       const commMgmt = inv.communities ? inv.communities.management_company_id : null;
-      const { data: libDoc, error: libErr } = await supabase.from('library_documents').insert({
-        management_company_id: commMgmt,
-        community_id: inv.community_id,
-        category: 'vendor_invoice',
-        title: `AP Invoice — ${(inv.vendors && inv.vendors.name) || ''} #${inv.vendor_invoice_number || ''}`.trim(),
-        file_name_original: req.file.originalname || null,
-        file_path: storagePath,
-        file_hash: sha,
-        file_size_bytes: req.file.size,
-        created_by_mgmt_company: 'Bedrock',
-      }).select('id').single();
-      if (libErr) console.warn('[ap] attach-pdf (document only) library_documents insert failed:', libErr.message);
+      let libDoc = null;
+      const { data: existingDoc } = await supabase.from('library_documents')
+        .select('id').eq('file_hash', sha).maybeSingle();
+      if (existingDoc) {
+        libDoc = existingDoc;
+      } else {
+        const { data: created, error: libErr } = await supabase.from('library_documents').insert({
+          management_company_id: commMgmt,
+          community_id: inv.community_id,
+          category: 'vendor_invoice',
+          title: `AP Invoice — ${(inv.vendors && inv.vendors.name) || ''} #${inv.vendor_invoice_number || ''}`.trim(),
+          file_name_original: req.file.originalname || null,
+          file_path: storagePath,
+          file_hash: sha,
+          file_size_bytes: req.file.size,
+          created_by_mgmt_company: 'Bedrock',
+        }).select('id').single();
+        if (libErr) console.warn('[ap] attach-pdf (document only) library_documents insert failed:', libErr.message);
+        libDoc = created || null;
+      }
 
-      const { error: upErr } = await supabase.from('ap_invoices').update({
-        source_storage_path: storagePath,
-        source_filename: req.file.originalname || null,
-        source_document_id: libDoc?.id || null,
+      // The FIRST document becomes the bill's invoice; anything after it is
+      // filed alongside. Only the first touches ap_invoices, so every existing
+      // reader — check runs, the payables list, /invoice-file — is untouched.
+      if (!asAdditional) {
+        const { error: upErr } = await supabase.from('ap_invoices').update({
+          source_storage_path: storagePath,
+          source_filename: req.file.originalname || null,
+          source_document_id: libDoc?.id || null,
+          file_sha256: sha,
+        }).eq('id', id);
+        if (upErr) return res.status(500).json({ error: 'attach_failed', detail: safeErrorMessage(upErr) });
+      }
+
+      // Every document, primary included, is also recorded here so one query
+      // answers "what is filed against this bill" instead of two.
+      const kind = ['invoice', 'supporting', 'work_order', 'proposal', 'photo', 'correspondence', 'other']
+        .includes(req.body?.kind) ? req.body.kind : (asAdditional ? 'supporting' : 'invoice');
+      const { error: docErr } = await supabase.from('ap_invoice_documents').insert({
+        invoice_id: id,
+        library_document_id: libDoc?.id || null,
+        kind,
+        label: req.body?.label || null,
+        storage_path: storagePath,
+        file_name: req.file.originalname || null,
         file_sha256: sha,
-      }).eq('id', id);
-      if (upErr) return res.status(500).json({ error: 'attach_failed', detail: safeErrorMessage(upErr) });
+        file_size_bytes: req.file.size || null,
+        added_by: req.body?.posted_by_user_id || null,
+      });
+      // A unique-index hit means this exact file is already on this bill — the
+      // person clicked twice. That is a no-op, not an error worth showing.
+      if (docErr && !/duplicate key|unique constraint/i.test(docErr.message)) {
+        console.warn('[ap] ap_invoice_documents insert failed:', docErr.message);
+      }
 
       let duplicateOf = null;
       try {
@@ -483,6 +570,10 @@ router.post('/invoices/:id/attach-pdf', upload.single('pdf'), async (req, res) =
       return res.json({
         ok: true, document_only: true, posted: !!inv.posting_journal_entry_id,
         storage_path: storagePath,
+        // additional=true means the bill already had its invoice and this was
+        // filed alongside it, so the screen can say which happened rather than
+        // implying the bill's invoice was replaced.
+        additional: asAdditional, kind,
         duplicate_of: duplicateOf,
       });
     }
@@ -727,7 +818,26 @@ router.get('/invoices/:id', async (req, res) => {
     let policy = null;
     try { policy = require('../lib/ap/approval_policy').approvalPath(recurrence, openCredits); }
     catch (e) { console.warn('[ap] approval policy skipped:', e.message); }
-    res.json({ invoice, lines: outLines, approvals: approvals || [], recurrence, policy, open_credits: openCredits, applied_credit: appliedCredit, statement });
+    // Everything filed against this bill, not just the primary invoice.
+    // Best-effort: the table arrives with migration 381, and a bill with no
+    // extra documents is the normal case, so its absence must not break the
+    // detail screen. (Ed 2026-08-21: "is there a way to add invoice to this
+    // screen so it goes to this invoices?")
+    let documents = [];
+    try {
+      const { data: docs, error: dErr } = await supabase.from('ap_invoice_documents')
+        .select('id, kind, label, storage_path, file_name, file_size_bytes, added_at')
+        .eq('invoice_id', invoice.id)
+        .order('added_at', { ascending: true });
+      if (dErr) throw dErr;
+      documents = docs || [];
+    } catch (e) {
+      if (!/does not exist|schema cache/i.test(e.message || '')) {
+        console.warn('[ap] invoice documents lookup failed:', e.message);
+      }
+    }
+
+    res.json({ invoice, lines: outLines, approvals: approvals || [], recurrence, policy, open_credits: openCredits, applied_credit: appliedCredit, statement, documents });
   } catch (err) {
     console.error('[ap] invoice detail failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
