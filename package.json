@@ -37,7 +37,8 @@
     "test:micr": "node scripts/check_micr_pitch.js",
     "test:tessa-reply": "node tests/test_tessa_reply_recipients.js",
     "test:tessa-board": "node tests/test_tessa_board_command.js",
-    "test:preview-gate": "node tests/test_checkout_preview_gate.js"
+    "test:preview-gate": "node tests/test_checkout_preview_gate.js",
+    "test:attachment-names": "node tests/test_attachment_names_intent.js"
   },
   "keywords": [],
   "author": "",
