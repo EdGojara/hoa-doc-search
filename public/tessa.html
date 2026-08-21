@@ -81,15 +81,27 @@ function showSignIn(){ $('body').innerHTML='<div class="soon"><b>Sign in to open
 function render(){
   $('body').innerHTML = `<div class="grid">
     <div>
+      <!-- Ask Tessa: one box. Ed says what he wants in his own words and she
+           works out who it goes to, reads the thread in his mailbox, and
+           comes back with a draft. (Ed 2026-08-21.) The form below is still
+           there for when he wants to drive it himself. -->
+      <div class="card" style="border:2px solid var(--gold,#D4AF37);">
+        <h2 style="margin-top:0;">Ask Tessa</h2>
+        <div class="note" style="margin-bottom:8px;">Say it the way you'd say it out loud. She'll work out who it goes to and pull up the thread.</div>
+        <textarea id="ask" rows="3" placeholder="e.g. Tessa please email the Canyon Gate board and ask if they want a follow-up virtual meeting with the security company, the one with Grant"></textarea>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn gold" id="askBtn" onclick="askTessa()">Do it</button>
+          <button class="btn ghost" id="askMicBtn" onclick="toggleMic('ask')">🎙 Dictate</button>
+          <span id="askMsg" class="note"></span>
+        </div>
+        <div id="askOut"></div>
+      </div>
       <div class="card">
         <h2>Draft an email</h2>
-        <div class="row" style="justify-content:space-between;">
-          <div class="modewrap">
-            <button id="m-ed" onclick="setMode('ed')">Send as me</button>
-            <button id="m-tessa" class="on" onclick="setMode('tessa')">Send as Tessa</button>
-          </div>
-          <span class="note" id="mode-note">Sent as Tessa, on your behalf.</span>
-        </div>
+        <!-- No "send as me" switch. Tessa always writes as herself and says Ed
+             asked her to, per his 2026-08-20 rule. The toggle used to sit here
+             offering a mode the server refuses. -->
+        <div class="note" style="margin-bottom:6px;">Goes out from Tessa, on your behalf.</div>
         <label>Pick a recipient <span class="note" style="font-weight:400;">(board member, staff, or AI teammate — or just type below)</span></label>
         <select id="rpick" onchange="pickRecipient()"><option value="">— loading directory&hellip; —</option></select>
         <label>Search my contacts <span class="note" style="font-weight:400;">(bank, attorney, insurance, vendor reps &mdash; e.g. &ldquo;Melody&rdquo; or &ldquo;New First&rdquo;)</span></label>
@@ -506,18 +518,12 @@ async function ibDismiss(id){
   await af('/api/tessa/inbox/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'dismissed'})});
   loadInbox();
 }
-function setMode(m){
-  _mode=m; $('m-ed').className=m==='ed'?'on':''; $('m-tessa').className=m==='tessa'?'on':'';
-  $('mode-note').textContent = 'Sent as Tessa, on your behalf. She says you asked her to write.';
-  const sb=$('sendBtn'); if(sb) sb.textContent='Send '+(m==='ed'?'as me':'as Tessa');
-  // If a draft is already on screen and it was written in a DIFFERENT voice,
-  // re-draft so the BODY matches who it's sent as — not just the signature.
-  // (Ed 2026-08-01: a send-as-Tessa email still signed "Ed".)
-  if(document.getElementById('d-body') && _draftMode && _draftMode!==m && $('thought') && $('thought').value.trim()){
-    if($('draftMsg')) $('draftMsg').textContent='Re-drafting in '+(m==='ed'?'your':'Tessa’s')+' voice…';
-    doDraft();
-  }
-}
+// setMode() lived here. It flipped between "send as Ed" and "send as Tessa"
+// and set className on #m-ed / #m-tessa. Both the buttons and the server-side
+// mode are gone (Ed 2026-08-20: she never signs as him), so the function was
+// left calling .className on null — the removing-a-DOM-element-without-
+// grepping-for-its-id scar. Deleted rather than guarded: a guarded no-op is
+// something a future caller re-enables by accident.
 
 async function doDraft(){
   const thought=$('thought').value.trim(); if(!thought) return;
@@ -542,20 +548,22 @@ function showEmailDraft(subject, body){
 
 // ---- Voice dictation --------------------------------------------------------
 let _rec=null, _chunks=[], _recording=false;
-async function toggleMic(){
+let _micMode='draft';   // 'draft' fills the thought box, 'ask' fills Ask Tessa
+async function toggleMic(mode){
+  _micMode = mode === 'ask' ? 'ask' : 'draft';
   if(_recording) return stopRec();
-  const btn=$('micBtn');
-  if(!navigator.mediaDevices || !window.MediaRecorder){ $('voiceMsg').innerHTML='<span class="err">This browser can’t record audio. Try Chrome or Edge.</span>'; return; }
+  const btn=$(_micMode==='ask'?'askMicBtn':'micBtn');
+  if(!navigator.mediaDevices || !window.MediaRecorder){ $(_micMode==='ask'?'askMsg':'voiceMsg').innerHTML='<span class="err">This browser can’t record audio. Try Chrome or Edge.</span>'; return; }
   try{
     const stream=await navigator.mediaDevices.getUserMedia({audio:true});
     _chunks=[]; _rec=new MediaRecorder(stream);
     _rec.ondataavailable=e=>{ if(e.data && e.data.size) _chunks.push(e.data); };
     _rec.onstop=async()=>{ stream.getTracks().forEach(t=>t.stop()); await sendVoice(); };
     _rec.start(); _recording=true;
-    btn.textContent='⏹ Stop'; btn.classList.add('gold'); $('voiceMsg').innerHTML='<span class="note">Listening… tap Stop when you’re done.</span>';
-  }catch(e){ $('voiceMsg').innerHTML='<span class="err">Microphone blocked. Allow mic access and try again.</span>'; }
+    btn.textContent='⏹ Stop'; btn.classList.add('gold'); $(_micMode==='ask'?'askMsg':'voiceMsg').innerHTML='<span class="note">Listening… tap Stop when you’re done.</span>';
+  }catch(e){ $(_micMode==='ask'?'askMsg':'voiceMsg').innerHTML='<span class="err">Microphone blocked. Allow mic access and try again.</span>'; }
 }
-function stopRec(){ if(_rec && _recording){ _recording=false; $('micBtn').textContent='🎙 Dictate'; $('micBtn').classList.remove('gold'); $('voiceMsg').innerHTML='<span class="note">Transcribing…</span>'; try{_rec.stop();}catch(_){} } }
+function stopRec(){ if(_rec && _recording){ _recording=false; $(_micMode==='ask'?'askMicBtn':'micBtn').textContent='🎙 Dictate'; $(_micMode==='ask'?'askMicBtn':'micBtn').classList.remove('gold'); $(_micMode==='ask'?'askMsg':'voiceMsg').innerHTML='<span class="note">Transcribing…</span>'; try{_rec.stop();}catch(_){} } }
 async function sendVoice(){
   try{
     const type=(_rec && _rec.mimeType)||'audio/webm';
@@ -563,8 +571,17 @@ async function sendVoice(){
     const fd=new FormData(); fd.append('audio', blob, 'dictation.webm');
     const r=await af('/api/tessa/voice',{method:'POST',body:fd});
     const j=await r.json(); if(!r.ok) throw new Error(j.error||'voice failed');
+    // Ask Tessa wants the words, not a drafted email. /voice also routes the
+    // dictation into a draft; in ask mode that work is thrown away and the
+    // request endpoint does the drafting instead, with recipients resolved.
+    if(_micMode==='ask'){
+      $('ask').value = j.transcript || '';
+      $('askMsg').innerHTML = j.transcript ? '<span class="note">Got it. Tap <b>Do it</b>.</span>' : '<span class="err">Didn’t catch that.</span>';
+      _micMode='draft';
+      return;
+    }
     if(j.transcript) $('thought').value=j.transcript;
-    $('voiceMsg').innerHTML = j.summary ? '<span class="ok">Heard: '+esc(j.summary)+'</span>' : (j.note?'<span class="note">'+esc(j.note)+'</span>':'');
+    $(_micMode==='ask'?'askMsg':'voiceMsg').innerHTML = j.summary ? '<span class="ok">Heard: '+esc(j.summary)+'</span>' : (j.note?'<span class="note">'+esc(j.note)+'</span>':'');
     if(j.email){
       // Stash the transcript as the "thought" so a send-as switch can re-draft,
       // and record the voice this dictation was written in. (Ed 2026-08-01.)
@@ -635,6 +652,118 @@ async function doSend(){
     $('sendMsg').innerHTML='<span class="ok">✅ Sent as Tessa.</span>';
     $('thought').value=''; $('to').value=''; $('rname').value=''; if($('rpick')) $('rpick').value=''; $('draftArea').innerHTML=''; if(j.followup_id) loadFu();
   }catch(e){ $('sendMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; btn.disabled=false; }
+}
+
+
+// ---- Ask Tessa --------------------------------------------------------------
+// One box. Ed says what he wants; the server resolves who it goes to, reads the
+// thread in his mailbox, and drafts. Nothing sends until he clicks Send.
+let _ask = null;   // the last response, so Send knows the resolved addresses
+
+async function askTessa(extra){
+  const base = $('ask').value.trim();
+  if(!base) return;
+  const text = extra ? (base + '. ' + extra) : base;
+  const btn = $('askBtn'); btn.disabled = true;
+  $('askMsg').innerHTML = '<span class="note">Working out who this goes to and pulling up the thread\u2026</span>';
+  try{
+    const r = await af('/api/tessa/request', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({request: text})});
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.detail || j.error || 'request failed');
+    _ask = j; $('askMsg').textContent = '';
+    renderAsk(j);
+  }catch(e){ $('askMsg').innerHTML = '<span class="err">'+esc(e.message)+'</span>'; }
+  finally{ btn.disabled = false; }
+}
+
+function renderAsk(j){
+  const to = j.to || [], cc = j.cc || [], q = j.questions || [];
+  let h = '<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px;">';
+
+  // Who it's going to. Named, always \u2014 a hidden recipient list is how the
+  // wrong people get emailed.
+  if(to.length){
+    h += '<div style="margin-bottom:10px;"><div class="note" style="font-weight:600;color:var(--ink);">Sending to</div>'
+       + to.map(function(p){ return '<div style="font-size:13px;">'+esc(p.name||'')+' <span class="note">&lt;'+esc(p.email||'')+'&gt;</span></div>'; }).join('')
+       + '</div>';
+  }
+  if(cc.length){
+    h += '<div style="margin-bottom:10px;"><div class="note" style="font-weight:600;color:var(--ink);">Copying</div>'
+       + cc.map(function(p){ return '<div style="font-size:13px;">'+esc(p.name||'')+' <span class="note">&lt;'+esc(p.email||'')+'&gt;</span></div>'; }).join('')
+       + '</div>';
+  }
+
+  // Who the email is ABOUT, and why she picked them. Ed 2026-08-21: she works
+  // this out from correspondence, so she shows her evidence and offers the
+  // alternative rather than quietly choosing.
+  (j.mentions||[]).forEach(function(m){
+    h += '<div style="margin-bottom:10px;padding:8px 10px;background:#fbfcfe;border:1px solid var(--line);border-radius:8px;">'
+       + '<div style="font-size:13px;font-weight:600;color:var(--ink);">About: '+esc(m.name||'')+'</div>';
+    if(m.evidence) h += '<div class="note">'+esc(m.evidence)+'</div>';
+    (m.alternates||[]).forEach(function(a){
+      var first = String(a.name||'').split(' ')[0];
+      h += '<div class="note" style="margin-top:4px;">Also there: '+esc(a.name)+' &middot; '+esc(a.note)
+         + ' <a href="#" onclick="askTessa(\'Use '+esc(a.name)+' at that company, not '+esc(m.name||'')+'\');return false;" style="color:var(--navy);font-weight:600;">use '+esc(first)+' instead</a></div>';
+    });
+    h += '</div>';
+  });
+
+  // What she read. Shows the work, and makes a bad context obvious at a glance.
+  if((j.context||[]).length){
+    h += '<details style="margin-bottom:10px;"><summary class="note" style="cursor:pointer;">She read '+j.context.length+' thread'+(j.context.length>1?'s':'')+' in your mail</summary>'
+       + j.context.map(function(c){ return '<div class="note" style="margin-top:4px;">'+esc(String(c.received||'').slice(0,10))+' &middot; '+esc(c.subject||'')+(c.from?' &middot; '+esc(c.from):'')+'</div>'; }).join('')
+       + '</details>';
+  }
+  if((j.context_errors||[]).length){
+    var boxes = j.context_errors.map(function(e){ return e.mailbox; }).filter(function(v,i,a){ return a.indexOf(v)===i; });
+    h += '<div class="note" style="color:#b91c1c;">Couldn\u2019t search: '+esc(boxes.join(', '))+'</div>';
+  }
+
+  // Anything she couldn't work out. She asks instead of guessing an address.
+  if(q.length){
+    h += '<div style="margin-bottom:10px;padding:9px 11px;background:#fff8e6;border:1px solid #e6d08a;border-radius:8px;">'
+       + q.map(function(x){ return '<div style="font-size:13px;color:var(--ink);">'+esc(x.ask)+'</div>'
+         + (x.options&&x.options.length ? '<div class="note">'+x.options.map(esc).join('<br>')+'</div>' : ''); }).join('')
+       + '<div class="note" style="margin-top:6px;">Add the answer to your request above and tap Do it again.</div></div>';
+  }
+
+  if(j.draft){
+    h += '<label>Subject</label><input id="a-subj" value="'+esc(j.draft.subject||'')+'">'
+       + '<label>Body</label><textarea id="a-body" rows="10">'+esc(j.draft.body||'')+'</textarea>'
+       + '<label style="display:flex;gap:7px;align-items:center;font-weight:400;color:var(--ink);margin-top:10px;"><input type="checkbox" id="a-fu" checked> Track a follow-up on this</label>'
+       + '<div class="row" style="margin-top:10px;">'
+       + '<button class="btn gold" id="aSendBtn" onclick="askSend()"'+(to.length?'':' disabled')+'>Send from Tessa</button>'
+       + '<span id="aSendMsg" class="result"></span></div>';
+    if(j.wants_meeting){
+      h += '<div class="note" style="margin-top:8px;">You mentioned a meeting. Send this first, then book it once they say yes \u2014 she won\u2019t put an invite in a board member\u2019s calendar before they have agreed.</div>';
+    }
+  } else if(!q.length){
+    h += '<div class="note">No draft \u2014 she couldn\u2019t work out who this goes to.</div>';
+  }
+  h += '</div>';
+  $('askOut').innerHTML = h;
+}
+
+async function askSend(){
+  if(!_ask || !(_ask.to||[]).length) return;
+  const btn = $('aSendBtn'); btn.disabled = true; $('aSendMsg').textContent = 'Sending\u2026';
+  try{
+    const r = await af('/api/tessa/send', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+      to: _ask.to.map(function(p){ return p.email; }).join(', '),
+      cc: (_ask.cc||[]).map(function(p){ return p.email; }).join(', '),
+      subject: $('a-subj').value,
+      body: $('a-body').value,
+      create_followup: $('a-fu').checked,
+      followup_title: 'Follow up: ' + $('a-subj').value,
+      followup_detail: _ask.request || null,
+    })});
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error || 'send failed');
+    $('aSendMsg').innerHTML = '<span class="ok">\u2705 Sent to '+_ask.to.length+' recipient'+(_ask.to.length>1?'s':'')+'.</span>';
+    $('ask').value = ''; _ask = null;
+    setTimeout(function(){ $('askOut').innerHTML=''; }, 4000);
+    if(j.followup_id) loadFu();
+  }catch(e){ $('aSendMsg').innerHTML = '<span class="err">'+esc(e.message)+'</span>'; btn.disabled = false; }
 }
 
 function toggleAddFu(){ const a=$('fuAdd'); a.style.display=a.style.display==='none'?'block':'none'; }

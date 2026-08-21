@@ -579,7 +579,7 @@
 <div id="managerBanner" style="display:none; position:fixed; top:0; left:0; right:0; background:#0B1D34; color:#fff; padding:8px 16px; z-index:1000; align-items:center; justify-content:space-between; gap:12px; box-shadow:0 2px 8px rgba(0,0,0,0.25); font-family:Inter,-apple-system,sans-serif; font-size:13px; font-weight:600;">
   <div>🏢 <strong>MANAGER VIEW</strong> · <span id="mgrBannerAddress">—</span> · <span id="mgrBannerEmail" style="opacity:0.75; font-weight:400;">—</span></div>
   <div style="display:flex; gap:10px; align-items:center;">
-    <button onclick="window.location.href='/portal'" style="background:#D4AF37; color:#0B1D34; border:0; border-radius:6px; padding:5px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">← Switch property</button>
+    <button onclick="switchProperty()" style="background:#D4AF37; color:#0B1D34; border:0; border-radius:6px; padding:5px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">← Switch property</button>
   </div>
 </div>
 
@@ -1064,6 +1064,23 @@ function clearStoredPropertyId() {
   try { sessionStorage.removeItem(SS_PROPERTY_KEY); } catch (_) {}
 }
 
+// Leave the property being viewed and go back to the picker.
+//
+// The manager banner navigated to /portal WITHOUT clearing the stored
+// property, so the page reloaded and restored the same one. The button looked
+// dead because nothing visibly changed.
+//
+// One function now, so the banner and the header chip cannot drift apart
+// again. Two buttons with the same label doing different things is how this
+// happened in the first place.
+function switchProperty() {
+  clearStoredPropertyId();
+  // Keep the query string. A manager may be several screens deep so an
+  // explicit path is right, but dropping ?demo=1 would silently kick a demo
+  // session out of the demo community mid-walkthrough.
+  window.location.href = '/portal' + (window.location.search || '');
+}
+
 function applyDemoBanner(ctx) {
   const banner = document.getElementById('demoBanner');
   if (!banner) return;
@@ -1330,9 +1347,9 @@ function renderPortal(ctx) {
   switchEl.title = 'Pick a different property to view';
   switchEl.addEventListener('click', (e) => {
     e.preventDefault();
-    clearStoredPropertyId();
-    // Reload to fetch /me without property_id — picker will show
-    window.location.reload();
+    // Same path as the manager banner. Two buttons with this label doing two
+    // different things is exactly how the banner one ended up broken.
+    switchProperty();
   });
   const tourEl = document.createElement('button');
   tourEl.id = 'tourBtn';

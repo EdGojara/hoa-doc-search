@@ -208,6 +208,52 @@ router.post('/draft', express.json({ limit: '32kb' }), async (req, res) => {
   }
 });
 
+// POST /request — the one box. Ed says what he wants; Tessa works out who,
+// looks the thread up in his own mailbox, and comes back with a draft.
+//
+// Ed 2026-08-21: "tessa please send email to canyon gate board and ask if they
+// want us to set up a follow up virtual meeting with security company the one
+// with Grant as the contact."
+//
+// NOTHING IS SENT HERE. This returns a draft plus the resolved recipients and
+// any questions she has. Ed reviews, then POSTs /send. Booking a meeting is a
+// separate deliberate call to /meeting for the same reason: both put mail in
+// real board members' inboxes, so Ed clicking IS the approval.
+router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const text = String((req.body || {}).request || '').trim();
+    if (!text) return res.status(400).json({ error: 'request_required', detail: 'Tell Tessa what you need.' });
+
+    const { runRequest } = require('../lib/ea/tessa_request');
+    const { searchMailbox } = require('../lib/email/graph_search');
+    // Ed's own mailbox first (his inbox AND sent items — Graph /messages spans
+    // both), then Tessa's, which holds anything he forwarded her.
+    const mailboxes = graphSend.isConfigured()
+      ? [graphSend.ED_MAILBOX, graphSend.TESSA_MAILBOX].filter(Boolean)
+      : [];
+
+    const out = await runRequest(text, { resolveRecipient, searchMailbox, mailboxes });
+    if (out.degraded) return res.status(503).json({ error: 'Tessa could not work that one out. Try saying it a different way.' });
+
+    res.json({
+      ok: true,
+      request: text,
+      instruction: out.parsed.instruction,
+      to: out.to, cc: out.cc, mentions: out.mentions,
+      questions: out.questions,
+      draft: out.draft,
+      context: out.context,
+      context_errors: out.context_errors,
+      wants_meeting: out.wants_meeting,
+      resolved: out.resolved,
+    });
+  } catch (err) {
+    console.error('[tessa] request failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /send — send the approved draft, as Ed (ghostwrite) or as Tessa.
 router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
   const admin = await requireOwner(req, res); if (!admin) return;
@@ -227,16 +273,16 @@ router.post('/send', express.json({ limit: '64kb' }), async (req, res) => {
     if (asEd) {
       html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1a2230;">${body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
     } else {
-      // The thread goes out with the reply. Without it the recipient gets a
-      // sentence with no context, which is both unhelpful and the clearest
-      // tell that nobody read what they wrote.
-      const quoted = quotedOriginal({
-        fromName: item.from_name, fromEmail: item.from_email,
-        sentAt: item.received_at, to: 'Tessa McCall',
-        subject: item.subject,
-        bodyText: item.body_full || item.body_preview,
-      });
-      ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(body, null, quoted));
+      // A NEW email has no original to quote. The reply path
+      // (/inbox/:id/send) quotes the incoming thread; this one composes from
+      // scratch, so there is nothing to attach.
+      //
+      // SCAR: this handler carried a copy of the reply path's quoting block,
+      // which referenced `item` — a variable that only exists in the reply
+      // handler. asEd is always false so the else branch ALWAYS ran, meaning
+      // every send threw ReferenceError and returned a generic 500. The Send
+      // button looked like it simply did nothing. (Found 2026-08-21.)
+      ({ html, attachments } = require('../lib/email/tessa_signature').buildTessaEmail(body, null, null));
     }
     await graphSend.sendAs({ from, to, cc, subject, html, attachments });
 

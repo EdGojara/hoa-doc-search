@@ -29,7 +29,8 @@
     "test:roster": "node tests/test_team_roster.js",
     "test:claire-scope": "node tests/test_claire_scope.js",
     "test:directives": "node tests/test_staff_directives.js",
-    "test:amanda-review": "node tests/test_amanda_review.js"
+    "test:amanda-review": "node tests/test_amanda_review.js",
+    "test:tessa-request": "node tests/test_tessa_request.js"
   },
   "keywords": [],
   "author": "",
