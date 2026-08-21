@@ -579,8 +579,23 @@
 <div id="managerBanner" style="display:none; position:fixed; top:0; left:0; right:0; background:#0B1D34; color:#fff; padding:8px 16px; z-index:1000; align-items:center; justify-content:space-between; gap:12px; box-shadow:0 2px 8px rgba(0,0,0,0.25); font-family:Inter,-apple-system,sans-serif; font-size:13px; font-weight:600;">
   <div>🏢 <strong>MANAGER VIEW</strong> · <span id="mgrBannerAddress">—</span> · <span id="mgrBannerEmail" style="opacity:0.75; font-weight:400;">—</span></div>
   <div style="display:flex; gap:10px; align-items:center;">
+    <button id="presentBtn" onclick="togglePresentation()" title="Hide homeowner names, emails, phones and balances" style="background:#fff; color:#0B1D34; border:0; border-radius:6px; padding:5px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">Privacy: off</button>
     <button onclick="switchProperty()" style="background:#D4AF37; color:#0B1D34; border:0; border-radius:6px; padding:5px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">← Switch property</button>
   </div>
+</div>
+
+<!-- Presentation mode. Ed 2026-08-21: "i need to be able to maintain privacy
+     for the homeowners if we go that route" — the route being demoing on a
+     REAL community (Waterview) rather than the fictional one, whose map cannot
+     honestly be shown at all.
+
+     Masking happens SERVER SIDE, so this bar is an indicator and not the
+     control. Worth knowing while presenting: if a real homeowner name is on
+     screen, the mode is off, whatever this bar says. The masking is its own
+     proof. -->
+<div id="presentBanner" style="display:none; position:fixed; top:0; left:0; right:0; background:#166534; color:#fff; padding:7px 16px; z-index:1001; align-items:center; justify-content:space-between; gap:12px; font-family:Inter,-apple-system,sans-serif; font-size:12.5px; font-weight:600;">
+  <div>🔒 <strong>PRIVACY MODE</strong> · homeowner names, emails, phones and balances are hidden</div>
+  <button onclick="togglePresentation(false)" style="background:#fff; color:#166534; border:0; border-radius:6px; padding:4px 11px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">Turn off</button>
 </div>
 
 <!-- Demo community banner — visible ONLY when /me returns
@@ -1073,6 +1088,43 @@ function clearStoredPropertyId() {
 // One function now, so the banner and the header chip cannot drift apart
 // again. Two buttons with the same label doing different things is how this
 // happened in the first place.
+// Presentation (privacy) mode. Server-side masking of homeowner identity and
+// per-account balances, so a real community can be demoed without putting a
+// named person and their money on a shared screen.
+//
+// The state lives in a 2-hour cookie set by the server, NOT in this page: the
+// portal is 29 pages and threading a query param through every fetch in all of
+// them is how one gets missed. The cookie rides along automatically.
+async function refreshPresentation(){
+  try{
+    const r = await fetch('/api/portal/presentation', { credentials: 'same-origin' });
+    const j = await r.json();
+    const btn = document.getElementById('presentBtn');
+    const banner = document.getElementById('presentBanner');
+    if(!j.staff){ if(btn) btn.style.display = 'none'; return; }
+    if(btn){ btn.style.display=''; btn.textContent = j.presentation ? 'Privacy: ON' : 'Privacy: off'; }
+    if(banner) banner.style.display = j.presentation ? 'flex' : 'none';
+  }catch(_){ /* the banner is an indicator; a failed check must not block the page */ }
+}
+
+async function togglePresentation(force){
+  const btn = document.getElementById('presentBtn');
+  const turningOn = typeof force === 'boolean' ? force : !(btn && /ON/.test(btn.textContent));
+  try{
+    const r = await fetch('/api/portal/presentation', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ on: turningOn }),
+    });
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.message || j.error || 'could not change privacy mode');
+    // Reload so every already-rendered value comes back through the mask.
+    // Flipping the flag without re-fetching would leave real names on screen
+    // under a banner that says they are hidden, which is worse than no banner.
+    window.location.reload();
+  }catch(e){ alert(e.message); }
+}
+
 function switchProperty() {
   clearStoredPropertyId();
   // Keep the query string. A manager may be several screens deep so an
@@ -1099,6 +1151,10 @@ function applyDemoBanner(ctx) {
 // a specific property (not the picker). The picker handles its own header
 // so we only show the banner on the homeowner-view portion.
 function applyManagerBanner(ctx) {
+  // Ask the server whether privacy mode is on, and show the bar if so. Fired
+  // from here because this already runs on every portal render and knows the
+  // manager case; a separate boot hook would be a second thing to keep in sync.
+  if (typeof refreshPresentation === 'function') refreshPresentation();
   const banner = document.getElementById('managerBanner');
   if (!banner) return;
   const isManagerViewing = (ctx?.user?.role === 'manager' || ctx?.manager_mode?.active)

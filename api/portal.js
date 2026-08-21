@@ -1006,6 +1006,49 @@ router.post('/staff-enter', async (req, res) => {
 // on the manager portal landing. Search by address, owner name, or
 // vantaca_account_id. Limited to the manager's community scope.
 // ============================================================================
+// ----------------------------------------------------------------------------
+// Presentation mode on/off. Staff only.
+//
+// Sets a cookie rather than asking 29 portal pages to thread a query param
+// through every fetch they make. The cookie rides along on every request to
+// this router automatically, so the mask covers pages nobody remembered to
+// update — which is the whole point of putting it at the router.
+//
+// Two hours, then it lapses on its own. An operator who forgets to turn it off
+// should not still be masked next week wondering why balances read "—".
+// ----------------------------------------------------------------------------
+router.post('/presentation', express.json({ limit: '1kb' }), async (req, res) => {
+  const resolved = await resolveUserWithRole(req, res);
+  if (!resolved) return;
+  if (resolved.user.role !== 'manager') {
+    return res.status(403).json({ error: 'staff_only', message: 'Presentation mode is for Bedrock staff.' });
+  }
+  const on = (req.body || {}).on !== false;
+  const { COOKIE_NAME } = require('./_presentation_mode');
+  const secure = process.env.NODE_ENV === 'production' ? ' Secure;' : '';
+  res.setHeader('Set-Cookie', on
+    ? `${COOKIE_NAME}=1; Path=/; HttpOnly; SameSite=Lax;${secure} Max-Age=7200`
+    : `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax;${secure} Max-Age=0`);
+  await logAudit(on ? 'presentation_mode_on' : 'presentation_mode_off', {
+    portal_user_id: resolved.user.id, performed_by: resolved.user.email,
+  }).catch(() => {});
+  res.json({
+    ok: true, presentation: on,
+    message: on
+      ? 'Presentation mode is ON. Homeowner names, emails, phones and balances are hidden for the next 2 hours.'
+      : 'Presentation mode is OFF. Real homeowner data is showing again.',
+  });
+});
+
+// GET /presentation — what state am I in? Used by the banner.
+router.get('/presentation', async (req, res) => {
+  const { requestedMode } = require('./_presentation_mode');
+  const resolved = await resolveUserWithRole(req, null);
+  const role = resolved && resolved.user ? resolved.user.role : null;
+  const mode = requestedMode(req);
+  res.json({ presentation: !!(mode && role === 'manager'), mode, staff: role === 'manager' });
+});
+
 router.get('/manager/properties', async (req, res) => {
   try {
     const { portalUserId } = resolvePortalUser(req);

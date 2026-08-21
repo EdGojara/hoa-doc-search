@@ -79,6 +79,7 @@ const CHECKS = [
   'tests/test_reply_includes_history.js',
   'tests/test_tessa_voice.js',
   'tests/test_tessa_request.js',
+  'tests/test_presentation_mode.js',
   'tests/test_balance_asof.js',
   'tests/test_amanda_review.js',
   'tests/test_staff_directives.js',
