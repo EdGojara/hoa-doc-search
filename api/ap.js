@@ -388,10 +388,38 @@ router.post('/invoices/:id/attach-pdf', upload.single('pdf'), async (req, res) =
       .eq('id', id).maybeSingle();
     if (!inv) return res.status(404).json({ error: 'not_found' });
     if (inv.status === 'voided') return res.status(400).json({ error: 'voided' });
-    if (inv.posting_journal_entry_id) {
+
+    // Attaching the DOCUMENT and re-running the CODING are two different things,
+    // and treating them as one locked the invoice out of every posted bill.
+    //
+    // Ed 2026-08-21, on the Barker Cypress M.U.D. bill: "you can see pdf invoice
+    // if its there but if not we may need to upload sometime." That bill shows
+    // "JE: ✓ Posted", so posting_journal_entry_id is set, so this handler 409'd
+    // and the UI hid the upload button entirely. All he saw was "No source PDF
+    // on file" and no way to fix it.
+    //
+    // The 409 is right about re-extraction: replacing the lines of a bill whose
+    // accrual is on the books desyncs the ledger. It is wrong about the file.
+    // A posted bill needs its supporting document MORE than an unposted one —
+    // that is the evidence behind a journal entry that already exists, and an
+    // auditor asking "what is this $470.25" is the whole reason to keep it.
+    //
+    // document_only stores and links the PDF and touches nothing else: no
+    // extraction, no lines, no coding, no re-post. The ledger cannot move.
+    const documentOnly = req.body?.document_only === 'true' || req.body?.document_only === true;
+    if (inv.posting_journal_entry_id && !documentOnly) {
       return res.status(409).json({
         error: 'already_posted',
         detail: 'This bill\'s accrual is already on the books. Re-attaching and replacing its lines would desync the ledger — change the coding from the invoice detail instead.',
+      });
+    }
+    // Never overwrite a document that is already there. Swapping the evidence
+    // under a posted entry is exactly the kind of silent rewrite that makes a
+    // record untrustworthy; append, never edit.
+    if (inv.source_storage_path) {
+      return res.status(409).json({
+        error: 'already_has_document',
+        detail: 'This bill already has an invoice on file. Open it with "View original PDF" — replacing it would rewrite the evidence behind a posted entry.',
       });
     }
 
@@ -407,6 +435,57 @@ router.post('/invoices/:id/attach-pdf', upload.single('pdf'), async (req, res) =
         contentType: 'application/pdf', upsert: false,
       });
     } catch (_) { /* non-fatal — may already exist */ }
+
+    // DOCUMENT ONLY — file it against the bill and stop.
+    //
+    // No extraction, no lines, no coding, no posting. The bill's numbers are
+    // whatever they already were; all that changes is that the evidence behind
+    // them now exists. This is the path a posted bill takes, and it is the only
+    // path that can run against one.
+    //
+    // Also warns when this exact file is already on ANOTHER bill: identical
+    // bytes on two payables is how the same invoice gets paid twice, and the
+    // moment somebody is attaching it by hand is the moment to say so. It warns
+    // rather than refuses — a vendor really can send one PDF covering two bills,
+    // and a person looking at both can tell.
+    if (documentOnly) {
+      const commMgmt = inv.communities ? inv.communities.management_company_id : null;
+      const { data: libDoc, error: libErr } = await supabase.from('library_documents').insert({
+        management_company_id: commMgmt,
+        community_id: inv.community_id,
+        category: 'vendor_invoice',
+        title: `AP Invoice — ${(inv.vendors && inv.vendors.name) || ''} #${inv.vendor_invoice_number || ''}`.trim(),
+        file_name_original: req.file.originalname || null,
+        file_path: storagePath,
+        file_hash: sha,
+        file_size_bytes: req.file.size,
+        created_by_mgmt_company: 'Bedrock',
+      }).select('id').single();
+      if (libErr) console.warn('[ap] attach-pdf (document only) library_documents insert failed:', libErr.message);
+
+      const { error: upErr } = await supabase.from('ap_invoices').update({
+        source_storage_path: storagePath,
+        source_filename: req.file.originalname || null,
+        source_document_id: libDoc?.id || null,
+        file_sha256: sha,
+      }).eq('id', id);
+      if (upErr) return res.status(500).json({ error: 'attach_failed', detail: safeErrorMessage(upErr) });
+
+      let duplicateOf = null;
+      try {
+        const { data: same } = await supabase.from('ap_invoices')
+          .select('id, vendor_invoice_number, total_cents, status, vendors(name)')
+          .eq('file_sha256', sha).neq('id', id).limit(3);
+        if (same && same.length) duplicateOf = same;
+      } catch (_) { /* the warning is a bonus, never a blocker */ }
+
+      console.log(`[ap] invoice document attached to posted bill ${id} (${sha.slice(0, 12)})`);
+      return res.json({
+        ok: true, document_only: true, posted: !!inv.posting_journal_entry_id,
+        storage_path: storagePath,
+        duplicate_of: duplicateOf,
+      });
+    }
 
     // 2. Extract via Claude
     const extracted = await extractInvoice(fileBuffer);
