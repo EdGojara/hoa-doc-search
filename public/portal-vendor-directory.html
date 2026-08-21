@@ -154,6 +154,13 @@
       <a href="/portal/vendor-feedback" class="share-btn">+ Share a vendor experience</a>
     </div>
 
+    <div style="margin:0 0 12px;">
+      <input type="search" id="vendorSearch" placeholder="Search a vendor, a job, a price&hellip;"
+             oninput="applySearch()" autocomplete="off"
+             style="width:100%;padding:11px 14px;border:1px solid #cbd5e1;border-radius:9px;
+                    font-size:15px;font-family:inherit;color:#0B1D34;background:#fff;">
+      <div id="searchNote" style="font-size:12.5px;color:#94a3b8;margin-top:6px;"></div>
+    </div>
     <div class="chips" id="chipsRow"><div class="loading" style="padding:8px;">Loading categories…</div></div>
 
     <div id="vendorList"></div>
@@ -216,6 +223,37 @@
     // ----------------------------------------------------------------------
     // Render
     // ----------------------------------------------------------------------
+    // Search over what is already on screen. Matches the vendor, the category,
+    // and the free-text project description, because "fence" and "hail" and
+    // "Carlos" are all things a neighbour actually types.
+    function applySearch() {
+      const box = document.getElementById('vendorSearch');
+      const q = ((box && box.value) || '').trim().toLowerCase();
+      const note = document.getElementById('searchNote');
+      const cards = Array.from(document.querySelectorAll('[data-vendor-card]'));
+      if (!cards.length) return;
+      if (!q) {
+        cards.forEach((c) => { c.style.display = ''; });
+        if (note) note.textContent = '';
+        return;
+      }
+      // Every word has to appear somewhere, so "carlos fence" narrows rather
+      // than widening the way an OR match would.
+      const words = q.split(/\s+/).filter(Boolean);
+      let shown = 0;
+      for (const c of cards) {
+        const hay = (c.getAttribute('data-search') || '').toLowerCase();
+        const hit = words.every((w) => hay.includes(w));
+        c.style.display = hit ? '' : 'none';
+        if (hit) shown++;
+      }
+      if (note) {
+        note.textContent = shown
+          ? shown + ' of ' + cards.length + ' vendors'
+          : 'No vendor matches "' + q + '". Try a trade, a job, or a name.';
+      }
+    }
+
     function renderChips() {
       const total = state.categories.reduce((sum, c) => sum + (c.n_submissions || 0), 0);
       const allChip = '<button class="chip ' + (state.activeCategory === null ? 'active' : '') + '" onclick="loadFeed(null)">All <span class="n">' + total + '</span></button>';
@@ -259,7 +297,11 @@
                     (v.category && v.category.id ? '&category_id=' + encodeURIComponent(v.category.id) : '');
         const recent = v.most_recent_at ? friendlyDate(v.most_recent_at) : '';
         return `
-          <a class="vendor-card" href="${url}">
+          <!-- data-search carries everything a neighbour might type: the
+               company, the trade, and the free-text job description. Built
+               once here so the filter never has to walk the DOM for text. -->
+          <a class="vendor-card" href="${url}" data-vendor-card
+             data-search="${escapeHtml([v.vendor_name, v.category ? v.category.label : '', v.most_recent_project_type || ''].filter(Boolean).join(' '))}">
             <div class="head">
               <div>
                 <div class="name">${escapeHtml(v.vendor_name)}</div>
