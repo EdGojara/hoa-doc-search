@@ -154,6 +154,28 @@
             <input type="text" id="project_type" maxlength="500" placeholder="e.g. Repainted exterior trim and front door">
             <div class="field-hint">Be specific — helps neighbors compare apples to apples.</div>
           </div>
+
+          <!-- How to reach them. The directory used to collect who was hired,
+               what it cost and whether they'd hire again, and no way to contact
+               them, which left a neighbor to go and find the vendor themselves.
+               All optional: a job from eight months ago may not come with the
+               number to hand, and a required field there costs the whole
+               submission. (Ed 2026-08-20.) -->
+          <div class="field">
+            <label>Contact name <span style="color:var(--ink-faint); font-weight:500; text-transform:none;">(optional)</span></label>
+            <input type="text" id="vendor_contact_name" maxlength="120" placeholder="e.g. Carlos Mendez">
+            <div class="field-hint">The person you actually dealt with, if it wasn't just a main line.</div>
+          </div>
+          <div class="field">
+            <label>Phone <span style="color:var(--ink-faint); font-weight:500; text-transform:none;">(optional)</span></label>
+            <input type="tel" id="vendor_phone" maxlength="40" placeholder="e.g. (281) 555-0142">
+            <div class="field-hint">The number that actually reached them.</div>
+          </div>
+          <div class="field">
+            <label>Email <span style="color:var(--ink-faint); font-weight:500; text-transform:none;">(optional)</span></label>
+            <input type="email" id="vendor_email" maxlength="200" placeholder="e.g. carlos@carlospainting.com">
+            <div class="field-hint">These are the vendor's business details and are shown to your neighbors. Never your own.</div>
+          </div>
         </div>
 
         <div class="card">
@@ -165,8 +187,8 @@
           </div>
           <div class="field-row">
             <div class="field">
-              <label>Completed month <span style="color:var(--ink-faint); font-weight:500; text-transform:none;">(optional)</span></label>
-              <select id="completed_month">
+              <label>Completed month <span class="req">*</span></label>
+              <select id="completed_month" required>
                 <option value="">—</option>
                 <option value="1">January</option>
                 <option value="2">February</option>
@@ -183,8 +205,9 @@
               </select>
             </div>
             <div class="field">
-              <label>Completed year <span style="color:var(--ink-faint); font-weight:500; text-transform:none;">(optional)</span></label>
-              <input type="number" id="completed_year" min="2020" max="2050" placeholder="e.g. 2026">
+              <label>Completed year <span class="req">*</span></label>
+              <input type="number" id="completed_year" min="2020" max="2050" required placeholder="e.g. 2026">
+              <div class="field-hint">When the work finished. A price with no date is hard for a neighbor to use.</div>
             </div>
           </div>
         </div>
@@ -297,15 +320,23 @@
       if (!vendorName)    { status.textContent = 'Vendor name is required.';    status.className = 'status-line err'; return; }
       if (!categoryId)    { status.textContent = 'Pick a category.';            status.className = 'status-line err'; return; }
       if (!hireRaw)       { status.textContent = 'Would you hire them again?'; status.className = 'status-line err'; return; }
+      // Ed 2026-08-20: a submission with no date cannot be compared against
+      // anything, so this is required even though price is not.
+      const whenMonth = document.getElementById('completed_month').value;
+      const whenYear  = document.getElementById('completed_year').value;
+      if (!whenMonth || !whenYear) { status.textContent = 'When was the work completed? Month and year are required.'; status.className = 'status-line err'; return; }
 
       const body = {
         vendor_name: vendorName,
         vendor_category_id: categoryId,
         would_hire_again: hireRaw.value === 'true',
         project_type:     document.getElementById('project_type').value.trim() || null,
+        vendor_contact_name: document.getElementById('vendor_contact_name').value.trim() || null,
+        vendor_phone:        document.getElementById('vendor_phone').value.trim() || null,
+        vendor_email:        document.getElementById('vendor_email').value.trim() || null,
         price_paid_dollars: document.getElementById('price_paid_dollars').value || null,
-        completed_month:    document.getElementById('completed_month').value || null,
-        completed_year:     document.getElementById('completed_year').value || null,
+        completed_month:    whenMonth,
+        completed_year:     whenYear,
         did_well:         document.getElementById('did_well').value.trim() || null,
         could_improve:    document.getElementById('could_improve').value.trim() || null,
       };

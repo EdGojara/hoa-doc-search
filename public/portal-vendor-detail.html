@@ -156,6 +156,17 @@
       display: inline-block;
     }
     .share-btn:hover { background: var(--navy-soft); }
+    .contact-card {
+      background: #fff; border: 1px solid var(--rule); border-radius: 10px;
+      padding: 14px 16px; margin-bottom: 18px;
+    }
+    .contact-line { font-size: 14px; color: var(--ink); margin-bottom: 6px; }
+    .contact-line a { color: var(--navy); }
+    .contact-label {
+      display: inline-block; min-width: 62px; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-faint);
+    }
+    .contact-note { font-size: 12px; color: var(--ink-faint); margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -217,6 +228,24 @@
           ? (pct === 100 ? '1 of 1 neighbor would hire again' : '1 of 1 would not hire again')
           : (pct + '% of ' + submissionCount + ' neighbors would hire again'));
 
+      // How to reach them. The whole point of a neighbour recommending a
+      // vendor is being able to call them, and the directory collected
+      // everything except that. Phone and email are click-to-use on a phone,
+      // which is where most homeowners read this.
+      const c = v.contact || {};
+      let contactHtml = '';
+      if (c.name || c.phone || c.email) {
+        const bits = [];
+        if (c.name)  bits.push(`<div class="contact-line"><span class="contact-label">Ask for</span> ${escapeHtml(c.name)}</div>`);
+        if (c.phone) bits.push(`<div class="contact-line"><span class="contact-label">Phone</span> <a href="tel:${encodeURIComponent(c.phone)}">${escapeHtml(c.phone)}</a></div>`);
+        if (c.email) bits.push(`<div class="contact-line"><span class="contact-label">Email</span> <a href="mailto:${encodeURIComponent(c.email)}">${escapeHtml(c.email)}</a></div>`);
+        contactHtml = ```
+          <div class="section-title">Contact</div>
+          <div class="contact-card">${bits.join('')}
+            <div class="contact-note">Shared by a neighbor who hired them. Bedrock has not verified these details.</div>
+          </div>```;
+      }
+
       let pricingHtml = '';
       if (v.pricing && v.pricing.show) {
         pricingHtml = `
@@ -273,6 +302,7 @@
           <strong>Reminder.</strong> Bedrock doesn't accept money from vendors. We don't curate this list — all data below is submitted by your neighbors. Not BAM-endorsed.
         </div>
 
+        ${contactHtml}
         ${pricingHtml}
 
         <div class="section-title">All submissions (${submissionCount})</div>

@@ -3775,11 +3775,36 @@ router.post('/vendor-experiences', express.json({ limit: '32kb' }), async (req, 
       ? Number(body.completed_month) : null;
     const completed_year  = body.completed_year != null && body.completed_year !== ''
       ? Number(body.completed_year) : null;
+    // Required, unlike price. Without a date a submission cannot be compared
+    // to anything and the recency weighting has nothing to weigh. Enforced
+    // here as well as in the form, because the form is not a control.
+    // (Ed 2026-08-20.) The COLUMNS stay nullable: rows submitted before this
+    // have no date and a NOT NULL would have to invent one for them.
+    if (completed_month == null || completed_year == null) {
+      return res.status(400).json({ error: 'completed_date_required' });
+    }
     if (completed_month != null && !(completed_month >= 1 && completed_month <= 12)) {
       return res.status(400).json({ error: 'completed_month_invalid' });
     }
     if (completed_year != null && !(completed_year >= 2020 && completed_year <= 2050)) {
       return res.status(400).json({ error: 'completed_year_invalid' });
+    }
+
+    // How to reach them. All optional: a homeowner writing up a job from
+    // months ago may not have the number to hand, and a required field there
+    // costs us the whole submission. Stored as typed rather than normalised,
+    // because a mangled number is worse than an oddly formatted one.
+    const clean = (v, max) => {
+      const t = String(v == null ? '' : v).trim();
+      return t ? t.slice(0, max) : null;
+    };
+    const vendor_contact_name = clean(body.vendor_contact_name, 120);
+    const vendor_phone = clean(body.vendor_phone, 40);
+    const vendor_email = clean(body.vendor_email, 200);
+    // Shape check only. Rejecting a real address for looking unusual helps
+    // nobody, but a value with no @ is a typo the neighbour will never reach.
+    if (vendor_email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(vendor_email)) {
+      return res.status(400).json({ error: 'vendor_email_invalid' });
     }
 
     const { data: inserted, error: insErr } = await supabase
@@ -3797,6 +3822,9 @@ router.post('/vendor-experiences', express.json({ limit: '32kb' }), async (req, 
         could_improve,
         completed_month,
         completed_year,
+        vendor_contact_name,
+        vendor_phone,
+        vendor_email,
       })
       .select('id, vendor_name, submitted_at')
       .single();
@@ -3827,6 +3855,7 @@ router.get('/vendor-experiences/mine', async (req, res) => {
       .select(`
         id, vendor_name, project_type, price_paid_cents, would_hire_again,
         did_well, could_improve, completed_month, completed_year, submitted_at,
+        vendor_contact_name, vendor_phone, vendor_email,
         vendor_categories:vendor_category_id (slug, label)
       `)
       .eq('portal_user_id', user.id)
@@ -3916,6 +3945,17 @@ function _aggregateVendorCards(rows, opts = {}) {
         });
       }
     }
+    // How to reach them. Several neighbours submitting the same company will
+    // not all fill these in, and the newest number is the one most likely to
+    // still work, so each field is taken from the most recent submission that
+    // actually has it rather than from one row. (Ed 2026-08-20.)
+    const newestFirst = g.submissions.slice()
+      .sort((a, b) => String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')));
+    const firstWith = (field) => {
+      const hit = newestFirst.find((s) => s[field] && String(s[field]).trim());
+      return hit ? String(hit[field]).trim() : null;
+    };
+
     cards.push({
       vendor_name: g.vendor_name,
       category:    g.category,
@@ -3923,6 +3963,11 @@ function _aggregateVendorCards(rows, opts = {}) {
       pct_would_hire_again: pctWouldHire,
       most_recent_at: mostRecent.submitted_at,
       most_recent_project_type: mostRecent.project_type || null,
+      contact: {
+        name:  firstWith('vendor_contact_name'),
+        phone: firstWith('vendor_phone'),
+        email: firstWith('vendor_email'),
+      },
       pricing_summary,
       submissions: g.submissions,
     });
@@ -3947,6 +3992,7 @@ router.get('/vendor-directory/feed', async (req, res) => {
       .select(`
         id, vendor_name, project_type, price_paid_cents, would_hire_again,
         did_well, could_improve, completed_month, completed_year, submitted_at,
+        vendor_contact_name, vendor_phone, vendor_email,
         vendor_category_id, vendor_categories:vendor_category_id (id, slug, label)
       `)
       .eq('community_id', scoped.property.community_id)
@@ -4038,6 +4084,7 @@ router.get('/vendor-directory/vendor', async (req, res) => {
       .select(`
         id, vendor_name, project_type, price_paid_cents, would_hire_again,
         did_well, could_improve, completed_month, completed_year, submitted_at,
+        vendor_contact_name, vendor_phone, vendor_email,
         vendor_categories:vendor_category_id (id, slug, label)
       `)
       .eq('community_id', scoped.property.community_id)
