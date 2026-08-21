@@ -151,7 +151,7 @@
 
     <div class="share-row">
       <div class="lhs">Used a vendor recently? Help your neighbors out.</div>
-      <a href="/portal/vendor-feedback" class="share-btn">+ Share a vendor experience</a>
+      <a href="/portal/vendor-feedback" class="share-btn">+ Add a vendor</a>
     </div>
 
     <div style="margin:0 0 12px;">
@@ -225,7 +225,7 @@
     // ----------------------------------------------------------------------
     // Search over what is already on screen. Matches the vendor, the category,
     // and the free-text project description, because "fence" and "hail" and
-    // "Carlos" are all things a neighbour actually types.
+    // "Carlos" are all things a neighbor actually types.
     function applySearch() {
       const box = document.getElementById('vendorSearch');
       const q = ((box && box.value) || '').trim().toLowerCase();
@@ -274,14 +274,23 @@
       if (state.vendors.length === 0) {
         list.innerHTML = `
           <div class="empty">
-            <h3>No vendor experiences yet</h3>
+            <h3>Nobody has added a vendor yet</h3>
             <p>
-              When your neighbors share who they hired and what they paid, those names show up here —
-              real prices, real reviews, no vendor fees, community-only.
+              This is where your neighbors tell you who they hired, what they paid,
+              and whether they would use them again. No vendor pays to be listed and
+              we never edit or remove a rating.
             </p>
-            <p style="font-weight:600; color: var(--ink);">Be the first to share.</p>
+            <!-- A specific question about something they already did beats a plea to
+                 go first. Almost everyone hired someone in the last year, and the
+                 answer takes thirty seconds. (Ed 2026-08-20.) -->
+            <p style="font-weight:600; color: var(--ink); margin-top:16px;">
+              Who mowed your lawn, fixed your AC, or painted your house this year?
+            </p>
+            <p style="font-size:13.5px; color:#94a3b8; margin-top:-4px;">
+              Add them and the next neighbor who needs one will know who to call.
+            </p>
             <div class="actions">
-              <a href="/portal/vendor-feedback" class="share-btn" style="display:inline-block;">+ Share a vendor experience</a>
+              <a href="/portal/vendor-feedback" class="share-btn" style="display:inline-block;">+ Add a vendor</a>
             </div>
           </div>
         `;
@@ -297,7 +306,7 @@
                     (v.category && v.category.id ? '&category_id=' + encodeURIComponent(v.category.id) : '');
         const recent = v.most_recent_at ? friendlyDate(v.most_recent_at) : '';
         return `
-          <!-- data-search carries everything a neighbour might type: the
+          <!-- data-search carries everything a neighbor might type: the
                company, the trade, and the free-text job description. Built
                once here so the filter never has to walk the DOM for text. -->
           <a class="vendor-card" href="${url}" data-vendor-card
