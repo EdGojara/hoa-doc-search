@@ -546,7 +546,26 @@ router.get('/inbox', async (req, res) => {
     if (status !== 'all') q = q.eq('status', status);
     const { data, error } = await q;
     if (error) throw error;
-    res.json({ inbox: data || [] });
+    // Tell the screen exactly where a reply would land, both ways.
+    //
+    // Ed 2026-08-21: "how do i know tessa is replying to all or just sender?"
+    // He could not: the reply box showed one unlabelled address and no Cc field.
+    // Computing this server-side means the label and the actual send agree,
+    // rather than the UI guessing.
+    const { replyOptions, describeRecipients } = require('../lib/ea/tessa_reply_recipients');
+    const inbox = (data || []).map((item) => {
+      const opts = replyOptions(item, graphSend);
+      return {
+        ...item,
+        reply_to_sender: opts.sender,
+        reply_to_all: opts.all,
+        reply_recipients_known: opts.known,
+        reply_others_count: opts.others,
+        reply_sender_label: describeRecipients('sender', opts),
+        reply_all_label: opts.all ? describeRecipients('all', opts) : null,
+      };
+    });
+    res.json({ inbox });
   } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 

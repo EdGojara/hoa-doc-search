@@ -34,7 +34,8 @@
     "test:presentation": "node tests/test_presentation_mode.js",
     "test:tessa-identity": "node tests/test_tessa_identity.js",
     "test:requires": "node scripts/check_requires_tracked.js",
-    "test:micr": "node scripts/check_micr_pitch.js"
+    "test:micr": "node scripts/check_micr_pitch.js",
+    "test:tessa-reply": "node tests/test_tessa_reply_recipients.js"
   },
   "keywords": [],
   "author": "",
