@@ -8,6 +8,18 @@ docs/
 # Re-download from www.fbcad.org/gis-data/ rather than committing.
 scripts/fbcad-data/
 scripts/hcad-data/
-# one-off ops/analysis scripts (session-local)
-_*.js
-_*.json
+# one-off ops/analysis scripts (session-local), at the REPO ROOT only.
+#
+# This was an unanchored "_*.js", which ignores every underscore-prefixed file
+# ANYWHERE — including real source like api/_safe_error.js and
+# api/_require_admin.js. Those are tracked only because they predate the rule.
+#
+# 2026-08-21: api/_presentation_mode.js was silently skipped by `git add -A`, so
+# the commit shipped its test but not the module, and the server died on boot
+# with MODULE_NOT_FOUND. The deploy failed with no clue why, because nothing
+# reports a file git decided not to see.
+/_*.js
+/_*.json
+
+# Temp diagnostics, wherever they live.
+**/_tmp_*.js
