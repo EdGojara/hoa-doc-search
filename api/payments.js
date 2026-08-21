@@ -101,6 +101,28 @@ async function loadRentalContext(rentalId) {
   return rental;
 }
 
+// Can a real charge happen for THIS rental, right now?
+//
+// The preview's original gate was "are Stripe keys configured", which was wrong
+// and made the whole thing dead on arrival in production: the keys ARE set on
+// Render, so `stripeLib.isConfigured()` is true and the preview refused itself
+// on the only environment Ed actually uses. (Found 2026-08-21 by walking the
+// live site: stripe_configured true, stripe_ready false.)
+//
+// Keys are not the question. The question is whether this ASSOCIATION can be
+// paid. Waterview has no connected account, so the live path 503s with
+// community_stripe_not_onboarded no matter how good the keys are — there is no
+// real checkout for the preview to shadow.
+//
+// That makes this gate safe by construction: the moment a community finishes
+// Connect onboarding, a real charge becomes possible and the preview refuses.
+async function chargeIsImpossible(body) {
+  if (!stripeLib.isConfigured()) return true;
+  const rental = await loadRentalContext(body.product_id);
+  if (!rental) return false;                        // let the live path 404 properly
+  return !rental.community.stripe_connected_account_id;
+}
+
 // Work out what checkout WOULD charge, without charging anything.
 //
 // Deliberately shares loadRentalContext / fetchActiveFees with the live path
@@ -138,14 +160,17 @@ async function buildCheckoutPreview(body) {
 // ============================================================================
 router.get('/preview/:rentalId', async (req, res) => {
   try {
-    if (stripeLib.isConfigured()) {
-      return res.status(409).json({
-        error: 'preview_disabled',
-        hint: 'Stripe is configured, so checkout is live. The preview only exists before wiring.',
-      });
-    }
     const rental = await loadRentalContext(req.params.rentalId);
     if (!rental) return res.status(404).json({ error: 'rental not found' });
+    // Refuse only when a REAL charge is possible for this association — see
+    // chargeIsImpossible. Gating on "are keys configured" killed the preview in
+    // production, where the keys are set but no community is onboarded yet.
+    if (stripeLib.isConfigured() && rental.community.stripe_connected_account_id) {
+      return res.status(409).json({
+        error: 'preview_disabled',
+        hint: `${rental.community.name} can take real payments now, so checkout is live. The preview only exists before a community is onboarded.`,
+      });
+    }
 
     const fees = await fetchActiveFees(rental.amenity_id);
     const wantsAv = req.query.av === '1';
@@ -229,7 +254,7 @@ router.post('/create-checkout-session', express.json({ limit: '128kb' }), async 
     //   - the page it returns has no card field of any kind. A card-shaped box
     //     on a non-PCI page is an invitation to type a real card number into it.
     const wantsPreview = (req.body || {}).preview === true;
-    if (!stripeLib.isConfigured() && wantsPreview) {
+    if (wantsPreview && await chargeIsImpossible(req.body || {})) {
       const preview = await buildCheckoutPreview(req.body || {});
       if (preview.error) return res.status(preview.status || 400).json({ error: preview.error, hint: preview.hint });
       return res.json({ ok: true, preview: true, checkout_url: preview.url });

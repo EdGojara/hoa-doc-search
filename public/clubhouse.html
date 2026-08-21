@@ -514,6 +514,7 @@ let busySlots = [];
 let isDemo = false;
 let isPreview = false;   // ?preview=1 — walk the flow with Stripe switched off
 let stripeLive = false;  // set from the server: are real Stripe keys configured?
+let payByCheck = false;  // this association is not on Stripe yet, so payment is by check
 
 function $(id) { return document.getElementById(id); }
 function escapeHtml(s) {
@@ -601,12 +602,21 @@ function getQueryParams() {
     // real. It cannot become a way around a live checkout.
     stripeLive = community.stripe_configured === true;
 
-    if (!community.stripe_ready && !isDemo && !isPreview) {
-      return renderClosed({
-        title: 'Online payments coming soon',
-        message: `Online reservations for ${community.name} will be available once payment setup is complete. To reserve in the meantime, contact Bedrock at (832) 588-2485 or info@bedrocktx.com.`,
-      });
-    }
+    // The wall used to stand here, and it was too broad.
+    //
+    // Ed 2026-08-21: "i am still not seeing anything in the reservation portal
+    // — im just seeing online payments coming soon."
+    //
+    // Everything on this page works. The dates, the conflict check, the fee
+    // schedule, the agreement, the booking itself — all of it, and a reservation
+    // creates cleanly. The ONLY missing piece is the card step, and hiding a
+    // complete reservation form behind a payment gap is the wrong trade: an
+    // association that takes a check is a normal association, not a broken one.
+    //
+    // So the form renders and the money step adapts (see the submit handler):
+    // pay by check when the association is not on Stripe yet, real checkout once
+    // it is. The banner below says which, so nobody is surprised at the end.
+    payByCheck = !community.stripe_ready && !isDemo;
 
     // For v0: load the first rentable amenity (typically the clubhouse).
     // Multi-amenity selection is a follow-on.
@@ -686,6 +696,27 @@ function renderForm() {
     const back = `/portal?demo=1&community=${encodeURIComponent(community.slug)}`;
     $('brandLink').href = back;
     $('backLink').href = back;
+  }
+
+  // Say how payment works BEFORE they fill the form in, not after.
+  //
+  // This replaces the "Online payments coming soon" wall, which hid a complete
+  // and working reservation form because one step was missing. An association
+  // that takes a check is a normal association. (Ed 2026-08-21: "i am still not
+  // seeing anything in the reservation portal, im just seeing online payments
+  // coming soon.")
+  if (payByCheck) {
+    const bar = document.createElement('div');
+    bar.style.cssText = 'background:#fff8e6;border:1px solid #e6d08a;border-radius:9px;'
+      + 'padding:12px 16px;margin:0 0 18px;font-size:13.5px;line-height:1.5;color:#4a4a4a;';
+    bar.innerHTML = '<b style="color:#92400e;">Payment is by check for now.</b> '
+      + 'Reserve below and we will confirm your date and tell you where to send it. '
+      + 'Card payment is coming shortly.'
+      // Staff only. Ed should not have to remember a URL parameter to see the
+      // step he asked to see — that was the whole reason he could not find it.
+      + ' <a href="?preview=1" style="color:#0B1D34;font-weight:600;">Staff: preview the card step &rarr;</a>';
+    const main = document.querySelector('main');
+    if (main) main.insertBefore(bar, main.firstChild);
   }
 
   // Hero
@@ -891,9 +922,14 @@ async function onSubmit(e) {
         selected_addons: data.optional_addons,
         success_url: `${window.location.origin}/clubhouse/${slug}/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${window.location.origin}/clubhouse/${slug}?cancelled=1`,
-        // Ask for the preview when Stripe is not wired. The server only honours
-        // this while Stripe is unconfigured, so it cannot bypass a live checkout.
-        preview: !stripeLive,
+        // Ask for the preview when this ASSOCIATION cannot take a real payment.
+        //
+        // Gating on `!stripeLive` (are keys set anywhere) was wrong: the keys
+        // ARE set on Render, so the preview refused itself in the only place Ed
+        // actually uses it. The server re-checks and honours this only when a
+        // real charge is genuinely impossible for the community, so it can
+        // never bypass a live checkout. (Ed 2026-08-21.)
+        preview: isPreview || !stripeLive || (community && community.stripe_ready === false),
       }),
     });
     const checkoutData = await checkoutResp.json();
