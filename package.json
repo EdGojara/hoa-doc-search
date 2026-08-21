@@ -40,7 +40,8 @@
     "test:preview-gate": "node tests/test_checkout_preview_gate.js",
     "test:attachment-names": "node tests/test_attachment_names_intent.js",
     "test:paige-review": "node tests/test_paige_doc_review.js",
-    "test:draft-attachments": "node tests/test_draft_attachments.js"
+    "test:draft-attachments": "node tests/test_draft_attachments.js",
+    "test:paige-annual": "node tests/test_paige_annual_meeting.js"
   },
   "keywords": [],
   "author": "",
