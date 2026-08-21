@@ -56,6 +56,14 @@ const MARTHA = {
 
 const sev = (f, s) => f.filter((x) => x.severity === s);
 
+// Source with line comments removed and line endings normalised. Several checks
+// below look for wording in the CODE, and a note explaining why some earlier
+// wording was removed will otherwise match the explanation instead.
+function stripComments(text) {
+  return String(text).replace(/\r\n/g, '\n').split('\n')
+    .filter((l) => !/^\s*\/\//.test(l)).join('\n');
+}
+
 console.log('\nMartha\'s real document');
 check('passes — nothing blocking, nothing to check', () => {
   const f = compareToTruth(MARTHA, TRUTH);
@@ -154,14 +162,23 @@ check('the readiness report cannot overwrite the review', () => {
 });
 
 console.log('\nShe does not claim what she has not done');
-check('no "attached" when nothing is attached', () => {
-  // The draft goes to the review queue and the reply path carries no files.
-  // Strip comments first: the note explaining WHY the claim was removed quotes
-  // the old wording, and matching that is matching the explanation, not the code.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'board_package', 'paige_doc_review.js'), 'utf8')
-    .replace(/^\s*\/\/.*$/gm, '');
-  assert.ok(!/body \+=[^;]*attached/i.test(src),
-    'a message that says "attached" with nothing attached reads as done and is not');
+check('\"attached\" only inside the branch that has a file', () => {
+  // She CAN attach now: buildCallForNominations produces a real PDF and the
+  // send path carries it. So the invariant is no longer "never say attached",
+  // it is "only say it when something was actually built".
+  //
+  // Worth noticing that the earlier version of this test asserted the former
+  // and went stale the moment the feature landed. A test pinned to a temporary
+  // limitation fails when you remove the limitation.
+  const src = stripComments(fs.readFileSync(path.join(__dirname, '..', 'lib', 'board_package', 'paige_doc_review.js'), 'utf8'));
+  const claim = src.indexOf("I've attached a corrected version");
+  assert.ok(claim > -1, 'she should offer her corrected version when she built one');
+  const guard = src.lastIndexOf('} else if (replacement.length) {', claim);
+  assert.ok(guard > -1 && guard < claim,
+    'the claim must sit inside the replacement.length branch, never on an unconditional path');
+  const fallback = src.slice(src.indexOf("} else {", claim));
+  assert.ok(!/attached/i.test(fallback.slice(0, 400)),
+    'the fallback wording, used when the build failed, must not say "attached"');
 });
 
 console.log(`\npaige_doc_review: ${pass} passed, ${fail} failed`);

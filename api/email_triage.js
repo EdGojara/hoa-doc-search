@@ -1328,6 +1328,29 @@ router.post('/:id/send', express.json(), async (req, res) => {
       } catch (_) { /* best-effort — the reply still sends without the form */ }
     }
 
+    // Files the AGENT generated when she drafted this reply.
+    //
+    // Paige builds the call-for-nominations PDF while drafting; it is stashed in
+    // storage and referenced from extracted.draft.attachments, because a base64
+    // PDF inside a JSONB column would be dragged along by every read of the
+    // triage list. Attached here so the approved reply carries what the draft
+    // said it would. (Ed 2026-08-21: "ok add that feature.")
+    //
+    // Nothing is generated at send time — only what was produced at draft time
+    // and reviewed by the person clicking send. Generating fresh here would mean
+    // sending a document nobody had looked at.
+    const generated = ((m.extracted || {}).draft || {}).attachments || [];
+    if (generated.length) {
+      try {
+        const { loadDraftAttachments } = require('../lib/email/draft_attachments');
+        const files = await loadDraftAttachments(generated);
+        if (files.length) attachments = [...(attachments || []), ...files];
+        if (files.length !== generated.length) {
+          console.warn(`[email_triage] generated attachments: ${files.length}/${generated.length} available at send`);
+        }
+      } catch (e) { console.warn('[email_triage] generated attachments skipped:', e.message); }
+    }
+
     // Documents the operator picked to attach (any filed library doc).
     const attachDocIds = Array.isArray(req.body && req.body.attach_doc_ids) ? req.body.attach_doc_ids.filter(Boolean).slice(0, 6) : [];
     if (attachDocIds.length) {
