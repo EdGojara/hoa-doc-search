@@ -33,7 +33,8 @@
     "test:tessa-request": "node tests/test_tessa_request.js",
     "test:presentation": "node tests/test_presentation_mode.js",
     "test:tessa-identity": "node tests/test_tessa_identity.js",
-    "test:requires": "node scripts/check_requires_tracked.js"
+    "test:requires": "node scripts/check_requires_tracked.js",
+    "test:micr": "node scripts/check_micr_pitch.js"
   },
   "keywords": [],
   "author": "",

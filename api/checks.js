@@ -463,6 +463,11 @@ router.get('/accounts/:id/test-print', async (req, res) => {
       return res.status(400).json({ error: 'This account is not ready to print — it needs a routing number (bank) and the full account number.' });
     }
     cfg.ready_for_print = false; // ALWAYS watermark a test print, even if the account is live-ready
+    // Calibration marks: a target box the MICR must fill exactly, and a one-inch
+    // ruler that catches printer scaling. On by default here because an alignment
+    // print with nothing to measure against is what let a bad MICR line ship.
+    // (Wells Fargo rejection, 2026-08-21.) ?calibration=0 turns them off.
+    cfg.calibration = req.query.calibration !== '0';
     const sample = [{
       check_number: cfg.next_check_number || 1001,
       issue_date: new Date().toISOString().slice(0, 10),

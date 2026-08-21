@@ -74,6 +74,7 @@ const CHECKS = [
   'scripts/check_stored_email_body.js',
   'scripts/check_source_bytes.js',
   'scripts/check_requires_tracked.js',
+  'scripts/check_micr_pitch.js',
   'tests/test_contact_mining.js',
   'tests/test_persona_routing.js',
   'tests/test_signature_identity.js',

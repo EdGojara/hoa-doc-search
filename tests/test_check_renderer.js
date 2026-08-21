@@ -30,13 +30,43 @@ for (const [cents, exp] of words) {
 check('amountToWords rejects negative', () => { assert.throws(() => amountToWords(-1)); });
 
 // --- MICR: structure + digit-stripping ---
-check('MICR format', () => {
+// These three assertions had been RED since 2026-07-16 and nobody noticed,
+// on the surface where being wrong means a bank rejection.
+//
+// They asserted the Unicode E-13B symbols (⑆ ⑈) and an unpadded serial. Both
+// were corrected in July after NewFirst's live test: the bundled font maps the
+// symbols to LETTERS (A = transit, C = on-us), and the serial is zero-padded to
+// the bank's field width while the account prints as its real digits. The code
+// was fixed against a real cleared check; the test was not updated, so it sat
+// failing and was read as noise.
+//
+// Asserting the PROVEN format now, so a future change to the symbol mapping
+// fails loudly instead of quietly reprinting July's bug.
+check('MICR format — letters, not Unicode symbols (proven vs a cleared check)', () => {
   assert.strictEqual(formatMicr({ routing: '111000025', account: '1234567890', checkNumber: '1001' }),
-    '⑈1001⑈ ⑆111000025⑆ 1234567890⑈');
+    'C001001C A111000025A 1234567890C');
 });
 check('MICR strips non-digits', () => {
   assert.strictEqual(formatMicr({ routing: '11-1000-025', account: '1234 5678 90', checkNumber: '#1001' }),
-    '⑈1001⑈ ⑆111000025⑆ 1234567890⑈');
+    'C001001C A111000025A 1234567890C');
+});
+check('MICR pads the serial but never the account', () => {
+  // A leading zero on the account changes it: the reader takes the digits
+  // between the on-us symbols AS the account number, so 787385 != 0787385 and
+  // the item does not post. An earlier pass zero-filled to 7 and failed to scan.
+  const line = formatMicr({ routing: '113100091', account: '787385', checkNumber: '112', serialDigits: 6 });
+  assert.strictEqual(line, 'C000112C A113100091A 787385C');
+  assert.ok(!/A\s*0787385/.test(line), 'the account must never be zero-padded');
+});
+check('MICR line is exactly the width the geometry assumes', () => {
+  // E-13B is 8 characters per inch, and .micr is positioned so its right edge
+  // sits 1.9375in from the check's right edge, reserving the 12-position amount
+  // field for the bank of first deposit. Character COUNT is therefore physical
+  // width: 28 characters is exactly 3.5in. A format change that alters the
+  // count moves where every field lands.
+  const line = formatMicr({ routing: '113100091', account: '787385', checkNumber: '1001', serialDigits: 6 });
+  assert.strictEqual(line.length, 28, 'MICR character count changed — re-check the geometry and re-test with the bank');
+  assert.strictEqual(line.length * 0.125, 3.5, 'at 8 CPI this must be 3.5in');
 });
 
 // --- renderChecksHTML: critical fields present, draft watermark when not ready ---
@@ -49,7 +79,11 @@ check('render includes payee, amount, words, MICR', () => {
   assert.ok(html.includes('GreenScape LLC'), 'payee');
   assert.ok(html.includes('$476.30'), 'numeric amount');
   assert.ok(html.includes('Four Hundred Seventy-Six and 30/100'), 'words');
-  assert.ok(html.includes('⑆111000025⑆'), 'MICR routing');
+  assert.ok(html.includes('A111000025A'), 'MICR routing bracketed by the transit symbol');
+  // Geometry, not just content: these are what Wells Fargo rejected on 2026-08-21.
+  assert.ok(/.micr {[^}]*font-size: 10pt/.test(html), 'MICR must render at 10pt (8 chars/inch for this font)');
+  assert.ok(/.micr {[^}]*letter-spacing: 0/.test(html), 'letter-spacing must be 0 — the font advance IS the pitch');
+  assert.ok(/.micr {[^}]*right: 1.9375in/.test(html), 'MICR must be positioned from the RIGHT edge, reserving the amount field');
   assert.ok(html.includes('NON-NEGOTIABLE'), 'draft watermark when not ready');
 });
 check('no watermark when ready_for_print', () => {
