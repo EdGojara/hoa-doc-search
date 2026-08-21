@@ -685,8 +685,52 @@ router.post('/inbox/:id/handle', express.json(), async (req, res) => {
     if (d.action === 'forward' && d.recipient_hint) {
       try { recipient = await resolveRecipient(d.recipient_hint); toEmail = recipient && recipient.best ? recipient.best.email : null; } catch (_) {}
     }
+
+    // "reply to all board" — a direction about RECIPIENTS, not about wording.
+    //
+    // Ed 2026-08-21: "cant we add — i want to be able to give tessa command to
+    // reply to all board." This is better than reply-all rebuilt from a stored
+    // recipient list: that only works for mail polled after migration 380, and
+    // it copies whoever happened to be on one message. The board is the board,
+    // whether or not every member was on this thread.
+    //
+    // She has to work out WHICH association first, and if she cannot tell she
+    // asks instead of guessing — mail landing at the wrong board is worse than
+    // a question.
+    let group = null;
+    const { wantsBoard, communityForThread } = require('../lib/ea/tessa_thread_community');
+    if (wantsBoard(instruction)) {
+      try {
+        const { resolveBoardGroup } = require('../lib/ea/tessa_resolve');
+        const found = await communityForThread(item);
+        if (!found.community) {
+          group = { kind: 'board', resolved: false,
+            ask: 'Which community\'s board? I couldn\'t tell from this message — name it in your note (for example "reply to the Canyon Gate board").' };
+        } else {
+          const board = await resolveBoardGroup(`${found.community.name} board`);
+          const people = (board && board.people) || [];
+          if (!people.length) {
+            group = { kind: 'board', resolved: false, community: found.community.name,
+              ask: `I don't have board addresses on file for ${found.community.name}.` };
+          } else {
+            group = {
+              kind: 'board', resolved: true,
+              community: found.community.name,
+              how: found.how,
+              confident: found.confident,
+              to: people.map((p) => p.email).filter(Boolean),
+              people: people.map((p) => ({ name: p.name, email: p.email })),
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('[tessa] board group resolve failed:', e.message);
+        group = { kind: 'board', resolved: false, ask: 'I could not look up the board just now.' };
+      }
+    }
+
     await supabase.from('ea_inbox').update({ draft_subject: d.subject, draft_body: d.body, draft_mode: d.mode, updated_at: new Date().toISOString() }).eq('id', item.id);
-    res.json({ ok: true, action: d.action, subject: d.subject, body: d.body, mode: d.mode, to: toEmail, recipient_hint: d.recipient_hint || null, recipient });
+    res.json({ ok: true, action: d.action, subject: d.subject, body: d.body, mode: d.mode, to: toEmail, recipient_hint: d.recipient_hint || null, recipient, group });
   } catch (err) { console.error('[tessa] inbox handle failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 

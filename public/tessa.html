@@ -578,6 +578,30 @@ async function ibHandle(id){
       if(sendBtn) sendBtn.textContent='Send reply';
       msg.innerHTML='<span class="ok">✉️ Drafted a reply. Review and send.</span>';
     }
+
+    // "reply to all board" — she looked the board up and re-addressed it.
+    //
+    // Ed 2026-08-21: "i want to be able to give tessa command to reply to all
+    // board." Works whether or not this thread's recipients were recorded,
+    // because it comes from the roster, not from who happened to be copied.
+    if(j.group && j.group.kind==='board'){
+      if(j.group.resolved){
+        $('ib-to-'+id).value=j.group.to.join(', ');
+        const ccEl=document.getElementById('ib-cc-'+id); if(ccEl) ccEl.value='';
+        const lbl=document.getElementById('ib-rlabel-'+id);
+        const who=j.group.people.map(p=>esc(p.email)).join(', ');
+        const note='Addressed to the <b>'+esc(j.group.community)+'</b> board ('
+          +j.group.to.length+'), found from '+esc(j.group.how||'this thread')+'.'
+          +(j.group.confident===false?' Worth a check — that was a passing mention, not the sender\'s address.':'');
+        if(lbl) lbl.innerHTML=note;
+        msg.innerHTML='<span class="ok">✉️ Drafted, addressed to the '+esc(j.group.community)+' board.</span>'
+          +'<div class="note" style="font-size:11.5px;margin-top:3px;">'+who+'</div>';
+      } else {
+        // She could not tell which board. Ask rather than guess: mail at the
+        // wrong association is worse than one more question.
+        msg.innerHTML='<span class="err">'+esc(j.group.ask||'I could not work out which board you meant.')+'</span>';
+      }
+    }
   }catch(e){ msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
   finally{ if(hb) hb.disabled=false; }
 }
