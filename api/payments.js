@@ -101,6 +101,104 @@ async function loadRentalContext(rentalId) {
   return rental;
 }
 
+// Work out what checkout WOULD charge, without charging anything.
+//
+// Deliberately shares loadRentalContext / fetchActiveFees with the live path
+// rather than reimplementing the arithmetic. A preview computed by different
+// code is a preview of a different system, and the whole point is to see the
+// real numbers and the real payee split before the money is switched on.
+async function buildCheckoutPreview(body) {
+  const { product_type, product_id, selected_addons } = body;
+  if (product_type !== 'amenity_rental') return { error: 'unsupported product_type for v0 (only amenity_rental)', status: 400 };
+  if (!product_id) return { error: 'product_id is required', status: 400 };
+
+  const rental = await loadRentalContext(product_id);
+  if (!rental) return { error: 'rental not found', status: 404 };
+
+  const fees = await fetchActiveFees(rental.amenity_id);
+  if (!fees.length) return { error: 'no active fee schedule for this amenity', status: 500 };
+
+  const addons = selected_addons || rental.optional_addons || {};
+  const applicable = fees.filter((f) => f.required || (f.fee_type === 'av_equipment_deposit' && addons.av_equipment === true));
+  const chargeFees = applicable.filter((f) => f.amount_cents > 0 && f.payee_display_name);
+  if (!chargeFees.length) return { error: 'no chargeable fees on schedule', status: 500 };
+
+  const qs = new URLSearchParams({ rental: rental.id });
+  if (addons.av_equipment === true) qs.set('av', '1');
+  return { url: `/clubhouse/${rental.community.slug}/preview-checkout?${qs.toString()}` };
+}
+
+// ============================================================================
+// GET /api/payments/preview/:rentalId — the numbers behind the preview page.
+//
+// Same loaders as the live path. Returns the line items, the payee split, and
+// the exact argument object that would be handed to Stripe, because "show me
+// where the Stripe payment goes" is answered by the payload, not by a mockup.
+// Refuses once Stripe is configured — after that the real thing exists.
+// ============================================================================
+router.get('/preview/:rentalId', async (req, res) => {
+  try {
+    if (stripeLib.isConfigured()) {
+      return res.status(409).json({
+        error: 'preview_disabled',
+        hint: 'Stripe is configured, so checkout is live. The preview only exists before wiring.',
+      });
+    }
+    const rental = await loadRentalContext(req.params.rentalId);
+    if (!rental) return res.status(404).json({ error: 'rental not found' });
+
+    const fees = await fetchActiveFees(rental.amenity_id);
+    const wantsAv = req.query.av === '1';
+    const applicable = fees.filter((f) => f.required || (f.fee_type === 'av_equipment_deposit' && wantsAv));
+    const chargeFees = applicable.filter((f) => f.amount_cents > 0 && f.payee_display_name);
+
+    const totalCents = chargeFees.reduce((s, f) => s + f.amount_cents, 0);
+    const split = {};
+    for (const f of chargeFees) {
+      const k = f.payee_display_name;
+      split[k] = (split[k] || 0) + f.amount_cents;
+    }
+
+    const needsConnect = chargeFees.some((f) => f.payee === 'community_association');
+    res.json({
+      ok: true,
+      preview: true,
+      reference: rental.reference_number,
+      community: { name: rental.community.name, slug: rental.community.slug },
+      amenity: rental.amenity ? rental.amenity.name : null,
+      event_date: rental.event_date,
+      renter: { name: rental.renter_name },
+      line_items: chargeFees.map((f) => ({
+        label: f.label, amount_cents: f.amount_cents,
+        fee_type: f.fee_type, payee: f.payee, payee_display_name: f.payee_display_name,
+        refundable: !!f.refundable,
+      })),
+      total_cents: totalCents,
+      payee_split: Object.entries(split).map(([name, cents]) => ({ payee_display_name: name, amount_cents: cents })),
+      // What the live path would hand to Stripe. Shown so the hand-off is
+      // inspectable before any key is set, rather than taken on trust.
+      would_send_to_stripe: {
+        mode: 'payment',
+        connected_account: rental.community.stripe_connected_account_id || null,
+        connect_ready: !!rental.community.stripe_connected_account_id,
+        statement_descriptor: rental.community.slug?.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 22) || 'BEDROCK',
+        customer_email: rental.renter_email ? '(the renter\'s email)' : null,
+        line_items: chargeFees.map((f) => ({ name: f.label, amount_cents: f.amount_cents })),
+        metadata: { product_type: 'amenity_rental', product_id: rental.id, reference: rental.reference_number },
+      },
+      blockers: [
+        ...(stripeLib.isConfigured() ? [] : ['STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are not set.']),
+        ...(needsConnect && !rental.community.stripe_connected_account_id
+          ? [`${rental.community.hoa_legal_name || rental.community.name} has not completed Stripe Connect onboarding, and ${dollars(split[chargeFees.find((f) => f.payee === 'community_association').payee_display_name] || 0)} of this is owed to the association.`]
+          : []),
+      ],
+    });
+  } catch (err) {
+    console.error('[payments] preview failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // ============================================================================
 // POST /api/payments/create-checkout-session
 // Body: {
@@ -113,6 +211,30 @@ async function loadRentalContext(rentalId) {
 // ============================================================================
 router.post('/create-checkout-session', express.json({ limit: '128kb' }), async (req, res) => {
   try {
+    // PREVIEW. Ed 2026-08-21: "i want to be able to see everything including the
+    // payment processing and stripe link, we will wire it after."
+    //
+    // Waterview stops at "Online payments coming soon" and demo mode pauses at
+    // submit, so there has been no way to walk the checkout step at all — the
+    // one part of the flow nobody has ever seen. This runs every piece of the
+    // real logic (the rental, the active fee schedule, the payee split, the
+    // Connect requirement) and stops exactly where the Stripe call would go,
+    // handing back a page that shows what would have been sent.
+    //
+    // Three things keep it from ever being mistaken for money:
+    //   - it ONLY exists while Stripe is unconfigured. The moment real keys are
+    //     set this branch is unreachable, so it can never shadow a live payment.
+    //   - it writes NO payment rows. Nothing lands in the payments table, so
+    //     nothing can reach the GL or an AR balance.
+    //   - the page it returns has no card field of any kind. A card-shaped box
+    //     on a non-PCI page is an invitation to type a real card number into it.
+    const wantsPreview = (req.body || {}).preview === true;
+    if (!stripeLib.isConfigured() && wantsPreview) {
+      const preview = await buildCheckoutPreview(req.body || {});
+      if (preview.error) return res.status(preview.status || 400).json({ error: preview.error, hint: preview.hint });
+      return res.json({ ok: true, preview: true, checkout_url: preview.url });
+    }
+
     if (!stripeLib.isConfigured()) {
       return res.status(503).json({
         error: 'payment_not_configured',

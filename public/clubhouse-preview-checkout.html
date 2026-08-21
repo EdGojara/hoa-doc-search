@@ -1,0 +1,154 @@
+<title>Checkout preview</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --line:#e2e8f0; --ink:#1a2230; --muted:#64748b; --bg:#f4f2ec; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif; color:var(--ink); }
+  .bar { background:#7c2d12; color:#fff; padding:10px 18px; font-size:13px; font-weight:600;
+         display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+  .bar .sub { font-weight:400; opacity:.9; font-size:12.5px; }
+  .wrap { max-width:1040px; margin:0 auto; padding:26px 18px 60px; }
+  .cols { display:grid; grid-template-columns:1.15fr .85fr; gap:22px; align-items:start; }
+  @media (max-width:860px){ .cols { grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:20px 22px; }
+  h1 { font-family:'Cormorant Garamond',Georgia,serif; font-size:26px; margin:0 0 4px; color:var(--navy); }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 12px; font-weight:600; }
+  .li { display:flex; justify-content:space-between; gap:16px; padding:11px 0; border-bottom:1px solid #f1f5f9; }
+  .li:last-of-type { border-bottom:0; }
+  .li .n { font-size:14px; }
+  .li .meta { font-size:12px; color:var(--muted); margin-top:2px; }
+  .li .a { font-size:14px; font-weight:600; white-space:nowrap; }
+  .total { display:flex; justify-content:space-between; border-top:2px solid var(--navy); margin-top:8px; padding-top:12px;
+           font-size:17px; font-weight:700; color:var(--navy); }
+  .who { display:flex; justify-content:space-between; font-size:13px; padding:7px 0; border-bottom:1px dashed #eef2f7; }
+  .who:last-child { border-bottom:0; }
+  .btn { display:block; width:100%; background:var(--navy); color:#fff; border:0; border-radius:9px;
+         padding:13px; font-size:14.5px; font-weight:600; cursor:pointer; font-family:inherit; margin-top:16px; }
+  .btn.ghost { background:#fff; color:var(--navy); border:1px solid var(--line); margin-top:8px; }
+  .note { font-size:12.5px; color:var(--muted); line-height:1.5; }
+  .warn { background:#fff8e6; border:1px solid #e6d08a; border-radius:9px; padding:11px 13px; font-size:13px; margin-top:14px; }
+  .warn b { color:#92400e; }
+  details { margin-top:16px; }
+  summary { cursor:pointer; font-size:13px; font-weight:600; color:var(--navy); }
+  pre { background:#0b1d34; color:#d6e4f0; padding:14px; border-radius:9px; overflow:auto;
+        font-size:11.5px; line-height:1.5; font-family:'JetBrains Mono',ui-monospace,monospace; margin-top:10px; }
+  .err { color:#b91c1c; font-size:14px; }
+  .sk { color:var(--muted); font-size:14px; }
+</style>
+
+<div class="bar">
+  <div>PREVIEW &middot; no payment will be taken and no card is collected</div>
+  <div class="sub">Stripe is not connected yet. This shows exactly what checkout will charge once it is.</div>
+</div>
+
+<div class="wrap">
+  <div id="app"><div class="sk">Loading the real numbers&hellip;</div></div>
+</div>
+
+<script>
+// The checkout step, before Stripe is wired.
+//
+// Ed 2026-08-21: "i want to be able to see everything including the payment
+// processing and stripe link, we will wire it after."
+//
+// Every figure on this page comes from the SAME loaders the live path uses —
+// the rental, the active fee schedule, the payee split. It is not a mockup with
+// invented numbers; it is the real charge, stopped one step before Stripe.
+//
+// There is no card field anywhere on this page, on purpose. A card-shaped box
+// on a page that is not PCI-scoped is an invitation for somebody to type a real
+// card number into it, and "it was only a preview" is not a defence.
+const params = new URLSearchParams(location.search);
+const rentalId = params.get('rental');
+const av = params.get('av') === '1';
+const slug = location.pathname.split('/')[2];
+
+const money = (c) => (Number(c || 0) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+(async function () {
+  if (!rentalId) {
+    document.getElementById('app').innerHTML = '<div class="card err">No reservation reference in the link.</div>';
+    return;
+  }
+  let d;
+  try {
+    const r = await fetch('/api/payments/preview/' + encodeURIComponent(rentalId) + (av ? '?av=1' : ''));
+    d = await r.json();
+    if (!r.ok) throw new Error(d.hint || d.error || 'Could not load the preview');
+  } catch (e) {
+    document.getElementById('app').innerHTML = '<div class="card err">' + esc(e.message) + '</div>';
+    return;
+  }
+
+  const items = d.line_items || [];
+  document.getElementById('app').innerHTML = `
+    <div class="cols">
+      <div>
+        <div class="card">
+          <h1>${esc(d.community.name)}</h1>
+          <div class="note">${esc(d.amenity || 'Amenity')}${d.event_date ? ' &middot; ' + esc(d.event_date) : ''}
+            ${d.reference ? ' &middot; ' + esc(d.reference) : ''}</div>
+
+          <div style="margin-top:18px;">
+            <h2>What the renter pays</h2>
+            ${items.map((f) => `
+              <div class="li">
+                <div>
+                  <div class="n">${esc(f.label)}</div>
+                  <div class="meta">to ${esc(f.payee_display_name)}${f.refundable ? ' &middot; refundable' : ''}</div>
+                </div>
+                <div class="a">${money(f.amount_cents)}</div>
+              </div>`).join('')}
+            <div class="total"><span>Total</span><span>${money(d.total_cents)}</span></div>
+          </div>
+
+          <button class="btn" onclick="finish()">Simulate a successful payment &rarr;</button>
+          <button class="btn ghost" onclick="location.href='/clubhouse/${esc(slug)}'">&larr; Back to the form</button>
+          <div class="note" style="margin-top:12px;">
+            Nothing is charged and no payment record is written. This button only
+            moves you to the confirmation screen so the whole journey can be seen
+            end to end.
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <h2>Where the money goes</h2>
+          ${(d.payee_split || []).map((p) => `
+            <div class="who"><span>${esc(p.payee_display_name)}</span><b>${money(p.amount_cents)}</b></div>`).join('')}
+          <div class="note" style="margin-top:12px;">
+            Stripe splits this at the moment of payment. The association's share
+            goes straight to its own connected account; it never sits in a
+            Bedrock account first.
+          </div>
+
+          ${(d.blockers || []).length ? `
+            <div class="warn">
+              <b>Before this can go live:</b>
+              <ul style="margin:7px 0 0 16px; padding:0; line-height:1.55;">
+                ${d.blockers.map((b) => '<li>' + esc(b) + '</li>').join('')}
+              </ul>
+            </div>` : ''}
+
+          <details>
+            <summary>What gets sent to Stripe</summary>
+            <div class="note" style="margin-top:8px;">
+              The exact call the live path makes. Worth reading now rather than
+              trusting later.
+            </div>
+            <pre>${esc(JSON.stringify(d.would_send_to_stripe, null, 2))}</pre>
+          </details>
+        </div>
+      </div>
+    </div>`;
+})();
+
+function finish() {
+  // Straight to the real confirmation screen, flagged as a preview so it does
+  // not claim a payment was received.
+  location.href = '/clubhouse/' + encodeURIComponent(slug) + '/success?ref='
+    + encodeURIComponent(new URLSearchParams(location.search).get('rental') || '') + '&preview=1';
+}
+</script>

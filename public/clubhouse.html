@@ -512,6 +512,8 @@ let fees = [];
 let agreementHash = null;
 let busySlots = [];
 let isDemo = false;
+let isPreview = false;   // ?preview=1 — walk the flow with Stripe switched off
+let stripeLive = false;  // set from the server: are real Stripe keys configured?
 
 function $(id) { return document.getElementById(id); }
 function escapeHtml(s) {
@@ -539,6 +541,7 @@ function getQueryParams() {
     demo: url.searchParams.get('demo') === '1',
     session_id: url.searchParams.get('session_id'),
     cancelled: url.searchParams.get('cancelled') === '1',
+    preview: url.searchParams.get('preview') === '1',
   };
 }
 
@@ -547,6 +550,7 @@ function getQueryParams() {
   const slug = getCommunitySlug();
   const q = getQueryParams();
   isDemo = q.demo;
+  isPreview = q.preview;
 
   if (q.session_id) {
     // Returning from Stripe success → redirect to success page
@@ -584,7 +588,20 @@ function getQueryParams() {
       });
     }
 
-    if (!community.stripe_ready && !isDemo) {
+    // ?preview=1 walks the whole journey with Stripe switched off. Ed
+    // 2026-08-21: "i want to be able to see everything including the payment
+    // processing and stripe link, we will wire it after."
+    //
+    // Without it there was no way to see the checkout step at all: a real
+    // community stops at the wall below, and demo mode used to stop at submit.
+    // The checkout step is the part of the flow nobody had ever laid eyes on.
+    //
+    // Self-limiting: /api/payments/preview 409s as soon as Stripe is
+    // configured, so this flag stops doing anything the moment payments are
+    // real. It cannot become a way around a live checkout.
+    stripeLive = community.stripe_configured === true;
+
+    if (!community.stripe_ready && !isDemo && !isPreview) {
       return renderClosed({
         title: 'Online payments coming soon',
         message: `Online reservations for ${community.name} will be available once payment setup is complete. To reserve in the meantime, contact Bedrock at (832) 588-2485 or info@bedrocktx.com.`,
@@ -820,7 +837,14 @@ async function onSubmit(e) {
     return;
   }
 
-  if (isDemo) {
+  // Demo mode used to stop dead here with "submission paused so no test charges
+  // are made". The caution was right when checkout meant a real Stripe call; it
+  // meant the checkout step was the one part of the journey nobody could ever
+  // see. Now that the preview charges nothing and writes no payment row, the
+  // demo walks all the way through. (Ed 2026-08-21.)
+  //
+  // Still stops if Stripe IS configured, because then the next step is real.
+  if (isDemo && stripeLive) {
     toast('Demo mode — submission paused so no test charges are made. Live communities will redirect to checkout here.', 'error');
     return;
   }
@@ -846,7 +870,10 @@ async function onSubmit(e) {
     // No connected Stripe account means the association takes payment the way
     // it always has. Skipping the checkout call entirely beats letting it 503
     // and showing an error over a reservation that WAS created.
-    if (community && community.stripe_ready === false) {
+    //
+    // Unless we are previewing, in which case the whole point is to reach the
+    // checkout step and see what it would charge.
+    if (community && community.stripe_ready === false && !isPreview && !isDemo) {
       window.location.href = `/clubhouse/${community.slug}/success`
         + '?ref=' + encodeURIComponent(rentalData.reference_number || rentalData.rental_id)
         + '&pay=check';
@@ -864,6 +891,9 @@ async function onSubmit(e) {
         selected_addons: data.optional_addons,
         success_url: `${window.location.origin}/clubhouse/${slug}/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${window.location.origin}/clubhouse/${slug}?cancelled=1`,
+        // Ask for the preview when Stripe is not wired. The server only honours
+        // this while Stripe is unconfigured, so it cannot bypass a live checkout.
+        preview: !stripeLive,
       }),
     });
     const checkoutData = await checkoutResp.json();

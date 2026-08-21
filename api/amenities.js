@@ -262,6 +262,13 @@ router.get('/community/:slug', async (req, res) => {
         hoa_legal_name: community.hoa_legal_name || community.name,
         bookings_active: community.amenity_bookings_active,
         stripe_ready: !!community.stripe_connected_account_id,
+        // Whether real Stripe keys exist AT ALL, which is a different question
+        // from whether this community has finished Connect onboarding. The form
+        // needs both: stripe_ready decides whether the association can be paid
+        // online, stripe_configured decides whether the next screen is a real
+        // checkout or the preview. (Ed 2026-08-21: "i want to be able to see
+        // everything including the payment processing and stripe link.")
+        stripe_configured: require('../lib/payments/stripe').isConfigured(),
       },
       amenities: amenities || [],
     });

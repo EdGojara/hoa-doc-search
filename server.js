@@ -489,6 +489,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/board-portal$/,                       // board portal landing — auth checked inside via board/staff session (board member's own homeowner magic-link cookie is honored); every /api/board-portal route enforces requireBoardViewer + canSeeCommunity
   /^\/board-portal\.html$/,                 // same page at the static path (self-referencing year-view share links + portal-login hint use .html?community=…)
   /^\/clubhouse\/[^/]+$/,                   // /clubhouse/:slug — public clubhouse rental form (gated server-side by amenity_bookings_active)
+  /^\/clubhouse\/[^/]+\/preview-checkout$/, // checkout preview — charges nothing, writes nothing, and /api/payments/preview refuses once Stripe is configured
   // BD digital business cards. Public is the entire point: the person scanning
   // the QR is a stranger at a conference with no login and no reason to get
   // one. There is no data behind these routes to protect — api/bd.js reads a
@@ -577,7 +578,8 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/amenities\/[0-9a-f-]+\/availability$/, // busy-slot check
   /^\/api\/amenities\/[0-9a-f-]+\/rentals$/,   // POST create draft rental
   /^\/api\/amenities\/rentals\/[0-9a-f-]+$/,   // GET rental status for success page
-  /^\/clubhouse\/[^/]+(\/success)?$/,          // /clubhouse/:slug and /clubhouse/:slug/success
+  /^\/api\/payments\/preview\/[0-9a-f-]+$/,    // GET the numbers behind the checkout preview (no charge; 409s once Stripe is live)
+  /^\/clubhouse\/[^/]+(\/success|\/preview-checkout)?$/,  // /clubhouse/:slug, /success and /preview-checkout
 ];
 
 // Communities query is needed by amenity admin pages. Reuse existing route
@@ -1410,6 +1412,12 @@ app.get('/forms/august-meadows-submission.pdf', async (req, res) => {
 // Public clubhouse rental form + post-Stripe success page
 app.get('/clubhouse/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'clubhouse.html'));
+});
+// The checkout step before Stripe is wired. Ed 2026-08-21: "i want to be able
+// to see everything including the payment processing and stripe link." The page
+// refuses itself once Stripe is configured, so it cannot shadow a live payment.
+app.get('/clubhouse/:slug/preview-checkout', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'clubhouse-preview-checkout.html'));
 });
 app.get('/clubhouse/:slug/success', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'clubhouse-success.html'));
