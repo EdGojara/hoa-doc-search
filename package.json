@@ -42,7 +42,8 @@
     "test:paige-review": "node tests/test_paige_doc_review.js",
     "test:draft-attachments": "node tests/test_draft_attachments.js",
     "test:paige-annual": "node tests/test_paige_annual_meeting.js",
-    "test:tessa-groups": "node tests/test_tessa_groups.js"
+    "test:tessa-groups": "node tests/test_tessa_groups.js",
+    "test:ap-attach": "node tests/test_ap_attach_document.js"
   },
   "keywords": [],
   "author": "",
