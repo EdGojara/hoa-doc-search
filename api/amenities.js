@@ -23,6 +23,11 @@
 const express = require('express');
 const multer = require('multer');
 const crypto = require('crypto');
+// Staff gate. The /admin routes below were UNAUTHENTICATED: the rental queue
+// returns homeowner names, emails, phones and addresses; complete-inspection
+// releases or withholds a $400 deposit; and the amenity routes edit the fee
+// schedule. Same hole found in api/pool_access.js the same day.
+const { requireStaff } = require('./_require_admin');
 const pdfParse = require('pdf-parse');
 const Anthropic = require('@anthropic-ai/sdk');
 const { createClient } = require('@supabase/supabase-js');
@@ -317,11 +322,55 @@ router.get('/:id/availability', async (req, res) => {
       .order('arrival_time');
     if (error) throw error;
 
+    // Dates staff have taken off the board: maintenance, a holiday, an
+    // association event. Merged here rather than folded into
+    // v_amenity_busy_slots, because changing that view means DROP VIEW and
+    // DROP VIEW loses its GRANTs, which returns empty arrays and looks like
+    // "nothing is booked". (CLAUDE.md scar.)
+    //
+    // A blackout is a RANGE, expanded to individual dates here so the client
+    // gets one flat list it can colour a calendar with.
+    let blocked = [];
+    try {
+      const { data: bo, error: boErr } = await supabase
+        .from('amenity_blackouts')
+        .select('start_date, end_date, public_note, amenity_id')
+        .eq('community_id', amenity.community_id)
+        .or('amenity_id.is.null,amenity_id.eq.' + amenity.id)
+        .lte('start_date', to.toISOString().slice(0, 10))
+        .gte('end_date', from.toISOString().slice(0, 10))
+        .order('start_date', { ascending: true })
+        .limit(500);
+      if (boErr) throw boErr;
+      const seen = new Set();
+      for (const b of bo || []) {
+        let d = new Date(b.start_date + 'T12:00:00');
+        const end = new Date(b.end_date + 'T12:00:00');
+        let guard = 0;
+        while (d <= end && guard++ < 400) {
+          const key = d.toISOString().slice(0, 10);
+          if (key >= from.toISOString().slice(0, 10) && key <= to.toISOString().slice(0, 10) && !seen.has(key)) {
+            seen.add(key);
+            // public_note only. The staff-facing reason is never sent to the
+            // booking page; a homeowner sees "Not available" and no more.
+            blocked.push({ date: key, note: b.public_note || null });
+          }
+          d.setDate(d.getDate() + 1);
+        }
+      }
+    } catch (e) {
+      // A blackout table that is missing or unreadable must NOT silently
+      // report a blocked date as free. Log loudly; the booking still gets
+      // checked again server-side at submit.
+      console.warn('[amenities] blackout read failed:', e.message);
+    }
+
     res.json({
       from: from.toISOString().slice(0, 10),
       to: to.toISOString().slice(0, 10),
       min_lead_time_days: amenity.rental_min_lead_time_days,
       max_lead_time_days: amenity.rental_max_lead_time_days,
+      blocked_dates: blocked,
       busy_slots: (busy || []).map((b) => ({
         date: b.event_date,
         from: b.arrival_time,
@@ -423,6 +472,35 @@ router.post('/:id/rentals', express.json({ limit: '64kb' }), async (req, res) =>
       .eq('amenity_id', amenity.id)
       .eq('event_date', body.event_date)
       .in('status', ['pending_payment', 'confirmed', 'completed']);
+
+    // Staff blackout. Checked at SUBMIT, not only when the calendar was
+    // drawn: the form may have been open since before the date was blocked,
+    // and a homeowner who signs a contract for a closed clubhouse is a
+    // refund and an apology. (Ed 2026-08-20.)
+    try {
+      const { data: bo, error: boErr } = await supabase
+        .from('amenity_blackouts')
+        .select('id, public_note, reason')
+        .eq('community_id', amenity.community_id)
+        .or('amenity_id.is.null,amenity_id.eq.' + amenity.id)
+        .lte('start_date', body.event_date)
+        .gte('end_date', body.event_date)
+        .limit(1);
+      if (boErr) throw boErr;
+      if (bo && bo.length) {
+        return res.status(409).json({
+          error: 'date_unavailable',
+          detail: bo[0].public_note || 'That date is not available.',
+        });
+      }
+    } catch (e) {
+      // Never fail OPEN on a control. If the check cannot run we do not know
+      // the date is free, and quietly booking it is the outcome this exists
+      // to prevent.
+      console.error('[amenities] blackout check failed, refusing booking:', e.message);
+      return res.status(503).json({ error: 'availability_check_unavailable',
+        detail: 'We could not confirm that date is open. Please try again in a moment.' });
+    }
 
     const requestedFrom = body.arrival_time;
     const requestedTo = body.departure_time;
@@ -538,6 +616,7 @@ router.get('/rentals/:id', async (req, res) => {
 //   POST /api/amenities/admin/rentals/:id/cancel
 // ============================================================================
 router.get('/admin/queue', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     let q = supabase
       .from('v_amenity_rental_queue')
@@ -581,6 +660,7 @@ router.get('/admin/queue', async (req, res) => {
 // and emails the renter when refund issues successfully.
 // ============================================================================
 router.post('/admin/rentals/:id/complete-inspection', express.json({ limit: '64kb' }), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const stripeLib = require('../lib/payments/stripe');
     const { sendEmail } = require('../lib/notifications/email');
@@ -737,6 +817,7 @@ router.post('/admin/rentals/:id/complete-inspection', express.json({ limit: '64k
 // and either confirms (rental proceeds) or cancels (with full refund).
 // ============================================================================
 router.post('/admin/rentals/:id/resolve-eligibility', express.json({ limit: '16kb' }), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const { decision, resolved_by, notes } = req.body || {};
     if (!resolved_by) return res.status(400).json({ error: 'resolved_by_required' });
@@ -775,7 +856,92 @@ router.post('/admin/rentals/:id/resolve-eligibility', express.json({ limit: '16k
 //   GET    /admin/amenities                 list all amenities across communities
 // ============================================================================
 
+// ----------------------------------------------------------------------------
+// Blackout dates — staff take a date off the board.
+//
+// Ed 2026-08-20: "how does the staff block out dates on the calendar."
+// Before this the only way was to invent a rental, which puts a fiction in
+// the record the association keeps.
+// ----------------------------------------------------------------------------
+router.get('/admin/blackouts', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    let q = supabase.from('amenity_blackouts')
+      .select('id, community_id, amenity_id, start_date, end_date, reason, public_note, created_by, created_at, amenities:amenity_id(name), communities:community_id(name)')
+      .gte('end_date', new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10))
+      .order('start_date', { ascending: true }).limit(500);
+    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ ok: true, blackouts: data || [] });
+  } catch (err) {
+    console.error('[amenities] blackout list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/admin/blackouts', express.json({ limit: '16kb' }), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const b = req.body || {};
+    const start = String(b.start_date || "").trim();
+    const end = String(b.end_date || start).trim();
+    const reason = String(b.reason || "").trim();
+    if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) return res.status(400).json({ error: 'start_date_required' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(end)) return res.status(400).json({ error: 'end_date_invalid' });
+    if (end < start) return res.status(400).json({ error: 'end_before_start' });
+    // A reason is required because a blocked date with no explanation is one
+    // nobody dares remove later.
+    if (!reason) return res.status(400).json({ error: 'reason_required' });
+
+    // Warn rather than refuse: an existing booking inside the range is a real
+    // conflict a person has to resolve, but blocking the date is often
+    // exactly what they are trying to do.
+    let conflicts = [];
+    try {
+      let cq = supabase.from('amenity_rentals')
+        .select('id, reference_number, event_date, renter_name, status')
+        .eq('community_id', b.community_id)
+        .in('status', ['pending_payment', 'confirmed'])
+        .gte('event_date', start).lte('event_date', end);
+      if (b.amenity_id) cq = cq.eq('amenity_id', b.amenity_id);
+      const { data: cf, error: cfErr } = await cq;
+      if (cfErr) throw cfErr;
+      conflicts = cf || [];
+    } catch (e) { console.warn('[amenities] blackout conflict scan failed:', e.message); }
+
+    const { data, error } = await supabase.from('amenity_blackouts').insert({
+      community_id: b.community_id,
+      amenity_id: b.amenity_id || null,
+      start_date: start,
+      end_date: end,
+      reason,
+      public_note: (b.public_note && String(b.public_note).trim()) || null,
+      created_by: staff.full_name || staff.email || null,
+    }).select().single();
+    if (error) throw error;
+    res.json({ ok: true, blackout: data, conflicts });
+  } catch (err) {
+    console.error('[amenities] blackout create failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.delete('/admin/blackouts/:id', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const { error } = await supabase.from('amenity_blackouts').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[amenities] blackout delete failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/admin/amenities', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     let q = supabase
       .from('amenities')
@@ -802,6 +968,7 @@ router.get('/admin/amenities', async (req, res) => {
 // saves via the existing PATCH /admin/amenities/:id.
 // ---------------------------------------------------------------------------
 router.post('/admin/amenities/extract-contract', uploadPdf.single('file'), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     if (!req.file) return res.status(400).json({ error: 'file_required' });
     if (!anthropic) return res.status(500).json({ error: 'anthropic_not_configured' });
@@ -1180,6 +1347,7 @@ The PDF is attached to this message. Read the form-field values as they appear v
 });
 
 router.post('/admin/amenities', express.json({ limit: '64kb' }), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const body = req.body || {};
     if (!body.community_id) return res.status(400).json({ error: 'community_id_required' });
@@ -1246,6 +1414,7 @@ router.post('/admin/amenities', express.json({ limit: '64kb' }), async (req, res
 });
 
 router.patch('/admin/amenities/:id', express.json({ limit: '64kb' }), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const allowedFields = [
       'amenity_type', 'name', 'description', 'street_address', 'capacity',
@@ -1285,6 +1454,7 @@ router.patch('/admin/amenities/:id', express.json({ limit: '64kb' }), async (req
 });
 
 router.delete('/admin/amenities/:id', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const { error } = await supabase
       .from('amenities')
@@ -1299,6 +1469,7 @@ router.delete('/admin/amenities/:id', async (req, res) => {
 });
 
 router.post('/admin/rentals/:id/cancel', express.json({ limit: '16kb' }), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const { cancelled_by, reason } = req.body || {};
     if (!cancelled_by) return res.status(400).json({ error: 'cancelled_by_required' });
