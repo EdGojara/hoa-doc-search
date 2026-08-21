@@ -898,6 +898,15 @@ const MODULES = [
     buildLink: (ctx) => `/portal/financials`,
   },
   {
+    key: 'events',
+    title: 'Community Calendar',
+    description: 'Social events, board meetings, and which dates the amenities are already reserved.',
+    icon: '🗓️',
+    section: 'community',
+    cta: 'View calendar',
+    buildLink: () => `/portal/events`,
+  },
+  {
     key: 'meetings',
     title: 'Meetings & Notices',
     description: 'Board meeting agendas, minutes, and notices for your community.',
@@ -1232,6 +1241,7 @@ function defaultDemoModuleConfig(slug) {
     clubhouse:        { status: 'live' },  // demo mode: clubhouse always shows the demo flow
     documents:        { status: 'live' },  // demo mode: renders mock governing docs library
     financials:       { status: 'live' },  // demo mode: renders the same docs payload filtered to financial group
+    events:           { status: 'live' },  // demo mode: seeded community calendar
     meetings:         { status: 'live' },  // demo mode: 2 upcoming + 5 past meeting minutes
     map:              { status: 'live' },  // demo mode: map renders mock amenities
     contacts:         { status: 'live' },  // demo mode: loads from community_contacts table (seeded for Waterview)

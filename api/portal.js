@@ -2709,6 +2709,117 @@ router.post('/chamber/:broadcastId/viewer', express.json(), async (req, res) => 
   }
 });
 
+// ----------------------------------------------------------------------------
+// GET /api/portal/community-calendar
+// One calendar for the community: social events, board meetings, and the dates
+// the clubhouse is already taken.
+//
+// Ed 2026-08-20: "i want to also add events tile in portal" and "we need to
+// connect it to our calendar for each community."
+//
+// It READS the three sources rather than copying them into a calendar table.
+// A rental copied into an events row is a second copy of a fact that then
+// drifts when the booking moves or cancels, which is the parallel-silo problem
+// this codebase has already paid for twice. The booking stays the one true
+// record; the calendar is a view over it.
+//
+// PRIVACY: a clubhouse booking shows as "Clubhouse reserved" and nothing else.
+// Neighbours need to know the date is taken so they do not try to book it. They
+// do not need the renter's name, their party, or how many people are coming.
+// The renter never agreed to be published to their neighbours.
+// ----------------------------------------------------------------------------
+router.get('/community-calendar', async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (scoped.error === 'property_outside_manager_scope') {
+      return res.status(403).json({ error: scoped.error });
+    }
+    const prop = scoped.property;
+    if (!prop) return res.json({ community: null, items: [] });
+    const community = prop.communities || {};
+
+    // A calendar is only useful looking forward, with a little history so an
+    // empty month does not read as broken.
+    const from = new Date(Date.now() - 30 * 864e5).toISOString();
+    const to = new Date(Date.now() + 365 * 864e5).toISOString();
+    const items = [];
+
+    // 1) Community events and meetings. Both live in `events`; the kind decides
+    //    how it is labelled, not which table it came from.
+    const MEETING_TYPES = ['annual_meeting', 'board_meeting', 'special_meeting', 'meeting'];
+    const { data: evs, error: evErr } = await supabase
+      .from('events')
+      .select('id, name, event_type, description, location, scheduled_start_at, scheduled_end_at, status')
+      .eq('community_id', community.id)
+      .gte('scheduled_start_at', from)
+      .lte('scheduled_start_at', to)
+      .order('scheduled_start_at', { ascending: true })
+      .limit(200);
+    if (evErr) throw new Error('events read failed: ' + evErr.message);
+    for (const e of evs || []) {
+      if (String(e.status || '').toLowerCase() === 'cancelled') continue;
+      const isMeeting = MEETING_TYPES.includes(e.event_type);
+      items.push({
+        id: e.id,
+        kind: isMeeting ? 'meeting' : 'event',
+        title: e.name,
+        description: e.description || null,
+        location: e.location || null,
+        starts_at: e.scheduled_start_at,
+        ends_at: e.scheduled_end_at || null,
+        link: isMeeting ? '/portal/meetings' : null,
+      });
+    }
+
+    // 2) Amenity bookings. Date and amenity only, deliberately.
+    const { data: rentals, error: rErr } = await supabase
+      .from('amenity_rentals')
+      .select('id, event_date, arrival_time, departure_time, status, amenities:amenity_id(name)')
+      .eq('community_id', community.id)
+      .in('status', ['pending_payment', 'confirmed', 'completed'])
+      .gte('event_date', from.slice(0, 10))
+      .lte('event_date', to.slice(0, 10))
+      .order('event_date', { ascending: true })
+      .limit(300);
+    if (rErr) throw new Error('rentals read failed: ' + rErr.message);
+    for (const r of rentals || []) {
+      const amenityName = (r.amenities && r.amenities.name) || 'Amenity';
+      items.push({
+        id: r.id,
+        kind: 'amenity_booking',
+        // Ed 2026-08-20: 'they just see reserved or event or not available'.
+        // The word and nothing else. No renter, no event description, no
+        // headcount. A neighbour needs to know the date is taken, and that is
+        // the whole of what they need to know.
+        title: 'Reserved',
+        description: null,
+        location: amenityName,
+        starts_at: r.event_date + 'T' + String(r.arrival_time || '00:00:00'),
+        ends_at: r.event_date + 'T' + String(r.departure_time || '23:59:00'),
+        link: null,
+      });
+    }
+
+    items.sort((a, b) => String(a.starts_at).localeCompare(String(b.starts_at)));
+
+    res.json({
+      community: { id: community.id, name: community.name, slug: community.slug },
+      items,
+      counts: {
+        events: items.filter((i) => i.kind === 'event').length,
+        meetings: items.filter((i) => i.kind === 'meeting').length,
+        bookings: items.filter((i) => i.kind === 'amenity_booking').length,
+      },
+    });
+  } catch (err) {
+    console.error('[portal.community-calendar]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/meetings', async (req, res) => {
   try {
     // Renter sessions REFUSED — meetings are owner/member-only (statutory

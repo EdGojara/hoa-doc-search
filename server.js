@@ -1425,6 +1425,7 @@ app.get('/portal/compliance',(req, res) => res.sendFile(require('path').join(__d
 app.get('/portal/documents', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-documents.html')));
 app.get('/portal/financials',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-financials.html')));
 app.get('/portal/meetings',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-meetings.html')));
+app.get('/portal/events',    (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-events.html')));
 app.get('/portal/contacts',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-contacts.html')));
 app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-map.html')));
 app.get('/portal/arc',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-arc.html')));
@@ -10599,6 +10600,51 @@ app.get('/api/calendar/events', async (req, res) => {
         }
       }
     } catch (e) { console.warn('[calendar/events] native events failed:', e.message); }
+
+    // Amenity bookings. Staff see WHO, which is the whole difference between
+    // this calendar and the homeowner one.
+    //
+    // Ed 2026-08-20: 'homeowners and boards see it is booked but staff sees
+    // who is booking it.' The portal renders the same booking as the single
+    // word 'Reserved' with no renter, no party and no headcount. Here a
+    // manager taking a call about Saturday needs the name and the hours to
+    // answer it, and needs to see a booking still sitting unpaid.
+    //
+    // Read from amenity_rentals, not copied into calendar_events. A booking
+    // duplicated into a calendar row drifts the moment it moves or cancels.
+    try {
+      const { data: rentals, error } = await supabase
+        .from('amenity_rentals')
+        .select('id, event_date, arrival_time, departure_time, status, renter_name, attendee_count, community_id, amenities:amenity_id(name)')
+        .gte('event_date', from)
+        .lte('event_date', to)
+        .in('status', ['pending_payment', 'confirmed', 'completed'])
+        .order('event_date', { ascending: true })
+        .limit(2000);
+      if (error) throw error;
+      for (const r of rentals || []) {
+        const amenity = (r.amenities && r.amenities.name) || 'Amenity';
+        const who = r.renter_name || 'renter unknown';
+        // An unpaid booking is flagged rather than looking identical to a
+        // confirmed one, because the difference is whether it is really
+        // holding the date.
+        const unpaid = r.status === 'pending_payment' ? ' · UNPAID' : '';
+        events.push({
+          date: r.event_date,
+          type: 'amenity_booking',
+          label: amenity + ' · ' + who + unpaid,
+          community: r.community_id ? (commName[r.community_id] || null) : null,
+          time: r.arrival_time || null,
+          event_id: r.id,
+          is_native: false,
+          notes: [
+            r.arrival_time && r.departure_time ? r.arrival_time + ' to ' + r.departure_time : null,
+            r.attendee_count ? r.attendee_count + ' guests' : null,
+            'status: ' + r.status,
+          ].filter(Boolean).join(' · '),
+        });
+      }
+    } catch (e) { console.warn('[calendar/events] amenity bookings failed:', e.message); }
 
     res.json({ events });
   } catch (err) {

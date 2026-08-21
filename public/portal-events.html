@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community Calendar · Bedrock Homeowner Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap">
+<link rel="stylesheet" href="/brand.css">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #0B1D34;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --cream: #FAFAF6;
+    --ink: #1a1a1a;
+    --ink-mute: #475569;
+    --ink-faint: #94a3b8;
+    --rule: #e2e8f0;
+  }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--cream); color: var(--ink); min-height: 100vh;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 26px 20px 80px; }
+  .crumb { font-size: 12px; color: var(--ink-faint); margin-bottom: 14px;
+           text-transform: uppercase; letter-spacing: .08em; }
+  .crumb a { color: var(--ink-mute); text-decoration: none; border-bottom: 1px solid var(--rule); }
+  h1 { font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600;
+       font-size: 34px; margin: 0 0 4px; color: var(--navy); }
+  .deck { color: var(--ink-mute); font-size: 15px; line-height: 1.55; margin: 0 0 22px; max-width: 62ch; }
+
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; font-size: 12.5px; color: var(--ink-mute); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .dot.event { background: var(--gold); }
+  .dot.meeting { background: var(--navy-soft); }
+  .dot.amenity_booking { background: #94a3b8; }
+
+  .month { margin-bottom: 26px; }
+  .month-head { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 21px;
+                color: var(--navy); font-weight: 600; margin: 0 0 10px;
+                padding-bottom: 6px; border-bottom: 2px solid var(--gold); }
+  .row { display: flex; gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--rule); align-items: flex-start; }
+  .date { flex: 0 0 58px; text-align: center; }
+  .date .d { font-size: 21px; font-weight: 700; color: var(--navy); line-height: 1.1; }
+  .date .w { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); }
+  .body { flex: 1 1 auto; min-width: 0; }
+  .title { font-weight: 600; font-size: 15px; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+  .meta { font-size: 13px; color: var(--ink-mute); margin-top: 3px; }
+  .meta a { color: var(--navy); }
+  .empty { text-align: center; padding: 50px 20px; color: var(--ink-mute); }
+  .empty h3 { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 22px;
+              color: var(--navy); margin: 0 0 6px; font-weight: 600; }
+  .cta { display: inline-block; margin-top: 16px; padding: 11px 20px; border-radius: 8px;
+         background: var(--navy); color: #fff; text-decoration: none; font-size: 14px; font-weight: 600; }
+  @media (max-width: 600px) { .wrap { padding: 18px 14px 60px; } h1 { font-size: 27px; } }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="crumb"><a href="/portal">&larr; Your portal</a> &middot; Community calendar</div>
+    <h1>Community <em style="font-style:italic;color:var(--gold);">calendar</em></h1>
+    <p class="deck" id="deck">Everything happening in your community: social events, board meetings, and the dates the amenities are already reserved.</p>
+
+    <div class="legend">
+      <span><i class="dot event"></i> Community event</span>
+      <span><i class="dot meeting"></i> Board meeting</span>
+      <span><i class="dot amenity_booking"></i> Amenity reserved</span>
+    </div>
+
+    <div id="content"><p class="deck">Loading&hellip;</p></div>
+  </div>
+
+<script>
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g,
+  (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+const params = new URLSearchParams(location.search);
+const propId = params.get('property_id');
+
+function fmtTime(iso) {
+  if (!iso || !iso.includes('T')) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  // Central, because every community is in Texas and a time that renders in
+  // the reader's own zone is a time somebody shows up wrong for.
+  return d.toLocaleTimeString('en-US', {
+    timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+function parts(iso) {
+  const d = new Date(iso && iso.includes('T') ? iso : iso + 'T12:00:00');
+  return {
+    ok: !isNaN(d.getTime()),
+    month: d.toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'long', year: 'numeric' }),
+    day: d.toLocaleDateString('en-US', { timeZone: 'America/Chicago', day: 'numeric' }),
+    weekday: d.toLocaleDateString('en-US', { timeZone: 'America/Chicago', weekday: 'short' }),
+  };
+}
+
+function render(data) {
+  const items = data.items || [];
+  if (!items.length) {
+    document.getElementById('content').innerHTML =
+      '<div class="empty"><h3>Nothing on the calendar yet</h3>'
+      + '<p>Board meetings, community events and amenity reservations will appear here.</p>'
+      + '<a class="cta" href="/portal">Back to your portal</a></div>';
+    return;
+  }
+
+  // Group by month so a year of dates stays readable.
+  const months = [];
+  const byMonth = new Map();
+  for (const it of items) {
+    const p = parts(it.starts_at);
+    if (!p.ok) continue;
+    if (!byMonth.has(p.month)) { byMonth.set(p.month, []); months.push(p.month); }
+    byMonth.get(p.month).push({ it, p });
+  }
+
+  document.getElementById('content').innerHTML = months.map((m) => `
+    <div class="month">
+      <div class="month-head">${esc(m)}</div>
+      ${byMonth.get(m).map(({ it, p }) => {
+        const t = fmtTime(it.starts_at);
+        const bits = [
+          it.location ? esc(it.location) : null,
+          t ? esc(t) : null,
+        ].filter(Boolean).join(' &middot; ');
+        return `
+        <div class="row">
+          <div class="date"><div class="d">${esc(p.day)}</div><div class="w">${esc(p.weekday)}</div></div>
+          <div class="body">
+            <div class="title"><i class="dot ${esc(it.kind)}"></i>${esc(it.title)}</div>
+            ${bits ? `<div class="meta">${bits}</div>` : ''}
+            ${it.description ? `<div class="meta">${esc(it.description)}</div>` : ''}
+            ${it.link ? `<div class="meta"><a href="${esc(it.link)}">Details</a></div>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+}
+
+(async function load() {
+  try {
+    const qs = propId ? '?property_id=' + encodeURIComponent(propId) : '';
+    const r = await fetch('/api/portal/community-calendar' + qs, { credentials: 'same-origin' });
+    if (r.status === 401) { location.href = '/portal/login'; return; }
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Could not load the calendar');
+    if (j.community && j.community.name) {
+      document.getElementById('deck').textContent =
+        'Everything happening at ' + j.community.name + ': social events, board meetings, and the dates the amenities are already reserved.';
+    }
+    render(j);
+  } catch (e) {
+    document.getElementById('content').innerHTML =
+      '<div class="empty"><h3>Couldn\'t load the calendar</h3><p>' + esc(e.message) + '</p>'
+      + '<a class="cta" href="/portal">Back to your portal</a></div>';
+  }
+})();
+</script>
+</body>
+</html>
