@@ -126,13 +126,26 @@ router.post('/public', upload.array('files', 6), async (req, res) => {
     // Mint reference number FIRST so we can use it in the storage path
     const referenceNumber = await nextReferenceNumber(community);
 
-    // Optional portal_user link from authenticated session (if any)
+    // Optional portal_user link from authenticated session (if any).
+    //
+    // This required './portal/_cookie', a module that has never existed, for a
+    // function named decodeCookie that has never existed either. The require sat
+    // inside a bare try/catch, so it threw MODULE_NOT_FOUND on every submission
+    // and was swallowed: portalUserId was ALWAYS null and every master plan
+    // submission lost its link to the builder's portal account. Nothing ever
+    // surfaced, because a silent catch around a missing module looks exactly
+    // like "no session". (Found 2026-08-21 by scripts/check_requires_tracked.js.)
+    //
+    // The real resolver is exported from api/portal.js. Required lazily to keep
+    // the two modules from importing each other at load time.
     let portalUserId = null;
     try {
-      const { decodeCookie } = require('./portal/_cookie');
-      const decoded = decodeCookie && decodeCookie(req);
-      if (decoded?.portal_user_id) portalUserId = decoded.portal_user_id;
-    } catch (_) {}
+      const { resolvePortalUser } = require('./portal');
+      const { portalUserId: id } = resolvePortalUser(req) || {};
+      if (id) portalUserId = id;
+    } catch (e) {
+      console.warn('[master_plan_submissions] portal session lookup failed:', e.message);
+    }
 
     // Parse acknowledgments (optional JSON)
     let acknowledgments = {};
