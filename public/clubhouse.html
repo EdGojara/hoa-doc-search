@@ -843,6 +843,16 @@ async function onSubmit(e) {
 
     btn.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:-3px;margin-right:8px;"></span> Redirecting to secure checkout…`;
 
+    // No connected Stripe account means the association takes payment the way
+    // it always has. Skipping the checkout call entirely beats letting it 503
+    // and showing an error over a reservation that WAS created.
+    if (community && community.stripe_ready === false) {
+      window.location.href = `/clubhouse/${community.slug}/success`
+        + '?ref=' + encodeURIComponent(rentalData.reference_number || rentalData.rental_id)
+        + '&pay=check';
+      return;
+    }
+
     // 2) Create Stripe Checkout session
     const slug = community.slug;
     const checkoutResp = await fetch('/api/payments/create-checkout-session', {
@@ -866,7 +876,7 @@ async function onSubmit(e) {
   } catch (err) {
     toast(err.message, 'error');
     btn.disabled = false;
-    btn.textContent = 'Reserve & Pay →';
+    btn.textContent = (community && community.stripe_ready === false) ? 'Reserve →' : 'Reserve & Pay →';
   }
 }
 

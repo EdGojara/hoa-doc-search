@@ -200,6 +200,29 @@
 
 const params = new URL(window.location.href).searchParams;
 const sessionId = params.get('session_id');
+  const payByCheck = params.get('pay') === 'check';
+  const refParam = params.get('ref');
+
+  // Reserved, not yet paid. The date is held and the association will invoice
+  // the usual way, so this is a confirmation and not an error.
+  if (payByCheck && refParam) {
+    document.getElementById('app').innerHTML = `
+      <div class="check-circle">✓</div>
+      <h1>Your date is reserved</h1>
+      <div class="subhead">
+        Reference <strong>${refParam.replace(/[<>&]/g, "")}</strong>. We have emailed your confirmation.
+      </div>
+      <p style="margin-top:18px;line-height:1.6;">
+        Payment is handled directly with the association rather than online.
+        Someone from Bedrock will be in touch with the amount due and how to pay.
+        Your reservation is not final until payment and the signed agreement are received.
+      </p>
+      <p style="margin-top:14px;color:#6b7a8d;font-size:13.5px;">
+        Questions? Call Bedrock at (832) 588-2485.
+      </p>`;
+    return;
+  }
+
 const slugMatch = window.location.pathname.match(/^\/clubhouse\/([^/?#]+)/);
 const slug = slugMatch ? slugMatch[1] : '';
 
