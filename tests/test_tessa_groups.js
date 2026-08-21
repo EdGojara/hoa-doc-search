@@ -86,8 +86,21 @@ check('persona mailboxes are excluded', () => {
   // Mailing the AI team about the AI team is not what "staff" means.
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ea', 'tessa_groups.js'), 'utf8');
   assert.ok(/personas/.test(src), 'the AI mailboxes must be filtered out of the staff group');
-  assert.ok(/status['"]?\s*,\s*['"]active/.test(src) || /\.eq\('status', 'active'\)/.test(src),
-    'only active accounts get mail');
+});
+check('it reads the same table the Team screen does', () => {
+  // The first cut read portal_users — the PORTAL login table for homeowners,
+  // board members and managers. Wrong in both directions: it included Laurie
+  // Vrvilo, who left in August and is deactivated on the Team screen, and it
+  // left out Celina Deleon and Lizette Cano, who work here.
+  //
+  // Deactivating somebody on the Team screen has to stop their mail, and that
+  // is only true if both surfaces read the same rows.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ea', 'tessa_groups.js'), 'utf8');
+  const users = fs.readFileSync(path.join(__dirname, '..', 'api', 'users.js'), 'utf8');
+  assert.ok(/from\('user_profiles'\)/.test(src), 'the staff group must read user_profiles');
+  assert.ok(/from\('user_profiles'\)/.test(users), 'and that is what the Team screen reads');
+  assert.ok(!/from\('portal_users'\)/.test(src), 'portal_users is the portal login table, not the staff roster');
+  assert.ok(/\.eq\('is_active', true\)/.test(src), 'only active people get mail');
 });
 check('only @bedrocktx.com', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ea', 'tessa_groups.js'), 'utf8');
