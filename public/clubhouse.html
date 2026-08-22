@@ -476,9 +476,14 @@
 </section>
 
 <!-- Reserve & Pay CTA -->
+<!-- Bedrock Pay names the WAY you pay; the association is who gets paid.
+     Saying so out loud, right above the card step, is the single most
+     reassuring thing a homeowner can read before typing a card number, and
+     almost nobody in this industry says it. (Ed 2026-08-21.) -->
 <div class="cta-bar">
   <div class="total-line">Total today <strong id="ctaTotal">—</strong></div>
   <button type="submit" class="reserve-btn" id="reserveBtn">Reserve &amp; Pay →</button>
+  <div id="payNote" style="flex-basis:100%; font-size:12px; color:var(--ink-faint); margin-top:8px; line-height:1.45;"></div>
 </div>
 
 </form>
@@ -601,6 +606,24 @@ function getQueryParams() {
     // configured, so this flag stops doing anything the moment payments are
     // real. It cannot become a way around a live checkout.
     stripeLive = community.stripe_configured === true;
+
+    // Say where the money goes, BEFORE the card step.
+    //
+    // Bedrock Pay names the way you pay; the association is who gets paid and
+    // is the merchant of record on the charge. Homeowners are wary of paying a
+    // management company, and rightly so — saying plainly that the money goes
+    // to their own association is the most reassuring line on the page, and
+    // almost nobody in this industry says it. (Ed 2026-08-21.)
+    {
+      const who = community.hoa_legal_name || community.name;
+      const note = document.getElementById('payNote');
+      if (note) {
+        note.textContent = community.stripe_ready
+          ? 'Payments go directly to ' + (/[.!?]$/.test(who) ? who : who + '.')
+            + ' Bedrock Pay never holds your association’s money.'
+          : 'This association takes payment by check. We’ll confirm your reservation and tell you where to send it.';
+      }
+    }
 
     // The wall used to stand here, and it was too broad.
     //
@@ -896,7 +919,7 @@ async function onSubmit(e) {
       throw new Error(humanizeError(rentalData.error) || `Reservation failed (${rentalResp.status})`);
     }
 
-    btn.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:-3px;margin-right:8px;"></span> Redirecting to secure checkout…`;
+    btn.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:-3px;margin-right:8px;"></span> Taking you to Bedrock Pay to pay ${community.hoa_legal_name || community.name}…`;
 
     // No connected Stripe account means the association takes payment the way
     // it always has. Skipping the checkout call entirely beats letting it 503

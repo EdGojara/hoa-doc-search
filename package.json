@@ -45,7 +45,8 @@
     "test:tessa-groups": "node tests/test_tessa_groups.js",
     "test:ap-attach": "node tests/test_ap_attach_document.js",
     "stripe:preflight": "node scripts/stripe_preflight.js",
-    "test:lifecycle": "node tests/test_community_lifecycle.js"
+    "test:lifecycle": "node tests/test_community_lifecycle.js",
+    "test:bedrock-pay": "node tests/test_bedrock_pay.js"
   },
   "keywords": [],
   "author": "",

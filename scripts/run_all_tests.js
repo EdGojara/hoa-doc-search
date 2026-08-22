@@ -92,6 +92,7 @@ const CHECKS = [
   'tests/test_draft_attachments.js',
   'tests/test_ap_attach_document.js',
   'tests/test_community_lifecycle.js',
+  'tests/test_bedrock_pay.js',
   'tests/test_paige_annual_meeting.js',
   'tests/test_balance_asof.js',
   'tests/test_amanda_review.js',
