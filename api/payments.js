@@ -279,6 +279,17 @@ router.post('/create-checkout-session', express.json({ limit: '128kb' }), async 
     if (!rental.community.amenity_bookings_active) {
       return res.status(403).json({ error: 'amenity bookings are not active for this community' });
     }
+    // Never take money for a community we have stopped managing, or one whose
+    // payments are switched off. The association would have to refund it, and
+    // taking a homeowner's money on behalf of an association we no longer act
+    // for is the kind of mistake that outlives the engagement. (Ed 2026-08-21.)
+    {
+      const { canDo } = require('../lib/community/lifecycle');
+      const gate = await canDo('payments', rental.community.id);
+      if (!gate.allowed) {
+        return res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason });
+      }
+    }
     if (rental.status !== 'draft' && rental.status !== 'pending_payment') {
       return res.status(409).json({ error: `rental status is ${rental.status}; checkout no longer applies` });
     }
@@ -538,6 +549,22 @@ router.post('/connect/onboard', express.json(), async (req, res) => {
     if (!stripeLib.isConfigured()) return res.status(503).json({ error: 'payment_not_configured', hint: 'Set STRIPE_SECRET_KEY first.' });
     const { community_id, return_url } = req.body || {};
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+
+    // Don't onboard a community we are winding down.
+    //
+    // Ed 2026-08-21: "we aren't going to onboard eaglewood, we are losing them
+    // as a client." Connect onboarding creates a real Stripe account in the
+    // ASSOCIATION's name and asks a board officer for their identity documents.
+    // Starting that for a client we stop managing on 9/30 wastes their time and
+    // leaves an orphaned account nobody closes.
+    //
+    // Enforced here rather than only in the UI, because the UI lists every
+    // community and one wrong click is all it takes.
+    const { canDo } = require('../lib/community/lifecycle');
+    const gate = await canDo('payments', community_id);
+    if (!gate.allowed) {
+      return res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason });
+    }
 
     const { data: community } = await supabase.from('communities')
       .select('id, name, hoa_legal_name, stripe_connected_account_id').eq('id', community_id).maybeSingle();

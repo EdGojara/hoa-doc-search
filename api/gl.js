@@ -196,6 +196,19 @@ ${totRow('NET INCOME', 'net_cents', 'net')}
 // ----------------------------------------------------------------------------
 router.get('/:communityId/income-statement-print', async (req, res) => {
   try {
+    // A statement is only as true as the ledger under it.
+    //
+    // Eaglewood keeps its books in Vantaca, and the 179 journal entries in
+    // trustEd are a partial parallel ledger from a cancelled cutover. A balance
+    // sheet built from them renders perfectly and is wrong, and this endpoint
+    // produces the board-facing artifact. Refuse rather than print something
+    // that looks authoritative. (Ed 2026-08-21: "we are going to keep in
+    // vantaca and stop all migration.")
+    {
+      const { canRenderFinancials } = require("../lib/community/lifecycle");
+      const ok = await canRenderFinancials(req.params.communityId);
+      if (!ok.allowed) return res.status(409).json({ error: "books_not_here", detail: ok.reason });
+    }
     const { perFundIncomeStatement } = require('../lib/accounting/financial_statements');
     const period_end = req.query.period_end || _today();
     const data = await perFundIncomeStatement({ community_id: req.params.communityId, period_end });
@@ -231,6 +244,19 @@ router.get('/:communityId/income-statement-print', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.get('/:communityId/balance-sheet-print', async (req, res) => {
   try {
+    // A statement is only as true as the ledger under it.
+    //
+    // Eaglewood keeps its books in Vantaca, and the 179 journal entries in
+    // trustEd are a partial parallel ledger from a cancelled cutover. A balance
+    // sheet built from them renders perfectly and is wrong, and this endpoint
+    // produces the board-facing artifact. Refuse rather than print something
+    // that looks authoritative. (Ed 2026-08-21: "we are going to keep in
+    // vantaca and stop all migration.")
+    {
+      const { canRenderFinancials } = require("../lib/community/lifecycle");
+      const ok = await canRenderFinancials(req.params.communityId);
+      if (!ok.allowed) return res.status(409).json({ error: "books_not_here", detail: ok.reason });
+    }
     const { balanceSheet, groupRows, _BS_ASSET_ORDER, _BS_LIAB_ORDER } = require('../lib/accounting/financial_statements');
     const as_of = req.query.as_of || _today();
     const bs = await balanceSheet({ community_id: req.params.communityId, as_of_date: as_of });

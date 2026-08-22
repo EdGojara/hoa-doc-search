@@ -486,6 +486,25 @@ router.get('/accounts/:id/test-print', async (req, res) => {
 router.post('/run', express.json(), async (req, res) => {
   try {
     const b = req.body || {};
+
+    // Do not cut checks for a community whose financials are switched off, or
+    // one we have stopped managing.
+    //
+    // Ed 2026-08-21, on Eaglewood: "lets not do any financials or payments, our
+    // last day will be 9/30." A check is signed on the association's account by
+    // Bedrock as its agent — writing one after the agency ends is not a
+    // bookkeeping error, it is signing on an account we no longer act for.
+    //
+    // Checked at the run, not at the render: the PDF is the visible step, and
+    // the register row and the ledger entry are the ones that matter.
+    if (b.community_id) {
+      const { canDo } = require('../lib/community/lifecycle');
+      const gate = await canDo('financials', b.community_id);
+      if (!gate.allowed) {
+        return res.status(409).json({ error: 'financials_closed', detail: gate.reason });
+      }
+    }
+
     const run = await createCheckRun({
       community_id: b.community_id, bank_account_id: b.bank_account_id,
       payment_date: b.payment_date, invoice_ids: b.invoice_ids, memo: b.memo, user: b.user || null,
