@@ -743,11 +743,17 @@ router.post('/admin/rentals/:id/complete-inspection', express.json({ limit: '64k
         const refundThis = p.amount_cents - withholdThis;
         if (refundThis <= 0) continue;
 
+        // Returning a deposit AFTER the event: the rental happened, so Bedrock
+        // keeps its management fee. reverse_transfer pulls the money back from
+        // the association's account rather than paying it out of Bedrock's —
+        // it is their deposit, and it was transferred to them at capture.
+        // (See the note on stripeLib.refund; this path had never run.)
         const result = await stripeLib.refund({
           paymentIntentId: p.processor_payment_id,
           amountCents: refundThis,
           connectedAccountId: p.connected_account_id || undefined,
           reason: 'requested_by_customer',
+          refundApplicationFee: false,
         });
 
         if (result.ok) {

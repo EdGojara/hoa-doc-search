@@ -997,12 +997,19 @@ router.post('/:id/refund', express.json({ limit: '32kb' }), async (req, res) => 
       return res.status(400).json({ error: 'no processor_payment_id on record (was this a paper payment?)' });
     }
 
+    // Whether Bedrock gives back its management fee is a judgement about
+    // whether the service happened, so the operator states it rather than the
+    // code assuming. A cancelled booking refunds it (nothing was delivered);
+    // returning a deposit after the event does not (the rental happened).
+    // Default false — keeping a fee you earned is recoverable; silently
+    // handing back revenue on every deposit return is not obvious to anyone.
     const refund = await stripeLib.refund({
       paymentIntentId: payment.processor_payment_id,
       amountCents: amount_cents || undefined,
       connectedAccountId: payment.connected_account_id || undefined,
       reason: reason || 'requested_by_customer',
       reverseTransfer: !!reverse_transfer,
+      refundApplicationFee: req.body.refund_application_fee === true,
     });
 
     if (!refund.ok) {
