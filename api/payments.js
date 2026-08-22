@@ -636,7 +636,7 @@ router.get('/connect/portfolio-status', async (req, res) => {
     const key = process.env.STRIPE_SECRET_KEY || '';
     const mode = /^sk_live_/.test(key) ? 'live' : (/^sk_test_/.test(key) ? 'test' : 'unconfigured');
     const { data, error } = await supabase.from('communities')
-      .select('id, name, stripe_connected_account_id, stripe_onboarding_status, portal_active, portal_module_config')
+      .select('id, name, stripe_connected_account_id, stripe_onboarding_status, portal_active, portal_module_config, is_demo, management_status, financials_active')
       .order('name');
     if (error) return res.status(500).json({ error: error.message });
     const communities = (data || []).map((c) => {
@@ -657,7 +657,18 @@ router.get('/connect/portfolio-status', async (req, res) => {
         // portal now hides the Pay-now button in this state, so without this
         // flag the gap is SILENT — owners simply have no way to pay and nobody
         // is told why.
-        portal_live_without_payments: portalLive && balanceTile && !hasAccount,
+        // Demo communities and communities we are winding down are excluded on
+        // purpose. Drama Creek is fictional and will never have a Stripe
+        // account, and Eaglewood's payments are switched off deliberately —
+        // both would sit in this banner forever. An alert that is permanently
+        // on is an alert nobody reads, and this one has to still mean something
+        // the day a REAL community quietly loses its ability to take payment.
+        // (Ed 2026-08-21, seeing Drama Creek flagged on the Online Payments
+        // screen.)
+        portal_live_without_payments: portalLive && balanceTile && !hasAccount
+          && c.is_demo !== true
+          && c.financials_active !== false
+          && !['terminating', 'terminated'].includes(c.management_status || 'active'),
       };
     });
     const summary = {
