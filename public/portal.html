@@ -651,6 +651,11 @@
       <span class="value" id="balanceValue">—</span>
       <span class="sub" id="balanceAsOf">—</span>
       <button id="payNowBtn" onclick="openPayModal()" style="display:none; margin-top:8px; align-self:flex-start; background:#D4AF37; color:#0B1D34; border:none; border-radius:8px; padding:7px 16px; font-weight:700; font-size:13px; cursor:pointer;">Pay now</button>
+      <!-- Autopay state, on the card. Somebody with a standing authorisation
+           should be able to see what it will take and when without opening
+           anything — that uncertainty is the whole reason people will not turn
+           it on. Populated in renderBalance. -->
+      <div id="autopayNote" style="display:none; margin-top:10px; font-size:12.5px; line-height:1.5; color:#334155; border-top:1px solid #eef2f7; padding-top:9px;"></div>
     </div>
     <div class="stat">
       <span class="label">Compliance status</span>
@@ -1023,6 +1028,26 @@ window.openPayModal = function () {
       <input type="radio" name="_payMethod" value="card"> <b>Credit / debit card</b>
       <div style="color:#64748b; font-size:12.5px; margin-left:22px;">Includes a ${usd(cardFee)} card fee · ${usd(amt + cardFee)} total</div>
     </label>
+
+    <!-- Autopay, offered at the moment somebody is already paying.
+         This is the highest-value thing a homeowner can switch on and the only
+         moment they are thinking about it. Buried on a settings screen it never
+         gets found; here it is one checkbox at the point of intent.
+         (Ed 2026-08-22, on Vantaca's recurring tab.) -->
+    <label id="_autoWrap" style="display:${c.autopay_available ? 'block' : 'none'}; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:12px; cursor:pointer; background:#f8fafc;">
+      <input type="checkbox" id="_autoOn"> <b>Also pay automatically from now on</b>
+      <div style="color:#64748b; font-size:12.5px; margin-left:22px; line-height:1.45;">
+        We take whatever is owed on the due date, and email you the exact amount
+        at least 10 days before. Cancel any time.
+      </div>
+    </label>
+    <div id="_autoCap" style="display:none; margin:-4px 0 16px 36px;">
+      <label style="font-size:12px; color:#475569;">Never take more than (optional)</label>
+      <input id="_autoMax" type="text" inputmode="decimal" placeholder="e.g. 1000"
+             style="display:block; margin-top:4px; width:150px; padding:7px 10px; border:1px solid #cbd5e1; border-radius:7px; font-size:14px;">
+      <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">If a balance is ever above this, we stop and ask instead of taking it.</div>
+    </div>
+
     <div style="display:flex; gap:8px; justify-content:flex-end;">
       <button id="_payCancel" style="padding:9px 16px; border:1px solid #cbd5e1; background:#fff; border-radius:8px; cursor:pointer; font-weight:600;">Cancel</button>
       <button id="_payGo" style="padding:9px 18px; border:none; background:#0B1D34; color:#fff; font-weight:700; border-radius:8px; cursor:pointer;">Continue to payment</button>
@@ -1033,10 +1058,42 @@ window.openPayModal = function () {
   const close = () => modal.remove();
   modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
   modal.querySelector('#_payCancel').onclick = close;
+
+  // The cap only makes sense once autopay is on, and only for a variable
+  // amount — which is the only kind we offer.
+  const autoOn = modal.querySelector('#_autoOn');
+  if (autoOn) {
+    autoOn.onchange = () => {
+      modal.querySelector('#_autoCap').style.display = autoOn.checked ? 'block' : 'none';
+    };
+  }
+
   modal.querySelector('#_payGo').onclick = async function () {
     const method = modal.querySelector('input[name="_payMethod"]:checked').value;
+    const wantsAuto = !!(autoOn && autoOn.checked);
     this.disabled = true; this.textContent = 'Redirecting…';
     try {
+      // Autopay first, because it is a SETUP session — the homeowner authorises
+      // future debits and no money moves. Doing it after the payment would mean
+      // two Stripe redirects in a row and most people would abandon the second.
+      if (wantsAuto) {
+        const rawCap = (modal.querySelector('#_autoMax').value || '').replace(/[^0-9.]/g, '');
+        const capCents = rawCap ? Math.round(parseFloat(rawCap) * 100) : null;
+        const ar = await fetch('/api/portal/autopay/begin', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            method_kind: method === 'card' ? 'card' : 'us_bank_account',
+            max_amount_cents: capCents && capCents > 0 ? capCents : null,
+            amount_mode: 'full_balance',
+            success_url: location.origin + '/portal?autopay=1',
+            cancel_url: location.href,
+          }),
+        });
+        const aj = await ar.json();
+        if (!ar.ok || aj.error) throw new Error(aj.hint || aj.error || 'Could not set up automatic payments');
+        location.href = aj.setup_url;
+        return;
+      }
       const r = await fetch('/api/payments/assessment/create-checkout', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1061,7 +1118,42 @@ function getQueryParams() {
   return {
     demo: url.searchParams.get('demo') === '1',
     community: url.searchParams.get('community') || '',
+    autopay: url.searchParams.get('autopay') === '1',
+    session_id: url.searchParams.get('session_id') || '',
   };
+}
+
+// Coming back from Stripe's setup page.
+//
+// The mandate is NOT active until we read the session back and store the
+// payment method — Stripe redirects on completion, not on success, and a
+// homeowner who closed the tab halfway would otherwise sit at pending_setup
+// believing they were enrolled. This is the step that makes it real, and it
+// says so on screen either way.
+async function finishAutopayIfReturning() {
+  const q = getQueryParams();
+  if (!q.autopay) return;
+  const sid = q.session_id;
+  const banner = document.createElement('div');
+  banner.style.cssText = 'margin:12px 0; padding:11px 14px; border-radius:9px; font-size:13.5px; line-height:1.5;';
+  const main = document.querySelector('main') || document.body;
+  main.insertBefore(banner, main.firstChild);
+  try {
+    if (!sid) throw new Error('Stripe did not return a session, so nothing was set up.');
+    const r = await fetch('/api/portal/autopay/complete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sid }),
+    });
+    const j = await r.json();
+    if (!r.ok || j.error) throw new Error(j.error || 'could not finish setting up automatic payments');
+    banner.style.cssText += 'background:#f0fdf4; border:1px solid #86efac; color:#166534;';
+    banner.innerHTML = '<b>Automatic payments are on.</b> We\'ll email you the exact amount at least 10 days before each payment, and you can turn this off any time.';
+  } catch (e) {
+    banner.style.cssText += 'background:#fff7ed; border:1px solid #fed7aa; color:#9a3412;';
+    banner.textContent = 'We could not finish setting up automatic payments: ' + e.message + ' Nothing has been authorised, and no money has moved.';
+  }
+  // Clean the URL so a refresh does not re-run this.
+  history.replaceState({}, '', location.pathname);
 }
 
 // =============================================================================
@@ -1512,6 +1604,68 @@ function renderPortal(ctx) {
       && window._payCtx.payments_enabled;
     payBtn.style.display = canPay ? 'inline-block' : 'none';
   }
+
+  // Autopay state on the balance card.
+  //
+  // Someone enrolled needs to see it WITHOUT opening anything — the whole
+  // anxiety of a standing authorisation is not knowing whether it is still on
+  // and what it will take. Next amount, next date, and how to stop it, on the
+  // card. (Ed 2026-08-22.)
+  //
+  // Best-effort: it arrives with migration 383, and a community that never
+  // enables payments has none. Neither may break the balance card.
+  (async () => {
+    const wrap = document.getElementById('autopayNote');
+    if (!wrap) return;
+    window._payCtx.autopay_available = !!window._payCtx.payments_enabled;
+    try {
+      const r = await fetch('/api/portal/autopay');
+      if (!r.ok) return;
+      const j = await r.json();
+      const a = j.autopay;
+      if (!a || a.status === 'cancelled') return;
+
+      // Already enrolled — do not offer it again inside the pay modal.
+      if (a.status === 'active' || a.status === 'paused') window._payCtx.autopay_available = false;
+
+      const money = (c) => '$' + (Number(c || 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const day = (d) => (d ? new Date(d + 'T12:00:00Z').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '');
+      const method = a.method_label
+        ? a.method_label + (a.method_last4 ? ' ending ' + a.method_last4 : '')
+        : (a.method_kind === 'card' ? 'your card' : 'your bank account');
+
+      let body = '';
+      if (a.status === 'active') {
+        body = '<b style="color:#166534;">● Automatic payments are on</b>'
+          + '<div style="margin-top:3px;">Next: <b>'
+          + (a.noticed_amount_cents ? money(a.noticed_amount_cents) : 'your balance')
+          + '</b> on <b>' + day(a.next_charge_at) + '</b>, from ' + escapeHtml(method) + '.</div>'
+          + (a.max_amount_cents ? '<div style="color:#64748b;">We never take more than ' + money(a.max_amount_cents) + '.</div>' : '');
+      } else if (a.status === 'paused') {
+        // A pause is always something the homeowner needs to act on, so it says
+        // why in their words rather than showing a status word.
+        body = '<b style="color:#b45309;">● Automatic payments are paused</b>'
+          + '<div style="margin-top:3px;">' + escapeHtml(a.status_reason || 'We stopped and need you to take a look.') + '</div>';
+      } else if (a.status === 'failed') {
+        body = '<b style="color:#b91c1c;">● Automatic payments stopped</b>'
+          + '<div style="margin-top:3px;">' + escapeHtml(a.status_reason || 'The last few payments did not go through.') + '</div>';
+      } else if (a.status === 'pending_setup') {
+        body = '<b style="color:#64748b;">Automatic payments — not finished</b>'
+          + '<div style="margin-top:3px;">You started setting this up but did not finish authorising it.</div>';
+      }
+      if (!body) return;
+      wrap.innerHTML = body
+        + '<div style="margin-top:6px;"><a href="#" id="autopayOff" style="color:#475569; font-size:12px;">Turn off automatic payments</a></div>';
+      wrap.style.display = 'block';
+      const off = document.getElementById('autopayOff');
+      if (off) off.onclick = async (e) => {
+        e.preventDefault();
+        if (!confirm('Turn off automatic payments? You will need to pay each balance yourself.')) return;
+        await fetch('/api/portal/autopay/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        location.reload();
+      };
+    } catch (_) { /* the balance card must render regardless */ }
+  })();
 
   const compVal = $('complianceValue');
   const comp = ctx.compliance || {};
@@ -1978,6 +2132,8 @@ function _dismissTutorial() {
   applyMimicBanner(ctx);
   applyManagerBanner(ctx);
   renderPortal(ctx);
+  // After render, so the balance card exists to refresh underneath the banner.
+  try { await finishAutopayIfReturning(); } catch (_) { /* never block the portal */ }
 
   // After main render, async-fetch the ACC review queue count. If > 0, the
   // ACC Reviews tile appears at the top of the home section.
