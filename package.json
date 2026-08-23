@@ -47,7 +47,8 @@
     "stripe:preflight": "node scripts/stripe_preflight.js",
     "test:lifecycle": "node tests/test_community_lifecycle.js",
     "test:bedrock-pay": "node tests/test_bedrock_pay.js",
-    "test:refunds": "node tests/test_refund_routing.js"
+    "test:refunds": "node tests/test_refund_routing.js",
+    "test:autopay": "node tests/test_autopay.js"
   },
   "keywords": [],
   "author": "",
