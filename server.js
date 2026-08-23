@@ -526,6 +526,13 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/portal\/property$/,                 // GET property details + owners + activity (cookie-gated)
   /^\/api\/portal\/balance$/,                  // GET balance + aging buckets + history (cookie-gated)
   /^\/api\/portal\/meetings$/,                 // GET upcoming meetings + past minutes (cookie-gated)
+  // Autopay — every handler resolves the property from the CALLER'S cookie
+  // (assertOwnerLikeRole + resolveScopedProperty), never from the request body.
+  // A client-supplied property_id here would leak whether a neighbour has
+  // autopay and the last four of their bank account, and would let anyone
+  // cancel it and quietly stop their assessments being paid.
+  /^\/api\/portal\/autopay$/,                  // GET this owner's standing authorisation
+  /^\/api\/portal\/autopay\/(begin|complete|cancel)$/, // enrol / finish / stop
   // Board portal API — every handler enforces requireBoardViewer (staff JWT OR
   // a board member's portal magic-link cookie whose email holds an active seat)
   // + canSeeCommunity per-community scope (lib/portal/board_access.js,

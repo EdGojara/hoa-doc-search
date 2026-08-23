@@ -4188,6 +4188,122 @@ router.get('/vendor-directory/feed', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Assessment autopay — the homeowner's own standing authorisation.
+//
+// ON THE PORTAL ROUTER, NOT api/payments.js, and that is the point. These
+// endpoints were first written there and took property_id from the request
+// body, checking only that the lot belonged to the stated community. Behind the
+// staff gate that is invisible; allowlisted for homeowners it would have meant
+// anyone could read whether a property has autopay and the last four digits of
+// its bank account, and anyone could CANCEL a neighbour's authorisation and
+// quietly stop their assessments being paid.
+//
+// assertOwnerLikeRole + resolveScopedProperty live here and answer "which
+// property is THIS caller's" from the cookie. The property is never taken from
+// the request. (Caught before shipping, 2026-08-22.)
+// ============================================================================
+router.get('/autopay', async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (!scoped.property) return res.json({ autopay: null });
+    const { statusForProperty } = require('../lib/payments/autopay');
+    res.json({ ok: true, autopay: await statusForProperty(scoped.property.id) });
+  } catch (err) {
+    console.error('[portal] autopay status failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/autopay/begin', express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (!scoped.property) return res.status(404).json({ error: 'no_property' });
+
+    // resolveScopedProperty joins communities(id, name, slug, hoa_legal_name)
+    // and deliberately not the Stripe account — a dozen endpoints share it and
+    // widening that select to suit this one is how a shared helper turns into
+    // everyone's grab bag. Read what this path needs, here.
+    const { data: community, error: cErr } = await supabase.from('communities')
+      .select('id, name, hoa_legal_name, stripe_connected_account_id')
+      .eq('id', scoped.property.community_id).maybeSingle();
+    if (cErr) throw cErr;
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+    const { canDo } = require('../lib/community/lifecycle');
+    const gate = await canDo('payments', community.id);
+    if (!gate.allowed) return res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason });
+
+    const b = req.body || {};
+    const { beginEnrollment } = require('../lib/payments/autopay');
+    const r = await beginEnrollment({
+      community,
+      property: { id: scoped.property.id },
+      payer: { name: roleCheck.user.full_name, email: roleCheck.user.email },
+      amountMode: b.amount_mode === 'fixed' ? 'fixed' : 'full_balance',
+      maxAmountCents: Number(b.max_amount_cents) > 0 ? Math.round(Number(b.max_amount_cents)) : null,
+      frequency: b.frequency || 'on_due_date',
+      methodKind: b.method_kind === 'card' ? 'card' : 'us_bank_account',
+      successUrl: b.success_url, cancelUrl: b.cancel_url,
+      portalUserId: roleCheck.user.id,
+    });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
+    res.json(r);
+  } catch (err) {
+    console.error('[portal] autopay begin failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/autopay/complete', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (!scoped.property) return res.status(404).json({ error: 'no_property' });
+
+    const { session_id } = req.body || {};
+    if (!session_id) return res.status(400).json({ error: 'session_id_required' });
+
+    // The enrolment must be the one on THIS caller's property — never an id
+    // handed in by the client.
+    const { statusForProperty, completeEnrollment } = require('../lib/payments/autopay');
+    const existing = await statusForProperty(scoped.property.id);
+    if (!existing) return res.status(404).json({ error: 'no_enrollment_in_progress' });
+
+    const r = await completeEnrollment({ autopayId: existing.id, sessionId: session_id });
+    if (!r.ok) return res.status(400).json({ error: r.error });
+    res.json({ ok: true, autopay: await statusForProperty(scoped.property.id) });
+  } catch (err) {
+    console.error('[portal] autopay complete failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/autopay/cancel', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (!scoped.property) return res.status(404).json({ error: 'no_property' });
+
+    const { statusForProperty, cancel } = require('../lib/payments/autopay');
+    const existing = await statusForProperty(scoped.property.id);
+    if (!existing) return res.json({ ok: true, already: true });
+
+    const r = await cancel({ autopayId: existing.id, by: 'homeowner', reason: (req.body || {}).reason || null });
+    if (!r.ok) return res.status(500).json({ error: r.error });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[portal] autopay cancel failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/vendor-directory/categories', async (req, res) => {
   try {
     const roleCheck = await assertOwnerLikeRole(req, res);

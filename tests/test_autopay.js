@@ -141,5 +141,53 @@ check('the migration says so', () => {
     'a new table the API writes to needs explicit grants');
 });
 
+console.log('\nThe caller can only touch their own property');
+check('autopay lives on the portal router, not api/payments', () => {
+  // These were first written in api/payments.js, taking property_id from the
+  // request body and checking only that the lot was in the stated community.
+  // Behind the staff gate that is invisible. Allowlisted for homeowners it
+  // would have let anyone read whether a neighbour has autopay and the last
+  // four of their bank account — and CANCEL it, quietly stopping their
+  // assessments from being paid. Caught before shipping, 2026-08-22.
+  const pay = src('api/payments.js');
+  const portal = src('api/portal.js');
+  assert.ok(!/router\.(get|post)\('\/autopay/.test(pay),
+    'api/payments.js has no cookie identity — autopay cannot live there');
+  assert.ok(/router\.get\('\/autopay'/.test(portal), 'status belongs on the portal router');
+  assert.ok(/router\.post\('\/autopay\/begin'/.test(portal));
+});
+
+check('every handler resolves the property from the cookie', () => {
+  const portal = src('api/portal.js');
+  const block = portal.slice(
+    portal.indexOf("router.get('/autopay'"),
+    portal.indexOf("router.get('/vendor-directory/categories'"));
+  const handlers = block.split(/router\.(?:get|post)\(/).filter((h) => h.includes('autopay'));
+  assert.ok(handlers.length >= 4, `expected status/begin/complete/cancel, found ${handlers.length}`);
+  for (const h of handlers) {
+    assert.ok(/assertOwnerLikeRole\(req, res\)/.test(h), 'each handler must authenticate');
+    assert.ok(/resolveScopedProperty\(req, supabase, roleCheck\.user\)/.test(h),
+      'the property must come from the caller, never from the request');
+  }
+});
+
+check('complete and cancel never take an id from the client', () => {
+  const portal = src('api/portal.js');
+  const block = portal.slice(
+    portal.indexOf("router.post('/autopay/complete'"),
+    portal.indexOf("router.get('/vendor-directory/categories'"));
+  assert.ok(!/autopay_id/.test(block),
+    'the enrolment is looked up from the scoped property, not handed in');
+  assert.ok(/statusForProperty\(scoped\.property\.id\)/.test(block));
+});
+
+check('the allowlist is exact, not a prefix', () => {
+  // A prefix would open every future /autopay/* route to the public internet.
+  const s = src('server.js');
+  assert.ok(s.includes(String.raw`/^\/api\/portal\/autopay$/`), 'status path, anchored');
+  assert.ok(s.includes(String.raw`/^\/api\/portal\/autopay\/(begin|complete|cancel)$/`),
+    'named actions only');
+});
+
 console.log(`\nautopay: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
