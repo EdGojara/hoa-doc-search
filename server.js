@@ -6955,7 +6955,24 @@ app.get('/api/presentations/story', async (req, res) => {
       }
     }
 
+    // The "Meet the team" screen draws its members from the roster (the single
+    // source for who works here), so the deck can't drift from the team.
+    let teamMembers = null;
+    if (screens.some((s) => s.type === 'team')) {
+      try {
+        const roster = require('./lib/team/roster');
+        teamMembers = roster.people()
+          .filter((m) => !m.owner_only && !m.not_a_person)
+          .map((m) => ({
+            name: m.name,
+            role: m.signature_title || m.title || '',
+            img: `/assets/presentations/team/${m.persona}.jpg`,
+          }));
+      } catch (e) { console.warn('[presentations] roster load failed:', e.message); }
+    }
+
     const resolved = screens.map((s) => {
+      if (s.type === 'team') return { ...s, members: teamMembers || [] };
       if (!s.video_topic) return s;
       const v = urls[s.video_topic] || null;
       return {

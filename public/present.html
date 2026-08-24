@@ -90,6 +90,15 @@
   .ms .mh { font-size:22px; font-weight:700; color:#fff; margin-bottom:6px; }
   .ms .mb { font-size:17px; line-height:1.4; color:var(--ice); }
 
+  /* Team grid */
+  .team { display:flex; flex-wrap:wrap; gap:18px 26px; margin-top:22px; justify-content:center; align-content:flex-start; }
+  .tm { width:180px; text-align:center; }
+  .tm-photo { width:112px; height:112px; margin:0 auto 10px; border-radius:50%; overflow:hidden;
+              border:2px solid var(--gold); box-shadow:0 8px 22px rgba(0,0,0,.35); }
+  .tm-photo img { width:100%; height:100%; object-fit:cover; display:block; }
+  .tm-n { font-size:17px; font-weight:700; color:#fff; }
+  .tm-r { font-size:13px; color:var(--ice); margin-top:2px; line-height:1.3; }
+
   /* Video screen: copy left, player right. */
   .videowrap { display:flex; gap:46px; margin-top:26px; flex:1; align-items:center; }
   .videocopy { flex:0 0 42%; }
@@ -220,6 +229,14 @@
       inner = `${label(s)}<h2>${esc(s.headline||'')}</h2>
         <div class="roadmap">${(s.milestones||[]).map(m=>`<div class="ms">
           <div class="when">${esc(m.when)}</div><div class="mh">${esc(m.head)}</div><div class="mb">${esc(m.body)}</div></div>`).join('')}</div>`;
+    } else if (s.type === 'team') {
+      const members = s.members || [];
+      inner = `${label(s)}<h2 style="font-size:40px;">${esc(s.headline||'')}</h2>${s.body?`<div class="body" style="margin-bottom:6px;">${esc(s.body)}</div>`:''}
+        <div class="team">${members.map(m=>`<div class="tm">
+          <div class="tm-photo"><img src="${esc(m.img)}" alt="${esc(m.name)}" loading="eager"></div>
+          <div class="tm-n">${esc(m.name)}</div>
+          <div class="tm-r">${esc(m.role)}</div>
+        </div>`).join('')}</div>`;
     } else if (s.type === 'video') {
       const player = s.video_ready
         ? `<video src="${esc(s.video_url)}" controls preload="metadata" playsinline></video>`
