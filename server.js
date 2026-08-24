@@ -1224,6 +1224,12 @@ app.use('/api/ar', arRouter);
 const homeSalesRouter = require('./api/home_sales');
 app.use('/api/home-sales', homeSalesRouter);
 
+// New-homeowner welcome packet. Mounted beside Home Sales because the closing
+// is its trigger, and refused for communities we are handing off via
+// canDo('welcome') rather than by name. Migration 384.
+const welcomePacketsRouter = require('./api/welcome_packets');
+app.use('/api/welcome', welcomePacketsRouter);
+
 const checksRouter = require('./api/checks');
 app.use('/api/checks', checksRouter);
 

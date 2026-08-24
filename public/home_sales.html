@@ -60,6 +60,7 @@
     <button class="btn gold" id="btnRequest">＋ Log resale request</button>
     <button class="btn" id="btnScan">📄 Scan closing packet</button>
     <button class="btn" id="btnProrate">🧮 Prorate assessment</button>
+    <button class="btn" id="btnWelcome">📬 Welcome packet</button>
   </div>
   <div id="panel"></div>
   <div id="list"><div class="muted" style="padding:30px; text-align:center;">Loading…</div></div>
@@ -90,6 +91,7 @@
     $('btnRequest').addEventListener('click', openRequestFlow);
     $('btnScan').addEventListener('click', openScanFlow);
     $('btnProrate').addEventListener('click', openProrateFlow);
+    $('btnWelcome').addEventListener('click', openWelcomeFlow);
     if (CID) loadList(); else $('list').innerHTML = '<div class="card muted">No managed communities found.</div>';
   }
 
@@ -99,6 +101,7 @@
   async function loadList() {
     $('list').innerHTML = '<div class="muted" style="padding:30px; text-align:center;">Loading…</div>';
     try {
+      await loadWelcomeSent();
       const r = await fetch(`/api/home-sales?community_id=${CID}`);
       const j = await r.json(); if (j.error) throw new Error(j.error);
       const sales = j.sales || [];
@@ -114,6 +117,14 @@
               : `<span class="badge err">${fmt(s.seller_final_balance_cents)}</span>`)
           : (s.balance_cents===0 ? '<span class="badge ok">$0</span>' : (s.balance_cents!=null?fmt(s.balance_cents):'—'));
         const drv = s.drv_clean==null ? '—' : (s.drv_clean ? '<span class="badge ok">clean</span>' : `<span class="badge err">${s.open_violations_count||0} open</span>`);
+        // The welcome packet, for closed sales only. A closed sale with no
+        // packet is a new owner nobody has spoken to, so it shows as an action
+        // rather than a blank cell.
+        const wp = WELCOME_BY_PROP[s.property_id];
+        const packet = s.status !== 'closed' ? '<span class="muted">—</span>'
+          : (wp && wp.status === 'sent') ? '<span class="badge ok">sent</span>'
+          : (wp ? '<span class="badge req">filed</span>'
+                : `<a class="link" onclick="openWelcomeFor('${s.property_id}','${s.id}','${esc(s.buyer_name||'')}','${esc(s.closing_date||'')}')">send</a>`);
         return `<tr>
           <td><a class="link" onclick="openHistory('${s.property_id}')">${esc(addr)}</a></td>
           <td>${STAGE_BADGE[s.status]||esc(s.status)}</td>
@@ -122,12 +133,13 @@
           <td>${drv}</td>
           <td class="num">${bal}</td>
           <td class="num">${s.transfer_fee_cents!=null?fmt(s.transfer_fee_cents):'—'}</td>
+          <td>${packet}</td>
         </tr>`;
       }).join('');
       $('list').innerHTML = `<div class="card">
         <h2 class="sec">Sales &amp; resale requests</h2>
         <div class="muted" style="margin-bottom:10px; font-size:12.5px;">Click a property for its full ownership history.</div>
-        <table><thead><tr><th>Property</th><th>Stage</th><th>Seller → Buyer</th><th>Closing / Request</th><th>DRV</th><th class="num">Balance</th><th class="num">Transfer fee</th></tr></thead>
+        <table><thead><tr><th>Property</th><th>Stage</th><th>Seller → Buyer</th><th>Closing / Request</th><th>DRV</th><th class="num">Balance</th><th class="num">Transfer fee</th><th>Welcome</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
     } catch (e) { $('list').innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load: '+esc(e.message)+'</div>'; }
   }
@@ -176,6 +188,9 @@
       const snap = await fetchSnapshot(property_id);
       $('sc-prop-chosen').innerHTML = snap ? ('Matched: <b>'+esc(snap.property.street_address)+'</b> — seller of record <b>'+esc(snap.owner?snap.owner.owner_name:'unknown')+'</b>') : '';
       renderSellerCheck(snap);
+    } else if (ctx === 'wp') {
+      $('wp-results').innerHTML = '';
+      renderWelcomePanel(property_id, {});
     } else if (ctx === 'pr') {
       // proration flow property pick
       window._prProp = property_id;
@@ -302,7 +317,17 @@
       $('sc-out').innerHTML = `<div class="${cleared?'result-ok':'result-warn'}">
         <b>Ownership updated.</b> ${esc(buyer)} is now the owner of record as of ${fmtDate(closing)}; the prior owner moved into history.
         <div style="margin-top:8px;">Seller's final balance: ${cleared?'<span class="badge ok">$0.00 — cleared at closing</span>':'<span class="badge err">'+fmt(j.seller_final_balance_cents)+' — NOT zero, review before deposit</span>'}</div>
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid #e7e3d8;">
+          <b>Next: welcome the new owner.</b>
+          <div class="muted" style="font-size:12.5px; margin:3px 0 8px;">This is the only moment we know a new person owns this lot. Everything in the packet is specific to this community.</div>
+          <div id="wp-panel"></div>
+        </div>
       </div>`;
+      // Offered, never automatic. The operator reads it and sends it.
+      renderWelcomePanel(property_id, {
+        owner_name: buyer, effective_date: closing,
+        occasion: 'resale', home_sale_id: (j.sale && j.sale.id) || null,
+      });
       loadList();
     } catch (e) { alert('Couldn\'t record: '+e.message); $('sc-record').disabled = false; }
   }
@@ -332,6 +357,158 @@
     </div>`;
     window.scrollTo({top:0, behavior:'smooth'});
   };
+
+  // -- New-homeowner welcome packet ------------------------------------------
+  // Lives here because the closing is the trigger. Nothing sends itself: the
+  // operator sees what will print AND what is missing before anything goes out.
+  function openWelcomeFlow() {
+    if (!CID) { alert('Pick a community first.'); return; }
+    clearPanel();
+    $('panel').innerHTML = `<div class="card">
+      <h2 class="sec">Welcome packet <span class="muted" style="font-size:13px;">(new homeowner)</span></h2>
+      <div class="muted" style="margin-bottom:12px; font-size:12.5px;">Everything in the packet is specific to this community: the trash schedule, the numbers, how architectural approval works, and what owners here actually get written about.</div>
+      <div class="field"><label>Which home</label>
+        <input type="text" id="wp-search" placeholder="Street address or owner name&hellip;" autocomplete="off"></div>
+      <div id="wp-results"></div>
+      <div id="wp-panel"></div>
+    </div>`;
+    let t; $('wp-search').addEventListener('input', (e)=>{ clearTimeout(t); t=setTimeout(()=>propSearch(e.target.value,'wp'), 250); });
+    $('wp-search').focus();
+  }
+
+  // Straight from a closed sale in the list, with the buyer and closing date
+  // already known, so the operator never re-types what the system has.
+  window.openWelcomeFor = function(property_id, sale_id, buyer, closing) {
+    clearPanel();
+    $('panel').innerHTML = `<div class="card">
+      <div class="row" style="justify-content:space-between;"><h2 class="sec">Welcome packet</h2><a class="link" onclick="clearPanel()">close</a></div>
+      <div id="wp-panel"></div></div>`;
+    renderWelcomePanel(property_id, {
+      owner_name: buyer || null, effective_date: closing || null,
+      occasion: 'resale', home_sale_id: sale_id || null,
+    });
+    window.scrollTo({top:0, behavior:'smooth'});
+  };
+
+  // Renders into #wp-panel when the flow opened it, otherwise into ctx.into.
+  window.renderWelcomePanel = async function(property_id, ctx) {
+    ctx = ctx || {};
+    const host = $('wp-panel') || $(ctx.into);
+    if (!host) return;
+    host.innerHTML = '<div class="muted" style="padding:12px 0;">Checking what we can tell them&hellip;</div>';
+    const qs = new URLSearchParams({ community_id: CID, property_id });
+    if (ctx.owner_name) qs.set('owner_name', ctx.owner_name);
+    if (ctx.effective_date) qs.set('effective_date', ctx.effective_date);
+    if (ctx.occasion) qs.set('occasion', ctx.occasion);
+    let j, r;
+    try {
+      r = await fetch('/api/welcome/preview?' + qs.toString());
+      j = await r.json();
+    } catch (e) { host.innerHTML = '<div class="result-warn">Could not build it: '+esc(e.message)+'</div>'; return; }
+
+    if (r.status === 409) {
+      // The lifecycle refusal (a community we are handing off). Say why, in full.
+      host.innerHTML = '<div class="result-warn"><b>No welcome packet for this community.</b><div style="margin-top:6px;">'+esc(j.reason||'')+'</div></div>';
+      return;
+    }
+    if (!r.ok) { host.innerHTML = '<div class="result-warn">'+esc(j.reason||j.error||'Could not build it')+'</div>'; return; }
+
+    window._wpProp = property_id;
+    window._wpCtx = ctx;
+    const inc = j.included || [], miss = j.missing || [];
+    const link = '/api/welcome/preview.html?' + qs.toString();
+    const pdf  = '/api/welcome/pdf?' + qs.toString();
+    const letterHtml = '/api/welcome/letter.html?' + qs.toString();
+    const letterPdf  = '/api/welcome/letter.pdf?' + qs.toString();
+    const email = (j.owner && j.owner.email) || '';
+
+    const missBlock = miss.length ? `<div style="margin-top:14px;">
+          <div style="font-weight:700; font-size:12.5px; margin-bottom:4px;">Gaps in what we can tell them</div>
+          <div class="muted" style="font-size:12px; margin-bottom:6px;">An empty section does not print, it is never filled with generic copy. Supplying these improves every packet this community sends from here on.</div>
+          ${miss.map((m)=>`<div style="padding:6px 0; border-bottom:1px solid #f1efe8;">
+            <b>${esc(m.title)}</b>
+            ${m.partial?'<span class="badge req" style="font-size:10px;">partial</span>':'<span class="badge" style="font-size:10px; background:#e2e8f0; color:#334155;">not printed</span>'}
+            ${m.detail?('<div class="muted" style="font-size:12px;">'+esc(m.detail)+'</div>'):''}
+            ${m.fix?('<div class="muted" style="font-size:12px;">'+esc(m.fix)+'</div>'):''}</div>`).join('')}
+        </div>` : '<div class="result-ok" style="margin-top:12px;">Every section has data. This community sends a complete packet.</div>';
+
+    host.innerHTML = `
+      <div class="card" style="background:#fbfaf6; margin-top:12px;">
+        <div class="kv"><span class="k">Home</span><span class="v">${esc(j.property.street_address)}${j.property.unit?(' '+esc(j.property.unit)):''}</span></div>
+        <div class="kv"><span class="k">Owner</span><span class="v">${esc((j.owner&&j.owner.name)||'—')}</span></div>
+        <div class="kv" style="border-bottom:none;"><span class="k">Sections that will print</span><span class="v">${inc.length} of ${j.total_sections || inc.length}</span></div>
+        <div style="margin-top:8px;">${inc.map((x)=>'<span class="badge ok" style="margin:2px 4px 2px 0; font-weight:600;">'+esc(x.title)+'</span>').join('')}</div>
+        ${missBlock}
+        <div style="margin-top:16px;">
+          <div class="muted" style="font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">The letter <span style="text-transform:none;">(one page, what you mail)</span></div>
+          <div class="row">
+            <a class="btn ghost" href="${esc(letterHtml)}" target="_blank" rel="noopener">Read letter</a>
+            <a class="btn ghost" href="${esc(letterPdf)}" target="_blank" rel="noopener">Letter PDF</a>
+          </div>
+          <div class="muted" style="font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; margin:12px 0 4px;">The packet <span style="text-transform:none;">(the full reference, attached to the email)</span></div>
+          <div class="row">
+            <a class="btn ghost" href="${esc(link)}" target="_blank" rel="noopener">Read packet</a>
+            <a class="btn ghost" href="${esc(pdf)}" target="_blank" rel="noopener">Packet PDF</a>
+          </div>
+        </div>
+        <div class="grid2" style="margin-top:14px;">
+          <div class="field"><label>Email it to</label><input type="email" id="wp-email" value="${esc(email)}" placeholder="new owner's email"></div>
+          <div class="field"><label>&nbsp;</label>
+            <div class="row">
+              <button class="btn gold" id="wp-send">Send packet</button>
+              <button class="btn ghost" id="wp-file">File without sending</button>
+            </div></div>
+        </div>
+        <div id="wp-status" class="muted" style="font-size:12.5px; margin-top:6px;"></div>
+      </div>`;
+    $('wp-send').addEventListener('click', ()=>wpSend(false));
+    $('wp-file').addEventListener('click', ()=>wpSend(true));
+  };
+
+  async function wpSend(saveOnly) {
+    const st = $('wp-status');
+    const to = ($('wp-email').value || '').trim();
+    if (!saveOnly && !to) { st.innerHTML = '<span style="color:#b00">Add an email address, or file it without sending.</span>'; return; }
+    $('wp-send').disabled = true; $('wp-file').disabled = true;
+    st.textContent = saveOnly ? 'Filing…' : 'Sending…';
+    const ctx = window._wpCtx || {};
+    const body = {
+      community_id: CID, property_id: window._wpProp,
+      to_email: to || null, save_only: !!saveOnly,
+      owner_name: ctx.owner_name || null,
+      effective_date: ctx.effective_date || null,
+      occasion: ctx.occasion || null,
+      home_sale_id: ctx.home_sale_id || null,
+    };
+    try {
+      const r = await fetch('/api/welcome/send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || j.reason || j.error || 'failed');
+      st.innerHTML = j.emailed
+        ? '<span style="color:#166534">&#10003; Sent to '+esc(j.packet.sent_to_email)+' and filed to the association record.</span>'
+        : '<span style="color:#166534">&#10003; Filed to the association record'+(j.stored?'':' (PDF storage failed, check the logs)')+'. Nothing was emailed.</span>';
+      loadWelcomeSent();
+    } catch (e) {
+      st.innerHTML = '<span style="color:#b00">'+esc(e.message)+'</span>';
+      $('wp-send').disabled = false; $('wp-file').disabled = false;
+    }
+  }
+
+  // Which closings already got their packet. Loaded alongside the list so a
+  // closed sale with no packet is visible rather than assumed handled.
+  let WELCOME_BY_PROP = {};
+  async function loadWelcomeSent() {
+    try {
+      const r = await fetch(`/api/welcome/history?community_id=${CID}`);
+      if (!r.ok) { WELCOME_BY_PROP = {}; return; }
+      const j = await r.json();
+      const map = {};
+      for (const p of (j.packets || [])) {
+        if (!map[p.property_id] || (p.status === 'sent' && map[p.property_id].status !== 'sent')) map[p.property_id] = p;
+      }
+      WELCOME_BY_PROP = map;
+    } catch (e) { WELCOME_BY_PROP = {}; }
+  }
 
   // ── Prorated assessments at transfer ──────────────────────────────────────
   const PR_TYPES = [
