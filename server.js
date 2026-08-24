@@ -1281,6 +1281,9 @@ app.get('/claire', (req, res) => res.sendFile(require('path').join(__dirname, 'p
 // to a prospect. It serves only portfolio-wide videos; anything scoped to a
 // named community stays behind the portal.
 app.get('/learn', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'learn.html')));
+// The in-platform demo (staff-gated by default — presented from a signed-in
+// session, screen-shared to the room). Not in the public allowlist on purpose.
+app.get('/present', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'present.html')));
 // Sweep visits whose tab was closed without ending them, so their metered
 // minutes still land in the cost ledger instead of sitting 'active' forever.
 setInterval(() => { expireIdleSessions().catch((e) => console.warn('[claire] sweep:', e.message)); }, 120000).unref();
@@ -6916,6 +6919,59 @@ const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.
 
 app.get('/api/presentations/templates', (req, res) => {
   res.json({ templates: presentationsRegistry.listTemplates() });
+});
+
+// The in-platform demo — the pitch that runs INSIDE trustEd (public/present.html),
+// sourced from the SAME narrative as the .pptx export (lib/presentations/story.js)
+// so the two cannot drift. Returns the ordered screens for an audience with each
+// video screen's live URL resolved from claire_explainers by topic. A topic with
+// no ready video yet comes back video_url:null and renders as a labelled
+// placeholder, never a broken embed. (Ed 2026-08-24.)
+app.get('/api/presentations/story', async (req, res) => {
+  try {
+    const story = require('./lib/presentations/story');
+    const audience = String(req.query.audience || 'general');
+    const language = String(req.query.language) === 'es' ? 'es' : 'en';
+    const screens = story.getStory(audience);
+
+    // Resolve every referenced topic once, then attach urls to the video screens.
+    const topics = [...new Set(screens.filter((s) => s.video_topic).map((s) => s.video_topic))];
+    const urls = {};
+    if (topics.length) {
+      const { data, error } = await supabase.from('claire_explainers')
+        .select('topic, language, title, video_url, duration_seconds')
+        .in('topic', topics)
+        .eq('status', 'ready')
+        .is('community_id', null)
+        .not('video_url', 'is', null);
+      if (error) throw error;
+      // Prefer the requested language; fall back to English so a screen still
+      // plays rather than going blank when only an EN cut exists.
+      for (const row of data || []) {
+        const cur = urls[row.topic];
+        if (!cur || (cur.language !== language && row.language === language)) {
+          urls[row.topic] = row;
+        }
+      }
+    }
+
+    const resolved = screens.map((s) => {
+      if (!s.video_topic) return s;
+      const v = urls[s.video_topic] || null;
+      return {
+        ...s,
+        video_url: v ? v.video_url : null,
+        video_title: v ? v.title : null,
+        video_ready: !!v,
+        video_duration_seconds: v ? v.duration_seconds : null,
+      };
+    });
+
+    res.json({ audience, language, screens: resolved, audiences: story.AUDIENCES });
+  } catch (err) {
+    console.error('[presentations] story failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
 });
 
 app.get('/api/presentations/instances', async (req, res) => {

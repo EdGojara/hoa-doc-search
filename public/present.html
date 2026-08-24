@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bedrock · The Demo</title>
+<style>
+  :root {
+    --navy:#0B1D34; --navy-deep:#12173A; --ice:#CADCFC; --gold:#D4AF37;
+    --ink:#1f2430; --slate:#475569; --faint:#94a3b8; --rule:#e2e8f0;
+    --paper:#FAFBFC; --serif:'Cormorant Garamond',Georgia,serif;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; }
+  body { font-family:Inter,system-ui,-apple-system,sans-serif; background:#0a0f1c; color:var(--ink); overflow:hidden; }
+
+  /* Viewport centers the fixed 1280x720 stage; the stage is scaled to fit. */
+  #viewport { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  #stage { position:relative; width:1280px; height:720px; }
+  .slide {
+    position:absolute; width:1280px; height:720px; opacity:0; transform:translateY(14px) scale(.995);
+    transition:opacity .4s ease, transform .4s ease; pointer-events:none;
+    display:flex; flex-direction:column; padding:54px 80px; overflow:hidden;
+  }
+  .slide.active { opacity:1; transform:none; pointer-events:auto; }
+  .slide.light { background:var(--paper); color:var(--ink); }
+  .slide.dark  { background:var(--navy-deep); color:#fff; }
+
+  .label { font-size:14px; letter-spacing:.22em; text-transform:uppercase; color:var(--faint); font-weight:700; margin-bottom:18px; }
+  .dark .label { color:var(--ice); }
+  h1.cover { font-family:var(--serif); font-size:132px; font-weight:600; line-height:.95; color:#fff; }
+  .kicker { font-size:20px; letter-spacing:.12em; color:var(--ice); font-weight:600; margin-bottom:30px; }
+  .tagline { font-family:var(--serif); font-style:italic; font-size:40px; color:var(--ice); margin-top:22px; }
+  h2 { font-family:var(--serif); font-weight:600; font-size:48px; line-height:1.05; margin-bottom:16px; color:var(--navy); max-width:22ch; }
+  .dark h2 { color:#fff; }
+  .body { font-size:20px; line-height:1.48; color:var(--slate); max-width:64ch; }
+  .dark .body { color:var(--ice); }
+  .footnote { margin-top:auto; font-size:17px; line-height:1.5; color:var(--faint); max-width:70ch; font-style:italic; }
+  .dark .footnote { color:var(--ice); opacity:.8; }
+
+  .cols { display:flex; gap:34px; margin-top:34px; }
+  .col { flex:1; }
+  .col .ch { font-size:13px; letter-spacing:.16em; text-transform:uppercase; font-weight:700; color:var(--gold); margin-bottom:12px; }
+  .col ul { list-style:none; }
+  .col li { font-size:19px; line-height:1.4; color:var(--ink); padding:7px 0; border-top:1px solid var(--rule); }
+  .col li:first-child { border-top:none; }
+  .dark .col li { color:#fff; border-color:rgba(255,255,255,.14); }
+
+  .points { display:flex; flex-direction:column; gap:10px; margin-top:20px; }
+  .point { display:flex; gap:20px; align-items:baseline; }
+  .point .n { font-family:var(--serif); font-size:30px; font-weight:600; color:var(--gold); min-width:104px; }
+  .point .pt-h { font-size:21px; font-weight:700; color:var(--navy); margin-bottom:2px; }
+  .dark .point .pt-h { color:#fff; }
+  .point .pt-b { font-size:17px; line-height:1.36; color:var(--slate); max-width:76ch; }
+  .dark .point .pt-b { color:var(--ice); }
+
+  .compare { display:flex; gap:28px; margin-top:34px; }
+  .cmp { flex:1; border-radius:16px; padding:30px 32px; }
+  .cmp.a { background:#eef1f6; }
+  .cmp.b { background:var(--navy); color:#fff; }
+  .cmp .cl { font-size:13px; letter-spacing:.16em; text-transform:uppercase; font-weight:700; margin-bottom:14px; }
+  .cmp.a .cl { color:var(--slate); } .cmp.b .cl { color:var(--gold); }
+  .cmp .chh { font-size:26px; font-weight:700; margin-bottom:8px; }
+  .cmp .csub { font-size:18px; opacity:.85; }
+
+  .roadmap { display:flex; gap:22px; margin-top:40px; }
+  .ms { flex:1; }
+  .ms .when { font-size:14px; letter-spacing:.14em; text-transform:uppercase; color:var(--gold); font-weight:700; margin-bottom:10px; }
+  .ms .mh { font-size:22px; font-weight:700; color:#fff; margin-bottom:6px; }
+  .ms .mb { font-size:17px; line-height:1.4; color:var(--ice); }
+
+  /* Video screen: copy left, player right. */
+  .videowrap { display:flex; gap:46px; margin-top:26px; flex:1; align-items:center; }
+  .videocopy { flex:0 0 42%; }
+  .player { flex:1; aspect-ratio:16/9; border-radius:16px; overflow:hidden; background:#000;
+            box-shadow:0 24px 60px rgba(0,0,0,.4); position:relative; display:flex; align-items:center; justify-content:center; }
+  .player video { width:100%; height:100%; object-fit:cover; }
+  .player .ph { color:var(--ice); text-align:center; padding:30px; }
+  .player .ph .pht { font-size:20px; font-weight:700; margin-bottom:8px; }
+  .player .ph .phs { font-size:15px; opacity:.7; line-height:1.5; }
+
+  /* Chrome: progress dots, controls, audience switch. */
+  #chrome { position:fixed; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:space-between;
+            padding:14px 24px; z-index:10; pointer-events:none; }
+  #dots { display:flex; gap:8px; pointer-events:auto; }
+  .dot { width:9px; height:9px; border-radius:50%; background:rgba(255,255,255,.28); cursor:pointer; transition:.2s; }
+  .dot.on { background:var(--gold); transform:scale(1.25); }
+  .ctl { pointer-events:auto; display:flex; gap:8px; align-items:center; }
+  .btn { background:rgba(255,255,255,.1); color:#fff; border:1px solid rgba(255,255,255,.18); border-radius:8px;
+         padding:8px 14px; font-size:13px; font-weight:600; cursor:pointer; }
+  .btn:hover { background:rgba(255,255,255,.2); }
+  select.aud { background:rgba(255,255,255,.1); color:#fff; border:1px solid rgba(255,255,255,.18); border-radius:8px; padding:8px 12px; font-size:13px; }
+  select.aud option { color:#000; }
+  #hint { position:fixed; top:16px; right:20px; color:rgba(255,255,255,.4); font-size:12px; z-index:10; }
+  #err { position:fixed; inset:0; display:none; align-items:center; justify-content:center; color:#fff; font-size:18px; }
+</style>
+</head>
+<body>
+<div id="viewport"><div id="stage"></div></div>
+<div id="hint">← → to move · F fullscreen</div>
+<div id="chrome">
+  <div id="dots"></div>
+  <div class="ctl">
+    <select class="aud" id="aud" title="Audience framing">
+      <option value="general">General</option>
+      <option value="bank">Banking partner</option>
+      <option value="board">Board</option>
+      <option value="partner">Operator</option>
+    </select>
+    <button class="btn" id="btnPptx">Export PowerPoint</button>
+    <button class="btn" id="btnFull">Fullscreen</button>
+  </div>
+</div>
+<div id="err"></div>
+
+<script>
+  const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const stage = document.getElementById('stage');
+  let SCREENS = [], idx = 0, AUD = 'general';
+
+  function screenHTML(s) {
+    const theme = s.theme === 'dark' ? 'dark' : 'light';
+    let inner = '';
+    if (s.type === 'cover') {
+      inner = `<div style="margin:auto 0;">
+        <div class="kicker">${esc(s.kicker||'')}</div>
+        <h1 class="cover">${esc(s.title||'')}</h1>
+        <div class="tagline">${esc(s.tagline||'')}</div></div>`;
+    } else if (s.type === 'closing') {
+      inner = `<div style="margin:auto 0;">
+        <h1 class="cover" style="font-size:88px;">${esc(s.title||'')}</h1>
+        <div class="kicker" style="margin-top:24px;">${esc(s.kicker||'')}</div></div>`;
+    } else if (s.type === 'statement') {
+      inner = `${label(s)}<h2>${esc(s.headline||'')}</h2><div class="body">${esc(s.body||'')}</div>${cols(s)}${foot(s)}`;
+    } else if (s.type === 'points') {
+      inner = `${label(s)}<h2>${esc(s.headline||'')}</h2>${s.body?`<div class="body">${esc(s.body)}</div>`:''}
+        <div class="points">${(s.points||[]).map(p=>`<div class="point">
+          <div class="n">${esc(p.n)}</div>
+          <div><div class="pt-h">${esc(p.head||'')}</div><div class="pt-b">${esc(p.body||'')}</div></div>
+        </div>`).join('')}</div>${foot(s)}`;
+    } else if (s.type === 'columns') {
+      inner = `${label(s)}<h2>${esc(s.headline||'')}</h2>${s.body?`<div class="body">${esc(s.body)}</div>`:''}${cols(s)}${foot(s)}`;
+    } else if (s.type === 'compare') {
+      inner = `${label(s)}<h2>${esc(s.headline||'')}</h2>${s.body?`<div class="body">${esc(s.body)}</div>`:''}
+        <div class="compare">
+          <div class="cmp a"><div class="cl">${esc(s.left.label)}</div><div class="chh">${esc(s.left.head)}</div><div class="csub">${esc(s.left.sub)}</div></div>
+          <div class="cmp b"><div class="cl">${esc(s.right.label)}</div><div class="chh">${esc(s.right.head)}</div><div class="csub">${esc(s.right.sub)}</div></div>
+        </div>`;
+    } else if (s.type === 'roadmap') {
+      inner = `${label(s)}<h2>${esc(s.headline||'')}</h2>
+        <div class="roadmap">${(s.milestones||[]).map(m=>`<div class="ms">
+          <div class="when">${esc(m.when)}</div><div class="mh">${esc(m.head)}</div><div class="mb">${esc(m.body)}</div></div>`).join('')}</div>`;
+    } else if (s.type === 'video') {
+      const player = s.video_ready
+        ? `<video src="${esc(s.video_url)}" controls preload="metadata" playsinline></video>`
+        : `<div class="ph"><div class="pht">Video coming</div><div class="phs">This screen is built for the “${esc(s.label||'')}” explainer.<br>It plays here as soon as the video is rendered.</div></div>`;
+      inner = `${label(s)}
+        <div class="videowrap">
+          <div class="videocopy"><h2 style="font-size:44px;">${esc(s.headline||'')}</h2><div class="body">${esc(s.body||'')}</div></div>
+          <div class="player">${player}</div>
+        </div>`;
+    }
+    return `<section class="slide ${theme}" data-id="${esc(s.id)}">${inner}</section>`;
+  }
+  const label = (s) => s.label ? `<div class="label">${esc(s.label)}</div>` : '';
+  const foot = (s) => s.footnote ? `<div class="footnote">${esc(s.footnote)}</div>` : '';
+  const cols = (s) => (s.columns && s.columns.length) ? `<div class="cols">${s.columns.map(c=>`<div class="col">
+      <div class="ch">${esc(c.header)}</div><ul>${(c.items||[]).map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}</div>` : '';
+
+  function render() {
+    stage.innerHTML = SCREENS.map(screenHTML).join('');
+    buildDots();
+    show(Math.min(idx, SCREENS.length-1));
+    fit();
+  }
+  function buildDots() {
+    document.getElementById('dots').innerHTML = SCREENS.map((_,i)=>`<div class="dot" data-i="${i}"></div>`).join('');
+    document.querySelectorAll('.dot').forEach(d=>d.addEventListener('click',()=>show(+d.dataset.i)));
+  }
+  function show(i) {
+    idx = Math.max(0, Math.min(i, SCREENS.length-1));
+    const slides = document.querySelectorAll('.slide');
+    slides.forEach((el,n)=>{
+      el.classList.toggle('active', n===idx);
+      const v = el.querySelector('video'); if (v && n!==idx) { v.pause(); }
+    });
+    document.querySelectorAll('.dot').forEach((d,n)=>d.classList.toggle('on', n===idx));
+  }
+  const next = () => show(idx+1), prev = () => show(idx-1);
+
+  // Scale the fixed 1280x720 stage to the viewport (letterboxed).
+  function fit() {
+    // Guard the zero-viewport case (e.g. a hidden tab): scale(0) would collapse
+    // the whole deck. Skip until the viewport has real dimensions; a resize
+    // fires when it becomes visible and re-runs this.
+    if (!window.innerWidth || !window.innerHeight) return;
+    const s = Math.min(window.innerWidth/1280, window.innerHeight/720);
+    stage.style.transform = `scale(${s || 1})`;
+    stage.style.transformOrigin = 'center center';
+  }
+
+  async function load(aud) {
+    try {
+      const r = await fetch(`/api/presentations/story?audience=${encodeURIComponent(aud)}`);
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      SCREENS = j.screens || [];
+      idx = 0; render();
+    } catch (e) {
+      document.getElementById('err').style.display='flex';
+      document.getElementById('err').textContent = 'Could not load the demo: '+e.message;
+    }
+  }
+
+  document.addEventListener('keydown',(e)=>{
+    if (e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ') { e.preventDefault(); next(); }
+    else if (e.key==='ArrowLeft'||e.key==='PageUp') { e.preventDefault(); prev(); }
+    else if (e.key==='f'||e.key==='F') toggleFull();
+    else if (e.key==='Home') show(0);
+    else if (e.key==='End') show(SCREENS.length-1);
+  });
+  function toggleFull(){ if(!document.fullscreenElement) document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen(); else document.exitFullscreen&&document.exitFullscreen(); }
+  document.getElementById('btnFull').addEventListener('click', toggleFull);
+  document.getElementById('aud').addEventListener('change',(e)=>{ AUD=e.target.value; load(AUD); });
+  // The PowerPoint export is the SAME narrative, generated server-side. The
+  // partner template is the current canonical .pptx; the leave-behind that travels.
+  document.getElementById('btnPptx').addEventListener('click', async ()=>{
+    const btn = document.getElementById('btnPptx'); const old = btn.textContent; btn.textContent='Building…'; btn.disabled=true;
+    try {
+      // /generate streams the .pptx binary back directly. Pull it as a blob and
+      // save it. Same partner narrative, the travelling leave-behind.
+      const fd = new FormData(); fd.append('template_slug','partner');
+      const r = await fetch('/api/presentations/generate', { method:'POST', body: fd });
+      if (!r.ok) { let m='export failed'; try { m=(await r.json()).error||m; } catch(_){} throw new Error(m); }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download='bedrock-overview.pptx'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    } catch (e) { alert('Export failed: '+e.message); }
+    finally { btn.textContent=old; btn.disabled=false; }
+  });
+  window.addEventListener('resize', fit);
+  load('general');
+</script>
+</body>
+</html>
