@@ -346,7 +346,14 @@
   });
   window.addEventListener('resize', fit);
   loadCover();
-  load('general');
+  // Honor ?audience= so a run can be opened straight into a given audience.
+  const qAud = new URLSearchParams(location.search).get('audience');
+  if (qAud && ['general','bank','board','partner'].includes(qAud)) {
+    AUD = qAud; document.getElementById('aud').value = qAud;
+    load(AUD, AUD !== 'general');
+  } else {
+    load('general');
+  }
 </script>
 </body>
 </html>
