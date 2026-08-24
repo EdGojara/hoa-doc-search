@@ -265,13 +265,20 @@
     stage.style.transformOrigin = 'center center';
   }
 
-  async function load(aud) {
+  async function load(aud, focusFit) {
     try {
       const r = await fetch(`/api/presentations/story?audience=${encodeURIComponent(aud)}`);
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       SCREENS = j.screens || [];
       idx = 0; render();
+      // On a deliberate audience switch, jump straight to the screen that
+      // differs (the audience-specific 'fit_' / audience-scoped screen), so the
+      // change is visible instead of silently reloading to the shared cover.
+      if (focusFit) {
+        const target = SCREENS.findIndex((s) => s.audience && s.audience !== 'general');
+        if (target >= 0) show(target);
+      }
     } catch (e) {
       document.getElementById('err').style.display='flex';
       document.getElementById('err').textContent = 'Could not load the demo: '+e.message;
@@ -287,7 +294,7 @@
   });
   function toggleFull(){ if(!document.fullscreenElement) document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen(); else document.exitFullscreen&&document.exitFullscreen(); }
   document.getElementById('btnFull').addEventListener('click', toggleFull);
-  document.getElementById('aud').addEventListener('change',(e)=>{ AUD=e.target.value; load(AUD); });
+  document.getElementById('aud').addEventListener('change',(e)=>{ AUD=e.target.value; load(AUD, AUD!=='general'); });
 
   // --- Cover setup ---------------------------------------------------------
   const setup = document.getElementById('setup');
