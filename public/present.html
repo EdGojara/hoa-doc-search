@@ -113,11 +113,15 @@
   select.aud { background:rgba(255,255,255,.1); color:#fff; border:1px solid rgba(255,255,255,.18); border-radius:8px; padding:8px 12px; font-size:13px; }
   select.aud option { color:#000; }
   #hint { position:fixed; top:16px; right:20px; color:rgba(255,255,255,.4); font-size:12px; z-index:10; }
+  #back { position:fixed; top:14px; left:20px; color:rgba(255,255,255,.45); font-size:13px; font-weight:600;
+          text-decoration:none; z-index:10; padding:4px 2px; transition:color .2s; }
+  #back:hover { color:#fff; }
   #err { position:fixed; inset:0; display:none; align-items:center; justify-content:center; color:#fff; font-size:18px; }
 </style>
 </head>
 <body>
 <div id="viewport"><div id="stage"></div></div>
+<a id="back" href="/" title="Back to trustEd">← trustEd</a>
 <div id="hint">← → to move · F fullscreen</div>
 <div id="chrome">
   <div id="dots"></div>
