@@ -31,6 +31,27 @@
   h1.cover { font-family:var(--serif); font-size:132px; font-weight:600; line-height:.95; color:#fff; }
   .kicker { font-size:20px; letter-spacing:.12em; color:var(--ice); font-weight:600; margin-bottom:30px; }
   .tagline { font-family:var(--serif); font-style:italic; font-size:40px; color:var(--ice); margin-top:22px; }
+  .prepared { margin-top:34px; padding-top:20px; border-top:1px solid rgba(202,220,252,.28); max-width:82%; }
+  .prepared .pf-label { font-size:12px; letter-spacing:.28em; text-transform:uppercase; color:var(--faint); font-weight:700; margin-bottom:9px; }
+  .prepared .pf-org { font-size:30px; font-weight:700; color:#fff; line-height:1.12; }
+  .prepared .pf-att { font-size:18px; color:var(--ice); margin-top:8px; line-height:1.45; }
+  .prepared .pf-date { font-family:var(--serif); font-style:italic; font-size:19px; color:var(--ice); margin-top:8px; opacity:.85; }
+
+  /* Cover setup panel */
+  #setup { position:fixed; inset:0; background:rgba(6,10,20,.72); display:none; align-items:center; justify-content:center; z-index:30; }
+  #setup.open { display:flex; }
+  #setup .card { width:460px; background:#fff; border-radius:14px; padding:26px 28px; box-shadow:0 30px 80px rgba(0,0,0,.5); }
+  #setup h3 { font-family:var(--serif); font-size:24px; color:var(--navy); margin-bottom:4px; }
+  #setup .sub { font-size:13px; color:var(--slate); margin-bottom:18px; }
+  #setup label { display:block; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--slate); margin:14px 0 5px; }
+  #setup input, #setup textarea { width:100%; padding:9px 12px; border:1px solid var(--rule); border-radius:8px; font-size:14px; font-family:inherit; color:var(--ink); }
+  #setup textarea { min-height:78px; resize:vertical; }
+  #setup .hint2 { font-size:11.5px; color:var(--faint); margin-top:4px; }
+  #setup .row2 { display:flex; gap:10px; justify-content:flex-end; margin-top:22px; }
+  #setup .b { padding:9px 18px; border-radius:8px; font-size:13.5px; font-weight:700; cursor:pointer; border:1px solid var(--navy); }
+  #setup .b.primary { background:var(--navy); color:#fff; }
+  #setup .b.ghost { background:#fff; color:var(--navy); }
+  #setup .b.clear { border-color:var(--rule); color:var(--slate); margin-right:auto; }
   h2 { font-family:var(--serif); font-weight:600; font-size:48px; line-height:1.05; margin-bottom:16px; color:var(--navy); max-width:22ch; }
   .dark h2 { color:#fff; }
   .body { font-size:20px; line-height:1.48; color:var(--slate); max-width:64ch; }
@@ -107,8 +128,28 @@
       <option value="board">Board</option>
       <option value="partner">Operator</option>
     </select>
+    <button class="btn" id="btnCover">Cover</button>
     <button class="btn" id="btnPptx">Export PowerPoint</button>
     <button class="btn" id="btnFull">Fullscreen</button>
+  </div>
+</div>
+
+<div id="setup">
+  <div class="card">
+    <h3>Title page</h3>
+    <div class="sub">Who this presentation is prepared for. Shown on the first slide, and carried into the PowerPoint export.</div>
+    <label>Association or company</label>
+    <input type="text" id="cv-org" placeholder="e.g. NewFirst National Bank  ·  Waterview Estates HOA">
+    <label>Attendees</label>
+    <textarea id="cv-att" placeholder="One name per line"></textarea>
+    <div class="hint2">One per line. Left blank, the first slide stays generic.</div>
+    <label>Date</label>
+    <input type="text" id="cv-date" placeholder="e.g. August 25, 2026">
+    <div class="row2">
+      <button class="b clear" id="cv-clear">Clear</button>
+      <button class="b ghost" id="cv-cancel">Cancel</button>
+      <button class="b primary" id="cv-apply">Apply</button>
+    </div>
   </div>
 </div>
 <div id="err"></div>
@@ -118,6 +159,30 @@
   const stage = document.getElementById('stage');
   let SCREENS = [], idx = 0, AUD = 'general';
 
+  // The "Prepared for" title page. Per-meeting personalization, held on the
+  // client (localStorage + optional query params), never a stored proposal. A
+  // blank COVER renders the plain evergreen cover.
+  const COVER = { org: '', attendees: [], date: '' };
+  function loadCover() {
+    try { const j = JSON.parse(localStorage.getItem('bedrock_present_cover')||'{}');
+      COVER.org = j.org||''; COVER.attendees = j.attendees||[]; COVER.date = j.date||''; } catch(_){}
+    const q = new URLSearchParams(location.search);
+    if (q.has('org')) COVER.org = q.get('org');
+    if (q.has('attendees')) COVER.attendees = q.get('attendees').split(/[;,\n]/).map(s=>s.trim()).filter(Boolean);
+    if (q.has('date')) COVER.date = q.get('date');
+  }
+  function saveCover() { localStorage.setItem('bedrock_present_cover', JSON.stringify(COVER)); }
+
+  function preparedForBlock() {
+    if (!COVER.org && !COVER.attendees.length && !COVER.date) return '';
+    return `<div class="prepared">
+      <div class="pf-label">Prepared for</div>
+      ${COVER.org ? `<div class="pf-org">${esc(COVER.org)}</div>` : ''}
+      ${COVER.attendees.length ? `<div class="pf-att">${COVER.attendees.map(esc).join('&nbsp;&nbsp;·&nbsp;&nbsp;')}</div>` : ''}
+      ${COVER.date ? `<div class="pf-date">${esc(COVER.date)}</div>` : ''}
+    </div>`;
+  }
+
   function screenHTML(s) {
     const theme = s.theme === 'dark' ? 'dark' : 'light';
     let inner = '';
@@ -125,7 +190,8 @@
       inner = `<div style="margin:auto 0;">
         <div class="kicker">${esc(s.kicker||'')}</div>
         <h1 class="cover">${esc(s.title||'')}</h1>
-        <div class="tagline">${esc(s.tagline||'')}</div></div>`;
+        <div class="tagline">${esc(s.tagline||'')}</div>
+        ${preparedForBlock()}</div>`;
     } else if (s.type === 'closing') {
       inner = `<div style="margin:auto 0;">
         <h1 class="cover" style="font-size:88px;">${esc(s.title||'')}</h1>
@@ -222,14 +288,42 @@
   function toggleFull(){ if(!document.fullscreenElement) document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen(); else document.exitFullscreen&&document.exitFullscreen(); }
   document.getElementById('btnFull').addEventListener('click', toggleFull);
   document.getElementById('aud').addEventListener('change',(e)=>{ AUD=e.target.value; load(AUD); });
+
+  // --- Cover setup ---------------------------------------------------------
+  const setup = document.getElementById('setup');
+  function openSetup() {
+    document.getElementById('cv-org').value = COVER.org;
+    document.getElementById('cv-att').value = COVER.attendees.join('\n');
+    document.getElementById('cv-date').value = COVER.date;
+    setup.classList.add('open');
+  }
+  function closeSetup() { setup.classList.remove('open'); }
+  function applyCover() {
+    COVER.org = document.getElementById('cv-org').value.trim();
+    COVER.attendees = document.getElementById('cv-att').value.split(/\n/).map(s=>s.trim()).filter(Boolean);
+    COVER.date = document.getElementById('cv-date').value.trim();
+    saveCover(); closeSetup();
+    // Re-render just the cover in place and jump to it so Ed sees the change.
+    render(); show(0);
+  }
+  document.getElementById('btnCover').addEventListener('click', openSetup);
+  document.getElementById('cv-cancel').addEventListener('click', closeSetup);
+  document.getElementById('cv-apply').addEventListener('click', applyCover);
+  document.getElementById('cv-clear').addEventListener('click', ()=>{ COVER.org=''; COVER.attendees=[]; COVER.date=''; saveCover(); closeSetup(); render(); show(0); });
+  setup.addEventListener('click',(e)=>{ if(e.target===setup) closeSetup(); });
   // The PowerPoint export is the SAME narrative, generated server-side. The
   // partner template is the current canonical .pptx; the leave-behind that travels.
   document.getElementById('btnPptx').addEventListener('click', async ()=>{
     const btn = document.getElementById('btnPptx'); const old = btn.textContent; btn.textContent='Building…'; btn.disabled=true;
     try {
       // /generate streams the .pptx binary back directly. Pull it as a blob and
-      // save it. Same partner narrative, the travelling leave-behind.
+      // save it. Same partner narrative, the travelling leave-behind. Carry the
+      // title-page info so the exported cover matches the one on screen (the
+      // partner template renders a PREPARED FOR block from these).
       const fd = new FormData(); fd.append('template_slug','partner');
+      const preparedFor = [COVER.org, ...COVER.attendees].filter(Boolean).join(', ');
+      if (preparedFor) fd.append('prepared_for', preparedFor);
+      if (COVER.date) fd.append('meeting_date', COVER.date);
       const r = await fetch('/api/presentations/generate', { method:'POST', body: fd });
       if (!r.ok) { let m='export failed'; try { m=(await r.json()).error||m; } catch(_){} throw new Error(m); }
       const blob = await r.blob();
@@ -240,6 +334,7 @@
     finally { btn.textContent=old; btn.disabled=false; }
   });
   window.addEventListener('resize', fit);
+  loadCover();
   load('general');
 </script>
 </body>
