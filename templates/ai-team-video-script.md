@@ -15,6 +15,13 @@
 > most brittle, forces full re-renders). Each segment stands alone and is reusable
 > on its own.
 >
+> **Voice = HeyGen, NOT ElevenLabs.** The video is rendered end to end by HeyGen:
+> it produces the avatar AND speaks the script with a HeyGen voice (`voice_id`).
+> ElevenLabs is the separate LIVE phone-voice stack (Vapi + ElevenLabs Mary) and
+> is not in the video path. Each persona's HeyGen avatar_id + voice_id are already
+> configured (CLAIRE/KAT/PAIGE/AMANDA _AVATAR_ID + _VOICE_ID in env), so the cast
+> is built — the remaining work is rendering their segments, not creating characters.
+>
 > **Target runtime:** ~3–4 minutes total. Per-segment ~30–45s. Cast kept to the
 > minimum the script needs.
 >
@@ -96,7 +103,8 @@ actually means."
 ## Production checklist (the money-saver)
 
 - [ ] Script locked (this file), read aloud once for timing (~3–4 min total).
-- [ ] Characters built: Claire (exists), Kat, Paige, Amanda — avatar + ElevenLabs voice each.
+- [ ] Characters: Claire, Kat, Paige, Amanda — HeyGen avatar_id + voice_id already
+      set in env for all four. Nothing to build; confirm each renders as expected.
 - [ ] **ONE test render: Segment 1 (Claire) only.** Check avatar, voice, pacing,
       caption burn-in, aspect ratio (16:9 to match the in-platform player).
 - [ ] Approve the test, THEN batch-render Segments 2–5 with the same settings.
