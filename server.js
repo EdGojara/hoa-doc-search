@@ -6961,8 +6961,12 @@ app.get('/api/presentations/story', async (req, res) => {
     if (screens.some((s) => s.type === 'team')) {
       try {
         const roster = require('./lib/team/roster');
+        // Everyone real. The catch-all ('general') is never a person. Tessa is
+        // owner_only for ACCESS gating (her tools are Ed's), but Ed wants her on
+        // the team screen because she corresponds on his behalf — so she shows
+        // here while her owner_only flag stays intact everywhere else. (Ed 2026-08-24.)
         teamMembers = roster.people()
-          .filter((m) => !m.owner_only && !m.not_a_person)
+          .filter((m) => !m.not_a_person)
           .map((m) => ({
             name: m.name,
             role: m.signature_title || m.title || '',
