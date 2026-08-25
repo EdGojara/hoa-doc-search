@@ -886,4 +886,128 @@ router.get('/community/:id/meetings', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Board Learning — education for board members, grounded in Chapter 209 and, in
+// the tutor, in the community's own governing documents. (Ed 2026-08-25: "many
+// board members are new and genuinely don't know what to do.")
+//
+// The written modules are portfolio-wide (migration 385). The tutor grounds each
+// answer in the community's docs via the existing hybrid retrieval, and is bound
+// by a system prompt that frames it as EDUCATION, cites its sources, and refuses
+// to render a legal opinion on a consequential matter, pointing to counsel.
+// ============================================================================
+
+// GET /api/board-portal/learning  — the published module library.
+router.get('/learning', async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const { data, error } = await supabase.from('board_learning_modules')
+      .select('slug, category, title, summary, key_points, statute_refs, review_status, reviewed_by, read_minutes, display_order')
+      .eq('is_published', true)
+      .order('display_order', { ascending: true });
+    if (error) {
+      // Migration 385 not applied yet: the tutor still works, so return an empty
+      // library rather than failing the whole view.
+      if (/does not exist|schema cache/i.test(error.message || '')) return res.json({ modules: [], pending_migration: true });
+      throw error;
+    }
+    res.json({ modules: data || [] });
+  } catch (err) {
+    console.error('[board_portal] learning list failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/board-portal/learning/:slug  — one module's full content.
+router.get('/learning/:slug', async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const { data, error } = await supabase.from('board_learning_modules')
+      .select('*').eq('slug', req.params.slug).eq('is_published', true).maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'module_not_found' });
+    res.json({ module: data });
+  } catch (err) {
+    console.error('[board_portal] learning module failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/board-portal/learning/ask  — the tutor.
+//   body: { community_id, question }
+//   Grounds in the community's governing docs + statutes (hybrid retrieval),
+//   answers as board EDUCATION, cites sources, and defers to counsel on
+//   anything consequential. Never a legal opinion.
+const BOARD_TUTOR_SYSTEM = `You are a board-education assistant for a Texas homeowners association, part of Bedrock Association Management's platform. You help NEW volunteer board members understand their role and how their community works.
+
+HARD RULES:
+- You are EDUCATION, not a lawyer. You explain how things generally work and what the board should consider. You NEVER give a definitive legal opinion, and you NEVER tell the board a specific action is legally safe or required.
+- Ground every answer in (a) the provided excerpts from this community's own governing documents and Texas law, and (b) well-established Texas HOA governance principles (Chapter 209 of the Property Code). When the provided excerpts answer the question, rely on them and say which document they came from.
+- If the answer turns on the community's specific documents and they were not provided, say so plainly and tell the board to check their declaration/bylaws or ask their manager.
+- For anything consequential — a fine, a lien, foreclosure, litigation, an executive-session boundary, a records-request denial, a specific dollar figure or deadline — explicitly recommend confirming with the association's attorney before acting. Do NOT improvise the specifics.
+- Be warm, plain, and brief. Assume the reader is a smart volunteer who is new to this. No legalese. Commas, not em-dashes.
+- Never invent a statute citation. If you are not certain of an exact subsection, refer to "Chapter 209 of the Texas Property Code" generally rather than guessing a number.`;
+
+router.post('/learning/ask', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const communityId = String((req.body && req.body.community_id) || '').trim();
+    const question = String((req.body && req.body.question) || '').trim();
+    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
+    if (!question) return res.status(400).json({ error: 'question_required' });
+    if (question.length > 2000) return res.status(400).json({ error: 'question_too_long' });
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+
+    const { data: community } = await supabase.from('communities')
+      .select('id, name').eq('id', communityId).maybeSingle();
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+    // Ground in the community's docs + statutes. Retrieval is best-effort: a
+    // failure here means a thinner answer, never a 500 and never a fabricated one.
+    let context = '';
+    let sources = [];
+    try {
+      const { getRelevantChunksWithSources } = require('../lib/hybrid_retrieval');
+      const r = await getRelevantChunksWithSources(question, community.name);
+      context = r.context || '';
+      sources = (r.sources || []).map((s) => ({ document: s.filename, community: s.community }));
+    } catch (e) {
+      console.warn('[board_portal] tutor retrieval failed:', e.message);
+    }
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const userContent = `Community: ${community.name}
+
+The board member asks:
+"${question}"
+
+Excerpts from ${community.name}'s governing documents and Texas law that may be relevant (may be empty):
+${context || '(no document excerpts were retrieved for this question)'}
+
+Answer as board education, following your rules. If the excerpts don't cover it, say so and point them to their documents, their manager, or counsel.`;
+
+    const completion = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 900,
+      system: BOARD_TUTOR_SYSTEM,
+      messages: [{ role: 'user', content: userContent }],
+    });
+    const answer = (completion.content && completion.content[0] && completion.content[0].text) || '';
+
+    res.json({
+      answer,
+      sources,
+      grounded: !!context,
+      disclaimer: 'This is general education, not legal advice. Confirm anything consequential with the association’s attorney.',
+    });
+  } catch (err) {
+    console.error('[board_portal] tutor ask failed:', err.message);
+    res.status(500).json({ error: 'tutor_unavailable' });
+  }
+});
+
 module.exports = { router };

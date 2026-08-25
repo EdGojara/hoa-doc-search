@@ -1568,6 +1568,107 @@
     </div>`;
   }
 
+  // ----- Board Learning: plain-language guides + a doc-grounded tutor -------
+  // Small, safe markdown renderer for module bodies and tutor answers (the
+  // model returns headings, blockquotes, and lists). Escape first, then format.
+  function _mdLite(md) {
+    const esc0 = (t) => String(t).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const inline = (t) => esc0(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/(?<!\*)\*(?!\*)(.+?)\*(?!\*)/g, '<em>$1</em>');
+    const lines = String(md || '').replace(/\r/g, '').split('\n');
+    let html = '', list = null; // list = 'ul' | 'ol' | null
+    const closeList = () => { if (list) { html += `</${list}>`; list = null; } };
+    for (const raw of lines) {
+      const line = raw.trim();
+      const h = line.match(/^(#{1,4})\s+(.*)$/);
+      const ul = line.match(/^[-*]\s+(.*)$/);
+      const ol = line.match(/^\d+\.\s+(.*)$/);
+      const bq = line.match(/^>\s?(.*)$/);
+      if (h) { closeList(); const lvl = Math.min(4, h[1].length); const sz = [0, 18, 16, 14, 13][lvl]; html += `<div style="font-weight:700;color:#0B1D34;font-size:${sz}px;margin:12px 0 5px;">${inline(h[2])}</div>`; }
+      else if (bq) { closeList(); html += `<blockquote style="margin:8px 0;padding:8px 12px;border-left:3px solid #D4AF37;background:#faf7ef;color:#374151;">${inline(bq[1])}</blockquote>`; }
+      else if (ul) { if (list !== 'ul') { closeList(); html += '<ul style="margin:6px 0;padding-left:20px;">'; list = 'ul'; } html += `<li style="margin-bottom:3px;">${inline(ul[1])}</li>`; }
+      else if (ol) { if (list !== 'ol') { closeList(); html += '<ol style="margin:6px 0;padding-left:20px;">'; list = 'ol'; } html += `<li style="margin-bottom:3px;">${inline(ol[1])}</li>`; }
+      else if (!line) { closeList(); }
+      else if (/^[-—*_]{3,}$/.test(line)) { closeList(); /* horizontal rule: skip */ }
+      else { closeList(); html += `<p style="margin:0 0 10px;line-height:1.6;">${inline(line)}</p>`; }
+    }
+    closeList();
+    return html;
+  }
+  const _LEARN_CAT = { fiduciary: 'Your role', meetings: 'Meetings', records: 'Records', enforcement: 'Enforcement', finance: 'Money', architectural: 'Architectural', elections: 'Elections', general: 'General' };
+
+  async function showLearning() {
+    const wrap = document.getElementById('container');
+    wrap.innerHTML = `${backBar()}<div class="loading">Loading…</div>`;
+    let mods = [];
+    try { const j = await fetchJSON('/api/board-portal/learning'); mods = j.modules || []; }
+    catch (e) { wrap.innerHTML = `${backBar()}<div class="err">Load failed: ${esc(e.message)}</div>`; return; }
+    const cards = mods.map((m) => `
+      <div class="property-card" onclick="showLearningModule('${esc(m.slug)}')" style="cursor:pointer;">
+        <div class="main">
+          <div class="addr">${esc(m.title)}</div>
+          <div class="owner">${esc(m.summary)}</div>
+          <div class="badges"><span class="badge" style="background:#eef2f7;color:#475569;">${esc(_LEARN_CAT[m.category] || m.category)}</span>
+            <span class="owner" style="margin-left:6px;">${m.read_minutes || 3} min</span>
+            ${m.review_status === 'counsel_reviewed' ? '<span class="badge good" style="margin-left:6px;">Attorney reviewed</span>' : ''}</div>
+        </div>
+        <div class="arrow"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+      </div>`).join('');
+    wrap.innerHTML = `${backBar()}
+      <div class="properties-header">Board Learning</div>
+      <div style="font-size:13px;color:#475569;margin:-6px 0 16px;">Short, plain-language guides for board members, and an assistant that answers questions using your community's own documents. General education, not legal advice.</div>
+      <div style="background:#0B1D34;border-radius:14px;padding:18px 20px;margin-bottom:20px;color:#fff;">
+        <div style="font-family:Georgia,serif;font-size:18px;margin-bottom:4px;">Ask about your community</div>
+        <div style="font-size:12.5px;color:#CADCFC;margin-bottom:12px;">Grounded in your governing documents and Texas law. It points you to your documents or your attorney when it matters.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <input id="learn-q" placeholder="e.g. Can the board go into executive session to discuss a delinquent owner?" style="flex:1;min-width:240px;padding:11px 14px;border-radius:9px;border:none;font-size:14px;">
+          <button onclick="learnAsk()" style="background:#D4AF37;color:#0B1D34;border:none;border-radius:9px;padding:11px 20px;font-weight:700;cursor:pointer;">Ask</button>
+        </div>
+        <div id="learn-a" style="margin-top:14px;"></div>
+      </div>
+      <div class="tile-section-label" style="margin-bottom:8px;">Guides</div>
+      ${cards || '<div class="empty">No guides yet.</div>'}`;
+    const q = document.getElementById('learn-q');
+    if (q) q.addEventListener('keydown', (e) => { if (e.key === 'Enter') learnAsk(); });
+  }
+
+  async function showLearningModule(slug) {
+    const wrap = document.getElementById('container');
+    wrap.innerHTML = '<div class="loading">Loading…</div>';
+    let m;
+    try { const j = await fetchJSON('/api/board-portal/learning/' + encodeURIComponent(slug)); m = j.module; }
+    catch (e) { wrap.innerHTML = `<div class="err">Load failed: ${esc(e.message)}</div>`; return; }
+    const back = '<div style="margin-bottom:14px;"><a href="javascript:showLearning()" style="color:#0B1D34;font-weight:600;text-decoration:none;">← Board Learning</a></div>';
+    const kp = (m.key_points || []).length ? `<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin:14px 0;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#64748b;font-weight:700;margin-bottom:8px;">The short version</div>
+        <ul style="margin:0;padding-left:18px;">${m.key_points.map((p) => `<li style="margin-bottom:4px;">${esc(p)}</li>`).join('')}</ul></div>` : '';
+    const reviewed = m.review_status === 'counsel_reviewed'
+      ? `<span class="badge good">Attorney reviewed${m.reviewed_by ? ': ' + esc(m.reviewed_by) : ''}</span>`
+      : '<span class="badge" style="background:#fef3c7;color:#92400e;">Educational draft</span>';
+    wrap.innerHTML = `${back}
+      <div class="properties-header">${esc(m.title)}</div>
+      <div style="margin:-4px 0 10px;">${reviewed} ${(m.statute_refs || []).map((x) => `<span class="owner" style="margin-left:6px;">${esc(x)}</span>`).join('')}</div>
+      ${kp}
+      <div style="font-size:15px;color:#1f2937;">${_mdLite(m.body)}</div>
+      <div style="margin-top:18px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:12px;color:#64748b;">${esc(m.source_note || '')} This is general education, not legal advice. Confirm specifics with your governing documents and the association's attorney.</div>`;
+  }
+
+  async function learnAsk() {
+    const el = document.getElementById('learn-q');
+    const box = document.getElementById('learn-a');
+    const q = el ? el.value : '';
+    if (!q || !q.trim()) return;
+    if (!currentCommunityId) { box.innerHTML = '<div style="color:#fca5a5;font-size:13px;">Pick a community first.</div>'; return; }
+    box.innerHTML = '<div style="color:#CADCFC;font-size:13px;">Thinking…</div>';
+    try {
+      const j = await fetchPost('/api/board-portal/learning/ask', { community_id: currentCommunityId, question: q.trim() });
+      const src = (j.sources || []).length ? `<div style="margin-top:10px;font-size:11.5px;color:#94a3b8;">Based on: ${j.sources.map((s) => esc(s.document)).join(', ')}</div>` : '';
+      box.innerHTML = `<div style="background:#fff;color:#1f2937;border-radius:10px;padding:14px 16px;font-size:14px;">${_mdLite(j.answer)}${src}
+        <div style="margin-top:10px;font-size:11.5px;color:#8a6d00;background:#fdf6e3;border-radius:7px;padding:7px 10px;">${esc(j.disclaimer || '')}</div></div>`;
+    } catch (e) {
+      box.innerHTML = `<div style="color:#fca5a5;font-size:13px;">Couldn't answer that right now: ${esc(e.message)}</div>`;
+    }
+  }
+
   function renderDashboardCards(s, projects, motions, threads) {
     const fmtMoney = (cents) => {
       if (cents == null) return '—';
@@ -1769,6 +1870,20 @@
         ${motionsTile}
         ${discussionTile}
         ${projectsTile}
+      </div>
+
+      <div class="tile-section-label">Learn</div>
+      <div class="board-tile-grid">
+        <a class="board-tile" href="javascript:showLearning()">
+          <div class="tile-icon">🎓</div>
+          <div class="tile-title">Board Learning</div>
+          <div class="tile-desc">Plain-language guides on your role, meetings, records, enforcement, budget, and architectural review, plus an assistant that answers questions from your own documents.</div>
+          <div class="tile-metric"><div>
+            <div class="metric-value good">Ask anything</div>
+            <div class="metric-label">grounded in your community</div>
+          </div></div>
+          <div class="tile-cta">Start learning →</div>
+        </a>
       </div>
 
       <div class="tile-section-label">Community health</div>
