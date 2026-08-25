@@ -22,6 +22,7 @@ const { buildKatEmail } = require('../lib/email/kat_signature');
 const { buildAmandaEmail } = require('../lib/email/amanda_signature');
 const { buildReeseEmail } = require('../lib/email/reese_signature');
 const { buildPaigeEmail } = require('../lib/email/paige_signature');
+const { buildTessaEmail } = require('../lib/email/tessa_signature');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -45,6 +46,7 @@ const PERSONA = {
   amanda:  { mailbox: graphSend.AMANDA_MAILBOX,  build: buildAmandaEmail,   label: 'Amanda Albright (senior community manager)' },
   reese:   { mailbox: graphSend.REESE_MAILBOX,   build: buildReeseEmail,    label: 'Reese Calloway (resale / closings)' },
   paige:   { mailbox: graphSend.PAIGE_MAILBOX,   build: buildPaigeEmail,    label: 'Paige Chandler (board operations)' },
+  tessa:   { mailbox: graphSend.TESSA_MAILBOX,   build: buildTessaEmail,    label: 'Tessa McCall (executive assistant)' },
 };
 function personaMailbox(p, fallback) {
   return (PERSONA[p] && PERSONA[p].mailbox) || fallback || graphSend.CLAIRE_MAILBOX;
@@ -192,7 +194,13 @@ router.post('/:id/send', async (req, res) => {
       const built = p.build(d.body_text, d.community_name);
       html = built.html; personaAttachments = built.attachments || [];
     } else if (!html && d.body_text) {
-      html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;white-space:pre-wrap;">${d.body_text.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</div>`;
+      // Build real paragraphs. white-space:pre-wrap gets collapsed by Outlook
+      // into one blob (Ed 2026-08-25), so emit explicit <p> per blank-line block
+      // and <br> per line instead.
+      const esc0 = (t) => String(t).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+      const paras = d.body_text.replace(/\r\n/g, '\n').split(/\n{2,}/)
+        .map((para) => `<p style="margin:0 0 12px;">${esc0(para).replace(/\n/g, '<br>')}</p>`).join('');
+      html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1f2430;">${paras}</div>`;
     }
 
     // Pull any stored file attachments. Default bucket is 'documents'; an
