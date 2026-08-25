@@ -570,6 +570,21 @@ router.patch('/:id', express.json(), async (req, res) => {
       }
     }
 
+    // Making a record inactive carries a REASON on the record itself, appended
+    // to notes with who + when. "Moved out" is just the reason a homeowner's
+    // access ends. We never hard-delete: the signed form is an association
+    // record, so the row stays as history and simply drops off the Active view.
+    // (Ed 2026-08-25: "make inactive with reason and remove because they moved.")
+    if (patch.status && ['revoked', 'expired'].includes(patch.status)) {
+      const reason = String((req.body || {}).reason || '').trim();
+      const label = (req.body || {}).moved ? 'Removed — homeowner moved out' : 'Made inactive';
+      const { data: cur } = await supabase.from('pool_access').select('notes').eq('id', req.params.id).maybeSingle();
+      const line = `[${label} ${new Date().toISOString().slice(0, 10)}] ${reason || '(no reason given)'}`
+        + ' — ' + (staff.full_name || staff.email || 'staff');
+      const baseNotes = ('notes' in patch) ? patch.notes : (cur && cur.notes);
+      patch.notes = baseNotes ? (baseNotes + '\n' + line) : line;
+    }
+
     const { error } = await supabase.from('pool_access').update(patch).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });

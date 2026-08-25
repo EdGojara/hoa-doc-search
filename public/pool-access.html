@@ -65,6 +65,18 @@
     <div class="counts" id="counts"></div>
   </div>
 
+  <div class="toolbar" id="findbar" style="display:none;">
+    <input id="q" placeholder="🔎 Search name, address, tag number, or authorized person…" oninput="renderRoster()"
+           style="flex:1;min-width:240px;padding:9px 12px;font-size:13.5px;border:1px solid var(--line);border-radius:8px;">
+    <select id="sortBy" onchange="renderRoster()" title="Sort the roster">
+      <option value="address">Sort: Address</option>
+      <option value="homeowner">Sort: Homeowner</option>
+      <option value="tag">Sort: Tag #</option>
+      <option value="resident">Sort: Owner / renter</option>
+      <option value="status">Sort: Status</option>
+    </select>
+  </div>
+
   <div class="dropzone" id="dz"
        ondragover="event.preventDefault();this.classList.add('over');"
        ondragleave="this.classList.remove('over');"
@@ -128,27 +140,55 @@ async function setResidentType(id, val){
 }
 function peopleHtml(arr){ if(!arr||!arr.length)return '<span class="rel">—</span>'; return arr.map(p=>`<div class="people">${esc(p.name)}${p.relationship?' <span class="rel">('+esc(p.relationship)+')</span>':''}</div>`).join(''); }
 
+let _allRows=[], _rowById={};
 async function loadRoster(){
   const c=cid();
-  $('counts').innerHTML='';
+  $('counts').innerHTML=''; _allRows=[]; _rowById={};
+  if($('findbar')) $('findbar').style.display='none';
   if(!c){ $('roster').innerHTML='<div class="empty">Pick a community to see its pool roster.</div>'; return; }
   $('roster').innerHTML='<div class="spin">Loading roster…</div>';
   try{
     const r=await fetch(`${API}/roster?community_id=${encodeURIComponent(c)}&status=${$('statusFilter').value}`);
     const j=await r.json();
     if(!j.ok){ $('roster').innerHTML='<div class="empty">'+esc(j.error||'Could not load')+'</div>'; return; }
-    const rows=j.rows||[];
+    _allRows=j.rows||[];
     $('counts').innerHTML=`<div class="cnt"><b>${j.counts.total}</b> access records</div><div class="cnt"><b>${j.counts.fobs}</b> fobs</div><div class="cnt"><b>${j.counts.extended_hours}</b> ext-hours</div>`;
-    if(!rows.length){ $('roster').innerHTML='<div class="empty">No pool access on file yet for this community. Drop a batch of forms above.</div>'; return; }
-    $('roster').innerHTML=`<table><thead><tr>
-      <th>Property</th><th>Homeowner</th><th>Resident</th><th>Type</th><th>Tag #</th><th>Authorized people</th><th>Season</th><th>Signed</th><th>Status</th><th>Form</th><th></th>
-    </tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`;
+    if($('findbar')) $('findbar').style.display=_allRows.length?'flex':'none';
+    renderRoster();
   }catch(e){ $('roster').innerHTML='<div class="empty">Error loading roster.</div>'; }
+}
+
+// Search + sort happen client-side over the loaded roster so typing filters
+// instantly with no round-trip. (Ed 2026-08-25: accurate info, quickly and
+// easily accessible.)
+function renderRoster(){
+  _rowById={}; for(const r of _allRows) _rowById[r.id]=r;
+  if(!_allRows.length){ $('roster').innerHTML='<div class="empty">No pool access on file yet for this community. Drop a batch of forms above.</div>'; return; }
+  const q=($('q')?$('q').value:'').trim().toLowerCase();
+  const sort=$('sortBy')?$('sortBy').value:'address';
+  let rows=_allRows.slice();
+  if(q){
+    rows=rows.filter(r=>{
+      const people=(r.authorized_persons||[]).map(p=>p&&p.name).filter(Boolean).join(' ');
+      return [r.address,r.homeowner,r.fob_tag_number,people,r.resident_type].map(x=>String(x==null?'':x).toLowerCase()).some(s=>s.includes(q));
+    });
+  }
+  const keyer={address:r=>r.address,homeowner:r=>r.homeowner,tag:r=>r.fob_tag_number,resident:r=>r.resident_type,status:r=>r.status}[sort]||(r=>r.address);
+  rows.sort((a,b)=>String(keyer(a)||'~').localeCompare(String(keyer(b)||'~'),undefined,{numeric:true,sensitivity:'base'}));
+  if(!rows.length){ $('roster').innerHTML='<div class="empty">No records match “'+esc($('q').value.trim())+'”. Clear the search to see all '+_allRows.length+'.</div>'; return; }
+  $('roster').innerHTML=`<table><thead><tr>
+    <th>Property</th><th>Homeowner</th><th>Resident</th><th>Type</th><th>Tag #</th><th>Authorized people</th><th>Season</th><th>Signed</th><th>Status</th><th>Form</th><th></th>
+  </tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`;
 }
 
 function rowHtml(r){
   const form=r.source_filename?`<span title="${esc(r.source_filename)}">📄</span>`:'<span class="rel">—</span>';
-  const revoke=r.status==='active'?`<button class="btn ghost sm" onclick="revoke('${r.id}')">Revoke</button>`:'';
+  const actions = r.status==='active'
+    ? `<div style="display:flex;flex-direction:column;gap:4px;align-items:stretch;">
+         <button class="btn ghost sm" title="End this access and record why" onclick="makeInactive('${r.id}')">Make inactive</button>
+         <button class="btn ghost sm" title="Homeowner sold or moved out — remove from the active roster" onclick="movedOut('${r.id}')">Moved out</button>
+       </div>`
+    : `<button class="btn ghost sm" title="Restore this access" onclick="reactivate('${r.id}')">Reactivate</button>`;
   return `<tr>
     <td>${esc(r.address||'—')}</td>
     <td>${esc(r.homeowner||'—')}</td>
@@ -159,12 +199,13 @@ function rowHtml(r){
     </select></td>
     <td>${typePill(r.form_type)}</td>
     <td class="tag">${r.form_type==='fob_registration'?`<span onclick="editTag('${r.id}',this)" title="Click to change the tag number" style="cursor:pointer;border-bottom:1px dashed var(--line);">${r.fob_tag_number?esc(r.fob_tag_number):'<span class="rel">set tag</span>'}</span>`:(r.fob_tag_number?esc(r.fob_tag_number):'<span class="rel">—</span>')}</td>
-    <td>${peopleHtml(r.authorized_persons)}${r.extended_hours_detail?'<div class="rel">'+esc(r.extended_hours_detail)+'</div>':''}</td>
+    <td>${peopleHtml(r.authorized_persons)}${r.extended_hours_detail?'<div class="rel">'+esc(r.extended_hours_detail)+'</div>':''}
+      <div><a onclick="editPeople('${r.id}')" title="Add or edit who's on this fob" style="cursor:pointer;color:var(--navy);font-size:11.5px;border-bottom:1px dashed var(--line);">✏️ edit people</a></div></td>
     <td>${r.season_year||'<span class="rel">—</span>'}</td>
     <td>${d10(r.form_signed_date)||'<span class="rel">—</span>'}</td>
     <td>${statusPill(r.status)}</td>
     <td>${form}</td>
-    <td>${revoke}</td>
+    <td>${actions}</td>
   </tr>`;
 }
 
@@ -198,10 +239,51 @@ async function editTag(id, el){
   }
 }
 
-async function revoke(id){
-  if(!confirm('Revoke this pool access record?'))return;
-  await fetch(`${API}/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'revoked'})});
-  loadRoster();
+async function patchRow(id, body){
+  const r=await fetch(`${API}/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||j.error) throw new Error(j.error||('HTTP '+r.status));
+}
+
+// Make inactive — one click, one reason, done. The reason lands on the record
+// (server appends it to notes with who + when), so anyone reading later knows
+// why access ended without asking around.
+async function makeInactive(id){
+  const reason=prompt('Why is this access ending? (e.g. fob lost, past-due assessments, rule violation)');
+  if(reason===null) return;                 // cancelled
+  try{ await patchRow(id,{status:'revoked', reason:reason.trim()}); loadRoster(); }
+  catch(e){ alert('Could not update: '+e.message); }
+}
+
+// Moved out — the common case, so it's a single confirm with a canned reason.
+// We don't delete: the signed form is the association's record, so the row is
+// kept as history and just drops off the active roster.
+async function movedOut(id){
+  const r=_rowById[id]||{};
+  if(!confirm(`Remove pool access for ${r.homeowner||'this homeowner'}${r.address?(' at '+r.address):''}?\n\nThey moved out. The signed form is kept as history; the record just leaves the active roster.`)) return;
+  try{ await patchRow(id,{status:'revoked', moved:true, reason:'Homeowner moved out'}); loadRoster(); }
+  catch(e){ alert('Could not update: '+e.message); }
+}
+
+async function reactivate(id){
+  if(!confirm('Reactivate this pool access record?')) return;
+  try{ await patchRow(id,{status:'active'}); loadRoster(); }
+  catch(e){ alert('Could not update: '+e.message); }
+}
+
+// Edit who's on the fob — one prompt, one line per person, relationship in
+// parentheses (round-trips the "(tenant)" tags shown in the roster).
+async function editPeople(id){
+  const r=_rowById[id]; if(!r) return;
+  const cur=(r.authorized_persons||[]).map(p=>p&&p.name?(p.name+(p.relationship?` (${p.relationship})`:'')):'').filter(Boolean).join('\n');
+  const next=prompt('Authorized people — one per line.\nAdd a relationship in parentheses, e.g.\n  Jane Doe (tenant)\n  Sam Doe (child)', cur);
+  if(next===null) return;
+  const people=next.split('\n').map(s=>s.trim()).filter(Boolean).map(line=>{
+    const m=line.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+    return m?{name:m[1].trim(), relationship:m[2].trim()}:{name:line};
+  });
+  try{ await patchRow(id,{authorized_persons:people}); loadRoster(); }
+  catch(e){ alert('Could not save the people list: '+e.message); }
 }
 
 /* ---------- batch upload -> preview -> approve ---------- */
