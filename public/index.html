@@ -24055,7 +24055,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             ${o.ai_confidence ? `<span style="color:${confColor}; font-weight:600; font-size:11px;">${escapeHtml(o.ai_confidence)}</span>` : ''}
           </div>
           <div style="font-size:11.5px; color:#475569; margin-bottom:4px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-            <strong>${escapeHtml(category.label || 'uncategorized')}</strong>
+            <strong id="revcatlabel-${o.id}">${escapeHtml(category.label || 'uncategorized')}</strong>
             <button onclick="inspReviewToggleCat('${o.id}')" style="background:none; border:1px solid #c7d2fe; color:#4338ca; padding:1px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">✎ Change category</button>
           </div>
           <select id="revcat-${o.id}" onchange="inspReviewSetCategory('${o.id}', this.value)" style="display:none; margin-bottom:6px; padding:5px 8px; font-size:12px; border:1px solid #cbd5e1; border-radius:5px; background:#fff; max-width:300px;">
@@ -24120,7 +24120,13 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         body: JSON.stringify({ category_id: categoryId }),
       });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
-      await inspReviewLoad();
+      // Update THIS row in place — don't reload the whole queue. Reloading every
+      // row + photo after each edit is what made edits feel slow (Ed 2026-08-25).
+      const cat = (window._inspCats || []).find((c) => c && c.id === categoryId);
+      const lbl = document.getElementById('revcatlabel-' + obsId);
+      if (lbl && cat) lbl.textContent = cat.label;
+      const selEl = document.getElementById('revcat-' + obsId);
+      if (selEl) selEl.style.display = 'none';
     } catch (e) { alert('Could not change category: ' + e.message); }
   }
   function inspReviewToggleDesc(obsId) {
@@ -24134,7 +24140,11 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     try {
       const r = await fetch('/api/inspections/observations/' + obsId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ai_description: text }) });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
-      await inspReviewLoad();
+      // Update THIS row in place + flip back to the read view — no full reload.
+      const dv = document.getElementById('descview-' + obsId);
+      const span = dv ? dv.querySelector('span') : null;
+      if (span) span.textContent = '"' + text + '"';
+      inspReviewToggleDesc(obsId);
     } catch (e) { alert('Could not save the text: ' + e.message); }
   }
 

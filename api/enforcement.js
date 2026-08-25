@@ -2345,6 +2345,27 @@ async function _assembleBundlePdf({ group, letterDate }) {
 // stage correction) AND re-renders loose singletons. property_id / community_id
 // scope the run. Returns a summary; throws on fatal error. Callable directly
 // (bulk regenerate script) as well as from the route above.
+// Debounced, property-scoped draft re-render. Category/description edits during
+// verification must be INSTANT — the operator's request returns after the DB
+// write, and the (expensive) letter re-render is coalesced into ONE background
+// run a few seconds after edits stop. Rapid successive edits on the same
+// property reset the timer, so N edits => 1 render instead of N. The mailed
+// letter is re-rendered again at postmark time, so a briefly-stale draft
+// preview is never what ships. (Ed 2026-08-25 — inspection edits felt slow.)
+const _bundleRebuildTimers = new Map();
+function scheduleBundleRebuild(propertyId, delayMs = 4000) {
+  if (!propertyId) return;
+  const prev = _bundleRebuildTimers.get(propertyId);
+  if (prev) clearTimeout(prev);
+  const t = setTimeout(async () => {
+    _bundleRebuildTimers.delete(propertyId);
+    try { await runAutoBundle({ propertyId, force: true }); }
+    catch (e) { console.warn('[auto-bundle] debounced rebuild failed for property', propertyId, '-', e.message); }
+  }, delayMs);
+  if (t && typeof t.unref === 'function') t.unref();   // don't keep the process alive for a pending rebuild
+  _bundleRebuildTimers.set(propertyId, t);
+}
+
 async function runAutoBundle({ communityId = null, force = false, propertyId = null } = {}) {
     const propertyFilter = propertyId;
     const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'];
@@ -4598,10 +4619,18 @@ router.post('/violations/:id/change-category', express.json(), async (req, res) 
 
     // Re-render this property's DRAFT letter(s) from the NEW category so the
     // reviewed preview matches what ships. Without this the draft PDF stays a
-    // frozen snapshot of the OLD category. Best-effort — never fail the change
-    // on it. (Ed 2026-07-30 — same fix as /drafts/:id/reclassify.)
-    try { await runAutoBundle({ propertyId: v.property_id, force: true }); }
-    catch (e) { console.warn('[violations.change-category] draft re-render failed (non-fatal):', e.message); }
+    // frozen snapshot of the OLD category. (Ed 2026-07-30 — same fix as
+    // /drafts/:id/reclassify.)
+    //
+    // DEBOUNCED, not synchronous. Ed 2026-08-25: operators complained every
+    // category/description edit hung "a long time between edits" because it
+    // blocked the response on a full letter re-render. The render is (a) wasted
+    // during Step-1 triage (nobody's viewing the letter PDF yet) and (b)
+    // redundant for the MAILED letter, which the mail-queue lock-and-batch step
+    // re-renders with the real postmark date regardless. So we update the record
+    // now, return immediately, and schedule ONE background rebuild a few seconds
+    // after edits settle — a flurry of edits collapses into a single render.
+    scheduleBundleRebuild(v.property_id);
 
     res.json({ ok: true, category_label: newCat.label, prior_label: priorLabel, duplicate_open_case });
   } catch (err) {
