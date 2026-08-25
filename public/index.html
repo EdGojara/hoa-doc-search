@@ -29823,6 +29823,11 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         try { inspLoadCommunities(); } catch (e) { console.warn('[inspect] load communities', e); }
         try { inspQueueLoadCommunityOptions(); } catch (e) { console.warn('[inspect] load queue filter', e); }
         try { inspLoadRecent(); }      catch (e) { console.warn('[inspect] load recent', e); }
+        // Step 1 verify queue must auto-load on tab open like Step 2 does —
+        // without this it stayed on its placeholder until a manual Refresh, so
+        // 300+ pending Waterview observations looked like "no violations".
+        // (Ed 2026-08-25.)
+        try { inspReviewLoad(); }      catch (e) { console.warn('[inspect] load review queue', e); }
         try { inspDraftsLoad(); }      catch (e) { console.warn('[inspect] load drafts', e); }
         try { inspMailQueueLoad(); }   catch (e) { console.warn('[inspect] load mail queue', e); }
         try { inspFineQueueLoad(); }   catch (e) { console.warn('[inspect] load fine queue', e); }
