@@ -184,35 +184,9 @@ async function findOrCreateVendor({ vendor_name, vendor_email, vendor_phone, sug
   return { vendor: created, created: true };
 }
 
-// Find-or-create a REIMBURSEMENT PAYEE — a board/committee member being paid
-// back for an out-of-pocket association expense. Matched on name AND
-// kind='reimbursement' so it never collides with a real vendor of the same
-// name, and flagged so it stays out of the vendor directory and off 1099s.
-async function findOrCreateReimbursementPayee({ name, contact_id, email }) {
-  if (!name || !String(name).trim()) return null;
-  const clean = String(name).trim();
-  const { data: existing } = await supabase.from('vendors')
-    .select('*')
-    .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-    .eq('kind', 'reimbursement')
-    .ilike('name', clean)
-    .maybeSingle();
-  if (existing) return { payee: existing, created: false };
-  const { data: created, error } = await supabase.from('vendors').insert({
-    management_company_id: BEDROCK_MGMT_CO_ID,
-    name: clean,
-    payee_name: clean,                 // name on the check face
-    kind: 'reimbursement',
-    reimbursee_contact_id: contact_id || null,
-    is_active: true,
-    is_1099_vendor: false,             // reimbursing an expense is not reportable income
-    category: 'Reimbursement',
-    payment_terms_days: 0,
-    account_manager_email: email || null,
-  }).select('*').single();
-  if (error) { console.warn('[ap.reimbursement.payee.create] failed:', error.message); return null; }
-  return { payee: created, created: true };
-}
+// Find-or-create a reimbursement PAYEE — canonical helper in lib/ap/intake.js so
+// the manual endpoint and Emma's email intake create the same payee for a person.
+const { findOrCreateReimbursementPayee } = require('../lib/ap/intake');
 
 // ---------------------------------------------------------------------------
 // POST /api/ap/invoices/upload — the main intake endpoint
