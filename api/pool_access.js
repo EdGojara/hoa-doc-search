@@ -114,6 +114,7 @@ async function resolveRows(forms, communityId, sourceFilename) {
       form_type: f.form_type,
       property_address: f.property_address,
       primary_homeowner_name: f.primary_homeowner_name,
+      resident_type: f.resident_type || 'unknown',
       authorized_persons: f.authorized_persons || [],
       season_year: f.season_year,
       extended_hours_detail: f.extended_hours_detail,
@@ -304,6 +305,7 @@ router.post('/ingest/:batch_id/approve', express.json(), async (req, res) => {
         season_year: r.season_year || null,
         extended_hours_detail: r.extended_hours_detail || null,
         authorized_persons: r.authorized_persons || [],
+        resident_type: ['owner', 'tenant'].includes(r.resident_type) ? r.resident_type : 'unknown',
         form_signed_date: r.form_signed_date || null,
         status: 'active',
         notes: overrideReason ? `${r.notes ? r.notes + '\n' : ''}[Override] Granted despite past-due assessments — ${overrideReason}`.slice(0, 1000) : (r.notes || null),
@@ -407,13 +409,13 @@ router.get('/roster', async (req, res) => {
     const status = req.query.status || 'active';
     const rows = await fetchAll(() => {
       let q = supabase.from('pool_access')
-        .select('id, form_type, fob_tag_number, season_year, extended_hours_detail, authorized_persons, form_signed_date, status, notes, source_storage_path, source_filename, property_id, contact_id, properties(street_address), contacts(full_name)')
+        .select('id, form_type, fob_tag_number, season_year, extended_hours_detail, authorized_persons, form_signed_date, status, notes, resident_type, source_storage_path, source_filename, property_id, contact_id, properties(street_address), contacts(full_name)')
         .eq('community_id', communityId).order('form_type', { ascending: true }).order('fob_tag_number', { ascending: true });
       if (status !== 'all') q = q.eq('status', status);
       return q;
     });
     const flat = rows.map((r) => ({
-      id: r.id, form_type: r.form_type, fob_tag_number: r.fob_tag_number, season_year: r.season_year,
+      id: r.id, form_type: r.form_type, fob_tag_number: r.fob_tag_number, season_year: r.season_year, resident_type: r.resident_type || 'unknown',
       extended_hours_detail: r.extended_hours_detail, authorized_persons: r.authorized_persons || [],
       form_signed_date: r.form_signed_date, status: r.status, notes: r.notes,
       source_storage_path: r.source_storage_path, source_filename: r.source_filename,
@@ -510,6 +512,7 @@ router.post('/grant', express.json(), async (req, res) => {
       form_type: b.form_type, fob_tag_number: b.fob_tag_number ? String(b.fob_tag_number).trim() : null,
       season_year: b.season_year || null, extended_hours_detail: b.extended_hours_detail || null,
       authorized_persons: Array.isArray(b.authorized_persons) ? b.authorized_persons : [],
+      resident_type: ['owner','tenant'].includes(b.resident_type) ? b.resident_type : 'unknown',
       form_signed_date: /^\d{4}-\d{2}-\d{2}$/.test(b.form_signed_date || '') ? b.form_signed_date : null,
       status: 'active', notes: overrideReason ? `${b.notes ? b.notes + '\n' : ''}[Override] Granted despite past-due assessments — ${overrideReason}`.slice(0, 1000) : (b.notes || null),
       record_ownership: 'association_record',
@@ -528,7 +531,7 @@ router.post('/grant', express.json(), async (req, res) => {
 router.patch('/:id', express.json(), async (req, res) => {
   const staff = await requireStaff(req, res); if (!staff) return;
   try {
-    const allowed = ['status', 'fob_tag_number', 'season_year', 'extended_hours_detail', 'authorized_persons', 'form_signed_date', 'notes'];
+    const allowed = ['status', 'fob_tag_number', 'season_year', 'extended_hours_detail', 'authorized_persons', 'form_signed_date', 'notes', 'resident_type'];
     const patch = {};
     for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
     if (patch.status && !['active', 'revoked', 'expired'].includes(patch.status)) return res.status(400).json({ error: 'bad status' });
