@@ -1857,10 +1857,22 @@ router.post('/communities/:communityId/monthly-package', async (req, res) => {
     if (graphSend.isConfigured()) {
       try {
         const { buildTessaEmail } = require('../lib/email/tessa_signature');
-        const body = `Hi Ed,\n\nHere is ${comm.name}'s billing package for your review: the management invoice for ${periodMonthLabel(month + '-01')}, the ${periodMonthLabel(aStart)} activity invoice, and the supporting activity detail. Take a look and let me know who to send it to, or if anything needs adjusting.`;
+        const subject = `${comm.name} — billing package for review (${periodMonthLabel(month + '-01')})`;
+        const body = `Hi Ed,\n\nHere is ${comm.name}'s billing package for your review: the management invoice for ${periodMonthLabel(month + '-01')}, the ${periodMonthLabel(aStart)} activity invoice, and the supporting activity detail. Take a look, and just reply "approved" and I will post it to the association's payables. Or let me know if anything needs adjusting.`;
         const { html, attachments: sigAttachments } = buildTessaEmail(body);
-        await graphSend.sendAs({ from: graphSend.TESSA_MAILBOX, to: graphSend.ED_MAILBOX, subject: `${comm.name} — billing package for review (${periodMonthLabel(month + '-01')})`, html, attachments: [...sigAttachments, ...attachments] });
+        await graphSend.sendAs({ from: graphSend.TESSA_MAILBOX, to: graphSend.ED_MAILBOX, subject, html, attachments: [...sigAttachments, ...attachments] });
         emailed = true;
+        // Record the pending review so Ed's "approved" reply can be matched to
+        // these invoices and posted to AP. Upsert per community+month so a
+        // re-send refreshes it. (Ed 2026-08-25.)
+        try {
+          await supabase.from('billing_package_reviews').upsert({
+            community_id: communityId, month,
+            invoice_ids: [fixed.invoiceId, activityInv.id].filter(Boolean),
+            subject, sent_to: graphSend.ED_MAILBOX, sent_at: new Date().toISOString(),
+            status: 'pending', approved_at: null, approved_by: null, posted_ap_invoice_ids: [], post_note: null,
+          }, { onConflict: 'community_id,month' });
+        } catch (e) { if (!/does not exist|schema cache/i.test(e.message || '')) console.warn('[monthly-package] review record failed:', e.message); }
       } catch (e) { emailError = e.message; console.error('[monthly-package] email failed:', e.message); }
     } else { emailError = 'email_not_configured'; }
 
