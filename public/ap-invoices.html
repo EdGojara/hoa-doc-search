@@ -68,6 +68,7 @@ function shell(){
       <select id="comm"><option value="">Association (optional — Emma will guess)</option></select>
       <label class="drop" id="drop"><span id="dropText">Drop an invoice PDF, or click to choose</span><input id="file" type="file" accept="application/pdf" style="display:none"></label>
       <button class="btn" id="analyze" disabled>Read invoice</button>
+      <button class="btn ghost" id="reimburseBtn" onclick="openReimbursement()" title="A board or committee member paid for something and needs to be paid back">＋ Board reimbursement</button>
     </div>
     <div id="preview"></div>
     <div style="margin:4px 0 10px;"><button class="btn ghost" id="sweepBtn" style="font-size:12px;padding:5px 11px;" onclick="sweepInbox(this)" title="Pull vendor bills already sitting in Emma's inbox into Payables (or the needs-attention list) using the archived PDF">🧹 Pull vendor bills from Emma’s inbox</button> <span id="sweepMsg" style="font-size:12px;color:#64748b;"></span></div>
@@ -167,6 +168,82 @@ window.sweepInbox=async function(btn){
     loadExceptions(); loadQueue();
   }catch(e){ if(msg){msg.style.color='#b91c1c';msg.textContent='Sweep failed.';} }
   finally{ btn.disabled=false; btn.textContent=t; }
+};
+
+// ---- Board / committee member reimbursement -------------------------------
+// A person paid out of pocket for the association and needs paying back. The
+// expense codes normally; the payable goes to the person, not the store; it
+// always lands in the approval queue (never auto-pays a board member).
+window.openReimbursement = function(){
+  const comms = window._comms || [];
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('preview').innerHTML = `
+    <div style="border:1px solid #e2e8f0;border-radius:12px;padding:18px 20px;margin-bottom:16px;background:#fff;">
+      <div style="font-weight:700;font-size:15px;color:#0B1D34;margin-bottom:3px;">Board / committee reimbursement</div>
+      <div style="font-size:12.5px;color:#64748b;margin-bottom:14px;">The receipt is from the store, but the association pays the person back. This always goes to approval first.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#475569;">Association</label>
+          <select id="rb-comm" onchange="rbLoadAccounts()" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;"><option value="">Select…</option>${comms.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></div>
+        <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#475569;">Reimburse to (board/committee member)</label>
+          <input id="rb-name" list="rb-payees" placeholder="Name on the check" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;"><datalist id="rb-payees"></datalist></div>
+        <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#475569;">Store / vendor on the receipt</label>
+          <input id="rb-source" placeholder="e.g. Home Depot" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;"></div>
+        <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#475569;">What was it for</label>
+          <input id="rb-desc" placeholder="e.g. irrigation parts" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;"></div>
+        <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#475569;">Receipt date</label>
+          <input id="rb-date" type="date" value="${today}" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;"></div>
+        <div><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#475569;">Amount ($)</label>
+          <input id="rb-amt" type="text" inputmode="decimal" placeholder="0.00" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;"></div>
+        <div style="grid-column:1 / -1;"><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#475569;">Expense account (coding)</label>
+          <select id="rb-acct" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;"><option value="">Pick a community first, or leave for auto-coding</option></select></div>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
+        <button class="btn" id="rb-submit" onclick="submitReimbursement()">Create &amp; send to approval</button>
+        <button class="btn ghost" onclick="document.getElementById('preview').innerHTML='';">Cancel</button>
+        <span id="rb-msg" style="font-size:12.5px;"></span>
+      </div>
+    </div>`;
+  // payee suggestions
+  af('/api/ap/reimbursement-payees').then(r=>r.json()).then(j=>{
+    const dl=document.getElementById('rb-payees'); if(dl) dl.innerHTML=(j.payees||[]).map(p=>`<option value="${esc(p.name)}">`).join('');
+  }).catch(()=>{});
+};
+window.rbLoadAccounts = function(){
+  const cid=document.getElementById('rb-comm').value; const sel=document.getElementById('rb-acct');
+  if(!cid){ sel.innerHTML='<option value="">Pick a community first…</option>'; return; }
+  sel.innerHTML='<option value="">Loading…</option>';
+  af('/api/ap/expense-accounts?community_id='+encodeURIComponent(cid)).then(r=>r.json()).then(j=>{
+    const a=j.accounts||[];
+    sel.innerHTML='<option value="">Auto-code from the description</option>'+a.map(x=>`<option value="${esc(x.id)}">${esc(x.account_number)} · ${esc(x.account_name)}</option>`).join('');
+  }).catch(()=>{ sel.innerHTML='<option value="">Auto-code from the description</option>'; });
+};
+window.submitReimbursement = async function(){
+  const msg=document.getElementById('rb-msg'); msg.style.color='#64748b'; msg.textContent='';
+  const community_id=document.getElementById('rb-comm').value;
+  const name=document.getElementById('rb-name').value.trim();
+  const source=document.getElementById('rb-source').value.trim();
+  const desc=document.getElementById('rb-desc').value.trim();
+  const date=document.getElementById('rb-date').value;
+  const amtRaw=document.getElementById('rb-amt').value.replace(/[$,]/g,'').trim();
+  const gl=document.getElementById('rb-acct').value||null;
+  const cents=Math.round(parseFloat(amtRaw)*100);
+  if(!community_id){ msg.style.color='#b91c1c'; msg.textContent='Pick the association.'; return; }
+  if(!name){ msg.style.color='#b91c1c'; msg.textContent='Enter who to reimburse.'; return; }
+  if(!date){ msg.style.color='#b91c1c'; msg.textContent='Enter the receipt date.'; return; }
+  if(!(cents>0)){ msg.style.color='#b91c1c'; msg.textContent='Enter a valid amount.'; return; }
+  const btn=document.getElementById('rb-submit'); btn.disabled=true; msg.textContent='Creating…';
+  try {
+    const r=await af('/api/ap/reimbursements',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      community_id, reimbursee_name:name, source, description:desc||null, invoice_date:date, total_cents:cents, gl_account_id:gl,
+    })});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+    const who = (j.payee&&j.payee.name)||name;
+    const board = j.board_approval_required ? ' It is above the board-approval threshold, so it needs board sign-off.' : '';
+    msg.style.color='#166534';
+    msg.innerHTML='✓ Created a reimbursement to <b>'+esc(who)+'</b> for '+money(cents)+', sent to approval.'+esc(board);
+    setTimeout(()=>{ document.getElementById('preview').innerHTML=''; loadQueue(); }, 2200);
+  } catch(e){ msg.style.color='#b91c1c'; msg.textContent='Failed: '+e.message; btn.disabled=false; }
 };
 
 async function doIngest(file,communityId,btn){

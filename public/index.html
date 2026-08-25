@@ -45704,7 +45704,7 @@ ${questionsPage}
               const dueColor = daysUntil != null && daysUntil < 0 ? '#dc2626' : daysUntil != null && daysUntil <= 7 ? '#d97706' : '#6b7280';
               return `
                 <tr style="border-bottom:1px solid #eee; cursor:pointer;" onclick="apOpenInvoice('${inv.id}')">
-                  <td style="padding:8px 10px;"><strong>${apEsc(inv.vendors?.name || '—')}</strong>${inv.vendors?.category ? ' <span style="font-size:10.5px; color:#888;">· ' + apEsc(inv.vendors.category) + '</span>' : ''}</td>
+                  <td style="padding:8px 10px;"><strong>${apEsc(inv.vendors?.name || '—')}</strong>${inv.reimbursement_source ? ' <span style="font-size:10px; font-weight:700; color:#6b21a8; background:#f3e8ff; border-radius:999px; padding:1px 7px;">REIMBURSEMENT</span>' : (inv.vendors?.category ? ' <span style="font-size:10.5px; color:#888;">· ' + apEsc(inv.vendors.category) + '</span>' : '')}${inv.reimbursement_source ? `<div style="font-size:10.5px; color:#888;">for ${apEsc(inv.reimbursement_source)}</div>` : ''}</td>
                   <td style="padding:8px 10px; font-family:ui-monospace,monospace; font-size:12px;">${apEsc(inv.vendor_invoice_number || '—')}</td>
                   <td style="padding:8px 10px; white-space:nowrap;">${apEsc(apFmtDate(inv.invoice_date))}</td>
                   <td style="padding:8px 10px; color:${dueColor}; white-space:nowrap;">${apEsc(apFmtDate(inv.due_date))}${daysUntil != null && daysUntil < 0 ? ` <strong>(${Math.abs(daysUntil)}d late)</strong>` : daysUntil != null && daysUntil <= 7 ? ` <strong>(${daysUntil}d)</strong>` : ''}</td>

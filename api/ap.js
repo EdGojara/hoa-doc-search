@@ -184,6 +184,36 @@ async function findOrCreateVendor({ vendor_name, vendor_email, vendor_phone, sug
   return { vendor: created, created: true };
 }
 
+// Find-or-create a REIMBURSEMENT PAYEE — a board/committee member being paid
+// back for an out-of-pocket association expense. Matched on name AND
+// kind='reimbursement' so it never collides with a real vendor of the same
+// name, and flagged so it stays out of the vendor directory and off 1099s.
+async function findOrCreateReimbursementPayee({ name, contact_id, email }) {
+  if (!name || !String(name).trim()) return null;
+  const clean = String(name).trim();
+  const { data: existing } = await supabase.from('vendors')
+    .select('*')
+    .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+    .eq('kind', 'reimbursement')
+    .ilike('name', clean)
+    .maybeSingle();
+  if (existing) return { payee: existing, created: false };
+  const { data: created, error } = await supabase.from('vendors').insert({
+    management_company_id: BEDROCK_MGMT_CO_ID,
+    name: clean,
+    payee_name: clean,                 // name on the check face
+    kind: 'reimbursement',
+    reimbursee_contact_id: contact_id || null,
+    is_active: true,
+    is_1099_vendor: false,             // reimbursing an expense is not reportable income
+    category: 'Reimbursement',
+    payment_terms_days: 0,
+    account_manager_email: email || null,
+  }).select('*').single();
+  if (error) { console.warn('[ap.reimbursement.payee.create] failed:', error.message); return null; }
+  return { payee: created, created: true };
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/ap/invoices/upload — the main intake endpoint
 // ---------------------------------------------------------------------------
@@ -655,6 +685,123 @@ router.post('/invoices', express.json(), async (req, res) => {
       return res.status(400).json({ error: err.message, code: err.code });
     }
     console.error('[ap] create invoice failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/ap/expense-accounts?community_id  — the community's expense accounts,
+// for coding a reimbursement (or any manual entry) at intake.
+// ---------------------------------------------------------------------------
+router.get('/expense-accounts', async (req, res) => {
+  try {
+    const { community_id } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { data, error } = await supabase.from('chart_of_accounts')
+      .select('id, account_number, account_name')
+      .eq('community_id', community_id)
+      .eq('account_type', 'expense')
+      .eq('is_active', true)
+      .eq('is_summary', false)
+      .order('account_number')
+      .limit(500);
+    if (error) throw error;
+    res.json({ accounts: data || [] });
+  } catch (err) {
+    console.error('[ap] expense-accounts failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/ap/reimbursement-payees?q=  — the board-member payee picker.
+// ---------------------------------------------------------------------------
+router.get('/reimbursement-payees', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    let query = supabase.from('vendors')
+      .select('id, name, payee_name, reimbursee_contact_id')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('kind', 'reimbursement')
+      .order('name').limit(25);
+    if (q) query = query.ilike('name', `%${q}%`);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ payees: data || [] });
+  } catch (err) {
+    console.error('[ap] reimbursement-payees failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/ap/reimbursements — a board/committee member reimbursement.
+//   body: { community_id, reimbursee_name, reimbursee_contact_id?, source,
+//           invoice_date, total_cents, gl_account_id?, description?, notes?,
+//           source_document_id?, source_filename? }
+//   The expense codes normally (gl_account_id, or auto-coded); the payable is to
+//   the reimbursee (a kind='reimbursement' payee); the real store is kept as
+//   reimbursement_source. Always lands 'awaiting_approval' — a payment to a
+//   board member is a related-party transaction and never auto-pays. The
+//   response says whether BOARD approval is required (community threshold).
+// ---------------------------------------------------------------------------
+router.post('/reimbursements', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (!b.reimbursee_name || !String(b.reimbursee_name).trim()) return res.status(400).json({ error: 'reimbursee_name_required' });
+    if (!b.invoice_date || !/^\d{4}-\d{2}-\d{2}$/.test(b.invoice_date)) return res.status(400).json({ error: 'invoice_date_required' });
+    const total = Math.round(Number(b.total_cents) || 0);
+    if (!total || total <= 0) return res.status(400).json({ error: 'total_cents_must_be_positive' });
+
+    const payeeRes = await findOrCreateReimbursementPayee({
+      name: b.reimbursee_name, contact_id: b.reimbursee_contact_id || null, email: b.reimbursee_email || null,
+    });
+    if (!payeeRes || !payeeRes.payee) return res.status(500).json({ error: 'could_not_create_payee' });
+
+    const store = b.source ? String(b.source).trim() : null;
+    const desc = String(b.description || '').trim() || (store ? `Reimbursement — ${store}` : 'Reimbursement');
+
+    const result = await createInvoice({
+      community_id: b.community_id,
+      vendor_id: payeeRes.payee.id,
+      invoice_date: b.invoice_date,
+      subtotal_cents: total,
+      total_cents: total,
+      reimbursement_source: store,
+      source_document_id: b.source_document_id || null,
+      source_filename: b.source_filename || null,
+      notes: b.notes || null,
+      posted_by_user_id: b.posted_by_user_id || null,
+      lines: [{
+        description: desc,
+        amount_cents: total,
+        gl_account_id: b.gl_account_id || null,   // null -> auto-code from the description
+      }],
+    });
+
+    // Does this one need BOARD sign-off (not just manager)? Advisory in the
+    // response; the approval routing enforces "never auto-pay" regardless.
+    let boardApprovalRequired = false;
+    try {
+      const { data: comm } = await supabase.from('communities')
+        .select('reimbursement_board_approval_over_cents').eq('id', b.community_id).maybeSingle();
+      const thr = comm && comm.reimbursement_board_approval_over_cents;
+      boardApprovalRequired = thr != null && total > thr;
+    } catch (_) { /* threshold optional */ }
+
+    res.json({
+      ...result,
+      payee: { id: payeeRes.payee.id, name: payeeRes.payee.name, created: payeeRes.created },
+      reimbursement_source: store,
+      board_approval_required: boardApprovalRequired,
+      related_party: true,
+    });
+  } catch (err) {
+    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'period_closed') {
+      return res.status(400).json({ error: err.message, code: err.code });
+    }
+    console.error('[ap] reimbursement failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
