@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board Learning · Review · Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700&family=Inter:wght@300;400;500;600;700&display=swap">
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --ink:#1f2430; --slate:#475569; --faint:#94a3b8; --rule:#e5e7eb; --bg:#F2F4F7; --ok:#15803d; --warn:#92400e; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:Inter,system-ui,sans-serif; font-size:14px; }
+  header.top { background:var(--navy); color:#fff; padding:16px 26px; display:flex; align-items:center; justify-content:space-between; border-bottom:3px solid var(--gold); }
+  header.top h1 { font-family:'Cormorant Garamond',Georgia,serif; font-weight:600; font-size:23px; margin:0; }
+  header.top a { color:#fff; opacity:.85; text-decoration:none; font-size:13px; }
+  .wrap { max-width:1180px; margin:0 auto; padding:22px 26px 60px; display:grid; grid-template-columns:320px 1fr; gap:22px; }
+  @media (max-width:900px){ .wrap { grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid var(--rule); border-radius:12px; padding:16px 18px; }
+  .list-item { padding:11px 12px; border-radius:9px; border:1px solid var(--rule); margin-bottom:8px; cursor:pointer; background:#fff; }
+  .list-item:hover { border-color:var(--navy); }
+  .list-item.active { border-color:var(--gold); box-shadow:0 0 0 2px rgba(212,175,55,.25); }
+  .list-item .t { font-weight:700; }
+  .list-item .m { font-size:12px; color:var(--slate); margin-top:2px; }
+  .badge { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:700; }
+  .badge.draft { background:#fef3c7; color:var(--warn); } .badge.reviewed { background:#dcfce7; color:var(--ok); } .badge.unpub { background:#e2e8f0; color:#334155; }
+  label { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--slate); margin:14px 0 5px; }
+  input[type=text], input[type=number], textarea, select { width:100%; padding:9px 12px; border:1px solid var(--rule); border-radius:8px; font-size:14px; font-family:inherit; color:var(--ink); }
+  textarea { resize:vertical; line-height:1.5; }
+  textarea.body { min-height:280px; font-size:13.5px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:120px; }
+  .btn { padding:9px 18px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-weight:700; font-size:13.5px; cursor:pointer; }
+  .btn.gold { background:var(--gold); border-color:var(--gold); color:var(--navy); }
+  .btn.ghost { background:#fff; color:var(--navy); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .muted { color:var(--faint); font-size:12.5px; }
+  .status { font-size:12.5px; margin-left:10px; }
+  .reviewbox { background:#fbfaf6; border:1px solid #ecd9a0; border-radius:10px; padding:12px 14px; margin-top:16px; }
+  #gate { max-width:520px; margin:80px auto; text-align:center; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div><h1>Board Learning <span style="color:var(--gold);">Review</span></h1></div>
+  <div><a href="/">&larr; trustEd</a></div>
+</header>
+
+<div id="gate" style="display:none;">
+  <div class="card"><h2>Sign in required</h2><p class="muted">Open this from the trustEd staff app so your session is active, then reload.</p></div>
+</div>
+
+<div class="wrap" id="app" style="display:none;">
+  <div>
+    <div class="card" style="margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <strong>Modules</strong>
+        <button class="btn ghost" id="btnNew" style="padding:6px 12px; font-size:12.5px;">+ New</button>
+      </div>
+      <div class="muted" style="margin-top:6px;">Edit the content boards see. Everything carries a standing not-legal-advice disclaimer; unpublish anything you want off the board's view.</div>
+    </div>
+    <div id="list"><div class="muted">Loading…</div></div>
+  </div>
+  <div>
+    <div class="card" id="editor"><div class="muted">Select a module to edit, or create a new one.</div></div>
+  </div>
+</div>
+
+<script>
+  const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const CATEGORIES = ['fiduciary','meetings','records','enforcement','finance','architectural','elections','general'];
+  let MODULES = [], current = null;
+
+  async function authHeaders() {
+    const h = { 'Content-Type':'application/json' };
+    try { if (window.supa) { const s = (await window.supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; } } catch(_){}
+    return h;
+  }
+  async function api(method, url, body) {
+    const r = await fetch(url, { method, headers: await authHeaders(), credentials:'same-origin', body: body?JSON.stringify(body):undefined });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(j.detail || j.error || (r.status+' '+r.statusText));
+    return j;
+  }
+
+  (async function boot(){
+    try {
+      const cfg = await (await fetch('/api/auth/config')).json();
+      if (cfg.enabled) {
+        if (!window.supabase) { await new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
+        window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      }
+    } catch(e){ console.warn('boot', e.message); }
+    // Try loading; the API enforces staff auth. If it 403s, show the gate.
+    try { await load(); document.getElementById('app').style.display='grid'; }
+    catch(e){ document.getElementById('gate').style.display='block'; }
+  })();
+
+  async function load(){
+    const j = await api('GET','/api/admin/board-learning');
+    MODULES = j.modules || [];
+    renderList(j.pending_migration);
+  }
+
+  function statusBadge(m){
+    return m.is_published ? '<span class="badge reviewed">Published</span>' : '<span class="badge unpub">Unpublished</span>';
+  }
+
+  function renderList(pending){
+    const el = document.getElementById('list');
+    if (pending) { el.innerHTML = '<div class="card muted">Migration 385 not applied yet, so there are no modules to review. Apply it, then reload.</div>'; return; }
+    if (!MODULES.length) { el.innerHTML = '<div class="card muted">No modules yet. Create one with + New.</div>'; return; }
+    el.innerHTML = MODULES.map((m)=>`
+      <div class="list-item ${current&&current.id===m.id?'active':''}" onclick="pick('${m.id}')">
+        <div class="t">${esc(m.title)}</div>
+        <div class="m">${esc(m.category)} · ${m.read_minutes||3} min · ${statusBadge(m)}</div>
+      </div>`).join('');
+  }
+
+  window.pick = function(id){ current = MODULES.find((m)=>m.id===id) || null; renderList(); renderEditor(); };
+
+  window.newModule = function(){
+    current = { id:null, slug:'', category:'general', title:'', summary:'', body:'', key_points:[], statute_refs:[], source_note:'', read_minutes:3, display_order:100, is_published:true };
+    renderList(); renderEditor(true);
+  };
+
+  function renderEditor(isNew){
+    const m = current; const ed = document.getElementById('editor');
+    if (!m) { ed.innerHTML = '<div class="muted">Select a module to edit, or create a new one.</div>'; return; }
+    ed.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <strong style="font-size:16px;">${isNew?'New module':'Edit module'}</strong>
+        <span>${statusBadge(m)}</span>
+      </div>
+      ${isNew?`<label>Slug (stable key, cannot change later)</label><input type="text" id="f-slug" value="${esc(m.slug)}" placeholder="e.g. conflicts-of-interest">`:`<div class="muted">Slug: <code>${esc(m.slug)}</code></div>`}
+      <label>Title</label><input type="text" id="f-title" value="${esc(m.title)}">
+      <label>One-line summary</label><input type="text" id="f-summary" value="${esc(m.summary)}">
+      <div class="row">
+        <div><label>Category</label><select id="f-category">${CATEGORIES.map((c)=>`<option value="${c}" ${m.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
+        <div><label>Read minutes</label><input type="number" id="f-read" value="${m.read_minutes||3}" min="1"></div>
+        <div><label>Order</label><input type="number" id="f-order" value="${m.display_order||100}"></div>
+      </div>
+      <label>Key points (one per line)</label><textarea id="f-kp" rows="4">${esc((m.key_points||[]).join('\n'))}</textarea>
+      <label>Statute references (one per line)</label><textarea id="f-refs" rows="2">${esc((m.statute_refs||[]).join('\n'))}</textarea>
+      <label>Body (markdown: ** bold **, ## headings, - lists, > quotes)</label><textarea id="f-body" class="body">${esc(m.body)}</textarea>
+      <label>Source note</label><input type="text" id="f-source" value="${esc(m.source_note||'')}">
+      <label style="display:inline-flex; align-items:center; gap:8px; text-transform:none; font-weight:500; margin-top:14px;"><input type="checkbox" id="f-pub" ${m.is_published?'checked':''} style="width:auto;"> Published (visible to boards)</label>
+
+      <div style="margin-top:18px; display:flex; align-items:center; gap:10px;">
+        <button class="btn gold" id="btnSave">${isNew?'Create':'Save changes'}</button>
+        ${!isNew?`<button class="btn ghost" id="btnPreview" onclick="window.open('/board-portal.html','_blank')">Open board portal ↗</button>`:''}
+        <span class="status muted" id="saveStatus"></span>
+      </div>
+
+      <div class="reviewbox">
+        Boards see a standing disclaimer on every module and every tutor answer: general education based on their governing documents and Texas Property Code Chapter 209, not legal advice, and no substitute for the association's attorney. There is no attorney sign-off, edit freely and unpublish anything you want off the board's view.
+      </div>
+    `;
+    const saveBtn = document.getElementById('btnSave');
+    if (saveBtn) saveBtn.onclick = ()=> save(isNew);
+  }
+
+  function collect(isNew){
+    const g = (id)=> (document.getElementById(id)||{}).value;
+    const body = {
+      title:g('f-title'), summary:g('f-summary'), category:g('f-category'), body:g('f-body'),
+      key_points:g('f-kp'), statute_refs:g('f-refs'), source_note:g('f-source'),
+      read_minutes:g('f-read'), display_order:g('f-order'),
+      is_published: (document.getElementById('f-pub')||{}).checked,
+    };
+    if (isNew) body.slug = g('f-slug');
+    return body;
+  }
+
+  async function save(isNew){
+    const st = document.getElementById('saveStatus'); st.textContent='Saving…';
+    try {
+      const body = collect(isNew);
+      const j = isNew ? await api('POST','/api/admin/board-learning', body)
+                      : await api('PATCH','/api/admin/board-learning/'+current.id, body);
+      st.innerHTML = '<span style="color:#15803d;">Saved.</span>';
+      await load(); current = MODULES.find((m)=>m.id===j.module.id) || j.module; renderList(); renderEditor(false);
+    } catch(e){ st.innerHTML = '<span style="color:#b91c1c;">'+esc(e.message)+'</span>'; }
+  }
+
+  document.getElementById('btnNew').addEventListener('click', ()=>window.newModule());
+</script>
+</body>
+</html>

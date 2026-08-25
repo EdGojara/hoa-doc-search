@@ -903,7 +903,7 @@ router.get('/learning', async (req, res) => {
     const viewer = await requireBoardViewer(req, res);
     if (!viewer) return;
     const { data, error } = await supabase.from('board_learning_modules')
-      .select('slug, category, title, summary, key_points, statute_refs, review_status, reviewed_by, read_minutes, display_order')
+      .select('slug, category, title, summary, key_points, statute_refs, read_minutes, display_order')
       .eq('is_published', true)
       .order('display_order', { ascending: true });
     if (error) {
@@ -1002,7 +1002,7 @@ Answer as board education, following your rules. If the excerpts don't cover it,
       answer,
       sources,
       grounded: !!context,
-      disclaimer: 'This is general education, not legal advice. Confirm anything consequential with the association’s attorney.',
+      disclaimer: 'General education based on your governing documents and the Texas Property Code (Chapter 209). Not legal advice, and no substitute for the association’s attorney.',
     });
   } catch (err) {
     console.error('[board_portal] tutor ask failed:', err.message);

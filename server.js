@@ -1180,6 +1180,11 @@ app.use('/api/arc-history', arcHistoryRouter);
 // visibility. Future: board-member auth, scoped to their community only.
 const { router: boardPortalRouter } = require('./api/board_portal');
 app.use('/api/board-portal', boardPortalRouter);
+
+// Staff-side review + editing for the board-learning modules (migration 385).
+// requireStaff-gated inside the router. The page is served below at
+// /admin/board-learning.
+app.use('/api/admin/board-learning', require('./api/board_learning_admin'));
 const { router: boardMotionsRouter } = require('./api/board_motions');
 app.use('/api/board-motions', boardMotionsRouter);
 const { router: boardVoteRouter } = require('./api/board_vote');
@@ -1284,6 +1289,8 @@ app.get('/learn', (req, res) => res.sendFile(require('path').join(__dirname, 'pu
 // The in-platform demo (staff-gated by default — presented from a signed-in
 // session, screen-shared to the room). Not in the public allowlist on purpose.
 app.get('/present', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'present.html')));
+// Staff review + editing for Board Learning modules (staff-gated by the API).
+app.get('/admin/board-learning', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'board-learning-admin.html')));
 // Sweep visits whose tab was closed without ending them, so their metered
 // minutes still land in the cost ledger instead of sitting 'active' forever.
 setInterval(() => { expireIdleSessions().catch((e) => console.warn('[claire] sweep:', e.message)); }, 120000).unref();

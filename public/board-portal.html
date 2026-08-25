@@ -1595,6 +1595,12 @@
     return html;
   }
   const _LEARN_CAT = { fiduciary: 'Your role', meetings: 'Meetings', records: 'Records', enforcement: 'Enforcement', finance: 'Money', architectural: 'Architectural', elections: 'Elections', general: 'General' };
+  // Standing disclaimer, shown on every learning surface. No attorney sign-off:
+  // this is education grounded in the docs + §209, not legal advice.
+  function learnDisclaimer(sourceNote) {
+    return `<div style="margin-top:18px;padding:11px 14px;border:1px solid #ecd9a0;background:#fbfaf6;border-radius:9px;font-size:12px;color:#6b5b2e;line-height:1.5;">
+      ${sourceNote ? esc(sourceNote) + ' ' : ''}This is general education based on your community's governing documents and the Texas Property Code (Chapter 209). It is not legal advice and is not a substitute for advice from the association's attorney.</div>`;
+  }
 
   async function showLearning() {
     const wrap = document.getElementById('container');
@@ -1608,8 +1614,7 @@
           <div class="addr">${esc(m.title)}</div>
           <div class="owner">${esc(m.summary)}</div>
           <div class="badges"><span class="badge" style="background:#eef2f7;color:#475569;">${esc(_LEARN_CAT[m.category] || m.category)}</span>
-            <span class="owner" style="margin-left:6px;">${m.read_minutes || 3} min</span>
-            ${m.review_status === 'counsel_reviewed' ? '<span class="badge good" style="margin-left:6px;">Attorney reviewed</span>' : ''}</div>
+            <span class="owner" style="margin-left:6px;">${m.read_minutes || 3} min</span></div>
         </div>
         <div class="arrow"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
       </div>`).join('');
@@ -1626,7 +1631,8 @@
         <div id="learn-a" style="margin-top:14px;"></div>
       </div>
       <div class="tile-section-label" style="margin-bottom:8px;">Guides</div>
-      ${cards || '<div class="empty">No guides yet.</div>'}`;
+      ${cards || '<div class="empty">No guides yet.</div>'}
+      ${learnDisclaimer()}`;
     const q = document.getElementById('learn-q');
     if (q) q.addEventListener('keydown', (e) => { if (e.key === 'Enter') learnAsk(); });
   }
@@ -1641,15 +1647,12 @@
     const kp = (m.key_points || []).length ? `<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin:14px 0;">
         <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#64748b;font-weight:700;margin-bottom:8px;">The short version</div>
         <ul style="margin:0;padding-left:18px;">${m.key_points.map((p) => `<li style="margin-bottom:4px;">${esc(p)}</li>`).join('')}</ul></div>` : '';
-    const reviewed = m.review_status === 'counsel_reviewed'
-      ? `<span class="badge good">Attorney reviewed${m.reviewed_by ? ': ' + esc(m.reviewed_by) : ''}</span>`
-      : '<span class="badge" style="background:#fef3c7;color:#92400e;">Educational draft</span>';
     wrap.innerHTML = `${back}
       <div class="properties-header">${esc(m.title)}</div>
-      <div style="margin:-4px 0 10px;">${reviewed} ${(m.statute_refs || []).map((x) => `<span class="owner" style="margin-left:6px;">${esc(x)}</span>`).join('')}</div>
+      <div style="margin:-4px 0 10px;">${(m.statute_refs || []).map((x) => `<span class="owner">${esc(x)}</span>`).join(' · ')}</div>
       ${kp}
       <div style="font-size:15px;color:#1f2937;">${_mdLite(m.body)}</div>
-      <div style="margin-top:18px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:12px;color:#64748b;">${esc(m.source_note || '')} This is general education, not legal advice. Confirm specifics with your governing documents and the association's attorney.</div>`;
+      ${learnDisclaimer(m.source_note)}`;
   }
 
   async function learnAsk() {
