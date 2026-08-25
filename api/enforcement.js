@@ -4676,6 +4676,126 @@ router.get('/property-violations', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/enforcement/reconcile?community_id=&window_days=  — re-inspection
+// reconciliation PREVIEW (read-only). Ed 2026-08-25: the cure-lapse engine has
+// never run, so courtesy cases pile up — never escalated when still violating,
+// never closed when cured. This computes, from the recent drive(s), what SHOULD
+// happen, WITHOUT changing anything:
+//   • ESCALATE — open courtesy case, cure period lapsed, and re-observed in the
+//     window (still violating) -> should advance to the next courtesy notice.
+//   • CURE — open courtesy case whose property WAS inspected in the window but
+//     the category was NOT re-flagged (came back clean) -> should close as cured.
+//   • PROTECTED — certified §209 / fine / 10-day self-help. NEVER auto-touched
+//     (Ed's hard rule; they may have been served outside trustEd). Info only.
+// Only trustEd_native, courtesy-tier cases are ever candidates.
+// ---------------------------------------------------------------------------
+const _SELF_HELP_SLUGS = new Set(['lawn_force_mow_10day', 'trash_cleanup_10day', 'tree_hazard_10day']);
+router.get('/reconcile', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    const windowDays = Math.min(180, Math.max(7, Number(req.query.window_days) || 60));
+    const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+    const now = Date.now();
+
+    // Open violations for the community (paginated, ordered).
+    const open = [];
+    for (let from = 0; from < 100000; from += 1000) {
+      const { data, error } = await supabase.from('violations')
+        .select('id, property_id, primary_category_id, current_stage, source, opened_at, cure_period_ends_at, enforcement_categories(slug, label)')
+        .eq('community_id', communityId)
+        .not('current_stage', 'in', '(cured,closed,voided)').is('resolved_at', null).neq('quality_status', 'superseded')
+        .order('opened_at', { ascending: true }).range(from, from + 999);
+      if (error) throw error;
+      open.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+
+    // Recent observations in the window: which (property,category) were re-flagged,
+    // and which properties were inspected at all.
+    const augObs = [];
+    for (let from = 0; from < 100000; from += 1000) {
+      const { data, error } = await supabase.from('property_observations')
+        .select('property_id, category_id, created_at')
+        .eq('community_id', communityId).gte('created_at', since)
+        .order('created_at', { ascending: true }).range(from, from + 999);
+      if (error) throw error;
+      augObs.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    // Latest sighting time per property, and per property+category. Comparing to
+    // a violation's opened_at excludes its OWN originating observation (a
+    // re-inspection is a LATER sighting, not the one that opened the case) — the
+    // self-citation trap that otherwise flags every case as "re-observed".
+    const maxByProp = new Map(), maxByPC = new Map();
+    for (const o of augObs) {
+      const t = new Date(o.created_at).getTime();
+      if (t > (maxByProp.get(o.property_id) || 0)) maxByProp.set(o.property_id, t);
+      const k = `${o.property_id}|${o.category_id}`;
+      if (t > (maxByPC.get(k) || 0)) maxByPC.set(k, t);
+    }
+
+    // Property display info for the candidate rows.
+    const propIds = [...new Set(open.map((v) => v.property_id).filter(Boolean))];
+    const propInfo = new Map();
+    for (let i = 0; i < propIds.length; i += 300) {
+      const { data } = await supabase.from('v_property_summary')
+        .select('property_id, street_address, unit, owner_name, owner_contact_id')
+        .in('property_id', propIds.slice(i, i + 300));
+      for (const p of (data || [])) propInfo.set(p.property_id, p);
+    }
+
+    const isProtected = (v) => ['certified_209', 'fine_assessed'].includes(v.current_stage)
+      || (v.enforcement_categories && _SELF_HELP_SLUGS.has(v.enforcement_categories.slug));
+    const isCourtesyOurs = (v) => ['courtesy_1', 'courtesy_2'].includes(v.current_stage)
+      && (!v.source || v.source === 'trustEd_native') && !isProtected(v);
+
+    const escalate = [], cure = [];
+    const protectedCount = { certified_209: 0, fine_assessed: 0, ten_day: 0 };
+    const row = (v) => {
+      const p = propInfo.get(v.property_id) || {};
+      return {
+        violation_id: v.id, property_id: v.property_id,
+        address: (p.street_address || '—') + (p.unit ? ' #' + p.unit : ''),
+        owner: p.owner_name || null, owner_contact_id: p.owner_contact_id || null,
+        category: (v.enforcement_categories && v.enforcement_categories.label) || '—',
+        stage: v.current_stage, opened_at: v.opened_at, cure_period_ends_at: v.cure_period_ends_at,
+      };
+    };
+    for (const v of open) {
+      if (isProtected(v)) {
+        if (v.current_stage === 'certified_209') protectedCount.certified_209++;
+        else if (v.current_stage === 'fine_assessed') protectedCount.fine_assessed++;
+        else protectedCount.ten_day++;
+        continue;
+      }
+      if (!isCourtesyOurs(v)) continue;
+      const openedT = new Date(v.opened_at).getTime();
+      // Re-observed = a sighting at this property+category AFTER the case opened.
+      const reObserved = (maxByPC.get(`${v.property_id}|${v.primary_category_id}`) || 0) > openedT;
+      const propReInspected = (maxByProp.get(v.property_id) || 0) > openedT;
+      const cureLapsed = v.cure_period_ends_at ? (new Date(v.cure_period_ends_at).getTime() < now) : false;
+      if (reObserved && cureLapsed) {
+        escalate.push({ ...row(v), next_stage: v.current_stage === 'courtesy_1' ? 'courtesy_2' : 'certified_209 (needs your review — not automatic)' });
+      } else if (propReInspected && !reObserved) {
+        cure.push(row(v));
+      }
+    }
+
+    res.json({
+      ok: true, community_id: communityId, window_days: windowDays,
+      counts: { escalate: escalate.length, cure: cure.length,
+        protected: protectedCount.certified_209 + protectedCount.fine_assessed + protectedCount.ten_day },
+      protected: protectedCount,
+      escalate, cure,
+    });
+  } catch (err) {
+    console.error('[enforcement.reconcile]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/enforcement/interactions/:id/record-mailing
 // Body: { mailed_date: 'YYYY-MM-DD', delivery_method?, certified_tracking_number?,
 //         reason?, user_name? }

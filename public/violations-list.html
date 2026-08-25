@@ -49,9 +49,11 @@
     <select id="community" onchange="loadList()"><option value="">Select a community…</option></select>
     <input id="q" placeholder="🔎 Search address or owner…" oninput="render()" style="flex:1; min-width:220px;">
     <label class="toggle"><input type="checkbox" id="openOnly" checked onchange="render()"> Only homes with an open violation</label>
+    <button id="recBtn" onclick="reconcile()" style="background:#0B1D34; color:#C6A15B; border:none; padding:9px 13px; border-radius:8px; font-weight:700; cursor:pointer;" title="From the recent drives: what should escalate (still violating), what looks cured (re-inspected clean), and what's protected (certified/10-day — never auto-touched).">🔁 Reconcile</button>
     <div class="counts" id="counts"></div>
   </div>
 
+  <div id="reconcilePanel"></div>
   <div id="list"><div class="empty">Pick a community to see its violations register.</div></div>
 </div>
 
@@ -168,6 +170,54 @@ function render(){
     ${th('last_violation_at','Last violation')}
     ${th('last_inspected_at','Last inspected')}
   </tr></thead><tbody>${body}</tbody></table>`;
+}
+
+// Re-inspection reconciliation PREVIEW (read-only). Shows what the drives imply
+// should happen — escalate (still violating), cure (re-inspected clean), and the
+// protected certified/10-day set that automation never touches. No stage changes
+// here; this is the review step before any apply. (Ed 2026-08-25.)
+async function reconcile(){
+  const c=$('community').value; const panel=$('reconcilePanel');
+  if(!c){ alert('Pick a community first.'); return; }
+  const btn=$('recBtn'); btn.disabled=true; const label=btn.textContent; btn.textContent='Working…';
+  panel.innerHTML='<div class="empty">Reconciling from the recent drives…</div>';
+  try{
+    const r=await fetch(`${API}/reconcile?community_id=${encodeURIComponent(c)}&window_days=60`);
+    const j=await r.json();
+    if(!j.ok){ panel.innerHTML='<div class="empty">'+esc(j.error||'Could not reconcile')+'</div>'; return; }
+    const card=(color,bg,n,label,sub)=>`<div style="flex:1; min-width:150px; background:${bg}; border:1px solid ${color}33; border-radius:10px; padding:12px 14px;">
+      <div style="font-size:26px; font-weight:800; color:${color};">${n}</div>
+      <div style="font-weight:700; color:#0f172a; font-size:13px;">${label}</div>
+      <div style="font-size:11.5px; color:#64748b; margin-top:2px;">${sub}</div></div>`;
+    const tbl=(rows,extraCol)=> rows.length? `<table style="margin-top:8px;"><thead><tr>
+        <th style="cursor:default;">Property</th><th style="cursor:default;">Owner</th><th style="cursor:default;">Category</th><th style="cursor:default;">Stage</th>${extraCol?`<th style="cursor:default;">${extraCol}</th>`:''}<th style="cursor:default;">Opened</th>
+      </tr></thead><tbody>${rows.map(x=>`<tr>
+        <td class="addr">${esc(x.address)}</td><td class="owner">${esc(x.owner||'—')}</td>
+        <td>${esc(x.category)}</td><td>${stagePill(x.stage,true)}</td>
+        ${extraCol?`<td>${esc(x.next_stage||'')}</td>`:''}<td>${d10(x.opened_at)}</td>
+      </tr>`).join('')}</tbody></table>` : '<div class="rel" style="padding:8px 2px;">None.</div>';
+    const p=j.protected||{};
+    panel.innerHTML=`<div style="background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div style="font-weight:700; color:var(--navy); font-size:15px;">Reconciliation — last ${j.window_days} days <span class="rel" style="font-weight:400;">(preview only — nothing changes yet)</span></div>
+        <button onclick="document.getElementById('reconcilePanel').innerHTML=''" style="background:none; border:1px solid var(--line); border-radius:6px; padding:4px 10px; cursor:pointer; color:#64748b;">Close</button>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin:12px 0;">
+        ${card('#166534','#f0fdf4',j.counts.escalate,'Escalate','Re-inspected, still violating, cure period lapsed → advance to next courtesy notice')}
+        ${card('#0369a1','#f0f9ff',j.counts.cure,'Likely cured','Property re-inspected and this issue did NOT recur → close as cured (review first — a drive-by can miss)')}
+        ${card('#991b1b','#fef2f2',j.counts.protected,'Protected','Certified §209 / fine / 10-day self-help — never auto-touched. Your manual call.')}
+      </div>
+      <div style="font-size:12px; color:#64748b; margin-bottom:2px;">Protected breakdown: ${p.certified_209||0} certified §209 · ${p.fine_assessed||0} fine · ${p.ten_day||0} 10-day self-help — these are shown so you know they exist; the tool will never change them.</div>
+      <h3 style="font-size:13px; color:#166534; margin:16px 0 0;">▲ Escalate candidates (${j.counts.escalate})</h3>
+      ${tbl(j.escalate,'Next')}
+      <h3 style="font-size:13px; color:#0369a1; margin:18px 0 0;">✓ Likely-cured candidates (${j.counts.cure})</h3>
+      ${tbl(j.cure,null)}
+      <div style="margin-top:14px; padding:10px 12px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; font-size:12px; color:#92400e;">
+        This is a <b>preview</b>. Once you confirm these buckets look right, the next step wires the one-click <b>Advance</b> / <b>Mark cured</b> actions (courtesy-only, certified/10-day hard-blocked).
+      </div>
+    </div>`;
+  }catch(e){ panel.innerHTML='<div class="empty">Error: '+esc(e.message)+'</div>'; }
+  finally{ btn.disabled=false; btn.textContent=label; }
 }
 
 _authReady.then(()=>{ loadCommunities(); });
