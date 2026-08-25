@@ -78,12 +78,38 @@
   <div id="modal"></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const API='/api/pool-access';
 const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const d10=s=>s?String(s).slice(0,10):'';
 const $=id=>document.getElementById(id);
 function cid(){ return $('community').value; }
+
+// Every /api/pool-access endpoint is staff-gated (requireStaff = a Bearer JWT),
+// but this page used to send none, so every call 403'd and the dropdown, roster,
+// and ingest all came back empty. Bootstrap the Supabase session and attach the
+// token to every same-origin /api call by wrapping fetch, so the existing calls
+// need no changes. (Ed 2026-08-25: "no communities in the drop down.")
+let _supa=null, _authReady=(async()=>{
+  try{
+    const cfg=await (await fetch('/api/auth/config')).json();
+    if(cfg.enabled && window.supabase){ _supa=window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key); }
+  }catch(_){}
+})();
+const _origFetch=window.fetch.bind(window);
+window.fetch=async(url,opts)=>{
+  opts=opts||{};
+  try{
+    if(typeof url==='string' && url.startsWith('/api/') && _supa){
+      await _authReady;
+      const s=(await _supa.auth.getSession()).data.session;
+      if(s && s.access_token){ opts.headers=Object.assign({}, opts.headers||{}, { Authorization:'Bearer '+s.access_token }); }
+    }
+  }catch(_){}
+  if(opts.credentials===undefined) opts.credentials='same-origin';
+  return _origFetch(url,opts);
+};
 
 async function loadCommunities(){
   try{
@@ -365,8 +391,8 @@ async function gOverride(){
   closeModal(); loadRoster();
 }
 
-loadCommunities();
-loadRoster();
+// Wait for the session bootstrap so the very first calls carry the token.
+_authReady.then(()=>{ loadCommunities(); loadRoster(); });
 </script>
 <script src="/deploy-watcher.js"></script>
 </body>
