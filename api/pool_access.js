@@ -41,6 +41,19 @@ const router = express.Router();
 
 const FILEABLE = new Set(['fob_registration', 'extended_hours']);
 
+// Deploy-safety (CLAUDE.md scar: PostgREST fails the WHOLE query on an unknown
+// column). resident_type ships in migration 388; until that's applied, naming
+// the column in a select/insert 500s the entire page. Probe once, cache, and
+// gate every resident_type read/write on it so the roster works before AND
+// after the migration. Once 388 is live the probe flips true and it persists.
+let _hasResidentType = null;
+async function hasResidentType() {
+  if (_hasResidentType !== null) return _hasResidentType;
+  const { error } = await supabase.from('pool_access').select('resident_type').limit(1);
+  _hasResidentType = !error;
+  return _hasResidentType;
+}
+
 // ----------------------------------------------------------------------------
 // Paged fetch — never trust the implicit 1000-row PostgREST cap on a roster
 // (CLAUDE.md: Supabase 1000-row silent truncation).
@@ -305,7 +318,7 @@ router.post('/ingest/:batch_id/approve', express.json(), async (req, res) => {
         season_year: r.season_year || null,
         extended_hours_detail: r.extended_hours_detail || null,
         authorized_persons: r.authorized_persons || [],
-        resident_type: ['owner', 'tenant'].includes(r.resident_type) ? r.resident_type : 'unknown',
+        ...((await hasResidentType()) ? { resident_type: ['owner', 'tenant'].includes(r.resident_type) ? r.resident_type : 'unknown' } : {}),
         form_signed_date: r.form_signed_date || null,
         status: 'active',
         notes: overrideReason ? `${r.notes ? r.notes + '\n' : ''}[Override] Granted despite past-due assessments — ${overrideReason}`.slice(0, 1000) : (r.notes || null),
@@ -407,9 +420,10 @@ router.get('/roster', async (req, res) => {
     const communityId = req.query.community_id;
     if (!communityId) return res.status(400).json({ error: 'community_id required' });
     const status = req.query.status || 'active';
+    const rt = (await hasResidentType()) ? 'resident_type, ' : '';
     const rows = await fetchAll(() => {
       let q = supabase.from('pool_access')
-        .select('id, form_type, fob_tag_number, season_year, extended_hours_detail, authorized_persons, form_signed_date, status, notes, resident_type, source_storage_path, source_filename, property_id, contact_id, properties(street_address), contacts(full_name)')
+        .select(`id, form_type, fob_tag_number, season_year, extended_hours_detail, authorized_persons, form_signed_date, status, notes, ${rt}source_storage_path, source_filename, property_id, contact_id, properties(street_address), contacts(full_name)`)
         .eq('community_id', communityId).order('form_type', { ascending: true }).order('fob_tag_number', { ascending: true });
       if (status !== 'all') q = q.eq('status', status);
       return q;
@@ -512,7 +526,7 @@ router.post('/grant', express.json(), async (req, res) => {
       form_type: b.form_type, fob_tag_number: b.fob_tag_number ? String(b.fob_tag_number).trim() : null,
       season_year: b.season_year || null, extended_hours_detail: b.extended_hours_detail || null,
       authorized_persons: Array.isArray(b.authorized_persons) ? b.authorized_persons : [],
-      resident_type: ['owner','tenant'].includes(b.resident_type) ? b.resident_type : 'unknown',
+      ...((await hasResidentType()) ? { resident_type: ['owner','tenant'].includes(b.resident_type) ? b.resident_type : 'unknown' } : {}),
       form_signed_date: /^\d{4}-\d{2}-\d{2}$/.test(b.form_signed_date || '') ? b.form_signed_date : null,
       status: 'active', notes: overrideReason ? `${b.notes ? b.notes + '\n' : ''}[Override] Granted despite past-due assessments — ${overrideReason}`.slice(0, 1000) : (b.notes || null),
       record_ownership: 'association_record',
@@ -531,7 +545,8 @@ router.post('/grant', express.json(), async (req, res) => {
 router.patch('/:id', express.json(), async (req, res) => {
   const staff = await requireStaff(req, res); if (!staff) return;
   try {
-    const allowed = ['status', 'fob_tag_number', 'season_year', 'extended_hours_detail', 'authorized_persons', 'form_signed_date', 'notes', 'resident_type'];
+    const allowed = ['status', 'fob_tag_number', 'season_year', 'extended_hours_detail', 'authorized_persons', 'form_signed_date', 'notes'];
+    if (await hasResidentType()) allowed.push('resident_type');
     const patch = {};
     for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
     if (patch.status && !['active', 'revoked', 'expired'].includes(patch.status)) return res.status(400).json({ error: 'bad status' });

@@ -186,6 +186,7 @@ function render(){
 // leaves that group out; the free-text To always works.
 let _rpickName = {}; // email -> display name, so a pick fills the greeting
 let _allStaffEmails = []; // for the company-wide "All Bedrock team" pick
+let _boardGroups = {};    // community -> [emails], for the per-community "whole board" pick
 async function loadRecipients(){
   const sel = $('rpick'); if(!sel) return;
   // AI team mirrors lib/email/graph_send.js persona mailboxes.
@@ -204,6 +205,7 @@ async function loadRecipients(){
   try { const r=await af('/api/board-members'); const j=await r.json(); board=(j.members||[]).filter(m=>m&&m.email); } catch(_){}
   const opt=(v,label)=>`<option value="${esc(v)}">${esc(label)}</option>`;
   _rpickName = {};
+  _boardGroups = {};
   _allStaffEmails = staff.map(u=>u.email).filter(Boolean);
   let html = '<option value="">— pick a board member, staff, or AI teammate —</option>';
   // Company-wide: one pick to email the whole Bedrock team (Tessa sends on Ed's
@@ -217,6 +219,12 @@ async function loadRecipients(){
     for(const m of board){ const c=m.community_name||'Board'; (byC[c]=byC[c]||[]).push(m); }
     for(const [comm, mem] of Object.entries(byC).sort((a,b)=>a[0].localeCompare(b[0]))){
       html += `<optgroup label="Board — ${esc(comm)}">`;
+      // One pick to email the whole board of this community (fans out below).
+      const bEmails = mem.map(m=>m.email).filter(Boolean);
+      _boardGroups[comm] = bEmails;
+      if(bEmails.length > 1){
+        html += `<option value="__board__::${esc(comm)}">👥 All ${esc(comm)} board (${bEmails.length})</option>`;
+      }
       for(const m of mem.sort((a,b)=>String(a.name||a.full_name||a.email).localeCompare(String(b.name||b.full_name||b.email)))){
         const nm = m.name || m.full_name || m.email;
         const title = m.position || m.role || '';
@@ -244,6 +252,12 @@ function pickRecipient(){
   if(v==='__all_staff__'){
     $('to').value = _allStaffEmails.join(', ');
     if($('rname') && !$('rname').value.trim()) $('rname').value = 'team';
+    return;
+  }
+  if(v.startsWith('__board__::')){
+    const comm = v.slice('__board__::'.length);
+    $('to').value = (_boardGroups[comm]||[]).join(', ');
+    if($('rname') && !$('rname').value.trim()) $('rname').value = 'everyone';
     return;
   }
   $('to').value = v;
