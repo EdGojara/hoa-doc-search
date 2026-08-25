@@ -3479,6 +3479,23 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
     // "✓ Confirmed" but the Drafts queue stays empty — exactly the bug
     // Ed flagged. Mirrors the auto-draft path in POST /photos so the
     // letter looks identical regardless of which entry point opened it.
+    // Respond NOW — the violation is open and the observation is confirmed.
+    // The letter PDF (semantic CC&R lookup + photo fetch + PDF layout) runs in
+    // the BACKGROUND so a verify pass stays fast; the draft lands in Step 2 a
+    // few seconds later. A failed render leaves the violation open with no
+    // draft, which the Step-2 drafts queue already surfaces. (Ed 2026-08-25:
+    // "so it is faster" — confirming used to block on the full render.)
+    res.json({
+      ok: true,
+      opened: true,
+      violation_id: violation.id,
+      stage: violation.current_stage,
+      cure_period_ends_at: violation.cure_period_ends_at,
+      rationale: decision.rationale,
+      draft_pending: true,
+    });
+
+    void (async () => {
     let letterResult = { error: 'letter not generated' };
     try {
       const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
@@ -3654,21 +3671,10 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       console.error('[inspections.confirm] letter draft FAILED (violation opened, no draft):', letterErr.message);
       letterResult = { error: letterErr.message };
     }
-
-    res.json({
-      ok: true,
-      opened: true,
-      violation_id: violation.id,
-      stage: violation.current_stage,
-      cure_period_ends_at: violation.cure_period_ends_at,
-      rationale: decision.rationale,
-      draft_created: !!(letterResult && letterResult.interaction_id),
-      letter_error: (letterResult && letterResult.error) || null,
-      letter: letterResult,
-    });
+    })().catch((e) => console.warn('[inspections.confirm] background draft crashed:', e.message));
   } catch (err) {
     console.error('[inspections.observations.confirm]', err);
-    res.status(500).json({ error: err.message || 'confirm failed' });
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'confirm failed' });
   }
 });
 

@@ -24169,16 +24169,19 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       try {
         const r = await fetch('/api/inspections/observations/' + id + '/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         const j = await r.json().catch(() => ({}));
-        if (r.ok) { ok++; if (j.draft_created) drafts++; else if (j.opened === false) cont++; else noDraft++; } else fail++;
+        if (r.ok) { ok++; if (j.draft_created || j.draft_pending) drafts++; else if (j.opened === false) cont++; else noDraft++; } else fail++;
       } catch (_) { fail++; }
     }
     const sa = document.getElementById('revSelectAll'); if (sa) sa.checked = false;
     await Promise.all([inspReviewLoad(), (typeof inspDraftsLoad === 'function') ? inspDraftsLoad() : Promise.resolve()]);
-    alert('Confirmed ' + ok + ' · ' + drafts + ' new draft letter' + (drafts === 1 ? '' : 's')
+    // Letters render in the background — refresh Step 2 again shortly so they
+    // appear without a manual refresh. (Ed 2026-08-25.)
+    if (typeof inspDraftsLoad === 'function') setTimeout(() => { try { inspDraftsLoad(); } catch (_) {} }, 5000);
+    alert('Confirmed ' + ok + ' · ' + drafts + ' draft letter' + (drafts === 1 ? '' : 's') + ' generating'
       + (cont ? (' · ' + cont + ' continuation' + (cont === 1 ? '' : 's') + ' (house already has an open case — no duplicate letter)') : '')
-      + (noDraft ? (' · ' + noDraft + ' opened but draft FAILED — tell Claude') : '')
+      + (noDraft ? (' · ' + noDraft + ' opened but no draft — tell Claude') : '')
       + (fail ? (' · ' + fail + ' error' + (fail === 1 ? '' : 's')) : '')
-      + '.\n\nDraft letters are in Step 2 below.');
+      + '.\n\nDraft letters appear in Step 2 below in a few seconds.');
   }
   async function inspReviewRejectSelected() {
     const ids = [...document.querySelectorAll('.revchk:checked')].map((c) => c.value);
@@ -24265,7 +24268,11 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       } else if (j.draft_created === false) {
         alert('Violation opened but the draft letter could NOT be created:\n\n' + (j.letter_error || 'unknown error') + '\n\n(Copy this and send it to Claude.)');
       }
-      await Promise.all([inspReviewLoad(), inspDraftsLoad && inspDraftsLoad()]);
+      // The letter renders in the background now, so drop the row from Step 1
+      // immediately, then refresh Step 2 now AND again shortly so the freshly
+      // rendered draft appears without a manual refresh. (Ed 2026-08-25.)
+      await inspReviewLoad();
+      if (typeof inspDraftsLoad === 'function') { inspDraftsLoad(); setTimeout(() => { try { inspDraftsLoad(); } catch (_) {} }, 5000); }
     } catch (e) {
       alert('Confirm failed: ' + e.message);
     } finally {
