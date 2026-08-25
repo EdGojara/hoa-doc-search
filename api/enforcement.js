@@ -4796,6 +4796,71 @@ router.get('/reconcile', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/enforcement/reconcile/apply  { action:'escalate'|'cure',
+//   violation_ids:[...], user_name? } — apply the reviewed reconciliation.
+// EVERY id is re-guarded server-side (a stale client list must never move a
+// protected case): courtesy tier only, trustEd_native only, never a 10-day
+// self-help category, never superseded. Escalate ONLY advances courtesy_1 ->
+// courtesy_2 (drafting the 2nd notice); courtesy_2 -> certified is refused as
+// needs_human. Cure closes the case as resolved_via='cured'. Certified §209 /
+// fine / 10-day can never be reached here. (Ed 2026-08-25 hard rule.)
+// ---------------------------------------------------------------------------
+router.post('/reconcile/apply', express.json(), async (req, res) => {
+  try {
+    const action = (req.body || {}).action;
+    const ids = Array.isArray((req.body || {}).violation_ids) ? (req.body || {}).violation_ids : [];
+    const actor = ((req.body || {}).user_name || 'staff').toString().slice(0, 80);
+    if (!['escalate', 'cure'].includes(action)) return res.status(400).json({ error: 'action must be escalate or cure' });
+    if (!ids.length) return res.status(400).json({ error: 'no violation_ids' });
+
+    const applied = [], skipped = [];
+    for (const id of ids.slice(0, 500)) {
+      const { data: v } = await supabase.from('violations')
+        .select('id, property_id, community_id, primary_category_id, current_stage, source, opened_at, board_priority_at_open, quality_status, enforcement_categories(slug)')
+        .eq('id', id).maybeSingle();
+      if (!v) { skipped.push({ id, reason: 'not_found' }); continue; }
+      // HARD GUARDS — re-checked on the server for every id.
+      if (!['courtesy_1', 'courtesy_2'].includes(v.current_stage)) { skipped.push({ id, reason: `protected_stage_${v.current_stage}` }); continue; }
+      if (v.source && v.source !== 'trustEd_native') { skipped.push({ id, reason: 'imported_not_ours' }); continue; }
+      if (v.enforcement_categories && _SELF_HELP_SLUGS.has(v.enforcement_categories.slug)) { skipped.push({ id, reason: 'ten_day_self_help_protected' }); continue; }
+      if (v.quality_status === 'superseded') { skipped.push({ id, reason: 'superseded' }); continue; }
+
+      if (action === 'cure') {
+        const { error } = await supabase.from('violations')
+          .update({ current_stage: 'cured', resolved_via: 'cured', resolved_at: new Date().toISOString(),
+            resolved_notes: `Re-inspected clean via reconciliation (${actor}) — not observed on a later drive.` })
+          .eq('id', id).in('current_stage', ['courtesy_1', 'courtesy_2']); // optimistic guard vs concurrent change
+        if (error) { skipped.push({ id, reason: 'update_failed: ' + error.message }); continue; }
+        applied.push({ id, action: 'cured' });
+        continue;
+      }
+
+      // action === 'escalate' — only courtesy_1 -> courtesy_2 is automatic.
+      if (v.current_stage !== 'courtesy_1') { skipped.push({ id, reason: 'only_courtesy_1_auto_advances' }); continue; }
+      const priorityWeight = await _getPriorityWeight(v.community_id, v.primary_category_id);
+      const decision = decideEscalation({ prior_violations: [], priority_weight: priorityWeight, is_cure_lapse: true, current_stage: v.current_stage });
+      // Never auto anything but a courtesy_2 target.
+      if (decision.needs_board_review || !decision.should_open || decision.stage !== 'courtesy_2') {
+        skipped.push({ id, reason: `needs_human_${decision.stage || 'review'}` });
+        continue;
+      }
+      const newCureEnd = _newCureDate(decision);
+      const { error: upErr } = await supabase.from('violations')
+        .update({ current_stage: 'courtesy_2', current_stage_started_at: new Date().toISOString(), cure_period_ends_at: newCureEnd })
+        .eq('id', id).eq('current_stage', 'courtesy_1');
+      if (upErr) { skipped.push({ id, reason: 'bump_failed: ' + upErr.message }); continue; }
+      const letterResult = await _draftLetterForBumpedViolation(v, decision, v.community_id);
+      applied.push({ id, action: 'advanced_to_courtesy_2', letter_drafted: !letterResult.error, letter_error: letterResult.error || null });
+    }
+
+    res.json({ ok: true, action, applied_count: applied.length, skipped_count: skipped.length, applied, skipped });
+  } catch (err) {
+    console.error('[enforcement.reconcile.apply]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/enforcement/interactions/:id/record-mailing
 // Body: { mailed_date: 'YYYY-MM-DD', delivery_method?, certified_tracking_number?,
 //         reason?, user_name? }

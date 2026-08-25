@@ -189,9 +189,11 @@ async function reconcile(){
       <div style="font-size:26px; font-weight:800; color:${color};">${n}</div>
       <div style="font-weight:700; color:#0f172a; font-size:13px;">${label}</div>
       <div style="font-size:11.5px; color:#64748b; margin-top:2px;">${sub}</div></div>`;
-    const tbl=(rows,extraCol)=> rows.length? `<table style="margin-top:8px;"><thead><tr>
+    const tbl=(rows,extraCol,kind)=> rows.length? `<table style="margin-top:8px;"><thead><tr>
+        <th style="cursor:default; width:28px;"><input type="checkbox" checked onchange="document.querySelectorAll('.rc-${kind}').forEach(c=>c.checked=this.checked)"></th>
         <th style="cursor:default;">Property</th><th style="cursor:default;">Owner</th><th style="cursor:default;">Category</th><th style="cursor:default;">Stage</th>${extraCol?`<th style="cursor:default;">${extraCol}</th>`:''}<th style="cursor:default;">Opened</th>
       </tr></thead><tbody>${rows.map(x=>`<tr>
+        <td><input type="checkbox" class="rc-${kind}" value="${esc(x.violation_id)}" checked></td>
         <td class="addr">${esc(x.address)}</td><td class="owner">${esc(x.owner||'—')}</td>
         <td>${esc(x.category)}</td><td>${stagePill(x.stage,true)}</td>
         ${extraCol?`<td>${esc(x.next_stage||'')}</td>`:''}<td>${d10(x.opened_at)}</td>
@@ -208,16 +210,42 @@ async function reconcile(){
         ${card('#991b1b','#fef2f2',j.counts.protected,'Protected','Certified §209 / fine / 10-day self-help — never auto-touched. Your manual call.')}
       </div>
       <div style="font-size:12px; color:#64748b; margin-bottom:2px;">Protected breakdown: ${p.certified_209||0} certified §209 · ${p.fine_assessed||0} fine · ${p.ten_day||0} 10-day self-help — these are shown so you know they exist; the tool will never change them.</div>
-      <h3 style="font-size:13px; color:#166534; margin:16px 0 0;">▲ Escalate candidates (${j.counts.escalate})</h3>
-      ${tbl(j.escalate,'Next')}
-      <h3 style="font-size:13px; color:#0369a1; margin:18px 0 0;">✓ Likely-cured candidates (${j.counts.cure})</h3>
-      ${tbl(j.cure,null)}
+      <div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0 0; flex-wrap:wrap; gap:8px;">
+        <h3 style="font-size:13px; color:#166534; margin:0;">▲ Escalate candidates (${j.counts.escalate})</h3>
+        ${j.counts.escalate?`<button onclick="applyReconcile('escalate')" style="background:#166534; color:#fff; border:none; padding:7px 13px; border-radius:7px; font-weight:700; cursor:pointer; font-size:12px;">Advance checked → 2nd notice</button>`:''}
+      </div>
+      ${tbl(j.escalate,'Next','esc')}
+      <div style="display:flex; justify-content:space-between; align-items:center; margin:18px 0 0; flex-wrap:wrap; gap:8px;">
+        <h3 style="font-size:13px; color:#0369a1; margin:0;">✓ Likely-cured candidates (${j.counts.cure})</h3>
+        ${j.counts.cure?`<button onclick="applyReconcile('cure')" style="background:#0369a1; color:#fff; border:none; padding:7px 13px; border-radius:7px; font-weight:700; cursor:pointer; font-size:12px;">Mark checked cured</button>`:''}
+      </div>
+      ${tbl(j.cure,null,'cure')}
       <div style="margin-top:14px; padding:10px 12px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; font-size:12px; color:#92400e;">
-        This is a <b>preview</b>. Once you confirm these buckets look right, the next step wires the one-click <b>Advance</b> / <b>Mark cured</b> actions (courtesy-only, certified/10-day hard-blocked).
+        Uncheck any row you want to keep. <b>Advance</b> drafts a 2nd-notice letter (courtesy #1 → #2) — it does not mail. <b>Mark cured</b> closes the case. Certified §209 / 10-day are never in these lists and can't be reached here. Anything closed wrongly re-opens on the next drive.
       </div>
     </div>`;
   }catch(e){ panel.innerHTML='<div class="empty">Error: '+esc(e.message)+'</div>'; }
   finally{ btn.disabled=false; btn.textContent=label; }
+}
+
+// Apply the reviewed reconciliation for the CHECKED rows only. The server
+// re-guards every id (courtesy-only, certified/10-day hard-blocked).
+async function applyReconcile(action){
+  const kind=action==='escalate'?'esc':'cure';
+  const ids=[...document.querySelectorAll('.rc-'+kind+':checked')].map(c=>c.value);
+  if(!ids.length){ alert('Nothing checked.'); return; }
+  const verb=action==='escalate'?'advance to a 2nd notice (drafts a letter, does not mail)':'mark cured and close';
+  if(!confirm(`${verb.charAt(0).toUpperCase()+verb.slice(1)} for ${ids.length} case${ids.length===1?'':'s'}?`)) return;
+  try{
+    const r=await fetch(`${API}/reconcile/apply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action, violation_ids:ids})});
+    const j=await r.json();
+    if(!j.ok){ alert('Failed: '+(j.error||'unknown')); return; }
+    let msg=`Done: ${j.applied_count} applied`;
+    if(j.skipped_count){ msg+=`, ${j.skipped_count} skipped (protected or changed).`; }
+    alert(msg);
+    reconcile();      // refresh the preview
+    loadList();       // refresh the register counts
+  }catch(e){ alert('Error: '+e.message); }
 }
 
 _authReady.then(()=>{ loadCommunities(); });
