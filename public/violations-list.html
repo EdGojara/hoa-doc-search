@@ -1,0 +1,174 @@
+<!-- Violations register by property. Ed 2026-08-25: "build a list in violations
+     ... community drop down and sortable list of homes and violation status and
+     when last one was ... right now there is nowhere I can see this." -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Violations by Property</title>
+<style>
+  :root { --navy:#0B1D34; --gold:#C6A15B; --line:#e2e8f0; --muted:#64748b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; background:#f6f8fb; color:#0f172a; }
+  .wrap { max-width:1200px; margin:0 auto; padding:22px 20px 60px; }
+  a.back { color:var(--muted); text-decoration:none; font-size:13px; font-weight:600; }
+  h1 { font-size:24px; color:var(--navy); margin:8px 0 3px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:16px; max-width:760px; }
+  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  select, input, button { font-size:13px; font-family:inherit; }
+  select, input { padding:9px 11px; border:1px solid #cbd5e1; border-radius:8px; background:#fff; }
+  .toggle { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:#334155; cursor:pointer; user-select:none; }
+  .counts { margin-left:auto; display:flex; gap:8px; }
+  .cnt { background:#fff; border:1px solid var(--line); border-radius:20px; padding:6px 12px; font-size:12px; color:#475569; }
+  .cnt b { color:var(--navy); }
+  table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; font-size:13px; }
+  thead th { text-align:left; padding:10px 12px; background:#f1f5f9; color:#475569; font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; white-space:nowrap; }
+  thead th .arr { color:var(--gold); font-size:10px; }
+  tbody td { padding:9px 12px; border-top:1px solid #f1f5f9; vertical-align:middle; }
+  tbody tr:hover { background:#f8fafc; }
+  .addr { font-weight:600; color:var(--navy); }
+  .owner { color:#334155; }
+  .num { text-align:center; font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:1px 9px; border-radius:20px; font-size:10.5px; font-weight:700; text-transform:capitalize; }
+  .s-clean { background:#f1f5f9; color:#64748b; }
+  .s-courtesy_1 { background:#dcfce7; color:#166534; }
+  .s-courtesy_2 { background:#fef3c7; color:#92400e; }
+  .s-certified_209 { background:#fee2e2; color:#991b1b; }
+  .s-fine_assessed { background:#ede9fe; color:#5b21b6; }
+  .legal { background:#7f1d1d; color:#fff; font-size:9.5px; font-weight:700; padding:1px 6px; border-radius:5px; margin-left:5px; }
+  .rel { color:#94a3b8; }
+  .empty { text-align:center; color:#94a3b8; padding:40px 0; }
+  .link { color:var(--navy); text-decoration:none; }
+  .link:hover { text-decoration:underline; }
+</style>
+
+<div class="wrap">
+  <a class="back" href="/">&larr; Back to trustEd</a>
+  <h1>⚠️ Violations by Property</h1>
+  <div class="sub">Every home in the community with its current violation status and when the last violation was recorded. Click a column to sort, search to jump to a home.</div>
+
+  <div class="toolbar">
+    <select id="community" onchange="loadList()"><option value="">Select a community…</option></select>
+    <input id="q" placeholder="🔎 Search address or owner…" oninput="render()" style="flex:1; min-width:220px;">
+    <label class="toggle"><input type="checkbox" id="openOnly" checked onchange="render()"> Only homes with an open violation</label>
+    <div class="counts" id="counts"></div>
+  </div>
+
+  <div id="list"><div class="empty">Pick a community to see its violations register.</div></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const API='/api/enforcement';
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const $=id=>document.getElementById(id);
+const d10=s=>s?String(s).slice(0,10):'';
+
+// Staff auth: attach the Supabase JWT to every /api call (same pattern as
+// pool-access.html) so the staff-gated enforcement endpoints don't 403.
+let _supa=null, _authReady=(async()=>{
+  try{ const cfg=await (await fetch('/api/auth/config')).json();
+    if(cfg.enabled && window.supabase){ _supa=window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key); } }catch(_){}
+})();
+const _origFetch=window.fetch.bind(window);
+window.fetch=async(url,opts)=>{
+  opts=opts||{};
+  try{ if(typeof url==='string' && url.startsWith('/api/') && _supa){ await _authReady;
+    const s=(await _supa.auth.getSession()).data.session;
+    if(s&&s.access_token){ opts.headers=Object.assign({},opts.headers||{},{Authorization:'Bearer '+s.access_token}); } } }catch(_){}
+  if(opts.credentials===undefined) opts.credentials='same-origin';
+  return _origFetch(url,opts);
+};
+
+let _rows=[], _sortKey='open_violations', _sortDir='desc';
+
+async function loadCommunities(){
+  try{
+    const r=await fetch('/api/communities'); const j=await r.json();
+    const list=(j.communities||j||[]).filter(Boolean).sort((a,b)=>String(a.name).localeCompare(b.name));
+    $('community').innerHTML='<option value="">Select a community…</option>'+list.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  }catch(e){ $('community').innerHTML='<option>Could not load communities</option>'; }
+}
+
+async function loadList(){
+  const c=$('community').value; $('counts').innerHTML='';
+  if(!c){ _rows=[]; $('list').innerHTML='<div class="empty">Pick a community to see its violations register.</div>'; return; }
+  $('list').innerHTML='<div class="empty">Loading…</div>';
+  try{
+    const r=await fetch(`${API}/property-violations?community_id=${encodeURIComponent(c)}`);
+    const j=await r.json();
+    if(!j.ok){ $('list').innerHTML='<div class="empty">'+esc(j.error||'Could not load')+'</div>'; return; }
+    _rows=j.properties||[];
+    render();
+  }catch(e){ $('list').innerHTML='<div class="empty">Error loading the register.</div>'; }
+}
+
+function setSort(key){
+  if(_sortKey===key){ _sortDir=_sortDir==='asc'?'desc':'asc'; }
+  else { _sortKey=key; _sortDir=(key==='street_address'||key==='owner_name')?'asc':'desc'; }
+  render();
+}
+function stagePill(stage, open){
+  if(!open){ return '<span class="pill s-clean">clean</span>'; }
+  const s=stage||'courtesy_1';
+  return `<span class="pill s-${esc(s)}">${esc(String(s).replace(/_/g,' '))}</span>`;
+}
+
+function render(){
+  if(!_rows.length){ return; }
+  const q=($('q').value||'').trim().toLowerCase();
+  const openOnly=$('openOnly').checked;
+  let rows=_rows.slice();
+  if(openOnly) rows=rows.filter(r=>(r.open_violations||0)>0);
+  if(q) rows=rows.filter(r=>`${r.street_address||''} ${r.owner_name||''} ${r.resident_name||''}`.toLowerCase().includes(q));
+
+  const dir=_sortDir==='asc'?1:-1;
+  const val=(r)=>{
+    switch(_sortKey){
+      case 'street_address': return String(r.street_address||'').toLowerCase();
+      case 'owner_name': return String(r.owner_name||'').toLowerCase();
+      case 'open_violations': return r.open_violations||0;
+      case 'worst_open_stage': return ({courtesy_1:1,courtesy_2:2,certified_209:3,fine_assessed:4})[r.worst_open_stage]||0;
+      case 'violations_last_12mo': return r.violations_last_12mo||0;
+      case 'lifetime_violations': return r.lifetime_violations||0;
+      case 'last_violation_at': return r.last_violation_at? new Date(r.last_violation_at).getTime():0;
+      case 'last_inspected_at': return r.last_inspected_at? new Date(r.last_inspected_at).getTime():0;
+      default: return 0;
+    }
+  };
+  rows.sort((a,b)=>{ const av=val(a),bv=val(b); if(av<bv)return -1*dir; if(av>bv)return 1*dir; return String(a.street_address||'').localeCompare(String(b.street_address||'')); });
+
+  const openTotal=_rows.filter(r=>(r.open_violations||0)>0).length;
+  $('counts').innerHTML=`<div class="cnt"><b>${_rows.length}</b> homes</div><div class="cnt"><b>${openTotal}</b> with open violations</div><div class="cnt">showing <b>${rows.length}</b></div>`;
+
+  const arrow=(k)=> _sortKey===k? `<span class="arr">${_sortDir==='asc'?'▲':'▼'}</span>`:'';
+  const th=(k,label,cls='')=>`<th class="${cls}" onclick="setSort('${k}')">${label} ${arrow(k)}</th>`;
+  const body=rows.map(r=>{
+    const legal=(r.ar_at_legal||r.ar_enforcement_stage==='at_legal')?'<span class="legal">LEGAL</span>':'';
+    const who=r.owner_name?esc(r.owner_name):'<span class="rel">—</span>';
+    const homeLink=r.owner_contact_id?`/admin/homeowner?contact_id=${encodeURIComponent(r.owner_contact_id)}`:null;
+    const addr=`${esc(r.street_address||'—')}${r.unit?' #'+esc(r.unit):''}`;
+    return `<tr>
+      <td class="addr">${homeLink?`<a class="link" href="${homeLink}" target="_blank" rel="noopener">${addr}</a>`:addr}${legal}</td>
+      <td class="owner">${who}</td>
+      <td class="num">${(r.open_violations||0)>0?`<b>${r.open_violations}</b>`:'<span class="rel">0</span>'}</td>
+      <td>${stagePill(r.worst_open_stage, (r.open_violations||0)>0)}</td>
+      <td class="num">${r.violations_last_12mo||'<span class="rel">0</span>'}</td>
+      <td class="num">${r.lifetime_violations||'<span class="rel">0</span>'}</td>
+      <td>${d10(r.last_violation_at)||'<span class="rel">—</span>'}</td>
+      <td>${d10(r.last_inspected_at)||'<span class="rel">—</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  $('list').innerHTML=`<table><thead><tr>
+    ${th('street_address','Property')}
+    ${th('owner_name','Owner')}
+    ${th('open_violations','Open','num')}
+    ${th('worst_open_stage','Stage')}
+    ${th('violations_last_12mo','12 mo','num')}
+    ${th('lifetime_violations','Lifetime','num')}
+    ${th('last_violation_at','Last violation')}
+    ${th('last_inspected_at','Last inspected')}
+  </tr></thead><tbody>${body}</tbody></table>`;
+}
+
+_authReady.then(()=>{ loadCommunities(); });
+</script>

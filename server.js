@@ -1145,6 +1145,9 @@ app.get('/admin/statement-tracker', (req, res) => {
 app.get('/admin/pool-access', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'pool-access.html'));
 });
+app.get('/admin/violations-list', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'violations-list.html'));
+});
 app.get('/admin/homeowner', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'homeowner.html'));
 });

@@ -4640,6 +4640,42 @@ router.post('/violations/:id/change-category', express.json(), async (req, res) 
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/enforcement/property-violations?community_id=  — the violations
+// REGISTER by property. Ed 2026-08-25: "there is nowhere I can see this" — a
+// sortable list of every home with its violation status and when the last one
+// was. Reads v_property_summary, which already carries open_violations,
+// worst_open_stage, last_violation_at, etc. Paginated + ordered (Waterview is
+// 1,171 homes — past the PostgREST 1000-row cap).
+// ---------------------------------------------------------------------------
+router.get('/property-violations', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    const COLS = [
+      'property_id', 'community_id', 'street_address', 'unit', 'owner_name', 'owner_contact_id',
+      'resident_name', 'residency_type', 'owner_occupied',
+      'open_violations', 'worst_open_stage', 'lifetime_violations', 'violations_last_12mo',
+      'last_violation_at', 'last_inspected_at', 'ar_enforcement_stage', 'ar_at_legal',
+    ].join(', ');
+    const out = [];
+    const page = 1000;
+    for (let from = 0; from < 100000; from += page) {
+      const { data, error } = await supabase.from('v_property_summary').select(COLS)
+        .eq('community_id', communityId)
+        .order('street_address', { ascending: true })
+        .range(from, from + page - 1);
+      if (error) throw error;
+      out.push(...(data || []));
+      if (!data || data.length < page) break;
+    }
+    res.json({ ok: true, properties: out, count: out.length });
+  } catch (err) {
+    console.error('[enforcement.property-violations]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/enforcement/interactions/:id/record-mailing
 // Body: { mailed_date: 'YYYY-MM-DD', delivery_method?, certified_tracking_number?,
 //         reason?, user_name? }

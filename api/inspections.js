@@ -3287,17 +3287,141 @@ router.get('/inspections/observations/pending', async (req, res) => {
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
 
-    // Sign URLs for the photos — parallel + thumbnail transform. See signPhotoUrls().
-    const signedByPath = await signPhotoUrls((data || []).map((o) => o.inspection_photos && o.inspection_photos.storage_path));
-    const withUrls = (data || []).map((o) => ({
-      ...o,
-      photo_url: (o.inspection_photos && signedByPath.get(o.inspection_photos.storage_path)) || null,
-    }));
+    // Sign URLs for the photos. The queue renders 120px tiles, so sign SMALL
+    // (600px) thumbnails, not the 1600px default — the whole pending batch can
+    // be 300+ rows, and pulling ~500KB transforms x300 (~150MB) is why "some
+    // pictures didn't load": the heavy transforms time out / render broken while
+    // still generating. A 600px thumb is ~40KB and generates fast. A separate
+    // full-size link is signed for click-to-open. (Ed 2026-08-25.)
+    const paths = (data || []).map((o) => o.inspection_photos && o.inspection_photos.storage_path);
+    const thumbByPath = await signPhotoUrls(paths, { width: 600, quality: 68 });
+    const withUrls = (data || []).map((o) => {
+      const p = o.inspection_photos && o.inspection_photos.storage_path;
+      return { ...o, photo_url: (p && thumbByPath.get(p)) || null };
+    });
 
     res.json({ observations: withUrls });
   } catch (err) {
     console.error('[inspections.observations.pending]', err);
     res.status(500).json({ error: err.message || 'failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/inspections/:id/summary — close the loop on a drive.
+// Ed 2026-08-25: "should we have a summary for the drive — xxx pictures taken,
+// xxx violations sent, xxx not sent or mistakes — something so we know."
+//
+// Walks the funnel photos -> observations -> violations -> letters and reports
+// what became of every photo, so a drive is never a black box and nothing
+// falls through silently. Linkage: observation.inspection_id ->
+// violation.opened_from_observation_id -> interaction.violation_id.
+// ---------------------------------------------------------------------------
+router.get('/inspections/:id/summary', async (req, res) => {
+  try {
+    const inspId = req.params.id;
+    const { data: insp } = await supabase
+      .from('inspections')
+      .select('id, community_id, status, mode, started_at, ended_at, total_photos, communities(name)')
+      .eq('id', inspId).maybeSingle();
+    if (!insp) return res.status(404).json({ error: 'inspection not found' });
+
+    // Photos actually captured on this drive (authoritative count, not the cached total).
+    const { count: photoCount } = await supabase
+      .from('inspection_photos').select('*', { count: 'exact', head: true })
+      .eq('inspection_id', inspId);
+
+    // Every observation from the drive — one read, funnel computed in JS.
+    const { data: obs, error: oErr } = await supabase
+      .from('property_observations')
+      .select('id, reviewer_status, property_id, category_id, reviewer_notes, severity')
+      .eq('inspection_id', inspId);
+    if (oErr) throw oErr;
+    const observations = obs || [];
+
+    const isContinuation = (o) => /continuation/i.test(o.reviewer_notes || '');
+    const pending   = observations.filter((o) => o.reviewer_status === 'pending');
+    const confirmed = observations.filter((o) => o.reviewer_status === 'confirmed');
+    const rejected  = observations.filter((o) => o.reviewer_status === 'rejected');
+    const continuations = confirmed.filter(isContinuation);
+
+    // Violations opened from this drive's observations, and the letters on them.
+    const obsIds = observations.map((o) => o.id);
+    let vios = [];
+    if (obsIds.length) {
+      const { data: vrows } = await supabase
+        .from('violations')
+        .select('id, opened_from_observation_id, current_stage')
+        .in('opened_from_observation_id', obsIds);
+      vios = vrows || [];
+    }
+    const vioByObs = new Map(vios.map((v) => [v.opened_from_observation_id, v]));
+    const vioIds = vios.map((v) => v.id);
+
+    let letters = [];
+    if (vioIds.length) {
+      const { data: lrows } = await supabase
+        .from('interactions')
+        .select('violation_id, status, type')
+        .in('violation_id', vioIds)
+        .in('type', ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209']);
+      letters = lrows || [];
+    }
+    const lettersByVio = new Map();
+    for (const l of letters) {
+      const cur = lettersByVio.get(l.violation_id);
+      // Keep the most-advanced status per violation for the outcome tally.
+      const rank = { sent: 3, approved: 2, draft: 1 };
+      if (!cur || (rank[l.status] || 0) > (rank[cur.status] || 0)) lettersByVio.set(l.violation_id, l);
+    }
+    let lettersSent = 0, lettersQueued = 0, lettersDraft = 0;
+    for (const l of lettersByVio.values()) {
+      if (l.status === 'sent') lettersSent++;
+      else if (l.status === 'approved') lettersQueued++;
+      else if (l.status === 'draft') lettersDraft++;
+    }
+
+    // NEEDS ATTENTION — the "not sent / mistakes" bucket, so nothing hides.
+    const unlinked = observations.filter((o) => !o.property_id);          // no house matched
+    const uncategorizedPending = pending.filter((o) => !o.category_id);   // can't confirm until categorized
+    // Confirmed, not a continuation, but produced NO letter (opened but draft
+    // failed/held, or never opened a violation at all). This is the silent-drop
+    // case the summary exists to surface.
+    const confirmedNoLetter = confirmed.filter((o) => {
+      if (isContinuation(o)) return false;
+      const v = vioByObs.get(o.id);
+      if (!v) return true;                       // confirmed but no violation opened
+      return !lettersByVio.has(v.id);            // violation opened but no letter
+    });
+
+    res.json({
+      ok: true,
+      inspection: {
+        id: insp.id,
+        community: insp.communities ? insp.communities.name : null,
+        status: insp.status,
+        mode: insp.mode,
+        started_at: insp.started_at,
+        ended_at: insp.ended_at,
+      },
+      photos: (typeof photoCount === 'number' ? photoCount : (insp.total_photos || 0)),
+      analyzed: observations.length,
+      review: { pending: pending.length, confirmed: confirmed.length, rejected: rejected.length },
+      outcomes: {
+        letters_sent: lettersSent,
+        letters_queued: lettersQueued,     // approved, in the mail queue
+        letters_draft: lettersDraft,       // drafted, awaiting approval
+        continuations: continuations.length,  // rolled into an already-open case, no new letter
+      },
+      needs_attention: {
+        unlinked_property: unlinked.length,
+        uncategorized_pending: uncategorizedPending.length,
+        confirmed_no_letter: confirmedNoLetter.length,
+      },
+    });
+  } catch (err) {
+    console.error('[inspections.summary]', err);
+    res.status(500).json({ error: err.message || 'summary failed' });
   }
 });
 

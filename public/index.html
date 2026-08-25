@@ -17349,6 +17349,14 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
          title="Drive the certified §209 list on a map. Mark each still-open case not-cured (snap an updated photo) or cured. Generates a board-meeting 'not cured as of' report.">
         🔴 §209 field re-verification
       </a>
+      <!-- Violations register — every home with its violation status + last
+           violation date, sortable + searchable. Ed 2026-08-25: "there is
+           nowhere I can see this." -->
+      <a href="/violations-list.html" target="_blank" rel="noopener"
+         style="display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; margin-left: 8px; padding: 4px 10px; background: #fff; border: 1px solid #0B1D34; border-radius: 16px; font-size: 11.5px; color: #0B1D34; text-decoration: none; font-weight: 700;"
+         title="A sortable, searchable list of every home in a community with its violation status and when the last violation was.">
+        ⚠️ Violations by property
+      </a>
     </div>
 
     <!-- Review queue moved into Office tools as STEP 1 (verify violations),
@@ -23906,6 +23914,24 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // Track which inspection's unlinked-photos list to show.
   let inspReviewActiveInspectionId = null;
 
+  // A thumbnail that fails to load usually just lost the race with the image
+  // transform generating on first hit. Retry the SAME signed URL once after a
+  // short delay (no cache-buster — that would break the signature), then fall
+  // back to a clear tile instead of a broken-image icon. (Ed 2026-08-25: "some
+  // pictures didn't load".)
+  window.inspThumbBroken = function inspThumbBroken(img) {
+    if (!img) return;
+    if (!img.dataset.retry) {
+      img.dataset.retry = '1';
+      const src = img.src;
+      img.removeAttribute('src');
+      setTimeout(() => { img.src = src; }, 900);
+      return;
+    }
+    const a = img.closest('a') || img;
+    a.outerHTML = '<div title="Thumbnail did not load — hit Refresh, or it will appear on scroll" style="width:120px; height:120px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:8px; flex-shrink:0; display:flex; align-items:center; justify-content:center; text-align:center; color:#94a3b8; font-size:9px; line-height:1.3; padding:4px;">photo didn’t load</div>';
+  };
+
   async function inspReviewLoad() {
     const wrap = document.getElementById('inspReviewList');
     if (!wrap) return;
@@ -24046,7 +24072,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div style="display:flex; gap:12px; padding:12px 0; border-bottom:1px solid #f1f5f9; align-items:flex-start;">
         <input type="checkbox" class="revchk" value="${o.id}" onchange="inspReviewUpdateSelCount()" style="margin-top:4px; width:17px; height:17px; flex-shrink:0; cursor:pointer;" title="Select for bulk confirm/reject">
         ${o.photo_url
-          ? `<a href="${escapeHtml(o.photo_url)}" target="_blank" rel="noopener" title="Click to open the full-size photo" style="flex-shrink:0; display:block; line-height:0;"><img src="${escapeHtml(o.photo_url)}" loading="lazy" decoding="async" style="width:120px; height:120px; object-fit:cover; border-radius:8px; border:1px solid #e2e8f0; cursor:zoom-in;" /></a>`
+          ? `<a href="${escapeHtml(o.photo_url)}" target="_blank" rel="noopener" title="Click to open the full-size photo" style="flex-shrink:0; display:block; line-height:0;"><img src="${escapeHtml(o.photo_url)}" loading="lazy" decoding="async" onerror="inspThumbBroken(this)" style="width:120px; height:120px; object-fit:cover; border-radius:8px; border:1px solid #e2e8f0; cursor:zoom-in;" /></a>`
           : '<div style="width:120px; height:120px; background:#f1f5f9; border-radius:8px; flex-shrink:0;"></div>'}
         <div style="flex:1; min-width:0;">
           <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:4px;">
@@ -24263,8 +24289,16 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       const r = await fetch(`/api/inspections/observations/${obsId}/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      if (j.opened === false) {
-        alert('No new letter: ' + (j.reason || j.continuation ? 'this house already has an open violation for this issue — logged as a continuation (no duplicate letter).' : 'escalation engine declined.'));
+      if (j.opened === false && (j.continuation || /continuation|already/i.test(j.reason || ''))) {
+        // NOT an error — the house already has an open case for this issue, so
+        // the system logged a continuation instead of mailing a duplicate §209
+        // letter (correct, and common with 700+ open cases). Don't interrupt
+        // with a popup; flash the outcome on the button and let the row clear.
+        // (Ed 2026-08-25: "why are we getting this error" — it isn't one.)
+        if (btn) { btn.innerHTML = '↩ Continued'; btn.style.background = '#64748b'; btn.disabled = true; }
+        await new Promise((res) => setTimeout(res, 650));
+      } else if (j.opened === false) {
+        alert('No new letter: ' + (j.reason || 'the escalation engine declined to open a case.'));
       } else if (j.draft_created === false) {
         alert('Violation opened but the draft letter could NOT be created:\n\n' + (j.letter_error || 'unknown error') + '\n\n(Copy this and send it to Claude.)');
       }
