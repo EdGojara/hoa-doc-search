@@ -3988,7 +3988,8 @@
       <h4 style="margin-top:0;">📦 Monthly billing package <span style="font-weight:400; color:#888; font-size:12px;">— Tessa bundles the management invoice, the prior month's activity invoice, and the supporting activity detail, and emails them to you to review</span></h4>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         <input type="month" id="billing-pkg-month" style="padding:6px 9px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
-        <button class="action-btn" onclick="billingMonthlyPackage()" style="padding:7px 16px; background:#0B1D34; color:#fff;">📦 Prepare &amp; email me the package</button>
+        <button class="action-btn" onclick="billingMonthlyPackage()" style="padding:7px 16px; background:#0B1D34; color:#fff;">📧 Email to Ed for review</button>
+        <button class="action-btn" onclick="billingSendPackageToBoard()" style="padding:7px 16px; background:#166534; color:#fff;">📨 Email to board</button>
       </div>
       <div id="billing-pkg-status" style="font-size:12.5px; margin-top:8px; color:#888;"></div>
     </div>
@@ -4878,12 +4879,39 @@
       if (status) {
         status.style.color = j.emailed ? '#166534' : '#b45309';
         status.innerHTML = j.emailed
-          ? `✓ Emailed the ${j.month} package to <strong>${escapeHtml(j.email_to)}</strong> — ${j.attachments} attachments (${escapeHtml(j.fixed_invoice)}${j.fixed_generated ? ' — auto-generated' : ''}, ${escapeHtml(j.activity_invoice)}, activity detail). Saved to the system. Reply to Tessa to send it on to the board.`
+          ? `✓ Emailed the ${j.month} package to <strong>${escapeHtml(j.email_to)}</strong> — ${j.attachments} attachments (${escapeHtml(j.fixed_invoice)}${j.fixed_generated ? ' — auto-generated' : ''}, ${escapeHtml(j.activity_invoice)}, activity detail). Reply <strong>"approved"</strong> to Tessa and she'll post it to the association's payables.`
           : `⚠ Package assembled + saved (${j.attachments} PDFs), but the email didn't go out: ${escapeHtml(j.email_error || 'unknown')}. (Tessa's mailbox / Graph needs connecting.)`;
       }
     } catch (e) { if (status) { status.style.color = '#b91c1c'; status.textContent = '✗ ' + e.message; } }
   }
   window.billingMonthlyPackage = billingMonthlyPackage;
+
+  // Send the same package FROM Tessa TO the community's listed billing
+  // recipient(s). Only communities with a recipient configured can use it.
+  async function billingSendPackageToBoard() {
+    const cid = billingCurrentCommunityId; if (!cid) return;
+    const monthEl = document.getElementById('billing-pkg-month');
+    const now = new Date();
+    const month = (monthEl && monthEl.value) || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const status = document.getElementById('billing-pkg-status');
+    if (!confirm(`Email the ${month} billing package to the board?\n\nTessa sends the management invoice, the activity invoice, and the activity detail to this community's listed billing recipient(s), and marks the invoices sent.`)) return;
+    if (status) { status.style.color = '#888'; status.textContent = '📨 Tessa is preparing the package for the board…'; }
+    try {
+      const r = await fetch(`/api/billing/communities/${cid}/send-package-to-board`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }) });
+      const j = await r.json();
+      if (!r.ok) {
+        if (status) { status.style.color = '#b45309'; status.textContent = '⚠ ' + (j.message || j.error || `HTTP ${r.status}`); }
+        return;
+      }
+      if (j.needs_activity_invoice) { if (status) { status.style.color = '#b45309'; status.textContent = '⚠ ' + j.message; } return; }
+      if (status) {
+        status.style.color = '#166534';
+        status.innerHTML = `✓ Sent to the board — <strong>${escapeHtml(j.sent_to)}</strong>${j.cc ? ' (cc ' + escapeHtml(j.cc) + ')' : ''} <span style="color:#888;">· ${escapeHtml(j.recipient_source || '')}</span>. Invoices ${escapeHtml((j.invoices || []).join(', '))} marked sent.`;
+      }
+      if (typeof billingLoadInvoicesForCommunity === 'function') billingLoadInvoicesForCommunity(cid);
+    } catch (e) { if (status) { status.style.color = '#b91c1c'; status.textContent = '✗ ' + e.message; } }
+  }
+  window.billingSendPackageToBoard = billingSendPackageToBoard;
 
   // ---- Pending billing items (staged ad-hoc charges) -----------------------
   let billingPiCatalog = [];   // rate-card items for the category dropdown

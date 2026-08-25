@@ -1885,6 +1885,77 @@ router.post('/communities/:communityId/monthly-package', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// POST /communities/:communityId/send-package-to-board  body: { month:'YYYY-MM' }
+// Send the monthly package FROM Tessa TO the community's listed billing
+// recipient(s) — only communities with a recipient configured get this (today
+// Waterview; future boards opt in by setting one). Marks the invoices sent.
+// Separate from the Ed-approval → AP flow. (Ed 2026-08-25.)
+// ----------------------------------------------------------------------------
+router.post('/communities/:communityId/send-package-to-board', express.json(), async (req, res) => {
+  try {
+    const communityId = req.params.communityId;
+    const month = String((req.body && req.body.month) || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month required as YYYY-MM' });
+    const { data: comm } = await supabase.from('communities').select('id, name, legal_name').eq('id', communityId).maybeSingle();
+    if (!comm) return res.status(404).json({ error: 'community_not_found' });
+
+    // Only communities with a billing recipient configured get a board email.
+    const rcpt = await resolveInvoiceRecipient(communityId);
+    if (!rcpt || !rcpt.to) {
+      return res.status(400).json({ error: 'no_board_recipient', message: `No billing recipient is set for ${comm.name}, so there's no board to email. Set one on this screen first (or use "Email to Ed for review").` });
+    }
+
+    const [yy, mm] = month.split('-').map(Number);
+    const prior = new Date(Date.UTC(yy, mm - 2, 1));
+    const priorMonth = `${prior.getUTCFullYear()}-${String(prior.getUTCMonth() + 1).padStart(2, '0')}`;
+    const { start: aStart, end: aEnd } = periodBoundaries(priorMonth);
+
+    const fixed = await ensureFixedInvoice(communityId, month);
+    if (fixed.missingContract) return res.status(400).json({ error: 'No active contract for this community.' });
+    const { data: activityInv } = await supabase.from('invoices')
+      .select('id, invoice_number').eq('community_id', communityId).eq('invoice_type', 'activity')
+      .eq('service_period_start', aStart).neq('status', 'void').limit(1).maybeSingle();
+    if (!activityInv) {
+      return res.json({ ok: false, needs_activity_invoice: true, prior_month: priorMonth,
+        message: `Generate ${comm.name}'s ${periodMonthLabel(aStart)} activity invoice first, then send to the board.` });
+    }
+
+    const attachments = [];
+    async function addPdf(name, buffer) {
+      attachments.push({ '@odata.type': '#microsoft.graph.fileAttachment', name, contentType: 'application/pdf', contentBytes: Buffer.from(buffer).toString('base64') });
+    }
+    await addPdf(`${(fixed.invoiceNumber || 'management').replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`, (await renderInvoicePdfBuffer(fixed.invoiceId)).buffer);
+    await addPdf(`${(activityInv.invoice_number || 'activity').replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`, (await renderInvoicePdfBuffer(activityInv.id)).buffer);
+    await addPdf(`${comm.name.replace(/[^A-Za-z0-9]+/g, '_')}_activity_detail_${priorMonth}.pdf`, await renderActivityDetailPdfBuffer(communityId, aStart, aEnd));
+
+    const graphSend = require('../lib/email/graph_send');
+    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'email_not_configured' });
+    const { buildTessaEmail } = require('../lib/email/tessa_signature');
+    const cover = draftBillingCoverNote({
+      invoice: { service_period_start: `${month}-01`, invoice_number: fixed.invoiceNumber },
+      community: comm,
+      attachmentsDesc: 'the management invoice, the activity invoice, and the supporting activity detail',
+    });
+    const { html, attachments: sigAttachments } = buildTessaEmail(cover);
+    const subject = `${comm.name} — invoices for ${periodMonthLabel(month + '-01')}`;
+    await graphSend.sendAs({ from: graphSend.TESSA_MAILBOX, to: rcpt.to, cc: rcpt.cc || undefined, subject, html, attachments: [...sigAttachments, ...attachments] });
+
+    // Mark both invoices sent + record the recipient.
+    const nowIso = new Date().toISOString();
+    for (const id of [fixed.invoiceId, activityInv.id].filter(Boolean)) {
+      await supabase.from('invoices').update({ status: 'sent', sent_at: nowIso, recipient_email: rcpt.to, recipient_name: rcpt.name || null }).eq('id', id).neq('status', 'void');
+      await supabase.from('invoice_events').insert({ invoice_id: id, kind: 'sent', payload: { to: rcpt.to, cc: rcpt.cc || null, source: 'send-package-to-board' } });
+    }
+
+    res.json({ ok: true, community: comm.name, sent_to: rcpt.to, cc: rcpt.cc || null, recipient_source: rcpt.source,
+      invoices: [fixed.invoiceNumber, activityInv.invoice_number] });
+  } catch (err) {
+    console.error('[billing] send-package-to-board failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/invoices/:invoiceId/pdf', async (req, res) => {
   const { invoiceId } = req.params;
   try {
