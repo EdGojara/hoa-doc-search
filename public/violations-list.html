@@ -148,8 +148,8 @@ function render(){
     const who=r.owner_name?esc(r.owner_name):'<span class="rel">—</span>';
     const homeLink=r.owner_contact_id?`/admin/homeowner?contact_id=${encodeURIComponent(r.owner_contact_id)}`:null;
     const addr=`${esc(r.street_address||'—')}${r.unit?' #'+esc(r.unit):''}`;
-    return `<tr>
-      <td class="addr">${homeLink?`<a class="link" href="${homeLink}" target="_blank" rel="noopener">${addr}</a>`:addr}${legal}</td>
+    return `<tr id="prow-${r.property_id}">
+      <td class="addr"><span onclick="toggleProp('${r.property_id}', this)" style="cursor:pointer; color:#94a3b8; margin-right:5px; user-select:none; font-size:11px;" title="Show this home's violations">▸</span>${homeLink?`<a class="link" href="${homeLink}" target="_blank" rel="noopener">${addr}</a>`:addr}${legal}</td>
       <td class="owner">${who}</td>
       <td class="num">${(r.open_violations||0)>0?`<b>${r.open_violations}</b>`:'<span class="rel">0</span>'}</td>
       <td>${stagePill(r.worst_open_stage, (r.open_violations||0)>0)}</td>
@@ -170,6 +170,43 @@ function render(){
     ${th('last_violation_at','Last violation')}
     ${th('last_inspected_at','Last inspected')}
   </tr></thead><tbody>${body}</tbody></table>`;
+}
+
+// Expand a home to see its actual violations inline — category, stage, source
+// (ours vs Vantaca-inherited), dates, and the latest letter status — so you can
+// tell what the count is made of without leaving for the 360. (Ed 2026-08-25.)
+async function toggleProp(pid, caret){
+  const open=document.getElementById('pdet-'+pid);
+  if(open){ open.remove(); if(caret)caret.textContent='▸'; return; }
+  if(caret)caret.textContent='▾';
+  const row=document.getElementById('prow-'+pid); if(!row) return;
+  const tr=document.createElement('tr'); tr.id='pdet-'+pid;
+  const td=document.createElement('td'); td.colSpan=8;
+  td.style.cssText='background:#f8fafc; padding:8px 14px 14px 36px; border-top:1px solid #eef2f7;';
+  td.innerHTML='<div class="rel">Loading violations…</div>';
+  tr.appendChild(td); row.after(tr);
+  try{
+    const r=await fetch(`${API}/properties/${encodeURIComponent(pid)}/violations`); const j=await r.json();
+    if(!j.ok){ td.innerHTML='<div class="rel">Could not load.</div>'; return; }
+    const vs=j.violations||[]; const openV=vs.filter(v=>v.open); const closedV=vs.filter(v=>!v.open);
+    const src=v=> (v.source==='vantaca_import')?'<span style="font-size:9.5px; font-weight:700; color:#7c3aed; background:#ede9fe; padding:1px 6px; border-radius:5px;">Vantaca</span>'
+                : (v.source==='manual_entry')?'<span style="font-size:9.5px; font-weight:700; color:#475569; background:#f1f5f9; padding:1px 6px; border-radius:5px;">manual</span>'
+                : '<span style="font-size:9.5px; font-weight:700; color:#166534; background:#dcfce7; padding:1px 6px; border-radius:5px;">ours</span>';
+    const letter=v=> v.letter_status? `${esc(v.letter_status)} ${v.letter_date?d10(v.letter_date):''}` : '<span class="rel">no letter</span>';
+    const line=v=>`<div style="display:flex; gap:10px; align-items:center; padding:5px 0; border-bottom:1px solid #eef2f7; font-size:12.5px; flex-wrap:wrap;">
+      <span style="min-width:190px; font-weight:600; color:#0f172a;">${esc(v.category)}</span>
+      ${stagePill(v.stage, v.open)} ${src(v)}
+      <span class="rel">opened ${d10(v.opened_at)}</span>
+      ${v.open && v.cure_period_ends_at?`<span class="rel">· cure by ${d10(v.cure_period_ends_at)}</span>`:''}
+      ${!v.open?`<span class="rel">· ${esc(v.resolved_via||'closed')} ${d10(v.resolved_at)}</span>`:''}
+      <span class="rel">· letter: ${letter(v)}</span>
+    </div>`;
+    const ohref=(row.querySelector('a.link')||{}).href;
+    td.innerHTML=`
+      <div style="font-weight:700; color:var(--navy); font-size:12.5px; margin-bottom:4px;">Open (${openV.length})${ohref?` &nbsp;·&nbsp; <a class="link" href="${ohref}" target="_blank" rel="noopener" style="font-weight:600; font-size:11.5px;">Open full Homeowner 360 →</a>`:''}</div>
+      ${openV.length?openV.map(line).join(''):'<div class="rel">No open violations.</div>'}
+      ${closedV.length?`<div style="font-weight:700; color:#64748b; font-size:11.5px; margin:10px 0 2px;">Resolved history (${closedV.length})</div>${closedV.slice(0,15).map(line).join('')}${closedV.length>15?`<div class="rel" style="padding-top:4px;">+${closedV.length-15} more…</div>`:''}`:''}`;
+  }catch(e){ td.innerHTML='<div class="rel">Error loading violations.</div>'; }
 }
 
 // Re-inspection reconciliation PREVIEW (read-only). Shows what the drives imply

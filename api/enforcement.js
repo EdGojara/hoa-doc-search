@@ -4676,6 +4676,51 @@ router.get('/property-violations', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/enforcement/properties/:propertyId/violations — one home's
+// violations for the expandable row on the register. Each carries its stage,
+// dates, and the latest letter's status so an operator can see what's happening
+// without leaving for the 360. (Ed 2026-08-25: "expand and see the violations
+// here as well as 360".)
+// ---------------------------------------------------------------------------
+router.get('/properties/:propertyId/violations', async (req, res) => {
+  try {
+    const propertyId = req.params.propertyId;
+    const { data: vios, error } = await supabase.from('violations')
+      .select('id, current_stage, opened_at, cure_period_ends_at, resolved_at, resolved_via, source, quality_status, enforcement_categories(label, slug)')
+      .eq('property_id', propertyId)
+      .neq('quality_status', 'superseded')
+      .order('opened_at', { ascending: false }).limit(300);
+    if (error) throw error;
+    const ids = (vios || []).map((v) => v.id);
+    const letterByVio = new Map();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: ls } = await supabase.from('interactions')
+        .select('violation_id, status, created_at')
+        .in('violation_id', ids.slice(i, i + 200))
+        .in('type', ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'])
+        .order('created_at', { ascending: false });
+      for (const l of (ls || [])) if (!letterByVio.has(l.violation_id)) letterByVio.set(l.violation_id, l);
+    }
+    const out = (vios || []).map((v) => {
+      const l = letterByVio.get(v.id);
+      const open = !['cured', 'closed', 'voided'].includes(v.current_stage) && !v.resolved_at;
+      return {
+        id: v.id,
+        category: (v.enforcement_categories && v.enforcement_categories.label) || '—',
+        stage: v.current_stage, open,
+        opened_at: v.opened_at, cure_period_ends_at: v.cure_period_ends_at,
+        resolved_at: v.resolved_at, resolved_via: v.resolved_via, source: v.source,
+        letter_status: l ? l.status : null, letter_date: l ? l.created_at : null,
+      };
+    });
+    res.json({ ok: true, violations: out });
+  } catch (err) {
+    console.error('[enforcement.properties.violations]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/enforcement/reconcile?community_id=&window_days=  — re-inspection
 // reconciliation PREVIEW (read-only). Ed 2026-08-25: the cure-lapse engine has
 // never run, so courtesy cases pile up — never escalated when still violating,
