@@ -307,6 +307,11 @@
   }
 
   document.addEventListener('keydown',(e)=>{
+    // Don't hijack keys while typing in a form field (the cover/title setup).
+    // Otherwise Space and the arrows move slides instead of going into the box,
+    // and Space can't be typed at all. (Ed 2026-08-26.)
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ') { e.preventDefault(); next(); }
     else if (e.key==='ArrowLeft'||e.key==='PageUp') { e.preventDefault(); prev(); }
     else if (e.key==='f'||e.key==='F') toggleFull();
