@@ -9716,6 +9716,20 @@ async function _reconcileAliasedOpenViolations(canonicalCategoryId) {
 router.post('/category-aliases/:id/confirm', express.json(), async (req, res) => {
   try {
     const { id } = req.params;
+    // Guard (Ed 2026-08-25): a 10-day self-help category must never be aliased.
+    // Confirming would merge/reconcile a 10-day certified case into a courtesy
+    // one (e.g. the AI-suggested "Lawn - 10-Day Certified Force Mow" -> "Lawn
+    // height"), collapsing a statutory track. Refuse before touching anything.
+    const { data: pend } = await supabase.from('enforcement_category_aliases')
+      .select('alias_category_id, canonical_category_id').eq('id', id).maybeSingle();
+    if (pend) {
+      const { data: cs } = await supabase.from('enforcement_categories')
+        .select('id, slug').in('id', [pend.alias_category_id, pend.canonical_category_id]);
+      const hitsProtected = (cs || []).some((c) => _SELF_HELP_SLUGS.has(c.slug));
+      if (hitsProtected) {
+        return res.status(409).json({ error: 'protected_category', detail: 'This mapping touches a 10-day self-help category. Those are never aliased — reject it and keep the track separate.' });
+      }
+    }
     const { data, error } = await supabase
       .from('enforcement_category_aliases')
       .update({ status: 'confirmed', reviewed_at: new Date().toISOString() })
