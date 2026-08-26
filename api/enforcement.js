@@ -4819,8 +4819,14 @@ router.get('/reconcile', async (req, res) => {
         continue;
       }
       if (!isCourtesyOurs(v)) continue;
-      const openedT = new Date(v.opened_at).getTime();
-      // Re-observed = a sighting at this property+category AFTER the case opened.
+      // Require the re-sighting to be from a LATER DRIVE, not another photo in
+      // the SAME pass. Photos in one drive span minutes, so a raw timestamp
+      // compare makes a just-opened case look "re-inspected & clean" (Ed
+      // 2026-08-25: 8/11 Trash Cans wrongly showed cure). A 2-day gap cleanly
+      // separates same-drive noise from a genuine later re-inspection (drives
+      // are days/weeks apart) and errs toward "leave" (never a false cure).
+      const REINSPECT_GAP_MS = 2 * 24 * 60 * 60 * 1000;
+      const openedT = new Date(v.opened_at).getTime() + REINSPECT_GAP_MS;
       const reObserved = (maxByPC.get(`${v.property_id}|${v.primary_category_id}`) || 0) > openedT;
       const propReInspected = (maxByProp.get(v.property_id) || 0) > openedT;
       const cureLapsed = v.cure_period_ends_at ? (new Date(v.cure_period_ends_at).getTime() < now) : false;
