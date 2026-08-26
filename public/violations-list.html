@@ -193,6 +193,11 @@ async function toggleProp(pid, caret){
                 : (v.source==='manual_entry')?'<span style="font-size:9.5px; font-weight:700; color:#475569; background:#f1f5f9; padding:1px 6px; border-radius:5px;">manual</span>'
                 : '<span style="font-size:9.5px; font-weight:700; color:#166534; background:#dcfce7; padding:1px 6px; border-radius:5px;">ours</span>';
     const letter=v=> v.letter_status? `${esc(v.letter_status)} ${v.letter_date?d10(v.letter_date):''}` : '<span class="rel">no letter</span>';
+    const action=v=>{
+      if(!v.open) return '';
+      if(v.protected) return '<span style="font-size:9.5px; font-weight:700; color:#991b1b; background:#fee2e2; padding:1px 7px; border-radius:5px;" title="Certified §209 / 10-day — protected. Handle from the case file, never removed here.">🛡 protected</span>';
+      return `<button onclick="removeViolation('${v.id}','${pid}')" title="Void this violation (kept as history, drops off every open view)" style="margin-left:auto; background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:2px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">✕ Remove</button>`;
+    };
     const line=v=>`<div style="display:flex; gap:10px; align-items:center; padding:5px 0; border-bottom:1px solid #eef2f7; font-size:12.5px; flex-wrap:wrap;">
       <span style="min-width:190px; font-weight:600; color:#0f172a;">${esc(v.category)}</span>
       ${stagePill(v.stage, v.open)} ${src(v)}
@@ -200,6 +205,7 @@ async function toggleProp(pid, caret){
       ${v.open && v.cure_period_ends_at?`<span class="rel">· cure by ${d10(v.cure_period_ends_at)}</span>`:''}
       ${!v.open?`<span class="rel">· ${esc(v.resolved_via||'closed')} ${d10(v.resolved_at)}</span>`:''}
       <span class="rel">· letter: ${letter(v)}</span>
+      ${action(v)}
     </div>`;
     const ohref=(row.querySelector('a.link')||{}).href;
     td.innerHTML=`
@@ -207,6 +213,28 @@ async function toggleProp(pid, caret){
       ${openV.length?openV.map(line).join(''):'<div class="rel">No open violations.</div>'}
       ${closedV.length?`<div style="font-weight:700; color:#64748b; font-size:11.5px; margin:10px 0 2px;">Resolved history (${closedV.length})</div>${closedV.slice(0,15).map(line).join('')}${closedV.length>15?`<div class="rel" style="padding-top:4px;">+${closedV.length-15} more…</div>`:''}`:''}`;
   }catch(e){ td.innerHTML='<div class="rel">Error loading violations.</div>'; }
+}
+
+// Void a violation from the expanded view. Uses /correct (correction_type
+// 'voided') so it's a SOFT delete with an audit trail — the record survives as
+// history and drops off every open surface (register count, 360, drafts) because
+// the violations table is the single source of truth. Reason required. Never
+// offered on certified §209 / 10-day (the button isn't rendered for those).
+// (Ed 2026-08-25: "delete button here ... will it flow everywhere ... SSOT".)
+async function removeViolation(vid, pid){
+  const reason=prompt('Remove this violation — why? (e.g. stale Vantaca import, duplicate, not a real violation)\n\nThis voids it: kept as history, removed from every open view.');
+  if(reason===null) return;
+  if(!reason.trim()){ alert('A reason is required — it stays on the record.'); return; }
+  try{
+    const r=await fetch(`${API}/violations/${encodeURIComponent(vid)}/correct`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({correction_type:'voided', reason:reason.trim()})});
+    const j=await r.json();
+    if(!r.ok||j.error){ alert('Could not remove: '+(j.error||('HTTP '+r.status))); return; }
+    // Reload the register so the OPEN count drops here AND everywhere — the SSOT
+    // proof. Re-expand the same home to keep working it.
+    await loadList();
+    const caret=document.querySelector('#prow-'+pid+' td.addr span');
+    if(caret) toggleProp(pid, caret);
+  }catch(e){ alert('Error: '+e.message); }
 }
 
 // Re-inspection reconciliation PREVIEW (read-only). Shows what the drives imply

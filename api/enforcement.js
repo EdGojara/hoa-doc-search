@@ -4704,10 +4704,14 @@ router.get('/properties/:propertyId/violations', async (req, res) => {
     const out = (vios || []).map((v) => {
       const l = letterByVio.get(v.id);
       const open = !['cured', 'closed', 'voided'].includes(v.current_stage) && !v.resolved_at;
+      // Protected = certified §209 / fine / 10-day self-help. The quick Remove
+      // button is hidden for these (Ed's rule — human-only, via the case file).
+      const slug = v.enforcement_categories && v.enforcement_categories.slug;
+      const isProtected = ['certified_209', 'fine_assessed'].includes(v.current_stage) || _SELF_HELP_SLUGS.has(slug);
       return {
         id: v.id,
         category: (v.enforcement_categories && v.enforcement_categories.label) || '—',
-        stage: v.current_stage, open,
+        stage: v.current_stage, open, protected: isProtected,
         opened_at: v.opened_at, cure_period_ends_at: v.cure_period_ends_at,
         resolved_at: v.resolved_at, resolved_via: v.resolved_via, source: v.source,
         letter_status: l ? l.status : null, letter_date: l ? l.created_at : null,
