@@ -1219,10 +1219,17 @@ async function togglePresentation(force){
 
 function switchProperty() {
   clearStoredPropertyId();
-  // Keep the query string. A manager may be several screens deep so an
-  // explicit path is right, but dropping ?demo=1 would silently kick a demo
-  // session out of the demo community mid-walkthrough.
-  window.location.href = '/portal' + (window.location.search || '');
+  // Strip property_id from the query, then reload. Keeping the WHOLE query
+  // string was the bug (Ed 2026-08-26: "switch property doesn't switch") — a
+  // manager viewing /portal?property_id=XXX cleared the stored id but landed
+  // back on /portal?property_id=XXX, which re-resolves the SAME property
+  // (storedId = urlPropertyId || getStoredPropertyId(), URL wins). Drop
+  // property_id so /me returns the picker; keep everything else (e.g. ?demo=1)
+  // so a demo session stays in its community mid-walkthrough.
+  const params = new URLSearchParams(window.location.search);
+  params.delete('property_id');
+  const qs = params.toString();
+  window.location.href = '/portal' + (qs ? '?' + qs : '');
 }
 
 function applyDemoBanner(ctx) {
