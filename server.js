@@ -1157,9 +1157,6 @@ app.get('/admin/newfirst-integration', (req, res) => {
 app.get('/admin/lockbox', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'lockbox.html'));
 });
-app.get('/admin/community-map', (req, res) => {
-  res.sendFile(require('path').join(__dirname, 'public', 'community-map.html'));
-});
 app.get('/admin/statement-tracker', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'statement-tracker.html'));
 });
