@@ -6985,7 +6985,9 @@ app.get('/api/presentations/story', async (req, res) => {
           .map((m) => ({
             persona: m.persona,
             name: m.name,
-            role: m.signature_title || m.title || '',
+            // demo_title is a presentation-only override (e.g. Paige's outward
+            // "Client Success" role) that must NOT change her email signature.
+            role: m.demo_title || m.signature_title || m.title || '',
             img: `/assets/presentations/team/${m.persona}.jpg`,
           }));
       } catch (e) { console.warn('[presentations] roster load failed:', e.message); }
