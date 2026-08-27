@@ -449,6 +449,22 @@ function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// Season helpers: format an "MM-DD" contract season boundary, and whether the
+// season is open today (non-wrapping seasons like a summer pool). (Ed 2026-08-26.)
+const _SEASON_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function fmtSeasonMd(md) {
+  if (!md || !/^\d{2}-\d{2}$/.test(md)) return '';
+  const [mm, dd] = md.split('-').map(Number);
+  return `${_SEASON_MONTHS[mm - 1]} ${dd}`;
+}
+function seasonOpenNow(openMd, closeMd) {
+  if (!openMd || !closeMd) return null;
+  const d = new Date();
+  const today = String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  return openMd <= closeMd ? (today >= openMd && today <= closeMd)   // summer season
+                           : (today >= openMd || today <= closeMd);  // winter-wrapping season
+}
+
 function getQueryParams() {
   const u = new URL(window.location.href);
   return {
@@ -569,6 +585,7 @@ function buildDemoData(slug) {
         contact_name: 'Sweetwater Pool Management',
         contact_phone: '(281) 555-0142',
         seasonal_open_month: 5, seasonal_close_month: 9,
+        season_open_md: '05-02', season_close_md: '09-27', offseason_status: 'closed',
         is_rentable: false,
         lat: c.lat + off(0.6), lng: c.lng + off(0.4),
         status: 'active',
@@ -748,6 +765,13 @@ function openDetail(amenity) {
       <section>
         <h3>Hours</h3>
         <p>${escapeHtml(amenity.hours_text)}</p>
+      </section>` : ''}
+
+      ${(amenity.season_open_md && amenity.season_close_md) ? `
+      <section>
+        <h3>Season</h3>
+        <p>Open ${escapeHtml(fmtSeasonMd(amenity.season_open_md))} &ndash; ${escapeHtml(fmtSeasonMd(amenity.season_close_md))}${amenity.offseason_status === 'closed' ? ', closed the rest of the year' : ''}.</p>
+        ${seasonOpenNow(amenity.season_open_md, amenity.season_close_md) === false ? `<p style="margin-top:6px; font-size:12.5px; color: var(--ink-faint);">Currently closed for the season. Reopens ${escapeHtml(fmtSeasonMd(amenity.season_open_md))}.</p>` : ''}
       </section>` : ''}
 
       ${(amenity.contact_phone || amenity.contact_email || amenity.contact_name) ? `

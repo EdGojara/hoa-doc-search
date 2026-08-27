@@ -1954,7 +1954,9 @@ router.get('/map/:slug', async (req, res) => {
         hours_text, hours_structured, contact_name, contact_phone, contact_email,
         rules_url, photo_storage_path, lat, lng,
         is_rentable, rental_max_attendees, rental_min_lead_time_days, rental_max_lead_time_days,
-        status, seasonal_open_month, seasonal_close_month
+        status, seasonal_open_month, seasonal_close_month,
+        season_rule, season_open_md, season_close_md, offseason_status, offseason_hours_text,
+        management_vendor_name
       `)
       .eq('community_id', community.id)
       .in('status', ['active', 'seasonal_closed', 'maintenance'])
