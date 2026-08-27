@@ -1,0 +1,118 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Positive Pay — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  .wrap { max-width: 980px; margin: 0 auto; padding: 22px 20px 70px; }
+  .back { display:inline-flex; gap:6px; color:#5a7390; text-decoration:none; font-size:13px; font-weight:600; margin-bottom:12px; }
+  h1 { font-size:26px; color:var(--navy,#0B1D34); margin:6px 0 4px; }
+  .sub { color:#5a7390; font-size:14px; max-width:720px; margin-bottom:20px; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px 20px; margin-bottom:16px; }
+  .card h2 { font-size:15px; color:var(--navy,#0B1D34); margin:0 0 10px; }
+  .steps { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+  .step { background:#f8fafc; border:1px solid #eef2f7; border-radius:10px; padding:14px; }
+  .step .n { font-size:11px; font-weight:800; color:var(--gold,#C6A15B); letter-spacing:.08em; }
+  .step .t { font-weight:700; color:#0f172a; font-size:13.5px; margin:4px 0 3px; }
+  .step .d { font-size:12px; color:#64748b; line-height:1.5; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  label { display:block; font-size:11px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:.04em; margin-bottom:4px; }
+  select, input { padding:9px 11px; border:1px solid #cbd5e1; border-radius:8px; font-size:13px; background:#fff; font-family:inherit; }
+  .btn { background:var(--navy,#0B1D34); color:var(--gold,#C6A15B); border:0; border-radius:8px; padding:10px 16px; font-weight:700; font-size:13px; cursor:pointer; }
+  .btn.ghost { background:#fff; border:1px solid #cbd5e1; color:#475569; }
+  .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:2px 9px; border-radius:20px; background:#fef3c7; color:#92400e; }
+  .pill.live { background:#dcfce7; color:#166534; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; margin-top:8px; }
+  th { text-align:left; padding:8px 10px; background:#f1f5f9; color:#475569; font-size:11px; text-transform:uppercase; letter-spacing:.03em; }
+  td { padding:8px 10px; border-top:1px solid #f1f5f9; }
+  .muted { color:#94a3b8; }
+  .note { font-size:12px; color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; padding:10px 12px; margin-top:10px; }
+</style>
+
+<div class="wrap">
+  <a class="back" href="/">&larr; Back to trustEd</a>
+  <h1>🛡️ Positive Pay <span class="pill live">Built — delivery to NewFirst pending</span></h1>
+  <div class="sub">Check-fraud protection. Every time we cut checks for a community, we send the bank the list of checks we actually issued. The bank pays only those, and flags anything that does not match, before the money leaves the account.</div>
+
+  <div class="card">
+    <h2>How it works</h2>
+    <div class="steps">
+      <div class="step"><div class="n">01 / ISSUE</div><div class="t">We cut the checks</div><div class="d">Checks print from the community's account through the check register, each with its number, payee, and amount.</div></div>
+      <div class="step"><div class="n">02 / SEND</div><div class="t">We send the issued-check file</div><div class="d">A Positive Pay file (check number, amount, date, payee, account) goes to the bank the same day, before any check clears.</div></div>
+      <div class="step"><div class="n">03 / MATCH</div><div class="t">The bank pays only matches</div><div class="d">Any presented check that does not match the file — wrong amount, unknown number, altered payee — is held and flagged for review.</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Generate a Positive Pay file</h2>
+    <div class="row">
+      <div><label>Community</label><select id="community" onchange="loadChecks()"><option>Loading…</option></select></div>
+      <div><label>Bank account</label><select id="account"><option>—</option></select></div>
+      <div><label>Check run / date range</label><input id="range" type="text" placeholder="Latest check run" style="min-width:180px;"></div>
+      <button class="btn" onclick="genFile()">Generate file →</button>
+    </div>
+    <div id="preview">
+      <table>
+        <thead><tr><th>Check #</th><th>Date</th><th>Payee</th><th style="text-align:right;">Amount</th></tr></thead>
+        <tbody><tr><td colspan="4" class="muted" style="padding:16px; text-align:center;">Pick a community and check run to preview the issued checks.</td></tr></tbody>
+      </table>
+    </div>
+    <div class="note" id="fmtNote"><strong>Format:</strong> exports to the standard bank Positive Pay layout (fixed-width or CSV). Once NewFirst National Bank confirms their exact field layout and delivery method (secure upload or SFTP), we map to it here — the data is already in the register.</div>
+  </div>
+
+  <div class="card">
+    <h2>Sent files</h2>
+    <table>
+      <thead><tr><th>Date sent</th><th>Community</th><th>Checks</th><th style="text-align:right;">Total</th><th>Status</th></tr></thead>
+      <tbody><tr><td colspan="5" class="muted" style="padding:16px; text-align:center;">No files sent yet. History appears here once Positive Pay is live with NewFirst.</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const money=c=>'$'+((c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+let _supa=null, _checks=[];
+// Staff auth: attach the Supabase JWT to every /api call so gated endpoints work.
+async function af(url,opts){ opts=opts||{}; const h=Object.assign({},opts.headers||{});
+  try{ if(_supa){ const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; } }catch(_){}
+  return fetch(url,Object.assign({},opts,{headers:h,credentials:'same-origin'})); }
+(async()=>{
+  try{ const cfg=await (await fetch('/api/auth/config')).json();
+    if(cfg&&cfg.enabled&&window.supabase){ _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key); } }catch(_){}
+  try{ const r=await af('/api/communities'); const j=await r.json();
+    const list=(j.communities||j||[]).filter(Boolean).sort((a,b)=>String(a.name).localeCompare(b.name));
+    $('community').innerHTML='<option value="">Select a community…</option>'+list.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  }catch(e){ $('community').innerHTML='<option>Could not load communities</option>'; }
+})();
+async function loadChecks(){
+  const c=$('community').value; const tbody=$('preview').querySelector('tbody');
+  if(!c){ tbody.innerHTML='<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">Pick a community to preview the issued checks.</td></tr>'; return; }
+  tbody.innerHTML='<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">Loading issued checks…</td></tr>';
+  try{
+    const r=await af('/api/checks/register?community_id='+encodeURIComponent(c)); const j=await r.json();
+    _checks=(j.checks||[]).filter(x=>x.status!=='voided');
+    if(!_checks.length){ tbody.innerHTML='<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">No issued checks on file for this community yet.</td></tr>'; return; }
+    const total=_checks.reduce((s,x)=>s+(x.amount_cents||0),0);
+    tbody.innerHTML=_checks.map(x=>`<tr>
+      <td>#${esc(x.check_number)}</td>
+      <td>${esc((x.issue_date||'').slice(0,10))}</td>
+      <td>${esc(x.payee_name||'—')}</td>
+      <td style="text-align:right;">${money(x.amount_cents)}</td></tr>`).join('')
+      +`<tr style="font-weight:700;background:#f8fafc;"><td colspan="3" style="text-align:right;">${_checks.length} checks — total</td><td style="text-align:right;">${money(total)}</td></tr>`;
+  }catch(e){ tbody.innerHTML='<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">Could not load checks.</td></tr>'; }
+}
+async function genFile(){
+  const c=$('community').value; if(!c){ alert('Pick a community first.'); return; }
+  if(!_checks.length){ alert('No issued checks to include.'); return; }
+  try{
+    const r=await af('/api/checks/positive-pay-file?community_id='+encodeURIComponent(c));
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const blob=await r.blob(); const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download='newfirst-validation-stop-file.csv'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),4000);
+  }catch(e){ alert('Could not generate the file: '+e.message); }
+}
+</script>

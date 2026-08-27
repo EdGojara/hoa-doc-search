@@ -1139,6 +1139,15 @@ app.get('/admin/ap', (req, res) => {
 app.get('/admin/bank-setup', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'bank-setup.html'));
 });
+app.get('/admin/positive-pay', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'positive-pay.html'));
+});
+app.get('/admin/newfirst-integration', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'newfirst-integration.html'));
+});
+app.get('/admin/lockbox', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'lockbox.html'));
+});
 app.get('/admin/statement-tracker', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'statement-tracker.html'));
 });

@@ -1,0 +1,77 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NewFirst Integration — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 22px 20px 70px; }
+  .back { display:inline-flex; gap:6px; color:#5a7390; text-decoration:none; font-size:13px; font-weight:600; margin-bottom:12px; }
+  h1 { font-size:26px; color:var(--navy,#0B1D34); margin:6px 0 4px; }
+  .sub { color:#5a7390; font-size:14px; max-width:760px; margin-bottom:20px; }
+  .flow { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .col { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px 18px; }
+  .col h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--gold,#C6A15B); margin:0 0 4px; }
+  .col .dir { font-size:12.5px; color:#64748b; margin-bottom:12px; }
+  .file { border:1px solid #eef2f7; border-radius:10px; padding:11px 13px; margin-bottom:10px; background:#f8fafc; }
+  .file .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .file .nm { font-weight:700; color:#0f172a; font-size:13.5px; }
+  .file .fields { font-size:11.5px; color:#64748b; margin-top:3px; line-height:1.5; }
+  .pill { font-size:9.5px; font-weight:800; padding:2px 8px; border-radius:20px; white-space:nowrap; }
+  .p-built { background:#dcfce7; color:#166534; }
+  .p-progress { background:#fef3c7; color:#92400e; }
+  .p-config { background:#e0e7ff; color:#3730a3; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px 18px; margin-top:16px; }
+  .card h2 { font-size:15px; color:var(--navy,#0B1D34); margin:0 0 10px; }
+  .req { display:flex; align-items:flex-start; gap:9px; padding:7px 0; border-top:1px solid #f1f5f9; font-size:13px; color:#334155; }
+  .req:first-of-type { border-top:0; }
+  .req .box { flex:0 0 auto; margin-top:1px; }
+  a.modlink { color:var(--navy,#0B1D34); font-weight:700; text-decoration:none; font-size:12.5px; }
+  a.modlink:hover { text-decoration:underline; }
+  .legend { font-size:11.5px; color:#94a3b8; margin-top:14px; }
+</style>
+
+<div class="wrap">
+  <a class="back" href="/">&larr; Back to trustEd</a>
+  <h1>🏦 NewFirst National Bank Integration</h1>
+  <div class="sub">A secure SFTP file exchange with NewFirst. Each morning the bank posts the prior business day's activity to Bedrock; Bedrock posts back the checks it issued so the bank can protect the account. Built to NewFirst's stated requirements (Melody Hess, integration spec).</div>
+
+  <div class="flow">
+    <div class="col">
+      <h2>NewFirst → Bedrock</h2>
+      <div class="dir">Delivered by SFTP early each morning, as of the previous business day's close.</div>
+
+      <div class="file"><div class="top"><span class="nm">Balance</span><span class="pill p-config">Ready to import</span></div>
+        <div class="fields">Account number · routing number · balance · date. Posts each account's live balance for the dashboard and bank rec.</div></div>
+
+      <div class="file"><div class="top"><span class="nm">Transactions</span><span class="pill p-built">Bank rec live</span></div>
+        <div class="fields">Check number · account · routing · date · amount · debit/credit · description. Feeds the reconciliation matcher (already understands lockbox batch deposits).</div></div>
+
+      <div class="file"><div class="top"><span class="nm">Statements</span><span class="pill p-config">Ready to import</span></div>
+        <div class="fields">Filed per association by naming scheme, into each community's document library.</div></div>
+
+      <div class="file"><div class="top"><span class="nm">Lockbox</span><span class="pill p-progress">Import framework</span></div>
+        <div class="fields">Homeowner assessment payments processed at the lockbox → auto-posted to each owner's ledger. <a class="modlink" href="/admin/lockbox">Open lockbox &rarr;</a></div></div>
+    </div>
+
+    <div class="col">
+      <h2>Bedrock → NewFirst</h2>
+      <div class="dir">Uploaded by Bedrock for NewFirst to process.</div>
+
+      <div class="file"><div class="top"><span class="nm">Validation / Stop file (Positive Pay)</span><span class="pill p-built">Built</span></div>
+        <div class="fields">Every check we issue — number · account · amount · date · payee. The bank pays only matches and flags the rest, before money leaves the account. <a class="modlink" href="/admin/positive-pay">Open Positive Pay &rarr;</a></div></div>
+
+      <div class="file"><div class="top"><span class="nm">Assessment billing</span><span class="pill p-built">Billing live</span></div>
+        <div class="fields">Annual assessment runs generate the receivables and the homeowner coupons the lockbox scans back in — closing the loop with the Lockbox import.</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Setup checklist (NewFirst IT)</h2>
+    <div class="req"><input type="checkbox" class="box"> <span><strong>File / folder naming scheme</strong> for each feed, so the automated daily/monthly downloads route correctly.</span></div>
+    <div class="req"><input type="checkbox" class="box"> <span><strong>Static IP + SSH keys</strong> for SFTP authentication (key-based, not password). <span style="color:#94a3b8;">Pending our static IP — the one open blocker.</span></span></div>
+    <div class="req"><input type="checkbox" class="box"> <span><strong>Validation / Stop file format</strong> — CSV or tab-delimited. Our export is CSV today and maps to whichever they confirm.</span></div>
+    <div class="req"><input type="checkbox" class="box"> <span><strong>Test files</strong> exchanged and validated end-to-end before go-live.</span></div>
+  </div>
+
+  <div class="legend">Legend: <span class="pill p-built">Built</span> working today · <span class="pill p-progress">Framework</span> scaffolded, wiring in progress · <span class="pill p-config">Ready to import</span> code ready, awaiting the feed.</div>
+</div>

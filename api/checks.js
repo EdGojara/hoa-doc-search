@@ -541,6 +541,41 @@ router.get('/register', async (req, res) => {
   } catch (err) { handleErr(res, 'register', err); }
 });
 
+// Positive Pay / "Validation-Stop" file — the outbound file Bedrock sends
+// NewFirst (per their 2026-07-14 integration spec) so the bank pays only the
+// checks we actually issued. Real data from the check register. Format is CSV
+// (NewFirst: "CSV or tab delimited" — TBD); one row per non-voided issued check.
+router.get('/positive-pay-file', async (req, res) => {
+  try {
+    const { community_id, bank_account_id } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { data: accts } = await supabase.from('bank_accounts')
+      .select('id, account_last4, account_nickname').eq('community_id', community_id);
+    const acctMap = new Map((accts || []).map((a) => [a.id, a]));
+    let q = supabase.from('check_register')
+      .select('check_number, issue_date, payee_name, amount_cents, status, bank_account_id')
+      .eq('community_id', community_id).neq('status', 'voided')
+      .order('check_number', { ascending: true });
+    if (bank_account_id) q = q.eq('bank_account_id', bank_account_id);
+    const { data, error } = await q;
+    if (error) throw error;
+    const rows = data || [];
+    const csvField = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const header = 'Account,Check Number,Amount,Issue Date,Payee,Status';
+    const lines = rows.map((c) => {
+      const a = acctMap.get(c.bank_account_id);
+      const acct = a && a.account_last4 ? ('XXXXXX' + a.account_last4) : '';
+      const amt = ((c.amount_cents || 0) / 100).toFixed(2);
+      const d = c.issue_date ? new Date(c.issue_date + 'T00:00:00').toLocaleDateString('en-US') : '';
+      return [csvField(acct), c.check_number, amt, d, csvField(c.payee_name), 'Issued'].join(',');
+    });
+    const csv = [header, ...lines].join('\r\n') + '\r\n';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="newfirst-validation-stop-file.csv"');
+    res.send(csv);
+  } catch (err) { handleErr(res, 'positive-pay-file', err); }
+});
+
 // Reprint a hand-picked set of checks into ONE combined PDF. Same-day locked
 // (see getChecksForReprint) so an already-mailed check can't be re-cut.
 router.post('/reprint', express.json(), async (req, res) => {

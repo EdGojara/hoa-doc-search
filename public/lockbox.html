@@ -1,0 +1,109 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lockbox — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 22px 20px 70px; }
+  .back { display:inline-flex; gap:6px; color:#5a7390; text-decoration:none; font-size:13px; font-weight:600; margin-bottom:12px; }
+  h1 { font-size:26px; color:var(--navy,#0B1D34); margin:6px 0 4px; }
+  .sub { color:#5a7390; font-size:14px; max-width:740px; margin-bottom:20px; }
+  .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:2px 9px; border-radius:20px; background:#fef3c7; color:#92400e; vertical-align:middle; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px 20px; margin-bottom:16px; }
+  .card h2 { font-size:15px; color:var(--navy,#0B1D34); margin:0 0 12px; }
+  .loop { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  .node { background:#f8fafc; border:1px solid #eef2f7; border-radius:10px; padding:13px; position:relative; }
+  .node .n { font-size:10.5px; font-weight:800; color:var(--gold,#C6A15B); letter-spacing:.07em; }
+  .node .t { font-weight:700; color:#0f172a; font-size:13px; margin:5px 0 4px; }
+  .node .d { font-size:11.5px; color:#64748b; line-height:1.5; }
+  .node .st { margin-top:7px; font-size:9.5px; font-weight:800; padding:2px 7px; border-radius:20px; display:inline-block; }
+  .st-built { background:#dcfce7; color:#166534; }
+  .st-frame { background:#fef3c7; color:#92400e; }
+  .arrow { text-align:center; color:#cbd5e1; font-size:18px; align-self:center; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:8px; }
+  label { display:block; font-size:11px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:.04em; margin-bottom:4px; }
+  select, input[type=file] { padding:9px 11px; border:1px solid #cbd5e1; border-radius:8px; font-size:13px; background:#fff; font-family:inherit; }
+  .btn { background:var(--navy,#0B1D34); color:var(--gold,#C6A15B); border:0; border-radius:8px; padding:10px 16px; font-weight:700; font-size:13px; cursor:pointer; }
+  .note { font-size:12px; color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; padding:11px 13px; margin-top:10px; line-height:1.6; }
+  a.modlink { color:var(--navy,#0B1D34); font-weight:700; text-decoration:none; }
+  a.modlink:hover { text-decoration:underline; }
+  .cpn { font-family:'Courier New',monospace; font-size:12px; background:#0B1D34; color:#e2e8f0; border-radius:8px; padding:12px 14px; margin-top:6px; letter-spacing:.5px; }
+  .muted { color:#94a3b8; }
+</style>
+
+<div class="wrap">
+  <a class="back" href="/admin/newfirst-integration">&larr; NewFirst Integration</a>
+  <h1>📮 Lockbox <span class="pill">Framework — awaiting NewFirst file format</span></h1>
+  <div class="sub">How homeowner assessment payments flow from the bank's lockbox straight onto each owner's ledger — no manual keying. This is the inbound half of the assessment loop; Positive Pay is the outbound half.</div>
+
+  <div class="card">
+    <h2>The loop</h2>
+    <div class="loop">
+      <div class="node"><div class="n">01 / BILL</div><div class="t">We generate coupons</div><div class="d">The assessment run produces each owner's statement with a scannable coupon — account number encoded in the OCR scanline.</div><span class="st st-built">Billing live</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="n">02 / SCAN</div><div class="t">NewFirst processes payments</div><div class="d">Owners mail checks to the lockbox. NewFirst scans the coupon, deposits the funds, and posts a Lockbox file each morning.</div><span class="st st-frame">Bank side</span></div>
+      <div class="arrow">→</div>
+    </div>
+    <div class="loop" style="margin-top:10px;">
+      <div class="node"><div class="n">03 / MATCH</div><div class="t">We match to the owner</div><div class="d">Each Lockbox line's account number matches back to the property. Unmatched lines drop to a review queue — never silently posted.</div><span class="st st-frame">On file receipt</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="n">04 / POST</div><div class="t">Auto-posted to the ledger</div><div class="d">Matched payments post to each owner's AR ledger and the GL, same day. The posting engine already handles lockbox-sourced payments.</div><span class="st st-built">Engine live</span></div>
+      <div class="arrow"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Import a Lockbox file</h2>
+    <div class="row">
+      <div><label>Community</label><select id="community"><option>Loading…</option></select></div>
+      <div><label>Lockbox file (from NewFirst)</label><input id="file" type="file" accept=".csv,.txt,.xml"></div>
+      <button class="btn" onclick="previewFile()">Preview matches →</button>
+    </div>
+    <div id="out"></div>
+    <div class="note">
+      <strong>Status:</strong> the coupon generation (step 1) and the ledger posting engine (step 4) are live today. The middle — parsing NewFirst's Lockbox file and matching each line to a property — maps the moment they send their first test file. We build the parser to their real format rather than guess at it, so it can't break on the first live file. <span class="muted">(This is the same self-serve import pattern used for Vantaca and bank statements: the file's columns are shown, and any unmatched line is queued for review, never posted blind.)</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>The coupon scanline</h2>
+    <div class="sub" style="margin-bottom:8px;">Every statement carries a machine-readable line NewFirst's scanner reads — this is what ties a mailed check back to the right owner automatically.</div>
+    <div class="cpn">⑈ 000123456 ⑈ &nbsp; 0004250 ⑆ &nbsp; WATERVIEW-001482 ⑆</div>
+    <div class="note" style="margin-top:8px;"><strong>Reads as:</strong> account <strong>000123456</strong> · amount due <strong>$42.50</strong> · property reference <strong>WATERVIEW-001482</strong>. The property reference is what we match on in step 3 — it is the canonical property id, so there's no name-matching guesswork. Final scanline layout confirms with NewFirst's spec.</div>
+  </div>
+
+  <div class="card">
+    <h2>Related</h2>
+    <div style="font-size:13px; line-height:2;">
+      <a class="modlink" href="/admin/newfirst-integration">NewFirst Integration hub</a> — the full file exchange<br>
+      <a class="modlink" href="/admin/positive-pay">Positive Pay</a> — the outbound check-fraud file<br>
+      <a class="modlink" href="/admin/accounting">trustEd Books</a> — where matched payments land on the ledger
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+let _supa=null;
+async function af(url,opts){ opts=opts||{}; const h=Object.assign({},opts.headers||{});
+  try{ if(_supa){ const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; } }catch(_){}
+  return fetch(url,Object.assign({},opts,{headers:h,credentials:'same-origin'})); }
+(async()=>{
+  try{ const cfg=await (await fetch('/api/auth/config')).json();
+    if(cfg&&cfg.enabled&&window.supabase){ _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key); } }catch(_){}
+  try{ const r=await af('/api/communities'); const j=await r.json();
+    const list=(j.communities||j||[]).filter(Boolean).sort((a,b)=>String(a.name).localeCompare(b.name));
+    $('community').innerHTML='<option value="">Select a community…</option>'+list.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  }catch(e){ $('community').innerHTML='<option>Could not load communities</option>'; }
+})();
+function previewFile(){
+  const c=$('community').value; const f=$('file').files[0];
+  if(!c){ alert('Pick a community first.'); return; }
+  if(!f){ alert('Choose a Lockbox file to preview.'); return; }
+  $('out').innerHTML='<div class="note" style="border-style:solid;border-color:#c6a15b;background:#fffdf5;">'
+    +'<strong>File received: '+esc(f.name)+' ('+Math.round(f.size/102.4)/10+' KB).</strong><br>'
+    +'The parser maps to NewFirst\'s Lockbox layout on receipt of their first test file — once the column/scanline spec is confirmed, this preview will show each payment line, its matched property, and any unmatched lines for review before posting.</div>';
+}
+</script>
