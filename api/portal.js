@@ -1587,15 +1587,32 @@ router.get('/me', async (req, res) => {
       }
     } catch (_) { /* gracefully degrade */ }
 
-    // Compliance — count of open violations
+    // Compliance — count of open notices we ACTUALLY MAILED the homeowner.
+    // Same accuracy gate as GET /compliance: the raw violations table is heavily
+    // phantom/unreviewed (opens with no letter ever sent), so a bare open-count
+    // would over-report notices we never sent — and disagree with the tile page.
+    // No mailed outbound letter -> not counted. Under-reporting is the safe
+    // direction here; over-reporting a phantom notice is not.
     let compliance = { open_count: 0, status: 'good' };
     try {
-      const { count } = await supabase
+      const { data: openV } = await supabase
         .from('violations')
-        .select('id', { count: 'exact', head: true })
+        .select('id')
         .eq('property_id', prop.id)
-        .not('current_stage', 'in', '(cured,closed,voided)');
-      compliance = { open_count: count || 0, status: (count || 0) === 0 ? 'good' : 'open' };
+        .in('current_stage', ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed']);
+      const openIds = (openV || []).map((v) => v.id);
+      let mailedCount = 0;
+      if (openIds.length) {
+        const { data: ls } = await supabase
+          .from('interactions')
+          .select('violation_id')
+          .in('violation_id', openIds)
+          .in('type', ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_other'])
+          .eq('direction', 'outbound')
+          .not('sent_at', 'is', null);
+        mailedCount = new Set((ls || []).map((l) => l.violation_id)).size;
+      }
+      compliance = { open_count: mailedCount, status: mailedCount === 0 ? 'good' : 'open' };
     } catch (_) { /* fall through */ }
 
     // Open requests — ACC applications still in flight + builder applications (if any)
@@ -2040,21 +2057,33 @@ router.get('/compliance', async (req, res) => {
       });
     }
 
-    // Load violations for this property
+    // Load violations for this property.
+    // NOTE: violations has NO voided_at / severity / governing_doc_reference_id
+    // columns — a voided case is current_stage='voided', a resolved one is
+    // current_stage='cured'. Selecting non-existent columns made PostgREST fail
+    // the WHOLE query (the tile 500'd for every real property; only demo mode
+    // ever rendered). Real columns only.
     const { data: violations, error: vErr } = await supabase
       .from('violations')
       .select(`
-        id, current_stage, cure_period_ends_at, opened_at, resolved_at, voided_at,
-        severity, opened_from_observation_id, governing_doc_reference_id
+        id, current_stage, cure_period_ends_at, opened_at, resolved_at, resolved_via,
+        quality_status, opened_from_observation_id, primary_category_id
       `)
       .eq('property_id', prop.id)
       .order('opened_at', { ascending: false })
       .limit(50);
     if (vErr) throw vErr;
 
+    // ACCURACY GATE (Ed 2026-08-27): a homeowner's compliance tile must show
+    // ONLY notices we ACTUALLY MAILED them. The violations table is ~76%
+    // phantom/unreviewed opens (AI + Vantaca imports with no letter ever sent) —
+    // surfacing those would show homeowners "active notices" we never sent,
+    // including phantom certified §209. So the open/resolved split is computed
+    // first, then filtered to violations that have a real outbound letter below
+    // (after lettersByViolation is built). Voided cases never surface.
     const openStages = ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed'];
-    const open = (violations || []).filter((v) => openStages.includes(v.current_stage) && !v.voided_at);
-    const resolved = (violations || []).filter((v) => !openStages.includes(v.current_stage));
+    const openRaw = (violations || []).filter((v) => openStages.includes(v.current_stage));
+    const resolvedRaw = (violations || []).filter((v) => v.current_stage === 'cured');
 
     // Load related observations + letters in parallel
     const observationIds = (violations || []).map((v) => v.opened_from_observation_id).filter(Boolean);
@@ -2090,6 +2119,14 @@ router.get('/compliance', async (req, res) => {
       (m[p.observation_id] = m[p.observation_id] || []).push(p);
       return m;
     }, {});
+
+    // The accuracy gate: keep only violations we actually MAILED the homeowner
+    // (≥1 outbound letter with a sent_at). Phantom / internal-only opens with no
+    // letter simply do not appear — the homeowner sees exactly the notices they
+    // received, nothing we never sent.
+    const wasMailed = (v) => (lettersByViolation[v.id] || []).some((l) => l.sent_at);
+    const open = openRaw.filter(wasMailed);
+    const resolved = resolvedRaw.filter(wasMailed);
 
     const enrich = async (v) => {
       const obs = v.opened_from_observation_id ? obsById[v.opened_from_observation_id] : null;
@@ -2140,7 +2177,6 @@ router.get('/compliance', async (req, res) => {
       return {
         id: v.id,
         stage: v.current_stage,
-        severity: v.severity,
         opened_at: v.opened_at,
         resolved_at: v.resolved_at,
         cure_period_ends_at: v.cure_period_ends_at,
