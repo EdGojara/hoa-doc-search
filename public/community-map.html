@@ -110,19 +110,24 @@ async function af(url, opts){ opts=opts||{}; const h=Object.assign({},opts.heade
   return fetch(url, Object.assign({},opts,{headers:h, credentials:'same-origin'})); }
 
 // ---- color mappings (match api/community_map.js exactly) --------------------
-const DRV_COLOR = { none:'#16a34a', open:'#f59e0b', certified_209:'#ea580c', in_fine:'#dc2626', unknown:'#94a3b8' };
-const AR_COLOR = { current:'#16a34a', bucket_0_30:'#a3e635', bucket_31_60:'#f59e0b', bucket_61_90:'#f97316',
-  bucket_91_120:'#ea580c', over_120:'#dc2626', past_due:'#f59e0b', at_legal:'#b91c1c', in_collections:'#7f1d1d', unknown:'#cbd5e1' };
-const OCC_COLOR = { owner_occupied:'#2563eb', renter:'#7c3aed', family_member:'#0891b2', vacant:'#94a3b8', unknown:'#cbd5e1' };
+// Colors + labels MATCH the staff Community Map tab exactly (index.html
+// CMAP_OCCUPANCY_COLORS / CMAP_AR_COLORS / CMAP_DRV_COLORS) so the SAME status
+// never renders a different color or label on the two windows onto the one map.
+// Status strings come from the backend (api/community_map.js). (Ed 2026-08-27:
+// "make sure we aren't ... [showing] different information in different places.")
+const OCC_COLOR = { owner_occupied:'#4FA37A', renter:'#D97A2D', family_member:'#6B7B92', vacant:'#94a3b8', unknown:'#cbd5e1' };
+const AR_COLOR = { current:'#4FA37A', bucket_0_30:'#C9A53A', bucket_31_60:'#D97A2D', bucket_61_90:'#E0844B',
+  bucket_91_120:'#DD5F47', over_120:'#C9514B', past_due:'#C9514B', at_legal:'#8B1A1A', in_collections:'#5C0F0F', unknown:'#cbd5e1' };
+const DRV_COLOR = { none:'#4FA37A', open:'#C9A53A', certified_209:'#D97A2D', in_fine:'#C9514B', unknown:'#cbd5e1' };
 function colorFor(p){
-  if(_layer==='drv') return DRV_COLOR[p.drv_status] || '#94a3b8';
+  if(_layer==='drv') return DRV_COLOR[p.drv_status] || '#cbd5e1';
   if(_layer==='ar') return AR_COLOR[p.ar_bucket] || '#cbd5e1';
   return OCC_COLOR[p.occupancy] || '#cbd5e1';
 }
 const LEGENDS = {
-  drv: { title:'Violations', rows:[['#16a34a','No open violations'],['#f59e0b','Courtesy notice'],['#ea580c','Certified §209'],['#dc2626','Fine assessed']] },
-  ar:  { title:'Delinquency', rows:[['#16a34a','Current'],['#a3e635','1–30 days'],['#f59e0b','31–60'],['#f97316','61–90'],['#dc2626','90+ days'],['#7f1d1d','At legal / collections']] },
-  occupancy: { title:'Occupancy', rows:[['#2563eb','Owner-occupied'],['#7c3aed','Renter'],['#0891b2','Family member'],['#94a3b8','Vacant']] },
+  drv: { title:'Violations', rows:[['#4FA37A','No open violations'],['#C9A53A','Open courtesy'],['#D97A2D','Certified §209'],['#C9514B','In fine schedule']] },
+  ar:  { title:'Delinquency', rows:[['#4FA37A','Current'],['#C9A53A','0–30 days'],['#D97A2D','31–60 days'],['#E0844B','61–90 days'],['#C9514B','120+ days'],['#8B1A1A','At legal / collections']] },
+  occupancy: { title:'Occupancy', rows:[['#4FA37A','Owner-occupied'],['#D97A2D','Renter'],['#6B7B92','Family member'],['#94a3b8','Vacant']] },
 };
 function renderLegend(){ const L=LEGENDS[_layer];
   $('legend').innerHTML = `<div class="lt">${L.title}</div>` + L.rows.map(r=>`<div class="row"><span class="dot" style="background:${r[0]}"></span>${r[1]}</div>`).join(''); }
