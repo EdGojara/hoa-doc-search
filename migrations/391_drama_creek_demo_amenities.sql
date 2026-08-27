@@ -28,7 +28,7 @@ VALUES
 
   ('dc100000-0000-4000-a000-000000000000', 'pool', 'Community Pool',
    'Outdoor swimming pool. Key fob access required.',
-   'Daily 10 am - 8 pm (Closed Mondays)', 29.70030, -95.75970, 'active', 2, false, NULL,
+   'Weekends only 10 am - 8 pm in the early and late season; daily except Mondays 10 am - 8 pm while school is out (late May to mid-August). Closed the rest of the year.', 29.70030, -95.75970, 'active', 2, false, NULL,
    'fixed', '05-02', '09-27', 'closed', 'Splash Pros Pool Management, LLC', 'Splash Pros Pool Management', '(281) 555-0142', NULL),
 
   ('dc100000-0000-4000-a000-000000000000', 'park', 'Creekside Park',

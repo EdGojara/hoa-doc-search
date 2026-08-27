@@ -56,6 +56,14 @@ SELECT c.id, 'soccer_field', 'Soccer Field', 'Community soccer field.', 'Dawn to
 FROM communities c WHERE c.slug = 'waterview'
   AND NOT EXISTS (SELECT 1 FROM amenities a WHERE a.community_id = c.id AND a.amenity_type = 'soccer_field');
 
+-- Waterview pool: accurate schedule from the Swim Houston contract lifeguard
+-- table — weekends only in the shoulder months, daily except Mondays while Fort
+-- Bend ISD is out. (Ed 2026-08-26, read from the contract.)
+UPDATE amenities SET hours_text =
+  'Weekends only 10 am - 8 pm in the early and late season; daily except Mondays 10 am - 8 pm while school is out (late May to mid-August). Closed the rest of the year.'
+WHERE community_id = (SELECT id FROM communities WHERE slug = 'waterview')
+  AND amenity_type = 'pool' AND name = 'Community Pool';
+
 COMMIT;
 
 NOTIFY pgrst, 'reload schema';
