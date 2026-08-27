@@ -47618,6 +47618,58 @@ ${questionsPage}
     },
   };
 
+  // ---------------------------------------------------------------------------
+  // Home tile picker: make EVERY nav tab shortcut-able (Ed 2026-08-27:
+  // "the picker should be updated for all tabs so we can create shortcuts").
+  // HOME_TILE_CATALOG (defined far above) is the CURATED set — nicer icons,
+  // notes, and special actions (scroll-to-section, open-a-modal). TAB_GROUPS is
+  // the single source of what tabs exist. This augments the catalog IN PLACE so
+  // every TAB_GROUPS child that isn't already a curated tile becomes selectable,
+  // and a NEW tab added to TAB_GROUPS shows up in the picker automatically — no
+  // second hand-maintained list to drift. Dedup: a child is skipped if a curated
+  // tile already targets that switchTab id / href (found by reading the curated
+  // action source), so nothing doubles up.
+  (function augmentHomeTileCatalog() {
+    try {
+      if (typeof HOME_TILE_CATALOG !== 'object' || !HOME_TILE_CATALOG || typeof TAB_GROUPS !== 'object') return;
+      const represented = new Set();
+      for (const k in HOME_TILE_CATALOG) {
+        represented.add('key:' + k);
+        const src = String(HOME_TILE_CATALOG[k].action || '');
+        const mTab = src.match(/switchTab\(\s*['"]([^'"]+)['"]/);
+        if (mTab) represented.add('tab:' + mTab[1]);
+        const mHref = src.match(/location\.href\s*=\s*['"]([^'"]+)['"]/);
+        if (mHref) represented.add('href:' + mHref[1]);
+      }
+      // Strip the leading emoji/symbol cluster from a nav label: everything up to
+      // the first alphanumeric is the icon, the rest is the label. Plain regex
+      // (no Unicode property escapes — those construct-but-don't-match in some
+      // engines, and this is simpler and reliable across browsers).
+      const emojiRe = /^\s*([^A-Za-z0-9]+)\s*/;
+      const cleanLabel = (s) => { const t = String(s || ''); const r = t.replace(emojiRe, '').trim(); return r || t.trim(); };
+      const firstEmoji = (s) => { const m = String(s || '').match(emojiRe); return (m && m[1].trim()) || '📄'; };
+      for (const gKey of Object.keys(TAB_GROUPS)) {
+        const g = TAB_GROUPS[gKey];
+        const groupName = cleanLabel(g.label) || gKey;
+        for (const c of (g.children || [])) {
+          if (!c || !c.id) continue;
+          const target = c.href ? ('href:' + c.href) : ('tab:' + c.id);
+          if (represented.has(target)) continue;          // a curated tile already covers it
+          const catKey = 'nav_' + c.id + (c.href ? '_x' : '');
+          if (HOME_TILE_CATALOG[catKey]) continue;         // same id already added from another group
+          represented.add(target);
+          HOME_TILE_CATALOG[catKey] = {
+            label: cleanLabel(c.label),
+            icon: firstEmoji(c.label),
+            group: groupName,
+            note: c.section || '',
+            action: c.href ? (() => { location.href = c.href; }) : (() => switchTab(c.id)),
+          };
+        }
+      }
+    } catch (e) { try { console.warn('[home tiles] catalog augment failed:', e.message); } catch (_) {} }
+  })();
+
   function tabParentGroup(tabId) {
     for (const [key, g] of Object.entries(TAB_GROUPS)) {
       if (g.children.some(c => c.id === tabId)) return key;
