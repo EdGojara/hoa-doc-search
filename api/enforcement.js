@@ -3896,6 +3896,15 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
           .upsert(pieces, { onConflict: 'interaction_id' });
         if (mpErr) console.warn('[mail-queue.lock-and-batch] letter_mail_pieces upsert failed:', mpErr.message);
       }
+      // Auto-post the certified-letter fee (Dr 1300 A/R / Cr 2300 Accrued
+      // Liability) for any certified letters in this batch. Best-effort,
+      // non-blocking, idempotent — a re-batch never double-charges. (Ed 2026-08-27)
+      try {
+        const { sweepCertifiedViolationFees } = require('../lib/enforcement/certified_fee');
+        sweepCertifiedViolationFees(supabase, { postedByUserId: actor && actor.id })
+          .then((sum) => { if (sum.posting) console.log(`[certified-fee] posted ${sum.posting} fee(s), $${(sum.total_cents / 100).toFixed(2)}`); })
+          .catch((e) => console.warn('[certified-fee] sweep failed (non-fatal):', e.message));
+      } catch (e) { console.warn('[certified-fee] wire failed:', e.message); }
     } catch (e) {
       console.warn('[mail-queue.lock-and-batch] mail piece logging failed (non-fatal):', e.message);
     }
