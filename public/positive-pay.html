@@ -46,9 +46,8 @@
   <div class="card">
     <h2>Generate a Positive Pay file</h2>
     <div class="row">
-      <div><label>Community</label><select id="community" onchange="loadChecks()"><option>Loading…</option></select></div>
-      <div><label>Bank account</label><select id="account"><option>—</option></select></div>
-      <div><label>Check run / date range</label><input id="range" type="text" placeholder="Latest check run" style="min-width:180px;"></div>
+      <div><label>Community</label><select id="community" onchange="loadAccounts()"><option>Loading…</option></select></div>
+      <div><label>Bank account</label><select id="account" onchange="loadChecks()" style="min-width:280px;"><option value="">Select a community first…</option></select></div>
       <button class="btn" onclick="genFile()">Generate file →</button>
     </div>
     <div id="preview">
@@ -87,14 +86,43 @@ async function af(url,opts){ opts=opts||{}; const h=Object.assign({},opts.header
     $('community').innerHTML='<option value="">Select a community…</option>'+list.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
   }catch(e){ $('community').innerHTML='<option>Could not load communities</option>'; }
 })();
+// Positive Pay is PER BANK ACCOUNT, not per community: a community can have an
+// operating account at more than one bank (e.g. Canyon Gate has Columbia AND
+// NewFirst), and a bank's validation file must contain ONLY checks drawn on
+// that bank's account. So we scope everything to the selected account. Accounts
+// that actually cut checks (operating / check-disbursement) are listed first.
+let _accounts=[];
+async function loadAccounts(){
+  const c=$('community').value; const asel=$('account');
+  $('preview').querySelector('tbody').innerHTML='<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">Pick a bank account to preview the issued checks.</td></tr>';
+  if(!c){ asel.innerHTML='<option value="">Select a community first…</option>'; return; }
+  asel.innerHTML='<option>Loading accounts…</option>';
+  try{
+    const r=await af('/api/checks/accounts'); const j=await r.json();
+    _accounts=(j.accounts||[]).filter(a=>a.community_id===c);
+    // Check-cutting accounts first, then by nickname.
+    _accounts.sort((a,b)=>(b.is_check_account?1:0)-(a.is_check_account?1:0) || String(a.account_nickname||'').localeCompare(String(b.account_nickname||'')));
+    if(!_accounts.length){ asel.innerHTML='<option value="">No bank accounts on file</option>'; return; }
+    asel.innerHTML=_accounts.map(a=>{
+      const l4=a.account_last4?(' · …'+a.account_last4):'';
+      const cut=a.is_check_account?'':' (no checks)';
+      return `<option value="${a.id}">${esc(a.account_nickname||'Account')}${l4}${cut}</option>`;
+    }).join('');
+    // Auto-select the first check-cutting account (usually the operating checking).
+    const firstCut=_accounts.find(a=>a.is_check_account)||_accounts[0];
+    asel.value=firstCut.id;
+    loadChecks();
+  }catch(e){ asel.innerHTML='<option value="">Could not load accounts</option>'; }
+}
 async function loadChecks(){
-  const c=$('community').value; const tbody=$('preview').querySelector('tbody');
+  const c=$('community').value; const acct=$('account').value; const tbody=$('preview').querySelector('tbody');
   if(!c){ tbody.innerHTML='<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">Pick a community to preview the issued checks.</td></tr>'; return; }
+  if(!acct){ tbody.innerHTML='<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">Pick a bank account to preview the issued checks.</td></tr>'; return; }
   tbody.innerHTML='<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">Loading issued checks…</td></tr>';
   try{
-    const r=await af('/api/checks/register?community_id='+encodeURIComponent(c)); const j=await r.json();
+    const r=await af('/api/checks/register?community_id='+encodeURIComponent(c)+'&bank_account_id='+encodeURIComponent(acct)); const j=await r.json();
     _checks=(j.checks||[]).filter(x=>x.status!=='voided');
-    if(!_checks.length){ tbody.innerHTML='<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">No issued checks on file for this community yet.</td></tr>'; return; }
+    if(!_checks.length){ tbody.innerHTML='<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">No issued checks drawn on this account yet.</td></tr>'; return; }
     const total=_checks.reduce((s,x)=>s+(x.amount_cents||0),0);
     tbody.innerHTML=_checks.map(x=>`<tr>
       <td>#${esc(x.check_number)}</td>
@@ -105,10 +133,12 @@ async function loadChecks(){
   }catch(e){ tbody.innerHTML='<tr><td colspan="4" class="muted" style="padding:16px;text-align:center;">Could not load checks.</td></tr>'; }
 }
 async function genFile(){
-  const c=$('community').value; if(!c){ alert('Pick a community first.'); return; }
-  if(!_checks.length){ alert('No issued checks to include.'); return; }
+  const c=$('community').value; const acct=$('account').value;
+  if(!c){ alert('Pick a community first.'); return; }
+  if(!acct){ alert('Pick a bank account first.'); return; }
+  if(!_checks.length){ alert('No issued checks to include for this account.'); return; }
   try{
-    const r=await af('/api/checks/positive-pay-file?community_id='+encodeURIComponent(c));
+    const r=await af('/api/checks/positive-pay-file?community_id='+encodeURIComponent(c)+'&bank_account_id='+encodeURIComponent(acct));
     if(!r.ok) throw new Error('HTTP '+r.status);
     const blob=await r.blob(); const url=URL.createObjectURL(blob);
     const a=document.createElement('a'); a.href=url; a.download='newfirst-validation-stop-file.csv'; document.body.appendChild(a); a.click(); a.remove();
