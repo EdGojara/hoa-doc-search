@@ -6945,7 +6945,12 @@ app.get('/api/presentations/story', async (req, res) => {
     const screens = story.getStory(audience);
 
     // Resolve every referenced topic once, then attach urls to the video screens.
-    const topics = [...new Set(screens.filter((s) => s.video_topic).map((s) => s.video_topic))];
+    // Includes both single-video screens (video_topic) and the team screen's
+    // sequence (video_segments[].topic).
+    const topics = [...new Set([
+      ...screens.filter((s) => s.video_topic).map((s) => s.video_topic),
+      ...screens.flatMap((s) => (s.video_segments || []).map((seg) => seg.topic)),
+    ])];
     const urls = {};
     if (topics.length) {
       const { data, error } = await supabase.from('claire_explainers')
@@ -6978,6 +6983,7 @@ app.get('/api/presentations/story', async (req, res) => {
         teamMembers = roster.people()
           .filter((m) => !m.not_a_person)
           .map((m) => ({
+            persona: m.persona,
             name: m.name,
             role: m.signature_title || m.title || '',
             img: `/assets/presentations/team/${m.persona}.jpg`,
@@ -6985,8 +6991,26 @@ app.get('/api/presentations/story', async (req, res) => {
       } catch (e) { console.warn('[presentations] roster load failed:', e.message); }
     }
 
+    let rosterMod = null;
+    try { rosterMod = require('./lib/team/roster'); } catch (_) {}
     const resolved = screens.map((s) => {
-      if (s.type === 'team') return { ...s, members: teamMembers || [] };
+      if (s.type === 'team') {
+        // Resolve the team-video sequence to permanent urls + eyes-open posters.
+        const segments = (s.video_segments || []).map((seg) => {
+          const v = urls[seg.topic] || null;
+          const m = rosterMod && rosterMod.get ? rosterMod.get(seg.persona) : null;
+          return {
+            topic: seg.topic,
+            persona: seg.persona,
+            name: m ? m.name : seg.persona,
+            role: m ? (m.signature_title || m.title || '') : '',
+            video_url: v ? v.video_url : null,
+            poster: `/assets/presentations/team/${seg.persona}.jpg`,
+            ready: !!v,
+          };
+        }).filter((seg) => seg.ready);
+        return { ...s, members: teamMembers || [], video_segments: segments };
+      }
       if (!s.video_topic) return s;
       const v = urls[s.video_topic] || null;
       return {

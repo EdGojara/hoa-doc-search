@@ -98,6 +98,25 @@
   .tm-photo img { width:100%; height:100%; object-fit:cover; display:block; }
   .tm-n { font-size:17px; font-weight:700; color:#fff; }
   .tm-r { font-size:13px; color:var(--ice); margin-top:2px; line-height:1.3; }
+  /* Team screen WITH the video sequence: player left, faces right. */
+  .teamwrap { display:flex; gap:34px; align-items:center; margin-top:16px; flex:1; }
+  .teamvid { flex:0 0 600px; }
+  .teamvid .player { aspect-ratio:16/9; border-radius:14px; overflow:hidden; background:#000; position:relative; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  .teamvid video { width:100%; height:100%; object-fit:cover; display:block; }
+  .teamstart { position:absolute; inset:0; margin:auto; width:78px; height:78px; border-radius:50%; border:0;
+               background:rgba(198,161,91,.94); color:#0B1D34; font-size:26px; cursor:pointer; padding-left:5px;
+               display:flex; align-items:center; justify-content:center; box-shadow:0 8px 26px rgba(0,0,0,.4); }
+  .teamstart.hidden { display:none; }
+  .teamcap { margin-top:12px; font-size:15px; color:var(--ice); min-height:20px; }
+  .teamcap b { color:#fff; }
+  .team-mini { margin-top:0; flex:1; gap:12px 4px; justify-content:flex-start; }
+  .team-mini .tm { width:112px; opacity:.45; transition:opacity .25s; }
+  .team-mini .tm.tm-hasvid { opacity:.8; cursor:pointer; }
+  .team-mini .tm.tm-active { opacity:1; }
+  .team-mini .tm-photo { width:66px; height:66px; margin-bottom:5px; border-color:transparent; }
+  .team-mini .tm.tm-active .tm-photo { border-color:var(--gold); }
+  .team-mini .tm-n { font-size:12px; }
+  .team-mini .tm-r { font-size:10px; }
 
   /* Video screen: copy left, player right. */
   .videowrap { display:flex; gap:46px; margin-top:26px; flex:1; align-items:center; }
@@ -231,15 +250,36 @@
           <div class="when">${esc(m.when)}</div><div class="mh">${esc(m.head)}</div><div class="mb">${esc(m.body)}</div></div>`).join('')}</div>`;
     } else if (s.type === 'team') {
       const members = s.members || [];
-      inner = `${label(s)}<h2 style="font-size:40px;">${esc(s.headline||'')}</h2>${s.body?`<div class="body" style="margin-bottom:6px;">${esc(s.body)}</div>`:''}
-        <div class="team">${members.map(m=>`<div class="tm">
+      const segs = s.video_segments || [];
+      const vidP = new Set(segs.map((x) => x.persona));
+      const first = segs[0] || null;
+      const grid = `<div class="team${segs.length ? ' team-mini' : ''}">${members.map((m) => {
+        const hv = vidP.has(m.persona);
+        return `<div class="tm${hv ? ' tm-hasvid' : ''}" data-persona="${esc(m.persona || '')}"${hv ? ` onclick="teamPlayPersona('${esc(m.persona)}')"` : ''}>
           <div class="tm-photo"><img src="${esc(m.img)}" alt="${esc(m.name)}" loading="eager"></div>
           <div class="tm-n">${esc(m.name)}</div>
           <div class="tm-r">${esc(m.role)}</div>
-        </div>`).join('')}</div>`;
+        </div>`;
+      }).join('')}</div>`;
+      if (segs.length) {
+        window._teamSegs = segs;
+        inner = `${label(s)}<h2 style="font-size:34px; margin-bottom:2px;">${esc(s.headline || '')}</h2>
+          <div class="teamwrap">
+            <div class="teamvid">
+              <div class="player" id="teamPlayer">
+                <video id="teamvid"${first ? ` poster="${esc(first.poster)}"` : ''} playsinline preload="none"></video>
+                <button class="teamstart" id="teamStart" aria-label="Play team intro">▶</button>
+              </div>
+              <div class="teamcap" id="teamCap">Press play to meet the team</div>
+            </div>
+            ${grid}
+          </div>`;
+      } else {
+        inner = `${label(s)}<h2 style="font-size:40px;">${esc(s.headline || '')}</h2>${s.body ? `<div class="body" style="margin-bottom:6px;">${esc(s.body)}</div>` : ''}${grid}`;
+      }
     } else if (s.type === 'video') {
       const player = s.video_ready
-        ? `<video src="${esc(s.video_url)}" controls preload="metadata" playsinline></video>`
+        ? `<video src="${esc(s.video_url)}"${s.poster ? ` poster="${esc(s.poster)}"` : ''} controls preload="none" playsinline></video>`
         : `<div class="ph"><div class="pht">Video coming</div><div class="phs">This screen is built for the “${esc(s.label||'')}” explainer.<br>It plays here as soon as the video is rendered.</div></div>`;
       inner = `${label(s)}
         <div class="videowrap">
@@ -257,6 +297,7 @@
   function render() {
     stage.innerHTML = SCREENS.map(screenHTML).join('');
     buildDots();
+    wireTeamVideo();
     show(Math.min(idx, SCREENS.length-1));
     fit();
   }
@@ -274,6 +315,36 @@
     document.querySelectorAll('.dot').forEach((d,n)=>d.classList.toggle('on', n===idx));
   }
   const next = () => show(idx+1), prev = () => show(idx-1);
+
+  // ---- Team-screen video sequence: Claire opens, each specialist speaks,
+  // Claire closes. Auto-advances; click a face with a clip to jump. (Ed 2026-08-26.)
+  let _teamIdx = 0;
+  function _teamCaption(seg){ const c=document.getElementById('teamCap'); if(c) c.innerHTML = seg ? `Now: <b>${esc(seg.name)}</b> &mdash; ${esc(seg.role)}` : 'Press play to meet the team'; }
+  function _teamHighlight(persona){ document.querySelectorAll('.slide[data-id="team"] .tm').forEach(el=>el.classList.toggle('tm-active', !!persona && el.getAttribute('data-persona')===persona)); }
+  function teamPlay(i){
+    const segs = window._teamSegs || []; const v = document.getElementById('teamvid'); if(!v || !segs.length) return;
+    _teamIdx = Math.max(0, Math.min(i, segs.length-1));
+    const seg = segs[_teamIdx];
+    const st = document.getElementById('teamStart'); if(st) st.classList.add('hidden');
+    if (v.getAttribute('src') !== seg.video_url) v.src = seg.video_url;
+    if (seg.poster) v.poster = seg.poster;
+    _teamCaption(seg); _teamHighlight(seg.persona);
+    v.play().catch(()=>{});
+  }
+  function teamPlayPersona(persona){ const segs = window._teamSegs || []; const i = segs.findIndex(s=>s.persona===persona); if(i>=0) teamPlay(i); }
+  window.teamPlayPersona = teamPlayPersona;
+  function wireTeamVideo(){
+    const v = document.getElementById('teamvid'); if(!v) return;
+    const st = document.getElementById('teamStart');
+    if(st && !st._wired){ st._wired = true; st.addEventListener('click', ()=>teamPlay(0)); }
+    if(!v._wired){ v._wired = true;
+      v.addEventListener('ended', ()=>{
+        const segs = window._teamSegs || [];
+        if(_teamIdx < segs.length-1){ teamPlay(_teamIdx+1); }
+        else { const s2=document.getElementById('teamStart'); if(s2) s2.classList.remove('hidden'); _teamCaption(null); _teamHighlight(null); _teamIdx=0; }
+      });
+    }
+  }
 
   // Scale the fixed 1280x720 stage to the viewport (letterboxed).
   function fit() {
