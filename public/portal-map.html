@@ -820,6 +820,9 @@ function openDetail(amenity) {
         ${amenity.is_rentable && community.slug ? `
           <a class="btn btn-primary" href="/clubhouse/${escapeHtml(community.slug)}${isDemo ? '?demo=1' : ''}">Reserve this amenity →</a>
         ` : ''}
+        ${amenity.amenity_type === 'pool' && community.slug ? `
+          <a class="btn btn-primary" href="/fob/${escapeHtml(community.slug)}${isDemo ? '?demo=1' : ''}">Don't have pool access? Apply for a fob →</a>
+        ` : ''}
         <button class="btn btn-secondary" onclick="window.__closeDetail()">Close</button>
       </div>
     </div>
