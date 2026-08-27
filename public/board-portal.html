@@ -1790,7 +1790,7 @@
       </a>`;
 
     const mapTile = `
-      <a class="board-tile" href="/community-map.html?community=${c.id}">
+      <a class="board-tile" href="/community-map.html?community=${encodeURIComponent(currentCommunityId)}">
         <div class="tile-icon">🗺️</div>
         <div class="tile-title">Community Map</div>
         <div class="tile-desc">Every home on a live map. See violations, delinquency, and owner vs. renter at a glance — tap any house for the full story, or report something you spot in the neighborhood.</div>
