@@ -488,6 +488,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/builder-dashboard\.html$/,            // DRB Group-facing portal — auth checked via portal cookie inside the page
   /^\/board-portal$/,                       // board portal landing — auth checked inside via board/staff session (board member's own homeowner magic-link cookie is honored); every /api/board-portal route enforces requireBoardViewer + canSeeCommunity
   /^\/board-portal\.html$/,                 // same page at the static path (self-referencing year-view share links + portal-login hint use .html?community=…)
+  /^\/community-map\.html$/,                // the shared Community Map page — auth checked inside via /api/community-map/* (requireBoardViewer + canSeeCommunity)
   /^\/clubhouse\/[^/]+$/,                   // /clubhouse/:slug — public clubhouse rental form (gated server-side by amenity_bookings_active)
   /^\/clubhouse\/[^/]+\/preview-checkout$/, // checkout preview — charges nothing, writes nothing, and /api/payments/preview refuses once Stripe is configured
   // BD digital business cards. Public is the entire point: the person scanning
@@ -543,6 +544,14 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/board-portal\/board-members$/,      // GET roster (scoped inside)
   /^\/api\/board-portal\/community\/[^/]+\/(summary|properties|year|projects|arc|meetings|violations)$/, // community oversight panels
   /^\/api\/board-portal\/property\/[^/]+$/,    // property detail (authorized by the property's own community)
+  // Community Map — the ONE map (api/community_map.js) shared by staff and board.
+  // Each handler enforces requireBoardViewer + canSeeCommunity (board members
+  // scoped to their own community; staff see all). Board responses are projected
+  // (delinquency band not exact $, no county value layers, no internal notes).
+  // Listed per-endpoint so a future community-map route can't ride the gate open.
+  /^\/api\/community-map\/[0-9a-f-]+\/layers$/,   // GET all house dots for a community
+  /^\/api\/community-map\/property\/[0-9a-f-]+$/, // GET one house's detail panel
+  /^\/api\/community-map\/property\/[0-9a-f-]+\/report$/, // POST board-reported issue (+photo) into the DRV queue
   // Board motions/voting — every handler enforces requireBoardViewer +
   // canSeeCommunity, and WRITES require a real actor (a staff "view as" preview
   // is read-only). Same cookie-gated-inside pattern; listed per-endpoint.
@@ -1147,6 +1156,9 @@ app.get('/admin/newfirst-integration', (req, res) => {
 });
 app.get('/admin/lockbox', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'lockbox.html'));
+});
+app.get('/admin/community-map', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'community-map.html'));
 });
 app.get('/admin/statement-tracker', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'statement-tracker.html'));

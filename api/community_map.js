@@ -39,9 +39,53 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { getActingUser, actorDisplayName } = require('./_acting_user');
+const { requireBoardViewer, canSeeCommunity } = require('../lib/portal/board_access');
+
+// Resolve who's looking at the map: STAFF (Supabase JWT) or a BOARD member
+// (portal magic-link with an active board seat). Sends 401 and returns null if
+// neither. Board members are scoped to their own community(ies) — the caller
+// still checks canSeeCommunity(viewer, communityId) per request. Staff keep the
+// richer actor object (id + display name) for the audit log; board viewers log
+// by name/email (no user_profiles id).
+async function resolveMapViewer(req, res) {
+  const viewer = await requireBoardViewer(req, res); // 401 if neither
+  if (!viewer) return null;
+  const isBoard = viewer.kind === 'board';
+  let actor = null;
+  if (!isBoard) { try { actor = await getActingUser(req); } catch (_) { /* staff w/o profile */ } }
+  return { viewer, isBoard, actor };
+}
+
+// Board projection for a map dot: the walking-the-neighborhood view. Boards see
+// residency, the DRV status, and the delinquency BAND (30/60/90) — never the
+// exact dollar on the dot (that appears only when they tap into one house), and
+// never the county appraisal / assessed-value / YoY layers (staff-only,
+// county-data-sensitive). No exact balance leaves in the all-dots payload.
+function projectPinForBoard(p) {
+  return {
+    property_id: p.property_id,
+    street_address: p.street_address,
+    unit: p.unit,
+    lot_number: p.lot_number,
+    latitude: p.latitude,
+    longitude: p.longitude,
+    owner_name: p.owner_name,
+    occupancy: p.occupancy,
+    residency_type: p.residency_type,
+    ar_bucket: p.ar_bucket,               // band only — no ar_balance
+    ar_at_legal: p.ar_at_legal,
+    ar_enforcement_stage: p.ar_enforcement_stage,
+    drv_status: p.drv_status,
+    drv_open_count: p.drv_open_count,
+    drv_worst_stage: p.drv_worst_stage,
+    drv_last_at: p.drv_last_at,
+    acc_decisions_count: p.acc_decisions_count,
+  };
+}
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
@@ -111,17 +155,17 @@ function statusOccupancy(row) {
 
 // Captures (and writes asynchronously) one row to community_map_access_log.
 // Failure is non-fatal — we log the warn but don't 500 the user-facing request.
-async function logAccess({ req, actor, communityId, propertyId, action, layers }) {
+async function logAccess({ req, actor, communityId, propertyId, action, layers, actorRole, actorName }) {
   try {
     const row = {
       community_id: communityId || null,
       property_id: propertyId || null,
       acted_by_user_id: actor ? actor.id : null,
-      actor_display_name: actor ? actorDisplayName(actor) : null,
-      // Staff is the only auth path today; when board auth ships, the caller
-      // passes 'board_member' explicitly. Defensive default avoids future
-      // mis-tagging if a new auth path forgets to set this.
-      actor_role: 'staff',
+      actor_display_name: actor ? actorDisplayName(actor) : (actorName || null),
+      // Board auth now shipped: the caller passes actorRole:'board_member' +
+      // actorName for a board magic-link viewer (no user_profiles id). Staff
+      // remain the default.
+      actor_role: actorRole || 'staff',
       action,
       layers_requested: Array.isArray(layers) && layers.length > 0 ? layers : null,
       request_ip: (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim()
@@ -180,7 +224,13 @@ router.get('/:communityId/layers', async (req, res) => {
     const communityId = req.params.communityId;
     if (!communityId) return res.status(400).json({ error: 'community_id_required' });
 
-    const actor = await getActingUser(req);
+    const mv = await resolveMapViewer(req, res);
+    if (!mv) return; // 401 sent
+    const { viewer, isBoard, actor } = mv;
+    // A board member may ONLY see their own community. Staff scope is 'all'.
+    if (!canSeeCommunity(viewer, communityId)) {
+      return res.status(403).json({ error: 'community_outside_scope' });
+    }
 
     // Validate community exists + is in our management company.
     const { data: community, error: cErr } = await supabase
@@ -373,11 +423,18 @@ router.get('/:communityId/layers', async (req, res) => {
       req, actor, communityId,
       action: 'view_map_layers',
       layers: requestedLayers.length > 0 ? requestedLayers : Array.from(VALID_LAYERS),
+      actorRole: isBoard ? 'board_member' : 'staff',
+      actorName: isBoard ? viewer.name : null,
     });
 
     // Watermark for the frontend overlay — viewer + when. Doesn't leak
     // sensitive info on its own; ruins screenshot value if leaked.
-    const watermark = `${actor ? actorDisplayName(actor) : 'Bedrock staff'} · ${new Date().toISOString()}`;
+    const viewerLabel = isBoard ? viewer.name : (actor ? actorDisplayName(actor) : 'Bedrock staff');
+    const watermark = `${viewerLabel} · ${new Date().toISOString()}`;
+
+    // Board projection: dots carry the delinquency BAND, not exact dollars, and
+    // no county appraisal/value layers. Staff get the full pin set.
+    const outProperties = isBoard ? properties.map(projectPinForBoard) : properties;
 
     res.json({
       community: {
@@ -385,21 +442,21 @@ router.get('/:communityId/layers', async (req, res) => {
         name: community.name,
         slug: community.slug,
       },
+      viewer: { role: isBoard ? 'board_member' : 'staff', name: viewerLabel },
       as_of: new Date().toISOString(),
       ar_snapshot_date: arSnapshotDate,
       ar_days_since_snapshot: arDaysOld,
-      // Portfolio-level appraisal aggregates — boards want the headline
-      // ("our community appreciated 8.4% on average") alongside the map.
-      yoy_summary: {
+      // Portfolio-level appraisal aggregate — staff-only (county value data).
+      yoy_summary: isBoard ? null : {
         average_pct: communityYoyAvg,
         median_pct: communityYoyMedian,
         property_count: yoyValues.length,
       },
       counts: {
-        total: properties.length,
+        total: outProperties.length,
         ungeocoded: propertiesWithoutGeo,
       },
-      properties,
+      properties: outProperties,
       watermark,
     });
   } catch (err) {
@@ -422,7 +479,9 @@ router.get('/property/:propertyId', async (req, res) => {
     const propertyId = req.params.propertyId;
     if (!propertyId) return res.status(400).json({ error: 'property_id_required' });
 
-    const actor = await getActingUser(req);
+    const mv = await resolveMapViewer(req, res);
+    if (!mv) return; // 401 sent
+    const { viewer, isBoard, actor } = mv;
 
     // The v_property_summary row already has owner contact info from
     // v_current_property_owners. Single read.
@@ -433,6 +492,11 @@ router.get('/property/:propertyId', async (req, res) => {
       .maybeSingle();
     if (sErr) throw sErr;
     if (!summary) return res.status(404).json({ error: 'property_not_found' });
+
+    // A board member may only open a property in their own community.
+    if (!canSeeCommunity(viewer, summary.community_id)) {
+      return res.status(403).json({ error: 'community_outside_scope' });
+    }
 
     // Recent interactions — last 10, newest first. interactions table is
     // mixed-ownership (the interaction record itself is association if
@@ -538,17 +602,96 @@ router.get('/property/:propertyId', async (req, res) => {
       communityId: summary.community_id,
       propertyId,
       action: 'view_property',
+      actorRole: isBoard ? 'board_member' : 'staff',
+      actorName: isBoard ? viewer.name : null,
     });
 
+    const viewerLabel = isBoard ? viewer.name : (actor ? actorDisplayName(actor) : 'Bedrock staff');
     res.json({
       property: summary,
       ar: arDetail,
       open_violations: openViolations,
-      interactions,
-      watermark: `${actor ? actorDisplayName(actor) : 'Bedrock staff'} · ${new Date().toISOString()}`,
+      // Interactions are the internal correspondence log (workpaper: staff
+      // notes + AI classifications). Boards see the violation + balance facts,
+      // not our internal notes on a neighbor. Staff see the full log.
+      interactions: isBoard ? [] : interactions,
+      viewer: { role: isBoard ? 'board_member' : 'staff', name: viewerLabel },
+      watermark: `${viewerLabel} · ${new Date().toISOString()}`,
     });
   } catch (err) {
     console.error('[community-map] property detail failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /property/:propertyId/report  — a board member (or staff) reporting an
+// issue they see at a house, straight from the map: description + optional
+// photo. Lands in board_map_reports for staff to triage (migration 393). This
+// is the "instead of emailing the manager, tap the house and report it" path.
+// ----------------------------------------------------------------------------
+const reportUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
+router.post('/property/:propertyId/report', reportUpload.single('photo'), async (req, res) => {
+  try {
+    const propertyId = req.params.propertyId;
+    if (!propertyId) return res.status(400).json({ error: 'property_id_required' });
+
+    const mv = await resolveMapViewer(req, res);
+    if (!mv) return; // 401 sent
+    const { viewer, isBoard, actor } = mv;
+
+    // Resolve the property's community and scope-check it.
+    const { data: prop, error: pErr } = await supabase
+      .from('properties')
+      .select('id, community_id, street_address')
+      .eq('id', propertyId)
+      .maybeSingle();
+    if (pErr) throw pErr;
+    if (!prop) return res.status(404).json({ error: 'property_not_found' });
+    if (!canSeeCommunity(viewer, prop.community_id)) {
+      return res.status(403).json({ error: 'community_outside_scope' });
+    }
+
+    const description = (req.body && req.body.description ? String(req.body.description) : '').slice(0, 2000).trim();
+    if (!description && !req.file) return res.status(400).json({ error: 'empty_report' });
+
+    // Upload the photo (if any) to the documents bucket.
+    let photoPath = null;
+    if (req.file && req.file.buffer && req.file.buffer.length) {
+      const ext = (req.file.mimetype && req.file.mimetype.split('/')[1]) || 'jpg';
+      const stamp = crypto.randomBytes(6).toString('hex');
+      photoPath = `board-map-reports/${prop.community_id}/${propertyId}/${stamp}.${ext}`;
+      const { error: upErr } = await supabase.storage.from('documents')
+        .upload(photoPath, req.file.buffer, { contentType: req.file.mimetype || 'image/jpeg', upsert: false });
+      if (upErr) { console.warn('[community-map] report photo upload failed:', upErr.message); photoPath = null; }
+    }
+
+    const reporterName = isBoard ? viewer.name : (actor ? actorDisplayName(actor) : 'Bedrock staff');
+    const reporterEmail = (viewer && viewer.email) || (actor && actor.email) || null;
+
+    const { data: row, error: insErr } = await supabase.from('board_map_reports').insert({
+      community_id: prop.community_id,
+      property_id: propertyId,
+      reported_by_name: reporterName,
+      reported_by_email: reporterEmail,
+      reporter_role: isBoard ? 'board_member' : 'staff',
+      description: description || null,
+      photo_path: photoPath,
+      photo_bucket: photoPath ? 'documents' : null,
+      status: 'new',
+    }).select('id').maybeSingle();
+    if (insErr) throw insErr;
+
+    logAccess({
+      req, actor, communityId: prop.community_id, propertyId,
+      action: 'report_issue',
+      actorRole: isBoard ? 'board_member' : 'staff',
+      actorName: isBoard ? viewer.name : null,
+    });
+
+    res.json({ ok: true, report_id: row && row.id, has_photo: !!photoPath });
+  } catch (err) {
+    console.error('[community-map] report failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

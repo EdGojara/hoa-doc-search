@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Community Map — Bedrock</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --navy:#0B1D34; --gold:#C6A15B; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; background:#0b1d34; }
+  #app { position:fixed; inset:0; display:flex; flex-direction:column; }
+  header { background:var(--navy); color:#fff; padding:10px 14px calc(10px + env(safe-area-inset-top)) 14px; z-index:20; flex:0 0 auto; }
+  .htop { display:flex; align-items:center; gap:10px; }
+  .htop a.back { color:#c6a15b; text-decoration:none; font-size:13px; font-weight:700; }
+  .htop h1 { font-size:16px; margin:0; font-weight:700; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .htop .cnt { font-size:11px; color:#9fb3cc; }
+  .chips { display:flex; gap:7px; margin-top:9px; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:2px; }
+  .chip { flex:0 0 auto; background:#132b47; color:#cfe0f2; border:1px solid #25436a; border-radius:20px; padding:6px 13px; font-size:12.5px; font-weight:700; cursor:pointer; white-space:nowrap; }
+  .chip.on { background:var(--gold); color:var(--navy); border-color:var(--gold); }
+  .mapwrap { position:relative; flex:1; }
+  #map { position:absolute; inset:0; background:#0b1d34; }
+  .legend { position:absolute; left:10px; bottom:14px; z-index:15; background:rgba(255,255,255,.96); border-radius:10px; padding:9px 11px; font-size:11.5px; color:#1a2230; box-shadow:0 2px 12px rgba(0,0,0,.25); max-width:60vw; }
+  .legend .lt { font-weight:800; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:#5a7390; margin-bottom:5px; }
+  .legend .row { display:flex; align-items:center; gap:7px; margin:3px 0; }
+  .legend .dot { width:11px; height:11px; border-radius:50%; border:1.5px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.15); flex:0 0 auto; }
+  .layerbtns { position:absolute; right:10px; top:10px; z-index:15; display:flex; flex-direction:column; gap:6px; }
+  .layerbtns button, .locate { width:40px; height:40px; border-radius:9px; border:0; background:rgba(255,255,255,.96); box-shadow:0 2px 10px rgba(0,0,0,.25); font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .layerbtns button.on { background:var(--gold); }
+  .locate { position:absolute; right:10px; bottom:14px; z-index:15; }
+  .wm { position:absolute; right:8px; bottom:60px; z-index:14; font-size:9px; color:rgba(255,255,255,.5); text-align:right; pointer-events:none; text-shadow:0 1px 2px rgba(0,0,0,.6); }
+
+  /* Detail panel — slides up on mobile, docks right on desktop */
+  #panel { position:absolute; z-index:30; background:#fff; box-shadow:0 -4px 24px rgba(0,0,0,.3); transition:transform .22s ease; overflow-y:auto; }
+  @media (max-width:720px){ #panel{ left:0; right:0; bottom:0; max-height:74%; border-radius:16px 16px 0 0; transform:translateY(110%);} #panel.open{ transform:translateY(0);} }
+  @media (min-width:721px){ #panel{ top:0; right:0; bottom:0; width:390px; transform:translateX(110%);} #panel.open{ transform:translateX(0);} .legend{bottom:14px;} }
+  .grab { width:40px; height:4px; background:#d4dbe4; border-radius:3px; margin:8px auto 2px; }
+  .pbody { padding:6px 18px 26px; }
+  .paddr { font-size:19px; font-weight:800; color:var(--navy); margin:6px 0 2px; }
+  .psub { font-size:12.5px; color:#64748b; margin-bottom:12px; }
+  .pclose { position:absolute; top:10px; right:12px; border:0; background:#f1f5f9; width:30px; height:30px; border-radius:50%; font-size:16px; cursor:pointer; color:#475569; }
+  .badges { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+  .badge { font-size:11px; font-weight:800; padding:4px 10px; border-radius:20px; }
+  .sec { margin-bottom:15px; }
+  .sec .sl { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:#5a7390; margin-bottom:7px; }
+  .kv { display:flex; justify-content:space-between; align-items:baseline; padding:5px 0; border-top:1px solid #f1f5f9; font-size:13.5px; }
+  .kv .k { color:#64748b; } .kv .v { font-weight:700; color:#0f172a; text-align:right; }
+  .viol { border:1px solid #eef2f7; border-radius:10px; padding:10px 12px; margin-bottom:8px; background:#fafbfc; }
+  .viol .vt { font-weight:700; font-size:13.5px; color:#0f172a; }
+  .viol .vm { font-size:11.5px; color:#64748b; margin-top:3px; }
+  .stagepill { font-size:10px; font-weight:800; padding:2px 8px; border-radius:20px; }
+  .goodstate { text-align:center; padding:16px; color:#16a34a; font-weight:700; font-size:14px; }
+  .btn { display:block; width:100%; text-align:center; background:var(--navy); color:var(--gold); border:0; border-radius:10px; padding:13px; font-weight:800; font-size:14px; cursor:pointer; margin-top:6px; }
+  .btn.ghost { background:#fff; border:1.5px solid var(--navy); color:var(--navy); }
+  .report { border-top:1px dashed #cbd5e1; margin-top:14px; padding-top:14px; }
+  .report textarea { width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:10px; font-family:inherit; font-size:13.5px; resize:vertical; min-height:66px; }
+  .report input[type=file]{ font-size:12.5px; margin:9px 0; width:100%; }
+  .loading, .err { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#cfe0f2; font-size:14px; z-index:40; background:#0b1d34; text-align:center; padding:20px; }
+  .leaflet-container { background:#0b1d34; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="htop">
+      <a class="back" id="backLink" href="/board-portal">&larr;</a>
+      <h1 id="title">Community Map</h1>
+      <span class="cnt" id="count"></span>
+    </div>
+    <div class="chips" id="chips">
+      <button class="chip on" data-layer="drv">Violations</button>
+      <button class="chip" data-layer="ar">Delinquency</button>
+      <button class="chip" data-layer="occupancy">Owner / Renter</button>
+    </div>
+  </header>
+  <div class="mapwrap">
+    <div id="map"></div>
+    <div class="layerbtns" id="layerbtns">
+      <button data-mode="hybrid" class="on" title="Hybrid">🛰️</button>
+      <button data-mode="satellite" title="Satellite">📷</button>
+      <button data-mode="street" title="Street">🗺️</button>
+    </div>
+    <button class="locate" id="locateBtn" title="Find where I'm standing">📍</button>
+    <div class="legend" id="legend"></div>
+    <div class="wm" id="wm"></div>
+    <div class="loading" id="loading">Loading community map…</div>
+  </div>
+</div>
+
+<div id="panel">
+  <div class="grab"></div>
+  <button class="pclose" onclick="closePanel()">✕</button>
+  <div class="pbody" id="pbody"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const money = (n) => (n==null?'—':'$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}));
+const qp = new URLSearchParams(location.search);
+let COMMUNITY_ID = qp.get('community') || '';
+let _supa=null, _map=null, _markers=[], _props=[], _layer='drv', _tiles={}, _viewer=null, _selected=null;
+
+// ---- auth: attach staff Bearer JWT if present; board cookie rides same-origin
+async function af(url, opts){ opts=opts||{}; const h=Object.assign({},opts.headers||{});
+  try{ if(_supa){ const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; } }catch(_){}
+  return fetch(url, Object.assign({},opts,{headers:h, credentials:'same-origin'})); }
+
+// ---- color mappings (match api/community_map.js exactly) --------------------
+const DRV_COLOR = { none:'#16a34a', open:'#f59e0b', certified_209:'#ea580c', in_fine:'#dc2626', unknown:'#94a3b8' };
+const AR_COLOR = { current:'#16a34a', bucket_0_30:'#a3e635', bucket_31_60:'#f59e0b', bucket_61_90:'#f97316',
+  bucket_91_120:'#ea580c', over_120:'#dc2626', past_due:'#f59e0b', at_legal:'#b91c1c', in_collections:'#7f1d1d', unknown:'#cbd5e1' };
+const OCC_COLOR = { owner_occupied:'#2563eb', renter:'#7c3aed', family_member:'#0891b2', vacant:'#94a3b8', unknown:'#cbd5e1' };
+function colorFor(p){
+  if(_layer==='drv') return DRV_COLOR[p.drv_status] || '#94a3b8';
+  if(_layer==='ar') return AR_COLOR[p.ar_bucket] || '#cbd5e1';
+  return OCC_COLOR[p.occupancy] || '#cbd5e1';
+}
+const LEGENDS = {
+  drv: { title:'Violations', rows:[['#16a34a','No open violations'],['#f59e0b','Courtesy notice'],['#ea580c','Certified §209'],['#dc2626','Fine assessed']] },
+  ar:  { title:'Delinquency', rows:[['#16a34a','Current'],['#a3e635','1–30 days'],['#f59e0b','31–60'],['#f97316','61–90'],['#dc2626','90+ days'],['#7f1d1d','At legal / collections']] },
+  occupancy: { title:'Occupancy', rows:[['#2563eb','Owner-occupied'],['#7c3aed','Renter'],['#0891b2','Family member'],['#94a3b8','Vacant']] },
+};
+function renderLegend(){ const L=LEGENDS[_layer];
+  $('legend').innerHTML = `<div class="lt">${L.title}</div>` + L.rows.map(r=>`<div class="row"><span class="dot" style="background:${r[0]}"></span>${r[1]}</div>`).join(''); }
+
+// ---- tiles (Esri, no key) --------------------------------------------------
+function buildTiles(){
+  const sat = () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:20, attribution:'Esri'});
+  const labels = () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {maxZoom:20});
+  const roads = () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', {maxZoom:20});
+  const street = () => L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'© OpenStreetMap'});
+  _tiles = {
+    hybrid: L.layerGroup([sat(), roads(), labels()]),
+    satellite: L.layerGroup([sat()]),
+    street: L.layerGroup([street()]),
+  };
+}
+function setMode(mode){
+  Object.values(_tiles).forEach(t=>_map.removeLayer(t));
+  _map.addLayer(_tiles[mode]);
+  document.querySelectorAll('#layerbtns button').forEach(b=>b.classList.toggle('on', b.dataset.mode===mode));
+}
+
+// ---- render markers --------------------------------------------------------
+function drawMarkers(){
+  _markers.forEach(m=>_map.removeLayer(m)); _markers=[];
+  const pts=[];
+  for(const p of _props){
+    if(p.latitude==null||p.longitude==null) continue;
+    const m=L.circleMarker([p.latitude,p.longitude], {
+      radius:7, weight:1.5, color:'#ffffff', fillColor:colorFor(p), fillOpacity:.95,
+    });
+    m.on('click', ()=>openProperty(p));
+    m.addTo(_map); _markers.push(m); pts.push([p.latitude,p.longitude]);
+  }
+  if(pts.length && !_map._fitted){ _map.fitBounds(pts, {padding:[40,40], maxZoom:17}); _map._fitted=true; }
+  renderLegend();
+}
+function setLayer(layer){ _layer=layer;
+  document.querySelectorAll('#chips .chip').forEach(c=>c.classList.toggle('on', c.dataset.layer===layer));
+  drawMarkers();
+}
+
+// ---- detail panel ----------------------------------------------------------
+const STAGE_LABEL = { courtesy_1:'Courtesy 1', courtesy_2:'Courtesy 2', certified_209:'Certified §209', fine_assessed:'Fine assessed' };
+const STAGE_COLOR = { courtesy_1:'#f59e0b', courtesy_2:'#f97316', certified_209:'#ea580c', fine_assessed:'#dc2626' };
+function occBadge(p){
+  const map={owner_occupied:['Owner-occupied','#dbeafe','#1e40af'],renter:['Renter','#ede9fe','#5b21b6'],family_member:['Family member','#cffafe','#155e75'],vacant:['Vacant','#f1f5f9','#475569'],unknown:['Occupancy unknown','#f1f5f9','#475569']};
+  const b=map[p.occupancy]||map.unknown; return `<span class="badge" style="background:${b[1]};color:${b[2]}">${b[0]}</span>`;
+}
+function daysUntil(d){ if(!d) return null; return Math.ceil((new Date(d).getTime()-Date.now())/86400000); }
+
+async function openProperty(p){
+  _selected=p;
+  $('panel').classList.add('open');
+  $('pbody').innerHTML = `<div class="paddr">${esc(p.street_address||'Property')}${p.unit?(' #'+esc(p.unit)):''}</div><div class="psub">Loading…</div>`;
+  try{
+    const r=await af('/api/community-map/property/'+encodeURIComponent(p.property_id)); const d=await r.json();
+    if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
+    renderPanel(p, d);
+  }catch(e){ $('pbody').innerHTML=`<div class="paddr">${esc(p.street_address||'Property')}</div><div class="psub">Couldn't load details: ${esc(e.message)}</div>`; }
+}
+function renderPanel(p, d){
+  const sum=d.property||{}; const ar=d.ar||{};
+  const ov=d.open_violations||[];
+  const bal = sum.current_balance!=null ? Number(sum.current_balance) : (ar.current_balance!=null?Number(ar.current_balance):null);
+  const owner = sum.owner_name || p.owner_name || '—';
+  const violHtml = ov.length ? ov.map(v=>{
+    const du=daysUntil(v.cure_period_ends_at);
+    const cure = du==null?'':(du>=0?`${du} day${du===1?'':'s'} left to cure`:`cure window passed ${Math.abs(du)}d ago`);
+    return `<div class="viol"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+      <span class="vt">${esc(v.violation_type||'Violation')}</span>
+      <span class="stagepill" style="background:${STAGE_COLOR[v.current_stage]||'#94a3b8'}20;color:${STAGE_COLOR[v.current_stage]||'#475569'}">${STAGE_LABEL[v.current_stage]||v.current_stage}</span></div>
+      <div class="vm">Opened ${(v.opened_at||'').slice(0,10)}${cure?(' · '+cure):''}${v.continuation_count?(' · re-notified '+v.continuation_count+'×'):''}</div></div>`;
+  }).join('') : `<div class="goodstate">✓ No open violations on file</div>`;
+
+  $('pbody').innerHTML = `
+    <div class="paddr">${esc(p.street_address||'Property')}${p.unit?(' #'+esc(p.unit)):''}</div>
+    <div class="psub">${sum.lot_number?('Lot '+esc(sum.lot_number)+' · '):''}${esc(sum.community_name||'')}</div>
+    <div class="badges">${occBadge(p)}${sum.ar_at_legal?'<span class="badge" style="background:#fee2e2;color:#991b1b">At legal</span>':''}</div>
+
+    <div class="sec"><div class="sl">Compliance</div>${violHtml}</div>
+
+    <div class="sec"><div class="sl">Account</div>
+      <div class="kv"><span class="k">Owner</span><span class="v">${esc(owner)}</span></div>
+      <div class="kv"><span class="k">Current balance</span><span class="v" style="color:${bal>0?'#b91c1c':'#166534'}">${money(bal)}</span></div>
+      ${sum.ar_enforcement_stage?`<div class="kv"><span class="k">Collections</span><span class="v">${esc(sum.ar_enforcement_stage)}</span></div>`:''}
+      ${sum.last_inspected_at?`<div class="kv"><span class="k">Last inspected</span><span class="v">${(sum.last_inspected_at||'').slice(0,10)}</span></div>`:''}
+    </div>
+
+    <div class="report" id="reportZone">
+      <div class="sl" style="margin-bottom:8px">See something here?</div>
+      <button class="btn ghost" onclick="showReport()">📸 Report an issue to Bedrock</button>
+    </div>`;
+}
+function showReport(){
+  $('reportZone').innerHTML = `
+    <div class="sl" style="margin-bottom:8px">Report an issue</div>
+    <textarea id="rDesc" placeholder="What did you see? (e.g. trailer parked on the street, tall grass, trash cans out)"></textarea>
+    <input type="file" id="rPhoto" accept="image/*" capture="environment">
+    <button class="btn" onclick="submitReport()">Send to Bedrock</button>
+    <div id="rMsg" style="font-size:12px;color:#64748b;margin-top:8px"></div>`;
+}
+async function submitReport(){
+  const desc=($('rDesc').value||'').trim(); const file=$('rPhoto').files[0];
+  if(!desc && !file){ $('rMsg').textContent='Add a short note or a photo first.'; return; }
+  $('rMsg').textContent='Sending…';
+  try{
+    const fd=new FormData(); fd.append('description', desc);
+    if(file) fd.append('photo', file);
+    const r=await af('/api/community-map/property/'+encodeURIComponent(_selected.property_id)+'/report', {method:'POST', body:fd});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
+    $('reportZone').innerHTML = `<div class="goodstate">✓ Sent to Bedrock. Our team will take it from here.</div>`;
+  }catch(e){ $('rMsg').textContent='Could not send: '+e.message; }
+}
+function closePanel(){ $('panel').classList.remove('open'); }
+
+// ---- locate me -------------------------------------------------------------
+let _meMarker=null;
+function locateMe(){
+  if(!navigator.geolocation){ return; }
+  navigator.geolocation.getCurrentPosition((pos)=>{
+    const {latitude,longitude}=pos.coords;
+    if(_meMarker) _map.removeLayer(_meMarker);
+    _meMarker=L.circleMarker([latitude,longitude],{radius:9,weight:3,color:'#fff',fillColor:'#2563eb',fillOpacity:1}).addTo(_map);
+    _map.setView([latitude,longitude], 18);
+  }, ()=>{ alert('Could not get your location. Check location permissions.'); }, {enableHighAccuracy:true, timeout:8000});
+}
+
+// ---- init ------------------------------------------------------------------
+(async function init(){
+  try{ const cfg=await (await fetch('/api/auth/config')).json();
+    if(cfg&&cfg.enabled&&window.supabase){ _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key); } }catch(_){}
+
+  // If no community in the URL, ask the caller's community list (works for staff + board).
+  if(!COMMUNITY_ID){
+    try{ const r=await af('/api/board-portal/communities'); const j=await r.json();
+      const list=(j.communities||[]).filter(Boolean);
+      if(list.length===1) COMMUNITY_ID=list[0].id;
+      else if(list.length>1){ // simple picker
+        $('loading').innerHTML = 'Pick a community:<br><br>'+list.map(c=>`<button class="btn" style="max-width:260px;margin:4px auto" onclick="location.search='?community='+encodeURIComponent('${c.id}')">${esc(c.name)}</button>`).join('');
+        return;
+      }
+    }catch(_){}
+  }
+  if(!COMMUNITY_ID){ $('loading').innerHTML='No community specified.'; return; }
+
+  _map = L.map('map', { zoomControl:true, attributionControl:false });
+  _map.setView([29.75,-95.7], 12);
+  buildTiles(); setMode('hybrid');
+
+  document.querySelectorAll('#layerbtns button').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+  document.querySelectorAll('#chips .chip').forEach(c=>c.onclick=()=>setLayer(c.dataset.layer));
+  $('locateBtn').onclick=locateMe;
+
+  try{
+    const r=await af('/api/community-map/'+encodeURIComponent(COMMUNITY_ID)+'/layers?include=drv,ar,occupancy');
+    const d=await r.json();
+    if(r.status===401){ location.href='/portal-login.html'; return; }
+    if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
+    _props = d.properties||[]; _viewer=d.viewer||null;
+    $('title').textContent = (d.community&&d.community.name) || 'Community Map';
+    const geo = _props.filter(p=>p.latitude!=null&&p.longitude!=null).length;
+    $('count').textContent = geo+' homes';
+    if(d.watermark) $('wm').textContent = d.watermark.split(' · ')[0];
+    $('loading').style.display='none';
+    drawMarkers();
+  }catch(e){ $('loading').innerHTML='Could not load the map: '+esc(e.message); }
+})();
+</script>
+</body>
+</html>

@@ -1789,6 +1789,20 @@
         <div class="tile-cta">Look up a home →</div>
       </a>`;
 
+    const mapTile = `
+      <a class="board-tile" href="/community-map.html?community=${c.id}">
+        <div class="tile-icon">🗺️</div>
+        <div class="tile-title">Community Map</div>
+        <div class="tile-desc">Every home on a live map. See violations, delinquency, and owner vs. renter at a glance — tap any house for the full story, or report something you spot in the neighborhood.</div>
+        <div class="tile-metric">
+          <div>
+            <div class="metric-value good">Live</div>
+            <div class="metric-label">${totalHomes} homes · walk it on your phone</div>
+          </div>
+        </div>
+        <div class="tile-cta">Open the map →</div>
+      </a>`;
+
     const meetings = s.recent_meetings || [];
     const lastMeeting = meetings[0];
     const meetingsTile = `
@@ -1891,6 +1905,7 @@
 
       <div class="tile-section-label">Community health</div>
       <div class="board-tile-grid">
+        ${mapTile}
         ${drvTile}
         ${arcTile}
         ${propsTile}
