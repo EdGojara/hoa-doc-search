@@ -59,6 +59,10 @@
   .footnote { margin-top:auto; font-size:17px; line-height:1.5; color:var(--faint); max-width:70ch; font-style:italic; }
   .dark .footnote { color:var(--ice); opacity:.8; }
 
+  .shot { margin-top:26px; }
+  .shot img { display:block; width:100%; max-width:900px; max-height:52vh; object-fit:contain; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.08); }
+  .shotcap { font-size:14px; color:var(--faint); margin-top:9px; letter-spacing:.02em; }
+  .dark .shotcap { color:var(--ice); opacity:.8; }
   .cols { display:flex; gap:34px; margin-top:34px; }
   .col { flex:1; }
   .col .ch { font-size:13px; letter-spacing:.16em; text-transform:uppercase; font-weight:700; color:var(--gold); margin-bottom:12px; }
@@ -229,7 +233,7 @@
         <h1 class="cover" style="font-size:88px;">${esc(s.title||'')}</h1>
         <div class="kicker" style="margin-top:24px;">${esc(s.kicker||'')}</div></div>`;
     } else if (s.type === 'statement') {
-      inner = `${label(s)}<h2>${esc(s.headline||'')}</h2><div class="body">${esc(s.body||'')}</div>${cols(s)}${foot(s)}`;
+      inner = `${label(s)}<h2>${esc(s.headline||'')}</h2><div class="body">${esc(s.body||'')}</div>${shot(s)}${cols(s)}${foot(s)}`;
     } else if (s.type === 'points') {
       inner = `${label(s)}<h2>${esc(s.headline||'')}</h2>${s.body?`<div class="body">${esc(s.body)}</div>`:''}
         <div class="points">${(s.points||[]).map(p=>`<div class="point">
@@ -293,6 +297,8 @@
   const foot = (s) => s.footnote ? `<div class="footnote">${esc(s.footnote)}</div>` : '';
   const cols = (s) => (s.columns && s.columns.length) ? `<div class="cols">${s.columns.map(c=>`<div class="col">
       <div class="ch">${esc(c.header)}</div><ul>${(c.items||[]).map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}</div>` : '';
+  // Optional showcase image (e.g. a live product screenshot dropped into a slide).
+  const shot = (s) => s.image ? `<div class="shot"><img src="${esc(s.image)}" alt="${esc(s.image_caption||'')}"/>${s.image_caption?`<div class="shotcap">${esc(s.image_caption)}</div>`:''}</div>` : '';
 
   function render() {
     stage.innerHTML = SCREENS.map(screenHTML).join('');
