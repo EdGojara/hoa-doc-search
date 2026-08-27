@@ -515,6 +515,21 @@ function getQueryParams() {
     const back = `/portal?demo=1&community=${encodeURIComponent(slug)}`;
     $('brandLink').href = back;
     $('backLink').href = back;
+    // Drama Creek is the FICTIONAL demo community with real DB amenity records,
+    // so it renders through the same production API — the demo is the product,
+    // no drifting mock. Safe: no real homeowners. Any other slug in demo mode
+    // stays on mock data so a real community is never exposed. Falls back to the
+    // mock if Drama Creek isn't seeded yet. (Ed 2026-08-26.)
+    if (slug === 'drama-creek') {
+      try {
+        const r = await fetch(`/api/portal/map/${encodeURIComponent(slug)}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        if (!data.amenities || !data.amenities.length) throw new Error('no amenities seeded');
+        renderMap(data);
+        return;
+      } catch (_) { /* fall through to the mock until the seed migration is applied */ }
+    }
     renderMap(buildDemoData(slug));
     return;
   }
