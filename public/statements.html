@@ -1,0 +1,100 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assessment Statements — Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 22px 20px 70px; }
+  .back { display:inline-flex; gap:6px; color:#5a7390; text-decoration:none; font-size:13px; font-weight:600; margin-bottom:12px; }
+  h1 { font-size:26px; color:var(--navy,#0B1D34); margin:6px 0 4px; }
+  .sub { color:#5a7390; font-size:14px; max-width:760px; margin-bottom:18px; }
+  .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:2px 9px; border-radius:20px; background:#dcfce7; color:#166534; vertical-align:middle; }
+  .bar { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px; }
+  label { display:block; font-size:11px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:.04em; margin-bottom:4px; }
+  select, input { padding:9px 11px; border:1px solid #cbd5e1; border-radius:8px; font-size:13px; background:#fff; font-family:inherit; }
+  .btn { background:var(--navy,#0B1D34); color:var(--gold,#C6A15B); border:0; border-radius:8px; padding:10px 16px; font-weight:700; font-size:13px; cursor:pointer; }
+  .btn.ghost { background:#fff; border:1px solid #cbd5e1; color:#475569; }
+  .layout { display:grid; grid-template-columns:320px 1fr; gap:16px; }
+  .list { background:#fff; border:1px solid #e2e8f0; border-radius:12px; max-height:70vh; overflow:auto; }
+  .acct { padding:9px 12px; border-bottom:1px solid #f1f5f9; cursor:pointer; font-size:13px; }
+  .acct:hover { background:#f8fafc; }
+  .acct.sel { background:#eef4ff; }
+  .acct .a { font-weight:700; color:#0f172a; }
+  .acct .o { font-size:11.5px; color:#64748b; }
+  .acct .n { font-size:10.5px; color:#94a3b8; }
+  .preview { background:#fff; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden; min-height:70vh; display:flex; flex-direction:column; }
+  .preview .ptop { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid #eef2f7; }
+  .preview .ptop .t { font-weight:700; color:#0f172a; font-size:13.5px; }
+  iframe { width:100%; flex:1; border:0; background:#eef1f5; }
+  .empty { flex:1; display:flex; align-items:center; justify-content:center; color:#94a3b8; font-size:13.5px; }
+  .note { font-size:12px; color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; padding:11px 13px; margin-top:14px; line-height:1.6; }
+</style>
+
+<div class="wrap">
+  <a class="back" href="/">&larr; Back to trustEd</a>
+  <h1>🧾 Assessment Statements <span class="pill">Bedrock-rendered</span></h1>
+  <div class="sub">The homeowner assessment statement, rendered by Bedrock in place of the Vantaca statement. Pulls the owner, account number, current balance, and activity from the live ledger, and includes the detachable remittance coupon and lockbox scanline. The scanline shape is a starting point; the exact lockbox format gets finalized with NewFirst.</div>
+
+  <div class="bar">
+    <div><label>Community</label><select id="community" onchange="loadAccounts()"><option>Loading…</option></select></div>
+    <div style="flex:1; min-width:200px;"><label>Find a home or owner</label><input id="search" type="text" placeholder="Search address, owner, or account #" oninput="renderList()" style="width:100%;"></div>
+    <button class="btn ghost" onclick="printStatement()">🖨️ Print</button>
+    <button class="btn" onclick="openTab()">Open full page ↗</button>
+  </div>
+
+  <div class="layout">
+    <div class="list" id="list"><div class="acct"><span class="o">Pick a community to load accounts.</span></div></div>
+    <div class="preview">
+      <div class="ptop"><span class="t" id="pTitle">Statement preview</span><span class="o" id="pSub" style="font-size:11.5px;color:#94a3b8"></span></div>
+      <div class="empty" id="pEmpty">Select a home on the left to preview its statement.</div>
+      <iframe id="frame" style="display:none;"></iframe>
+    </div>
+  </div>
+
+  <div class="note"><strong>Next with NewFirst:</strong> the coupon's remittance address becomes NewFirst's lockbox PO box, and the scanline is mapped to the exact layout their scanner reads. Everything above the coupon (balance, activity, account) is already live from the ledger, so only the remittance details change.</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+let _supa=null,_accts=[],_sel=null;
+async function af(url,opts){ opts=opts||{}; const h=Object.assign({},opts.headers||{});
+  try{ if(_supa){ const s=(await _supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; } }catch(_){}
+  return fetch(url,Object.assign({},opts,{headers:h,credentials:'same-origin'})); }
+(async()=>{
+  try{ const cfg=await (await fetch('/api/auth/config')).json();
+    if(cfg&&cfg.enabled&&window.supabase){ _supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key); } }catch(_){}
+  try{ const r=await af('/api/communities'); const j=await r.json();
+    const list=(j.communities||j||[]).filter(Boolean).sort((a,b)=>String(a.name).localeCompare(b.name));
+    $('community').innerHTML='<option value="">Select a community…</option>'+list.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  }catch(e){ $('community').innerHTML='<option>Could not load communities</option>'; }
+})();
+async function loadAccounts(){
+  const c=$('community').value; _accts=[]; _sel=null; showEmpty();
+  if(!c){ $('list').innerHTML='<div class="acct"><span class="o">Pick a community.</span></div>'; return; }
+  $('list').innerHTML='<div class="acct"><span class="o">Loading accounts…</span></div>';
+  try{
+    const r=await af('/api/statements/community/'+encodeURIComponent(c)+'/accounts'); const j=await r.json();
+    _accts=(j.accounts||[]).sort((a,b)=>String(a.address).localeCompare(String(b.address),undefined,{numeric:true}));
+    renderList();
+  }catch(e){ $('list').innerHTML='<div class="acct"><span class="o">Could not load accounts.</span></div>'; }
+}
+function renderList(){
+  const q=($('search').value||'').toLowerCase().trim();
+  const rows=_accts.filter(a=>!q||((a.address||'')+' '+(a.owner||'')+' '+(a.account||'')).toLowerCase().includes(q)).slice(0,400);
+  if(!rows.length){ $('list').innerHTML='<div class="acct"><span class="o">No matches.</span></div>'; return; }
+  $('list').innerHTML=rows.map(a=>`<div class="acct${_sel===a.property_id?' sel':''}" onclick="pick('${a.property_id}')">
+    <div class="a">${esc(a.address)}</div><div class="o">${esc(a.owner)}</div><div class="n">Acct ${esc(a.account||'—')}</div></div>`).join('')
+    +(_accts.length>rows.length?`<div class="acct"><span class="n">${_accts.length-rows.length} more — refine your search</span></div>`:'');
+}
+function pick(pid){
+  _sel=pid; renderList();
+  const a=_accts.find(x=>x.property_id===pid)||{};
+  $('pTitle').textContent=a.address||'Statement'; $('pSub').textContent='Acct '+(a.account||'—');
+  $('pEmpty').style.display='none'; const f=$('frame'); f.style.display='block'; f.src='/api/statements/'+encodeURIComponent(pid);
+}
+function showEmpty(){ $('frame').style.display='none'; $('frame').src='about:blank'; $('pEmpty').style.display='flex'; $('pTitle').textContent='Statement preview'; $('pSub').textContent=''; }
+function printStatement(){ if(!_sel){ alert('Pick a home first.'); return; } const f=$('frame'); try{ f.contentWindow.focus(); f.contentWindow.print(); }catch(e){ window.open('/api/statements/'+encodeURIComponent(_sel),'_blank'); } }
+function openTab(){ if(!_sel){ alert('Pick a home first.'); return; } window.open('/api/statements/'+encodeURIComponent(_sel),'_blank'); }
+</script>

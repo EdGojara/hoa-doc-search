@@ -1157,6 +1157,9 @@ app.get('/admin/newfirst-integration', (req, res) => {
 app.get('/admin/lockbox', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'lockbox.html'));
 });
+app.get('/admin/statements', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'statements.html'));
+});
 app.get('/admin/statement-tracker', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'statement-tracker.html'));
 });
@@ -1258,6 +1261,7 @@ app.use('/api/welcome', welcomePacketsRouter);
 
 const checksRouter = require('./api/checks');
 app.use('/api/checks', checksRouter);
+app.use('/api/statements', require('./api/statements'));
 
 const assessmentProrationRouter = require('./api/assessment_proration');
 app.use('/api/assessment-proration', assessmentProrationRouter);
