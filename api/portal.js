@@ -1911,6 +1911,19 @@ router.post('/mimic/stop', async (req, res) => {
 //                   street_address, description, rules_url }]
 //   }
 // ============================================================================
+// Deploy-safety: security_details ships in migration 390. Naming it in the
+// select before the migration is applied would 403 the WHOLE public map query
+// (CLAUDE.md: PostgREST fails the whole query on an unknown column), and
+// select('*') would leak management_contract_notes on a public endpoint. Probe
+// once, cache, and include the column only when it exists.
+let _hasSecurityDetails = null;
+async function hasSecurityDetails() {
+  if (_hasSecurityDetails !== null) return _hasSecurityDetails;
+  const { error } = await supabase.from('amenities').select('security_details').limit(1);
+  _hasSecurityDetails = !error;
+  return _hasSecurityDetails;
+}
+
 router.get('/map/:slug', async (req, res) => {
   try {
     const { data: community, error: cErr } = await supabase
@@ -1956,7 +1969,7 @@ router.get('/map/:slug', async (req, res) => {
         is_rentable, rental_max_attendees, rental_min_lead_time_days, rental_max_lead_time_days,
         status, seasonal_open_month, seasonal_close_month,
         season_rule, season_open_md, season_close_md, offseason_status, offseason_hours_text,
-        management_vendor_name
+        management_vendor_name${(await hasSecurityDetails()) ? ', security_details' : ''}
       `)
       .eq('community_id', community.id)
       .in('status', ['active', 'seasonal_closed', 'maintenance'])

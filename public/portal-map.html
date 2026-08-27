@@ -436,12 +436,17 @@ const AMENITY_ICONS = {
   walking_trail:'🚶',
   gate:         '🚪',
   mailroom:     '📬',
+  baseball_field: '⚾',
+  soccer_field: '⚽',
+  security:     '🚓',
   other:        '📍',
 };
 const AMENITY_TYPE_LABELS = {
   clubhouse: 'Clubhouse', pool: 'Pool', park: 'Park', playground: 'Playground',
   sport_court: 'Sport court', fitness: 'Fitness center', dog_park: 'Dog park',
-  walking_trail: 'Walking trail', gate: 'Gate', mailroom: 'Mailroom', other: 'Amenity',
+  walking_trail: 'Walking trail', gate: 'Gate', mailroom: 'Mailroom',
+  baseball_field: 'Baseball field', soccer_field: 'Soccer field', security: 'Community Patrol',
+  other: 'Amenity',
 };
 
 function $(id) { return document.getElementById(id); }
@@ -772,6 +777,21 @@ function openDetail(amenity) {
         <h3>Season</h3>
         <p>Open ${escapeHtml(fmtSeasonMd(amenity.season_open_md))} &ndash; ${escapeHtml(fmtSeasonMd(amenity.season_close_md))}${amenity.offseason_status === 'closed' ? ', closed the rest of the year' : ''}.</p>
         ${seasonOpenNow(amenity.season_open_md, amenity.season_close_md) === false ? `<p style="margin-top:6px; font-size:12.5px; color: var(--ink-faint);">Currently closed for the season. Reopens ${escapeHtml(fmtSeasonMd(amenity.season_open_md))}.</p>` : ''}
+      </section>` : ''}
+
+      ${amenity.security_details ? `
+      <section>
+        <h3>Patrol</h3>
+        ${amenity.security_details.officer_name ? `<p><strong>Current deputy:</strong> ${escapeHtml(amenity.security_details.officer_name)}</p>` : ''}
+        ${amenity.security_details.patrol_hours ? `<p style="margin-top:6px;">${escapeHtml(amenity.security_details.patrol_hours)}</p>` : ''}
+      </section>
+      <section>
+        <h3>Who to call</h3>
+        <ul class="contact-list">
+          ${amenity.security_details.emergency ? `<li><span class="ic">🚨</span><strong>Emergency:</strong>&nbsp;<a href="tel:${escapeHtml(amenity.security_details.emergency)}">${escapeHtml(amenity.security_details.emergency)}</a></li>` : ''}
+          ${amenity.security_details.sheriff && amenity.security_details.sheriff.phone ? `<li><span class="ic">🚔</span>${escapeHtml(amenity.security_details.sheriff.name || 'Sheriff')}: <a href="tel:${escapeHtml(amenity.security_details.sheriff.phone)}">${escapeHtml(amenity.security_details.sheriff.phone)}</a></li>` : ''}
+          ${amenity.security_details.constable && amenity.security_details.constable.phone ? `<li><span class="ic">🚓</span>${escapeHtml(amenity.security_details.constable.name || 'Constable')}: <a href="tel:${escapeHtml(amenity.security_details.constable.phone)}">${escapeHtml(amenity.security_details.constable.phone)}</a></li>` : ''}
+        </ul>
       </section>` : ''}
 
       ${(amenity.contact_phone || amenity.contact_email || amenity.contact_name) ? `
