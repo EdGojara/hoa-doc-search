@@ -32,10 +32,13 @@ const CASES = [
   // [signals, expected, why]
   [{ senderEmail: 'martha@bedrocktx.com', isBoardMember: false, isOwner: false }, 'staff',     'internal domain is staff'],
   [{ senderEmail: 'ED@BEDROCKTX.COM',     isBoardMember: true,  isOwner: true  }, 'staff',     'staff wins even if also flagged board/owner (case-insensitive)'],
-  [{ senderEmail: 'pres@gmail.com',       isBoardMember: true,  isOwner: true  }, 'board',     'board member on a personal email is board, and outranks owner'],
-  [{ senderEmail: 'dave@gmail.com',       isBoardMember: false, isOwner: true  }, 'homeowner', 'resolved lot owner is a homeowner'],
-  [{ senderEmail: 'stranger@gmail.com',   isBoardMember: false, isOwner: false }, 'other',     'unresolved sender is other, never assumed into a trusted tier'],
-  [{ senderEmail: '',                     isBoardMember: false, isOwner: false }, 'other',     'no sender resolves to other'],
+  [{ senderEmail: 'pres@gmail.com',       isBoardMember: true,  isOwner: true,  isVendor: false }, 'board',     'board member on a personal email is board, and outranks owner'],
+  [{ senderEmail: 'dave@gmail.com',       isBoardMember: false, isOwner: true,  isVendor: false }, 'homeowner', 'resolved lot owner is a homeowner'],
+  [{ senderEmail: 'ops@greenlawn.com',    isBoardMember: false, isOwner: false, isVendor: true  }, 'vendor',    'known vendor is a vendor'],
+  [{ senderEmail: 'ownervendor@x.com',    isBoardMember: false, isOwner: true,  isVendor: true  }, 'homeowner', 'owner who is also a vendor stays homeowner (own data only, the safer default)'],
+  [{ senderEmail: 'boardvendor@x.com',    isBoardMember: true,  isOwner: false, isVendor: true  }, 'board',     'board member who is also a vendor is board'],
+  [{ senderEmail: 'stranger@gmail.com',   isBoardMember: false, isOwner: false, isVendor: false }, 'other',     'unresolved sender is other, never assumed into a trusted tier'],
+  [{ senderEmail: '',                     isBoardMember: false, isOwner: false, isVendor: false }, 'other',     'no sender resolves to other'],
 ];
 
 for (const [signals, expected, why] of CASES) {
@@ -48,8 +51,9 @@ for (const [signals, expected, why] of CASES) {
 // NEVER be classified into a tier that widens disclosure (board/staff).
 console.log('\nDisclosure safety — never over-trust an unproven sender');
 for (const s of [
-  { senderEmail: 'unknown@x.com', isBoardMember: false, isOwner: false },
-  { senderEmail: 'owner@x.com',   isBoardMember: false, isOwner: true  },
+  { senderEmail: 'unknown@x.com', isBoardMember: false, isOwner: false, isVendor: false },
+  { senderEmail: 'owner@x.com',   isBoardMember: false, isOwner: true,  isVendor: false },
+  { senderEmail: 'vendor@x.com',  isBoardMember: false, isOwner: false, isVendor: true  },
 ]) {
   check(`"${s.senderEmail}" is not board/staff`, () => {
     const a = pickAudience(s);
