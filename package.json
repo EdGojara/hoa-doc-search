@@ -30,6 +30,7 @@
     "test:claire-scope": "node tests/test_claire_scope.js",
     "test:directives": "node tests/test_staff_directives.js",
     "test:amanda-review": "node tests/test_amanda_review.js",
+    "test:amanda-guardrails": "node tests/test_amanda_guardrails.js",
     "test:tessa-request": "node tests/test_tessa_request.js",
     "test:presentation": "node tests/test_presentation_mode.js",
     "test:tessa-identity": "node tests/test_tessa_identity.js",
