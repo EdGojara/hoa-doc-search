@@ -69,6 +69,7 @@ const CHECKS = [
   'tests/test_amanda_guardrails.js',
   'tests/test_amanda_audience.js',
   'tests/test_insurance_compare.js',
+  'tests/test_insurance_renewal.js',
   'tests/test_team_roster.js',
   'tests/test_claire_scope.js',
   'scripts/check_owner_concentration.js',
