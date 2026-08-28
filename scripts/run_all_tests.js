@@ -68,6 +68,7 @@ const CHECKS = [
   'tests/test_claire_guardrails.js',
   'tests/test_amanda_guardrails.js',
   'tests/test_amanda_audience.js',
+  'tests/test_amanda_disposition.js',
   'tests/test_insurance_compare.js',
   'tests/test_insurance_renewal.js',
   'tests/test_team_roster.js',

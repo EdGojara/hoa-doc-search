@@ -32,6 +32,7 @@
     "test:amanda-review": "node tests/test_amanda_review.js",
     "test:amanda-guardrails": "node tests/test_amanda_guardrails.js",
     "test:amanda-audience": "node tests/test_amanda_audience.js",
+    "test:amanda-disposition": "node tests/test_amanda_disposition.js",
     "test:insurance-compare": "node tests/test_insurance_compare.js",
     "test:insurance-renewal": "node tests/test_insurance_renewal.js",
     "test:tessa-request": "node tests/test_tessa_request.js",
