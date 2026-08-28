@@ -106,6 +106,15 @@ check('headline finding is the coinsurance high-severity item; premium framed as
   assert.ok(/not a like-for-like/i.test(prem.detail), 'premium finding did not attribute the saving to reduced coverage');
 });
 
+check('rating-basis schedule entries are not counted as insured values', () => {
+  const { analyzeProperty } = require('../lib/insurance_compare');
+  const a = analyzeProperty(
+    { statement_of_values: [{ description: 'Building', value: '$455,216' }, { description: 'Pool', value: '$1,000 per pool (premium basis)' }, { description: 'Clubhouse', value: '$0.040 per square foot' }] },
+    { statement_of_values: [{ description: 'Building', value: '$221,321' }] },
+  );
+  assert.ok(Math.abs(a.curTotal - 455216) < 1, `curTotal ${a.curTotal} should exclude the per-pool and per-sqft basis lines`);
+});
+
 console.log('');
 if (failures) { console.log(`FAILED — ${failures} case(s)\n`); process.exit(1); }
 console.log('All insurance comparator cases passed.\n');
