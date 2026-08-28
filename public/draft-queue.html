@@ -26,6 +26,8 @@
   .list .d .m{font-size:11.5px;color:var(--muted);margin-top:3px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
   .pill{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.02em;text-transform:uppercase;}
   .pill.draft{background:var(--amberbg);color:var(--amber);} .pill.sent{background:var(--goodbg);color:var(--good);} .pill.discarded{background:#eef0f3;color:var(--muted);}
+  .pill.ok{background:var(--goodbg);color:var(--good);} .pill.warn{background:var(--amberbg);color:var(--amber);}
+  .grp{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:14px 6px 6px;}
   .pill.persona{background:#eef2f7;color:var(--navy);text-transform:none;}
   .view{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px 28px;box-shadow:var(--shadow);min-height:320px;}
   .view .field{margin-bottom:12px;}
@@ -123,13 +125,27 @@ async function loadList(){
     else if(!drafts.length){ $('view').innerHTML='<div class="empty">Nothing '+(tab==='draft'?'awaiting review':tab)+'.</div>'; }
   }catch(e){ $('list').innerHTML='<div class="empty" style="color:#9B2C2C;">'+esc(e.message)+'</div>'; }
 }
+// Legacy drafts (pre-migration 395) have no disposition — treat as needs action,
+// the conservative default. The exception split only applies to the review tab.
+function dispOf(d){ return d.disposition==='auto_ok' ? 'auto_ok' : 'needs_review'; }
+function dispBadge(d){
+  if(d.status!=='draft') return '';
+  return dispOf(d)==='auto_ok'
+    ? `<span class="pill ok" title="${esc(d.disposition_reason||'routine, grounded, in-bounds')}">✓ handled</span>`
+    : `<span class="pill warn" title="${esc(d.disposition_reason||'a human should review this')}">⚠ needs action</span>`;
+}
+function rowHtml(d){ return `<button class="d ${current&&current.id===d.id?'sel':''}" onclick="openDraft('${d.id}')">
+    <div class="t">${esc(d.subject||'(no subject)')}</div>
+    <div class="m"><span class="pill ${d.status}">${d.status}</span>${d.persona?`<span class="pill persona">${esc(d.persona)}</span>`:''}${dispBadge(d)} ${esc(d.to_name||d.to_email||'')} · ${fmtDate(d.created_at)}</div>
+    ${d.community_name?`<div class="m">${esc(d.community_name)}</div>`:''}
+  </button>`; }
 function renderList(){
   if(!drafts.length){ $('list').innerHTML='<div class="empty" style="padding:24px;">No drafts.</div>'; return; }
-  $('list').innerHTML = drafts.map(d=>`<button class="d ${current&&current.id===d.id?'sel':''}" onclick="openDraft('${d.id}')">
-    <div class="t">${esc(d.subject||'(no subject)')}</div>
-    <div class="m"><span class="pill ${d.status}">${d.status}</span>${d.persona?`<span class="pill persona">${esc(d.persona)}</span>`:''} ${esc(d.to_name||d.to_email||'')} · ${fmtDate(d.created_at)}</div>
-    ${d.community_name?`<div class="m">${esc(d.community_name)}</div>`:''}
-  </button>`).join('');
+  if(tab!=='draft'){ $('list').innerHTML = drafts.map(rowHtml).join(''); return; }
+  const need = drafts.filter(d=>dispOf(d)==='needs_review');
+  const handled = drafts.filter(d=>dispOf(d)==='auto_ok');
+  const section = (title, arr) => `<div class="grp">${title} · ${arr.length}</div>` + (arr.length?arr.map(rowHtml).join(''):'<div class="empty" style="padding:8px 14px;">None.</div>');
+  $('list').innerHTML = section('Needs action', need) + section('Handled', handled);
 }
 
 async function openDraft(id){
@@ -147,6 +163,7 @@ function renderView(){
   const ctxBits = [];
   if(d.related_type) ctxBits.push(`Re: <b>${esc(d.related_type)}</b>${d.related_id?' '+esc(String(d.related_id).slice(0,8)):''}`);
   if(d.draft_kind) ctxBits.push(esc(d.draft_kind));
+  if(d.status==='draft' && d.disposition) ctxBits.push((d.disposition==='auto_ok'?'✓ handled':'⚠ needs action')+(d.disposition_reason?': '+esc(d.disposition_reason):''));
   if(d.draft_reason) ctxBits.push(esc(d.draft_reason));
   $('view').innerHTML = `
     ${d.status==='sent'?`<div class="sentnote">Sent ${fmtDate(d.sent_at)}${d.sent_from?' from '+esc(d.sent_from):''}.</div>`:''}
