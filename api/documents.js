@@ -2431,7 +2431,22 @@ Return ONLY the JSON, no preamble.`;
       const match = (comms || []).find(c => c.name.toLowerCase() === parsedFilters.community_name.toLowerCase());
       if (match) q = q.eq('community_id', match.id);
     }
-    if (parsedFilters.category) q = q.eq('category', parsedFilters.category);
+    // Insurance documents are split across TWO categories: insurance_dec_page
+    // (dec pages, ACORD certs, invoices) and insurance_policy (full policy-of-
+    // record forms from the insurance-program capability). The interpreter can
+    // only pick ONE category, so a premium/coverage question that resolves to
+    // dec_page silently hides the current signed policy — the exact miss that
+    // returned a stale 2021-22 dec page for a live 2025-26 premium question
+    // (Ed 2026-08-28). Same family as the alias-aware category-grouping scar in
+    // CLAUDE.md: dedup/filter on the canonical GROUP, never a single raw value.
+    const INSURANCE_CATEGORY_GROUP = ['insurance_dec_page', 'insurance_policy'];
+    if (parsedFilters.category) {
+      if (INSURANCE_CATEGORY_GROUP.includes(parsedFilters.category)) {
+        q = q.in('category', INSURANCE_CATEGORY_GROUP);
+      } else {
+        q = q.eq('category', parsedFilters.category);
+      }
+    }
     if (parsedFilters.period_label) q = q.ilike('period_label', `%${parsedFilters.period_label}%`);
     if (parsedFilters.approval_status) q = q.eq('approval_status', parsedFilters.approval_status);
 
