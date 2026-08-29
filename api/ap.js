@@ -876,13 +876,26 @@ router.get('/ed-queue', async (req, res) => {
     try {
       const ids = [...new Set(waiting.map((w) => w.community_id).filter(Boolean))];
       if (ids.length) {
-        const { data: tb, error: tbErr } = await supabase.from('v_trial_balance')
-          .select('community_id, total_debits_cents, total_credits_cents')
-          .eq('account_number', '1000').in('community_id', ids);
-        if (!tbErr) {
+        // Available cash = operating PLUS the ICS operating sweep (Ed 2026-08-29).
+        // Match by name (operating + cash) so it survives the 4-digit vs 5-digit
+        // account numbering across migrated communities, and excludes reserve
+        // cash, ICS reserve, money market, and expense accounts.
+        const { data: coa } = await supabase.from('chart_of_accounts')
+          .select('community_id, account_number')
+          .in('community_id', ids).ilike('account_name', '%operating%').ilike('account_name', '%cash%');
+        const opNums = {}; // community_id -> Set(account_number)
+        for (const a of (coa || [])) { (opNums[a.community_id] = opNums[a.community_id] || new Set()).add(String(a.account_number)); }
+        const allNums = [...new Set((coa || []).map((a) => String(a.account_number)))];
+        if (allNums.length) {
+          const { data: tb } = await supabase.from('v_trial_balance')
+            .select('community_id, account_number, total_debits_cents, total_credits_cents')
+            .in('community_id', ids).in('account_number', allNums);
           for (const r of (tb || [])) {
+            const set = opNums[r.community_id];
             const b = byCommunity[r.community_id];
-            if (b) b.operating_cash_cents = (b.operating_cash_cents || 0) + (Number(r.total_debits_cents || 0) - Number(r.total_credits_cents || 0));
+            if (b && set && set.has(String(r.account_number))) {
+              b.operating_cash_cents = (b.operating_cash_cents || 0) + (Number(r.total_debits_cents || 0) - Number(r.total_credits_cents || 0));
+            }
           }
         }
       }
