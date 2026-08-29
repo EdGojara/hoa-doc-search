@@ -23,7 +23,7 @@ function check(name, fn) {
 
 console.log('\nTeam operator configs\n');
 
-const expected = ['claire', 'annie', 'miranda', 'emma'];
+const expected = ['claire', 'annie', 'miranda', 'emma', 'kat'];
 check(`configs present: ${expected.join(', ')}`, () => {
   for (const p of expected) assert.ok(CONFIGS[p], `missing config for ${p}`);
 });
@@ -55,6 +55,7 @@ const boundary = {
   annie: /never approve or deny|committee/i,
   miranda: /never waive|decide a violation|chapter 209|deadline/i,
   emma: /never approve|promise a payment|commit funds/i,
+  kat: /never post|move money|report.*reconcile.*recommend/i,
 };
 for (const [persona, re] of Object.entries(boundary)) {
   check(`${persona}: prompt states its reserved boundary`, () => {
