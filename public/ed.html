@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ed · Command Center</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root{ --navy:#0B1D34; --gold:#D4AF37; --line:#e5e7eb; --muted:#6b7a8d; --card:#fff;
+         --bg:#f3f4f6; --good:#166534; --goodbg:#dcfce7; --amber:#92400e; --amberbg:#fef3c7; --bad:#9B2C2C; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);font-family:-apple-system,Segoe UI,Arial,sans-serif;color:#1a2230;}
+  .top{background:var(--navy);color:#fff;padding:18px 26px;display:flex;align-items:baseline;gap:14px;border-bottom:3px solid var(--gold);}
+  .top h1{margin:0;font-size:20px;letter-spacing:.5px;}
+  .top .sub{color:#c3ccd8;font-size:13px;}
+  .wrap{max-width:1120px;margin:22px auto;padding:0 20px;}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:18px;overflow:hidden;}
+  .tile .head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);}
+  .tile .head h2{margin:0;font-size:16px;}
+  .tile .head .meta{font-size:13px;color:var(--muted);}
+  .tile .body{padding:8px 0;}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;padding:8px 14px;border-bottom:1px solid var(--line);}
+  td{padding:11px 14px;border-bottom:1px solid #f1f3f6;vertical-align:middle;}
+  tr:last-child td{border-bottom:0;}
+  .amt{font-variant-numeric:tabular-nums;font-weight:700;text-align:right;}
+  .due-late{color:var(--bad);font-weight:600;}
+  .due-ok{color:var(--muted);}
+  .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;}
+  .pill.mgr{background:var(--goodbg);color:var(--good);}
+  .btn{border:0;border-radius:8px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;}
+  .btn.release{background:var(--good);color:#fff;}
+  .btn.release:disabled{opacity:.5;cursor:default;}
+  .btn.ghost{background:#faf9f5;border:1px solid var(--line);color:var(--navy);}
+  .empty{padding:26px;text-align:center;color:var(--muted);}
+  .soon{opacity:.62;}
+  .soon .head h2{color:var(--muted);}
+  .totalbar{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:#faf9f5;border-top:1px solid var(--line);}
+  .totalbar .t{font-weight:800;font-size:15px;}
+  #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;}
+  #toast.show{opacity:1;} #toast.err{background:var(--bad);}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  @media(max-width:720px){.grid2{grid-template-columns:1fr;} table{font-size:12.5px;}}
+</style>
+</head>
+<body>
+  <div class="top"><h1>Ed · Command Center</h1><span class="sub">What needs you, across the business.</span></div>
+  <div class="wrap">
+
+    <div class="tile" id="invTile">
+      <div class="head">
+        <h2>💵 Invoices awaiting your approval</h2>
+        <span class="meta" id="invMeta">Loading…</span>
+      </div>
+      <div class="body" id="invBody"><div class="empty">Loading your queue…</div></div>
+    </div>
+
+    <div class="grid2">
+      <div class="tile soon"><div class="head"><h2>➕ Add a shortcut</h2></div>
+        <div class="body"><div class="empty">Tell Claude what you want on this screen — an approval queue, a cash-to-release view, exceptions the team flagged, a KPI. It gets added here as a tile.</div></div></div>
+      <div class="tile soon"><div class="head"><h2>📌 Your pending list</h2></div>
+        <div class="body"><div class="empty">Coming next: everything across the platform that is gated on you, in one to-do.</div></div></div>
+    </div>
+
+  </div>
+  <div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const money = (c) => '$' + (Number(c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+let toastT; function toast(m,err){ const t=$('toast'); t.textContent=m; t.classList.toggle('err',!!err); t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), err?4200:2200); }
+function daysLate(due){ if(!due) return 0; const d=Math.floor((Date.now()-new Date(due+'T00:00:00').getTime())/86400000); return d; }
+function fmtDue(due){ if(!due) return '—'; const d=daysLate(due); const s=new Date(due+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  return d>0 ? `<span class="due-late">${s} (${d}d late)</span>` : `<span class="due-ok">${s}</span>`; }
+
+let rows = [];
+async function load(){
+  try{
+    const r = await fetch('/api/ap/ed-queue', { credentials:'same-origin' });
+    if(r.status===403){ $('invBody').innerHTML='<div class="empty">This is the owner\'s workspace. Sign in as the owner to view it.</div>'; $('invMeta').textContent=''; return; }
+    if(r.status===401){ $('invBody').innerHTML='<div class="empty">Please sign in to continue.</div>'; $('invMeta').textContent=''; return; }
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error||'load failed');
+    rows = j.invoices||[];
+    render(j);
+  }catch(e){ $('invBody').innerHTML='<div class="empty" style="color:#9B2C2C;">'+e.message+'</div>'; }
+}
+function render(j){
+  $('invMeta').textContent = j.count ? `${j.count} pending · ${money(j.total_cents)}` : '';
+  if(!rows.length){ $('invBody').innerHTML='<div class="empty">✅ Nothing waiting on you. Every manager-approved bill has been released.</div>'; return; }
+  const body = `
+    <table>
+      <thead><tr><th>Community</th><th>Vendor</th><th>Invoice #</th><th>Due</th><th style="text-align:right;">Amount</th><th>Manager</th><th></th></tr></thead>
+      <tbody>${rows.map(rowHtml).join('')}</tbody>
+    </table>
+    <div class="totalbar">
+      <span class="t">${rows.length} bills · ${money(rows.reduce((a,i)=>a+i.total_cents,0))}</span>
+      <button class="btn release" onclick="releaseAll()">Release all for payment</button>
+    </div>`;
+  $('invBody').innerHTML = body;
+}
+function rowHtml(i){
+  return `<tr id="row-${i.id}">
+    <td><strong>${esc(i.community||'—')}</strong></td>
+    <td>${esc(i.vendor||'—')}</td>
+    <td style="color:#6b7a8d;">${esc(i.invoice_number||'—')}</td>
+    <td>${fmtDue(i.due_date)}</td>
+    <td class="amt">${money(i.total_cents)}</td>
+    <td><span class="pill mgr">✓ ${esc((i.manager||'manager'))}</span></td>
+    <td style="text-align:right;"><button class="btn release" onclick="release('${i.id}', this)">Release</button></td>
+  </tr>`;
+}
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+
+async function release(id, btn){
+  if(btn){ btn.disabled=true; btn.textContent='Releasing…'; }
+  try{
+    const r = await fetch('/api/ap/invoices/'+id+'/approve', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:'{}' });
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error||j.detail||'release failed');
+    rows = rows.filter(x=>x.id!==id);
+    const el = $('row-'+id); if(el) el.remove();
+    render({ count: rows.length, total_cents: rows.reduce((a,i)=>a+i.total_cents,0) });
+    toast('Released for payment.');
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='Release'; } toast(e.message,true); }
+}
+async function releaseAll(){
+  if(!rows.length) return;
+  if(!confirm(`Release all ${rows.length} bills for payment (${money(rows.reduce((a,i)=>a+i.total_cents,0))})? Checks and ACH go out on the next run.`)) return;
+  const ids = rows.map(i=>i.id);
+  let ok=0, fail=0;
+  for(const id of ids){ try{ const r=await fetch('/api/ap/invoices/'+id+'/approve',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}); if(r.ok){ ok++; rows=rows.filter(x=>x.id!==id); const el=$('row-'+id); if(el) el.remove(); } else { fail++; } }catch(_){ fail++; } }
+  render({ count: rows.length, total_cents: rows.reduce((a,i)=>a+i.total_cents,0) });
+  toast(`Released ${ok}${fail?`, ${fail} failed`:''}.`, !!fail);
+}
+load();
+</script>
+</body>
+</html>

@@ -807,6 +807,46 @@ router.get('/invoices', async (req, res) => {
   }
 });
 
+// GET /ed-queue — the owner's approval to-do: every bill a manager has already
+// approved that is now waiting on Ed to release for payment, across ALL
+// communities, on one screen. Owner-only. (Ed 2026-08-29.)
+router.get('/ed-queue', async (req, res) => {
+  const { requireOwner } = require('./_require_admin');
+  const owner = await requireOwner(req, res);
+  if (!owner) return;
+  try {
+    const { data: invs, error } = await supabase.from('ap_invoices')
+      .select('id, community_id, vendor_id, vendor_invoice_number, invoice_date, due_date, total_cents, posting_journal_entry_id, status, vendors(name), communities(name), ap_invoice_approvals(action, user_name, created_at)')
+      .eq('status', 'awaiting_approval')
+      .order('due_date', { ascending: true, nullsFirst: false })
+      .limit(500);
+    if (error) throw error;
+    const waiting = [];
+    for (const inv of (invs || [])) {
+      const appr = inv.ap_invoice_approvals || [];
+      const mgr = appr.find((a) => a.action === 'approved');
+      const released = appr.find((a) => a.action === 'released_for_payment');
+      if (!mgr || released) continue; // only manager-approved, not yet released
+      waiting.push({
+        id: inv.id,
+        community: (inv.communities && inv.communities.name) || null,
+        vendor: (inv.vendors && inv.vendors.name) || null,
+        invoice_number: inv.vendor_invoice_number || null,
+        invoice_date: inv.invoice_date || null,
+        due_date: inv.due_date || null,
+        total_cents: Number(inv.total_cents || 0),
+        manager: mgr.user_name || null,
+        manager_at: mgr.created_at || null,
+      });
+    }
+    const total = waiting.reduce((a, i) => a + i.total_cents, 0);
+    res.json({ count: waiting.length, total_cents: total, invoices: waiting });
+  } catch (err) {
+    console.error('[ap] ed-queue failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // GET /manager-queue — "what is waiting on ME, across every community."
 //
 // Ed: "where is the manager review button". It was on staff screens, but the AP
