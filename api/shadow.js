@@ -12,7 +12,7 @@
 // ============================================================================
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const { runShadowForEmail } = require('../lib/team/shadow');
+const { runShadowForEmail, redraftWithFeedback, distillGuidance } = require('../lib/team/shadow');
 const { fetchAll } = require('../lib/db/fetch_all');
 const { requireAdmin } = require('./_require_admin');
 
@@ -233,6 +233,79 @@ router.post('/rate', async (req, res) => {
     res.json({ ok: true, id, rating });
   } catch (err) {
     console.error('[shadow] rate failed:', err.message);
+    res.status(500).json({ error: safe(err) });
+  }
+});
+
+// Regenerate a draft applying Ed's correction — "type the principle, get it
+// rewritten your way." Owner-gated (it's part of grading). Returns the revised
+// body for Ed to tweak and save as the rewrite.
+router.post('/redraft', async (req, res) => {
+  try {
+    const ed = await requireAdmin(req, res); if (!ed) return;
+    const { id, note } = req.body || {};
+    if (!id || !note || !String(note).trim()) return res.status(400).json({ error: 'id_and_note_required' });
+    const cur = await supabase.from('shadow_drafts').select('id, persona, source_email_id, body_text').eq('id', id).limit(1);
+    if (cur.error) throw cur.error;
+    if (!cur.data || !cur.data.length) return res.status(404).json({ error: 'not_found' });
+    const revised = await redraftWithFeedback(supabase, cur.data[0], String(note));
+    res.json({ ok: true, body: revised });
+  } catch (err) {
+    console.error('[shadow] redraft failed:', err.message);
+    res.status(500).json({ error: safe(err) });
+  }
+});
+
+// Distill a lane's graded corrections into proposed principles (in Ed's voice).
+// Owner-gated. Returns the proposal for Ed to review — NOT applied until approved.
+router.post('/distill', async (req, res) => {
+  try {
+    const ed = await requireAdmin(req, res); if (!ed) return;
+    const persona = (req.body && req.body.persona) || '';
+    if (!persona) return res.status(400).json({ error: 'persona_required' });
+    const out = await distillGuidance(supabase, persona);
+    res.json({ ok: true, persona, ...out });
+  } catch (err) {
+    console.error('[shadow] distill failed:', err.message);
+    res.status(500).json({ error: safe(err) });
+  }
+});
+
+// The approved learned guidance for a lane (what's injected into its drafts).
+router.get('/guidance', async (req, res) => {
+  try {
+    const persona = req.query.persona;
+    let q = supabase.from('persona_learned_guidance').select('persona, guidance, source_count, updated_by, updated_at');
+    if (persona) q = q.eq('persona', persona);
+    const { data, error } = await q;
+    if (error) {
+      if (_isMissingTable(error)) return res.json({ ok: true, notReady: true, guidance: [] });
+      throw error;
+    }
+    res.json({ ok: true, guidance: data || [] });
+  } catch (err) {
+    console.error('[shadow] guidance read failed:', err.message);
+    res.status(500).json({ error: safe(err) });
+  }
+});
+
+// Approve (save) a lane's learned guidance — Ed edits the proposal, then commits
+// it. Owner-gated: only Ed's approval encodes the bar. Upsert one row per lane.
+router.post('/guidance', async (req, res) => {
+  try {
+    const ed = await requireAdmin(req, res); if (!ed) return;
+    const { persona, guidance, source_count } = req.body || {};
+    if (!persona || typeof guidance !== 'string') return res.status(400).json({ error: 'persona_and_guidance_required' });
+    const row = {
+      persona, guidance: guidance.trim(), status: 'approved',
+      source_count: parseInt(source_count, 10) || 0,
+      updated_by: ed.full_name || ed.email || 'owner', updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('persona_learned_guidance').upsert(row, { onConflict: 'persona' });
+    if (error) throw error;
+    res.json({ ok: true, persona });
+  } catch (err) {
+    console.error('[shadow] guidance save failed:', err.message);
     res.status(500).json({ error: safe(err) });
   }
 });

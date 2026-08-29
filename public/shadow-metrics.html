@@ -66,6 +66,12 @@
   .progbar{flex:1;height:10px;background:#eee;border-radius:6px;overflow:hidden;}
   .progbar > div{height:100%;width:0;background:var(--good);transition:width .3s;}
   .progtxt{font-size:12px;color:var(--muted);white-space:nowrap;min-width:120px;}
+  .samplebtn{margin-top:10px;font-size:12px;color:var(--navy);background:#eef2f7;border:0;border-radius:7px;padding:6px 10px;cursor:pointer;font-weight:600;}
+  .modal{position:fixed;inset:0;background:rgba(11,29,52,.45);display:none;align-items:center;justify-content:center;padding:20px;z-index:70;}
+  .modal.on{display:flex;}
+  .sheet{background:var(--card);border-radius:14px;max-width:720px;width:100%;max-height:88vh;overflow:auto;padding:22px 24px;box-shadow:var(--shadow);}
+  .sheet h3{margin:0 0 8px;font-family:var(--serif);color:var(--navy);}
+  .x{float:right;cursor:pointer;color:var(--muted);font-size:22px;border:0;background:none;line-height:1;}
 </style>
 </head>
 <body>
@@ -95,6 +101,7 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="modal" id="gmodal"><div class="sheet" id="gsheet"></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -156,7 +163,11 @@ function gcard(it){
     <div class="fix" id="fix-${it.id}">
       <label>What's off, or how you'd handle it</label>
       <textarea class="note" id="note-${it.id}" placeholder="Your reasoning. This is the DNA the persona learns."></textarea>
-      <label>Write it your way (optional, prefilled with the AI draft)</label>
+      <div class="actions">
+        <button class="btn ghost" id="rd-${it.id}" onclick="redraft('${it.id}')">↻ Apply my feedback</button>
+        <span class="muted" style="font-size:12px;">rewrites the draft your way, then edit &amp; save</span>
+      </div>
+      <label>The reply that will be saved (edit freely)</label>
       <textarea class="rw" id="rw-${it.id}">${esc(it.body_text||'')}</textarea>
       <div class="actions">
         <button class="btn warn" onclick="grade('${it.id}','needs_work')">Save grade</button>
@@ -167,6 +178,20 @@ function gcard(it){
 }
 
 function openFix(id){ $('fix-'+id).classList.add('on'); }
+
+async function redraft(id){
+  const note = ($('note-'+id)||{}).value || '';
+  if(!note.trim()){ toast('Write what to change first, then apply.'); return; }
+  const b = $('rd-'+id); const orig=b.textContent; b.disabled=true; b.textContent='Rewriting…';
+  try{
+    const r = await af('/api/shadow/redraft',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id, note }) });
+    const d = await r.json();
+    if(r.status===403){ toast('Sign in as owner to use this.'); return; }
+    if(!r.ok) throw new Error(d.error||r.status);
+    if(d.body){ $('rw-'+id).value = d.body; toast('Rewritten your way. Edit if needed, then Save grade.'); }
+  }catch(e){ toast('Rewrite failed: '+e.message); }
+  finally{ b.disabled=false; b.textContent=orig; }
+}
 
 async function grade(id, rating){
   const body = { id, rating };
@@ -212,7 +237,56 @@ function laneCard(L){
       <div class="metric"><span>Reserved gate fired</span><b>${L.reserved} of ${L.total}</b></div>
     </div>
     <div style="margin-top:8px;">${reasons}</div>
+    <button class="samplebtn" onclick="openGuidance('${esc(L.persona)}')">Teach this lane ↻</button>
   </div>`;
+}
+
+// ---- learned guidance (the encode-Ed loop) --------------------------------
+async function openGuidance(persona){
+  $('gsheet').innerHTML = `<button class="x" onclick="closeG()">×</button>`
+    + `<h3 style="text-transform:capitalize;">Teach ${esc(persona)} — learned from your grades</h3>`
+    + `<p class="muted" style="font-size:12.5px;margin-top:0;">Distill your "needs work" corrections into principles in your voice, edit them, and approve. Approved principles get injected into every future draft in this lane.</p>`
+    + `<div id="gbody"><div class="empty">Loading current guidance…</div></div>`;
+  $('gmodal').classList.add('on');
+  try{
+    const r = await af('/api/shadow/guidance?persona='+encodeURIComponent(persona)); const d = await r.json();
+    const cur = (d.guidance && d.guidance[0]) ? d.guidance[0] : null;
+    $('gbody').innerHTML = `
+      <label style="display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:6px 0 4px;">Approved principles for this lane</label>
+      <textarea id="gtext" style="width:100%;min-height:200px;line-height:1.5;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font:inherit;">${esc(cur?cur.guidance:'')}</textarea>
+      <div class="muted" style="font-size:11.5px;margin-top:4px;">${cur?('Last updated '+new Date(cur.updated_at).toLocaleString()+' · from '+(cur.source_count||0)+' corrections'):'Nothing approved yet for this lane.'}</div>
+      <div class="actions" style="margin-top:12px;">
+        <button class="btn" id="distillBtn" onclick="distill('${esc(persona)}')">↻ Distill from my grades</button>
+        <button class="btn good" onclick="approveGuidance('${esc(persona)}')">Approve &amp; apply</button>
+        <span class="muted" id="gInfo" style="font-size:12px;"></span>
+      </div>`;
+  }catch(e){ $('gbody').innerHTML = '<div class="empty">Could not load: '+esc(e.message)+'</div>'; }
+}
+function closeG(){ $('gmodal').classList.remove('on'); }
+let LAST_SOURCE_COUNT = 0;
+async function distill(persona){
+  const b=$('distillBtn'); const o=b.textContent; b.disabled=true; b.textContent='Distilling…';
+  try{
+    const r = await af('/api/shadow/distill',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ persona }) });
+    const d = await r.json();
+    if(r.status===403){ toast('Sign in as owner.'); return; }
+    if(!r.ok) throw new Error(d.error||r.status);
+    if(!d.sourceCount){ $('gInfo').textContent = d.note||'No corrections graded yet for this lane.'; return; }
+    $('gtext').value = d.proposed || '';
+    LAST_SOURCE_COUNT = d.sourceCount;
+    $('gInfo').textContent = `Proposed from ${d.sourceCount} correction(s). Edit, then Approve.`;
+  }catch(e){ toast('Distill failed: '+e.message); }
+  finally{ b.disabled=false; b.textContent=o; }
+}
+async function approveGuidance(persona){
+  try{
+    const r = await af('/api/shadow/guidance',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ persona, guidance: $('gtext').value, source_count: LAST_SOURCE_COUNT }) });
+    const d = await r.json();
+    if(r.status===403){ toast('Sign in as owner to approve.'); return; }
+    if(!r.ok) throw new Error(d.error||r.status);
+    toast(`Approved. ${persona} will follow this on every future draft.`);
+    closeG();
+  }catch(e){ toast('Approve failed: '+e.message); }
 }
 
 // Batched run with a live progress bar: ask how many are pending, then process
@@ -257,6 +331,7 @@ async function runPass(){
 }
 
 $('runBtn').addEventListener('click', runPass);
+$('gmodal').addEventListener('click', (e)=>{ if(e.target===$('gmodal')) closeG(); });
 boot();
 </script>
 </body>
