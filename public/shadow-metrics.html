@@ -9,46 +9,57 @@
   :root{ --navy:#0B1D34; --gold:#C99A2E; --ink:#141b26; --muted:#5c6b7e; --line:#e4e2db; --bg:#f6f4ee; --card:#fffefb; --good:#2f6f4f; --goodbg:#e6f0ea; --amber:#B7791F; --amberbg:#fbf1dd; --red:#9B2C2C; --redbg:#f7e8e6; --shadow:0 1px 2px rgba(11,29,52,.05),0 8px 24px rgba(11,29,52,.06); --serif:Georgia,'Times New Roman',serif; }
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
-  .wrap{max-width:1140px;margin:0 auto;padding:26px 22px 60px;}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 22px 60px;}
   .head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:2px solid var(--gold);padding-bottom:12px;margin-bottom:8px;}
   .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:700;}
   h1{font-family:var(--serif);font-weight:600;color:var(--navy);font-size:26px;margin:4px 0 0;}
+  h2{font-family:var(--serif);font-weight:600;color:var(--navy);font-size:19px;margin:26px 0 10px;}
   a.back{font-size:12.5px;color:var(--muted);text-decoration:none;}
-  .sub{font-size:12.5px;color:var(--muted);margin:0 0 16px;max-width:820px;}
-  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:18px;box-shadow:var(--shadow);}
-  .bar select,.bar input{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;background:#fff;}
+  .sub{font-size:12.5px;color:var(--muted);margin:0 0 16px;max-width:860px;}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:14px;box-shadow:var(--shadow);}
+  .bar select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;background:#fff;}
   .btn{border:0;border-radius:9px;padding:9px 16px;font:inherit;font-weight:700;cursor:pointer;background:var(--navy);color:#fff;}
+  .btn.gold{background:var(--gold);color:#1a1204;} .btn.ghost{background:#fff;border:1px solid var(--line);color:var(--navy);}
+  .btn.good{background:var(--good);color:#fff;} .btn.warn{background:var(--amber);color:#fff;}
   .btn:disabled{opacity:.5;cursor:not-allowed;}
   .muted{color:var(--muted);}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;}
-  .lane{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow);}
-  .lane .top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;}
-  .lane .name{font-family:var(--serif);font-size:18px;color:var(--navy);text-transform:capitalize;}
-  .lane .vol{font-size:12px;color:var(--muted);}
-  .metric{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px dashed var(--line);}
-  .metric b{color:var(--navy);}
-  .track{height:8px;border-radius:5px;background:#eee;overflow:hidden;margin:8px 0 4px;display:flex;}
-  .track .ok{background:var(--good);} .track .rev{background:var(--amber);}
-  .legend{font-size:11px;color:var(--muted);display:flex;gap:12px;margin-bottom:8px;}
-  .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle;}
-  .reasons{margin-top:10px;}
-  .reason{font-size:11.5px;background:var(--amberbg);color:var(--amber);border-radius:6px;padding:2px 8px;display:inline-block;margin:2px 4px 2px 0;}
-  .reason.none{background:var(--goodbg);color:var(--good);}
-  .samplebtn{margin-top:10px;font-size:12px;color:var(--navy);background:#eef2f7;border:0;border-radius:7px;padding:6px 10px;cursor:pointer;font-weight:600;}
-  .empty{color:var(--muted);text-align:center;padding:50px 10px;}
-  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:9px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;}
-  .toast.on{opacity:1;}
-  .modal{position:fixed;inset:0;background:rgba(11,29,52,.45);display:none;align-items:center;justify-content:center;padding:20px;z-index:50;}
-  .modal.on{display:flex;}
-  .sheet{background:var(--card);border-radius:14px;max-width:760px;width:100%;max-height:86vh;overflow:auto;padding:22px 24px;box-shadow:var(--shadow);}
-  .sheet h3{margin:0 0 12px;font-family:var(--serif);color:var(--navy);}
-  .s{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;}
-  .s .meta{font-size:11.5px;color:var(--muted);margin-bottom:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
-  .pill{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;text-transform:uppercase;}
+  /* grading queue */
+  .gcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:16px;box-shadow:var(--shadow);}
+  .gtop{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+  .gtop .subj{font-weight:700;color:var(--navy);}
+  .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
+  @media (max-width:900px){ .cols{grid-template-columns:1fr;} }
+  .col{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff;}
+  .col h4{margin:0 0 6px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;}
+  .col.ai{background:#fbfaf6;border-color:#e7e2d2;}
+  .col.staff{background:#f5f6f8;}
+  .body{white-space:pre-wrap;font-size:13px;line-height:1.5;max-height:280px;overflow:auto;}
+  .signals{margin-top:8px;display:flex;gap:5px;flex-wrap:wrap;}
+  .pill{font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;text-transform:uppercase;}
   .pill.ok{background:var(--goodbg);color:var(--good);} .pill.rev{background:var(--amberbg);color:var(--amber);}
   .pill.res{background:var(--redbg);color:var(--red);} .pill.aud{background:#eef2f7;color:var(--navy);text-transform:none;}
-  .s .body{white-space:pre-wrap;font-size:13px;line-height:1.5;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:6px;}
-  .x{float:right;cursor:pointer;color:var(--muted);font-size:20px;border:0;background:none;}
+  .pill.persona{background:#eef2f7;color:var(--navy);text-transform:capitalize;}
+  .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;}
+  .fix{margin-top:12px;display:none;}
+  .fix.on{display:block;}
+  .fix label{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:8px 0 4px;}
+  textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit;background:#fff;color:var(--ink);}
+  .fix textarea.note{min-height:60px;} .fix textarea.rw{min-height:150px;line-height:1.5;}
+  /* scoreboard */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
+  .lane{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px 17px;box-shadow:var(--shadow);}
+  .lane .top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;}
+  .lane .name{font-family:var(--serif);font-size:17px;color:var(--navy);text-transform:capitalize;}
+  .lane .vol{font-size:12px;color:var(--muted);}
+  .bigmetric{font-size:26px;font-weight:800;color:var(--navy);line-height:1;}
+  .bigmetric small{font-size:12px;font-weight:600;color:var(--muted);}
+  .bigmetric.none{font-size:14px;font-weight:600;color:var(--muted);}
+  .metric{display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;border-bottom:1px dashed var(--line);}
+  .metric b{color:var(--navy);}
+  .reason{font-size:11px;background:var(--amberbg);color:var(--amber);border-radius:6px;padding:2px 8px;display:inline-block;margin:3px 4px 0 0;}
+  .empty{color:var(--muted);text-align:center;padding:36px 10px;}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:9px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60;}
+  .toast.on{opacity:1;}
 </style>
 </head>
 <body>
@@ -57,7 +68,7 @@
     <div><div class="eyebrow">Bedrock Office</div><h1>Shadow Mode</h1></div>
     <a class="back" href="/admin/draft-queue">← Draft Queue</a>
   </div>
-  <p class="sub">Trained personas run against real inbound mail and send nothing. This is the scoreboard that earns a go-live: watch each lane's exception rate on real mail before flipping it from propose to execute. <b>Nothing here is sent.</b></p>
+  <p class="sub">Trained personas answer real inbound mail and send nothing. You grade the drafts against <b>your</b> bar, not against what staff happened to send. A persona earns its go-live by consistently meeting your standard. What staff actually sent is shown only as contrast. <b>Nothing here is sent.</b></p>
 
   <div class="bar">
     <label class="muted" style="font-size:12px;">Replay last</label>
@@ -69,85 +80,151 @@
     <span class="muted" id="lastRun" style="font-size:12px;"></span>
   </div>
 
-  <div id="grid" class="grid"><div class="empty">Loading the scoreboard…</div></div>
+  <h2>Grade drafts against your bar</h2>
+  <div id="queue"><div class="empty">Loading…</div></div>
+
+  <h2>The scoreboard</h2>
+  <div id="grid" class="grid"><div class="empty">No graded drafts yet.</div></div>
 </div>
 
 <div class="toast" id="toast"></div>
-<div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('on'); setTimeout(()=>t.classList.remove('on'),2600); }
+function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('on'); setTimeout(()=>t.classList.remove('on'),2800); }
+let af = (u,o)=>fetch(u,o||{});
+let QUEUE = [];
+
+async function boot(){
+  try{
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if(cfg && cfg.enabled && window.supabase && cfg.supabase_url && cfg.supabase_anon_key){
+      const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      af = async (u,o)=>{ o=o||{}; const h=Object.assign({}, o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){ } return fetch(u, Object.assign({}, o, { headers:h })); };
+    }
+  }catch(_){}
+  loadQueue(); loadSummary();
+}
+
+async function loadQueue(){
+  try{
+    const r = await af('/api/shadow/to-grade'); const d = await r.json();
+    if(!r.ok) throw new Error(d.error||r.status);
+    QUEUE = d.items || [];
+    const q = $('queue');
+    if(d.notReady){ q.innerHTML = '<div class="empty">Shadow table not set up yet. Apply <b>migration 396</b> and run a shadow pass.</div>'; return; }
+    if(!QUEUE.length){ q.innerHTML = '<div class="empty">Nothing to grade. Press <b>Run shadow pass</b> to replay real inbound mail through the team.</div>'; return; }
+    q.innerHTML = QUEUE.map(gcard).join('');
+  }catch(e){ $('queue').innerHTML = '<div class="empty">Could not load: '+esc(e.message)+'</div>'; }
+}
+
+function gcard(it){
+  const inb = it.inbound || {};
+  const signals = [
+    it.disposition==='auto_ok' ? '<span class="pill ok">auto-ok</span>' : '<span class="pill rev">needs review</span>',
+    it.reserved_gate ? '<span class="pill res">reserved</span>' : '',
+    `<span class="pill aud">${esc(it.audience||'?')}</span>`,
+    `<span class="pill aud">${esc(it.confidence||'?')}</span>`,
+    it.grounded ? '<span class="pill ok">grounded</span>' : '<span class="pill rev">fallback</span>',
+  ].join('');
+  const staff = it.staff && it.staff.text
+    ? `<div class="body">${esc(it.staff.text)}</div>`
+    : `<div class="body muted">No staff reply on file for this thread.</div>`;
+  return `<div class="gcard" id="gc-${it.id}">
+    <div class="gtop">
+      <span class="subj">${esc(inb.subject||it.subject||'(no subject)')}</span>
+      <span><span class="pill persona">${esc(it.persona)}</span> <span class="muted" style="font-size:12px;">from ${esc(inb.sender_name||inb.sender_email||it.sender_email||'sender')}</span></span>
+    </div>
+    <div class="cols">
+      <div class="col"><h4>What came in</h4><div class="body">${esc(inb.body||'(body not found)')}</div></div>
+      <div class="col ai"><h4>The AI draft</h4><div class="body">${esc(it.body_text||'(no draft)')}</div><div class="signals">${signals}</div></div>
+      <div class="col staff"><h4>What staff sent (contrast)</h4>${staff}</div>
+    </div>
+    <div class="actions">
+      <button class="btn good" onclick="grade('${it.id}','meets_bar')">✓ Meets my bar</button>
+      <button class="btn warn" onclick="openFix('${it.id}')">Needs work</button>
+    </div>
+    <div class="fix" id="fix-${it.id}">
+      <label>What's off, or how you'd handle it</label>
+      <textarea class="note" id="note-${it.id}" placeholder="Your reasoning. This is the DNA the persona learns."></textarea>
+      <label>Write it your way (optional, prefilled with the AI draft)</label>
+      <textarea class="rw" id="rw-${it.id}">${esc(it.body_text||'')}</textarea>
+      <div class="actions">
+        <button class="btn warn" onclick="grade('${it.id}','needs_work')">Save grade</button>
+        <button class="btn ghost" onclick="document.getElementById('fix-${it.id}').classList.remove('on')">Cancel</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function openFix(id){ $('fix-'+id).classList.add('on'); }
+
+async function grade(id, rating){
+  const body = { id, rating };
+  if(rating==='needs_work'){
+    body.note = ($('note-'+id)||{}).value || '';
+    body.rewrite = ($('rw-'+id)||{}).value || '';
+  }
+  try{
+    const r = await af('/api/shadow/rate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const d = await r.json();
+    if(r.status===403){ toast('Only the owner can grade (sign in as Ed).'); return; }
+    if(!r.ok) throw new Error(d.error||r.status);
+    const el = $('gc-'+id); if(el){ el.style.transition='opacity .25s'; el.style.opacity='0'; setTimeout(()=>el.remove(),250); }
+    QUEUE = QUEUE.filter(x=>x.id!==id);
+    toast(rating==='meets_bar' ? 'Marked: meets your bar.' : 'Saved. That correction is the training signal.');
+    loadSummary();
+    if(!QUEUE.length) setTimeout(loadQueue, 300);
+  }catch(e){ toast('Save failed: '+e.message); }
+}
 
 async function loadSummary(){
   try{
-    const r = await fetch('/api/shadow/summary'); const d = await r.json();
+    const r = await af('/api/shadow/summary'); const d = await r.json();
     if(!r.ok) throw new Error(d.error||r.status);
     $('lastRun').textContent = d.lastRun ? ('last recorded '+new Date(d.lastRun).toLocaleString()) : 'no runs yet';
     const g = $('grid');
-    if(!d.lanes.length){ g.innerHTML = '<div class="empty">No shadow drafts yet. Press <b>Run shadow pass</b> to replay real inbound mail through the team.</div>'; return; }
+    if(!d.lanes || !d.lanes.length){ g.innerHTML = '<div class="empty">No shadow drafts yet.</div>'; return; }
     g.innerHTML = d.lanes.map(laneCard).join('');
-    d.lanes.forEach(L=>{ const b=$('samp-'+L.persona); if(b) b.addEventListener('click',()=>openSamples(L.persona)); });
   }catch(e){ $('grid').innerHTML = '<div class="empty">Could not load: '+esc(e.message)+'</div>'; }
 }
 
 function laneCard(L){
-  const okPct = L.auto_ok_rate, revPct = 100-okPct;
-  const reasons = L.top_reasons && L.top_reasons.length
-    ? L.top_reasons.map(x=>`<span class="reason">${esc(x.reason)} · ${x.n}</span>`).join('')
-    : '<span class="reason none">no escalation flags</span>';
+  const bar = (L.meets_bar_rate==null)
+    ? `<div class="bigmetric none">not graded yet</div>`
+    : `<div class="bigmetric">${L.meets_bar_rate}%<small> meets your bar</small></div>`;
+  const reasons = (L.top_reasons&&L.top_reasons.length) ? L.top_reasons.map(x=>`<span class="reason">${esc(x.reason)} · ${x.n}</span>`).join('') : '';
   return `<div class="lane">
-    <div class="top"><span class="name">${esc(L.persona)}</span><span class="vol">${L.total} message${L.total==1?'':'s'}</span></div>
-    <div class="legend"><span><span class="dot" style="background:#2f6f4f;"></span>auto-ok ${okPct}%</span><span><span class="dot" style="background:#B7791F;"></span>needs review ${revPct}%</span></div>
-    <div class="track"><div class="ok" style="width:${okPct}%"></div><div class="rev" style="width:${revPct}%"></div></div>
-    <div class="metric"><span>Grounded</span><b>${L.grounded_rate}%</b></div>
-    <div class="metric"><span>Reserved gate fired</span><b>${L.reserved} of ${L.total}</b></div>
-    <div class="metric"><span>Confidence</span><b>${L.conf.high}H / ${L.conf.medium}M / ${L.conf.low}L</b></div>
-    <div class="reasons">${reasons}</div>
-    <button class="samplebtn" id="samp-${esc(L.persona)}">View drafts →</button>
-  </div>`;
-}
-
-async function openSamples(persona){
-  try{
-    const r = await fetch('/api/shadow/samples?persona='+encodeURIComponent(persona)); const d = await r.json();
-    if(!r.ok) throw new Error(d.error||r.status);
-    $('sheet').innerHTML = `<button class="x" onclick="document.getElementById('modal').classList.remove('on')">×</button>`
-      + `<h3 style="text-transform:capitalize;">${esc(persona)} — recent shadow drafts</h3>`
-      + (d.samples.length ? d.samples.map(sampleRow).join('') : '<div class="empty">No drafts yet.</div>');
-    $('modal').classList.add('on');
-  }catch(e){ toast('Could not load drafts: '+e.message); }
-}
-function sampleRow(s){
-  const disp = s.disposition==='auto_ok' ? '<span class="pill ok">auto-ok</span>' : '<span class="pill rev">needs review</span>';
-  const res = s.reserved_gate ? '<span class="pill res">reserved</span>' : '';
-  const reasons = (s.escalation_reasons||[]).length ? ' · '+s.escalation_reasons.map(esc).join(', ') : '';
-  return `<div class="s">
-    <div class="meta">${disp}${res}<span class="pill aud">${esc(s.audience||'?')}</span><span class="pill aud">${esc(s.confidence||'?')}</span>
-      <span>${esc(s.subject||'(no subject)')}</span></div>
-    <div class="meta">${esc(s.disposition_reason||'')}${reasons}</div>
-    <div class="body">${esc(s.body_text||'(no body)')}</div>
+    <div class="top"><span class="name">${esc(L.persona)}</span><span class="vol">${L.total} shadowed · ${L.graded||0} graded</span></div>
+    ${bar}
+    <div style="margin-top:10px;">
+      <div class="metric"><span>Grounded</span><b>${L.grounded_rate}%</b></div>
+      <div class="metric"><span>Auto-ok vs needs-review</span><b>${L.auto_ok_rate}% / ${100-L.auto_ok_rate}%</b></div>
+      <div class="metric"><span>Reserved gate fired</span><b>${L.reserved} of ${L.total}</b></div>
+    </div>
+    <div style="margin-top:8px;">${reasons}</div>
   </div>`;
 }
 
 async function runPass(){
   const btn=$('runBtn'); btn.disabled=true; const orig=btn.textContent; btn.textContent='Running…';
-  $('runInfo').textContent='This fires one model call per message; hang tight.';
+  $('runInfo').textContent='One model call per message; hang tight.';
   try{
-    const r = await fetch('/api/shadow/run',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ limit: parseInt($('limit').value,10) }) });
+    const r = await af('/api/shadow/run',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ limit: parseInt($('limit').value,10) }) });
     const d = await r.json();
+    if(r.status===409){ toast(d.error||'Apply migration 396 first.'); return; }
     if(!r.ok) throw new Error(d.error||r.status);
-    toast(`Shadow pass: ${d.recorded} recorded, ${d.skipped} already done${d.errored?', '+d.errored+' errored':''}.`);
+    toast(`Shadow pass: ${d.recorded} new, ${d.skipped} already done${d.errored?', '+d.errored+' errored':''}.`);
     $('runInfo').textContent='';
-    await loadSummary();
+    loadQueue(); loadSummary();
   }catch(e){ toast('Run failed: '+e.message); $('runInfo').textContent=''; }
   finally{ btn.disabled=false; btn.textContent=orig; }
 }
 
 $('runBtn').addEventListener('click', runPass);
-$('modal').addEventListener('click', (e)=>{ if(e.target===$('modal')) $('modal').classList.remove('on'); });
-loadSummary();
+boot();
 </script>
 </body>
 </html>

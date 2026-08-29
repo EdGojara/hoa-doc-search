@@ -44,9 +44,21 @@ CREATE TABLE IF NOT EXISTS shadow_drafts (
   model              text,
   latency_ms         integer,
 
-  -- phase 2 (human agreement) — filled later, nullable for now
-  human_action       text,                 -- what the human actually did, once linked
-  agreement          text,                 -- agree | disagree | n/a
+  -- THE GRADING SIGNAL — the benchmark is Ed, not the staff. A persona earns its
+  -- go-live by consistently meeting Ed's bar, never by matching what a staffer
+  -- happened to send. ed_rewrite is the highest-fidelity encode-Ed signal: Ed's
+  -- own version of the reply on real mail, the DNA the persona should learn.
+  ed_rating          text CHECK (ed_rating IN ('meets_bar','needs_work')),
+  ed_note            text,                 -- why it missed / what Ed wants different
+  ed_rewrite         text,                 -- Ed's version of the reply (optional, gold)
+  ed_rated_at        timestamptz,
+  ed_rated_by        text,
+
+  -- CONTRAST ONLY, never the benchmark: what the staff actually sent on this
+  -- thread. Shown side-by-side so Ed can see (and prove) the AI beats the human
+  -- baseline. It is not scored against.
+  staff_reply_text   text,
+  staff_reply_at     timestamptz,
 
   record_ownership   text NOT NULL DEFAULT 'workpaper',
   created_at         timestamptz NOT NULL DEFAULT now(),
@@ -58,6 +70,9 @@ CREATE INDEX IF NOT EXISTS idx_shadow_drafts_persona     ON shadow_drafts (perso
 CREATE INDEX IF NOT EXISTS idx_shadow_drafts_community   ON shadow_drafts (community_id);
 CREATE INDEX IF NOT EXISTS idx_shadow_drafts_created     ON shadow_drafts (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shadow_drafts_disposition ON shadow_drafts (persona, disposition);
+-- the grading queue: ungraded first
+CREATE INDEX IF NOT EXISTS idx_shadow_drafts_ungraded ON shadow_drafts (created_at DESC) WHERE ed_rating IS NULL;
+CREATE INDEX IF NOT EXISTS idx_shadow_drafts_rating ON shadow_drafts (persona, ed_rating);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON shadow_drafts TO service_role;
 GRANT SELECT                          ON shadow_drafts TO authenticated;
