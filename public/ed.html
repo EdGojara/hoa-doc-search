@@ -10,9 +10,12 @@
          --bg:#f3f4f6; --good:#166534; --goodbg:#dcfce7; --amber:#92400e; --amberbg:#fef3c7; --bad:#9B2C2C; }
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);font-family:-apple-system,Segoe UI,Arial,sans-serif;color:#1a2230;}
-  .top{background:var(--navy);color:#fff;padding:18px 26px;display:flex;align-items:baseline;gap:14px;border-bottom:3px solid var(--gold);}
+  .top{background:var(--navy);color:#fff;padding:16px 26px;display:flex;align-items:center;justify-content:space-between;gap:14px;border-bottom:3px solid var(--gold);}
+  .top .lhs{display:flex;align-items:baseline;gap:14px;}
   .top h1{margin:0;font-size:20px;letter-spacing:.5px;}
   .top .sub{color:#c3ccd8;font-size:13px;}
+  .back{color:#c3ccd8;text-decoration:none;font-size:13px;font-weight:600;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:7px 13px;white-space:nowrap;}
+  .back:hover{background:rgba(255,255,255,.12);color:#fff;}
   .wrap{max-width:1120px;margin:22px auto;padding:0 20px;}
   .tile{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:18px;overflow:hidden;}
   .tile .head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);}
@@ -54,7 +57,10 @@
 </style>
 </head>
 <body>
-  <div class="top"><h1>Ed · Command Center</h1><span class="sub">What needs you, across the business.</span></div>
+  <div class="top">
+    <div class="lhs"><h1>Ed · Command Center</h1><span class="sub">What needs you, across the business.</span></div>
+    <a href="/" class="back">← trustEd</a>
+  </div>
   <div class="wrap">
 
     <div class="tile" id="invTile">
