@@ -192,10 +192,18 @@ router.get('/to-grade', async (req, res) => {
     for (const d of (data || [])) {
       let inbound = null;
       const em = await supabase.from('email_messages')
-        .select('subject, body_full, body_preview, sender_name, sender_email, received_at').eq('id', d.source_email_id).limit(1);
+        .select('subject, body_full, body_preview, sender_name, sender_email, received_at, ai_summary, has_attachments').eq('id', d.source_email_id).limit(1);
       if (!em.error && em.data && em.data.length) {
         const e = em.data[0];
-        inbound = { subject: e.subject, body: e.body_full || e.body_preview || '', sender_name: e.sender_name, sender_email: e.sender_email, received_at: e.received_at };
+        const body = e.body_full || e.body_preview || '';
+        // a body that is empty or just a phone signature has nothing to grade
+        // against — flag it so the UI can show the AI's read instead of a blank.
+        const stripped = body.replace(/sent from my (iphone|ipad|android|phone|mobile|samsung.*)/i, '').trim();
+        inbound = {
+          subject: e.subject, body, sender_name: e.sender_name, sender_email: e.sender_email, received_at: e.received_at,
+          ai_summary: e.ai_summary || '', has_attachments: !!e.has_attachments,
+          thin: stripped.length < 12,
+        };
       }
       const staff = await staffReplyFor(d);
       items.push({ ...d, inbound, staff });

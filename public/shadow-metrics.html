@@ -152,7 +152,7 @@ function gcard(it){
       <span><span class="pill persona">${esc(it.persona)}</span> <span class="muted" style="font-size:12px;">from ${esc(inb.sender_name||inb.sender_email||it.sender_email||'sender')}</span></span>
     </div>
     <div class="cols">
-      <div class="col"><h4>What came in</h4><div class="body">${esc(inb.body||'(body not found)')}</div></div>
+      <div class="col"><h4>What came in</h4>${camein(inb)}</div>
       <div class="col ai"><h4>The AI draft</h4><div class="body">${esc(it.body_text||'(no draft)')}</div><div class="signals">${signals}</div></div>
       <div class="col staff"><h4>What staff sent (contrast)</h4>${staff}</div>
     </div>
@@ -175,6 +175,20 @@ function gcard(it){
       </div>
     </div>
   </div>`;
+}
+
+// Render the inbound. When the body is empty or just a phone signature, don't
+// leave Ed staring at "Sent from my iPhone" — show that it's blank plus the
+// AI's read of it, so there's something to grade against.
+function camein(inb){
+  if(!inb) return `<div class="body muted">(message not found)</div>`;
+  const att = inb.has_attachments ? `<div class="muted" style="font-size:11.5px;margin-top:6px;">📎 has attachments (may be a photo with no text)</div>` : '';
+  if(inb.thin){
+    return `<div class="body muted">No real message body — the email was blank or just a phone signature (${esc((inb.body||'').trim()||'empty')}).</div>`
+      + (inb.ai_summary ? `<div style="margin-top:8px;"><div style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;">AI's read</div><div class="body">${esc(inb.ai_summary)}</div></div>` : '')
+      + att;
+  }
+  return `<div class="body">${esc(inb.body||'(body not found)')}</div>${att}`;
 }
 
 function openFix(id){ $('fix-'+id).classList.add('on'); }
