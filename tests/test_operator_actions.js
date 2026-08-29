@@ -20,7 +20,26 @@
 // =============================================================================
 
 const assert = require('assert');
-const { runAction, resolveAction, ACTIONS } = require('../lib/team/operator_actions');
+const {
+  runAction, resolveAction, ACTIONS,
+  inferServiceCategory, resolveCommunityVendor, renderVendorOutreach,
+} = require('../lib/team/operator_actions');
+
+// A tiny thenable Supabase stub: from(table) returns a builder whose query
+// methods chain and that awaits to the configured { data, error } for the table.
+function fakeSupabase(byTable) {
+  return {
+    from(table) {
+      const result = byTable[table] || { data: [], error: null };
+      const builder = {
+        select() { return builder; }, eq() { return builder; }, in() { return builder; },
+        limit() { return builder; }, order() { return builder; },
+        then(res, rej) { return Promise.resolve(result).then(res, rej); },
+      };
+      return builder;
+    },
+  };
+}
 
 let failures = 0;
 function check(name, fn) {
@@ -69,6 +88,73 @@ const safeBoom = { name: 'safe_boom', risk: 'safe', summarize: () => 'safe that 
     assert.ok(a, 'log_interaction not registered');
     assert.strictEqual(a.risk, 'safe');
     assert.ok(Object.isFrozen(ACTIONS), 'ACTIONS registry should be frozen');
+  });
+
+  await check('draft_vendor_outreach is SAFE and dark by default (drafting only)', async () => {
+    const a = resolveAction('draft_vendor_outreach');
+    assert.ok(a && a.risk === 'safe', 'should be a registered safe action');
+    // Safe, but sending is never its job — it queues a needs_review draft, and
+    // in a dark lane it is only proposed.
+    const r = await runAction(a, {}, {}, { autonomy: 'propose' });
+    assert.strictEqual(r.status, 'proposed');
+  });
+
+  console.log('\n  -- vendor outreach: category inference --');
+  await check('infers categories from natural issue text; unknown -> null', () => {
+    assert.strictEqual(inferServiceCategory('sprinkler zone 3 wont shut off'), 'irrigation');
+    assert.strictEqual(inferServiceCategory('there is a water line leak at the entrance'), 'plumbing');
+    assert.strictEqual(inferServiceCategory('the pool pump is broken'), 'pool');
+    assert.strictEqual(inferServiceCategory('the front gate wont open'), 'gate');
+    assert.strictEqual(inferServiceCategory('my dog is barking'), null);
+  });
+
+  console.log('\n  -- vendor outreach: the rendered email --');
+  await check('renders greeting, issue, community, and access note', () => {
+    const { subject, body } = renderVendorOutreach(
+      { contactName: 'Daniel Aleman' },
+      { issue: 'Sprinkler zone 3 is stuck on.', communityName: 'Quail Ridge', category: 'irrigation', accessNote: 'Gate code 1234' });
+    assert.ok(/irrigation/.test(subject) && /Quail Ridge/.test(subject), 'subject names category + community');
+    assert.ok(/Hi Daniel,/.test(body), 'greets the vendor contact by first name');
+    assert.ok(/Sprinkler zone 3 is stuck on\./.test(body), 'includes the issue');
+    assert.ok(/Gate code 1234/.test(body), 'includes the access note');
+  });
+
+  console.log('\n  -- vendor outreach: resolver on real-shaped data --');
+  await check('single category match -> confident pick, with compound email cleaned', async () => {
+    const sb = fakeSupabase({
+      vendor_contracts: { data: [], error: null },
+      ap_invoices: { data: [{ vendor_id: 'v1', invoice_date: '2026-07-01', total_cents: 500000 }], error: null },
+      vendors: { data: [{ id: 'v1', name: 'Swim Houston Pool Management LLC', email: 'matt@swimhoustonpools.com / hill@swimhoustonpools.com', is_active: true, status: 'active' }], error: null },
+    });
+    const r = await resolveCommunityVendor(sb, 'c1', 'pool', {});
+    assert.ok(r.pick, 'should have a confident pick');
+    assert.strictEqual(r.pick.email, 'matt@swimhoustonpools.com', 'compound email must be reduced to the first valid address');
+    assert.strictEqual(r.pick.source, 'history');
+  });
+
+  await check('two category matches -> no auto-pick, humans choose from candidates', async () => {
+    const sb = fakeSupabase({
+      vendor_contracts: { data: [], error: null },
+      ap_invoices: { data: [{ vendor_id: 'v1' }, { vendor_id: 'v2' }], error: null },
+      vendors: { data: [
+        { id: 'v1', name: 'Superior LawnCare', email: 'a@x.com', is_active: true },
+        { id: 'v2', name: 'Green Turf Irrigation', email: 'b@x.com', is_active: true },
+      ], error: null },
+    });
+    const r = await resolveCommunityVendor(sb, 'c1', 'irrigation', {});
+    assert.strictEqual(r.pick, null, 'ambiguous -> no auto pick');
+    assert.ok(r.candidates.length === 2 && r.candidates.every((c) => c.matchesCategory), 'both surface as matching candidates');
+  });
+
+  await check('an errored ap_invoices query FAILS LOUD (never read as "no vendors")', async () => {
+    const sb = fakeSupabase({
+      vendor_contracts: { data: [], error: null },
+      ap_invoices: { data: null, error: { message: 'boom', code: '42703' } },
+      vendors: { data: [], error: null },
+    });
+    let threw = false;
+    try { await resolveCommunityVendor(sb, 'c1', 'pool', {}); } catch (_) { threw = true; }
+    assert.ok(threw, 'must throw on a DB error, not silently return empty');
   });
 
   console.log('');

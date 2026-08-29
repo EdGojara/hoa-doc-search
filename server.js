@@ -1110,8 +1110,12 @@ app.get('/admin/legal', (req, res) => {
 });
 app.use('/api/email-drafts', require('./api/email_drafts'));
 app.use('/api/email-attachments', require('./api/email_attachments'));
+app.use('/api/vendor-outreach', require('./api/vendor_outreach'));
 app.get('/admin/draft-queue', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'draft-queue.html'));
+});
+app.get('/admin/vendor-outreach', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'vendor-outreach.html'));
 });
 
 app.use('/api/operations', require('./api/operations'));
