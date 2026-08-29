@@ -77,8 +77,8 @@
     <div class="grid2">
       <div class="tile soon"><div class="head"><h2>➕ Add a shortcut</h2></div>
         <div class="body"><div class="empty">Shortcuts you add land here as tiles, an approval queue, a cash-to-release view, exceptions the team flagged, a KPI. Whatever saves you clicks.</div></div></div>
-      <div class="tile soon"><div class="head"><h2>📌 Your pending list</h2></div>
-        <div class="body"><div class="empty">Coming next: everything across the platform that is gated on you, in one to-do.</div></div></div>
+      <div class="tile" id="pendingTile"><div class="head"><h2>📌 Your pending list</h2><span class="meta" id="pendingMeta"></span></div>
+        <div class="body" id="pendingBody"><div class="empty">Loading…</div></div></div>
     </div>
 
   </div>
@@ -106,6 +106,20 @@ async function boot(){
     }
   }catch(_){ /* fall through — load() will show the owner-only message if unauthed */ }
   load();
+  loadPending();
+}
+async function loadPending(){
+  try{
+    const r = await af('/api/ed/pending');
+    if(!r.ok) return;
+    const src = (await r.json()).sources || [];
+    if(!src.length){ $('pendingBody').innerHTML='<div class="empty">✅ Nothing across the platform is waiting on you.</div>'; $('pendingMeta').textContent=''; return; }
+    $('pendingMeta').textContent = src.reduce((a,s)=>a+s.count,0)+' items';
+    $('pendingBody').innerHTML = src.map(s=>`<a href="${s.action}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 18px;border-bottom:1px solid #f1f3f6;text-decoration:none;color:inherit;">
+      <span><span style="font-size:18px;margin-right:10px;">${s.icon||'•'}</span>${esc(s.label)}</span>
+      <span style="white-space:nowrap;color:var(--muted);font-size:13px;">${s.count}${s.stakes_cents!=null?' · '+money(s.stakes_cents):''} <span style="color:var(--navy);font-weight:700;margin-left:4px;">→</span></span>
+    </a>`).join('');
+  }catch(_){ }
 }
 async function load(){
   try{

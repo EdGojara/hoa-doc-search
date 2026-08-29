@@ -1279,6 +1279,9 @@ app.use('/api/banks', banksRouter);
 const { router: apRouter } = require('./api/ap');
 app.use('/api/ap', apRouter);
 
+// Owner command center — cross-domain "what's gated on Ed" aggregator (owner-only).
+app.use('/api/ed', require('./api/ed'));
+
 // Calls Dashboard — list + manage follow-ups on Claire-handled inbound calls.
 // Powers the "Calls" tab. See api/calls.js + migration 106 (added follow-up
 // state columns to homeowner_calls).
