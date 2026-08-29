@@ -34,6 +34,7 @@
     "test:amanda-audience": "node tests/test_amanda_audience.js",
     "test:amanda-disposition": "node tests/test_amanda_disposition.js",
     "test:persona-configs": "node tests/test_persona_configs.js",
+    "test:operator-actions": "node tests/test_operator_actions.js",
     "test:insurance-compare": "node tests/test_insurance_compare.js",
     "test:insurance-renewal": "node tests/test_insurance_renewal.js",
     "test:tessa-request": "node tests/test_tessa_request.js",
