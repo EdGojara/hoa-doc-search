@@ -31,6 +31,9 @@
   .due-ok{color:var(--muted);}
   .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;}
   .pill.mgr{background:var(--goodbg);color:var(--good);}
+  .cashstrip{display:flex;flex-wrap:wrap;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);background:#fbfcfd;}
+  .cashchip{font-size:12px;padding:5px 10px;border-radius:8px;background:#eef1f4;color:#334;white-space:nowrap;}
+  .cashchip.ok{background:var(--goodbg);color:var(--good);} .cashchip.warn{background:#fee2e2;color:#9B2C2C;font-weight:700;}
   .btn{border:0;border-radius:8px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;}
   .btn.release{background:var(--good);color:#fff;}
   .btn.release:disabled{opacity:.5;cursor:default;}
@@ -92,6 +95,7 @@ function fmtDue(due){ if(!due) return '—'; const d=daysLate(due); const s=new 
   return d>0 ? `<span class="due-late">${s} (${d}d late)</span>` : `<span class="due-ok">${s}</span>`; }
 
 let rows = [];
+let cashByCommunity = {}; // community_id -> operating_cash_cents
 let af = (u,o)=>fetch(u, o||{});
 async function boot(){
   try{
@@ -111,13 +115,27 @@ async function load(){
     const j = await r.json();
     if(!r.ok) throw new Error(j.error||'load failed');
     rows = j.invoices||[];
+    cashByCommunity = {};
+    (j.cash||[]).forEach(c=>{ if(c.community_id!=null) cashByCommunity[c.community_id]=c.operating_cash_cents; });
     render(j);
   }catch(e){ $('invBody').innerHTML='<div class="empty" style="color:#9B2C2C;">'+e.message+'</div>'; }
+}
+function cashStripHtml(){
+  const byC = {};
+  for(const r of rows){ const k=r.community_id||r.community; if(!byC[k]) byC[k]={ name:r.community, pending:0, cash:(k in cashByCommunity?cashByCommunity[k]:null) }; byC[k].pending += r.total_cents; }
+  const items = Object.values(byC).sort((a,b)=> ((a.cash!=null&&a.cash<a.pending)?0:1) - ((b.cash!=null&&b.cash<b.pending)?0:1) || b.pending-a.pending );
+  if(!items.length) return '';
+  const chip = (c)=>{
+    if(c.cash==null) return `<span class="cashchip" title="Operating cash unavailable">${esc(c.name||'—')}: ${money(c.pending)} pending</span>`;
+    const short = c.cash < c.pending;
+    return `<span class="cashchip ${short?'warn':'ok'}" title="Operating cash ${money(c.cash)} vs ${money(c.pending)} to release">${esc(c.name||'—')}: cash ${money(c.cash)} / ${money(c.pending)}${short?` · short ${money(c.pending-c.cash)}`:' · covered'}</span>`;
+  };
+  return `<div class="cashstrip"><span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;align-self:center;margin-right:4px;">Cash to release</span>${items.map(chip).join('')}</div>`;
 }
 function render(j){
   $('invMeta').textContent = j.count ? `${j.count} pending · ${money(j.total_cents)}` : '';
   if(!rows.length){ $('invBody').innerHTML='<div class="empty">✅ Nothing waiting on you. Every manager-approved bill has been released.</div>'; return; }
-  const body = `
+  const body = cashStripHtml() + `
     <table>
       <thead><tr><th>Community</th><th>Vendor</th><th>Invoice #</th><th>Due</th><th style="text-align:right;">Amount</th><th>Manager</th><th></th></tr></thead>
       <tbody>${rows.map(rowHtml).join('')}</tbody>

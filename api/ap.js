@@ -850,6 +850,7 @@ router.get('/ed-queue', async (req, res) => {
       if (!mgr || released) continue; // only manager-approved, not yet released
       waiting.push({
         id: inv.id,
+        community_id: inv.community_id || null,
         community: (inv.communities && inv.communities.name) || null,
         vendor: (inv.vendors && inv.vendors.name) || null,
         invoice_number: inv.vendor_invoice_number || null,
@@ -861,7 +862,36 @@ router.get('/ed-queue', async (req, res) => {
       });
     }
     const total = waiting.reduce((a, i) => a + i.total_cents, 0);
-    res.json({ count: waiting.length, total_cents: total, invoices: waiting });
+
+    // Cash to release: does each community's operating cash cover the bills
+    // waiting on Ed there? Answered at the moment of release, because that's the
+    // only moment it can stop a payment the account can't cover. (Ed 2026-08-29.)
+    const byCommunity = {};
+    for (const w of waiting) {
+      const key = w.community_id || w.community || 'unknown';
+      if (!byCommunity[key]) byCommunity[key] = { community: w.community, community_id: w.community_id, pending_cents: 0, count: 0, operating_cash_cents: null };
+      byCommunity[key].pending_cents += w.total_cents;
+      byCommunity[key].count += 1;
+    }
+    try {
+      const ids = [...new Set(waiting.map((w) => w.community_id).filter(Boolean))];
+      if (ids.length) {
+        const { data: tb, error: tbErr } = await supabase.from('v_trial_balance')
+          .select('community_id, total_debits_cents, total_credits_cents')
+          .eq('account_number', '1000').in('community_id', ids);
+        if (!tbErr) {
+          for (const r of (tb || [])) {
+            const b = byCommunity[r.community_id];
+            if (b) b.operating_cash_cents = (b.operating_cash_cents || 0) + (Number(r.total_debits_cents || 0) - Number(r.total_credits_cents || 0));
+          }
+        }
+      }
+    } catch (e) { /* cash context best-effort */ }
+    const cash = Object.values(byCommunity)
+      .map((b) => ({ ...b, covered: b.operating_cash_cents != null ? b.operating_cash_cents >= b.pending_cents : null }))
+      .sort((a, b) => (a.covered === false ? -1 : 1) - (b.covered === false ? -1 : 1) || b.pending_cents - a.pending_cents);
+
+    res.json({ count: waiting.length, total_cents: total, invoices: waiting, cash });
   } catch (err) {
     console.error('[ap] ed-queue failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
