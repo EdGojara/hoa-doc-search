@@ -65,6 +65,19 @@ for (const [persona, re] of Object.entries(boundary)) {
   });
 }
 
+// The two team-wide hard rules must reach every lane's prompt: don't recreate
+// the gatekeeper / fabricate contacts, and don't over-promise.
+console.log('\nTeam-wide hard rules reach every lane');
+for (const p of expected) {
+  const prompt = CONFIGS[p].systemPromptFor('homeowner', 'X');
+  check(`${p}: carries the no-gatekeeper / no-fabricated-contact rule`, () => {
+    assert.ok(/never name a specific staff member/i.test(prompt) && /never invent or guess a phone/i.test(prompt), `contact rule missing for ${p}`);
+  });
+  check(`${p}: carries the no-over-promise rule`, () => {
+    assert.ok(/do not over-promise/i.test(prompt) && /invent a deadline or timeline/i.test(prompt), `over-promise rule missing for ${p}`);
+  });
+}
+
 console.log('');
 if (failures) { console.log(`FAILED — ${failures} case(s)\n`); process.exit(1); }
 console.log('All persona config cases passed.\n');
