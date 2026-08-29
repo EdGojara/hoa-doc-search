@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shadow Mode — Bedrock Office</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root{ --navy:#0B1D34; --gold:#C99A2E; --ink:#141b26; --muted:#5c6b7e; --line:#e4e2db; --bg:#f6f4ee; --card:#fffefb; --good:#2f6f4f; --goodbg:#e6f0ea; --amber:#B7791F; --amberbg:#fbf1dd; --red:#9B2C2C; --redbg:#f7e8e6; --shadow:0 1px 2px rgba(11,29,52,.05),0 8px 24px rgba(11,29,52,.06); --serif:Georgia,'Times New Roman',serif; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1140px;margin:0 auto;padding:26px 22px 60px;}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:2px solid var(--gold);padding-bottom:12px;margin-bottom:8px;}
+  .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:700;}
+  h1{font-family:var(--serif);font-weight:600;color:var(--navy);font-size:26px;margin:4px 0 0;}
+  a.back{font-size:12.5px;color:var(--muted);text-decoration:none;}
+  .sub{font-size:12.5px;color:var(--muted);margin:0 0 16px;max-width:820px;}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:18px;box-shadow:var(--shadow);}
+  .bar select,.bar input{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;background:#fff;}
+  .btn{border:0;border-radius:9px;padding:9px 16px;font:inherit;font-weight:700;cursor:pointer;background:var(--navy);color:#fff;}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .muted{color:var(--muted);}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;}
+  .lane{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow);}
+  .lane .top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;}
+  .lane .name{font-family:var(--serif);font-size:18px;color:var(--navy);text-transform:capitalize;}
+  .lane .vol{font-size:12px;color:var(--muted);}
+  .metric{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px dashed var(--line);}
+  .metric b{color:var(--navy);}
+  .track{height:8px;border-radius:5px;background:#eee;overflow:hidden;margin:8px 0 4px;display:flex;}
+  .track .ok{background:var(--good);} .track .rev{background:var(--amber);}
+  .legend{font-size:11px;color:var(--muted);display:flex;gap:12px;margin-bottom:8px;}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle;}
+  .reasons{margin-top:10px;}
+  .reason{font-size:11.5px;background:var(--amberbg);color:var(--amber);border-radius:6px;padding:2px 8px;display:inline-block;margin:2px 4px 2px 0;}
+  .reason.none{background:var(--goodbg);color:var(--good);}
+  .samplebtn{margin-top:10px;font-size:12px;color:var(--navy);background:#eef2f7;border:0;border-radius:7px;padding:6px 10px;cursor:pointer;font-weight:600;}
+  .empty{color:var(--muted);text-align:center;padding:50px 10px;}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:9px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;}
+  .toast.on{opacity:1;}
+  .modal{position:fixed;inset:0;background:rgba(11,29,52,.45);display:none;align-items:center;justify-content:center;padding:20px;z-index:50;}
+  .modal.on{display:flex;}
+  .sheet{background:var(--card);border-radius:14px;max-width:760px;width:100%;max-height:86vh;overflow:auto;padding:22px 24px;box-shadow:var(--shadow);}
+  .sheet h3{margin:0 0 12px;font-family:var(--serif);color:var(--navy);}
+  .s{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;}
+  .s .meta{font-size:11.5px;color:var(--muted);margin-bottom:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .pill{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;text-transform:uppercase;}
+  .pill.ok{background:var(--goodbg);color:var(--good);} .pill.rev{background:var(--amberbg);color:var(--amber);}
+  .pill.res{background:var(--redbg);color:var(--red);} .pill.aud{background:#eef2f7;color:var(--navy);text-transform:none;}
+  .s .body{white-space:pre-wrap;font-size:13px;line-height:1.5;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:6px;}
+  .x{float:right;cursor:pointer;color:var(--muted);font-size:20px;border:0;background:none;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div><div class="eyebrow">Bedrock Office</div><h1>Shadow Mode</h1></div>
+    <a class="back" href="/admin/draft-queue">← Draft Queue</a>
+  </div>
+  <p class="sub">Trained personas run against real inbound mail and send nothing. This is the scoreboard that earns a go-live: watch each lane's exception rate on real mail before flipping it from propose to execute. <b>Nothing here is sent.</b></p>
+
+  <div class="bar">
+    <label class="muted" style="font-size:12px;">Replay last</label>
+    <select id="limit"><option>25</option><option>50</option><option>100</option></select>
+    <label class="muted" style="font-size:12px;">inbound messages</label>
+    <button class="btn" id="runBtn">Run shadow pass</button>
+    <span class="muted" id="runInfo" style="font-size:12px;"></span>
+    <span style="flex:1;"></span>
+    <span class="muted" id="lastRun" style="font-size:12px;"></span>
+  </div>
+
+  <div id="grid" class="grid"><div class="empty">Loading the scoreboard…</div></div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('on'); setTimeout(()=>t.classList.remove('on'),2600); }
+
+async function loadSummary(){
+  try{
+    const r = await fetch('/api/shadow/summary'); const d = await r.json();
+    if(!r.ok) throw new Error(d.error||r.status);
+    $('lastRun').textContent = d.lastRun ? ('last recorded '+new Date(d.lastRun).toLocaleString()) : 'no runs yet';
+    const g = $('grid');
+    if(!d.lanes.length){ g.innerHTML = '<div class="empty">No shadow drafts yet. Press <b>Run shadow pass</b> to replay real inbound mail through the team.</div>'; return; }
+    g.innerHTML = d.lanes.map(laneCard).join('');
+    d.lanes.forEach(L=>{ const b=$('samp-'+L.persona); if(b) b.addEventListener('click',()=>openSamples(L.persona)); });
+  }catch(e){ $('grid').innerHTML = '<div class="empty">Could not load: '+esc(e.message)+'</div>'; }
+}
+
+function laneCard(L){
+  const okPct = L.auto_ok_rate, revPct = 100-okPct;
+  const reasons = L.top_reasons && L.top_reasons.length
+    ? L.top_reasons.map(x=>`<span class="reason">${esc(x.reason)} · ${x.n}</span>`).join('')
+    : '<span class="reason none">no escalation flags</span>';
+  return `<div class="lane">
+    <div class="top"><span class="name">${esc(L.persona)}</span><span class="vol">${L.total} message${L.total==1?'':'s'}</span></div>
+    <div class="legend"><span><span class="dot" style="background:#2f6f4f;"></span>auto-ok ${okPct}%</span><span><span class="dot" style="background:#B7791F;"></span>needs review ${revPct}%</span></div>
+    <div class="track"><div class="ok" style="width:${okPct}%"></div><div class="rev" style="width:${revPct}%"></div></div>
+    <div class="metric"><span>Grounded</span><b>${L.grounded_rate}%</b></div>
+    <div class="metric"><span>Reserved gate fired</span><b>${L.reserved} of ${L.total}</b></div>
+    <div class="metric"><span>Confidence</span><b>${L.conf.high}H / ${L.conf.medium}M / ${L.conf.low}L</b></div>
+    <div class="reasons">${reasons}</div>
+    <button class="samplebtn" id="samp-${esc(L.persona)}">View drafts →</button>
+  </div>`;
+}
+
+async function openSamples(persona){
+  try{
+    const r = await fetch('/api/shadow/samples?persona='+encodeURIComponent(persona)); const d = await r.json();
+    if(!r.ok) throw new Error(d.error||r.status);
+    $('sheet').innerHTML = `<button class="x" onclick="document.getElementById('modal').classList.remove('on')">×</button>`
+      + `<h3 style="text-transform:capitalize;">${esc(persona)} — recent shadow drafts</h3>`
+      + (d.samples.length ? d.samples.map(sampleRow).join('') : '<div class="empty">No drafts yet.</div>');
+    $('modal').classList.add('on');
+  }catch(e){ toast('Could not load drafts: '+e.message); }
+}
+function sampleRow(s){
+  const disp = s.disposition==='auto_ok' ? '<span class="pill ok">auto-ok</span>' : '<span class="pill rev">needs review</span>';
+  const res = s.reserved_gate ? '<span class="pill res">reserved</span>' : '';
+  const reasons = (s.escalation_reasons||[]).length ? ' · '+s.escalation_reasons.map(esc).join(', ') : '';
+  return `<div class="s">
+    <div class="meta">${disp}${res}<span class="pill aud">${esc(s.audience||'?')}</span><span class="pill aud">${esc(s.confidence||'?')}</span>
+      <span>${esc(s.subject||'(no subject)')}</span></div>
+    <div class="meta">${esc(s.disposition_reason||'')}${reasons}</div>
+    <div class="body">${esc(s.body_text||'(no body)')}</div>
+  </div>`;
+}
+
+async function runPass(){
+  const btn=$('runBtn'); btn.disabled=true; const orig=btn.textContent; btn.textContent='Running…';
+  $('runInfo').textContent='This fires one model call per message; hang tight.';
+  try{
+    const r = await fetch('/api/shadow/run',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ limit: parseInt($('limit').value,10) }) });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error||r.status);
+    toast(`Shadow pass: ${d.recorded} recorded, ${d.skipped} already done${d.errored?', '+d.errored+' errored':''}.`);
+    $('runInfo').textContent='';
+    await loadSummary();
+  }catch(e){ toast('Run failed: '+e.message); $('runInfo').textContent=''; }
+  finally{ btn.disabled=false; btn.textContent=orig; }
+}
+
+$('runBtn').addEventListener('click', runPass);
+$('modal').addEventListener('click', (e)=>{ if(e.target===$('modal')) $('modal').classList.remove('on'); });
+loadSummary();
+</script>
+</body>
+</html>
