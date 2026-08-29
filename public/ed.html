@@ -41,6 +41,16 @@
   #toast.show{opacity:1;} #toast.err{background:var(--bad);}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
   @media(max-width:720px){.grid2{grid-template-columns:1fr;} table{font-size:12.5px;}}
+  .modal-bg{position:fixed;inset:0;background:rgba(11,29,52,.55);display:none;align-items:flex-start;justify-content:center;z-index:50;padding:40px 16px;overflow:auto;}
+  .modal-bg.show{display:flex;}
+  .modal{background:#fff;border-radius:14px;max-width:760px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);}
+  .modal .mh{display:flex;justify-content:space-between;align-items:flex-start;padding:18px 22px;border-bottom:1px solid var(--line);}
+  .modal .mh h3{margin:0 0 3px;font-size:17px;} .modal .mh .sub{color:var(--muted);font-size:13px;}
+  .modal .mb{padding:18px 22px;} .modal .x{background:none;border:0;font-size:24px;cursor:pointer;color:var(--muted);line-height:1;}
+  .kv{display:grid;grid-template-columns:130px 1fr;gap:7px 12px;font-size:13.5px;margin-bottom:14px;} .kv .k{color:var(--muted);}
+  .warn-box{background:var(--amberbg);color:var(--amber);border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:12px;}
+  .mfoot{display:flex;justify-content:flex-end;gap:10px;padding:16px 22px;border-top:1px solid var(--line);}
+  .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:4px 0 6px;}
 </style>
 </head>
 <body>
@@ -64,6 +74,7 @@
 
   </div>
   <div id="toast"></div>
+  <div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -112,14 +123,14 @@ function render(j){
   $('invBody').innerHTML = body;
 }
 function rowHtml(i){
-  return `<tr id="row-${i.id}">
+  return `<tr id="row-${i.id}" style="cursor:pointer;" onclick="openDetail('${i.id}')" title="Open to review">
     <td><strong>${esc(i.community||'—')}</strong></td>
     <td>${esc(i.vendor||'—')}</td>
     <td style="color:#6b7a8d;">${esc(i.invoice_number||'—')}</td>
     <td>${fmtDue(i.due_date)}</td>
     <td class="amt">${money(i.total_cents)}</td>
     <td><span class="pill mgr">✓ ${esc((i.manager||'manager'))}</span></td>
-    <td style="text-align:right;"><button class="btn release" onclick="release('${i.id}', this)">Release</button></td>
+    <td style="text-align:right;"><button class="btn ghost" onclick="event.stopPropagation();openDetail('${i.id}')">Review</button> <button class="btn release" onclick="event.stopPropagation();release('${i.id}', this)">Release</button></td>
   </tr>`;
 }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
@@ -145,6 +156,57 @@ async function releaseAll(){
   render({ count: rows.length, total_cents: rows.reduce((a,i)=>a+i.total_cents,0) });
   toast(`Released ${ok}${fail?`, ${fail} failed`:''}.`, !!fail);
 }
+
+// ---- Detail review ----
+function closeModal(){ $('modalBg').classList.remove('show'); }
+async function openDetail(id){
+  $('modal').innerHTML='<div class="mb"><div class="empty">Loading bill…</div></div>';
+  $('modalBg').classList.add('show');
+  try{
+    const r=await af('/api/ap/invoices/'+id); const d=await r.json();
+    if(!r.ok) throw new Error(d.error||d.detail||'load failed');
+    renderDetail(d);
+  }catch(e){ $('modal').innerHTML='<div class="mb"><div class="empty" style="color:#9B2C2C;">'+esc(e.message)+'</div></div>'; }
+}
+function dt(s){ if(!s) return '—'; try{ return new Date(s.length<=10?s+'T00:00:00':s).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }catch(_){ return String(s); } }
+function renderDetail(d){
+  const inv=d.invoice||{}, v=inv.vendors||{}, acct=inv.coded_account||{};
+  const lines=d.lines||[], appr=d.approvals||[], doc=(d.documents&&d.documents[0])||null;
+  const cred=(d.open_credits&&d.open_credits.length)?d.open_credits:null;
+  const lineAmt=(l)=> l.amount_cents!=null?l.amount_cents : (l.total_cents!=null?l.total_cents : (l.line_total_cents!=null?l.line_total_cents:0));
+  $('modal').innerHTML = `
+    <div class="mh"><div><h3>${esc(v.name||inv.vendor_name||'Vendor')}</h3><div class="sub">${esc(v.category||'')}${v.category?' · ':''}${money(inv.total_cents)}</div></div><button class="x" onclick="closeModal()">&times;</button></div>
+    <div class="mb">
+      <div class="kv">
+        <span class="k">Amount</span><span><strong>${money(inv.total_cents)}</strong></span>
+        <span class="k">Invoice #</span><span>${esc(inv.vendor_invoice_number||'—')}</span>
+        <span class="k">Invoice date</span><span>${dt(inv.invoice_date)}</span>
+        <span class="k">Due date</span><span>${dt(inv.due_date)}</span>
+        <span class="k">Coded to</span><span>${acct.account_number?esc(acct.account_number+' · '+acct.account_name):'<span style="color:#9B2C2C;">not coded</span>'}</span>
+        <span class="k">Approved by</span><span>${esc((appr.find(a=>a.action==='approved')||{}).user_name||'—')}</span>
+      </div>
+      ${cred?`<div class="warn-box">⚠ This vendor may owe a credit: ${cred.map(c=>esc((c.reason||'credit')+' '+money(c.expected_cents))).join('; ')}. Confirm before releasing.</div>`:''}
+      ${d.applied_credit?`<div class="warn-box">✓ A credit appears already applied on this invoice.</div>`:''}
+      ${lines.length?`<div class="lbl">Line items</div><table style="margin-bottom:12px;"><tbody>${lines.map(l=>`<tr><td>${esc(l.description||l.memo||'—')}${l.prior_payment?' <span style="color:#9aa;font-size:11px;">(prior payment)</span>':''}</td><td style="color:#6b7a8d;">${esc((l.chart_of_accounts&&(l.chart_of_accounts.account_number+' '+l.chart_of_accounts.account_name))||'')}</td><td class="amt">${money(lineAmt(l))}</td></tr>`).join('')}</tbody></table>`:''}
+      ${appr.length?`<div class="lbl">Approval history</div><div style="font-size:13px;line-height:1.7;">${appr.map(a=>`${esc(a.action)} — ${esc(a.user_name||'')} <span style="color:#9aa;">${dt(a.created_at)}</span>`).join('<br>')}</div>`:''}
+    </div>
+    <div class="mfoot">
+      ${doc?`<button class="btn ghost" id="pdfBtn" onclick="openPdf('${inv.id}','${doc.id}')">📄 Open invoice PDF</button>`:'<span style="color:#9aa;font-size:12px;align-self:center;">No PDF on file</span>'}
+      <button class="btn release" onclick="releaseFromModal('${inv.id}')">Release for payment</button>
+    </div>`;
+}
+async function openPdf(invId,docId){
+  const b=$('pdfBtn'); if(b){ b.disabled=true; b.textContent='Opening…'; }
+  try{
+    const r=await af('/api/ap/invoices/'+invId+'/documents/'+docId);
+    if(!r.ok) throw new Error('could not open the PDF');
+    const blob=await r.blob(); window.open(URL.createObjectURL(blob),'_blank');
+  }catch(e){ toast(e.message,true); }
+  if(b){ b.disabled=false; b.textContent='📄 Open invoice PDF'; }
+}
+async function releaseFromModal(id){ closeModal(); await release(id, null); }
+document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeModal(); });
+
 boot();
 </script>
 </body>
