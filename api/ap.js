@@ -1503,9 +1503,10 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
 router.post('/invoices/:id/post-coded', async (req, res) => {
   try {
     const { id } = req.params;
-    const { data: inv } = await supabase.from('ap_invoices')
-      .select('id, status, community_id, vendor_id, total_cents, tax_cents, invoice_date, vendor_invoice_number, vendor_name, source_storage_path, posting_journal_entry_id, vendors(name)')
+    const { data: inv, error: invErr } = await supabase.from('ap_invoices')
+      .select('id, status, community_id, vendor_id, total_cents, tax_cents, invoice_date, vendor_invoice_number, source_storage_path, posting_journal_entry_id, vendors(name)')
       .eq('id', id).maybeSingle();
+    if (invErr) { console.error('[ap] post-coded load failed:', invErr.message); return res.status(500).json({ error: safeErrorMessage(invErr) }); }
     if (!inv) return res.status(404).json({ error: 'not_found' });
     if (inv.status === 'voided') return res.status(400).json({ error: 'voided', detail: 'This invoice was voided.' });
     if (inv.posting_journal_entry_id) return res.json({ ok: true, already_posted: true, posting_journal_entry_id: inv.posting_journal_entry_id });
@@ -1520,7 +1521,7 @@ router.post('/invoices/:id/post-coded', async (req, res) => {
       invoiceId: id, communityId: inv.community_id, vendorId: inv.vendor_id,
       glLines: lines.map((l) => ({ accountId: l.gl_account_id, cents: l.amount_cents, memo: l.description })),
       totalCents: inv.total_cents, taxCents: inv.tax_cents, invoiceDate: inv.invoice_date,
-      vendorInvoiceNumber: inv.vendor_invoice_number, vendorName: (inv.vendors && inv.vendors.name) || inv.vendor_name,
+      vendorInvoiceNumber: inv.vendor_invoice_number, vendorName: (inv.vendors && inv.vendors.name) || null,
       sourceDocumentPath: inv.source_storage_path || null,
       classificationReason: `Posted as coded — ${lines.length} line(s) across ${new Set(lines.map((l) => l.gl_account_id)).size} account(s).`,
     });
