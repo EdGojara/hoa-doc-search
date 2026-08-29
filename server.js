@@ -1112,6 +1112,10 @@ app.use('/api/email-drafts', require('./api/email_drafts'));
 app.use('/api/email-attachments', require('./api/email_attachments'));
 app.use('/api/vendor-outreach', require('./api/vendor_outreach'));
 app.use('/api/shadow', require('./api/shadow'));
+app.use('/api/objectives', require('./api/objectives'));
+app.get('/admin/objectives', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'objectives.html'));
+});
 app.get('/admin/draft-queue', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'draft-queue.html'));
 });

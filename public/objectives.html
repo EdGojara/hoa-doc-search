@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operator Board — Bedrock Office</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root{ --navy:#0B1D34; --gold:#C99A2E; --ink:#141b26; --muted:#5c6b7e; --line:#e4e2db; --bg:#f6f4ee; --card:#fffefb; --good:#2f6f4f; --goodbg:#e6f0ea; --amber:#B7791F; --amberbg:#fbf1dd; --red:#9B2C2C; --redbg:#f7e8e6; --shadow:0 1px 2px rgba(11,29,52,.05),0 8px 24px rgba(11,29,52,.06); --serif:Georgia,'Times New Roman',serif; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:26px 22px 60px;}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:2px solid var(--gold);padding-bottom:12px;margin-bottom:8px;}
+  .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:700;}
+  h1{font-family:var(--serif);font-weight:600;color:var(--navy);font-size:26px;margin:4px 0 0;}
+  a.back{font-size:12.5px;color:var(--muted);text-decoration:none;}
+  .sub{font-size:12.5px;color:var(--muted);margin:0 0 18px;max-width:840px;}
+  .o{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:15px 17px;margin-bottom:12px;box-shadow:var(--shadow);}
+  .o.stalled{border-left:4px solid var(--amber);}
+  .o .top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;}
+  .o .title{font-weight:700;color:var(--navy);font-size:15px;}
+  .o .goal{font-size:13px;color:var(--muted);margin-top:2px;}
+  .pill{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:6px;text-transform:none;}
+  .pill.open{background:#eef2f7;color:var(--navy);} .pill.waiting_resident{background:var(--amberbg);color:var(--amber);}
+  .pill.waiting_third_party{background:var(--amberbg);color:var(--amber);} .pill.waiting_human{background:var(--redbg);color:var(--red);}
+  .pill.owner{background:#eef2f7;color:var(--navy);text-transform:capitalize;}
+  .pill.stall{background:var(--redbg);color:var(--red);}
+  .meta{font-size:12px;color:var(--muted);margin-top:8px;display:flex;gap:14px;flex-wrap:wrap;}
+  .meta b{color:var(--navy);font-weight:600;}
+  .empty{color:var(--muted);text-align:center;padding:48px 10px;}
+  .count{font-size:12.5px;color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div><div class="eyebrow">Bedrock Office</div><h1>Operator Board</h1></div>
+    <a class="back" href="/admin/draft-queue">← Draft Queue</a>
+  </div>
+  <p class="sub">Every objective the team is actively driving to an outcome — not a record of what happened, but live work the system owns. Each carries a goal, a status, and a planned next step, and reattaches new mail to itself. Anything gone quiet or past due is flagged, so nothing sits silent waiting for a human to remember.</p>
+
+  <div class="count" id="count"></div>
+  <div id="list"><div class="empty">Loading…</div></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const ago = (d) => { if(!d) return ''; const h=Math.round((Date.now()-new Date(d).getTime())/3600000); if(h<1) return 'just now'; if(h<48) return h+'h ago'; return Math.round(h/24)+'d ago'; };
+const due = (d) => { if(!d) return ''; const h=Math.round((new Date(d).getTime()-Date.now())/3600000); if(h<0) return `overdue ${Math.round(-h/24)||1}d`; if(h<48) return `due ${h}h`; return `due ${Math.round(h/24)}d`; };
+
+async function load(){
+  try{
+    const r = await fetch('/api/objectives'); const d = await r.json();
+    if(!r.ok) throw new Error(d.error||r.status);
+    if(d.notReady){ $('list').innerHTML = '<div class="empty">Objectives spine not set up yet. Apply <b>migration 399</b> and refresh.</div>'; return; }
+    const objs = d.objectives||[];
+    const stalled = objs.filter(o=>o.stalled).length;
+    $('count').textContent = `${objs.length} open objective${objs.length===1?'':'s'}${stalled?` · ${stalled} need attention`:''}`;
+    if(!objs.length){ $('list').innerHTML = '<div class="empty">No open objectives yet. As the team commits to outcomes, they show up here and get driven to closure.</div>'; return; }
+    // stalled first, then oldest activity
+    objs.sort((a,b)=> (b.stalled-a.stalled) || String(a.last_activity_at).localeCompare(String(b.last_activity_at)));
+    $('list').innerHTML = objs.map(card).join('');
+  }catch(e){ $('list').innerHTML = '<div class="empty">Could not load: '+esc(e.message)+'</div>'; }
+}
+function card(o){
+  return `<div class="o ${o.stalled?'stalled':''}">
+    <div class="top">
+      <div><div class="title">${esc(o.title)}</div>${o.goal&&o.goal!==o.title?`<div class="goal">${esc(o.goal)}</div>`:''}</div>
+      <div>${o.stalled?'<span class="pill stall">needs attention</span> ':''}<span class="pill ${esc(o.status)}">${esc(o.status.replace(/_/g,' '))}</span> ${o.owner_persona?`<span class="pill owner">${esc(o.owner_persona)}</span>`:''}</div>
+    </div>
+    <div class="meta">
+      ${o.next_action?`<span><b>Next:</b> ${esc(o.next_action)}${o.next_action_due?` (${due(o.next_action_due)})`:''}</span>`:'<span class="muted">no next step set</span>'}
+      <span><b>Last activity:</b> ${ago(o.last_activity_at)}</span>
+      ${o.resident_email?`<span>${esc(o.resident_email)}</span>`:''}
+    </div>
+  </div>`;
+}
+load();
+</script>
+</body>
+</html>
