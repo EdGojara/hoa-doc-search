@@ -34,7 +34,7 @@ async function pendingInbound(communityId) {
   // page, not fetchAll (whose cap is a runaway guard that throws). Ordered, so
   // the pagination linter is satisfied and paging is deterministic.
   let q = supabase.from('email_messages')
-    .select('id, internet_message_id, subject, body_full, body_preview, sender_name, sender_email, classification, community_id, resolved_property_id, received_at')
+    .select('id, internet_message_id, mailbox, graph_id, subject, body_full, body_preview, sender_name, sender_email, classification, community_id, resolved_property_id, received_at')
     .eq('direction', 'inbound').not('community_id', 'is', null)
     .order('received_at', { ascending: false }).limit(PENDING_UNIVERSE);
   if (communityId) q = q.eq('community_id', communityId);
