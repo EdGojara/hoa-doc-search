@@ -57,7 +57,7 @@
 
     <div class="grid2">
       <div class="tile soon"><div class="head"><h2>➕ Add a shortcut</h2></div>
-        <div class="body"><div class="empty">Tell Claude what you want on this screen — an approval queue, a cash-to-release view, exceptions the team flagged, a KPI. It gets added here as a tile.</div></div></div>
+        <div class="body"><div class="empty">Shortcuts you add land here as tiles, an approval queue, a cash-to-release view, exceptions the team flagged, a KPI. Whatever saves you clicks.</div></div></div>
       <div class="tile soon"><div class="head"><h2>📌 Your pending list</h2></div>
         <div class="body"><div class="empty">Coming next: everything across the platform that is gated on you, in one to-do.</div></div></div>
     </div>
@@ -65,6 +65,7 @@
   </div>
   <div id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const money = (c) => '$' + (Number(c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -74,9 +75,20 @@ function fmtDue(due){ if(!due) return '—'; const d=daysLate(due); const s=new 
   return d>0 ? `<span class="due-late">${s} (${d}d late)</span>` : `<span class="due-ok">${s}</span>`; }
 
 let rows = [];
+let af = (u,o)=>fetch(u, o||{});
+async function boot(){
+  try{
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if(cfg && cfg.enabled && window.supabase && cfg.supabase_url && cfg.supabase_anon_key){
+      const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      af = async (u,o)=>{ o=o||{}; const h=Object.assign({}, o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){ } return fetch(u, Object.assign({}, o, { headers:h })); };
+    }
+  }catch(_){ /* fall through — load() will show the owner-only message if unauthed */ }
+  load();
+}
 async function load(){
   try{
-    const r = await fetch('/api/ap/ed-queue', { credentials:'same-origin' });
+    const r = await af('/api/ap/ed-queue');
     if(r.status===403){ $('invBody').innerHTML='<div class="empty">This is the owner\'s workspace. Sign in as the owner to view it.</div>'; $('invMeta').textContent=''; return; }
     if(r.status===401){ $('invBody').innerHTML='<div class="empty">Please sign in to continue.</div>'; $('invMeta').textContent=''; return; }
     const j = await r.json();
@@ -115,7 +127,7 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;',
 async function release(id, btn){
   if(btn){ btn.disabled=true; btn.textContent='Releasing…'; }
   try{
-    const r = await fetch('/api/ap/invoices/'+id+'/approve', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:'{}' });
+    const r = await af('/api/ap/invoices/'+id+'/approve', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
     const j = await r.json();
     if(!r.ok) throw new Error(j.error||j.detail||'release failed');
     rows = rows.filter(x=>x.id!==id);
@@ -129,11 +141,11 @@ async function releaseAll(){
   if(!confirm(`Release all ${rows.length} bills for payment (${money(rows.reduce((a,i)=>a+i.total_cents,0))})? Checks and ACH go out on the next run.`)) return;
   const ids = rows.map(i=>i.id);
   let ok=0, fail=0;
-  for(const id of ids){ try{ const r=await fetch('/api/ap/invoices/'+id+'/approve',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}); if(r.ok){ ok++; rows=rows.filter(x=>x.id!==id); const el=$('row-'+id); if(el) el.remove(); } else { fail++; } }catch(_){ fail++; } }
+  for(const id of ids){ try{ const r=await af('/api/ap/invoices/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); if(r.ok){ ok++; rows=rows.filter(x=>x.id!==id); const el=$('row-'+id); if(el) el.remove(); } else { fail++; } }catch(_){ fail++; } }
   render({ count: rows.length, total_cents: rows.reduce((a,i)=>a+i.total_cents,0) });
   toast(`Released ${ok}${fail?`, ${fail} failed`:''}.`, !!fail);
 }
-load();
+boot();
 </script>
 </body>
 </html>
