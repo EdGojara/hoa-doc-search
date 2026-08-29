@@ -1494,6 +1494,42 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
   } catch (err) { console.error('[ap] line code failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// POST /invoices/:id/post-coded — post the journal entry straight from the
+// invoice's coded lines, AS-IS, respecting a line-by-line split. This is the
+// correct "post" for a split bill; the single-account apply path would collapse
+// the split into one lump. Idempotent if already posted. (Ed 2026-08-29 — the
+// split bill showed a misleading single-account "Apply & post"; staff shouldn't
+// have to guess. Toward: Emma posts, Kat reviews.)
+router.post('/invoices/:id/post-coded', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: inv } = await supabase.from('ap_invoices')
+      .select('id, status, community_id, vendor_id, total_cents, tax_cents, invoice_date, vendor_invoice_number, vendor_name, source_storage_path, posting_journal_entry_id, vendors(name)')
+      .eq('id', id).maybeSingle();
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    if (inv.status === 'voided') return res.status(400).json({ error: 'voided', detail: 'This invoice was voided.' });
+    if (inv.posting_journal_entry_id) return res.json({ ok: true, already_posted: true, posting_journal_entry_id: inv.posting_journal_entry_id });
+
+    const { data: lines } = await supabase.from('ap_invoice_lines').select('*').eq('invoice_id', id).order('line_number');
+    if (!lines || !lines.length) return res.status(400).json({ error: 'no_lines', detail: 'This bill has no line items to post.' });
+    const uncoded = lines.filter((l) => !l.gl_account_id);
+    if (uncoded.length) return res.status(400).json({ error: 'lines_uncoded', detail: `${uncoded.length} line(s) still need an account before this can post.` });
+
+    const { postAccrualForInvoice } = require('../lib/ap/intake');
+    const jeId = await postAccrualForInvoice({
+      invoiceId: id, communityId: inv.community_id, vendorId: inv.vendor_id,
+      glLines: lines.map((l) => ({ accountId: l.gl_account_id, cents: l.amount_cents, memo: l.description })),
+      totalCents: inv.total_cents, taxCents: inv.tax_cents, invoiceDate: inv.invoice_date,
+      vendorInvoiceNumber: inv.vendor_invoice_number, vendorName: (inv.vendors && inv.vendors.name) || inv.vendor_name,
+      sourceDocumentPath: inv.source_storage_path || null,
+      classificationReason: `Posted as coded — ${lines.length} line(s) across ${new Set(lines.map((l) => l.gl_account_id)).size} account(s).`,
+    });
+    const biggest = lines.filter((l) => l.amount_cents > 0).sort((a, b) => b.amount_cents - a.amount_cents)[0];
+    await supabase.from('ap_invoices').update({ coded_gl_account_id: biggest ? biggest.gl_account_id : null, posting_journal_entry_id: jeId || null, updated_at: new Date().toISOString() }).eq('id', id);
+    res.json({ ok: true, posting_journal_entry_id: jeId, posted: !!jeId, accounts: new Set(lines.map((l) => l.gl_account_id)).size });
+  } catch (err) { console.error('[ap] post-coded failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // POST /invoices/:id/lines/:lineId/split — break ONE line into several, each with
 // its own GL account, when the extractor lumped multiple charges into one line or
 // couldn't read the line-item table at all. The parts must sum to the original
