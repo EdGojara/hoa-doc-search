@@ -71,6 +71,7 @@ const CHECKS = [
   'tests/test_amanda_disposition.js',
   'tests/test_persona_configs.js',
   'tests/test_operator_actions.js',
+  'tests/test_legal_threat_detect.js',
   'tests/test_insurance_compare.js',
   'tests/test_insurance_renewal.js',
   'tests/test_team_roster.js',
