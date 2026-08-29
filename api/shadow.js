@@ -25,32 +25,62 @@ function _isMissingTable(err) {
   return /could not find|does not exist|42P01|PGRST20[45]|schema cache/i.test(m);
 }
 
-// Replay recent real inbound through the personas and record what each would do.
-// body: { limit=25, communityId?, personas?:[...] }  (limit hard-capped at 100)
+// The inbound mail not yet shadowed (newest first, up to a cap). Shared by the
+// pending-count and the batched runner so "how many are left" and "what's next"
+// never disagree. A message counts as shadowed once ANY persona has drafted it.
+const PENDING_UNIVERSE = 500; // a bounded window of "recent inbound" we consider
+async function pendingInbound(communityId) {
+  // Intentional bounded window (recent N), NOT "all rows" — so a single ordered
+  // page, not fetchAll (whose cap is a runaway guard that throws). Ordered, so
+  // the pagination linter is satisfied and paging is deterministic.
+  let q = supabase.from('email_messages')
+    .select('id, internet_message_id, subject, body_full, body_preview, sender_name, sender_email, classification, community_id, resolved_property_id, received_at')
+    .eq('direction', 'inbound').not('community_id', 'is', null)
+    .order('received_at', { ascending: false }).limit(PENDING_UNIVERSE);
+  if (communityId) q = q.eq('community_id', communityId);
+  const { data: inbound, error } = await q;
+  if (error) throw error;
+  // shadow_drafts is small and grows slowly — fetchAll (all rows) is right here.
+  const shadowed = await fetchAll(supabase, 'shadow_drafts', { select: 'source_email_id', orderBy: 'source_email_id' });
+  const done = new Set((shadowed || []).map((s) => s.source_email_id));
+  return (inbound || []).filter((r) => !done.has(r.id));
+}
+
+// How many inbound messages are still waiting to be shadowed — the progress
+// bar's target. GET /pending?communityId=
+router.get('/pending', async (req, res) => {
+  try {
+    const probe = await supabase.from('shadow_drafts').select('id').limit(1);
+    if (probe.error && _isMissingTable(probe.error)) return res.json({ ok: true, notReady: true, pending: 0 });
+    const pend = await pendingInbound((req.query && req.query.communityId) || null);
+    res.json({ ok: true, pending: pend.length, capped: pend.length >= PENDING_UNIVERSE });
+  } catch (err) {
+    console.error('[shadow] pending failed:', err.message);
+    res.status(500).json({ error: safe(err) });
+  }
+});
+
+// Shadow the NEXT batch of not-yet-shadowed inbound. Called repeatedly by the UI
+// with a small `limit` so it can show a live progress bar and never sit on a
+// silent "Running…". Each message is one model call, so batches stay small.
+// body: { limit=8, communityId? }  (limit hard-capped at 25 per call)
 router.post('/run', async (req, res) => {
   try {
-    const limit = Math.min(Math.max(parseInt(req.body && req.body.limit, 10) || 25, 1), 100);
+    const limit = Math.min(Math.max(parseInt(req.body && req.body.limit, 10) || 8, 1), 25);
     const communityId = (req.body && req.body.communityId) || null;
 
     // Cheap existence probe FIRST — never fire a batch of model calls (real $)
     // against a table that isn't there yet.
     const probe = await supabase.from('shadow_drafts').select('id').limit(1);
     if (probe.error && _isMissingTable(probe.error)) {
-      return res.status(409).json({ error: 'Shadow table not set up yet — apply migration 396 in the Supabase SQL editor and refresh.' });
+      return res.status(409).json({ error: 'Shadow table not set up yet — apply migration 397 in the Supabase SQL editor and refresh.' });
     }
 
-    let q = supabase.from('email_messages')
-      .select('id, internet_message_id, subject, body_full, body_preview, sender_name, sender_email, classification, community_id, resolved_property_id, received_at')
-      .eq('direction', 'inbound')
-      .not('community_id', 'is', null)     // need a community to ground against
-      .order('received_at', { ascending: false })
-      .limit(limit);
-    if (communityId) q = q.eq('community_id', communityId);
-    const { data: rows, error } = await q;
-    if (error) throw error;
+    const pend = await pendingInbound(communityId);
+    const batch = pend.slice(0, limit);
 
     // resolve community names once
-    const cids = [...new Set((rows || []).map((r) => r.community_id).filter(Boolean))];
+    const cids = [...new Set(batch.map((r) => r.community_id).filter(Boolean))];
     const nameById = {};
     if (cids.length) {
       const cm = await supabase.from('communities').select('id, name').in('id', cids);
@@ -58,17 +88,17 @@ router.post('/run', async (req, res) => {
     }
 
     const byPersona = {};
-    let recorded = 0, skipped = 0, errored = 0;
-    // sequential: keeps model load gentle and the run predictable
-    for (const row of (rows || [])) {
+    let recorded = 0, errored = 0;
+    for (const row of batch) {
       const out = await runShadowForEmail(supabase, row, { communityName: nameById[row.community_id] || null });
       const p = out.persona || 'unknown';
-      byPersona[p] = byPersona[p] || { recorded: 0, skipped: 0, error: 0 };
+      byPersona[p] = byPersona[p] || { recorded: 0, error: 0 };
       if (out.status === 'recorded') { recorded++; byPersona[p].recorded++; }
-      else if (out.status === 'skipped' || out.status === 'exists') { skipped++; byPersona[p].skipped++; }
-      else { errored++; byPersona[p].error++; }
+      else if (out.status !== 'skipped' && out.status !== 'exists') { errored++; byPersona[p].error++; }
     }
-    res.json({ ok: true, scanned: (rows || []).length, recorded, skipped, errored, byPersona });
+    // remaining after this batch, so the UI can advance the bar and know when to stop
+    const remaining = Math.max(0, pend.length - recorded);
+    res.json({ ok: true, processed: batch.length, recorded, errored, remaining, byPersona });
   } catch (err) {
     console.error('[shadow] run failed:', err.message);
     res.status(500).json({ error: safe(err) });

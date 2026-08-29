@@ -60,6 +60,12 @@
   .empty{color:var(--muted);text-align:center;padding:36px 10px;}
   .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:9px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60;}
   .toast.on{opacity:1;}
+  /* progress */
+  .prog{display:none;align-items:center;gap:10px;width:100%;margin-top:10px;}
+  .prog.on{display:flex;}
+  .progbar{flex:1;height:10px;background:#eee;border-radius:6px;overflow:hidden;}
+  .progbar > div{height:100%;width:0;background:var(--good);transition:width .3s;}
+  .progtxt{font-size:12px;color:var(--muted);white-space:nowrap;min-width:120px;}
 </style>
 </head>
 <body>
@@ -78,6 +84,7 @@
     <span class="muted" id="runInfo" style="font-size:12px;"></span>
     <span style="flex:1;"></span>
     <span class="muted" id="lastRun" style="font-size:12px;"></span>
+    <div class="prog" id="prog"><div class="progbar"><div id="progfill"></div></div><span class="progtxt" id="progtxt"></span></div>
   </div>
 
   <h2>Grade drafts against your bar</h2>
@@ -208,19 +215,45 @@ function laneCard(L){
   </div>`;
 }
 
+// Batched run with a live progress bar: ask how many are pending, then process
+// small batches, advancing the bar after each, so you never sit on a silent
+// "Running…" wondering if it's stuck.
+const BATCH = 6;
+function setProg(done, target){
+  $('prog').classList.add('on');
+  const pct = target ? Math.round((done/target)*100) : 0;
+  $('progfill').style.width = pct + '%';
+  $('progtxt').textContent = `${done} of ${target} · ${pct}%`;
+}
 async function runPass(){
   const btn=$('runBtn'); btn.disabled=true; const orig=btn.textContent; btn.textContent='Running…';
-  $('runInfo').textContent='One model call per message; hang tight.';
+  $('runInfo').textContent='';
   try{
-    const r = await af('/api/shadow/run',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ limit: parseInt($('limit').value,10) }) });
-    const d = await r.json();
-    if(r.status===409){ toast(d.error||'Apply migration 396 first.'); return; }
-    if(!r.ok) throw new Error(d.error||r.status);
-    toast(`Shadow pass: ${d.recorded} new, ${d.skipped} already done${d.errored?', '+d.errored+' errored':''}.`);
-    $('runInfo').textContent='';
-    loadQueue(); loadSummary();
-  }catch(e){ toast('Run failed: '+e.message); $('runInfo').textContent=''; }
-  finally{ btn.disabled=false; btn.textContent=orig; }
+    const chosen = parseInt($('limit').value,10);
+    // target = how many are actually waiting, capped by the chosen amount
+    const pr = await af('/api/shadow/pending'); const pd = await pr.json();
+    if(pr.status===403){ toast('Sign in as owner to run.'); return; }
+    if(pd.notReady){ toast('Apply migration 397 first, then refresh.'); return; }
+    const target = Math.min(chosen, pd.pending || 0);
+    if(!target){ toast('Nothing new to shadow — all recent inbound is already recorded.'); loadQueue(); return; }
+
+    let done = 0, errors = 0;
+    setProg(0, target);
+    while(done < target){
+      const want = Math.min(BATCH, target - done);
+      const r = await af('/api/shadow/run',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ limit: want }) });
+      const d = await r.json();
+      if(r.status===409){ toast(d.error||'Apply migration 397 first.'); break; }
+      if(!r.ok) throw new Error(d.error||r.status);
+      done += d.recorded; errors += (d.errored||0);
+      setProg(done, target);
+      loadQueue();               // fill the grading queue as drafts land
+      if(d.recorded===0) break;   // nothing more to do (or all erroring) — stop, don't loop forever
+    }
+    toast(`Shadow pass done: ${done} drafted${errors?`, ${errors} errored`:''}.`);
+    loadSummary();
+  }catch(e){ toast('Run failed: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent=orig; setTimeout(()=>$('prog').classList.remove('on'), 1500); }
 }
 
 $('runBtn').addEventListener('click', runPass);
