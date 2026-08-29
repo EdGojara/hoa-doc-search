@@ -406,6 +406,27 @@ router.get('/invoices/:id/documents/:docId', async (req, res) => {
   }
 });
 
+// GET /invoices/:id/source-pdf — open the ORIGINAL vendor invoice PDF (stored on
+// the bill as source_storage_path), distinct from ap_invoice_documents which
+// holds EXTRA attachments and is usually empty. This is the actual invoice a
+// reviewer wants to see before releasing. (Ed 2026-08-29.)
+router.get('/invoices/:id/source-pdf', async (req, res) => {
+  try {
+    const { data: inv, error } = await supabase.from('ap_invoices')
+      .select('source_storage_path, source_filename').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!inv || !inv.source_storage_path) return res.status(404).json({ error: 'no_source_pdf' });
+    const { data, error: sErr } = await supabase.storage.from('documents')
+      .createSignedUrl(inv.source_storage_path, 60 * 60);
+    if (sErr || !data || !data.signedUrl) return res.status(404).json({ error: 'file_not_found' });
+    if (req.query.json) return res.json({ url: data.signedUrl, name: inv.source_filename || 'invoice.pdf' });
+    res.redirect(data.signedUrl);
+  } catch (err) {
+    console.error('[ap] source pdf fetch failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // POST /api/ap/invoices/:id/attach-pdf — attach a source PDF to an EXISTING bill
 // and re-run extraction + coding. For bills whose invoice arrived without the

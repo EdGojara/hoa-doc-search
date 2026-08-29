@@ -191,7 +191,7 @@ function renderDetail(d){
       ${appr.length?`<div class="lbl">Approval history</div><div style="font-size:13px;line-height:1.7;">${appr.map(a=>`${esc(a.action)} — ${esc(a.user_name||'')} <span style="color:#9aa;">${dt(a.created_at)}</span>`).join('<br>')}</div>`:''}
     </div>
     <div class="mfoot">
-      ${doc?`<button class="btn ghost" id="pdfBtn" onclick="openPdf('${inv.id}','${doc.id}')">📄 Open invoice PDF</button>`:'<span style="color:#9aa;font-size:12px;align-self:center;">No PDF on file</span>'}
+      ${(inv.source_storage_path||doc)?`<button class="btn ghost" id="pdfBtn" onclick="${inv.source_storage_path?`openSourcePdf('${inv.id}')`:`openPdf('${inv.id}','${doc.id}')`}">📄 Open invoice PDF</button>`:'<span style="color:#9aa;font-size:12px;align-self:center;">No PDF on file</span>'}
       <button class="btn release" onclick="releaseFromModal('${inv.id}')">Release for payment</button>
     </div>`;
 }
@@ -201,6 +201,15 @@ async function openPdf(invId,docId){
     const r=await af('/api/ap/invoices/'+invId+'/documents/'+docId);
     if(!r.ok) throw new Error('could not open the PDF');
     const blob=await r.blob(); window.open(URL.createObjectURL(blob),'_blank');
+  }catch(e){ toast(e.message,true); }
+  if(b){ b.disabled=false; b.textContent='📄 Open invoice PDF'; }
+}
+async function openSourcePdf(invId){
+  const b=$('pdfBtn'); if(b){ b.disabled=true; b.textContent='Opening…'; }
+  try{
+    const r=await af('/api/ap/invoices/'+invId+'/source-pdf?json=1');
+    const j=await r.json(); if(!r.ok||!j.url) throw new Error(j.error||'could not open the PDF');
+    window.open(j.url,'_blank');
   }catch(e){ toast(e.message,true); }
   if(b){ b.disabled=false; b.textContent='📄 Open invoice PDF'; }
 }
