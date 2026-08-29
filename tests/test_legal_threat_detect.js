@@ -10,7 +10,8 @@
 // forces confidence to 'low' through classifyDisposition.
 // ============================================================================
 
-const { detectLegalThreat, classifyDisposition, LEGAL_THREAT_REASON } = require('../lib/team/exception_router');
+const { detectLegalThreat, classifyDisposition, LEGAL_THREAT_REASON, detectHarmEmergency, HARM_REASON } = require('../lib/team/exception_router');
+const { greetingName } = require('../lib/team/operator_core');
 
 let pass = 0, fail = 0;
 function ok(cond, label) { if (cond) { pass++; console.log('  PASS  ' + label); } else { fail++; console.log('  FAIL  ' + label); } }
@@ -58,5 +59,40 @@ ok(withThreat.confidence === 'low', 'threat -> urgent (low) tier, not medium');
 const clean = classifyDisposition({ gateAllowed: true, grounded: true, audience: 'homeowner', escalationReasons: [] });
 ok(clean.disposition === 'auto_ok' && clean.confidence === 'high', 'no threat, all-nominal -> auto_ok/high (no false escalation)');
 
-console.log(`\n${fail ? 'FAILED' : 'All'} legal-threat detector cases ${fail ? '' : 'passed'} (${pass} passed, ${fail} failed).`);
+// --- Imminent-harm detector -------------------------------------------------
+const HARMS = [
+  'This dog is left in a hot garage 24 hours a day and crying for help.',
+  'The animal is being cruelly confined with inadequate enclosure, please do something.',
+  'A dog is dying in a cage next door, no food or water.',
+  'My neighbor is threatening to kill me.',
+  'I am suicidal and need help.',
+  'There is a gas leak in the clubhouse.',
+  'A child was left home alone all day, I think it is child neglect.',
+];
+console.log('\nImminent-harm signals must fire:');
+for (const h of HARMS) ok(detectHarmEmergency(h) === HARM_REASON, `fires: "${h.slice(0, 50)}..."`);
+
+const HARM_BENIGN = [
+  'I have a dog and want to know the dog park hours.',
+  'Can I get approval to install a pet door?',
+  'The fire lane needs to be repainted.',
+  'We are grilling at the pool this weekend, is that allowed?',
+  'My cat keeps getting into the neighbor\'s yard.',
+];
+console.log('\nOrdinary pet/hazard-vocab must NOT fire:');
+for (const b of HARM_BENIGN) ok(detectHarmEmergency(b) === null, `quiet: "${b.slice(0, 50)}..."`);
+
+console.log('\nHarm drives the urgent tier:');
+const wh = classifyDisposition({ gateAllowed: true, grounded: true, audience: 'homeowner', escalationReasons: [HARM_REASON] });
+ok(wh.disposition === 'needs_review' && wh.confidence === 'low', 'harm -> needs_review/low (urgent), even when otherwise clean');
+
+// --- Greeting: greet who WROTE, not the resolved account --------------------
+console.log('\nGreeting name resolution:');
+ok(greetingName({ sender_name: 'Lorena Carnero' }, 'Maria & William De Slavick') === 'Lorena', 'prefers the actual sender over the resolved account name (the Maria bug)');
+ok(greetingName({ sender_name: '' }, 'Maria & William De Slavick') === 'Maria', 'falls back to the account name when no sender name');
+ok(greetingName({ sender_name: 'info@bedrocktx.com' }, null) === 'there', 'an email address is not a greeting name');
+ok(greetingName({ sender_name: 'Bedrock Information' }, 'Jane Doe') === 'Jane', 'skips a functional-mailbox name and uses the real contact');
+ok(greetingName({}, null) === 'there', 'neutral fallback when nothing usable');
+
+console.log(`\n${fail ? 'FAILED' : 'All'} severe-signal + greeting cases ${fail ? '' : 'passed'} (${pass} passed, ${fail} failed).`);
 process.exit(fail ? 1 : 0);
