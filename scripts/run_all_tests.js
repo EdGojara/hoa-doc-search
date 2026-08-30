@@ -75,6 +75,7 @@ const CHECKS = [
   'tests/test_shadow.js',
   'tests/test_objectives.js',
   'tests/test_reconcile.js',
+  'tests/test_bedrock_ops.js',
   'tests/test_insurance_compare.js',
   'tests/test_insurance_renewal.js',
   'tests/test_team_roster.js',
