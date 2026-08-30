@@ -78,6 +78,14 @@ for (const p of expected) {
   });
 }
 
+// Kat carries the CPA-grade review + budget capability (not just bookkeeping).
+check('kat: CPA-grade financial review + budget capability wired', () => {
+  const p = CONFIGS.kat.systemPromptFor('board', 'X');
+  assert.ok(/CPA/.test(p), 'kat missing CPA-standard review language');
+  assert.ok(/budget/i.test(p) && /reconcil/i.test(p) && /balance sheet|income statement|statements/i.test(p), 'kat missing budget/reconciliation/statements review content');
+  assert.ok(/audit opinion|tax|independent CPA/i.test(p), 'kat missing the not-the-auditor boundary');
+});
+
 console.log('');
 if (failures) { console.log(`FAILED — ${failures} case(s)\n`); process.exit(1); }
 console.log('All persona config cases passed.\n');
