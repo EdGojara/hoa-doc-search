@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bedrock Team — Internal</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root{ --navy:#0B1D34; --gold:#C99A2E; --ink:#141b26; --muted:#5c6b7e; --line:#e4e2db; --bg:#f6f4ee; --card:#fffefb; --shadow:0 1px 2px rgba(11,29,52,.05),0 10px 30px rgba(11,29,52,.07); --serif:Georgia,'Times New Roman',serif; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 22px 64px;}
+  .head{border-bottom:2px solid var(--gold);padding-bottom:14px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;}
+  .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:700;}
+  h1{font-family:var(--serif);font-weight:600;color:var(--navy);font-size:27px;margin:4px 0 0;}
+  a.back{font-size:12.5px;color:var(--muted);text-decoration:none;}
+  .sub{font-size:13px;color:var(--muted);margin:14px 0 22px;max-width:760px;}
+  .lock{background:#fbf1dd;border:1px solid #eadfc2;color:#7a5a12;border-radius:10px;padding:8px 12px;font-size:12.5px;display:inline-block;margin-bottom:20px;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:18px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:var(--shadow);}
+  .photo{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:#eee;}
+  .body{padding:15px 17px 17px;}
+  .name{font-family:var(--serif);font-size:19px;color:var(--navy);}
+  .title{font-size:12.5px;color:var(--gold);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin:2px 0 8px;}
+  .lane{font-size:13px;color:var(--ink);margin-bottom:10px;}
+  .meta{font-size:11.5px;color:var(--muted);border-top:1px dashed var(--line);padding-top:9px;display:flex;flex-direction:column;gap:3px;}
+  .pill{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;background:#eef2f7;color:var(--navy);border-radius:6px;padding:2px 7px;}
+  .empty{color:var(--muted);text-align:center;padding:60px 12px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div><div class="eyebrow">Bedrock Office · Internal</div><h1>The Bedrock Team</h1></div>
+    <a class="back" href="/admin/draft-queue">← Back</a>
+  </div>
+  <p class="sub">The agents that run <b>Bedrock the company</b> — growth and people — as opposed to the community-facing team (Claire, Kat, Darby, and the rest) who run the associations. This roster is internal and owner-only, and never appears on any community surface.</p>
+  <div class="lock">🔒 Owner-only · these teammates are dark (they draft and prepare; a human releases)</div>
+  <div id="grid" class="grid"><div class="empty">Loading…</div></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+let af = (u,o)=>fetch(u,o||{});
+async function boot(){
+  try{
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if(cfg && cfg.enabled && window.supabase && cfg.supabase_url && cfg.supabase_anon_key){
+      const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      af = async (u,o)=>{ o=o||{}; const h=Object.assign({}, o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){ } return fetch(u, Object.assign({}, o, { headers:h })); };
+    }
+  }catch(_){}
+  load();
+}
+async function load(){
+  try{
+    const r = await af('/api/bedrock-ops/team'); const d = await r.json();
+    if(r.status===403){ $('grid').innerHTML = '<div class="empty">This is the owner\'s internal team view. Sign in as the account owner to see it.</div>'; return; }
+    if(!r.ok) throw new Error(d.error||r.status);
+    if(!d.team || !d.team.length){ $('grid').innerHTML = '<div class="empty">No internal teammates yet.</div>'; return; }
+    $('grid').innerHTML = d.team.map(card).join('');
+  }catch(e){ $('grid').innerHTML = '<div class="empty">Could not load: '+esc(e.message)+'</div>'; }
+}
+function card(m){
+  return `<div class="card">
+    <img class="photo" src="${esc(m.photo)}" alt="${esc(m.name)}" onerror="this.style.display='none'">
+    <div class="body">
+      <div class="name">${esc(m.emoji||'')} ${esc(m.name)}</div>
+      <div class="title">${esc(m.title)}</div>
+      <div class="lane">${esc(m.domain||m.lane)}</div>
+      <div class="meta">
+        <span><span class="pill">mailbox</span> ${esc(m.mailbox||'—')}</span>
+        ${m.voice_note?`<span><span class="pill">voice</span> ${esc(m.voice_note)}</span>`:''}
+      </div>
+    </div>
+  </div>`;
+}
+boot();
+</script>
+</body>
+</html>

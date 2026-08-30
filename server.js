@@ -1112,6 +1112,7 @@ app.use('/api/email-drafts', require('./api/email_drafts'));
 app.use('/api/email-attachments', require('./api/email_attachments'));
 app.use('/api/vendor-outreach', require('./api/vendor_outreach'));
 app.use('/api/shadow', require('./api/shadow'));
+app.use('/api/bedrock-ops', require('./api/bedrock_ops'));
 app.use('/api/objectives', require('./api/objectives'));
 app.get('/admin/objectives', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'objectives.html'));
@@ -1124,6 +1125,9 @@ app.get('/admin/vendor-outreach', (req, res) => {
 });
 app.get('/admin/shadow', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'shadow-metrics.html'));
+});
+app.get('/admin/bedrock-team', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'bedrock-team.html'));
 });
 
 app.use('/api/operations', require('./api/operations'));
