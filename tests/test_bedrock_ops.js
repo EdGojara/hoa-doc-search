@@ -11,8 +11,9 @@
 const assert = require('assert');
 const communityRoster = require('../lib/team/roster');
 const ops = require('../lib/team/bedrock_ops');
-const { OPS_CONFIGS } = require('../lib/team/bedrock_ops_configs');
+const { OPS_CONFIGS, hrReservedDetect } = require('../lib/team/bedrock_ops_configs');
 const { GROWTH_PRIMER } = require('../lib/team/knowledge/growth_primer');
+const { PEOPLE_PRIMER } = require('../lib/team/knowledge/people_primer');
 
 let pass = 0, fail = 0;
 function ok(c, l) { if (c) { pass++; console.log('  PASS  ' + l); } else { fail++; console.log('  FAIL  ' + l); } }
@@ -46,6 +47,28 @@ ok(/audit|tax|fraud/i.test(GROWTH_PRIMER) && /MUST NOT|not claim|hard line/i.tes
 ok(/guarantee/i.test(GROWTH_PRIMER), 'primer forbids guarantees of results/savings');
 ok(/DARK|human-released|reserved/i.test(GROWTH_PRIMER) && /disclos/i.test(GROWTH_PRIMER), 'primer restates the dark + disclosure rails');
 ok(/board-seat flywheel|demonstrate|artifacts leave/i.test(GROWTH_PRIMER), 'primer carries the growth playbook (Ed\'s winning plays)');
+
+// --- Vivian (HR): isolation, hard boundaries, and the code-enforced stops -----
+console.log('\nVivian (HR) — isolation + hard stops:');
+ok(communityRoster.get('vivian') === null, 'Vivian is NOT in the community roster');
+const v = ops.get('vivian');
+ok(v && v.name === 'Vivian Hale' && v.title === 'Human Resources Director', 'Vivian is in the internal registry with her title');
+ok(v.community_facing === false && v.internal === true && v.owner_gated === true, 'internal, owner-gated, not community-facing');
+const vsys = OPS_CONFIGS.vivian.systemPromptFor();
+ok(/never make or advise an employment decision/i.test(vsys), 'prompt: never decides/advises an employment action');
+ok(/legal employment advice|employment-law/i.test(vsys), 'prompt: no legal employment advice');
+ok(/complaint is a time-zero stop|serious complaint.*stop|time-zero STOP/i.test(vsys), 'prompt: complaint = time-zero stop + route');
+ok(/confidential/i.test(vsys), 'prompt: confidentiality');
+
+console.log('\nHR reserved-detector (policy-as-code) fires on the hard stops:');
+ok(hrReservedDetect('My manager keeps making inappropriate comments, I want to report harassment').hit, 'fires: harassment complaint');
+ok(hrReservedDetect('I want to fire one of my reports this week').hit, 'fires: termination decision');
+ok(hrReservedDetect('Should I write him up / put him on a PIP?').hit, 'fires: discipline');
+ok(hrReservedDetect('He requested FMLA leave and an accommodation').hit, 'fires: leave/accommodation');
+ok(hrReservedDetect('An employee is threatening a wrongful termination lawsuit').hit, 'fires: legal employment matter');
+ok(!hrReservedDetect('How many PTO days do I have and how do I request time off?').hit, 'quiet: routine PTO question');
+ok(!hrReservedDetect('Where do I find the onboarding checklist for a new hire?').hit, 'quiet: routine onboarding question');
+ok(/complaint|decision|route|confidential|absolute/i.test(PEOPLE_PRIMER), 'people primer carries the hard boundaries');
 
 console.log(`\n${fail ? 'FAILED' : 'All'} Bedrock-ops cases ${fail ? '' : 'passed'} (${pass} passed, ${fail} failed).`);
 process.exit(fail ? 1 : 0);
