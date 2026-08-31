@@ -46524,6 +46524,15 @@ ${questionsPage}
         });
         const j = await r.json();
         if (!r.ok) throw new Error(j.detail || j.error || 'mark-paid failed');
+        // Paid before the invoice month — the server booked it as a prepaid
+        // asset (not a negative payable) and scheduled the expense into the
+        // service month. Surface it so this is never a silent reclass.
+        if (j.prepaid) {
+          const MO = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+          const parts = String(j.reverses_month || '').split('-');
+          const when = parts[1] ? (MO[Number(parts[1])] + ' ' + parts[0]) : 'the invoice month';
+          alert('Paid early — before the invoice date.\n\nBooked as a PREPAID asset (account ' + (j.prepaid_account || '13000') + ') in the payment month, so no negative payable shows at month-end. It reverses into expense in ' + when + '.');
+        }
         apOpenInvoice(id); apLoadList(); apLoadCounts();
       } catch (e) { alert('Could not record payment: ' + e.message); }
     };
