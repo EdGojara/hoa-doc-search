@@ -42209,6 +42209,17 @@ ${questionsPage}
     return `<span style="background:#e8f5e9; color:#2e7d32; padding:2px 8px; border-radius:4px; font-size:11px;">good thru ${vendorsFmtDate(expiresAt)}</span>`;
   }
 
+  // Lead-with-the-action chip for the vendor row: the handful of things a
+  // vendor actually needs done, surfaced up front (Ed 2026-08-31).
+  function vendorsActionBadge(v) {
+    const chip = (bg, fg, t) => `<span style="background:${bg}; color:${fg}; padding:1px 7px; border-radius:4px; font-size:10.5px; font-weight:600;">${t}</span>`;
+    const b = [];
+    if (v.coi_state === 'expired') b.push(chip('#fde7e7', '#a00', 'COI expired'));
+    else if (v.coi_state === 'expiring') b.push(chip('#fff4e0', '#a06400', 'COI expiring'));
+    if (v.needs_w9) b.push(chip('#fff4e0', '#a06400', 'W-9 needed'));
+    return b.length ? `<div style="margin-top:3px; display:flex; gap:4px; flex-wrap:wrap;">${b.join('')}</div>` : '';
+  }
+
   async function vendorsLoadCommunities() {
     try {
       const res = await fetch('/api/billing/communities');
@@ -42647,14 +42658,21 @@ ${questionsPage}
         return;
       }
 
+      const year = data.ytd_year || new Date().getFullYear();
+      const communitySel = document.getElementById('vendors-filter-community');
+      const scopeLabel = (communitySel && communitySel.value)
+        ? (communitySel.options[communitySel.selectedIndex]?.text || 'this community')
+        : 'all communities';
+
       const rows = vendors.map(v => `
-        <tr style="border-bottom:1px solid #eee; cursor:pointer;" onclick="vendorsShowVendor('${v.id}')">
-          <td style="padding:10px 8px;">
+        <tr style="border-bottom:1px solid #eee; cursor:pointer; ${v.has_action ? 'background:#fffaf3;' : ''}" onclick="vendorsShowVendor('${v.id}')">
+          <td style="padding:10px 8px; ${v.has_action ? 'border-left:3px solid #e0a83e;' : 'border-left:3px solid transparent;'}">
             <div style="font-weight:500; color:#315A87;">${escapeHtml(v.name || '—')}</div>
             ${v.dba ? `<div style="font-size:11px; color:#888;">dba ${escapeHtml(v.dba)}</div>` : ''}
+            ${vendorsActionBadge(v)}
           </td>
           <td style="padding:10px 8px; font-size:12px; color:#555;">${escapeHtml(v.category || '—')}</td>
-          <td style="padding:10px 8px; text-align:right; font-variant-numeric: tabular-nums;">${vendorsMoney(v.total_invoiced_lifetime)}</td>
+          <td style="padding:10px 8px; text-align:right; font-variant-numeric: tabular-nums;">${vendorsMoney(v.ytd_spend_cents != null ? v.ytd_spend_cents / 100 : 0)}</td>
           <td style="padding:10px 8px; text-align:right; font-variant-numeric: tabular-nums; color:#666;">${v.invoice_count || 0}</td>
           <td style="padding:10px 8px; font-size:12px; color:#666;">${vendorsFmtDate(v.last_invoice_at)}</td>
           <td style="padding:10px 8px;">${vendorsCoiBadge(v.earliest_coi_expiry)}</td>
@@ -42669,7 +42687,7 @@ ${questionsPage}
               <tr style="background:#f5f5f5; border-bottom:2px solid #ddd;">
                 <th style="padding:10px 8px; text-align:left;">Vendor</th>
                 <th style="padding:10px 8px; text-align:left;">Category</th>
-                <th style="padding:10px 8px; text-align:right;">Lifetime $</th>
+                <th style="padding:10px 8px; text-align:right;">YTD $ (${year})</th>
                 <th style="padding:10px 8px; text-align:right;"># Inv</th>
                 <th style="padding:10px 8px; text-align:left;">Last invoice</th>
                 <th style="padding:10px 8px; text-align:left;">COI</th>
@@ -42679,7 +42697,8 @@ ${questionsPage}
             <tbody>${rows}</tbody>
           </table>
         </div>
-        <div style="margin-top:8px; font-size:11px; color:#888;">${vendors.length} vendor${vendors.length === 1 ? '' : 's'}. Click a row to drill in.</div>
+        <div style="margin-top:8px; font-size:11px; color:#888;">${vendors.length} vendor${vendors.length === 1 ? '' : 's'} · YTD $ = paid this year to ${escapeHtml(scopeLabel)}; vendors needing a COI or W-9 are listed first. Click a row to drill in.</div>
+        <div style="margin-top:2px; font-size:10.5px; color:#abb2bd;"># Inv and Last invoice are vendor-wide across all communities.</div>
       `;
     } catch (e) {
       console.error('[vendors] list failed', e);

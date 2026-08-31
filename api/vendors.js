@@ -261,7 +261,50 @@ router.get('/', async (req, res) => {
       vendors = vendors.map(v => ({ ...v, ...(byId[v.id] || {}) }));
     }
 
-    res.json({ vendors });
+    // YTD spend + action flags (Ed 2026-08-31). A vendor-wide LIFETIME total is a
+    // vanity number on an operational screen; what drives decisions is (a) spend
+    // THIS calendar year — the 1099 threshold + budget basis — scoped to the
+    // filtered community, and (b) whether the vendor needs something done (COI
+    // expired/expiring, W-9 missing while over the $600 IRS threshold). Compute
+    // both here, and sort the vendors that need action to the top.
+    const year = new Date().getFullYear();
+    const spend_scope = community_id ? 'community' : 'all';
+    if (vendors.length) {
+      const { fetchAllQuery } = require('../lib/db/fetch_all');
+      const ids = vendors.map(v => v.id);
+      const yearStart = `${year}-01-01`;
+      // Cash-out rail (ap_payments), paginated (PostgREST 1000-row cap), scoped
+      // to the selected community when one is filtered.
+      const pays = await fetchAllQuery(() => {
+        let pq = supabase.from('ap_payments')
+          .select('vendor_id, amount_cents, payment_date, community_id')
+          .in('vendor_id', ids)
+          .gte('payment_date', yearStart);
+        if (community_id) pq = pq.eq('community_id', community_id);
+        return pq;
+      }, { orderBy: 'payment_date' });
+      const ytdByVendor = {};
+      for (const p of pays) ytdByVendor[p.vendor_id] = (ytdByVendor[p.vendor_id] || 0) + Number(p.amount_cents || 0);
+
+      vendors = vendors.map((v) => {
+        const ytd = ytdByVendor[v.id] || 0;
+        let coi_state = 'none';
+        if (v.earliest_coi_expiry) {
+          const days = Math.floor((new Date(v.earliest_coi_expiry) - new Date()) / 86400000);
+          coi_state = days < 0 ? 'expired' : (days <= 30 ? 'expiring' : 'ok');
+        }
+        // Reportable, no W-9 on file, and paid at/over $600 this year.
+        const needs_w9 = !!v.is_1099_vendor && !v.w9_received_date && !v.w9_on_file && ytd >= 60000;
+        return { ...v, ytd_spend_cents: ytd, ytd_year: year, spend_scope, coi_state, needs_w9, has_action: coi_state === 'expired' || coi_state === 'expiring' || needs_w9 };
+      });
+
+      // Lead with what needs doing: expired COI, then W-9 owed, then expiring
+      // COI, then everyone else — within each tier, biggest YTD spend first.
+      const rank = (v) => (v.coi_state === 'expired' ? 0 : v.needs_w9 ? 1 : v.coi_state === 'expiring' ? 2 : 3);
+      vendors.sort((a, b) => rank(a) - rank(b) || (b.ytd_spend_cents || 0) - (a.ytd_spend_cents || 0));
+    }
+
+    res.json({ vendors, ytd_year: year, spend_scope });
   } catch (err) {
     console.error('[vendors] list failed:', err.message);
     res.status(500).json({ error: err.message });
