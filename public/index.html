@@ -20891,6 +20891,25 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // Fetches properties for the active community, clears existing markers,
   // re-renders. Called from inspMapInit and from inspRunGeocoder after
   // backfill so the map updates without rebuilding the Mapbox instance.
+  // Offline-first cache of a community's homes (Ed 2026-08-31). The map's home
+  // list is a live fetch; on a COLD start with no signal there was nothing to
+  // fall back to, so the inspector saw "Retrying…" and an empty map mid-drive.
+  // We now save the last good list per community (localStorage — a plain JSON
+  // string, unaffected by the iOS Blob/IndexedDB quirk) and render it when the
+  // network can't be reached. Best-effort: quota/private-mode failures are
+  // swallowed so caching can never itself break the loader.
+  function _inspCachePropsSave(communityId, props) {
+    try { localStorage.setItem('insp_props_cache_' + communityId, JSON.stringify({ t: Date.now(), props })); } catch (_) {}
+  }
+  function _inspCachePropsLoad(communityId) {
+    try {
+      const raw = localStorage.getItem('insp_props_cache_' + communityId);
+      if (!raw) return null;
+      const o = JSON.parse(raw);
+      return (o && Array.isArray(o.props) && o.props.length) ? o : null;
+    } catch (_) { return null; }
+  }
+
   async function inspMapLoadProperties(opts) {
     if (!inspState.mapInstance || !inspState.communityId) return;
     const statusEl = document.getElementById('inspMapStatus');
@@ -20923,12 +20942,24 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (_retry < 8) setTimeout(() => inspMapLoadProperties({ _retry: _retry + 1 }), 4000);
       return;
     }
-    // Fetch failed on a cold map (nothing rendered yet) → show error + retry,
-    // but don't proceed to wipe/redraw with empty data.
+    // Fetch failed on a cold map (nothing rendered yet). Offline-first: render
+    // this community's LAST SAVED homes so she isn't stranded with an empty map,
+    // then keep retrying to refresh once signal returns. Only if there's no
+    // cached copy at all do we fall back to the retry-only message.
     if (!fetchOk && !hadMarkers) {
-      setStatus('⚠️ Couldn\'t load houses (signal?). Retrying…');
-      if (_retry < 8) setTimeout(() => inspMapLoadProperties({ _retry: _retry + 1 }), 4000);
-      return;
+      const cached = _inspCachePropsLoad(inspState.communityId);
+      if (cached) {
+        const ageMin = Math.max(0, Math.round((Date.now() - (cached.t || 0)) / 60000));
+        propsResp = { properties: cached.props, total_count: cached.props.length, geo_count: cached.props.length, missing_geo_count: 0, _from_cache: true };
+        fetchOk = false;
+        setStatus(`📴 Offline — showing your saved homes${ageMin ? ` (loaded ${ageMin} min ago)` : ''}. Capture still works; it will refresh when signal returns…`);
+        if (_retry < 8) setTimeout(() => inspMapLoadProperties({ _retry: _retry + 1 }), 4000);
+        // fall through and render from the cached list
+      } else {
+        setStatus('⚠️ Couldn\'t load houses (signal?). Retrying…');
+        if (_retry < 8) setTimeout(() => inspMapLoadProperties({ _retry: _retry + 1 }), 4000);
+        return;
+      }
     }
     // Good response in hand (possibly a legitimately-empty cold map that needs
     // geocoding — that path is handled by the status messaging below).
@@ -20944,6 +20975,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     // picker (inspReviewRenderUnlinkedPhoto) has a dropdown source for
     // photos that didn't get auto-linked at capture time.
     window.inspProperties = propsResp.properties || [];
+    // Save the fresh list so a later cold start with no signal can render it.
+    if (fetchOk && !propsResp._from_cache && window.inspProperties.length) {
+      _inspCachePropsSave(inspState.communityId, window.inspProperties);
+    }
 
     // Center on the community ONCE, then never again. This function is re-run by
     // the 30-second live poll (and other refreshes) while an inspector is driving
