@@ -22902,18 +22902,34 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
   async function inspQueueAdd(blob, metadata) {
     const db = await _inspOpenQueueDb();
+    // iOS Safari / WebKit intermittently FAILS to serialize a Blob/File into an
+    // IndexedDB object store ("Error preparing Blob/File data to be stored in
+    // object store"), which was silently blocking field captures mid-drive
+    // (Ed 2026-08-31, staff out driving LOPF). An ArrayBuffer stores reliably,
+    // so persist the raw bytes + MIME type and rebuild the Blob at upload time
+    // (see the uploader + insp-recover.html). Fall back to the Blob only if
+    // arrayBuffer() itself is unavailable, so a capture is never lost.
+    let row;
+    try {
+      const blob_buf = await blob.arrayBuffer();
+      row = { blob_buf, blob_type: (blob && blob.type) || 'image/jpeg', metadata, created_at: Date.now(), attempts: 0, last_error: null, last_attempt_at: null };
+    } catch (_) {
+      row = { blob, metadata, created_at: Date.now(), attempts: 0, last_error: null, last_attempt_at: null };
+    }
     return new Promise((resolve, reject) => {
       const tx = db.transaction(INSP_QUEUE_STORE, 'readwrite');
-      const req = tx.objectStore(INSP_QUEUE_STORE).add({
-        blob, metadata,
-        created_at: Date.now(),
-        attempts: 0,
-        last_error: null,
-        last_attempt_at: null,
-      });
+      const req = tx.objectStore(INSP_QUEUE_STORE).add(row);
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
+  }
+
+  // Rebuild the upload Blob from a queued row — new rows store an ArrayBuffer
+  // (blob_buf), legacy rows may still hold a Blob. Handles both.
+  function _inspRowToBlob(item) {
+    if (item.blob instanceof Blob) return item.blob;
+    if (item.blob_buf) return new Blob([item.blob_buf], { type: item.blob_type || 'image/jpeg' });
+    return null;
   }
 
   async function inspQueueList() {
@@ -22998,7 +23014,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         }
         try {
           const fd = new FormData();
-          fd.append('photo', item.blob, 'photo.jpg');
+          const upBlob = _inspRowToBlob(item);
+          if (!upBlob) { await inspQueueRemove(item.id); continue; }
+          fd.append('photo', upBlob, 'photo.jpg');
           fd.append('captured_at', item.metadata.captured_at);
           if (item.metadata.gps_lat != null) fd.append('gps_lat', item.metadata.gps_lat);
           if (item.metadata.gps_lng != null) fd.append('gps_lng', item.metadata.gps_lng);

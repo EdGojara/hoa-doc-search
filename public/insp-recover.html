@@ -73,7 +73,10 @@
     for (const item of items){
       try {
         const fd=new FormData();
-        fd.append('photo', item.blob, 'photo.jpg');
+        // New rows store an ArrayBuffer (blob_buf); legacy rows may hold a Blob.
+        const upBlob = (item.blob instanceof Blob) ? item.blob : (item.blob_buf ? new Blob([item.blob_buf], { type: item.blob_type || 'image/jpeg' }) : null);
+        if (!upBlob) { await removeItem(item.id); done++; continue; }
+        fd.append('photo', upBlob, 'photo.jpg');
         const m=item.metadata;
         fd.append('captured_at', m.captured_at || new Date().toISOString());
         if(m.gps_lat!=null) fd.append('gps_lat', m.gps_lat);
