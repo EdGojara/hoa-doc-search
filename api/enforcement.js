@@ -2161,6 +2161,112 @@ router.get('/drafts', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/enforcement/drafts/generate-missing   Body/query: { community_id?, dry_run? }
+//
+// Safety net for the silent-draft-loss bug (Ed 2026-09-01, Quail Ridge): the
+// /inspections confirm endpoint drafts the courtesy letter in a fire-and-forget
+// promise AFTER responding. Under a bulk confirm those detached renders can be
+// lost (39 QR violations opened, zero letters). The violation is open, the photo
+// shows "✓ Confirmed", and NOTHING is in the Drafts queue — a silent failure.
+//
+// This finds OPEN violations that have NO letter interaction at all (never got
+// their first notice) and generates the draft via the SAME canonical helper the
+// cure-lapse + manual paths use (_draftLetterForBumpedViolation) — awaited and
+// reliable, not fire-and-forget. Recovers what was lost AND is the ongoing
+// backstop the drafts queue can call after a batch confirm.
+//
+// GUARDS: courtesy_1 / courtesy_2 ONLY. certified_209 / fine_assessed are §209
+// artifacts that stay staff-gated — never auto-drafted by a sweep; they're
+// counted and reported for manual handling. Community-scoped. dry_run returns
+// the counts without drafting.
+// ---------------------------------------------------------------------------
+router.post('/drafts/generate-missing', express.json(), async (req, res) => {
+  try {
+    const communityId = req.body.community_id || req.query.community_id || null;
+    const dryRun = req.body.dry_run === true || req.query.dry_run === '1';
+    // ONLY the fresh first-notice case. courtesy_1 is a violation that just opened
+    // and never got its letter — exactly the confirm-loss bug. courtesy_2 needs a
+    // documented prior courtesy_1 (the §209 letter validator refuses otherwise),
+    // and certified/fine are staff-gated §209 artifacts — all of those need staff
+    // review, so they're counted as needs_review, never swept.
+    const AUTO_STAGES = ['courtesy_1'];
+    const REVIEW_STAGES = ['courtesy_2', 'certified_209', 'fine_assessed'];
+    const LETTER_TYPES = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
+
+    // 1) Open violations in scope (paginated — CLAUDE.md 1000-row scar).
+    const { fetchAllQuery } = require('../lib/db/fetch_all');
+    let openViolations = await fetchAllQuery(() => {
+      let q = supabase.from('violations')
+        .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, opened_from_observation_id, board_priority_at_open')
+        .not('current_stage', 'in', '(cured,closed,voided)')
+        .is('resolved_at', null);
+      if (communityId) q = q.eq('community_id', communityId);
+      return q;
+    }, { orderBy: 'opened_at' });
+
+    if (!openViolations.length) {
+      return res.json({ ok: true, community_id: communityId, candidates: 0, generated: 0, gated: 0, skipped_has_letter: 0, errors: [], dry_run: dryRun });
+    }
+
+    // 2) Which of these already have ANY letter interaction? Those are NOT
+    //    missing — skip them (a draft exists, or a notice already went out).
+    const violIds = openViolations.map((v) => v.id);
+    const haveLetter = new Set();
+    for (let i = 0; i < violIds.length; i += 200) {
+      const slice = violIds.slice(i, i + 200);
+      const { data: inters, error: iErr } = await supabase.from('interactions')
+        .select('violation_id').in('violation_id', slice).in('type', LETTER_TYPES);
+      if (iErr) throw iErr;
+      (inters || []).forEach((r) => haveLetter.add(r.violation_id));
+    }
+
+    const missing = openViolations.filter((v) => !haveLetter.has(v.id));
+    const needsReview = missing.filter((v) => REVIEW_STAGES.includes(v.current_stage));
+    const toDraft = missing.filter((v) => AUTO_STAGES.includes(v.current_stage));
+
+    if (dryRun) {
+      return res.json({
+        ok: true, community_id: communityId, dry_run: true,
+        open_total: openViolations.length,
+        candidates: toDraft.length,
+        needs_review: needsReview.length,
+        skipped_has_letter: openViolations.length - missing.length,
+      });
+    }
+
+    // 3) Generate the missing courtesy drafts — SEQUENTIALLY (each render is a
+    //    PDF; a bulk parallel burst is what lost them in the first place).
+    let generated = 0;
+    const errors = [];
+    for (const v of toDraft) {
+      const mailType = 'first_class_mail'; // courtesy stages are first-class
+      const r = await _draftLetterForBumpedViolation(
+        v,
+        { stage: v.current_stage, mail_type: mailType },
+        v.community_id,
+        { subject: `Violation letter (${v.current_stage}) — recovered missing draft` },
+      );
+      if (r && r.error) errors.push({ violation_id: v.id, error: r.error });
+      else generated++;
+    }
+
+    res.json({
+      ok: true,
+      community_id: communityId,
+      open_total: openViolations.length,
+      candidates: toDraft.length,
+      generated,
+      needs_review: needsReview.length,
+      skipped_has_letter: openViolations.length - missing.length,
+      errors,
+    });
+  } catch (err) {
+    console.error('[enforcement.drafts.generate-missing]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // POST /api/enforcement/drafts/auto-bundle
 // Body: { community_id? }

@@ -18136,6 +18136,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;"><span style="font-family: var(--font-mono, monospace); font-size: 9.5px; letter-spacing: 0.15em; background: #0B1D34; color: #D4AF37; padding: 2px 7px; border-radius: 4px; vertical-align: middle; margin-right: 6px;">STEP 2</span>📄 Drafts queue <span style="color:#64748b; font-weight:500;">— review · approve · reject</span></h3>
         <div style="display:flex; gap:6px;">
           <button class="secondary-btn" onclick="inspDraftsLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+          <button onclick="inspDraftsGenerateMissing()" style="font-size:11px; padding:4px 12px; background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; border-radius:6px; font-weight:600; cursor:pointer;" title="Recover letters for violations that were confirmed but whose draft never generated (a confirm can open the violation yet lose the background letter render). Generates the missing first-notice (courtesy) letters for the selected community. Certified §209 and second notices are left for staff review.">✚ Generate missing letters</button>
           <button onclick="inspDraftsReEvaluate()" style="font-size:11px; padding:4px 12px; background:#fef3c7; color:#854d0e; border:1px solid #fde68a; border-radius:6px; font-weight:600; cursor:pointer;" title="Re-run the escalation engine on every current draft using the latest Vantaca weight. Drafts at the wrong stage get rejected so re-confirming the observation creates a fresh draft at the correct stage. Drafts at properties with prior certified §209 history get flagged for board review (no auto-mail).">🔄 Re-evaluate stages</button>
           <button id="inspDraftsRejectAllBtn" onclick="inspDraftsRejectSelected()" style="font-size:12px; padding:5px 14px; background:#fff; color:#b91c1c; border:1px solid #fecaca; border-radius:6px; font-weight:600; cursor:pointer;" disabled>✕ Reject selected (0)</button>
           <button class="action-btn" id="inspDraftsApproveAllBtn" onclick="inspDraftsApproveSelected()" style="font-size:12px; padding:5px 14px; background:#16a34a; border-color:#16a34a;" disabled>✓ Approve selected (0)</button>
@@ -25165,7 +25166,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     // by Drafts queue + Mail queue + Cures dropdown. Pick one community
     // once, every portfolio view respects it.
     const params = new URLSearchParams({ horizon_days: horizon });
-    const cid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const cid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
     if (cid) params.set('community_id', cid);
     try {
       const r = await fetch(`/api/enforcement/cure-pipeline?${params.toString()}`);
@@ -25370,6 +25371,18 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   function inspQueueGetFilter() {
     try { return localStorage.getItem(QUEUE_FILTER_LS_KEY) || ''; } catch (_) { return ''; }
   }
+  // Effective community for the Review / Drafts / Mail queues. The explicit
+  // queue filter wins; when it's empty we fall back to the community the operator
+  // is actively inspecting (inspCommunity) instead of silently showing EVERY
+  // community's drafts. Without this, driving Quail Ridge showed Eaglewood's 87
+  // drafts mixed in — "Eaglewood popping up under Quail Ridge" (Ed 2026-09-01).
+  function inspQueueEffectiveCid() {
+    const explicit = inspQueueGetFilter();
+    if (explicit) return explicit;
+    const insp = document.getElementById('inspCommunity');
+    return (insp && insp.value) ? insp.value : '';
+  }
+  window.inspQueueEffectiveCid = inspQueueEffectiveCid;
   function inspQueueSetFilter(val) {
     try { localStorage.setItem(QUEUE_FILTER_LS_KEY, val || ''); } catch (_) {}
   }
@@ -25387,10 +25400,12 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   async function inspQueueLoadCommunityOptions() {
     const sel = document.getElementById('inspQueueCommunityFilter');
     if (!sel || sel.options.length > 1) {
-      // Already populated. Just re-sync the visible selection to the persisted value.
+      // Already populated. Re-sync the visible selection so the dropdown label
+      // matches what the queues actually show: the explicit filter if set, else
+      // the community being inspected (the effective scope).
       if (sel) {
-        const saved = inspQueueGetFilter();
-        if (saved && sel.value !== saved) sel.value = saved;
+        const eff = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : inspQueueGetFilter();
+        if (eff && sel.value !== eff) sel.value = eff;
       }
       return;
     }
@@ -25406,8 +25421,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         opt.textContent = c.name;
         sel.appendChild(opt);
       }
-      const saved = inspQueueGetFilter();
-      if (saved) sel.value = saved;
+      const eff = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : inspQueueGetFilter();
+      if (eff) sel.value = eff;
     } catch (_) { /* leave default */ }
   }
   window.inspQueueLoadCommunityOptions = inspQueueLoadCommunityOptions;
@@ -25570,7 +25585,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     if (!wrap) return;
     inspDraftsAllIndex = null;  // fresh data → rebuild the full-set index on next quick-select
     wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:18px 0;">Loading drafts…</div>';
-    const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
     const qs = filterCid ? `&community_id=${encodeURIComponent(filterCid)}` : '';
     try {
       // Load + render the FIRST page. Drafts are already bundled, so don't make
@@ -25611,7 +25626,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // Fetch the next page and APPEND (each page small so the view never blanks).
   async function inspDraftsLoadMore(btn) {
     if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
-    const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
     const qs = filterCid ? `&community_id=${encodeURIComponent(filterCid)}` : '';
     try {
       const r = await window._authFetch(`/api/enforcement/drafts?limit=${INSP_DRAFTS_PAGE}&offset=${inspDraftsNextOffset}${qs}`);
@@ -25772,7 +25787,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // Cached until the next inspDraftsLoad(). /drafts caps at 200/page → page.
   async function inspDraftsEnsureAllIndex() {
     if (inspDraftsAllIndex) return inspDraftsAllIndex;
-    const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
     const qs = filterCid ? `&community_id=${encodeURIComponent(filterCid)}` : '';
     const all = [];
     try {
@@ -26455,8 +26470,54 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // Drafts at properties with prior certified §209 get flagged for
   // board review (no auto-mail). Ed 2026-06-13 post-Vantaca-weight-fix.
   // ============================================================
+  // Recover missing first-notice letters. A confirm can open the violation but
+  // lose the background letter render (fire-and-forget after the response), so
+  // the violation sits open with nothing in the Drafts queue. This dry-runs the
+  // count, then generates the missing courtesy_1 letters via the reliable server
+  // helper. courtesy_2 / certified / fines are left for staff (§209 framework).
+  // ============================================================
+  async function inspDraftsGenerateMissing() {
+    const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
+    if (!filterCid) {
+      alert('Pick a community first (the inspection community or the queue filter) so this only sweeps one association at a time.');
+      return;
+    }
+    try {
+      // Dry run for the count.
+      const rd = await window._authFetch('/api/enforcement/drafts/generate-missing', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id: filterCid, dry_run: true }),
+      });
+      const jd = await rd.json();
+      if (!rd.ok) throw new Error(jd.error || `HTTP ${rd.status}`);
+      if ((jd.candidates || 0) === 0) {
+        alert(`No missing first-notice letters in this community.\n\n${jd.needs_review || 0} open violation(s) at a later stage (2nd notice / certified §209) need staff review — those are never auto-generated.`);
+        return;
+      }
+      const msg =
+        `${jd.candidates} open violation(s) were confirmed but never got their first (courtesy) letter.\n\n` +
+        `Generate those ${jd.candidates} courtesy letter(s) now?\n\n` +
+        `They land in this queue as drafts for you to review before anything mails.\n` +
+        (jd.needs_review ? `\n(${jd.needs_review} at a later stage — 2nd notice / certified §209 — are left for staff review.)` : '');
+      if (!confirm(msg)) return;
+
+      const r = await window._authFetch('/api/enforcement/drafts/generate-missing', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id: filterCid }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const errN = (j.errors || []).length;
+      alert(`Generated ${j.generated} draft letter(s).` + (errN ? `\n${errN} could not be generated (see them in the violation record).` : ''));
+      if (typeof inspDraftsLoad === 'function') inspDraftsLoad();
+    } catch (e) {
+      alert('Generate missing letters failed: ' + e.message);
+    }
+  }
+  window.inspDraftsGenerateMissing = inspDraftsGenerateMissing;
+
   async function inspDraftsReEvaluate() {
-    const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
     const scope = filterCid ? 'in the current community filter' : 'in ALL communities';
     if (!confirm(
       `Re-evaluate drafts ${scope}?\n\n` +
@@ -26789,7 +26850,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       // Honor the shared community filter so the visible letters match the
       // filtered counts + the per-community print scope. (Ed 2026-07-31 —
       // filtered to Eaglewood but other communities still listed here.)
-      const _cid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+      const _cid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
       const _qs = _cid ? `?community_id=${encodeURIComponent(_cid)}` : '';
       const r = await window._authFetch('/api/enforcement/mail-queue/letters' + _qs);
       const j = await r.json();
@@ -26839,7 +26900,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     if (!wrap) return;
     wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
     try {
-      const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+      const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
       const qs = filterCid ? `?community_id=${encodeURIComponent(filterCid)}` : '';
       const r = await window._authFetch(`/api/enforcement/mail-queue/summary${qs}`);
       const j = await r.json();
@@ -26857,7 +26918,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // tell the operator to pick one. Returns: a community_id, '' (single community
   // — safe to print all), or false (blocked; caller returns immediately).
   function inspMailQueueResolveCommunity() {
-    const cid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const cid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
     if (cid) return cid;
     const s = window._inspMailQueueSummary;
     const comms = s && s.by_community ? Object.keys(s.by_community) : [];
@@ -26885,7 +26946,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     ).join('');
 
     const _commNames = Object.keys(summary.by_community || {});
-    const _filtered = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const _filtered = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
     const multiCommWarn = (!_filtered && _commNames.length > 1) ? `
       <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:12px; color:#78350f;">
         ⚠ <strong>${_commNames.length} communities in this queue.</strong> Pick one in the community filter above, then print — each community mails as its own batch (its own letterhead + stack). Printing without a filter is blocked.
@@ -27005,7 +27066,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     box.innerHTML = '<div style="font-size:12px;color:#64748b;padding:6px;">Loading…</div>';
     const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, (m) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[m]));
     try {
-      const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+      const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
       const params = new URLSearchParams({ delivery_method: deliveryMethod, printed_at: printedAt });
       if (filterCid) params.set('community_id', filterCid);
       const r = await window._authFetch('/api/enforcement/mail-queue/batch-manifest?' + params.toString());
@@ -27029,7 +27090,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
   async function inspMailQueueRedownload(deliveryMethod, printedAt) {
     const label = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
-    const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
     try {
       const r = await window._authFetch('/api/enforcement/mail-queue/redownload', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -27055,7 +27116,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   // history.
   async function inspMailQueueConfirmMailed(deliveryMethod, printedAt) {
     const label = deliveryMethod === 'certified_mail' ? 'certified' : 'first-class';
-    const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
     const scope = printedAt ? `this ${label} print run` : `the ${label} batch`;
     if (!confirm(`Confirm ${scope} was printed and physically mailed?\n\nThis marks them mailed and clears them from "awaiting confirmation." They stay in the system as sent history and can still be reviewed. Only do this once they're actually in the mail.`)) return;
     try {
