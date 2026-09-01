@@ -169,6 +169,13 @@
     .board-tile:hover .tile-cta { color: var(--gold-bright); }
     .summary-card.bad .value { color: var(--bad); }
 
+    /* ============ BUDGET TABLE ============ */
+    .bnum { text-align: right; padding: 9px 12px; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 13px; }
+    .bhead { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; font-weight: 700; }
+    tr.bgroup td { padding: 9px 12px 5px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #94a3b8; font-weight: 700; background: #fbfcfe; }
+    tr.btotal td { border-top: 2px solid #0B1D34; font-weight: 800; color: #0B1D34; font-size: 13.5px; background: #f8fafc; }
+    tbody tr:not(.bgroup):not(.btotal) + tr:not(.bgroup):not(.btotal) td { border-top: 1px solid #f1f5f9; }
+
     /* ============ FILTER CHIPS ============ */
     .filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
     .chip { padding: 6px 12px; font-size: 12px; font-weight: 600; border: 1px solid var(--rule); background: var(--paper); border-radius: 99px; cursor: pointer; color: var(--ink-soft); transition: all 120ms; }
@@ -656,6 +663,110 @@
       </div>`;
     }).join('');
     return header + sections;
+  }
+
+  // Budget — read-only board view of the adopted Operating + Reserve budget vs.
+  // actuals. Same engine as the admin Budget tab; the board just sees it.
+  async function showBudget() {
+    const wrap = document.getElementById('container');
+    wrap.innerHTML = '<div class="loading">Loading the budget…</div>';
+    try {
+      const j = await fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/budget`);
+      wrap.innerHTML = `${backBar()}${renderBudget(j)}`;
+    } catch (e) {
+      wrap.innerHTML = `${backBar()}<div class="err">Load failed: ${esc(e.message)}</div>`;
+    }
+  }
+  const _bMoney = (c) => (Number(c || 0) < 0 ? '-' : '') + '$' + Math.abs(Number(c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  // A favorable variance is green: expenses under budget, or revenue over budget.
+  function _varCell(row) {
+    const fav = row.account_type === 'revenue'
+      ? (Number(row.ytd_actual_cents || 0) - Number(row.ytd_budget_cents || 0))   // over-collected = good
+      : (Number(row.ytd_budget_cents || 0) - Number(row.ytd_actual_cents || 0));  // under-spent = good
+    const color = fav > 0 ? '#2D7956' : fav < 0 ? '#b42318' : '#94a3b8';
+    const sign = fav > 0 ? '+' : '';
+    return `<span style="color:${color};font-weight:600;">${sign}${_bMoney(fav)}</span>`;
+  }
+  function _budgetRows(rows) {
+    if (!rows.length) return '<tr><td colspan="4" style="padding:10px 12px;color:#94a3b8;font-size:12.5px;">—</td></tr>';
+    return rows.map((r) => {
+      const annual = Number(r.annual_budget_cents || 0);
+      const actual = Number(r.ytd_actual_cents || 0);
+      const pct = annual !== 0 ? Math.min(100, Math.round((actual / annual) * 100)) : 0;
+      const over = annual !== 0 && actual > annual;
+      const barColor = over ? '#b42318' : r.account_type === 'revenue' ? '#2D7956' : '#0B1D34';
+      return `<tr>
+        <td style="padding:9px 12px;">
+          <div style="font-size:13px;color:#0B1D34;">${esc(r.account_name)}</div>
+          <div style="margin-top:4px;height:5px;background:#eef2f7;border-radius:3px;overflow:hidden;max-width:220px;">
+            <div style="height:100%;width:${pct}%;background:${barColor};"></div>
+          </div>
+        </td>
+        <td class="bnum">${_bMoney(annual)}</td>
+        <td class="bnum">${_bMoney(actual)}</td>
+        <td class="bnum">${_varCell(r)}</td>
+      </tr>`;
+    }).join('');
+  }
+  function _budgetFundSection(f) {
+    const t = f.totals;
+    const netAnnual = t.annual_net_cents;
+    const isReserve = f.fund_code === 'RES';
+    const revBlock = f.revenue.length ? `
+      <tr class="bgroup"><td colspan="4">${isReserve ? 'Contributions into reserves' : 'Income'}</td></tr>
+      ${_budgetRows(f.revenue)}` : '';
+    const expBlock = f.expense.length ? `
+      <tr class="bgroup"><td colspan="4">${isReserve ? 'Reserve expenditures' : 'Expenses'}</td></tr>
+      ${_budgetRows(f.expense)}` : '';
+    // Non-cash market gains/losses — not spendable, shown muted, outside the net.
+    const nc = f.noncash || [];
+    const ncBlock = nc.length ? `
+      <tr class="bgroup"><td colspan="4">Non-cash market change · not spendable, excluded from the net</td></tr>
+      ${nc.map((r) => `<tr><td style="padding:9px 12px;color:#94a3b8;font-size:12.5px;">${esc(r.account_name)}</td><td class="bnum" style="color:#94a3b8;">—</td><td class="bnum" style="color:#94a3b8;">${_bMoney(r.ytd_actual_cents)}</td><td class="bnum" style="color:#94a3b8;">—</td></tr>`).join('')}` : '';
+    return `
+      <div style="margin-bottom:22px;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+        <div style="padding:13px 16px;background:#0B1D34;color:#fff;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <div style="font-weight:700;font-size:15px;">${esc(f.fund_title)} Budget</div>
+          <div style="font-size:12px;color:#c7d2e0;">Annual net <b style="color:#fff;">${_bMoney(netAnnual)}</b></div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;min-width:520px;">
+            <thead>
+              <tr style="background:#f8fafc;">
+                <th style="text-align:left;padding:8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;">Account</th>
+                <th class="bnum bhead">Annual budget</th>
+                <th class="bnum bhead">Spent YTD</th>
+                <th class="bnum bhead">vs. plan</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${revBlock}
+              ${expBlock}
+              ${(() => {
+                const netFav = Number(t.ytd_actual_net_cents || 0) - Number(t.ytd_budget_net_cents || 0); // higher net than planned = good
+                const c = netFav > 0 ? '#2D7956' : netFav < 0 ? '#b42318' : '#94a3b8';
+                return `<tr class="btotal">
+                <td style="padding:11px 12px;">Net (income − expenses)</td>
+                <td class="bnum">${_bMoney(netAnnual)}</td>
+                <td class="bnum">${_bMoney(t.ytd_actual_net_cents)}</td>
+                <td class="bnum" style="color:${c};">${netFav > 0 ? '+' : ''}${_bMoney(netFav)}</td>
+              </tr>`;
+              })()}
+              ${ncBlock}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+  function renderBudget(j) {
+    if (!j.has_budget || !(j.funds || []).length) {
+      return `<div class="properties-header">Budget</div>
+        <div class="empty">No adopted budget is on file for FY ${esc(String(j.fiscal_year || ''))} yet. Once the board adopts it, it appears here line by line.</div>`;
+    }
+    const asOf = j.period_end ? new Date(j.period_end + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '';
+    const header = `<div class="properties-header">FY ${esc(String(j.fiscal_year))} Budget</div>
+      <div style="color:#64748b;font-size:13px;margin:-6px 0 16px;">Adopted budget vs. actuals through ${esc(asOf)}. Green means favorable — expenses under plan or income ahead of plan.</div>`;
+    return header + (j.funds || []).map(_budgetFundSection).join('');
   }
 
   // ARC — read-only board oversight. Summary + comfort first; anything PENDING
@@ -1713,6 +1824,33 @@
         <div class="tile-cta">Open reserve map →</div>
       </a>`;
 
+    // Budget — the adopted Operating + Reserve budget vs. actuals. Headline is
+    // the operating budget size + how YTD spending is tracking against plan.
+    const bh = s.budget_headline;
+    let budgetTile = '';
+    if (bh) {
+      // Where does YTD net actual sit vs. YTD net budget? Under budget on the
+      // net (spending less than planned / bringing in more) is good.
+      const opBudget = bh.operating_expense_cents || 0;
+      const metricLabel = [
+        'operating budget',
+        bh.reserve_contribution_cents ? `+ ${fmtMoney(bh.reserve_contribution_cents)} to reserves` : '',
+      ].filter(Boolean).join(' · ');
+      budgetTile = `
+        <a class="board-tile" href="javascript:showBudget()">
+          <div class="tile-icon">📊</div>
+          <div class="tile-title">Budget</div>
+          <div class="tile-desc">The adopted Operating and Reserve budget, line by line, next to what's actually been spent this year.</div>
+          <div class="tile-metric">
+            <div>
+              <div class="metric-value">${fmtMoney(opBudget)}</div>
+              <div class="metric-label">FY ${bh.fiscal_year} ${metricLabel}</div>
+            </div>
+          </div>
+          <div class="tile-cta">Open the budget →</div>
+        </a>`;
+    }
+
     // ── Violations + ARC row ────────────────────────────────────────
     // Violations is its OWN tile (distinct from Accounts Receivable, which is
     // money owed). Always rendered so the board can always see compliance.
@@ -1877,6 +2015,7 @@
       ${comfortBanner(s, projects, motions)}
       <div class="tile-section-label">Financial health</div>
       <div class="board-tile-grid">
+        ${budgetTile}
         ${arTile}
         ${rhTile}
         ${meetingsTile}

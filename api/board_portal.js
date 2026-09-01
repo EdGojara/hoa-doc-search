@@ -182,6 +182,49 @@ router.get('/community/:id/summary', async (req, res) => {
       console.warn('[board_portal] reserve health skipped:', e.message);
     }
 
+    // Budget headline — cheap (no GL read). Just: is there an adopted budget for
+    // the current fiscal year, and what does it total by fund (Operating revenue
+    // vs expense, Reserve contribution). The full budget-vs-actual is loaded on
+    // click via the /budget endpoint; the tile only needs the top line.
+    let budgetHeadline = null;
+    try {
+      const fy = new Date().getUTCFullYear();
+      const { data: bdg } = await supabase
+        .from('community_budgets')
+        .select('id, fiscal_year, status')
+        .eq('community_id', communityId)
+        .eq('fiscal_year', fy)
+        .in('status', ['approved', 'active'])
+        .maybeSingle();
+      if (bdg) {
+        const { data: lines } = await supabase
+          .from('budget_line_items')
+          .select('annual_amount_cents, chart_of_accounts ( account_type, account_funds ( fund_code ) )')
+          .eq('budget_id', bdg.id);
+        let opRev = 0, opExp = 0, resContrib = 0;
+        for (const l of (lines || [])) {
+          const amt = Number(l.annual_amount_cents) || 0;
+          const coa = l.chart_of_accounts || {};
+          const fund = coa.account_funds?.fund_code || 'OPR';
+          if (fund === 'RES') { if (coa.account_type === 'revenue') resContrib += amt; }
+          else if (coa.account_type === 'revenue') opRev += amt;
+          else if (coa.account_type === 'expense') opExp += amt;
+        }
+        budgetHeadline = {
+          fiscal_year: bdg.fiscal_year,
+          status: bdg.status,
+          operating_revenue_cents: opRev,
+          operating_expense_cents: opExp,
+          operating_net_cents: opRev - opExp,
+          // Contributions are booked as a negative (contra) revenue transfer; show
+          // the magnitude of money going INTO reserves so the tile reads "+ $X".
+          reserve_contribution_cents: Math.abs(resContrib),
+        };
+      }
+    } catch (e) {
+      console.warn('[board_portal] budget headline skipped:', e.message);
+    }
+
     // DRV breakdown by stage — counts of currently-open violations per stage
     let drvByStage = null;
     let drvAtAttorney = 0; // separate axis — a case at attorney is ALSO at a stage
@@ -280,6 +323,7 @@ router.get('/community/:id/summary', async (req, res) => {
       // Phase 2 dashboard cards
       ar_aging: arAging,
       reserve_health: reserveHealth,
+      budget_headline: budgetHeadline,
       drv_by_stage: drvByStage,
       drv_at_attorney: drvAtAttorney,
       arc_pipeline: arcPipeline,
@@ -706,6 +750,121 @@ router.get('/community/:id/projects', async (req, res) => {
     });
   } catch (err) {
     console.error('[board_portal] projects failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/board-portal/community/:id/budget[?period_end=YYYY-MM-DD]
+//   Read-only board view of the adopted budget — Operating and Reserve, side by
+//   side with actuals. Reuses the SAME budgetVsActual engine the admin Budget
+//   tab uses (one source of truth), then groups rows by fund + category and
+//   nets each fund. Board-scoped, read-only; the board sees where the money is
+//   planned vs. where it's gone, without touching anything.
+// ----------------------------------------------------------------------------
+router.get('/community/:id/budget', async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const communityId = req.params.id;
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+    const { data: community, error: cErr } = await supabase
+      .from('communities').select('id, name')
+      .eq('id', communityId).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+    if (cErr) throw cErr;
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+    // Period end drives which fiscal year + how many months of actuals. Default
+    // to today (Central), clamped to a real date; the engine reads the FY from it.
+    const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const periodEnd = /^\d{4}-\d{2}-\d{2}$/.test(req.query.period_end || '') ? req.query.period_end : todayISO;
+
+    const { budgetVsActual } = require('../lib/accounting/financial_statements');
+    const bva = await budgetVsActual({ community_id: communityId, period_end: periodEnd });
+
+    // Fund of each row → which section it belongs to. OPR = Operating, RES =
+    // Reserve; anything else (Adopt-A-School, Savings) gets its own section so a
+    // community's real fund set drives the view instead of a hard-coded list.
+    const FUND_TITLES = { OPR: 'Operating', RES: 'Reserve', SAV: 'Savings', ADO: 'Adopt-A-School' };
+    const fundOrder = ['OPR', 'RES', 'SAV', 'ADO'];
+    const byFund = new Map();
+    for (const r of (bva.rows || [])) {
+      const fc = r.fund_code || 'OPR';
+      if (!byFund.has(fc)) byFund.set(fc, []);
+      byFund.get(fc).push(r);
+    }
+
+    // Non-cash accounts (unrealized/realized market gains/losses) are NOT
+    // spendable money — the board must never read a $63k mark-to-market as
+    // reserve income. Same exclusion the living-budget engine applies. Shown
+    // separately, muted, never inside the spendable net.
+    const isNonCash = (r) => /unrealized|realized\s+(gain|loss)|market\s+(gain|loss)/i.test(r.account_name || '');
+    // A revenue line budgeted NEGATIVE is a contra/transfer (e.g. "Reserve
+    // Contribution" booked as a transfer out of operating). Flip it so the board
+    // reads it as a positive inflow into the fund. Flip budget AND actual so the
+    // variance stays honest.
+    const flipContribution = (r) => {
+      const neg = r.account_type === 'revenue'
+        && (Number(r.annual_budget_cents || 0) < 0 || Number(r.ytd_budget_cents || 0) < 0);
+      if (!neg) return r;
+      return {
+        ...r,
+        annual_budget_cents: -Number(r.annual_budget_cents || 0),
+        ytd_budget_cents: -Number(r.ytd_budget_cents || 0),
+        ytd_actual_cents: -Number(r.ytd_actual_cents || 0),
+        is_contribution: true,
+      };
+    };
+
+    const sumKey = (rows, key) => rows.reduce((s, r) => s + Number(r[key] || 0), 0);
+    const funds = [];
+    const orderedCodes = [...byFund.keys()].sort((a, b) => {
+      const ia = fundOrder.indexOf(a), ib = fundOrder.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+    for (const fc of orderedCodes) {
+      const rows = byFund.get(fc);
+      const noncash = rows.filter(isNonCash)
+        .sort((a, b) => a.account_number.localeCompare(b.account_number));
+      const cash = rows.filter((r) => !isNonCash(r));
+      const revenue = cash.filter((r) => r.account_type === 'revenue').map(flipContribution)
+        .sort((a, b) => a.account_number.localeCompare(b.account_number));
+      const expense = cash.filter((r) => r.account_type === 'expense')
+        .sort((a, b) => a.account_number.localeCompare(b.account_number));
+      const revB = sumKey(revenue, 'annual_budget_cents'), revYtdB = sumKey(revenue, 'ytd_budget_cents'), revYtdA = sumKey(revenue, 'ytd_actual_cents');
+      const expB = sumKey(expense, 'annual_budget_cents'), expYtdB = sumKey(expense, 'ytd_budget_cents'), expYtdA = sumKey(expense, 'ytd_actual_cents');
+      funds.push({
+        fund_code: fc,
+        fund_title: FUND_TITLES[fc] || fc,
+        is_reserve: fc === 'RES',
+        revenue,
+        expense,
+        noncash,
+        totals: {
+          annual_revenue_cents: revB,
+          annual_expense_cents: expB,
+          annual_net_cents: revB - expB,
+          ytd_budget_revenue_cents: revYtdB,
+          ytd_actual_revenue_cents: revYtdA,
+          ytd_budget_expense_cents: expYtdB,
+          ytd_actual_expense_cents: expYtdA,
+          ytd_budget_net_cents: revYtdB - expYtdB,
+          ytd_actual_net_cents: revYtdA - expYtdA,
+          noncash_ytd_actual_cents: sumKey(noncash, 'ytd_actual_cents'),
+        },
+      });
+    }
+
+    res.json({
+      community: { id: community.id, name: community.name },
+      fiscal_year: bva.fiscal_year,
+      period_end: periodEnd,
+      as_of: todayISO,
+      has_budget: bva.has_budget,
+      funds,
+    });
+  } catch (err) {
+    console.error('[board_portal] budget failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
