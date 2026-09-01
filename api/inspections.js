@@ -3308,6 +3308,100 @@ router.get('/inspections/observations/pending', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/inspections/observations/confirm-preview?community_id=
+// What a bulk-confirm of the pending queue WOULD do — a heads-up before the
+// letters draft. Uses the SAME shared classifier the confirm endpoint executes
+// (decideReobservationOutcome + findOpenCaseForCategory), so the count can't
+// disagree with the action. Deduped by (property, category) so it counts CASES,
+// not photos. Read-only. (Ed 2026-09-01: "tell me N advancing to Courtesy 2".)
+// ---------------------------------------------------------------------------
+router.get('/inspections/observations/confirm-preview', async (req, res) => {
+  try {
+    const communityId = req.query.community_id || null;
+    const { decideReobservationOutcome } = require('../lib/enforcement/reobservation_outcome');
+    const { fetchAllQuery } = require('../lib/db/fetch_all');
+
+    // 1) Pending observations → dedupe to unique CASES (a drive shoots several
+    //    photos of one issue; the preview counts cases, not photos).
+    let pq = supabase.from('property_observations')
+      .select('id, property_id, category_id')
+      .eq('reviewer_status', 'pending');
+    if (communityId) pq = pq.eq('community_id', communityId);
+    const { data: pend, error: pErr } = await pq.limit(5000);
+    if (pErr) return res.status(500).json({ error: pErr.message });
+    const cases = new Map();
+    let skipped = 0;
+    for (const o of (pend || [])) {
+      if (!o.property_id || !o.category_id) { skipped++; continue; }
+      cases.set(`${o.property_id}|${o.category_id}`, { propertyId: o.property_id, categoryId: o.category_id });
+    }
+    const caseList = [...cases.values()];
+
+    // 2) Confirmed category-alias groups, ONE fetch → union-find so a case under
+    //    a sibling label still matches its open case (same rule as intake).
+    const parent = new Map();
+    const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+    const union = (a, b) => { if (!parent.has(a)) parent.set(a, a); if (!parent.has(b)) parent.set(b, b); parent.set(find(a), find(b)); };
+    const { data: aliasRows } = await supabase.from('enforcement_category_aliases')
+      .select('canonical_category_id, alias_category_id').eq('status', 'confirmed');
+    for (const r of (aliasRows || [])) { if (r.canonical_category_id && r.alias_category_id) union(r.canonical_category_id, r.alias_category_id); }
+    const groupKey = (catId) => (parent.has(catId) ? find(catId) : catId);
+
+    // 3) All OPEN violations for the community, ONE paginated fetch. Index by
+    //    property_id → its open rows (we pick the furthest-advanced in-memory).
+    const openViols = await fetchAllQuery(() => {
+      let q = supabase.from('violations')
+        .select('id, property_id, primary_category_id, current_stage, current_stage_started_at')
+        .not('current_stage', 'in', '(cured,closed,voided)')
+        .is('resolved_at', null);
+      if (communityId) q = q.eq('community_id', communityId);
+      return q;
+    }, { orderBy: 'opened_at' });
+    const STAGE_RANK = { courtesy_1: 1, courtesy_2: 2, certified_209: 3, fine_assessed: 4 };
+    const openByProp = new Map();
+    for (const v of openViols) { (openByProp.get(v.property_id) || openByProp.set(v.property_id, []).get(v.property_id)).push(v); }
+
+    // 4) Match each case to its open violation (property + same alias group,
+    //    furthest-advanced). Collect matched courtesy_1 ids for a single letter fetch.
+    const matched = [];
+    let newCount = 0;
+    for (const c of caseList) {
+      const gk = groupKey(c.categoryId);
+      const rows = (openByProp.get(c.propertyId) || []).filter((v) => groupKey(v.primary_category_id) === gk);
+      if (!rows.length) { newCount++; continue; }
+      const open = rows.slice().sort((a, b) => (STAGE_RANK[b.current_stage] || 0) - (STAGE_RANK[a.current_stage] || 0))[0];
+      matched.push(open);
+    }
+    // 5) All letter_courtesy_1 rows for matched courtesy_1 violations, ONE fetch.
+    const c1Ids = matched.filter((v) => v.current_stage === 'courtesy_1').map((v) => v.id);
+    const lettersByViol = new Map();
+    for (let i = 0; i < c1Ids.length; i += 200) {
+      const { data: lts } = await supabase.from('interactions')
+        .select('violation_id, status, mailed_at').in('violation_id', c1Ids.slice(i, i + 200)).eq('type', 'letter_courtesy_1');
+      for (const l of (lts || [])) (lettersByViol.get(l.violation_id) || lettersByViol.set(l.violation_id, []).get(l.violation_id)).push(l);
+    }
+
+    // 6) Classify in-memory via the SHARED decider (pre-fetched letters, no per-case query).
+    const counts = { new: newCount, advance_courtesy_2: 0, recover_courtesy_1: 0, awaiting_first_mail: 0, eligible_209: 0, continuation: 0 };
+    for (const open of matched) {
+      const { outcome } = await decideReobservationOutcome(supabase, open, { courtesy1Letters: lettersByViol.get(open.id) || [] });
+      counts[outcome] = (counts[outcome] || 0) + 1;
+    }
+
+    res.json({
+      community_id: communityId,
+      pending_observations: (pend || []).length,
+      cases: caseList.length,
+      skipped_no_property_or_category: skipped,
+      counts,
+    });
+  } catch (err) {
+    console.error('[inspections.confirm-preview]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/inspections/:id/summary — close the loop on a drive.
 // Ed 2026-08-25: "should we have a summary for the drive — xxx pictures taken,
 // xxx violations sent, xxx not sent or mistakes — something so we know."
@@ -3498,12 +3592,6 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         // Same-DAY guard: one drive can't double-advance a property.
         const vId = cont.violation_id;
         const stage = cont.existing_stage;
-        const tz = { timeZone: 'America/Chicago' };
-        const todayCentral = new Date().toLocaleDateString('en-CA', tz);
-        const stageStartedDay = cont.existing_stage_started_at
-          ? new Date(cont.existing_stage_started_at).toLocaleDateString('en-CA', tz) : null;
-        const startedToday = stageStartedDay === todayCentral;
-
         const markObs = (note) => supabase.from('property_observations').update({
           reviewer_status:  'confirmed',
           reviewer_notes:   reviewerNotes ? `${note} ${reviewerNotes}` : note,
@@ -3523,27 +3611,23 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         };
         const base = { ok: true, opened: false, continuation: true, violation_id: vId, continuation_id: cont.continuation_id, continuation_count: cont.continuation_count_after };
 
-        if (stage === 'courtesy_1') {
-          const LTYPES = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
-          const { data: vLetters } = await supabase.from('interactions')
-            .select('type, status, mailed_at').eq('violation_id', vId).in('type', LTYPES);
-          const c1 = (vLetters || []).filter((l) => l.type === 'letter_courtesy_1' && l.status !== 'rejected' && l.status !== 'voided');
-          const c1Mailed = c1.some((l) => l.mailed_at || l.status === 'sent');
+        // Decide via the SHARED classifier so the re-inspection preview counts
+        // exactly what this endpoint does (no preview-diverges-from-action).
+        const { decideReobservationOutcome } = require('../lib/enforcement/reobservation_outcome');
+        const { outcome } = await decideReobservationOutcome(supabase, {
+          id: vId, current_stage: stage, current_stage_started_at: cont.existing_stage_started_at,
+        });
 
-          if (!c1.length) {
-            // First notice missing. If the violation opened TODAY the draft may
-            // still be rendering (or the Drafts-queue "Generate missing" sweep
-            // will catch it) — don't draft a duplicate. If it's OLDER, the first
-            // notice was genuinely lost — draft it now.
-            if (startedToday) { await markObs('[Continuation — first notice pending for a case opened today]'); return res.json(base); }
-            const r = await _draftFor('courtesy_1');
-            await markObs('[Re-observed — first courtesy notice was missing; drafted it now]');
-            return res.json({ ...base, drafted_stage: 'courtesy_1', recovered_first_notice: true, draft_error: (r && r.error) || null });
-          }
-          if (!c1Mailed) { await markObs('[Continuation — first courtesy notice drafted but not yet mailed]'); return res.json({ ...base, awaiting_first_notice_mail: true }); }
-          if (startedToday) { await markObs('[Continuation — already at this stage today]'); return res.json(base); }
-
-          // Advance Courtesy 1 → Courtesy 2 and draft the second notice.
+        if (outcome === 'recover_courtesy_1') {
+          const r = await _draftFor('courtesy_1');
+          await markObs('[Re-observed — first courtesy notice was missing; drafted it now]');
+          return res.json({ ...base, drafted_stage: 'courtesy_1', recovered_first_notice: true, draft_error: (r && r.error) || null });
+        }
+        if (outcome === 'awaiting_first_mail') {
+          await markObs('[Continuation — first courtesy notice drafted but not yet mailed]');
+          return res.json({ ...base, awaiting_first_notice_mail: true });
+        }
+        if (outcome === 'advance_courtesy_2') {
           const { data: comm } = await supabase.from('communities').select('letter_cure_days_courtesy_2').eq('id', obs.community_id).maybeSingle();
           const cureDays = (comm && Number(comm.letter_cure_days_courtesy_2)) || 20;
           const now = new Date();
@@ -3557,8 +3641,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
           if (adv) { const r = await _draftFor('courtesy_2'); draftErr = (r && r.error) || null; }
           return res.json({ ...base, advanced_to: 'courtesy_2', draft_error: draftErr });
         }
-
-        if (stage === 'courtesy_2') {
+        if (outcome === 'eligible_209') {
           await markObs('[Re-observed at Courtesy 2 — eligible for §209 certified; staff review]');
           try {
             await supabase.from('interactions').insert({
@@ -3572,7 +3655,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
           return res.json({ ...base, eligible_for_certified: true });
         }
 
-        // certified_209 / fine_assessed → continuation only.
+        // continuation — certified/fine in progress, or same-day re-scan.
         await markObs('[Continuation of open violation — no new letter drafted]');
         return res.json({ ...base, reason: 'continuation_logged_existing_open_violation' });
       }
