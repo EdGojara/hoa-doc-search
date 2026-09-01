@@ -259,7 +259,15 @@ let communityByMsg = {};// messageId -> community_id (scopes the document search
 let recipientByMsg = {};// messageId -> {to, source} suggested reply recipient (body email vs envelope sender)
 let originalDraftByMsg = {};// messageId -> Claire's FIRST autonomous draft (the encode-Ed learning baseline vs what Ed actually sends)
 const PNAME = { claire:'Claire', emma:'Emma Brooks', kat:'Kat Reed', annie:'Annie Reeves', miranda:'Miranda Pierce', amanda:'Amanda Albright', reese:'Reese Calloway', paige:'Paige Chandler', general:'General inbox' };
-const PMAIL = { claire:'claire@bedrocktx.com', emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com', miranda:'miranda@bedrocktx.com' };
+// Every sending persona's mailbox, matching lib/email/graph_send.js. A missing
+// entry silently fell back to claire@ — Amanda's contract review showed "sends
+// from claire@" though she has her own mailbox (Ed 2026-09-01).
+const PMAIL = {
+  claire:'claire@bedrocktx.com', emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com',
+  miranda:'miranda@bedrocktx.com', amanda:'amandaalbright@bedrocktx.com',
+  kat:'kat@bedrocktx.com', paige:'paige@bedrocktx.com', reese:'reese@bedrocktx.com',
+  tessa:'tessa@bedrocktx.com', darby:'darby@bedrocktx.com',
+};
 let openPersona = null;   // which teammate's emails are expanded
 let teamCache = [];
 
