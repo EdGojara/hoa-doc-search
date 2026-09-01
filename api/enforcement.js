@@ -6055,6 +6055,25 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
       .order('opened_at', { ascending: false })
       .limit(10);
 
+    // Documented prior NOTICES actually MAILED on THIS violation — the correct
+    // §209 "prior notice" source. A courtesy_2 must cite its mailed courtesy_1;
+    // a certified cites the mailed courtesies. Sourced from this case's OWN
+    // letter interactions that reached the homeowner (mailed_at set / status
+    // sent), NOT from other violation rows — an unmailed draft is not a prior
+    // notice. The letter being drafted now isn't inserted yet, so every mailed
+    // letter here is genuinely prior. (Ed 2026-09-01 — enables courtesy_2 on
+    // re-inspection to legally cite the first notice.)
+    const _TYPE_TO_STAGE = { letter_courtesy_1: 'courtesy_1', letter_courtesy_2: 'courtesy_2', letter_209: 'certified_209', letter_postcard_reminder: 'courtesy_1' };
+    const { data: ownLetters } = await supabase
+      .from('interactions')
+      .select('type, sent_at, created_at, mailed_at, delivery_method, status')
+      .eq('violation_id', violation.id)
+      .in('type', Object.keys(_TYPE_TO_STAGE))
+      .order('created_at', { ascending: true });
+    const ownPriorNotices = (ownLetters || [])
+      .filter((l) => l.mailed_at || l.status === 'sent')
+      .map((l) => ({ opened_at: l.mailed_at || l.sent_at || l.created_at, current_stage: _TYPE_TO_STAGE[l.type], mail_type: l.delivery_method || 'first_class_mail' }));
+
     // Download photo if present
     let photoBuffer = null;
     if (obsRow && obsRow.inspection_photos && obsRow.inspection_photos.storage_path) {
@@ -6208,7 +6227,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
         };
       })(),
       governing_doc: govDoc,
-      prior_violations: pv || [],
+      prior_violations: [...ownPriorNotices, ...(pv || [])],
       photo_buffer: photoBuffer,
       options: {
         sender_name:  (commRow && commRow.letter_sender_name)  || null,

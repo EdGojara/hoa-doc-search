@@ -3484,27 +3484,97 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       });
       if (cont.type === 'new') recurrenceSignal = cont.recurrence || null;
       if (cont.type === 'continuation') {
-        // Mark observation confirmed-as-continuation. Skip letter draft.
-        await supabase
-          .from('property_observations')
-          .update({
-            reviewer_status:  'confirmed',
-            reviewer_notes:   reviewerNotes
-              ? `[Continuation of open violation] ${reviewerNotes}`
-              : '[Continuation of open violation — no new letter drafted]',
-            reviewer_user_id: reviewerUserId,
-            reviewed_at:      new Date().toISOString(),
-          })
-          .eq('id', obsId);
-        return res.json({
-          ok: true,
-          opened: false,
-          continuation: true,
-          violation_id: cont.violation_id,
-          continuation_id: cont.continuation_id,
-          continuation_count: cont.continuation_count_after,
-          reason: 'continuation_logged_existing_open_violation',
-        });
+        // A re-observation of an already-open case. Ed's policy (2026-09-01):
+        // the cure window does NOT gate courtesy notices — only §209. So:
+        //   • Courtesy 1 (mailed) re-observed → advance to Courtesy 2 + draft the
+        //     second notice, even inside the cure window.
+        //   • Courtesy 1 with NO letter (a lost draft) → draft the first notice
+        //     now (self-heal), don't advance.
+        //   • Courtesy 1 drafted-but-not-yet-mailed → wait; can't issue a 2nd
+        //     notice before the 1st goes out. Continuation only.
+        //   • Courtesy 2 re-observed → flag eligible for §209 (staff sends the
+        //     certified when the cure time is earned). No auto-letter.
+        //   • Certified §209 / fine → continuation only (process running).
+        // Same-DAY guard: one drive can't double-advance a property.
+        const vId = cont.violation_id;
+        const stage = cont.existing_stage;
+        const tz = { timeZone: 'America/Chicago' };
+        const todayCentral = new Date().toLocaleDateString('en-CA', tz);
+        const stageStartedDay = cont.existing_stage_started_at
+          ? new Date(cont.existing_stage_started_at).toLocaleDateString('en-CA', tz) : null;
+        const startedToday = stageStartedDay === todayCentral;
+
+        const markObs = (note) => supabase.from('property_observations').update({
+          reviewer_status:  'confirmed',
+          reviewer_notes:   reviewerNotes ? `${note} ${reviewerNotes}` : note,
+          reviewer_user_id: reviewerUserId,
+          reviewed_at:      new Date().toISOString(),
+        }).eq('id', obsId);
+
+        const _draftFor = async (stg) => {
+          try {
+            const { _draftLetterForBumpedViolation } = require('./enforcement');
+            const { data: vrow } = await supabase.from('violations')
+              .select('id, property_id, primary_category_id, opened_at, opened_from_observation_id, board_priority_at_open, community_id')
+              .eq('id', vId).maybeSingle();
+            if (!vrow) return { error: 'violation not found' };
+            return await _draftLetterForBumpedViolation(vrow, { stage: stg, mail_type: 'first_class_mail' }, vrow.community_id, { subject: `Violation letter (${stg}) — re-inspection` });
+          } catch (e) { return { error: e.message }; }
+        };
+        const base = { ok: true, opened: false, continuation: true, violation_id: vId, continuation_id: cont.continuation_id, continuation_count: cont.continuation_count_after };
+
+        if (stage === 'courtesy_1') {
+          const LTYPES = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
+          const { data: vLetters } = await supabase.from('interactions')
+            .select('type, status, mailed_at').eq('violation_id', vId).in('type', LTYPES);
+          const c1 = (vLetters || []).filter((l) => l.type === 'letter_courtesy_1' && l.status !== 'rejected' && l.status !== 'voided');
+          const c1Mailed = c1.some((l) => l.mailed_at || l.status === 'sent');
+
+          if (!c1.length) {
+            // First notice missing. If the violation opened TODAY the draft may
+            // still be rendering (or the Drafts-queue "Generate missing" sweep
+            // will catch it) — don't draft a duplicate. If it's OLDER, the first
+            // notice was genuinely lost — draft it now.
+            if (startedToday) { await markObs('[Continuation — first notice pending for a case opened today]'); return res.json(base); }
+            const r = await _draftFor('courtesy_1');
+            await markObs('[Re-observed — first courtesy notice was missing; drafted it now]');
+            return res.json({ ...base, drafted_stage: 'courtesy_1', recovered_first_notice: true, draft_error: (r && r.error) || null });
+          }
+          if (!c1Mailed) { await markObs('[Continuation — first courtesy notice drafted but not yet mailed]'); return res.json({ ...base, awaiting_first_notice_mail: true }); }
+          if (startedToday) { await markObs('[Continuation — already at this stage today]'); return res.json(base); }
+
+          // Advance Courtesy 1 → Courtesy 2 and draft the second notice.
+          const { data: comm } = await supabase.from('communities').select('letter_cure_days_courtesy_2').eq('id', obs.community_id).maybeSingle();
+          const cureDays = (comm && Number(comm.letter_cure_days_courtesy_2)) || 20;
+          const now = new Date();
+          const { data: adv } = await supabase.from('violations').update({
+            current_stage: 'courtesy_2',
+            current_stage_started_at: now.toISOString(),
+            cure_period_ends_at: new Date(now.getTime() + cureDays * 86400000).toISOString(),
+          }).eq('id', vId).eq('current_stage', 'courtesy_1').select('id').maybeSingle();
+          await markObs('[Re-observed — advanced to Courtesy 2; second notice drafted]');
+          let draftErr = null;
+          if (adv) { const r = await _draftFor('courtesy_2'); draftErr = (r && r.error) || null; }
+          return res.json({ ...base, advanced_to: 'courtesy_2', draft_error: draftErr });
+        }
+
+        if (stage === 'courtesy_2') {
+          await markObs('[Re-observed at Courtesy 2 — eligible for §209 certified; staff review]');
+          try {
+            await supabase.from('interactions').insert({
+              community_id: obs.community_id, property_id: obs.property_id, violation_id: vId,
+              observation_id: obs.id, inspection_id: obs.inspection_id, type: 'observation_note', direction: 'internal',
+              subject: 'Re-observed at Courtesy 2 — eligible for §209 certified',
+              content: 'Still not cured after the second courtesy notice. Eligible for a certified §209 notice — staff review before sending (the statutory cure clock starts when the certified is mailed).',
+              sent_at: new Date().toISOString(),
+            });
+          } catch (_) { /* note is best-effort */ }
+          return res.json({ ...base, eligible_for_certified: true });
+        }
+
+        // certified_209 / fine_assessed → continuation only.
+        await markObs('[Continuation of open violation — no new letter drafted]');
+        return res.json({ ...base, reason: 'continuation_logged_existing_open_violation' });
       }
     } catch (contErr) {
       console.error('[confirm] continuation check failed:', contErr.message);
