@@ -834,23 +834,16 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
           };
           if (seedFinding.category_slug && slugToId.has(seedFinding.category_slug)) {
             seedUpdate.category_id = slugToId.get(seedFinding.category_slug);
+            // Preserve the AI's ORIGINAL category in the SAME write so a later
+            // human re-label is captured as a training signal and can never be
+            // lost to a separate failed update. (Ed 2026-09-01.)
+            seedUpdate.ai_suggested_category_id = seedUpdate.category_id;
           }
           if (seedFinding.notes || seedFinding.confidence === 'low') {
             seedUpdate.reviewer_notes = seedFinding.notes ||
               'AI low-confidence — recommend human review of the photo before any action.';
           }
           await supabase.from('property_observations').update(seedUpdate).eq('id', observationId);
-          // Training-signal capture (best-effort, non-fatal): preserve the AI's
-          // ORIGINAL category separately so a later human re-label doesn't erase
-          // what the AI guessed. Powers the accuracy report + few-shot learning.
-          // Silently no-ops until migration 305 adds the column.
-          if (seedUpdate.category_id) {
-            const { error: aiSugErr } = await supabase.from('property_observations')
-              .update({ ai_suggested_category_id: seedUpdate.category_id }).eq('id', observationId);
-            if (aiSugErr && !/ai_suggested_category_id|column|schema cache/i.test(aiSugErr.message || '')) {
-              console.warn('[ai_vision] ai_suggested capture (seed):', aiSugErr.message);
-            }
-          }
           console.log(`[ai_vision] photo ${req.params.id} → ${findings.length} finding(s); seed observation ${observationId} categorized as ${seedFinding.category_slug || 'no-match'} / ${seedFinding.severity}`);
 
           // INSERT additional observations for findings[1..N]
@@ -871,6 +864,8 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
             };
             if (f.category_slug && slugToId.has(f.category_slug)) {
               extra.category_id = slugToId.get(f.category_slug);
+              // Preserve the AI's original category in the same insert (see seed note).
+              extra.ai_suggested_category_id = extra.category_id;
             }
             try {
               const { data: row, error } = await supabase
@@ -880,14 +875,6 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                 .single();
               if (error) throw error;
               extraObservationIds.push(row.id);
-              // Training-signal capture (best-effort; see seed note above).
-              if (extra.category_id) {
-                const { error: aiSugErr } = await supabase.from('property_observations')
-                  .update({ ai_suggested_category_id: extra.category_id }).eq('id', row.id);
-                if (aiSugErr && !/ai_suggested_category_id|column|schema cache/i.test(aiSugErr.message || '')) {
-                  console.warn('[ai_vision] ai_suggested capture (extra):', aiSugErr.message);
-                }
-              }
               console.log(`[ai_vision] extra observation ${row.id} (finding ${i + 1}/${findings.length}) ${f.category_slug || 'no-match'} / ${f.severity}`);
             } catch (e) {
               console.warn(`[ai_vision] extra observation insert failed (finding ${i}):`, e.message);
@@ -3044,12 +3031,17 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
       // STEP 3b — Findings: one observation row per finding
       photosWithFindings += 1;
       for (const f of findings) {
+        const _catId = (f.category_slug && slugToId.get(f.category_slug)) || null;
         const insertRow = {
           inspection_id:         inspectionId,
           inspection_photo_id:   photo.id,
           property_id:           photo.polygon_match_property_id,
           community_id:          insp.community_id,
-          category_id:           (f.category_slug && slugToId.get(f.category_slug)) || null,
+          category_id:           _catId,
+          // Preserve the AI's ORIGINAL category so a later human re-label is
+          // captured as a training signal (buildLearnedCorrections). Stamped in
+          // the SAME insert so it can never be lost. (Ed 2026-09-01.)
+          ai_suggested_category_id: _catId,
           severity:              f.severity || 'minor',
           ai_description:        f.description || null,
           ai_recommended_action: f.recommended_action || 'courtesy',
@@ -3240,6 +3232,9 @@ router.post('/inspections/photos/:id/link-and-analyze', express.json(), async (r
         property_id:           propertyId,
         community_id:          inspectionCommunityId,
         category_id:           cat ? cat.id : null,
+        // Preserve the AI's original category as the training signal (see note
+        // in the batch-analyze path). Stamped in the same insert. (Ed 2026-09-01.)
+        ai_suggested_category_id: cat ? cat.id : null,
         severity:              result.severity || 'minor',
         ai_description:        result.description || null,
         ai_recommended_action: result.recommended_action || 'courtesy',
