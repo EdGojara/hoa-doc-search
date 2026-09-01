@@ -88,13 +88,41 @@ async function signPhotoUrls(paths, opts = {}) {
 // ---------------------------------------------------------------------------
 router.post('/inspections', async (req, res) => {
   try {
-    const { community_id, mode, route_label, notes, operator_id, device_label } = req.body || {};
+    const { community_id, mode, route_label, notes, operator_id, device_label, force_new } = req.body || {};
     if (!community_id) return res.status(400).json({ error: 'community_id is required' });
 
     const validModes = ['foot', 'drive_by', 'mounted_camera', 'spot_check'];
     const modeNorm = (mode || 'foot').toString().toLowerCase();
     if (!validModes.includes(modeNorm)) {
       return res.status(400).json({ error: `mode must be one of: ${validModes.join(', ')}` });
+    }
+
+    // RESUME, don't fragment (Ed 2026-09-01). A drive that reloads/reconnects
+    // (or the tablet re-taps Start) was spinning up a BRAND-NEW inspection every
+    // time — LOPF's 150-photo drive shattered into 10. Instead, resume THIS
+    // community+driver's most recent still-open drive from the last 12h (matched
+    // by device_label so two drivers stay separate). force_new: true bypasses it
+    // for a deliberately fresh drive.
+    const dev = (device_label && String(device_label).trim().slice(0, 60)) || null;
+    if (force_new !== true) {
+      const since = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+      let q = supabase.from('inspections')
+        .select('*')
+        .eq('community_id', community_id)
+        .not('status', 'in', '(closed,voided)')
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      q = dev ? q.eq('device_label', dev) : q.is('device_label', null);
+      const { data: existing, error: exErr } = await q;
+      if (!exErr && existing && existing.length) {
+        const drive = existing[0];
+        // Flip it back to in_progress so capture continues on the same record.
+        const { data: resumed } = await supabase.from('inspections')
+          .update({ status: 'in_progress', updated_at: new Date().toISOString() })
+          .eq('id', drive.id).select('*').single();
+        return res.json({ inspection: resumed || drive, resumed: true });
+      }
     }
 
     const { data, error } = await supabase
@@ -981,11 +1009,17 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                   // this property. Don't drop the evidence — continue the existing
                   // case with this observation instead of opening a twin.
                   if (vErr.code === '23505') {
+                    // An OPEN violation of this category already exists at this
+                    // property. Do NOT silently fold + auto-confirm it — leave the
+                    // observation PENDING so it surfaces in the review queue as a
+                    // re-observation, where the staff choose Escalate (confirm →
+                    // advances the ladder + drafts the next notice) or Reject.
+                    // (Ed 2026-09-01: "if we take a picture we should have the
+                    // option to escalate to the next level or reject — no silent
+                    // fails.") The continuation itself is logged at confirm time.
                     try {
-                      const { findOrContinueViolation } = require('../lib/enforcement/find_or_continue_violation');
-                      await findOrContinueViolation({ propertyId: resolvedPropertyId, categoryId, observationId, inspectionId: id, source: 'inspection' });
-                      await supabase.from('property_observations').update({ reviewer_status: 'confirmed', reviewed_at: new Date().toISOString() }).eq('id', observationId);
-                    } catch (e) { console.warn('[auto-draft] continue-existing after dup block failed:', e.message); }
+                      await supabase.from('property_observations').update({ reviewer_status: 'pending', reviewed_at: null }).eq('id', observationId);
+                    } catch (e) { console.warn('[auto-draft] leave-pending after dup block failed:', e.message); }
                   } else {
                     console.warn('[auto-draft] violation insert failed:', vErr.message);
                   }
