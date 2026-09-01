@@ -18623,6 +18623,24 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     <div id="curesCertifiedPanel"><div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div></div>
   </div>
 
+  <!-- STALE / LIKELY-CURED VIOLATIONS — Ed 2026-09-01: open cases not re-observed
+       on recent drives (the homeowner likely fixed it; the record was never
+       closed). Review + bulk-close the cured ones. Nothing auto-closes. -->
+  <div style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; margin-bottom:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+      <h3 style="font-size:14px; color:var(--navy, #0B1D34); margin:0;">🧹 Stale violations <span style="color:#64748b; font-weight:500;">— open cases not re-observed on recent drives</span></h3>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <label style="font-size:11px; color:#475569;">Not seen in
+          <select id="curesStaleQuiet" onchange="curesStaleLoad()" style="font-size:11px; padding:3px 6px; border:1px solid #cbd5e1; border-radius:4px;">
+            <option value="14">14 days</option><option value="30" selected>30 days</option><option value="60">60 days</option><option value="90">90 days</option>
+          </select>
+        </label>
+        <button class="secondary-btn" onclick="curesStaleLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+      </div>
+    </div>
+    <div id="curesStalePanel"><div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Pick a community above and Refresh to find stale open violations.</div></div>
+  </div>
+
   <!-- CURE-LAPSE PROCESSOR — moved from Inspect tab 2026-06-13.
        Auto-runs daily at 06:00 Central; manual Preview + Process here. -->
   <div style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; margin-bottom:14px;">
@@ -25543,8 +25561,83 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     if (typeof curePipelineLoad === 'function') curePipelineLoad();
     if (typeof inspCureLapsePreview === 'function') inspCureLapsePreview();
     if (typeof curesCertifiedLoad === 'function') curesCertifiedLoad();
+    if (typeof curesStaleLoad === 'function') curesStaleLoad();
   }
   window.curesQueueFilterChange = curesQueueFilterChange;
+
+  // Stale / likely-cured violations — open cases not re-observed on recent
+  // drives. Review surface: pick the ones that are actually fixed and close them.
+  async function curesStaleLoad() {
+    const panel = document.getElementById('curesStalePanel');
+    if (!panel) return;
+    const sel = document.getElementById('curesCommunityFilter');
+    const cid = sel && sel.value ? sel.value : '';
+    if (!cid) { panel.innerHTML = '<div style="color:#94a3b8; font-size:12px; padding:10px 0;">Pick a community above to find stale open violations.</div>'; return; }
+    const quiet = (document.getElementById('curesStaleQuiet') || {}).value || '30';
+    panel.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Finding stale violations…</div>';
+    try {
+      const r = await fetch(`/api/enforcement/stale-violations?community_id=${encodeURIComponent(cid)}&quiet_days=${encodeURIComponent(quiet)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const rows = j.candidates || [];
+      if (!rows.length) { panel.innerHTML = `<div style="color:#166534; font-size:12.5px; padding:10px 0;">No stale open violations — everything open was re-observed within ${quiet} days. 🎉</div>`; return; }
+      const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const gated = rows.filter((x) => x.current_stage === 'certified_209' || x.current_stage === 'fine_assessed');
+      const closeable = rows.filter((x) => x.current_stage === 'courtesy_1' || x.current_stage === 'courtesy_2');
+      const stageLbl = { courtesy_1: 'Courtesy 1', courtesy_2: 'Courtesy 2', certified_209: 'Certified §209', fine_assessed: 'Fine' };
+      const row = (x, closeableRow) => `<tr style="border-top:1px solid #f1f5f9;">
+        <td style="padding:6px 8px;">${closeableRow ? `<input type="checkbox" class="stalechk" value="${esc(x.violation_id)}" style="width:15px;height:15px;cursor:pointer;">` : ''}</td>
+        <td style="padding:6px 8px; cursor:pointer;" onclick="if(window.homesOpenProperty)homesOpenProperty('${esc(x.property_id)}')"><span style="color:#0B1D34; font-weight:600;">${esc(x.street_address || '—')}${x.unit ? ' #' + esc(x.unit) : ''}</span><div style="color:#94a3b8; font-size:10.5px;">${esc(x.owner_name || '')}</div></td>
+        <td style="padding:6px 8px;">${esc(x.category || '—')}</td>
+        <td style="padding:6px 8px;"><span style="font-size:10.5px; padding:1px 6px; border-radius:8px; background:#f1f5f9; color:#475569; font-weight:600;">${stageLbl[x.current_stage] || x.current_stage}</span></td>
+        <td style="padding:6px 8px; text-align:right; color:#64748b;">${x.quiet_days}d quiet</td>
+        <td style="padding:6px 8px; color:#94a3b8; font-size:10.5px;">${x.age_days}d old · ${esc((x.source || '').replace('_', ' '))}${x.has_letter ? (x.letter_mailed ? ' · notice mailed' : ' · draft only') : ' · no letter'}</td>
+      </tr>`;
+      const tbl = (list, closeableRows) => `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:12px; min-width:640px;">
+        <thead><tr style="background:#f8fafc;">
+          <th style="padding:6px 8px; width:28px;">${closeableRows ? `<input type="checkbox" onchange="document.querySelectorAll('.stalechk').forEach(c=>c.checked=this.checked); curesStaleSelCount();" title="Select all">` : ''}</th>
+          <th style="text-align:left; padding:6px 8px;">Property</th><th style="text-align:left; padding:6px 8px;">Category</th><th style="text-align:left; padding:6px 8px;">Stage</th><th style="text-align:right; padding:6px 8px;">Quiet</th><th style="text-align:left; padding:6px 8px;">Notes</th>
+        </tr></thead><tbody>${list.map((x) => row(x, closeableRows)).join('')}</tbody></table></div>`;
+      panel.innerHTML = `
+        <div style="font-size:12px; color:#64748b; margin-bottom:8px;">${rows.length} open violation${rows.length === 1 ? '' : 's'} not re-observed in ${quiet} days — likely cured. Check the ones that are fixed and close them. Certified §209 / fines are listed for reference but must be closed one at a time from the case.</div>
+        ${closeable.length ? `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <div style="font-weight:700; color:#0B1D34; font-size:12.5px;">Courtesy-stage — closeable (${closeable.length})</div>
+          <button id="curesStaleCloseBtn" onclick="curesStaleClose()" style="font-size:12px; padding:5px 14px; background:#16a34a; color:#fff; border:0; border-radius:6px; font-weight:600; cursor:pointer;" disabled>✓ Close selected as cured (0)</button>
+        </div>${tbl(closeable, true)}` : ''}
+        ${gated.length ? `<details style="margin-top:12px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:700; color:#92400e;">Certified §209 / fines — review individually (${gated.length})</summary><div style="margin-top:6px;">${tbl(gated, false)}</div></details>` : ''}`;
+      panel.querySelectorAll('.stalechk').forEach((c) => c.addEventListener('change', curesStaleSelCount));
+    } catch (e) {
+      panel.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:10px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+  window.curesStaleLoad = curesStaleLoad;
+  function curesStaleSelCount() {
+    const n = document.querySelectorAll('.stalechk:checked').length;
+    const btn = document.getElementById('curesStaleCloseBtn');
+    if (btn) { btn.textContent = `✓ Close selected as cured (${n})`; btn.disabled = n === 0; }
+  }
+  window.curesStaleSelCount = curesStaleSelCount;
+  async function curesStaleClose() {
+    const ids = [...document.querySelectorAll('.stalechk:checked')].map((c) => c.value);
+    if (!ids.length) return;
+    if (!confirm(`Close ${ids.length} violation${ids.length === 1 ? '' : 's'} as cured?\n\nThis marks them resolved (presumed cured — not re-observed). It's logged and reversible. Nothing is sent to homeowners.`)) return;
+    const btn = document.getElementById('curesStaleCloseBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Closing…'; }
+    try {
+      const r = await fetch('/api/enforcement/stale-violations/close', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ violation_ids: ids }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      alert(`Closed ${j.closed} violation${j.closed === 1 ? '' : 's'} as cured.` + ((j.skipped || []).length ? `\n${j.skipped.length} skipped (already resolved or staff-gated).` : ''));
+      curesStaleLoad();
+    } catch (e) {
+      alert('Close failed: ' + e.message);
+      if (btn) { btn.disabled = false; curesStaleSelCount(); }
+    }
+  }
+  window.curesStaleClose = curesStaleClose;
 
   // Certified §209 cases — per-community list of what's escalated, with days
   // since the certified notice. Respects the Cures community filter.

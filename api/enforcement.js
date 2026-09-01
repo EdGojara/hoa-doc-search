@@ -5649,6 +5649,130 @@ router.post('/violations/:id/resolve', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/enforcement/stale-violations?community_id=&min_age_days=30&quiet_days=30
+//   Ed 2026-09-01. Surfaces open violations that have gone QUIET — opened a
+//   while ago and NOT re-observed on recent drives. The most likely reason a
+//   violation stops being seen is the homeowner fixed it, but the record was
+//   never closed — a dormant backlog that inflates every enforcement count and
+//   (with the re-inspection escalation) would draft second notices for issues
+//   that are already cured. This is a REVIEW surface: it never closes anything;
+//   the operator picks the ones that are actually resolved. Re-observation is
+//   ALIAS-AWARE (a re-obs under a sibling category still counts as "seen").
+// ---------------------------------------------------------------------------
+router.get('/stale-violations', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    const minAge = Math.max(0, Number(req.query.min_age_days) || 30);
+    const quietDays = Math.max(1, Number(req.query.quiet_days) || 30);
+    const { fetchAllQuery } = require('../lib/db/fetch_all');
+    const nowMs = Date.now();
+    const ageCut = new Date(nowMs - minAge * 86400000).toISOString();
+    const quietCut = new Date(nowMs - quietDays * 86400000).toISOString();
+
+    // Open violations older than minAge.
+    const open = await fetchAllQuery(() => supabase.from('violations')
+      .select('id, property_id, primary_category_id, current_stage, source, opened_at, last_continued_at, continuation_count')
+      .eq('community_id', communityId)
+      .not('current_stage', 'in', '(cured,closed,voided)')
+      .is('resolved_at', null)
+      .lt('opened_at', ageCut), { orderBy: 'opened_at' });
+    if (!open.length) return res.json({ community_id: communityId, min_age_days: minAge, quiet_days: quietDays, total: 0, candidates: [] });
+
+    // Recent observations (last quietDays) → which cases were re-seen.
+    const recentObs = await fetchAllQuery(() => supabase.from('property_observations')
+      .select('property_id, category_id, created_at')
+      .eq('community_id', communityId).gte('created_at', quietCut), { orderBy: 'created_at' });
+
+    // Confirmed alias groups so a re-obs under a sibling label still counts.
+    const parent = new Map();
+    const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+    const union = (a, b) => { if (!parent.has(a)) parent.set(a, a); if (!parent.has(b)) parent.set(b, b); parent.set(find(a), find(b)); };
+    const { data: aliasRows } = await supabase.from('enforcement_category_aliases').select('canonical_category_id, alias_category_id').eq('status', 'confirmed');
+    (aliasRows || []).forEach((r) => { if (r.canonical_category_id && r.alias_category_id) union(r.canonical_category_id, r.alias_category_id); });
+    const gk = (c) => (parent.has(c) ? find(c) : c);
+    const reobserved = new Set();
+    recentObs.forEach((o) => reobserved.add(`${o.property_id}|${gk(o.category_id)}`));
+
+    // Candidates = open+old violations NOT re-observed in the quiet window.
+    const candidates = open.filter((v) => !reobserved.has(`${v.property_id}|${gk(v.primary_category_id)}`));
+    if (!candidates.length) return res.json({ community_id: communityId, min_age_days: minAge, quiet_days: quietDays, total: 0, candidates: [] });
+
+    // Enrich: address + owner, category label, whether any letter ever went out.
+    const propIds = [...new Set(candidates.map((v) => v.property_id))];
+    const catIds = [...new Set(candidates.map((v) => v.primary_category_id))];
+    const vIds = candidates.map((v) => v.id);
+    const propMap = new Map(); const catMap = new Map(); const letterMap = new Map();
+    for (let i = 0; i < propIds.length; i += 300) {
+      const { data } = await supabase.from('v_current_property_owners').select('property_id, street_address, unit, owner_name').in('property_id', propIds.slice(i, i + 300));
+      (data || []).forEach((p) => propMap.set(p.property_id, p));
+    }
+    { const { data } = await supabase.from('enforcement_categories').select('id, label').in('id', catIds); (data || []).forEach((c) => catMap.set(c.id, c.label)); }
+    for (let i = 0; i < vIds.length; i += 200) {
+      const { data } = await supabase.from('interactions').select('violation_id, type, mailed_at').in('violation_id', vIds.slice(i, i + 200)).in('type', ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209']);
+      (data || []).forEach((l) => { const cur = letterMap.get(l.violation_id) || { any: false, mailed: false }; cur.any = true; if (l.mailed_at) cur.mailed = true; letterMap.set(l.violation_id, cur); });
+    }
+    const daysSince = (d) => Math.floor((nowMs - new Date(d).getTime()) / 86400000);
+    const rows = candidates.map((v) => {
+      const lastActivity = v.last_continued_at || v.opened_at;
+      const p = propMap.get(v.property_id) || {};
+      const lt = letterMap.get(v.id) || { any: false, mailed: false };
+      return {
+        violation_id: v.id, property_id: v.property_id,
+        street_address: p.street_address || null, unit: p.unit || null, owner_name: p.owner_name || null,
+        category: catMap.get(v.primary_category_id) || null,
+        current_stage: v.current_stage, source: v.source,
+        opened_at: v.opened_at, age_days: daysSince(v.opened_at),
+        last_activity_at: lastActivity, quiet_days: daysSince(lastActivity),
+        continuation_count: v.continuation_count || 0,
+        has_letter: lt.any, letter_mailed: lt.mailed,
+      };
+    }).sort((a, b) => b.quiet_days - a.quiet_days);
+
+    res.json({ community_id: communityId, min_age_days: minAge, quiet_days: quietDays, total: rows.length, candidates: rows });
+  } catch (err) {
+    console.error('[enforcement.stale-violations]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/stale-violations/close
+//   Body: { violation_ids: [], resolved_notes? }
+//   Bulk-closes the operator-selected stale violations as presumed-cured. Uses
+//   the SAME close logic as /violations/:id/resolve (update + sibling restage);
+//   reversible via the normal restage/re-open path. Never touches a certified
+//   §209 / fine — those need a deliberate single-case decision, not a sweep.
+// ---------------------------------------------------------------------------
+router.post('/stale-violations/close', express.json(), async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body.violation_ids) ? req.body.violation_ids.filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ error: 'violation_ids required' });
+    const note = (req.body.resolved_notes || 'Presumed cured — not re-observed on recent drives (stale-review close).').trim();
+    const closed = []; const skipped = []; const errors = [];
+    for (const id of ids) {
+      const { data: v } = await supabase.from('violations')
+        .select('id, current_stage, property_id, primary_category_id, resolved_at').eq('id', id).maybeSingle();
+      if (!v) { skipped.push({ id, reason: 'not_found' }); continue; }
+      if (v.resolved_at || ['cured', 'closed', 'voided'].includes(v.current_stage)) { skipped.push({ id, reason: 'already_resolved' }); continue; }
+      // Certified §209 / fines stay a deliberate single-case decision.
+      if (['certified_209', 'fine_assessed'].includes(v.current_stage)) { skipped.push({ id, reason: 'staff_gated_stage' }); continue; }
+      const { error: uErr } = await supabase.from('violations').update({
+        current_stage: 'cured', resolved_via: 'cured', resolved_at: new Date().toISOString(),
+        resolved_notes: `[manual_cured] ${note}`,
+      }).eq('id', id);
+      if (uErr) { errors.push({ id, error: uErr.message }); continue; }
+      try { await _restageCategoryOpenSiblings(v.property_id, v.primary_category_id, id, 'Prior violation cured (stale-review close)'); } catch (_) {}
+      closed.push(id);
+    }
+    res.json({ ok: true, closed: closed.length, skipped, errors, closed_ids: closed });
+  } catch (err) {
+    console.error('[enforcement.stale-violations.close]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/enforcement/violations/:id/send-to-attorney
 //   Body: { firm?, matter_ref?, notes?, user_id? }
 //   Marks a §209 covenant violation as handed to the association's attorney.
