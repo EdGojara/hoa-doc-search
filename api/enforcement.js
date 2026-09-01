@@ -3571,7 +3571,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         // Fetch violation + joined data needed for regeneration
         const { data: vio } = await supabase
           .from('violations')
-          .select('id, property_id, community_id, current_stage, primary_category_id, opened_at, board_priority_at_open, opened_from_observation_id, cure_days_override')
+          .select('id, property_id, community_id, current_stage, primary_category_id, opened_at, board_priority_at_open, opened_from_observation_id, cure_days_override, source')
           .eq('id', L.violation_id)
           .maybeSingle();
         if (!vio) { skipped.push({ id: L.id, reason: 'violation not found' }); continue; }
@@ -3609,6 +3609,25 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         const priorNoticeRows = (priorSent || [])
           .filter((p) => p.violations && catGroup.includes(p.violations.primary_category_id))
           .map((p) => ({ opened_at: p.postmark_date || p.sent_at, current_stage: LETTER_STAGE[p.type], mail_type: p.delivery_method }));
+        // CARRIED-IN PRIOR HISTORY (Ed 2026-09-01). A Vantaca-imported violation
+        // arrives already at courtesy_2 / certified because the prior manager
+        // (Vantaca) sent the earlier notices — trustEd has no courtesy_1 letter
+        // to cite, but the homeowner WAS noticed. Without this, every imported
+        // escalated case failed the §209 "documented prior contact" check and
+        // could not print. Supply the carried-in history so the letter renders
+        // and truthfully references the prior notice given under prior management.
+        // Do NOT synthesize for a trustEd-native/manual case with no notice — that
+        // is a genuine gap that must be caught, not papered over.
+        if (priorNoticeRows.length === 0
+            && ['courtesy_2', 'certified_209', 'fine_assessed'].includes(renderStage)
+            && vio.source === 'vantaca_import') {
+          priorNoticeRows.push({
+            opened_at: vio.opened_at,
+            current_stage: renderStage === 'courtesy_2' ? 'courtesy_1' : 'courtesy_2',
+            mail_type: 'first_class_mail',
+            carried_in: true,
+          });
+        }
 
         // Cure-by date anchored to the postmark date + per-community cure days
         const cureDays = renderStage === 'courtesy_1' ? Number(community.letter_cure_days_courtesy_1 || 20)
