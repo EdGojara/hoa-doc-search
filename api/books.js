@@ -31,6 +31,7 @@ const { postJournalEntry, voidJournalEntry, editJournalEntry } = require('../lib
 const { onboardCommunityToGL, openInitialPeriods } = require('../lib/accounting/coa_template');
 const { balanceSheet, incomeStatement, equityStatement, budgetVsActual } = require('../lib/accounting/financial_statements');
 const { extractBudget } = require('../lib/accounting/budget_pdf_extractor');
+const { rollForwardBudget } = require('../lib/accounting/budget_roll_forward');
 const { safeErrorMessage } = require('./_safe_error');
 const Anthropic = require('@anthropic-ai/sdk');
 const _anthropic = new Anthropic();
@@ -706,6 +707,35 @@ router.post('/budgets', express.json({ limit: '1mb' }), async (req, res) => {
     res.json({ budget, line_items_count: rows.length });
   } catch (err) {
     console.error('[books] save budget failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Build next year's DRAFT budget from a prior year's adopted budget: carry each
+// line forward, flag expense lines tracking materially off this year's run-rate,
+// and note the reserve-study recommendation for the target year. Never clobbers
+// an existing target-year budget (returns 409 with its id). (Ed 2026-09-02.)
+// Body: { community_id, from_year, to_year, basis?: 'flat'|'inflation', inflation_pct?, user_id? }
+router.post('/budgets/roll-forward', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (!b.from_year || !b.to_year) return res.status(400).json({ error: 'from_year_and_to_year_required' });
+    const out = await rollForwardBudget(supabase, {
+      communityId: b.community_id,
+      fromYear: b.from_year,
+      toYear: b.to_year,
+      basis: b.basis || 'flat',
+      inflationPct: b.inflation_pct || 0,
+      createdByUserId: b.user_id || null,
+    });
+    if (out.conflict) {
+      return res.status(409).json({ error: 'target_year_budget_exists', detail: `A FY${b.to_year} budget already exists (${out.existing_status}). Delete it first or edit it directly.`, existing_budget_id: out.existing_budget_id });
+    }
+    res.json(out);
+  } catch (err) {
+    if (err.code === 'invalid_input') return res.status(400).json({ error: err.message });
+    console.error('[books] budget roll-forward failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
