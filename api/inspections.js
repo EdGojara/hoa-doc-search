@@ -4653,6 +4653,21 @@ router.patch('/inspections/observations/:id', express.json(), async (req, res) =
     for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'no updatable fields' });
 
+    // Read BEFORE so we can tell whether the CATEGORY actually changed. A
+    // category correction here must follow through to any violation ALREADY
+    // opened from this observation, otherwise the case keeps the AI's wrong
+    // label after the observation was fixed. That is exactly how 4718 Tahoe
+    // Canyon ended up with a phantom "RV / boat / trailer" case after the
+    // observation was corrected to Stored Vehicle (Ed 2026-09-01). The
+    // observation learned; the case did not.
+    const { data: before, error: beErr } = await supabase
+      .from('property_observations')
+      .select('id, category_id, property_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (beErr) throw beErr;
+    if (!before) return res.status(404).json({ error: 'observation not found' });
+
     const { data, error } = await supabase
       .from('property_observations')
       .update(patch)
@@ -4660,7 +4675,67 @@ router.patch('/inspections/observations/:id', express.json(), async (req, res) =
       .select('*')
       .single();
     if (error) throw error;
-    res.json({ observation: data });
+
+    // Propagate a category change to the open violation opened from this obs.
+    let category_propagation = null;
+    const categoryChanged = ('category_id' in patch) && patch.category_id && patch.category_id !== before.category_id;
+    if (categoryChanged) {
+      try {
+        const { data: openVios, error: vErr } = await supabase
+          .from('violations')
+          .select('id, primary_category_id, current_stage, property_id, enforcement_categories(label)')
+          .eq('opened_from_observation_id', req.params.id)
+          .is('resolved_at', null)
+          .not('current_stage', 'in', '(cured,closed,voided)')
+          .neq('quality_status', 'superseded');
+        if (vErr) throw vErr;
+        const { data: newCat } = await supabase.from('enforcement_categories')
+          .select('id, label').eq('id', patch.category_id).maybeSingle();
+        for (const v of (openVios || [])) {
+          if (v.primary_category_id === patch.category_id) continue; // already right
+          const priorLabel = (v.enforcement_categories && v.enforcement_categories.label) || '(unknown)';
+          const snapshot = { ...v }; delete snapshot.enforcement_categories;
+          const { error: uErr } = await supabase.from('violations')
+            .update({ primary_category_id: patch.category_id }).eq('id', v.id);
+          if (uErr) throw uErr;
+          await supabase.from('violation_corrections').insert({
+            original_violation_id: v.id,
+            correction_type: 'reclassified',
+            replacement_violation_id: null,
+            reason: `Category propagated from corrected observation: ${priorLabel} -> ${newCat ? newCat.label : patch.category_id}`,
+            corrected_by_user_id: (req.body || {}).user_id || null,
+            original_state: snapshot,
+            notes: 'Observation category was corrected; the open case it opened was re-labeled to match (record kept active).',
+          });
+          // Does the property already have ANOTHER open case in the new category?
+          // Warn, do not auto-merge (merging is a §209 judgment, same rule as the
+          // change-category endpoint).
+          const { data: dup } = await supabase.from('violations')
+            .select('id, current_stage, opened_at')
+            .eq('property_id', v.property_id)
+            .eq('primary_category_id', patch.category_id)
+            .neq('id', v.id)
+            .not('current_stage', 'in', '(cured,closed,voided)')
+            .is('resolved_at', null)
+            .neq('quality_status', 'superseded')
+            .order('opened_at', { ascending: true })
+            .limit(1).maybeSingle();
+          category_propagation = {
+            violation_id: v.id,
+            from: priorLabel,
+            to: newCat ? newCat.label : patch.category_id,
+            duplicate_open_case: dup ? { id: dup.id, current_stage: dup.current_stage, opened_at: dup.opened_at } : null,
+          };
+        }
+      } catch (propErr) {
+        // Surface, never silently swallow — the observation patch succeeded but
+        // the case is now out of sync, and staff must know.
+        console.error('[inspections.observation.patch] category propagation failed:', propErr.message);
+        category_propagation = { error: propErr.message };
+      }
+    }
+
+    res.json({ observation: data, category_propagation });
   } catch (err) {
     res.status(500).json({ error: err.message || 'patch failed' });
   }
