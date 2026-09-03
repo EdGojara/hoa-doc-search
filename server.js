@@ -2484,33 +2484,59 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
       if (cm) accCommunityId = cm.id;
     }
 
-    // 2) Insert the decision row so we have an id to namespace storage paths.
-    let decisionId = null;
+    // IDEMPOTENCY: regenerating the letter for the SAME application must not
+    // create a new decision each time. Reuse the row the caller names
+    // (decision_id), else a recent matching row (same community + lot + project,
+    // created in the last few days). This is how 4 identical Juniper decisions
+    // were created minutes apart on 2026-08-21 — each letter render inserted a
+    // fresh row. A genuine re-application months later still gets its own row.
+    // (Ed 2026-09-03.)
+    const _nrm = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]/g, '');
+    let reuseId = body.decision_id || null;
+    if (!reuseId && accCommunityId && body.homeowner_address) {
+      const sinceIso = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString();
+      const { data: recent } = await supabase.from('acc_decisions')
+        .select('id, homeowner_address, project_summary, created_at')
+        .eq('community_id', accCommunityId).gte('created_at', sinceIso)
+        .order('created_at', { ascending: false }).limit(50);
+      const match = (recent || []).find((r) =>
+        _nrm(r.homeowner_address) === _nrm(body.homeowner_address) &&
+        _nrm(r.project_summary).slice(0, 60) === _nrm(body.project_summary).slice(0, 60));
+      if (match) reuseId = match.id;
+    }
+
+    // 2) Create or reuse the decision row so we have an id to namespace storage.
+    let decisionId = reuseId || null;
     let letterStoragePath = null;
     let applicationStoragePath = null;
     const photoStoragePaths = [];
     try {
-      const { data: instance, error: insErr } = await supabase
-        .from('acc_decisions')
-        .insert({
-          management_company_id: BEDROCK_MGMT_CO_ID,
-          community_id: accCommunityId,
-          community_name: body.community || '',
-          homeowner_name: body.homeowner_name || null,
-          homeowner_address: body.homeowner_address || null,
-          project_summary: body.project_summary || null,
-          reference_number: body.reference_number || null,
-          decision_type: body.decision_type || null,
-          letter_body: body.body_text || null,
-          // Per-user audit attribution. Null if the caller wasn't signed
-          // in via Microsoft (legacy staff-password sessions). After the
-          // shared-password gate is killed, every row gets a real FK.
-          decided_by_user_id: actor?.id || null,
-        })
-        .select()
-        .single();
-      if (insErr) throw insErr;
-      decisionId = instance.id;
+      const fields = {
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community_id: accCommunityId,
+        community_name: body.community || '',
+        homeowner_name: body.homeowner_name || null,
+        homeowner_address: body.homeowner_address || null,
+        project_summary: body.project_summary || null,
+        reference_number: body.reference_number || null,
+        decision_type: body.decision_type || null,
+        letter_body: body.body_text || null,
+        // Per-user audit attribution. Null if the caller wasn't signed
+        // in via Microsoft (legacy staff-password sessions). After the
+        // shared-password gate is killed, every row gets a real FK.
+        decided_by_user_id: actor?.id || null,
+      };
+      if (reuseId) {
+        const { error: updErr } = await supabase.from('acc_decisions')
+          .update({ ...fields, updated_at: new Date().toISOString() }).eq('id', reuseId);
+        if (updErr) throw updErr;
+        decisionId = reuseId;
+      } else {
+        const { data: instance, error: insErr } = await supabase
+          .from('acc_decisions').insert(fields).select().single();
+        if (insErr) throw insErr;
+        decisionId = instance.id;
+      }
 
       const stemBase = (body.homeowner_address || body.homeowner_name || body.community || 'decision')
         .toString().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'decision';
@@ -2620,7 +2646,11 @@ app.get('/acc-review/decisions', async (req, res) => {
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('created_at', { ascending: false })
       .limit(500);
+    // 'archived' (a duplicate we retired) and 'withdrawn' rows are kept for the
+    // record but don't belong in the working queue or the answered history —
+    // exclude them unless the caller explicitly asks for that status. (Ed 2026-09-03)
     if (status) query = query.eq('status', status);
+    else query = query.not('status', 'in', '("archived","withdrawn")');
     if (source) query = query.eq('source', source);
     if (address) query = query.ilike('homeowner_address', `%${address}%`);
     if (community) query = query.ilike('community_name', `%${community}%`);
