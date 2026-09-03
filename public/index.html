@@ -46391,6 +46391,13 @@ ${questionsPage}
       const apSplitLabel = apIsSplit
         ? lines.filter((l) => l.gl_account_id && l.chart_of_accounts).map((l) => l.chart_of_accounts.account_number).filter((v, i, a) => a.indexOf(v) === i).join(' + ')
         : '';
+      // A bill coded at the invoice level (single account, not a split) posts EVERY
+      // line to that account — so a line without its own GL is NOT "uncoded", it
+      // inherits the bill's. Show that instead of a scary "⚠ no GL / classify
+      // manually" that made staff think each line needed hand-coding or escalation
+      // to Ed (Celina, LOPF Harned insurance ACH, 2026-09-03). Genuinely uncoded
+      // bills (no invoice-level account either) still show "no GL".
+      const invAcct = (inv.coded_account && !apIsSplit) ? inv.coded_account : null;
       const openForApproval = inv.status === 'awaiting_approval' && !!inv.posting_journal_entry_id;
       const canApprove = openForApproval;   // legacy name kept for the rest of the render
       const notFinal = inv.status !== 'paid' && inv.status !== 'voided';
@@ -46400,14 +46407,20 @@ ${questionsPage}
       const linesHtml = lines.map((ln) => {
         const isCredit = Number(ln.amount_cents) < 0;
         const isPrior = ln.prior_payment === true; // prior payment recorded in Vantaca — not a credit
+        const inheritedHtml = invAcct
+          ? `<span style="color:#166534;">${apEsc(invAcct.account_name)} <span style="color:#64748b; font-size:10.5px;">(from bill)</span></span>`
+          : '<span style="color:#dc2626;">⚠ no GL</span>';
         const acctName = ln.chart_of_accounts?.account_name
-          || (ln.gl_account_id ? '(coded)' : '<span style="color:#dc2626;">⚠ no GL</span>');
-        const lineNote = isPrior ? (ln.prior_payment_note || 'Prior payment — recorded in Vantaca, not posted here.') : ln.notes;
+          || (ln.gl_account_id ? '(coded)' : inheritedHtml);
+        let lineNote = isPrior ? (ln.prior_payment_note || 'Prior payment — recorded in Vantaca, not posted here.') : ln.notes;
+        // Once the bill is coded at the invoice level, the classifier's per-line
+        // "no confident match — classify manually" is stale and misleading — drop it.
+        if (invAcct && lineNote && /no confident match|classify manually/i.test(lineNote)) lineNote = '';
         return `
         <tr style="border-bottom:1px solid #f3f4f6; ${isPrior ? 'background:#f1f5f9;' : (isCredit ? 'background:#f0fdf4;' : '')}">
           <td style="padding:6px 10px;">${isPrior ? '<span title="Prior payment already recorded in Vantaca — not posted here." style="color:#475569; font-weight:700;">📄 </span>' : (isCredit ? '<span title="A credit on this bill — it reduces what we owe." style="color:#166534; font-weight:700;">💳 </span>' : '')}${apEsc(ln.description)}${lineNote ? `<div style="color:#5a7390; font-size:11px; margin-top:1px;">${apEsc(lineNote)}</div>` : ''}</td>
           <td style="padding:6px 10px; text-align:center;">${ln.quantity || 1}</td>
-          <td style="padding:6px 10px; font-family:ui-monospace,monospace; font-size:11.5px;">${apEsc(ln.chart_of_accounts?.account_number || '—')}</td>
+          <td style="padding:6px 10px; font-family:ui-monospace,monospace; font-size:11.5px;">${apEsc(ln.chart_of_accounts?.account_number || (invAcct ? invAcct.account_number : '—'))}</td>
           <td style="padding:6px 10px;">
             ${ln.chart_of_accounts?.account_name ? apEsc(acctName) : acctName}
             <button class="secondary-btn" style="font-size:10.5px; padding:1px 7px; margin-left:6px;" onclick="apToggleLineCode('${ln.id}')">Change</button>
