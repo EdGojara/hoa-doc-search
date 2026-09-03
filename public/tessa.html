@@ -81,6 +81,18 @@ function showSignIn(){ $('body').innerHTML='<div class="soon"><b>Sign in to open
 function render(){
   $('body').innerHTML = `<div class="grid">
     <div>
+      <!-- Tessa's outbox: work she has PREPARED and is holding for release.
+           North star — the AI team does the work, the human supervises. The
+           email/meeting is fully staged (recipients, body, the attached
+           document, the invite); Ed just reviews and releases. (Ed 2026-09-03.) -->
+      <div class="card" id="outboxCard" style="border:2px solid var(--gold,#D4AF37);">
+        <div class="row" style="justify-content:space-between;">
+          <h2 style="margin:0;">📤 Tessa's outbox</h2>
+          <button class="btn ghost sm" onclick="loadOutbox()">Refresh</button>
+        </div>
+        <div class="note">Work Tessa has prepared and is holding for you. Review and release — the send is yours.</div>
+        <div id="outboxList" style="margin-top:10px;"><div class="note">Loading&hellip;</div></div>
+      </div>
       <!-- Ask Tessa: one box. Ed says what he wants in his own words and she
            works out who it goes to, reads the thread in his mailbox, and
            comes back with a draft. (Ed 2026-08-21.) The form below is still
@@ -176,12 +188,66 @@ function render(){
       </div>
     </div>
   </div>`;
+  loadOutbox();
   loadFu();
   loadInbox();
   loadSent();
   loadRecipients();
   cbLoad();
   stLoad();
+}
+
+// ---- Tessa's outbox: prepared work held for Ed to release --------------------
+async function loadOutbox(){
+  const el=$('outboxList'); if(!el) return;
+  try{
+    const r=await af('/api/tessa/outbox?status=queued'); const j=await r.json();
+    if(j.migration_pending){ el.innerHTML='<div class="note">Outbox isn’t set up yet (migration 405 pending).</div>'; return; }
+    const items=j.items||[];
+    if(!items.length){ el.innerHTML='<div class="note">Nothing queued. When Tessa prepares an email or a meeting, it waits here for your OK.</div>'; return; }
+    el.innerHTML=items.map(renderOutboxItem).join('');
+  }catch(e){ el.innerHTML='<div class="note err">Couldn’t load the outbox.</div>'; }
+}
+function renderOutboxItem(it){
+  const isEmail = it.kind==='email';
+  const meta = isEmail
+    ? `<div class="note"><b>To</b> ${esc(it.to_emails||'')}${it.cc_emails?` &nbsp; <b>Cc</b> ${esc(it.cc_emails)}`:''}</div>
+       <div class="note"><b>Subject</b> ${esc(it.subject||'')}</div>
+       ${it.attachment_name?`<div class="note">📎 ${esc(it.attachment_name)} — attached when sent</div>`:''}`
+    : `<div class="note"><b>When</b> ${esc((it.meeting_start||'').replace('T',' '))} → ${esc((it.meeting_end||'').replace('T',' '))} ${esc(it.meeting_time_zone||'')}</div>
+       <div class="note"><b>Where</b> ${esc(it.meeting_location||'')}</div>
+       <div class="note"><b>Invite</b> ${esc(it.meeting_attendees||'')}</div>
+       <div class="note"><b>Organizer</b> ${esc(it.organizer||'Tessa')}</div>`;
+  const body = it.body_text ? `<div style="white-space:pre-wrap;font-size:12.5px;color:#334155;margin-top:8px;border-left:3px solid var(--line);padding-left:10px;">${esc(it.body_text)}</div>` : '';
+  return `<div class="fu" id="ob-${it.id}">
+    <div class="t">${esc(it.title)} <span class="pill">${isEmail?'EMAIL':'MEETING'}</span></div>
+    ${it.note?`<div class="note" style="margin-top:2px;">${esc(it.note)}</div>`:''}
+    ${meta}${body}
+    <div class="row" style="margin-top:10px;">
+      <button class="btn gold sm" onclick="releaseOutbox('${it.id}','${isEmail?'send':'book'}')">${isEmail?'Send it':'Book it'}</button>
+      <button class="btn ghost sm" onclick="cancelOutbox('${it.id}')">Discard</button>
+      <span id="obmsg-${it.id}" class="note"></span>
+    </div>
+  </div>`;
+}
+async function releaseOutbox(id, verb){
+  const msg=$('obmsg-'+id);
+  if(!confirm(verb==='send'?'Send this email now, from Tessa?':'Book this meeting and send the invitations now?')) return;
+  if(msg) msg.textContent='Working…';
+  try{
+    const r=await af('/api/tessa/outbox/'+id+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'failed');
+    if(msg) msg.innerHTML = j.kind==='meeting'
+      ? `<span class="ok">✅ Booked${j.join_url?` · <a href="${esc(j.join_url)}" target="_blank">Teams link</a>`:''}${j.warning?' (calendar invite sent; no Teams link)':''}</span>`
+      : `<span class="ok">✅ Sent to ${(j.to||[]).join(', ')}</span>`;
+    setTimeout(loadOutbox, 1400);
+    try{ loadSent(); }catch(_){}
+  }catch(e){ if(msg) msg.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+}
+async function cancelOutbox(id){
+  if(!confirm('Discard this queued item?')) return;
+  try{ const r=await af('/api/tessa/outbox/'+id,{method:'DELETE'}); if(r.ok) loadOutbox(); else alert('Could not discard.'); }catch(e){ alert('Could not discard.'); }
 }
 
 // Recipient directory for the compose picker: board members (by community),

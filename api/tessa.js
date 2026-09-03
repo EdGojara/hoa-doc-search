@@ -814,4 +814,146 @@ router.post('/standing/:id/run-now', express.json(), async (req, res) => {
   } catch (err) { console.error('[tessa] standing run-now failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// ---- Tessa's OUTBOX: prepared work she holds for Ed to release ---------------
+// North star (Ed 2026-09-03): the AI team does the work like real people in
+// their roles; the human supervises and releases. A queued email or meeting
+// sits here until Ed hits release. Nothing leaves on its own. (Migration 405.)
+const OUTBOX_COLS = 'id, kind, status, title, note, to_emails, cc_emails, subject, body_text, attachment_name, attachment_mime, attachment_path, attachment_bucket, organizer, meeting_start, meeting_end, meeting_time_zone, meeting_location, meeting_attendees, result, send_error, created_at, sent_at';
+
+// GET /outbox?status=queued — Tessa's prepared items (default: still queued).
+router.get('/outbox', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    let q = supabase.from('tessa_outbox').select(OUTBOX_COLS).order('created_at', { ascending: false }).limit(100);
+    const status = req.query.status || 'queued';
+    if (status !== 'all') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) {
+      if (/could not find|does not exist|42P01|PGRST20[45]|schema cache/i.test(`${error.message} ${error.code}`)) {
+        return res.json({ items: [], migration_pending: true });
+      }
+      throw error;
+    }
+    res.json({ items: data || [] });
+  } catch (err) { console.error('[tessa] outbox list failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /outbox — stage a prepared item. { kind, title, ... }. Nothing is sent.
+router.post('/outbox', express.json({ limit: '64kb' }), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const b = req.body || {};
+    const kind = String(b.kind || '').trim();
+    if (!['email', 'meeting'].includes(kind)) return res.status(400).json({ error: 'kind must be email or meeting' });
+    if (!String(b.title || '').trim()) return res.status(400).json({ error: 'title_required' });
+    const row = {
+      kind, title: String(b.title).trim(), note: b.note || null, status: 'queued',
+      to_emails: b.to_emails || null, cc_emails: b.cc_emails || null,
+      subject: b.subject || null, body_text: b.body_text || null,
+      attachment_path: b.attachment_path || null, attachment_name: b.attachment_name || null,
+      attachment_mime: b.attachment_mime || null, attachment_bucket: b.attachment_bucket || 'documents',
+      organizer: b.organizer || null, meeting_start: b.meeting_start || null, meeting_end: b.meeting_end || null,
+      meeting_time_zone: b.meeting_time_zone || null, meeting_location: b.meeting_location || null,
+      meeting_attendees: b.meeting_attendees || null, created_by: owner.email || 'Ed',
+    };
+    const { data, error } = await supabase.from('tessa_outbox').insert(row).select(OUTBOX_COLS).single();
+    if (error) throw error;
+    res.json({ ok: true, item: data });
+  } catch (err) { console.error('[tessa] outbox stage failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /outbox/:id/release — Ed releases a queued item. Email -> Tessa sends it
+// (her branded signature + headshot, plus the stored attachment). Meeting ->
+// Tessa books it (organizer = Tessa, per Ed 2026-09-03). The click IS the
+// approval, same gate as the Draft Queue and /meeting.
+router.post('/outbox/:id/release', express.json({ limit: '4kb' }), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'Email/calendar is not connected yet (Microsoft Graph credentials must be set up).' });
+    const { data: item, error } = await supabase.from('tessa_outbox').select('*').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!item) return res.status(404).json({ error: 'not_found' });
+    if (item.status === 'sent') return res.status(409).json({ error: 'already_released' });
+
+    if (item.kind === 'email') {
+      const to = parseAddrs(item.to_emails), cc = parseAddrs(item.cc_emails);
+      if (!to.length) return res.status(400).json({ error: 'no valid recipient on this item' });
+      const subject = String(item.subject || '').trim() || '(no subject)';
+      const body = String(item.body_text || '').trim();
+      if (!body) return res.status(400).json({ error: 'the email body is empty' });
+
+      // Tessa's branded wrapper: signature + headshot + logo (Ed's directive that
+      // every AI-team email carries the block + picture).
+      const { buildTessaEmail } = require('../lib/email/tessa_signature');
+      const built = buildTessaEmail(body, null, null);
+      const attachments = Array.isArray(built.attachments) ? built.attachments.slice() : [];
+
+      // Pull the stored file attachment (e.g. the NDA PDF) and base64 it for Graph.
+      if (item.attachment_path) {
+        const { data: blob, error: dErr } = await supabase.storage.from(item.attachment_bucket || 'documents').download(item.attachment_path);
+        if (dErr) {
+          await supabase.from('tessa_outbox').update({ status: 'error', send_error: 'attachment download failed: ' + dErr.message }).eq('id', item.id);
+          return res.status(502).json({ error: 'could not load the attachment — nothing was sent' });
+        }
+        const buf = Buffer.from(await blob.arrayBuffer());
+        attachments.push({ '@odata.type': '#microsoft.graph.fileAttachment', name: item.attachment_name || 'attachment.pdf', contentType: item.attachment_mime || 'application/octet-stream', contentBytes: buf.toString('base64') });
+      }
+
+      try {
+        await graphSend.sendAs({ from: graphSend.TESSA_MAILBOX, to, cc, subject, html: built.html, attachments });
+      } catch (e) {
+        await supabase.from('tessa_outbox').update({ status: 'error', send_error: e.message }).eq('id', item.id);
+        return res.status(502).json({ error: `send failed: ${e.message}` });
+      }
+      const result = { from: graphSend.TESSA_MAILBOX, to, cc, attachments: attachments.length };
+      await supabase.from('tessa_outbox').update({ status: 'sent', sent_at: new Date().toISOString(), released_by: owner.email || 'Ed', result, send_error: null }).eq('id', item.id);
+      // Log to correspondence so it shows in Tessa's Sent.
+      try {
+        await supabase.from('email_messages').insert({
+          mailbox: graphSend.TESSA_MAILBOX, direction: 'outbound', sender_email: graphSend.TESSA_MAILBOX,
+          sender_name: 'Tessa McCall (Bedrock EA)', persona: 'tessa',
+          recipients: [...to, ...cc], subject, body_preview: body.slice(0, 2000), body_full: body,
+          classification: 'outbound_reply', classification_confidence: 'high',
+          ai_summary: `Tessa released "${item.title}" to ${[...to, ...cc].join(', ')}`,
+          triage_status: 'handled', reviewed_at: new Date().toISOString(),
+        });
+      } catch (e) { console.warn('[tessa] outbox send-log skipped:', e.message); }
+      return res.json({ ok: true, kind: 'email', ...result });
+    }
+
+    // kind === 'meeting'
+    const attendees = parseAddrs(item.meeting_attendees);
+    if (!attendees.length) return res.status(400).json({ error: 'no valid attendees on this meeting' });
+    if (!item.meeting_start || !item.meeting_end) return res.status(400).json({ error: 'the meeting is missing a start/end time' });
+    const { createTeamsMeeting } = require('../lib/ea/tessa_meeting');
+    let meeting;
+    try {
+      meeting = await createTeamsMeeting({
+        organizer: item.organizer || graphSend.TESSA_MAILBOX,
+        subject: String(item.subject || item.title).trim(),
+        start: item.meeting_start, end: item.meeting_end,
+        timeZone: item.meeting_time_zone || undefined,
+        attendees, body: String(item.body_text || ''),
+        location: item.meeting_location || null,
+      });
+    } catch (e) {
+      await supabase.from('tessa_outbox').update({ status: 'error', send_error: e.message }).eq('id', item.id);
+      return res.status(502).json({ error: `booking failed: ${e.message}` });
+    }
+    await supabase.from('tessa_outbox').update({ status: 'sent', sent_at: new Date().toISOString(), released_by: owner.email || 'Ed', result: meeting, send_error: meeting.warning || null }).eq('id', item.id);
+    res.json({ ok: true, kind: 'meeting', ...meeting });
+  } catch (err) { console.error('[tessa] outbox release failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// DELETE /outbox/:id — Tessa stands the item down (never sent).
+router.delete('/outbox/:id', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { data, error } = await supabase.from('tessa_outbox').update({ status: 'cancelled' }).eq('id', req.params.id).eq('status', 'queued').select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'not_cancellable' });
+    res.json({ ok: true });
+  } catch (err) { console.error('[tessa] outbox cancel failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 module.exports = { router };
