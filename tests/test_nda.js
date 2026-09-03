@@ -22,13 +22,28 @@ check('fillNda replaces the counterparty and effective date', () => {
 });
 
 check('renderNdaHtml carries the material substance + both signature blocks', () => {
-  const html = renderNdaHtml({ counterparty: 'Acme Bank, N.A.', effective_date_text: 'September 3, 2026', signatory_name: 'Ed Gojara', signatory_title: 'Managing Member' });
+  const html = renderNdaHtml(
+    { counterparty: 'Acme Bank, N.A.', effective_date_text: 'September 3, 2026', signatory_name: 'Ed Gojara', signatory_title: 'Managing Member', cp_signer_name: 'Jane Roe', cp_signer_title: 'General Counsel' },
+    { docMeta: { version: 2, generated: 'September 3, 2026' } },
+  );
   assert.ok(/Mutual Non-Disclosure Agreement/.test(html), 'title');
   assert.ok(/Reverse Engineering/i.test(html), 'no-reverse-engineering clause (platform internals)');
-  assert.ok(/State of Texas/.test(html) && /Fort Bend County/.test(html), 'Texas governing law + venue');
+  assert.ok(/State of Texas/.test(html), 'Texas governing law');
+  // Venue fix: federal half must name SDTX Houston Division, not "federal courts in Fort Bend".
+  assert.ok(/Southern District of Texas, Houston Division/.test(html), 'correct federal venue');
+  assert.ok(!/federal courts located in Fort Bend/.test(html), 'no bad federal-in-Fort-Bend venue');
+  // AI/model-training misuse clause + independent-development carve-back.
+  assert.ok(/training data/i.test(html) && /artificial intelligence or machine learning/i.test(html), 'AI training clause');
+  assert.ok(/independently develop/i.test(html), 'independent-development carve-back (not a non-compete)');
+  // Backup carve-out in return/destruction.
+  assert.ok(/routine electronic backups/i.test(html), 'backup/archival carve-out');
+  // Observed/derived info in the confidential-information definition.
+  assert.ok(/learned, observed, inferred, or derived/i.test(html), 'observed/derived-from-demo language');
   assert.ok(/BEDROCK ASSOCIATION MANAGEMENT, LLC/.test(html), 'Bedrock signature block');
   assert.ok(/ACME BANK, N\.A\./.test(html), 'counterparty signature block');
   assert.ok(/Ed Gojara/.test(html) && /Managing Member/.test(html), 'Bedrock signatory prefilled');
+  assert.ok(/Jane Roe/.test(html) && /General Counsel/.test(html), 'counterparty signer prefilled');
+  assert.ok(/Template v2/.test(html), 'template version stamped in footer');
   assert.ok(!/\{\{/.test(html), 'no leftover placeholders in the rendered doc');
 });
 

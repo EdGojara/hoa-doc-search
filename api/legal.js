@@ -86,7 +86,7 @@ router.post('/:slug/prepare', express.json({ limit: '256kb' }), async (req, res)
     // Use the stored master body if present (so admin edits apply); else the
     // built-in template. Only agreement-type docs can be prepared for signing.
     const { data: doc } = await supabase.from('legal_documents')
-      .select('body_markdown, category, title').eq('slug', req.params.slug).maybeSingle();
+      .select('body_markdown, category, title, version').eq('slug', req.params.slug).maybeSingle();
     if (doc && doc.category && doc.category !== 'agreement') {
       return res.status(400).json({ error: 'not_an_agreement', detail: 'Only agreement documents can be prepared for signature.' });
     }
@@ -96,8 +96,14 @@ router.post('/:slug/prepare', express.json({ limit: '256kb' }), async (req, res)
       effective_date_text: (b.effective_date_text || '').trim(),
       signatory_name: (b.signatory_name || '').trim(),
       signatory_title: (b.signatory_title || '').trim(),
+      cp_signer_name: (b.counterparty_signer_name || '').trim(),
+      cp_signer_title: (b.counterparty_signer_title || '').trim(),
     };
-    const opts = { bodyMarkdown: doc && doc.body_markdown ? doc.body_markdown : undefined };
+    const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Chicago' });
+    const opts = {
+      bodyMarkdown: doc && doc.body_markdown ? doc.body_markdown : undefined,
+      docMeta: { version: doc && doc.version ? doc.version : 1, generated: today },
+    };
 
     if (b.preview) {   // HTML preview for the UI (no puppeteer)
       return res.json({ html: renderNdaHtml(fields, opts) });
