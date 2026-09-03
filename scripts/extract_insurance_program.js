@@ -17,6 +17,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const fs = require('fs');
+const { capPdfPages } = require('../lib/insurance_extract'); // >100pg policies get trimmed to their decs
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -58,7 +59,8 @@ const SCHEMA_PROMPT = `You are an HOA insurance analyst preparing a renewal RFP.
 Rules: include EVERY coverage line and EVERY limit/deductible this document shows. If a field isn't in the document, use null or []. Do NOT invent values. Amounts EXACTLY as printed. Output ONLY the JSON object.`;
 
 async function extractOne(path) {
-  const b64 = fs.readFileSync(path).toString('base64');
+  const safe = await capPdfPages(fs.readFileSync(path));
+  const b64 = safe.toString('base64');
   const r = await client.messages.create({
     model: 'claude-sonnet-4-5', max_tokens: 8000,
     messages: [{ role: 'user', content: [
