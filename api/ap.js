@@ -1736,4 +1736,64 @@ router.get('/aging', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Prepaid amortization. A bill coded to a prepaid asset (e.g. 1400 Prepaid
+// Insurance) must amortize to expense over its applicable period. GET returns
+// whether this is a prepaid bill, the suggested period + expense account, and
+// any schedule already set up; POST creates the recognition schedule (the
+// recognition engine then posts ~1/12 monthly, Dr expense / Cr prepaid).
+// (Ed 2026-09-03, Celina's LOPF Harned insurance ACH.)
+// ---------------------------------------------------------------------------
+async function loadInvoiceForAmortization(id) {
+  const { data: inv } = await supabase.from('ap_invoices')
+    .select('id, community_id, total_cents, invoice_date, vendor_invoice_number, coded_gl_account_id, posting_journal_entry_id, coded_account:coded_gl_account_id(account_number, account_name, account_type)')
+    .eq('id', id).maybeSingle();
+  return inv;
+}
+
+router.get('/invoices/:id/amortization', async (req, res) => {
+  try {
+    const { suggestForInvoice } = require('../lib/accounting/prepaid_amortization');
+    const inv = await loadInvoiceForAmortization(req.params.id);
+    if (!inv) return res.status(404).json({ error: 'invoice_not_found' });
+    const suggestion = inv.coded_account ? await suggestForInvoice({ supabase, invoice: inv }) : { is_prepaid: false };
+
+    // An existing schedule for this prepaid + amount (best-effort match).
+    let schedule = null;
+    if (inv.coded_account && suggestion.is_prepaid) {
+      const { data: sch } = await supabase.from('recognition_schedules')
+        .select('id, status, start_month, term_months, monthly_amount_cents, period_start, period_end, balance_account_number')
+        .eq('community_id', inv.community_id).eq('schedule_type', 'prepaid_expense')
+        .eq('balance_account_number', inv.coded_account.account_number).eq('recognize_amount_cents', inv.total_cents)
+        .in('status', ['active', 'fully_recognized']).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (sch) {
+        const { data: seg } = await supabase.from('recognition_schedule_segments').select('income_account_number').eq('schedule_id', sch.id).limit(1).maybeSingle();
+        schedule = { ...sch, expense_account_number: seg ? seg.income_account_number : null };
+      }
+    }
+    res.json({ is_prepaid: !!suggestion.is_prepaid, coded: !!inv.coded_gl_account_id, community_id: inv.community_id, suggestion, schedule });
+  } catch (err) {
+    console.error('[ap] amortization get failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/invoices/:id/amortization', express.json(), async (req, res) => {
+  try {
+    const { setupPrepaidAmortization } = require('../lib/accounting/prepaid_amortization');
+    const inv = await loadInvoiceForAmortization(req.params.id);
+    if (!inv) return res.status(404).json({ error: 'invoice_not_found' });
+    const b = req.body || {};
+    const result = await setupPrepaidAmortization({
+      supabase, invoice: inv,
+      expenseAccountNumber: b.expense_account_number,
+      periodStart: b.period_start, periodEnd: b.period_end, label: b.label,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[ap] amortization setup failed:', err.message);
+    res.status(400).json({ error: safeErrorMessage(err), detail: err.message });
+  }
+});
+
 module.exports = { router };

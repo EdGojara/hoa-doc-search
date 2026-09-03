@@ -46493,6 +46493,8 @@ ${questionsPage}
             <tbody>${linesHtml}</tbody>
           </table>
 
+          <div id="ap-amort-${inv.id}" style="margin-bottom:14px;"></div>
+
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
             <div>
               <h4 style="margin:0 0 6px; color:#0B1D34;">Auto-Coding</h4>
@@ -46681,7 +46683,62 @@ ${questionsPage}
       // When it isn't coded, infer the expense account from the community's own
       // history (how this vendor was coded before) and offer one-click apply.
       if (!inv.coded_gl_account_id) { try { apSuggestCode(inv.id); } catch (_) {} }
+      // Prepaid bills (e.g. 1400 Prepaid Insurance) need an amortization schedule
+      // so the recognition engine expenses them ~1/12 monthly. (Ed 2026-09-03.)
+      try { apLoadAmortization(inv.id); } catch (_) {}
     }
+
+    // Show the amortization panel only when the bill is coded to a prepaid asset.
+    // Renders either the existing schedule or a one-click setup form.
+    window.apLoadAmortization = async function (invId) {
+      const box = document.getElementById('ap-amort-' + invId); if (!box) return;
+      let j;
+      try { j = await (await fetch('/api/ap/invoices/' + encodeURIComponent(invId) + '/amortization')).json(); } catch (_) { return; }
+      if (!j || !j.is_prepaid) { box.innerHTML = ''; return; }
+      const money = (c) => '$' + (Number(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (j.schedule) {
+        const s = j.schedule;
+        box.innerHTML = `<div style="border:1px solid #bbf7d0; border-left:3px solid #16a34a; border-radius:8px; padding:12px 14px; background:#f0fdf4;">
+          <div style="font-weight:700; color:#166534;">✓ Amortization set up</div>
+          <div style="font-size:12.5px; color:#334155; margin-top:4px;">${money(s.monthly_amount_cents)}/mo for ${s.term_months} months — Dr <strong>${apEsc(s.expense_account_number || 'expense')}</strong> / Cr <strong>${apEsc(s.balance_account_number)}</strong>, from ${apEsc(String(s.start_month).slice(0,10))}. The recognition engine posts each month automatically.</div>
+        </div>`;
+        return;
+      }
+      const sug = j.suggestion || {};
+      const exp = sug.expense_account || null;
+      // Community expense accounts for the picker.
+      let opts = '';
+      try {
+        const cid = j.community_id;
+        if (cid) {
+          const ea = await (await fetch('/api/ap/expense-accounts?community_id=' + encodeURIComponent(cid))).json();
+          opts = (ea.accounts || []).map((a) => `<option value="${apEsc(a.account_number)}" ${exp && exp.account_number === a.account_number ? 'selected' : ''}>${apEsc(a.account_number)} — ${apEsc(a.account_name)}</option>`).join('');
+        }
+      } catch (_) {}
+      box.innerHTML = `<div style="border:1px solid #fde047; border-left:3px solid #D4AF37; border-radius:8px; padding:12px 14px; background:#fffbeb;">
+        <div style="font-weight:700; color:#92400e;">Prepaid asset — set up amortization</div>
+        <div style="font-size:12px; color:#5a4a1a; margin:4px 0 10px;">This bill posted to a prepaid account. Set it up to amortize to expense over the applicable period; the recognition engine then posts ~1/12 each month (Dr expense / Cr prepaid).</div>
+        <div style="display:grid; grid-template-columns:auto 1fr; gap:8px 10px; align-items:center; font-size:12.5px; max-width:560px;">
+          <label style="color:#5a7390;">Period start</label><input id="amort-start-${invId}" type="date" value="${apEsc((sug.period_start||'').slice(0,10))}" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:5px;">
+          <label style="color:#5a7390;">Period end</label><input id="amort-end-${invId}" type="date" value="${apEsc((sug.period_end||'').slice(0,10))}" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:5px;">
+          <label style="color:#5a7390;">Expense account</label>${opts ? `<select id="amort-exp-${invId}" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:5px;">${opts}</select>` : `<input id="amort-exp-${invId}" type="text" placeholder="Expense account number" value="${apEsc(exp ? exp.account_number : '')}" style="padding:5px 8px; border:1px solid #cbd5e1; border-radius:5px;">`}
+        </div>
+        <div style="margin-top:10px;"><button class="action-btn" style="background:#16a34a; border-color:#15803d; font-size:12px; padding:5px 14px;" onclick="apSetupAmortization('${invId}')">Set up amortization</button></div>
+      </div>`;
+    };
+
+    window.apSetupAmortization = async function (invId) {
+      const gv = (id) => { const el = document.getElementById(id); return el ? (el.value || '').trim() : ''; };
+      const body = { period_start: gv('amort-start-' + invId), period_end: gv('amort-end-' + invId), expense_account_number: gv('amort-exp-' + invId) };
+      if (!body.expense_account_number) { alert('Pick the expense account to amortize into.'); return; }
+      if (!body.period_start || !body.period_end) { alert('Set the period start and end.'); return; }
+      try {
+        const r = await fetch('/api/ap/invoices/' + encodeURIComponent(invId) + '/amortization', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || j.error || 'failed');
+        apLoadAmortization(invId);
+      } catch (e) { alert('Could not set up amortization: ' + e.message); }
+    };
 
     // Ask the server what the books say this vendor codes to, and render a
     // one-click suggestion. (Ed 2026-07-14 — "look at history / make inference".)
