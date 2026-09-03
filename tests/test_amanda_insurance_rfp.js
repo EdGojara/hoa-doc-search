@@ -117,6 +117,21 @@ const activeProgram = (srcIds) => ({ id: 'p1', status: 'active', entity: { named
     assert.ok(/Hi Ed/.test(d.body), 'greets the requester');
   });
 
+  await check('Amanda attaches the RFP with the shape persistDraftAttachments expects', async () => {
+    const sb = sbWith([activeProgram([])], COMPLETE, []);
+    const fakeBuild = async () => ({ ok: true, filename: 'Waterview_Insurance_RFP.pdf', pdfBuffer: Buffer.from('%PDF-1.4 fake'), program: { coverages: COMPLETE.map((c) => ({ line: c.coverage_line })) }, community: 'Waterview Estates' });
+    const d = await draftAmandaInsuranceRfp({
+      email: { sender_name: 'Ed', subject: 'Insurance RFP', body_full: 'prepare the insurance RFP for Waterview' },
+      supabase: sb, communityId: 'c1', communityName: 'Waterview Estates', _build: fakeBuild,
+    });
+    assert.ok(d.attachments && d.attachments.length === 1, 'one attachment');
+    const a = d.attachments[0];
+    // persistDraftAttachments filters on `a.content`; `buffer` silently drops it.
+    assert.ok(Buffer.isBuffer(a.content) && a.content.length, 'attachment carries a content buffer');
+    assert.ok(a.content && !a.buffer, 'uses content, not buffer');
+    assert.ok(/Attached is the insurance RFP/.test(d.body), 'body promises the attachment');
+  });
+
   await check('Amanda asks which community when none is named', async () => {
     const sb = sbWith([], [], []);
     const d = await draftAmandaInsuranceRfp({
