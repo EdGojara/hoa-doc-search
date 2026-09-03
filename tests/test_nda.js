@@ -39,6 +39,8 @@ check('renderNdaHtml carries the material substance + both signature blocks', ()
   assert.ok(/screen-record/i.test(html), 'no-recording-of-demonstrations clause');
   assert.ok(!/competes with, replicates, or substitutes/i.test(html), 'redundant "replicates" tightened out');
   assert.ok(/with respect to its trustEd platform/i.test(html) && !/affiliates including the trustEd/i.test(html), 'trustEd wording not an "affiliate"');
+  assert.ok(/architecture, structure, algorithms, methods, or underlying design/i.test(html), '§5 protectable terms (not "underlying ideas")');
+  assert.ok(/employees, affiliates, contractors, and professional advisors/i.test(html), '§4 permits contractors');
   // Backup carve-out in return/destruction.
   assert.ok(/routine electronic backups/i.test(html), 'backup/archival carve-out');
   // Observed/derived info in the confidential-information definition.
