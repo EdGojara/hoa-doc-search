@@ -48,6 +48,7 @@ const CHECKS = [
   'tests/test_vendor_master.js',
   'tests/test_forward_hygiene.js',
   'tests/test_payment_dedup.js',
+  'tests/test_mud_period_dedup.js',
   'tests/test_community_jurisdiction.js',
   'tests/test_board_package_registry.js',
   'tests/test_bill_classifier.js',
