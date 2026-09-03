@@ -86,6 +86,7 @@ const CHECKS = [
   'tests/test_amanda_insurance_rfp.js',
   'tests/test_nda.js',
   'tests/test_prepaid_amortization.js',
+  'tests/test_billing_arc_dedupe.js',
   'tests/test_team_roster.js',
   'tests/test_claire_scope.js',
   'scripts/check_owner_concentration.js',

@@ -41,6 +41,50 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 
+// Bill DISTINCT ARC work. The ACC intake can create more than one decided record
+// for the same application ("a second decision re-bills the ARC fee"), which would
+// over-bill. Within a billing period, collapse rows for the same lot + same project
+// (+ kind) to one billable — keeping the row that carries the decision letter
+// (evidence), else the earliest. So each distinct lot/project we did work for shows
+// once. (Ed 2026-09-03, Canyon Gate ARC over-count.)
+function _arcNormAddr(s) {
+  // Canonicalize common street-suffix abbreviations so "6411 Canyon Gate Drive"
+  // and "6411 Canyon Gate Dr" key the same, then strip to alphanumerics. Without
+  // this, a Dr/Drive variation on the SAME lot reads as two lots and duplicate
+  // decisions don't collapse.
+  const a = String(s == null ? '' : s).toLowerCase()
+    .replace(/\b(?:drive|dr)\b/g, 'dr')
+    .replace(/\b(?:street|str|st)\b/g, 'st')
+    .replace(/\b(?:court|ct)\b/g, 'ct')
+    .replace(/\b(?:lane|ln)\b/g, 'ln')
+    .replace(/\b(?:road|rd)\b/g, 'rd')
+    .replace(/\b(?:trail|trl)\b/g, 'trl')
+    .replace(/\b(?:circle|cir)\b/g, 'cir')
+    .replace(/\b(?:place|pl)\b/g, 'pl')
+    .replace(/\b(?:boulevard|blvd)\b/g, 'blvd')
+    .replace(/\b(?:cove|cv)\b/g, 'cv')
+    .replace(/\b(?:avenue|ave)\b/g, 'ave')
+    .replace(/\b(?:parkway|pkwy)\b/g, 'pkwy');
+  return a.replace(/[^a-z0-9]/g, '');
+}
+function _arcKey(r) {
+  const n = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  return `${r.kind || 'ACC'}|${_arcNormAddr(r.property)}|${n(r.project).slice(0, 60)}`;
+}
+function dedupeArcRows(rows) {
+  const m = new Map();
+  for (const r of (rows || [])) {
+    const k = _arcKey(r);
+    const prev = m.get(k);
+    if (!prev) { m.set(k, r); continue; }
+    const better = (r.letter_url && !prev.letter_url) ? r
+      : (!r.letter_url && prev.letter_url) ? prev
+      : ((r.date || '9999') <= (prev.date || '9999') ? r : prev);
+    m.set(k, better);
+  }
+  return [...m.values()];
+}
+
 const router = express.Router();
 
 // ----------------------------------------------------------------------------
@@ -1739,10 +1783,10 @@ async function renderActivityDetailPdfBuffer(communityId, start, end) {
   const letterRows = [...groups.values()].map((g) => ({ property: g.property, date: g.dates.sort()[0] || null, stage: [...g.stages].join(', '), mail_class: g.delivery_method === 'certified_mail' ? 'Certified' : 'First-class', violations: g.violations })).sort((a, b) => a.property.localeCompare(b.property));
   const certCount = letterRows.filter((r) => r.mail_class === 'Certified').length;
   const outcomeOf = (s) => { s = (s || '').toLowerCase(); return s.includes('condition') ? 'Approved w/ conditions' : /approved/.test(s) ? 'Approved' : (s.includes('deni') || s.includes('reject')) ? 'Denied' : (s ? s[0].toUpperCase() + s.slice(1) : '—'); };
-  const arcRows = [
+  const arcRows = dedupeArcRows([
     ...accDecisions.map((d) => ({ property: d.homeowner_address || '(no address)', applicant: d.homeowner_name || '—', project: d.project_summary || '—', outcome: outcomeOf(d.decision_type), date: (d.decided_at || '').slice(0, 10) })),
     ...portalDecisions.map((d) => ({ property: d.property_address || '(no address)', applicant: d.submitter_name || '—', project: d.service_type || '—', outcome: outcomeOf(d.final_status), date: (d.final_decided_at || '').slice(0, 10) })),
-  ].sort((a, b) => a.property.localeCompare(b.property));
+  ]).sort((a, b) => a.property.localeCompare(b.property));
 
   const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const fmtUS = (s) => { if (!s) return ''; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? s + 'T12:00:00' : s); return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Chicago' }); };
@@ -2519,7 +2563,7 @@ router.get('/activity-report', async (req, res) => {
       // Billed by DECISION date (decided_at, mig 330), not arrival, so a slow
       // approval isn't missed or billed to the wrong month (Ed 2026-07-24).
       let q = supabase.from('acc_decisions')
-        .select('community_id, decision_type, decided_at')
+        .select('community_id, decision_type, decided_at, homeowner_address, project_summary')
         .eq('status', 'decided')
         .gte('decided_at', start + 'T00:00:00Z')
         .lt('decided_at', endEx + 'T00:00:00Z');
@@ -2531,13 +2575,27 @@ router.get('/activity-report', async (req, res) => {
     // live; additive to acc_decisions, no double-count (different channel). (Ed 2026-07-24.)
     let portalDecisions = await fetchAll(() => {
       let q = supabase.from('community_applications')
-        .select('community_id, final_status, final_decided_at')
+        .select('community_id, final_status, final_decided_at, property_address, service_type')
         .not('final_decided_at', 'is', null)
         .gte('final_decided_at', start + 'T00:00:00Z')
         .lt('final_decided_at', endEx + 'T00:00:00Z');
       if (communityId) q = q.eq('community_id', communityId);
       return q;
     });
+
+    // Distinct billable ARC per community — collapse duplicate decided records for
+    // the same lot + project (same over-count fix as the detail report). (Ed 2026-09-03)
+    const _distinctByComm = (rows, addrOf, projOf, kind) => {
+      const seen = new Set(); const out = [];
+      for (const d of (rows || [])) {
+        const n = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]/g, '');
+        const k = `${d.community_id}|${kind}|${_arcNormAddr(addrOf(d))}|${n(projOf(d)).slice(0, 60)}`;
+        if (seen.has(k)) continue; seen.add(k); out.push(d);
+      }
+      return out;
+    };
+    accDecisions = _distinctByComm(accDecisions, (d) => d.homeowner_address, (d) => d.project_summary, 'ACC');
+    portalDecisions = _distinctByComm(portalDecisions, (d) => d.property_address, (d) => d.service_type, 'ACC');
 
     // Payment plans set up in the period — the HOA's payment-plan fee bills per
     // plan (Ed 2026-07-13, sourced from the payment plan module). NSF/returned
@@ -2822,7 +2880,7 @@ router.get('/activity-detail', async (req, res) => {
         : s.includes('condition') ? 'Approved w/ conditions'
         : (statusRaw ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1) : '—');
     };
-    const arcRows = [
+    const arcRows = dedupeArcRows([
       // Builder ARC
       ...decisions.map((d) => ({
         property: d.street_address || '(no address)', applicant: d.submitter_name || '—',
@@ -2844,7 +2902,7 @@ router.get('/activity-detail', async (req, res) => {
         outcome: outcomeOf(d.final_status), date: (d.final_decided_at || '').slice(0, 10),
         letter_url: null,
       })),
-    ].sort((a, b) => a.property.localeCompare(b.property));
+    ]).sort((a, b) => a.property.localeCompare(b.property));
 
     // Apply the ARC filter (from the ARC Approved / ARC Denied column links).
     const arcRowsShown = arcFilter === 'all' ? arcRows
@@ -3010,4 +3068,4 @@ router.put('/communities/:communityId/billing-code', express.json(), async (req,
   }
 });
 
-module.exports = { router };
+module.exports = { router, dedupeArcRows, _arcKey };
