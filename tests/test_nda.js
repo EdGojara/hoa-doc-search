@@ -35,6 +35,10 @@ check('renderNdaHtml carries the material substance + both signature blocks', ()
   // AI/model-training misuse clause + independent-development carve-back.
   assert.ok(/training data/i.test(html) && /artificial intelligence or machine learning/i.test(html), 'AI training clause');
   assert.ok(/independently develop/i.test(html), 'independent-development carve-back (not a non-compete)');
+  assert.ok(/Restricted Use/i.test(html), '§5 renamed to Restricted Use');
+  assert.ok(/screen-record/i.test(html), 'no-recording-of-demonstrations clause');
+  assert.ok(!/competes with, replicates, or substitutes/i.test(html), 'redundant "replicates" tightened out');
+  assert.ok(/with respect to its trustEd platform/i.test(html) && !/affiliates including the trustEd/i.test(html), 'trustEd wording not an "affiliate"');
   // Backup carve-out in return/destruction.
   assert.ok(/routine electronic backups/i.test(html), 'backup/archival carve-out');
   // Observed/derived info in the confidential-information definition.
