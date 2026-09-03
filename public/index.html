@@ -13962,6 +13962,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <p style="margin:4px 0 0 0; font-size:12px; color:#666;">Every application that reached trustEd, however it arrived. <strong>⏳ Waiting on us</strong> = nobody has answered the homeowner yet — open it and decide. <strong>✓ Answered</strong> = a letter went out; re-download it or the full packet (letter + application + photos + brochures).</p>
         </div>
         <div style="display:flex; gap:6px; align-items:center;">
+          <select id="accHistoryCommunity" onchange="accLoadHistory()" style="border:1px solid #d0d7de; border-radius:6px; padding:6px 10px; font-size:13px;" title="Filter to one community">
+            <option value="">All communities</option>
+          </select>
           <input id="accHistorySearch" placeholder="Search by address, name, or project…"
                  style="border:1px solid #d0d7de; border-radius:6px; padding:6px 10px; font-size:13px; min-width:240px;"
                  oninput="accLoadHistory()">
@@ -34386,8 +34389,20 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         const r = await fetch('/acc-review/decisions?' + params.toString());
         const j = await r.json();
         const decisions = j.decisions || [];
-        if (decisions.length === 0) {
-          list.innerHTML = `<div style="color:#999; font-size:13px; padding:14px;">${qRaw ? 'No applications match "' + escapeHtml(qRaw) + '". Clear the search to see every application.' : 'No ACC applications have reached trustEd yet — emailed applications land here automatically once ingested.'}</div>`;
+        // Community filter — populate the dropdown (merge new communities, keep the
+        // current selection) and narrow the list. (Ed 2026-09-03: see ACC history
+        // + approvals by community.)
+        const commSel = document.getElementById('accHistoryCommunity');
+        const commFilter = commSel ? commSel.value : '';
+        if (commSel) {
+          const have = new Set(Array.from(commSel.options).map((o) => o.value));
+          [...new Set(decisions.map((d) => d.community_name).filter(Boolean))].sort().forEach((c) => {
+            if (!have.has(c)) { const o = document.createElement('option'); o.value = c; o.textContent = c; commSel.appendChild(o); }
+          });
+        }
+        const shown = commFilter ? decisions.filter((d) => d.community_name === commFilter) : decisions;
+        if (shown.length === 0) {
+          list.innerHTML = `<div style="color:#999; font-size:13px; padding:14px;">${(qRaw || commFilter) ? 'No applications match the current filter. Clear the search / community to see every application.' : 'No ACC applications have reached trustEd yet — emailed applications land here automatically once ingested.'}</div>`;
           return;
         }
         // Every row answers three questions at a glance, because this list mixes
@@ -34461,9 +34476,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         // Search is for when you know the answer; this list has to SHOW you the
         // shape. Waiting-on-us first (oldest = most overdue), broken out by
         // community so a portfolio operator sees where the work sits.
-        const waiting = decisions.filter((d) => d.status === 'pending_review')
+        const waiting = shown.filter((d) => d.status === 'pending_review')
           .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
-        const answered = decisions.filter((d) => d.status !== 'pending_review')
+        const answered = shown.filter((d) => d.status !== 'pending_review')
           .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
         const groupHdr = (txt, bg, fg) => `<div style="position:sticky;top:0;background:${bg};color:${fg};font-size:12px;font-weight:700;padding:7px 14px;border-bottom:1px solid #e5e7eb;">${txt}</div>`;
@@ -34477,8 +34492,25 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             + Object.keys(byCommunity).sort().map((c) => subHdr(`${c} · ${byCommunity[c].length}`) + byCommunity[c].map(rowHtml).join('')).join('')
           : groupHdr('⏳ Waiting on us — nothing outstanding', '#dcfce7', '#166534');
 
+        // Answered/approvals — grouped by community too (Ed 2026-09-03: "see the
+        // history of ACC applications and approvals by community"). Each community
+        // header carries the decision breakdown so a portfolio operator sees what
+        // was done where at a glance.
+        const answeredByComm = {};
+        answered.forEach((d) => { const k = d.community_name || 'Unassigned community'; (answeredByComm[k] = answeredByComm[k] || []).push(d); });
+        const answeredCountLabel = (arr) => {
+          const ap = arr.filter((d) => /approved/i.test(d.decision_type || '')).length;
+          const dn = arr.filter((d) => /denied/i.test(d.decision_type || '')).length;
+          const other = arr.length - ap - dn;
+          const bits = [];
+          if (ap) bits.push(`${ap} approved`);
+          if (dn) bits.push(`${dn} denied`);
+          if (other) bits.push(`${other} other`);
+          return bits.length ? ` (${bits.join(', ')})` : '';
+        };
         const answeredHtml = answered.length
-          ? groupHdr(`✓ Answered — ${answered.length}`, '#f1f5f9', '#475569') + answered.map(rowHtml).join('')
+          ? groupHdr(`✓ Answered — ${answered.length}`, '#f1f5f9', '#475569')
+            + Object.keys(answeredByComm).sort().map((c) => subHdr(`${c} · ${answeredByComm[c].length}${answeredCountLabel(answeredByComm[c])}`) + answeredByComm[c].map(rowHtml).join('')).join('')
           : '';
 
         list.innerHTML = waitingHtml + answeredHtml;
