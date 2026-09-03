@@ -139,10 +139,23 @@ function renderView(){
       <div>${isAdmin?`<button class="btn ghost" onclick="startEdit()">✎ Edit</button>`:''}</div>
     </div>
     <div class="doc-render md">${mdToHtml(d.body_markdown)}</div>
+    ${d.category==='agreement'?`
+    <div style="margin-top:16px;border:1px solid #d8dee8;border-left:3px solid #D4AF37;border-radius:8px;padding:14px 16px;background:#fbfbf8;">
+      <div style="font-weight:700;color:#0B1D34;margin-bottom:2px;">Prepare a copy to sign</div>
+      <div style="font-size:12px;color:#666;margin-bottom:10px;">Fill the counterparty's details and generate a Bedrock-branded PDF with signature blocks to send for signature. This uses the current text above and does not change the master.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <input id="np-counterparty" placeholder="Counterparty legal name (e.g. First National Bank of Texas, N.A.)" style="grid-column:1/3;padding:7px 9px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;">
+        <input id="np-effective" placeholder="Effective date (e.g. September 3, 2026)" style="padding:7px 9px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;">
+        <div></div>
+        <input id="np-signame" placeholder="Bedrock signatory name" value="Ed Gojara" style="padding:7px 9px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;">
+        <input id="np-sigtitle" placeholder="Bedrock signatory title" value="Managing Member" style="padding:7px 9px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;">
+      </div>
+      <div style="margin-top:10px;"><button class="btn good" onclick="prepareAgreement('${esc(d.slug)}')">⬇ Generate signable PDF</button></div>
+    </div>`:''}
     <div class="editor" id="editor">
       <div class="row">
         <input id="e-title" placeholder="Title" value="${esc(d.title)}">
-        <input id="e-category" placeholder="Category (policy / disclosure / notice)" value="${esc(d.category)}">
+        <input id="e-category" placeholder="Category (policy / disclosure / notice / agreement)" value="${esc(d.category)}">
       </div>
       <div class="row">
         <input id="e-effective" type="date" value="${d.effective_date||''}">
@@ -159,6 +172,18 @@ function renderView(){
       </div>
       <div style="font-size:11.5px;color:var(--muted);margin-top:8px;">Markdown. Editing the body creates a new version. Set status to Published when counsel approves.</div>
     </div>`;
+}
+async function prepareAgreement(slug){
+  const counterparty=(($('np-counterparty')||{}).value||'').trim();
+  if(!counterparty){ toast('Enter the counterparty name.',true); const el=$('np-counterparty'); if(el) el.focus(); return; }
+  const body={ counterparty, effective_date_text:(($('np-effective')||{}).value||'').trim(), signatory_name:(($('np-signame')||{}).value||'').trim(), signatory_title:(($('np-sigtitle')||{}).value||'').trim() };
+  try{
+    const r=await fetch('/api/legal/'+encodeURIComponent(slug)+'/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.detail||j.error||'failed'); }
+    const blob=await r.blob(); const url=URL.createObjectURL(blob); const a=document.createElement('a');
+    a.href=url; a.download='NDA_'+counterparty.replace(/[^a-zA-Z0-9]+/g,'_').slice(0,60)+'.pdf'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    toast('Generated — ready to send for signature.');
+  }catch(e){ toast(e.message,true); }
 }
 function startEdit(){ editing=true; $('editor').classList.add('on'); document.querySelector('.doc-render').classList.add('off'); }
 function cancelEdit(){ editing=false; renderView(); }

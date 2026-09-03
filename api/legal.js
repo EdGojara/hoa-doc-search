@@ -72,4 +72,45 @@ router.put('/:slug', express.json({ limit: '512kb' }), async (req, res) => {
   } catch (err) { console.error('[legal] put', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// POST /api/legal/:slug/prepare — fill a signable copy of an agreement (the NDA)
+// with a counterparty's details and return a Bedrock-branded PDF to send out.
+// Uses the CURRENT stored body, so edits to the master flow through. Does not
+// alter the stored document. Staff-gated by the page like the other reads.
+router.post('/:slug/prepare', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const { renderNdaHtml, buildNdaPdf, NDA_SLUG } = require('../lib/legal/nda_render');
+    const b = req.body || {};
+    const counterparty = String(b.counterparty || '').trim();
+    if (!counterparty) return res.status(400).json({ error: 'counterparty required' });
+
+    // Use the stored master body if present (so admin edits apply); else the
+    // built-in template. Only agreement-type docs can be prepared for signing.
+    const { data: doc } = await supabase.from('legal_documents')
+      .select('body_markdown, category, title').eq('slug', req.params.slug).maybeSingle();
+    if (doc && doc.category && doc.category !== 'agreement') {
+      return res.status(400).json({ error: 'not_an_agreement', detail: 'Only agreement documents can be prepared for signature.' });
+    }
+
+    const fields = {
+      counterparty,
+      effective_date_text: (b.effective_date_text || '').trim(),
+      signatory_name: (b.signatory_name || '').trim(),
+      signatory_title: (b.signatory_title || '').trim(),
+    };
+    const opts = { bodyMarkdown: doc && doc.body_markdown ? doc.body_markdown : undefined };
+
+    if (b.preview) {   // HTML preview for the UI (no puppeteer)
+      return res.json({ html: renderNdaHtml(fields, opts) });
+    }
+    const pdf = await buildNdaPdf(fields, opts);
+    const fname = `NDA_${counterparty.replace(/[^a-zA-Z0-9]+/g, '_').slice(0, 60)}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send(pdf);
+  } catch (err) {
+    console.error('[legal] prepare', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = { router };
