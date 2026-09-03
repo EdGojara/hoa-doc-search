@@ -1,0 +1,15 @@
+{
+  "description": "The Waterview scar (2026-09-03): all seven policy PDFs were on file, but the program was built from only the casualty lines — Property and Cyber were DROPPED and Crime came through empty ('not purchased'). The guard MUST block and name Property, Cyber, and Crime/Fidelity so a half-complete RFP never reaches a broker.",
+  "sources": ["POLICY - PROP.pdf", "POLICY - GL.pdf", "POLICY - D&O.pdf", "POLICY - XS.pdf", "POLICY - CRIME.pdf", "POLICY - CYBER.pdf"],
+  "expect": { "ok": false, "missing": ["Property", "Cyber", "Crime/Fidelity"] },
+  "program": {
+    "entity": { "named_insured": "Waterview Estates Owners Association, Inc" },
+    "coverages": [
+      { "line": "General Liability", "limits": [{ "label": "Each Occurrence", "amount": "$1,000,000" }] },
+      { "line": "Directors & Officers", "limits": [{ "label": "Each Claim", "amount": "$1,000,000" }] },
+      { "line": "Umbrella/Excess Liability", "limits": [{ "label": "Each Occurrence", "amount": "$5,000,000" }] },
+      { "line": "Workers Compensation", "limits": [{ "label": "Bodily Injury by Accident", "amount": "$1,000,000" }] },
+      { "line": "Crime/Fidelity", "limits": [] }
+    ]
+  }
+}

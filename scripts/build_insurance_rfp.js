@@ -16,6 +16,7 @@
 
 const fs = require('fs');
 const { renderInsuranceRfpHTML, normalizeInsuranceProgram } = require('../lib/insurance_rfp');
+const { validateProgramCompleteness } = require('../lib/insurance_rfp_validate');
 
 async function htmlToPdfBuffer(html) {
   const puppeteer = require('puppeteer');
@@ -37,6 +38,26 @@ async function htmlToPdfBuffer(html) {
   const raw = JSON.parse(fs.readFileSync(programPath, 'utf8'));
   const program = normalizeInsuranceProgram(raw);
   const opts = optsPath ? JSON.parse(fs.readFileSync(optsPath, 'utf8')) : {};
+
+  // Completeness guard (Ed 2026-09-03, Waterview scar). The extract JSON records
+  // the source PDFs it was built from in `_sources`; cross-check the program
+  // against them. If a policy file implies a line we didn't capture, we DROPPED
+  // it — refuse to build the RFP unless run with --force.
+  const force = process.argv.includes('--force');
+  const sourceNames = Array.isArray(raw._sources) ? raw._sources.map((s) => s && (s.file || s)) : [];
+  const completeness = validateProgramCompleteness(program, sourceNames);
+  if (completeness.warnings.length) {
+    console.warn('\n⚠ completeness warnings:');
+    for (const w of completeness.warnings) console.warn('   -', w);
+  }
+  if (!completeness.ok) {
+    console.error('\n✖ REFUSING to build — the RFP would be incomplete:');
+    for (const b of completeness.blockers) console.error('   ✖', b);
+    console.error(`\n   lines present: ${completeness.linesPresent.join(', ') || '(none)'}`);
+    console.error('   Add the missing policy PDFs and re-extract, or re-run with --force to build anyway.');
+    if (!force) process.exit(2);
+    console.error('\n   --force given: building an ACKNOWLEDGED-INCOMPLETE RFP.\n');
+  }
 
   console.log('Named insured:', program.entity.named_insured);
   console.log('Coverage lines (deduped):');

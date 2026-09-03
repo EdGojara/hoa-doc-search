@@ -1,0 +1,17 @@
+{
+  "description": "Waterview Estates 2025-2026 — the full 7-line program as it actually stands (GL Chubb, Property Hartford, Umbrella Bankers Standard, D&O McGowan, Crime PMA, Cyber At-Bay, WC PMA). The completeness guard must PASS this.",
+  "sources": ["POLICY - PROP.pdf", "POLICY - GL.pdf", "POLICY - D&O.pdf", "POLICY - XS.pdf", "POLICY - CRIME.pdf", "POLICY - CYBER.pdf"],
+  "expect": { "ok": true },
+  "program": {
+    "entity": { "named_insured": "Waterview Estates Owners Association, Inc", "units_or_lots": 1172 },
+    "coverages": [
+      { "line": "Property", "limits": [{ "label": "Building", "amount": "$941,600" }, { "label": "Business Personal Property", "amount": "$58,900" }] },
+      { "line": "General Liability", "limits": [{ "label": "Each Occurrence", "amount": "$1,000,000" }, { "label": "General Aggregate", "amount": "$2,000,000" }] },
+      { "line": "Directors & Officers", "limits": [{ "label": "Each Claim", "amount": "$1,000,000" }] },
+      { "line": "Umbrella/Excess Liability", "limits": [{ "label": "Each Occurrence", "amount": "$5,000,000" }] },
+      { "line": "Crime/Fidelity", "limits": [{ "label": "Employee Theft", "amount": "$100,000" }] },
+      { "line": "Cyber", "limits": [{ "label": "Aggregate", "amount": "$1,000,000" }] },
+      { "line": "Workers Compensation", "limits": [{ "label": "Bodily Injury by Accident", "amount": "$1,000,000" }] }
+    ]
+  }
+}

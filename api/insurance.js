@@ -38,6 +38,7 @@ const { safeErrorMessage } = require('./_safe_error');
 const { renderInsuranceRfpHTML } = require('../lib/insurance_rfp');
 const { extractInsuranceProgram } = require('../lib/insurance_extract');
 const { normalizeInsuranceProgram } = require('../lib/insurance_rfp');
+const { validateProgramCompleteness } = require('../lib/insurance_rfp_validate');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -1100,7 +1101,13 @@ router.post('/program/upload', upload.array('pdfs', 12), async (req, res) => {
     const { error: polErr } = await supabase.from('insurance_policies').insert(policyRows);
     if (polErr) throw polErr;
 
-    res.json({ program: prog, policies_filed: policyRows.length, sources: rawProgram._sources });
+    // Surface completeness immediately (Ed 2026-09-03): if the uploaded PDFs
+    // imply a line we didn't capture, the operator sees it now — at file time —
+    // not when a broker asks why Property is missing. Filing still succeeds
+    // (the record is the SSOT); the RFP endpoint is what actually blocks.
+    const completeness = validateProgramCompleteness(program, files.map((f) => f.name));
+
+    res.json({ program: prog, policies_filed: policyRows.length, sources: rawProgram._sources, completeness });
   } catch (err) {
     console.error('[insurance] program upload failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -1121,6 +1128,30 @@ router.post('/program/:id/rfp', express.json({ limit: '16kb' }), async (req, res
       .eq('program_id', id).order('sort_order', { ascending: true, nullsFirst: false }).limit(100);
 
     const rendererProgram = dbToRendererProgram(prog, policies || []);
+
+    // Completeness guard (Ed 2026-09-03, Waterview scar): cross-check the program
+    // we're about to send a broker against the source policy PDFs it was built
+    // from. If a source file denotes a coverage line that's missing or empty, we
+    // DROPPED it — refuse to render a half-complete RFP (HTTP 409) unless the
+    // operator explicitly acknowledges. The renderer never throws, so this is the
+    // only thing standing between a dropped line and a broker's inbox.
+    let sourceNames = [];
+    const srcIds = Array.isArray(prog.source_document_ids) ? prog.source_document_ids : [];
+    if (srcIds.length) {
+      const { data: srcDocs } = await supabase.from('library_documents')
+        .select('file_name_original, title').in('id', srcIds);
+      sourceNames = (srcDocs || []).map((d) => (d && (d.file_name_original || d.title)) || '');
+    }
+    const completeness = validateProgramCompleteness(rendererProgram, sourceNames);
+    if (!completeness.ok && (req.body || {}).acknowledge_incomplete !== true) {
+      console.warn('[insurance] rfp blocked — incomplete program', prog.id, completeness.blockers);
+      return res.status(409).json({
+        error: 'insurance_rfp_incomplete',
+        completeness,
+        help: 'This RFP is missing coverage lines the association carries. File the missing policy PDFs and re-extract the program, or resend with acknowledge_incomplete:true to generate anyway.',
+      });
+    }
+
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Chicago' });
     const opts = {
       community: prog.communities?.name || prog.named_insured || '',
