@@ -1159,6 +1159,25 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
 // another copy). Reverses the AP accrual with an offsetting entry (never a hard
 // delete) and marks it voided, so it drops out of payables and never hits a check
 // run. Cannot void something already paid. (Ed 2026-07-14.)
+// POST /invoices/:id/add-convenience-fee — staff adds the (usually $1) fee to an
+// invoice by hand, so they don't have to wait for the auto path (MUD ACH bills).
+// Idempotent; posts the GL delta if the bill already accrued. (Ed 2026-09-03.)
+router.post('/invoices/:id/add-convenience-fee', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    let by = 'staff';
+    try { const { resolveUserRole } = require('./users'); const ctx = await resolveUserRole(req); by = (ctx && ctx.user && (ctx.user.full_name || ctx.user.email)) || 'staff'; } catch (_) {}
+    const amountCents = (req.body && Number(req.body.amount_cents)) || 0;   // 0 = use vendor setting / $1
+    const { addConvenienceFeeToInvoice } = require('../lib/ap/add_convenience_fee');
+    const out = await addConvenienceFeeToInvoice(supabase, { invoiceId: id, amountCents, by });
+    if (!out.ok) return res.status(out.error === 'not_found' ? 404 : 400).json({ error: out.error });
+    res.json(out);
+  } catch (err) {
+    console.error('[ap] add convenience fee failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/invoices/:id/void', express.json(), async (req, res) => {
   try {
     const { id } = req.params;

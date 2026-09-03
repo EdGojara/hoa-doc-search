@@ -46527,6 +46527,11 @@ ${questionsPage}
 
           <div id="ap-amort-${inv.id}" style="margin-bottom:14px;"></div>
 
+          ${(inv.status !== 'paid' && inv.status !== 'voided') ? `<div id="ap-convfee-${inv.id}" style="margin-bottom:14px;">
+            ${/convenience fee/i.test(inv.notes || '') ? `<span style="font-size:12px; color:#166534;">✓ Convenience fee added</span>` : `<button class="secondary-btn" style="font-size:12px; padding:5px 12px;" onclick="apAddConvenienceFee('${inv.id}')" title="Add the $1 convenience fee (MUD/ACH auto-draft bills) to this invoice so you don't have to wait for the auto path">＋ Add $1 convenience fee</button>`}
+            <span id="ap-convfee-msg-${inv.id}" style="font-size:12px; margin-left:8px;"></span>
+          </div>` : ''}
+
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
             <div>
               <h4 style="margin:0 0 6px; color:#0B1D34;">Auto-Coding</h4>
@@ -46815,6 +46820,23 @@ ${questionsPage}
           : `✓ Manager approved as ${j.by || 'you'}. It now needs Ed's release before it can be paid.`);
         apOpenInvoice(id); apLoadList(); apLoadCounts(); apLoadManagerQueue();
       } catch (e) { alert('Could not record approval: ' + e.message); }
+    };
+
+    // Add the $1 convenience fee to a bill by hand (MUD/ACH auto-draft), so staff
+    // don't wait for the auto path. Idempotent server-side. (Ed 2026-09-03.)
+    window.apAddConvenienceFee = async function (id) {
+      const msg = document.getElementById('ap-convfee-msg-' + id);
+      if (!confirm('Add the $1 convenience fee to this invoice?')) return;
+      if (msg) { msg.style.color = '#64748b'; msg.textContent = 'Adding…'; }
+      try {
+        const r = await (window._authFetch || fetch)('/api/ap/invoices/' + encodeURIComponent(id) + '/add-convenience-fee', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || j.error || 'failed');
+        if (msg) { msg.style.color = '#166534'; msg.textContent = j.already ? '✓ Already had the fee' : ('✓ Added $' + ((j.fee || 100) / 100).toFixed(2) + (j.je_warning ? ' (recorded on the bill; GL note: ' + j.je_warning + ')' : '')); }
+        setTimeout(() => { apOpenInvoice(id); apLoadList(); }, 800);
+      } catch (e) { if (msg) { msg.style.color = '#b91c1c'; msg.textContent = e.message; } }
     };
 
     // KEY 2 — admin release (Ed). Frees the money. Requires a manager approval.
