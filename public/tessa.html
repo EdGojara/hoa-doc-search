@@ -201,12 +201,49 @@ function render(){
 async function loadOutbox(){
   const el=$('outboxList'); if(!el) return;
   try{
-    const r=await af('/api/tessa/outbox?status=queued'); const j=await r.json();
-    if(j.migration_pending){ el.innerHTML='<div class="note">Outbox isn’t set up yet (migration 405 pending).</div>'; return; }
-    const items=j.items||[];
-    if(!items.length){ el.innerHTML='<div class="note">Nothing queued. When Tessa prepares an email or a meeting, it waits here for your OK.</div>'; return; }
-    el.innerHTML=items.map(renderOutboxItem).join('');
+    // Two sources, one box: staged items (email + meeting) from Tessa's outbox,
+    // AND her own email drafts from the shared draft table (persona='tessa').
+    const [ro, rd] = await Promise.all([
+      af('/api/tessa/outbox?status=queued').then(r=>r.json()).catch(()=>({items:[]})),
+      af('/api/email-drafts?status=draft&persona=tessa').then(r=>r.json()).catch(()=>({drafts:[]})),
+    ]);
+    if(ro.migration_pending){ el.innerHTML='<div class="note">Outbox isn’t set up yet (migration 405 pending).</div>'; return; }
+    const items = ro.items||[];
+    const drafts = rd.drafts||[];
+    if(!items.length && !drafts.length){ el.innerHTML='<div class="note">Nothing queued. When Tessa prepares an email or a meeting, it waits here for your OK.</div>'; return; }
+    el.innerHTML = items.map(renderOutboxItem).join('') + drafts.map(renderTessaDraft).join('');
   }catch(e){ el.innerHTML='<div class="note err">Couldn’t load the outbox.</div>'; }
+}
+// A Tessa email drafted through the normal flow, held in the shared draft table.
+// Sent via the tested Draft-Queue send path (her branded signature applied).
+function renderTessaDraft(d){
+  const cc = d.cc ? ` &nbsp; <b>Cc</b> ${esc(d.cc)}` : '';
+  const att = (Array.isArray(d.attachments)&&d.attachments.length) ? `<div class="note">📎 ${d.attachments.map(a=>esc(a.name||'attachment')).join(', ')} — attached when sent</div>` : '';
+  const body = d.body_text ? `<div style="white-space:pre-wrap;font-size:12.5px;color:#334155;margin-top:8px;border-left:3px solid var(--line);padding-left:10px;">${esc(d.body_text)}</div>` : '';
+  return `<div class="fu" id="d-${d.id}">
+    <div class="t">${esc(d.subject||'(no subject)')} <span class="pill">EMAIL</span></div>
+    <div class="note"><b>To</b> ${esc(d.to_name?d.to_name+' <'+d.to_email+'>':d.to_email||'')}${cc}</div>
+    ${att}${body}
+    <div class="row" style="margin-top:10px;">
+      <button class="btn gold sm" onclick="sendTessaDraft('${d.id}')">Send it</button>
+      <button class="btn ghost sm" onclick="discardTessaDraft('${d.id}')">Discard</button>
+      <span id="dmsg-${d.id}" class="note"></span>
+    </div>
+  </div>`;
+}
+async function sendTessaDraft(id){
+  const m=$('dmsg-'+id); if(!confirm('Send this email now, from Tessa?')) return;
+  if(m) m.textContent='Sending…';
+  try{
+    const r=await af('/api/email-drafts/'+id+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved_by:'owner'})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    if(m) m.innerHTML='<span class="ok">✅ Sent to '+esc(j.to||'')+'</span>';
+    setTimeout(loadOutbox, 1400); try{ loadSent(); }catch(_){}
+  }catch(e){ if(m) m.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+}
+async function discardTessaDraft(id){
+  if(!confirm('Discard this draft?')) return;
+  try{ const r=await af('/api/email-drafts/'+id+'/discard',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); if(r.ok) loadOutbox(); else alert('Could not discard.'); }catch(e){ alert('Could not discard.'); }
 }
 function renderOutboxItem(it){
   const isEmail = it.kind==='email';

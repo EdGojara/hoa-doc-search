@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Team Outboxes</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root{ --navy:#0B1D34; --gold:#C99A2E; --ink:#141b26; --muted:#5c6b7e; --line:#e4e2db; --bg:#f6f4ee; --card:#fffefb; --shadow:0 1px 2px rgba(11,29,52,.05),0 10px 30px rgba(11,29,52,.07); --serif:Georgia,'Times New Roman',serif; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1000px;margin:0 auto;padding:26px 20px 64px;}
+  .head{border-bottom:2px solid var(--gold);padding-bottom:12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;}
+  .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:700;}
+  h1{font-family:var(--serif);font-weight:600;color:var(--navy);font-size:26px;margin:4px 0 0;}
+  a.back{font-size:12.5px;color:var(--muted);text-decoration:none;}
+  .sub{font-size:13px;color:var(--muted);margin:14px 0 20px;max-width:760px;}
+  /* hub */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;}
+  .tcard{display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;text-decoration:none;color:inherit;box-shadow:var(--shadow);}
+  .tcard:hover{border-color:var(--gold);}
+  .ava{width:52px;height:52px;border-radius:50%;object-fit:cover;background:#e8eef5;flex:0 0 52px;border:2px solid #e8eef5;}
+  .tname{font-family:var(--serif);font-size:16px;color:var(--navy);}
+  .ttitle{font-size:11.5px;color:var(--muted);}
+  .count{margin-left:auto;font-weight:800;font-size:14px;color:#fff;background:var(--navy);border-radius:20px;min-width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;padding:0 8px;}
+  .count.zero{background:#e8eef5;color:#8b98a8;}
+  /* persona view */
+  .phead{display:flex;gap:14px;align-items:center;margin-bottom:14px;}
+  .phead .ava{width:58px;height:58px;flex:0 0 58px;border-color:var(--gold);}
+  .draft{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow);}
+  .draft .subj{font-weight:700;color:var(--navy);font-size:15px;}
+  .kv{font-size:12.5px;color:var(--muted);margin-top:3px;}
+  .kv b{color:var(--ink);}
+  .bodyprev{white-space:pre-wrap;font-size:13px;color:#33404f;margin-top:10px;border-left:3px solid var(--line);padding-left:11px;max-height:150px;overflow:auto;}
+  .att{font-size:12px;color:#2f6f4f;margin-top:8px;}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:12px;}
+  .btn{border:none;border-radius:8px;padding:8px 15px;font-size:13px;font-weight:700;cursor:pointer;background:var(--navy);color:#fff;}
+  .btn.gold{background:var(--gold);color:#1c1403;}
+  .btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line);}
+  .btn:disabled{opacity:.5;cursor:default;}
+  .msg{font-size:12.5px;}
+  .ok{color:#166534;} .err{color:#991b1b;}
+  .empty{color:var(--muted);text-align:center;padding:52px 12px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div><div class="eyebrow">Bedrock Office · Internal</div><h1 id="title">Team Outboxes</h1></div>
+    <a class="back" id="backlink" href="/">← Back</a>
+  </div>
+  <p class="sub" id="sub">Each teammate has their own outbox — the emails they've drafted and are holding for your OK. Open a teammate, review, and send from their box. Every send goes out under that teammate's name and signature.</p>
+  <div id="view"><div class="empty">Loading…</div></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const qp = new URLSearchParams(location.search);
+const PERSONA = (qp.get('persona')||'').trim().toLowerCase();
+const PHOTO = (p) => `/assets/presentations/team/${p}.jpg`;
+let af = (u,o)=>fetch(u,o||{});
+let _personas = [];
+
+async function boot(){
+  try{
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if(cfg && cfg.enabled && window.supabase && cfg.supabase_url && cfg.supabase_anon_key){
+      const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      af = async (u,o)=>{ o=o||{}; const h=Object.assign({}, o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){ } return fetch(u, Object.assign({}, o, { headers:h })); };
+    }
+  }catch(_){}
+  try{ const r=await af('/api/email-drafts/personas'); const j=await r.json(); _personas=j.personas||[]; }catch(_){}
+  PERSONA ? loadPersona() : loadHub();
+}
+const label = (id) => { const p=_personas.find(x=>x.id===id); return p? p.label : id; };
+const shortName = (id) => label(id).split(' (')[0];
+
+// ---- Hub: every teammate with a draft count -------------------------------
+async function loadHub(){
+  try{
+    const r = await af('/api/email-drafts/counts?status=draft'); const j = await r.json();
+    if(j.migration_pending){ $('view').innerHTML='<div class="empty">The draft queue isn’t set up yet.</div>'; return; }
+    const counts = j.counts||{};
+    const list = _personas.length ? _personas : Object.keys(counts).map(id=>({id,label:id}));
+    if(!list.length){ $('view').innerHTML='<div class="empty">No teammates configured.</div>'; return; }
+    $('view').innerHTML = '<div class="grid">' + list.map(p=>{
+      const n = counts[p.id]||0;
+      return `<a class="tcard" href="/admin/outbox?persona=${encodeURIComponent(p.id)}">
+        <img class="ava" src="${PHOTO(p.id)}" alt="" onerror="this.style.visibility='hidden'">
+        <div><div class="tname">${esc(shortName(p.id))}</div><div class="ttitle">${esc((p.label.match(/\(([^)]+)\)/)||[])[1]||'')}</div></div>
+        <span class="count ${n?'':'zero'}">${n}</span>
+      </a>`;
+    }).join('') + '</div>';
+  }catch(e){ $('view').innerHTML='<div class="empty err">Could not load: '+esc(e.message)+'</div>'; }
+}
+
+// ---- One teammate's outbox -------------------------------------------------
+async function loadPersona(){
+  $('title').textContent = shortName(PERSONA) + ' — Outbox';
+  $('backlink').href = '/admin/outbox';
+  $('sub').innerHTML = `Emails ${esc(shortName(PERSONA))} has drafted and is holding for your OK. Review and send — the send goes out under ${esc(shortName(PERSONA))}’s name and signature.`;
+  try{
+    const r = await af('/api/email-drafts?status=draft&persona='+encodeURIComponent(PERSONA)); const j = await r.json();
+    if(j.migration_pending){ $('view').innerHTML='<div class="empty">The draft queue isn’t set up yet.</div>'; return; }
+    const drafts = j.drafts||[];
+    const head = `<div class="phead"><img class="ava" src="${PHOTO(PERSONA)}" alt="" onerror="this.style.visibility='hidden'"><div><div class="tname">${esc(shortName(PERSONA))}</div><div class="ttitle">${esc((label(PERSONA).match(/\(([^)]+)\)/)||[])[1]||'')}</div></div></div>`;
+    if(!drafts.length){ $('view').innerHTML = head + '<div class="empty">Nothing waiting. When '+esc(shortName(PERSONA))+' drafts an email, it lands here for you to send.</div>'; return; }
+    $('view').innerHTML = head + drafts.map(draftCard).join('');
+  }catch(e){ $('view').innerHTML='<div class="empty err">Could not load: '+esc(e.message)+'</div>'; }
+}
+function draftCard(d){
+  const cc = d.cc ? `<div class="kv"><b>Cc</b> ${esc(d.cc)}</div>` : '';
+  const att = (Array.isArray(d.attachments)&&d.attachments.length) ? `<div class="att">📎 ${d.attachments.map(a=>esc(a.name||'attachment')).join(', ')} — attached when sent</div>` : '';
+  const body = d.body_text ? `<div class="bodyprev">${esc(d.body_text)}</div>` : '';
+  return `<div class="draft" id="d-${d.id}">
+    <div class="subj">${esc(d.subject||'(no subject)')}</div>
+    <div class="kv"><b>To</b> ${esc(d.to_name?d.to_name+' <'+d.to_email+'>':d.to_email||'')}</div>
+    ${cc}${att}${body}
+    <div class="row">
+      <button class="btn gold" onclick="sendDraft('${d.id}')">Send it</button>
+      <button class="btn ghost" onclick="discardDraft('${d.id}')">Discard</button>
+      <span class="msg" id="m-${d.id}"></span>
+    </div>
+  </div>`;
+}
+async function sendDraft(id){
+  const m=$('m-'+id); if(!confirm('Send this email now, from '+shortName(PERSONA)+'?')) return;
+  if(m){ m.className='msg'; m.textContent='Sending…'; }
+  try{
+    const r = await af('/api/email-drafts/'+id+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved_by:'owner'})});
+    const j = await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    if(m){ m.className='msg ok'; m.textContent='✅ Sent to '+(j.to||''); }
+    const el=$('d-'+id); if(el) setTimeout(()=>{ el.style.opacity=.5; loadPersona(); }, 1200);
+  }catch(e){ if(m){ m.className='msg err'; m.textContent=esc(e.message); } }
+}
+async function discardDraft(id){
+  if(!confirm('Discard this draft?')) return;
+  try{ const r=await af('/api/email-drafts/'+id+'/discard',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); if(r.ok) loadPersona(); else alert('Could not discard.'); }catch(e){ alert('Could not discard.'); }
+}
+boot();
+</script>
+</body>
+</html>

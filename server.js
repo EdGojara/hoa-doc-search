@@ -1120,6 +1120,12 @@ app.get('/admin/objectives', (req, res) => {
 app.get('/admin/draft-queue', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'draft-queue.html'));
 });
+// Per-teammate outboxes: /admin/outbox is the hub; ?persona=paige is that
+// teammate's own draft box. Reads each persona's slice of the same
+// outbound_email_drafts table. (Ed 2026-09-03.)
+app.get('/admin/outbox', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'outbox.html'));
+});
 app.get('/admin/vendor-outreach', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'vendor-outreach.html'));
 });

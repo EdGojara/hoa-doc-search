@@ -63,6 +63,10 @@ router.get('/', async (req, res) => {
     const status = (req.query.status || 'draft').toString();
     if (status !== 'all') q = q.eq('status', status);
     if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+    // Per-teammate outbox: each AI team member sees only their own drafts, sent
+    // from their own surface, instead of everyone digging the shared queue.
+    // (Ed 2026-09-03.)
+    if (req.query.persona) q = q.eq('persona', req.query.persona.toString());
     const { data, error } = await q;
     if (error) {
       if (_isMissingTable(error)) return res.json({ drafts: [], migration_pending: true });
@@ -78,6 +82,24 @@ router.get('/', async (req, res) => {
 // GET /api/email-drafts/personas — the AI team members that can send a draft.
 router.get('/personas', (req, res) => {
   res.json({ personas: Object.keys(PERSONA).map((id) => ({ id, label: PERSONA[id].label, mailbox: PERSONA[id].mailbox })) });
+});
+
+// GET /api/email-drafts/counts?status=draft — per-persona draft counts for the
+// team outbox hub. Cheap grouping done in JS over the id+persona projection.
+router.get('/counts', async (req, res) => {
+  try {
+    const status = (req.query.status || 'draft').toString();
+    let q = supabase.from('outbound_email_drafts').select('persona, status').limit(5000);
+    if (status !== 'all') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) { if (_isMissingTable(error)) return res.json({ counts: {}, migration_pending: true }); throw error; }
+    const counts = {};
+    for (const r of data || []) { const p = r.persona || 'unassigned'; counts[p] = (counts[p] || 0) + 1; }
+    res.json({ counts });
+  } catch (err) {
+    console.error('[email_drafts] counts failed:', err.message);
+    res.status(500).json({ error: safe(err) });
+  }
 });
 
 // GET /api/email-drafts/:id
