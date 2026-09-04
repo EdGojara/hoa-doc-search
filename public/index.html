@@ -600,6 +600,10 @@
   <!-- 📋 Status — team work board: every inbound mail/email + active project
        with owner, status, and SLA due-date from the Operations Standard. -->
   <div class="tab" onclick="switchTab('status')">📋 Status</div>
+  <!-- 🧭 Roadmap — "where we're going" vision surface. Planned verticals shown to
+       boards/partners during a live walkthrough; access control is the flagship.
+       Not a working module — a direction. (Ed 2026-09-04.) -->
+  <div class="tab" onclick="switchTab('roadmap')">🧭 Roadmap</div>
   <!-- =====================================================================
        NAV REORGANIZATION 2026-06-06 — Ed flagged nav crowding (~25 direct
        tabs). Moved tabs into three new groups: Operations / Finance / Admin.
@@ -1874,6 +1878,102 @@
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- =========================================================================
+     ROADMAP — "where we're going" vision surface (Ed 2026-09-04).
+     A DIRECTION shown to boards/partners during a live walkthrough, not a
+     working module. Access control is the flagship future vertical. Keep the
+     narrative in step with lib/presentations/story.js screen 'future_access'.
+     ========================================================================= -->
+<div class="tab-content" id="tab-roadmap" style="overflow-y:auto; padding:24px; background:#eef0f4;">
+  <div style="max-width:1080px; margin:0 auto;">
+
+    <!-- header -->
+    <div style="display:flex; align-items:baseline; justify-content:space-between; gap:16px; flex-wrap:wrap; border-bottom:2px solid #0B1D34; padding-bottom:16px; margin-bottom:24px;">
+      <div>
+        <div style="font-size:11.5px; font-weight:700; letter-spacing:.15em; text-transform:uppercase; color:#B8860B;">Where we're going</div>
+        <h1 style="margin:6px 0 0; font-size:30px; color:#0B1D34; letter-spacing:-.01em;">The roadmap</h1>
+      </div>
+      <div style="font-size:12.5px; color:#5A7390; max-width:42ch; text-align:right;">Directions the platform is heading, shown here so a board can see the arc — not features you can click yet.</div>
+    </div>
+
+    <!-- FLAGSHIP: access control -->
+    <div style="background:#fff; border:1px solid #d8dee7; border-left:4px solid #D4AF37; border-radius:12px; padding:24px 26px; box-shadow:0 1px 2px rgba(11,29,52,.06), 0 8px 26px rgba(11,29,52,.06); margin-bottom:22px;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+        <span style="font-size:22px;">🔑</span>
+        <h2 style="margin:0; font-size:22px; color:#0B1D34;">Physical access control</h2>
+        <span style="font-size:10.5px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:#B45309; background:#F6E6CE; padding:3px 9px; border-radius:20px;">Planned · not yet built</span>
+      </div>
+      <p style="margin:0 0 4px; font-size:16px; color:#274060; line-height:1.5; max-width:70ch;">Turn the clubhouse door, the pool gate, and the front gate into surfaces trustEd controls — <strong style="color:#0B1D34;">issued and revoked by the same rules that already run the community</strong>, not a separate system bolted on.</p>
+      <p style="margin:8px 0 18px; font-size:13.5px; color:#5A7390; line-height:1.5; max-width:74ch;">Access control looks like a hardware business. It's really a data problem — and we already hold the data: who lives here, who's current, who sits on the board, whose car is whose. The lock is a commodity; the brain that decides who gets in is trustEd. We integrate a proven access platform's API and own the orchestration.</p>
+
+      <!-- tie-in chips -->
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; margin-bottom:22px;">
+        <div style="border:1px solid #e2e8f0; border-radius:9px; padding:13px 14px; background:#f8fafc;">
+          <div style="font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#B8860B; margin-bottom:4px;">Enforcement, made physical</div>
+          <div style="font-size:13.5px; color:#0B1D34; font-weight:600;">Delinquency auto-suspends the fob</div>
+          <div style="font-size:12.5px; color:#5A7390; margin-top:3px; line-height:1.45;">Falls behind, the pool credential stops working — restored the night it clears. No phone call.</div>
+        </div>
+        <div style="border:1px solid #e2e8f0; border-radius:9px; padding:13px 14px; background:#f8fafc;">
+          <div style="font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#B8860B; margin-bottom:4px;">Board visibility</div>
+          <div style="font-size:13.5px; color:#0B1D34; font-weight:600;">Who accessed the amenity, and when</div>
+          <div style="font-size:12.5px; color:#5A7390; margin-top:3px; line-height:1.45;">A board-portal tile — pool entries, after-hours access — on the same dashboard as everything else.</div>
+        </div>
+        <div style="border:1px solid #e2e8f0; border-radius:9px; padding:13px 14px; background:#f8fafc;">
+          <div style="font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#B8860B; margin-bottom:4px;">One record</div>
+          <div style="font-size:13.5px; color:#0B1D34; font-weight:600;">Access history on the homeowner</div>
+          <div style="font-size:12.5px; color:#5A7390; margin-top:3px; line-height:1.45;">Every entry lands on Homeowner 360, next to balance and violations. Misuse can open a case.</div>
+        </div>
+        <div style="border:1px solid #e2e8f0; border-radius:9px; padding:13px 14px; background:#f8fafc;">
+          <div style="font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#B8860B; margin-bottom:4px;">Gates</div>
+          <div style="font-size:13.5px; color:#0B1D34; font-weight:600;">License-plate entry for residents</div>
+          <div style="font-size:12.5px; color:#5A7390; margin-top:3px; line-height:1.45;">Drawn from the community's own vehicle registry. Visitors pre-authorized, every entry logged.</div>
+        </div>
+      </div>
+
+      <!-- phase strip -->
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px;">
+        <div style="border:1px solid #e2e8f0; border-radius:9px; padding:13px 15px;">
+          <div style="font-family:ui-monospace,monospace; font-size:11px; font-weight:700; color:#B8860B; letter-spacing:.04em;">PHASE 1</div>
+          <div style="font-size:14px; color:#0B1D34; font-weight:600; margin:3px 0 2px;">Prove the loop</div>
+          <div style="font-size:12px; color:#5A7390; line-height:1.45;">One amenity, one community. Issue credentials from trustEd, board access log, auto-revoke on delinquency.</div>
+        </div>
+        <div style="border:1px solid #e2e8f0; border-radius:9px; padding:13px 15px;">
+          <div style="font-family:ui-monospace,monospace; font-size:11px; font-weight:700; color:#B8860B; letter-spacing:.04em;">PHASE 2</div>
+          <div style="font-size:14px; color:#0B1D34; font-weight:600; margin:3px 0 2px;">Scale &amp; rules</div>
+          <div style="font-size:12px; color:#5A7390; line-height:1.45;">Guest passes, pool-hours windows, misuse&nbsp;→&nbsp;violation, more amenities and communities.</div>
+        </div>
+        <div style="border:1px solid #e2e8f0; border-radius:9px; padding:13px 15px;">
+          <div style="font-family:ui-monospace,monospace; font-size:11px; font-weight:700; color:#B8860B; letter-spacing:.04em;">PHASE 3</div>
+          <div style="font-size:14px; color:#0B1D34; font-weight:600; margin:3px 0 2px;">Vehicle gates</div>
+          <div style="font-size:12px; color:#5A7390; line-height:1.45;">License-plate entry on existing cameras, resident whitelist from our registry, fob backup.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- also on the horizon (echoes the pitch roadmap, kept modest) -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px;">
+      <div style="background:#fff; border:1px solid #d8dee7; border-radius:11px; padding:16px 17px;">
+        <div style="font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#5A7390;">Also on the horizon</div>
+        <div style="font-size:15px; color:#0B1D34; font-weight:600; margin-top:5px;">Second market</div>
+        <div style="font-size:12.5px; color:#5A7390; margin-top:3px; line-height:1.45;">Prove the operating model is geography-agnostic.</div>
+      </div>
+      <div style="background:#fff; border:1px solid #d8dee7; border-radius:11px; padding:16px 17px;">
+        <div style="font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#5A7390;">Also on the horizon</div>
+        <div style="font-size:15px; color:#0B1D34; font-weight:600; margin-top:5px;">Operator network</div>
+        <div style="font-size:12.5px; color:#5A7390; margin-top:3px; line-height:1.45;">Second-act professionals running a book under the Bedrock brand.</div>
+      </div>
+      <div style="background:#fff; border:1px solid #d8dee7; border-radius:11px; padding:16px 17px;">
+        <div style="font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#5A7390;">Also on the horizon</div>
+        <div style="font-size:15px; color:#0B1D34; font-weight:600; margin-top:5px;">More verticals</div>
+        <div style="font-size:12.5px; color:#5A7390; margin-top:3px; line-height:1.45;">Same operating system, the next community service after access.</div>
+      </div>
+    </div>
+
+    <p style="font-size:12px; color:#8A9BB0; margin-top:22px; font-style:italic;">This is where trustEd is heading — a direction shared with boards and partners, not a live feature set. Timing and sequence will move as we learn.</p>
+
   </div>
 </div>
 
