@@ -1761,7 +1761,10 @@
       <div class="panel" style="margin-bottom:14px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
           <h3 style="margin:0;">📝 Journal Entries</h3>
-          <button class="action-btn" onclick="bkOpenJEModal()">+ New Journal Entry</button>
+          <div style="display:flex; gap:8px;">
+            <button class="action-btn" onclick="bkOpenDepositModal()" title="Record money in and code it to an income account, by fund — the income counterpart to Enter Bills (AP).">💰 Record Deposit</button>
+            <button class="secondary-btn" onclick="bkOpenJEModal()">+ New Journal Entry</button>
+          </div>
         </div>
         <div id="bk-je-container" style="font-size:13px;">Loading…</div>
       </div>
@@ -1823,6 +1826,50 @@
           <div style="display:flex; gap:8px;">
             <button class="secondary-btn" onclick="bkCloseJEModal()">Cancel</button>
             <button class="action-btn" id="bk-je-post-btn" onclick="bkPostJE()" disabled>Post Entry</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RECORD DEPOSIT MODAL — guided money-in, fund-aware income coding (parity with Enter Bills/AP) -->
+    <div id="bk-dep-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto;">
+      <div style="background:white; border-radius:10px; padding:22px; max-width:560px; width:100%;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <h3 style="margin:0;">💰 Record a Deposit</h3>
+          <button class="secondary-btn" onclick="bkCloseDepositModal()" style="font-size:12px;">×</button>
+        </div>
+        <p style="font-size:12px; color:#666; margin:0 0 16px;">Money in, coded to an income account by fund. Posts a balanced entry — <strong>Dr</strong> the cash account, <strong>Cr</strong> the income account.</p>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Date</label>
+            <input type="date" id="bk-dep-date" style="padding:7px; width:100%; font-size:13px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Amount</label>
+            <input type="text" id="bk-dep-amount" inputmode="decimal" placeholder="0.00" oninput="bkDepUpdate()" style="padding:7px; width:100%; font-size:13px; text-align:right; font-family:ui-monospace,monospace;">
+          </div>
+        </div>
+
+        <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Deposit into (cash account)</label>
+        <select id="bk-dep-cash" onchange="bkDepUpdate()" style="padding:7px; width:100%; font-size:13px; margin-bottom:14px;"></select>
+
+        <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Income account</label>
+        <div style="display:flex; gap:6px; margin-bottom:6px;">
+          <select id="bk-dep-fund" onchange="bkDepSearch()" title="Fund — defaults to Operating; switch to code the deposit to Reserve, Adopt a School, etc." style="padding:6px 7px; font-size:12px; max-width:170px; border:1px solid #cbd5e1; border-radius:5px;"></select>
+          <input type="text" id="bk-dep-search" placeholder="Search income account…" oninput="bkDepSearch()" style="flex:1; padding:6px 8px; font-size:12.5px; border:1px solid #cbd5e1; border-radius:5px;">
+        </div>
+        <div id="bk-dep-results" style="max-height:150px; overflow:auto; border:1px solid #eef2f7; border-radius:6px;"></div>
+        <div id="bk-dep-selected" style="margin-top:8px; font-size:13px; color:#166534; min-height:20px;"></div>
+
+        <label style="display:block; font-size:12px; color:#666; margin:12px 0 4px;">Memo / description</label>
+        <input type="text" id="bk-dep-desc" placeholder="e.g. School-furniture sponsorship — ABC Corp" style="padding:7px; width:100%; font-size:13px;">
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; padding-top:14px; border-top:1px solid #d0d7de;">
+          <div id="bk-dep-summary" style="font-size:12.5px; color:#5a7390;"></div>
+          <div style="display:flex; gap:8px;">
+            <button class="secondary-btn" onclick="bkCloseDepositModal()">Cancel</button>
+            <button class="action-btn" id="bk-dep-post-btn" onclick="bkPostDeposit()" disabled>Post Deposit</button>
           </div>
         </div>
       </div>
@@ -45749,6 +45796,124 @@ ${questionsPage}
         bkLoadTrialBalance();
         alert(`Posted ${j.entry.reference}.`);
       } catch (e) { alert('Post failed: ' + e.message); }
+    };
+
+    // ----- RECORD DEPOSIT — guided money-in with fund-aware income coding.
+    // The income counterpart to Enter Bills (AP): pick a fund, see that fund's
+    // income accounts, code the deposit — instead of hand-balancing a raw JE.
+    // Reuses the same chart endpoint + posting path as everything else here.
+    let _bkDepChart = null;        // cached chart for the current community
+    let _bkDepIncomeId = null;     // chosen income (credit) account
+
+    window.bkOpenDepositModal = async function () {
+      if (!bkCommunityId) { alert('Pick a community first.'); return; }
+      _bkDepIncomeId = null;
+      document.getElementById('bk-dep-date').value = new Date().toISOString().slice(0, 10);
+      document.getElementById('bk-dep-amount').value = '';
+      document.getElementById('bk-dep-desc').value = '';
+      document.getElementById('bk-dep-selected').textContent = '';
+      document.getElementById('bk-dep-search').value = '';
+      document.getElementById('bk-dep-results').innerHTML = '<div style="padding:8px; font-size:12px; color:#888;">Loading accounts…</div>';
+      document.getElementById('bk-dep-modal').style.display = 'flex';
+      try {
+        const r = await (window._authFetch || fetch)('/api/gl/' + encodeURIComponent(bkCommunityId) + '/chart-of-accounts');
+        const j = await r.json();
+        _bkDepChart = j.accounts || j.chart || (Array.isArray(j) ? j : []);
+      } catch (e) {
+        document.getElementById('bk-dep-results').innerHTML = '<div style="padding:8px; color:#dc2626; font-size:12px;">Could not load the chart of accounts.</div>';
+        return;
+      }
+      // Cash side (Dr): asset accounts — default to Operating Cash if present.
+      const cash = (_bkDepChart || []).filter((a) => !a.is_summary && (String(a.account_type || '') === 'asset' || /^1/.test(String(a.account_number || ''))));
+      const cashSel = document.getElementById('bk-dep-cash');
+      cashSel.innerHTML = cash.map((a) => `<option value="${bkEsc(a.id)}">${bkEsc(a.account_number)} — ${bkEsc(a.account_name)}</option>`).join('');
+      const opCash = cash.find((a) => String(a.account_number) === '1000') || cash.find((a) => /operating cash/i.test(a.account_name || '')) || cash[0];
+      if (opCash) cashSel.value = opCash.id;
+      // Fund selector — Operating first + default (same order rule as AP).
+      const fundSel = document.getElementById('bk-dep-fund');
+      fundSel.innerHTML = bkDepFundOptions(_bkDepChart);
+      const opr = Array.from(fundSel.options).find((o) => o.value === 'OPR');
+      if (opr) fundSel.value = 'OPR';
+      bkDepSearch();
+      bkDepUpdate();
+    };
+    window.bkCloseDepositModal = function () { document.getElementById('bk-dep-modal').style.display = 'none'; };
+
+    // Distinct funds off the loaded chart's revenue accounts, Operating first,
+    // plus an "All funds" escape so you're never caged. (Mirrors AP.)
+    function bkDepFundOptions(accts) {
+      const seen = new Map();
+      for (const a of (accts || [])) {
+        if (String(a.account_type || '') !== 'revenue' && !/^4/.test(String(a.account_number || ''))) continue;
+        const f = a.account_funds; if (!f || !f.fund_code) continue;
+        if (!seen.has(f.fund_code)) seen.set(f.fund_code, f.fund_name || f.fund_code);
+      }
+      const order = (c) => c === 'OPR' ? 0 : c === 'RES' ? 1 : 2;
+      const funds = [...seen.entries()].sort((a, b) => order(a[0]) - order(b[0]) || String(a[1]).localeCompare(String(b[1])));
+      return funds.map(([code, name]) => `<option value="${bkEsc(code)}">${bkEsc(name)}</option>`).join('') + '<option value="__all">All funds</option>';
+    }
+
+    window.bkDepSearch = function () {
+      const res = document.getElementById('bk-dep-results');
+      const accts = _bkDepChart || [];
+      const fund = document.getElementById('bk-dep-fund').value || '__all';
+      const q = (document.getElementById('bk-dep-search').value || '').trim().toLowerCase();
+      const inFund = (a) => fund === '__all' || (a.account_funds && a.account_funds.fund_code === fund) || !a.fund_id; // null fund = shared, always shown
+      const isIncome = (a) => String(a.account_type || '') === 'revenue' || /^4/.test(String(a.account_number || ''));
+      const nameNum = (a) => (String(a.account_number || '') + ' ' + String(a.account_name || '')).toLowerCase();
+      // Empty box = browse this fund's income accounts. Typing searches ALL
+      // income accounts across funds, so you're never caged to one fund.
+      const base = accts.filter((a) => !a.is_summary && isIncome(a));
+      const hits = q ? base.filter((a) => nameNum(a).includes(q)) : base.filter(inFund);
+      res.innerHTML = hits.length
+        ? hits.slice(0, 80).map((a) => `<div style="display:flex; justify-content:space-between; gap:6px; padding:4px 7px; border-bottom:1px solid #eef2f7; align-items:center;"><span style="font-size:12px;">${bkEsc(a.account_number)} ${bkEsc(a.account_name)}${a.account_funds && a.account_funds.fund_code && a.account_funds.fund_code !== 'OPR' ? ` <span style="color:#94a3b8; font-size:10px;">(${bkEsc(a.account_funds.fund_name || a.account_funds.fund_code)})</span>` : ''}</span><button class="secondary-btn" style="font-size:10.5px; padding:2px 8px;" onclick="bkDepPick('${bkEsc(a.id)}')">Use</button></div>`).join('')
+        : `<div style="padding:8px; font-size:12px; color:#888;">No income account matches "${bkEsc(q)}".</div>`;
+    };
+
+    window.bkDepPick = function (id) {
+      _bkDepIncomeId = id;
+      const a = (_bkDepChart || []).find((x) => String(x.id) === String(id));
+      document.getElementById('bk-dep-selected').innerHTML = a
+        ? `✓ Coding to <strong>${bkEsc(a.account_number)} ${bkEsc(a.account_name)}</strong>${a.account_funds && a.account_funds.fund_name ? ` <span style="color:#5a7390;">· ${bkEsc(a.account_funds.fund_name)}</span>` : ''}`
+        : '';
+      bkDepUpdate();
+    };
+
+    window.bkDepUpdate = function () {
+      const cents = parseMoney(document.getElementById('bk-dep-amount').value);
+      const cashId = document.getElementById('bk-dep-cash').value;
+      const cashOpt = document.getElementById('bk-dep-cash').selectedOptions[0];
+      const ready = cents > 0 && cashId && _bkDepIncomeId;
+      document.getElementById('bk-dep-post-btn').disabled = !ready;
+      document.getElementById('bk-dep-summary').innerHTML = cents > 0
+        ? `Dr ${cashOpt ? bkEsc(cashOpt.textContent.split(' — ')[0]) : 'cash'} <strong>${bkFmtCents(cents)}</strong> · Cr income <strong>${bkFmtCents(cents)}</strong>`
+        : '';
+    };
+
+    window.bkPostDeposit = async function () {
+      const posting_date = document.getElementById('bk-dep-date').value;
+      const cents = parseMoney(document.getElementById('bk-dep-amount').value);
+      const cashId = document.getElementById('bk-dep-cash').value;
+      const desc = document.getElementById('bk-dep-desc').value.trim() || 'Deposit';
+      if (!posting_date || cents <= 0 || !cashId || !_bkDepIncomeId) { alert('Need a date, amount, cash account, and income account.'); return; }
+      const btn = document.getElementById('bk-dep-post-btn'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Posting…';
+      try {
+        const r = await (window._authFetch || fetch)('/api/books/journal-entries', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            community_id: bkCommunityId, posting_date, description: desc, source_module: 'manual',
+            lines: [
+              { account_id: cashId, debit_cents: cents, credit_cents: 0, memo: desc },
+              { account_id: _bkDepIncomeId, debit_cents: 0, credit_cents: cents, memo: desc },
+            ],
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'post failed');
+        bkCloseDepositModal();
+        try { bkLoadJEs(); bkLoadTrialBalance(); } catch (_) {}
+        alert(`Deposit posted — ${j.entry ? j.entry.reference : ''} ${bkFmtCents(cents)}.`);
+      } catch (e) { alert('Deposit failed: ' + e.message); btn.disabled = false; btn.textContent = label; }
     };
 
     // Auto-load on tab activation
