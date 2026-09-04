@@ -53,6 +53,7 @@ const CHECKS = [
   'tests/test_board_package_registry.js',
   'tests/test_bill_classifier.js',
   'tests/test_ap_restatement.js',
+  'tests/test_interfund.js',
   'tests/test_property_resolution.js',
   'tests/test_reply_recipient.js',
   'tests/test_reply_learning.js',
