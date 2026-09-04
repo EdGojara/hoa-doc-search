@@ -1337,17 +1337,20 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
     }
 
     const isRecode = !!(inv.coded_gl_account_id && inv.posting_journal_entry_id);
-    // A bill no one has approved or paid is not yet a committed business
-    // transaction — its posted accrual is just Emma's coding, so a wrong account
-    // there is a system misinterpretation to REPLACE, not a real entry to reverse.
-    // A reversal would litter the ledger with offsetting entries that never
-    // reflected real business activity for this bill. (Ed 2026-07-31.)
-    const preApproval = !inv.approved_at && !inv.paid_at;
+    // A bill that hasn't been PAID is not a committed cash transaction — its posted
+    // accrual is just the system's coding (Emma's auto-guess or a staff pick), so a
+    // wrong account there is a system misinterpretation to REPLACE, not a real entry
+    // to reverse. A reversal would litter the ledger with offsetting entries that
+    // never reflected real business activity for this bill — and make the platform
+    // look like it posts things wrong. Once paid (cash out, reconciles to the bank),
+    // a correction becomes a real reclass with an audit trail.
+    // (Ed 2026-07-31; broadened approval->payment 2026-09-04.)
+    const notYetPaid = !inv.paid_at;
     let ctx = null;
     if (isRecode) {
-      // Reversing a COMMITTED (approved/paid) entry must say why; correcting a
-      // pre-approval mis-coding is routine and needs no ceremony.
-      if (!reason && !preApproval) return res.status(400).json({ error: 'reason_required', detail: 'This bill\'s accrual is already posted and approved. Changing the account reverses that entry and posts a new one — say why.' });
+      // Reversing a PAID (committed-cash) entry must say why; correcting a
+      // not-yet-paid mis-coding is routine and needs no ceremony.
+      if (!reason && !notYetPaid) return res.status(400).json({ error: 'reason_required', detail: 'This bill has been paid, so its accrual is committed. Changing the account reverses that entry and posts a new one — say why.' });
       const { resolveUserRole } = require('./users');
       ctx = await resolveUserRole(req);
       if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required', detail: 'Sign in to change the account on a posted bill.' });
@@ -1360,12 +1363,12 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
     const prevLabel = prevAcct ? `${prevAcct.account_number} ${prevAcct.account_name}` : '(uncoded)';
 
     // Clear the old accrual before re-posting. HOW depends on whether it's a
-    // committed transaction: pre-approval it's a coding mistake to DELETE; once
-    // approved/paid it's a real entry corrected by REVERSAL (audit trail).
+    // committed cash transaction: not-yet-paid it's a coding mistake to DELETE;
+    // once paid it's a real entry corrected by REVERSAL (audit trail).
     let jeId = inv.posting_journal_entry_id;
     if (jeId) {
-      if (preApproval) {
-        // System misinterpretation on an unapproved bill → remove it, no reversal.
+      if (notYetPaid) {
+        // System misinterpretation on an unpaid bill → remove it, no reversal.
         try {
           await supabase.from('journal_entry_lines').delete().eq('journal_entry_id', jeId);
           await supabase.from('journal_entries').delete().eq('id', jeId);
@@ -1418,9 +1421,9 @@ router.post('/invoices/:id/code', express.json(), async (req, res) => {
       const { error: audErr } = await supabase.from('ap_invoice_approvals').insert({
         invoice_id: id, action: 'recoded', user_id: (ctx.user && ctx.user.id) || null, user_name: who,
         amount_at_time_cents: inv.total_cents,
-        notes: preApproval
-          ? `Expense account corrected from ${prevLabel} to ${acct.account_number} ${acct.account_name} before approval — mis-coded accrual replaced (no reversal; not yet a committed transaction).${reason ? ' Reason: ' + reason : ''}`
-          : `Expense account changed from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the accrual was posted. Prior entry reversed, replacement posted. Reason: ${reason}`,
+        notes: notYetPaid
+          ? `Expense account corrected from ${prevLabel} to ${acct.account_number} ${acct.account_name} before payment — mis-coded accrual replaced (no reversal; not yet a committed cash transaction).${reason ? ' Reason: ' + reason : ''}`
+          : `Expense account changed from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the bill was paid. Prior entry reversed, replacement posted. Reason: ${reason}`,
       });
       if (audErr) {
         // Never let this fail silently — an unrecorded exception is the whole
@@ -1455,12 +1458,17 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
     if (!acct) return res.status(400).json({ error: 'invalid_account', detail: 'That account is not on this community\'s chart.' });
     if (line.gl_account_id === gl_account_id) return res.json({ ok: true, unchanged: true });
 
-    // Same rule as the invoice-level control: changing a POSTED entry is the
-    // exception and carries a name and a reason.
+    // Same rule as the invoice-level control: an unpaid accrual is just the
+    // system's coding (Emma's auto-guess or a staff pick), so a wrong line is a
+    // mis-code to REPLACE in place — no reversal, no ceremony. A reverse-and-
+    // repost trail on the platform's own guess reads like the books are wrong.
+    // Once the bill is PAID the entry is a committed cash transaction: correct it
+    // by reversal, with a name and a reason. (Ed 2026-09-04.)
     const posted = !!inv.posting_journal_entry_id;
+    const notYetPaid = !inv.paid_at;
     let ctx = null;
     if (posted) {
-      if (!reason) return res.status(400).json({ error: 'reason_required', detail: 'This bill\'s accrual is already posted. Changing a line reverses that entry and posts a new one — say why.' });
+      if (!notYetPaid && !reason) return res.status(400).json({ error: 'reason_required', detail: 'This bill has been paid, so its accrual is committed. Changing a line reverses that entry and posts a new one — say why.' });
       const { resolveUserRole } = require('./users');
       ctx = await resolveUserRole(req);
       if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required' });
@@ -1471,18 +1479,31 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
       : { data: null };
     const prevLabel = prev ? `${prev.account_number} ${prev.account_name}` : '(uncoded)';
 
-    await supabase.from('ap_invoice_lines').update({ gl_account_id, notes: posted ? `Re-coded by ${who}: ${reason}`.slice(0, 500) : line.notes }).eq('id', lineId);
+    await supabase.from('ap_invoice_lines').update({ gl_account_id, notes: (posted && !notYetPaid) ? `Re-coded by ${who}: ${reason}`.slice(0, 500) : line.notes }).eq('id', lineId);
 
     // Re-post the whole split from the (now updated) lines.
     const { data: lines } = await supabase.from('ap_invoice_lines').select('*').eq('invoice_id', id).order('line_number');
     const allCoded = (lines || []).length > 0 && lines.every((l) => l.gl_account_id);
     let jeId = inv.posting_journal_entry_id;
     if (posted) {
-      try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: jeId, void_reason: `Line ${line.line_number} re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}: ${reason}` }); }
-      catch (e) {
-        console.error('[ap] line recode reversal FAILED — refusing to re-post:', e.message);
-        await supabase.from('ap_invoice_lines').update({ gl_account_id: line.gl_account_id }).eq('id', lineId);   // put it back
-        return res.status(500).json({ error: 'reversal_failed', detail: 'Could not reverse the existing journal entry, so nothing was changed (re-posting would double-count the expense).' });
+      if (notYetPaid) {
+        // Unpaid mis-code → remove the old accrual and repost clean, no reversal.
+        // (Same mechanism as the invoice-level not-yet-paid correction above.)
+        try {
+          await supabase.from('journal_entry_lines').delete().eq('journal_entry_id', jeId);
+          await supabase.from('journal_entries').delete().eq('id', jeId);
+        } catch (e) {
+          console.error('[ap] line recode replace FAILED — refusing to re-post:', e.message);
+          await supabase.from('ap_invoice_lines').update({ gl_account_id: line.gl_account_id }).eq('id', lineId);   // put it back
+          return res.status(500).json({ error: 'replace_failed', detail: 'Could not remove the mis-coded entry, so nothing was changed (re-posting would double-count the expense).' });
+        }
+      } else {
+        try { const { voidJournalEntry } = require('../lib/accounting/posting'); await voidJournalEntry({ journal_entry_id: jeId, void_reason: `Line ${line.line_number} re-coded ${prevLabel} -> ${acct.account_number} ${acct.account_name} by ${who}: ${reason}` }); }
+        catch (e) {
+          console.error('[ap] line recode reversal FAILED — refusing to re-post:', e.message);
+          await supabase.from('ap_invoice_lines').update({ gl_account_id: line.gl_account_id }).eq('id', lineId);   // put it back
+          return res.status(500).json({ error: 'reversal_failed', detail: 'Could not reverse the existing journal entry, so nothing was changed (re-posting would double-count the expense).' });
+        }
       }
       jeId = null;
     }
@@ -1505,7 +1526,9 @@ router.post('/invoices/:id/lines/:lineId/code', express.json(), async (req, res)
       const { error: audErr } = await supabase.from('ap_invoice_approvals').insert({
         invoice_id: id, action: 'recoded', user_id: (ctx.user && ctx.user.id) || null, user_name: who,
         amount_at_time_cents: line.amount_cents,
-        notes: `Line ${line.line_number} ("${String(line.description || '').slice(0, 120)}") re-coded from ${prevLabel} to ${acct.account_number} ${acct.account_name} after posting. Entry reversed and re-posted. Reason: ${reason}`,
+        notes: notYetPaid
+          ? `Line ${line.line_number} ("${String(line.description || '').slice(0, 120)}") corrected from ${prevLabel} to ${acct.account_number} ${acct.account_name} before payment — mis-coded accrual replaced (no reversal; not yet a committed cash transaction).${reason ? ' Reason: ' + reason : ''}`
+          : `Line ${line.line_number} ("${String(line.description || '').slice(0, 120)}") re-coded from ${prevLabel} to ${acct.account_number} ${acct.account_name} after the bill was paid. Entry reversed and re-posted. Reason: ${reason}`,
       });
       if (audErr) { console.error('[ap] line recode audit FAILED:', audErr.message); auditWarning = 'The line was re-coded and the journal entry adjusted, but the audit note could not be saved.'; }
     }
