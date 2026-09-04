@@ -1062,7 +1062,26 @@ router.get('/invoices/:id', async (req, res) => {
       }
     }
 
-    res.json({ invoice, lines: outLines, approvals: approvals || [], recurrence, policy, open_credits: openCredits, applied_credit: appliedCredit, statement, documents });
+    // Prior-period restatement (vendor restacks paid prior months as positive
+    // "Outstanding Invoice" lines). Surface it so the detail can offer the
+    // one-click "pay current month only" hold. Only meaningful while unpaid.
+    let restatement = { is_restatement: false };
+    try {
+      const { classifyRestatement } = require('../lib/ap/statement_lines');
+      const rr = classifyRestatement(lines || []);
+      if (rr.is_restatement && !invoice.paid_at) {
+        restatement = {
+          is_restatement: true,
+          held_line_numbers: [...rr.held_line_numbers],
+          current_cents: rr.current_cents,
+          held_cents: rr.held_cents,
+          prior_period_count: rr.prior_period_count,
+          has_adjustment: rr.has_adjustment,
+        };
+      }
+    } catch (e) { console.warn('[ap] restatement classify skipped:', e.message); }
+
+    res.json({ invoice, lines: outLines, approvals: approvals || [], recurrence, policy, open_credits: openCredits, applied_credit: appliedCredit, statement, restatement, documents });
   } catch (err) {
     console.error('[ap] invoice detail failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -1571,6 +1590,91 @@ router.post('/invoices/:id/post-coded', async (req, res) => {
     await supabase.from('ap_invoices').update({ coded_gl_account_id: biggest ? biggest.gl_account_id : null, posting_journal_entry_id: jeId || null, updated_at: new Date().toISOString() }).eq('id', id);
     res.json({ ok: true, posting_journal_entry_id: jeId, posted: !!jeId, accounts: new Set(lines.map((l) => l.gl_account_id)).size });
   } catch (err) { console.error('[ap] post-coded failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /invoices/:id/hold-prior-periods — for a vendor that restacks prior months
+// as positive "Outstanding Invoice" lines and re-lists an adjustment (true-up)
+// every bill (Fort Bend County Sheriff). Hold those lines, pay only the current
+// month. Detection is lib/ap/statement_lines.classifyRestatement; this applies it:
+// zero + annotate the held lines, set the payable to the current-month sum, and
+// re-post the accrual at that amount. Unpaid bills only (replace, no reversal),
+// same rule as line recode. (Ed 2026-09-04: "emma should only pay the current
+// month.")
+router.post('/invoices/:id/hold-prior-periods', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: inv } = await supabase.from('ap_invoices').select('*, vendors(name)').eq('id', id).maybeSingle();
+    if (!inv) return res.status(404).json({ error: 'not_found' });
+    if (inv.status === 'voided') return res.status(400).json({ error: 'voided' });
+    if (inv.paid_at) return res.status(400).json({ error: 'already_paid', detail: 'This bill is paid — a restatement correction on a paid bill would need a reversal, not an in-place hold.' });
+
+    const { data: lines } = await supabase.from('ap_invoice_lines').select('*').eq('invoice_id', id).order('line_number');
+    const { classifyRestatement } = require('../lib/ap/statement_lines');
+    const r = classifyRestatement(lines || []);
+    if (!r.is_restatement) return res.status(400).json({ error: 'not_a_restatement', detail: 'No prior-period restatement lines detected on this bill (nothing to hold).' });
+    if (!(r.current_cents > 0)) return res.status(400).json({ error: 'no_current_amount', detail: 'Could not identify a current-month amount to pay.' });
+
+    const { resolveUserRole } = require('./users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required', detail: 'Sign in to adjust a posted bill.' });
+    const who = (ctx.user && (ctx.user.full_name || ctx.user.email)) || 'Staff';
+
+    // Current-month lines drive the new accrual (before we zero the held ones).
+    const currentLines = (lines || []).filter((l) => Number(l.amount_cents) > 0 && !r.isHeldLine(l));
+    const glLines = currentLines
+      .filter((l) => l.gl_account_id)
+      .map((l) => ({ accountId: l.gl_account_id, cents: l.amount_cents, memo: l.description }));
+    if (!glLines.length && inv.coded_gl_account_id) glLines.push({ accountId: inv.coded_gl_account_id, cents: r.current_cents, memo: 'Current month' });
+    if (!glLines.length) return res.status(400).json({ error: 'current_line_uncoded', detail: 'Code the current-month line to an expense account first.' });
+
+    // Replace the over-stated accrual (unpaid → delete + repost, no reversal).
+    if (inv.posting_journal_entry_id) {
+      const je = inv.posting_journal_entry_id;
+      try {
+        await supabase.from('journal_entry_lines').delete().eq('journal_entry_id', je);
+        await supabase.from('journal_entries').delete().eq('id', je);
+      } catch (e) {
+        console.error('[ap] hold-prior replace FAILED — refusing to re-post:', e.message);
+        return res.status(500).json({ error: 'replace_failed', detail: 'Could not remove the over-stated entry; nothing was changed.' });
+      }
+      await supabase.from('ap_invoices').update({ posting_journal_entry_id: null }).eq('id', id);
+    }
+    const { postAccrualForInvoice } = require('../lib/ap/intake');
+    const newJe = await postAccrualForInvoice({
+      glLines, totalCents: r.current_cents, invoiceDate: inv.invoice_date,
+      communityId: inv.community_id, vendorInvoiceNumber: inv.vendor_invoice_number,
+      vendorName: (inv.vendors && inv.vendors.name) || inv.vendor_name, vendorId: inv.vendor_id, invoiceId: inv.id,
+      classificationReason: `Prior-period restatement — current month only; ${r.prior_period_count} prior invoice(s)${r.has_adjustment ? ' + re-listed adjustment' : ''} held (${who})`,
+      sourceDocumentPath: inv.source_storage_path || null,
+    });
+    if (!newJe) return res.status(500).json({ error: 'repost_failed', detail: 'Could not re-post the current-month accrual; nothing was changed.' });
+
+    // Hold the prior-period + adjustment lines: zero the amount, keep the record.
+    let heldCount = 0;
+    for (const l of (lines || [])) {
+      if (!r.isHeldLine(l)) continue;
+      const orig = (Number(l.amount_cents) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+      const note = Number(l.amount_cents) < 0
+        ? `HELD ${new Date().toISOString().slice(0, 10)}: re-listed adjustment (${orig}) — already taken on a prior bill, not applied again (${who}).`
+        : `HELD ${new Date().toISOString().slice(0, 10)}: prior-period invoice restated by vendor (${orig}) — excluded from payment pending history (${who}).`;
+      const { error: le } = await supabase.from('ap_invoice_lines').update({ amount_cents: 0, notes: note }).eq('id', l.id);
+      if (!le) heldCount += 1; else console.warn('[ap] hold line skip:', le.message);
+    }
+
+    const singleAcct = new Set(glLines.map((g) => g.accountId)).size === 1 ? glLines[0].accountId : (inv.coded_gl_account_id || null);
+    await supabase.from('ap_invoices').update({ total_cents: r.current_cents, coded_gl_account_id: singleAcct, posting_journal_entry_id: newJe, updated_at: new Date().toISOString() }).eq('id', id);
+
+    // Audit trail on the bill.
+    let auditWarning = null;
+    const { error: audErr } = await supabase.from('ap_invoice_approvals').insert({
+      invoice_id: id, action: 'recoded', user_id: (ctx.user && ctx.user.id) || null, user_name: who,
+      amount_at_time_cents: inv.total_cents,
+      notes: `Prior-period restatement corrected: payable reduced from ${(inv.total_cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} to ${(r.current_cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} (current month only). ${heldCount} line(s) held (prior invoices${r.has_adjustment ? ' + re-listed adjustment' : ''}); accrual re-posted, no reversal (unpaid).`,
+    });
+    if (audErr) { console.error('[ap] hold-prior audit FAILED:', audErr.message); auditWarning = 'Adjusted, but the audit note could not be saved.'; }
+
+    res.json({ ok: true, held_count: heldCount, current_cents: r.current_cents, previous_total_cents: inv.total_cents, posting_journal_entry_id: newJe, warning: auditWarning });
+  } catch (err) { console.error('[ap] hold-prior-periods failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // POST /invoices/:id/lines/:lineId/split — break ONE line into several, each with

@@ -46781,6 +46781,7 @@ ${questionsPage}
           </div>
 
           <h4 style="margin:14px 0 6px; color:#0B1D34;">Line Items + GL Coding</h4>
+          ${payload.restatement && payload.restatement.is_restatement ? `<div style="margin:0 0 10px; padding:11px 13px; border-radius:6px; background:#fffbeb; border:1px solid #fde047; font-size:12.5px; color:#92400e;">⚠️ <strong>This bill restacks prior-period invoices.</strong> The vendor re-listed ${payload.restatement.prior_period_count} prior month${payload.restatement.prior_period_count===1?'':'s'} as "Outstanding Invoice" line${payload.restatement.prior_period_count===1?'':'s'}${payload.restatement.has_adjustment?' plus a re-listed adjustment':''}. During cutover we can't confirm those are unpaid — pay only the current month, <strong>$${(Number(payload.restatement.current_cents)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>, and hold the rest for review.<div style="margin-top:8px;"><button class="action-btn" style="font-size:12px; padding:5px 12px;" onclick="apHoldPriorPeriods('${inv.id}')">Pay current month only — hold prior-period lines</button></div></div>` : ''}
           ${lines.some((l) => l.prior_payment) ? `<div style="margin:0 0 10px; padding:9px 12px; border-radius:6px; background:#eff6ff; border:1px solid #bfdbfe; font-size:12px; color:#1e3a8a;">📄 <strong>Prior payments already recorded in Vantaca.</strong> The lines marked 📄 below are payments already made and posted in Vantaca — they are history, not credits, and are <strong>not posted again here</strong>. We record only the balance due, <strong>$${(Number(inv.total_cents)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>.</div>` : ''}
           <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-bottom:14px;">
             <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
@@ -47373,6 +47374,20 @@ ${questionsPage}
         if (j.warning) alert(j.warning);
         apOpenInvoice(invId); apLoadList(); apLoadCounts();
       } catch (e) { alert('Could not set the line\'s account: ' + e.message); }
+    };
+
+    // Prior-period restatement: hold the restacked prior + adjustment lines and
+    // pay only the current month. (Ed 2026-09-04 — Fort Bend Sheriff bills.)
+    window.apHoldPriorPeriods = async function (invId) {
+      if (!confirm('Reduce this bill to the current month only?\n\nThe prior-period "Outstanding Invoice" lines (and any re-listed adjustment) will be held at $0 with a note, and the accrual re-posted at the current-month amount. Nothing is paid or released.')) return;
+      try {
+        const r = await (window._authFetch || fetch)('/api/ap/invoices/' + encodeURIComponent(invId) + '/hold-prior-periods', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || j.error || 'hold failed');
+        if (j.warning) alert(j.warning);
+        else alert(`Done — ${j.held_count} line(s) held; payable is now $${(Number(j.current_cents)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} (was $${(Number(j.previous_total_cents)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}).`);
+        apOpenInvoice(invId); apLoadList(); apLoadCounts();
+      } catch (e) { alert('Could not hold the prior-period lines: ' + e.message); }
     };
 
     // --- Split a lumped line into several, each with its own GL account. For when
