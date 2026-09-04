@@ -1788,6 +1788,11 @@
         <div class="field"><label class="lbl">Account #</label><input type="text" id="cfg-account" placeholder="${c.account_last4?('•••• '+esc(c.account_last4)+' (on file — re-enter to change)'):'full account number'}"></div>
         <div class="field"><label class="lbl">Next check #</label><input type="text" id="cfg-next" value="${esc(c.next_check_number==null?'':c.next_check_number)}"></div>
         <div class="field"><label class="lbl">Dual-signature threshold ($, blank = none)</label><input type="text" id="cfg-dual" value="${dollars(c.dual_sig_threshold_cents)}"></div>
+        <div class="field"><label class="lbl">MICR line <span class="muted" style="font-weight:400;">— the numbers at the bottom of the check</span></label>
+          <select id="cfg-preenc">
+            <option value="false" ${c.check_stock_micr_pre_encoded===true?'':'selected'}>Blank stock — trustEd prints the MICR line</option>
+            <option value="true" ${c.check_stock_micr_pre_encoded===true?'selected':''}>Pre-encoded stock — bank already printed the MICR</option>
+          </select></div>
         <div class="field" style="grid-column:1/-1;"><label class="lbl">GL cash account <span class="muted" style="font-weight:400;">— which ledger account this checkbook draws down (shows the book "cash on hand")</span></label>
           <select id="cfg-gl">
             <option value="">— not linked —</option>
@@ -1851,6 +1856,8 @@
     const n=$('cfg-next').value.trim(); if (n!=='') body.next_check_number=parseInt(n,10);
     const d=$('cfg-dual').value.trim(); body.dual_sig_threshold_cents = d==='' ? null : Math.round(parseFloat(d)*100);
     const gl=$('cfg-gl'); if (gl) body.gl_account_number = gl.value; // '' clears the link
+    const pe=$('cfg-preenc'); if (pe) body.pre_encoded = pe.value === 'true'; // MICR: blank stock (false) prints the line
+
     // Authorized signature (optional) — auto-resized to a small PNG so any scan works.
     const sigInput = $('cfg-sig');
     const file = sigInput && sigInput.files && sigInput.files[0];
