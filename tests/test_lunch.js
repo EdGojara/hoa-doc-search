@@ -8,6 +8,7 @@ delete process.env.ANTHROPIC_API_KEY; // force the deterministic fallback path
 const assert = require('assert');
 const { genRefCode, fmtUsd } = require('../lib/ea/lunch');
 const { parseOrder, topOfReply } = require('../lib/ea/lunch_reply');
+const { isLunchQuestion, resolveDate, buildAnswer } = require('../lib/ea/lunch_question');
 
 let failures = 0;
 function check(name, fn) { try { fn(); console.log('  ok  ' + name); } catch (e) { failures++; console.error('  FAIL ' + name + ' — ' + e.message); } }
@@ -52,6 +53,37 @@ check('topOfReply strips quoted history', () => {
   });
   await acheck('parseOrder returns null for an empty reply', async () => {
     assert.strictEqual(await parseOrder('   ', 'Paulie\'s'), null);
+  });
+
+  // ---- Lunch question responder --------------------------------------------
+  check('isLunchQuestion recognizes real questions and ignores the rest', () => {
+    assert.ok(isLunchQuestion('what is for lunchdrop on wednesday'), "Ed's exact phrasing");
+    assert.ok(isLunchQuestion("What's for lunch tomorrow?"));
+    assert.ok(isLunchQuestion('lunchdrop menu?'));
+    assert.ok(!isLunchQuestion('Please approve the vendor invoice.'), 'not lunch');
+    assert.ok(!isLunchQuestion("let's grab lunch sometime"), 'lunch but not a question');
+  });
+
+  check('resolveDate maps day references correctly', () => {
+    const now = new Date('2026-09-05T12:00:00'); // fixed reference
+    const ymd = (d) => d.toISOString().slice(0, 10);
+    assert.strictEqual(resolveDate('what about today', now), ymd(now), 'today');
+    const tmr = new Date(now); tmr.setDate(tmr.getDate() + 1);
+    assert.strictEqual(resolveDate('lunch tomorrow?', now), ymd(tmr), 'tomorrow');
+    assert.strictEqual(resolveDate('menu for 2026-09-11 please', now), '2026-09-11', 'explicit date');
+    // A weekday resolves to its next occurrence (within a week) with that weekday.
+    const wed = resolveDate('what is for lunch on wednesday', now);
+    assert.strictEqual(new Date(wed + 'T12:00:00').getDay(), 3, 'resolved to a Wednesday');
+    assert.ok(wed >= ymd(now) && wed <= '2026-09-11', 'within the coming week: ' + wed);
+  });
+
+  check('buildAnswer lists restaurants + says so when the menu is missing', () => {
+    const rows = [{ restaurant_name: 'Paulie\'s Poboys', items: [{ name: 'The Cuban', price_cents: 1395 }], cutoff_text: 'Order by 10:30am Wednesday' }];
+    const a = buildAnswer('2026-09-09', rows, 'Ed');
+    assert.ok(/Paulie's Poboys/.test(a) && /The Cuban/.test(a) && /\$13\.95/.test(a), 'lists the restaurant + item + price');
+    assert.ok(/10:30am/.test(a), 'includes the cutoff');
+    const none = buildAnswer('2026-09-09', [], 'Ed');
+    assert.ok(/don't have/i.test(none), 'honest when menu not captured');
   });
 
   if (failures) { console.error('\n' + failures + ' lunch test(s) failed.'); process.exit(1); }

@@ -1016,4 +1016,35 @@ router.post('/lunch/round/:id/assemble', express.json({ limit: '4kb' }), async (
   } catch (err) { console.error('[tessa] lunch assemble failed:', err.message); res.status(err.code === 'invalid_input' ? 404 : 500).json({ error: safeErrorMessage(err) }); }
 });
 
+// Capture scraped Lunchdrop menus into the cache Tessa answers from. A browser
+// (scheduled job on Ed's signed-in session, or an on-demand run) posts the
+// week's days/restaurants/items here — the server can't read Lunchdrop itself.
+router.post('/lunch/menu-capture', express.json({ limit: '512kb' }), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const b = req.body || {};
+    const office = String(b.office || 'boxer');
+    const days = Array.isArray(b.days) ? b.days : [];
+    const rows = [];
+    for (const d of days) {
+      const date = String(d.date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+      for (const r of (Array.isArray(d.restaurants) ? d.restaurants : [])) {
+        if (!r || !r.slug) continue;
+        rows.push({
+          office, lunch_date: date,
+          restaurant_name: r.name || null, restaurant_slug: String(r.slug),
+          order_url: r.url || null, cutoff_text: r.cutoff || null,
+          items: Array.isArray(r.items) ? r.items.slice(0, 200) : [],
+          captured_at: new Date().toISOString(),
+        });
+      }
+    }
+    if (!rows.length) return res.status(400).json({ error: 'no_menu_rows' });
+    const { error } = await supabase.from('lunch_menu_cache').upsert(rows, { onConflict: 'office,lunch_date,restaurant_slug' });
+    if (error) throw error;
+    res.json({ ok: true, captured: rows.length, dates: [...new Set(rows.map((r) => r.lunch_date))] });
+  } catch (err) { console.error('[tessa] menu capture failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 module.exports = { router };
