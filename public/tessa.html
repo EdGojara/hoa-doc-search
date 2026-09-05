@@ -152,6 +152,14 @@ function render(){
       </div>
       <div class="card">
         <div class="row" style="justify-content:space-between;">
+          <h2 style="margin:0;">Lunch (Lunchdrop)</h2>
+          <button class="btn ghost sm" id="lunchBtn" onclick="checkLunch()">Check lunch inbox</button>
+        </div>
+        <div class="note">Email Tessa a lunch question (e.g. &ldquo;what&rsquo;s for lunch Wednesday?&rdquo;) or reply to one of her lunch-order requests, then click <b>Check lunch inbox</b> and she processes it, answers questions and records orders. She answers from the captured menu.</div>
+        <div id="lunchMsg" class="result"></div>
+      </div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between;">
           <h2 style="margin:0;">Sent by Tessa</h2>
           <button class="btn ghost sm" onclick="loadSent()">Refresh</button>
         </div>
@@ -565,6 +573,21 @@ async function pollInbox(){
     $('pollMsg').innerHTML='<span class="ok">'+(j.drafted?('✅ '+j.drafted+' new draft'+(j.drafted>1?'s':'')+' ready.'):'No new forwarded emails.')+'</span>';
     loadInbox();
   }catch(e){ $('pollMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+  finally{ btn.disabled=false; }
+}
+async function checkLunch(){
+  const btn=$('lunchBtn'); btn.disabled=true; $('lunchMsg').innerHTML='<span class="note">Checking the lunch inbox…</span>';
+  try{
+    const r=await af('/api/tessa/lunch/poll-inbox',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'check failed');
+    const s=j.stats||{};
+    if(s.error){ $('lunchMsg').innerHTML='<span class="err">'+esc(s.detail||s.error)+'</span>'; return; }
+    const parts=[];
+    if(s.answered) parts.push(s.answered+' question'+(s.answered>1?'s':'')+' answered');
+    if(s.recorded) parts.push(s.recorded+' order'+(s.recorded>1?'s':'')+' recorded');
+    if(s.unclear) parts.push(s.unclear+' need a look');
+    $('lunchMsg').innerHTML='<span class="ok">'+(parts.length?('✅ '+parts.join(', ')+'.'):'Nothing new in the lunch inbox.')+'</span>';
+  }catch(e){ $('lunchMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
   finally{ btn.disabled=false; }
 }
 let _inboxStatus='needs_review';
