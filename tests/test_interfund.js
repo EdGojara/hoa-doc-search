@@ -1,7 +1,7 @@
 // Tests for the interfund auto-bridge math (lib/accounting/interfund.js).
 // Cross-fund entries must leave EVERY fund self-balancing. (Ed 2026-09-04.)
 const assert = require('assert');
-const { computeBridge } = require('../lib/accounting/interfund');
+const { computeBridge, buildTransferLines } = require('../lib/accounting/interfund');
 
 let failures = 0;
 function check(name, fn) { try { fn(); console.log('  ok  ' + name); } catch (e) { failures++; console.error('  FAIL ' + name + ' — ' + e.message); } }
@@ -83,6 +83,48 @@ check('unresolved fund is not bridged', () => {
 check('null resolution posts unchanged', () => {
   const lines = [{ account_id: 'a', fund_id: 'ADO', debit_cents: 100, credit_cents: 0 }];
   assert.strictEqual(computeBridge(lines, fundOf, null).length, 0);
+});
+
+// ---- Transfer lines -------------------------------------------------------
+function fundNet(lines) {
+  const n = {};
+  for (const l of lines) { const f = l.fund_id; n[f] = (n[f] || 0) + Number(l.debit_cents || 0) - Number(l.credit_cents || 0); }
+  return n;
+}
+const OPR_CASH = { id: 'opr-cash', fund_id: 'OPR' };
+const OPR_SAV = { id: 'opr-sav', fund_id: 'OPR' };
+const ADO_CASH = { id: 'ado-cash', fund_id: 'ADO' };
+const RES_CASH = { id: 'res-cash', fund_id: 'RES' };
+
+check('same-fund transfer is a plain reallocation', () => {
+  const l = buildTransferLines({ from: OPR_CASH, to: OPR_SAV, amountCents: 10000, resolved });
+  assert.strictEqual(l.length, 2);
+  assert.strictEqual(fundNet(l).OPR, 0);
+  const dr = l.find((x) => x.debit_cents); const cr = l.find((x) => x.credit_cents);
+  assert.strictEqual(dr.account_id, 'opr-sav'); assert.strictEqual(cr.account_id, 'opr-cash');
+});
+
+check('sub -> Operating clears the interfund and balances each fund', () => {
+  const l = buildTransferLines({ from: ADO_CASH, to: OPR_CASH, amountCents: 50000, resolved });
+  const net = fundNet(l);
+  assert.strictEqual(net.OPR, 0); assert.strictEqual(net.ADO, 0);
+  // ADO pays down its "Due to Operating" (debit reduces the credit-balance),
+  // Operating collects its "Due from ADO" (credit reduces the debit-balance).
+  assert.ok(l.some((x) => x.account_id === 'ado-dueto-opr' && x.debit_cents === 50000), 'debit ADO Due-to-Operating');
+  assert.ok(l.some((x) => x.account_id === 'opr-duefrom-ado' && x.credit_cents === 50000), 'credit OPR Due-from-ADO');
+  assert.ok(l.some((x) => x.account_id === 'opr-cash' && x.debit_cents === 50000), 'cash into Operating');
+});
+
+check('Operating -> sub clears the other direction', () => {
+  const l = buildTransferLines({ from: OPR_CASH, to: ADO_CASH, amountCents: 50000, resolved });
+  const net = fundNet(l);
+  assert.strictEqual(net.OPR, 0); assert.strictEqual(net.ADO, 0);
+  assert.ok(l.some((x) => x.account_id === 'opr-dueto-ado' && x.debit_cents === 50000), 'debit OPR Due-to-ADO');
+  assert.ok(l.some((x) => x.account_id === 'ado-duefrom-opr' && x.credit_cents === 50000), 'credit ADO Due-from-Operating');
+});
+
+check('cross-fund transfer with no Operating side is rejected', () => {
+  assert.throws(() => buildTransferLines({ from: RES_CASH, to: ADO_CASH, amountCents: 100, resolved }), /operating/i);
 });
 
 if (failures) { console.error('\n' + failures + ' interfund test(s) failed.'); process.exit(1); }

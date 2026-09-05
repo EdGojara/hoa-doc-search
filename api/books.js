@@ -172,6 +172,59 @@ router.post('/journal-entries', express.json({ limit: '256kb' }), async (req, re
   }
 });
 
+// POST /transfer — move cash between two accounts. Same-fund is a plain
+// reallocation (Dr destination / Cr source); cross-fund settles the interfund
+// Due To/Due From toward zero (lib/accounting/interfund.buildTransferLines), so
+// a transfer between funds clears the payable/receivable instead of piling it
+// up. Lines are balanced per fund, so the auto-bridge adds nothing. (Ed 2026-09-05.)
+router.post('/transfer', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const { community_id, from_account_id, to_account_id, posting_date, memo } = b;
+    const amount_cents = Math.round(Number(b.amount_cents) || 0);
+    if (!community_id || !from_account_id || !to_account_id) return res.status(400).json({ error: 'community_id_from_to_required' });
+    if (from_account_id === to_account_id) return res.status(400).json({ error: 'from_and_to_must_differ' });
+    if (!(amount_cents > 0)) return res.status(400).json({ error: 'amount_must_be_positive' });
+    const date = /^\d{4}-\d{2}-\d{2}/.test(String(posting_date || '')) ? String(posting_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
+
+    const { data: accts, error: ae } = await supabase.from('chart_of_accounts')
+      .select('id, account_number, account_name, account_type, fund_id, community_id, is_active').in('id', [from_account_id, to_account_id]);
+    if (ae) throw ae;
+    const from = (accts || []).find((a) => a.id === from_account_id);
+    const to = (accts || []).find((a) => a.id === to_account_id);
+    if (!from || !to) return res.status(400).json({ error: 'account_not_found' });
+    if (from.community_id !== community_id || to.community_id !== community_id) return res.status(400).json({ error: 'account_in_different_community' });
+    if (!from.is_active || !to.is_active) return res.status(400).json({ error: 'account_inactive' });
+    const isCash = (a) => String(a.account_type || '') === 'asset' || /^1/.test(String(a.account_number || ''));
+    if (!isCash(from) || !isCash(to)) return res.status(400).json({ error: 'transfer_between_cash_accounts_only', detail: 'Both accounts must be cash/asset accounts.' });
+
+    const { resolveInterfund, buildTransferLines } = require('../lib/accounting/interfund');
+    const resolved = await resolveInterfund(supabase, community_id);
+    let lines;
+    try { lines = buildTransferLines({ from, to, amountCents: amount_cents, resolved }); }
+    catch (e) { return res.status(400).json({ error: e.message, code: e.code || 'invalid_input' }); }
+
+    const desc = (`Transfer: ${from.account_number} ${from.account_name} → ${to.account_number} ${to.account_name}` + (memo ? ` (${memo})` : '')).slice(0, 300);
+    const result = await postJournalEntry({ community_id, posting_date: date, description: desc, source_module: 'manual', lines });
+    res.json({ ok: true, entry: result.entry });
+  } catch (err) {
+    if (err.code === 'unbalanced' || err.code === 'invalid_input' || err.code === 'period_closed') return res.status(400).json({ error: err.message, code: err.code });
+    console.error('[books] transfer failed:', err); res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /interfund-balances?community_id — nonzero interfund balances (what each
+// non-Operating fund owes Operating). Powers the transfer hint + month-end
+// reminder to keep interfund at zero.
+router.get('/interfund-balances', async (req, res) => {
+  try {
+    const { community_id } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { interfundBalances } = require('../lib/accounting/interfund');
+    res.json({ ok: true, balances: await interfundBalances(supabase, community_id) });
+  } catch (err) { console.error('[books] interfund balances failed:', err); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 router.get('/journal-entries', async (req, res) => {
   try {
     const { community_id, period_id, account_id, from_date, to_date, status, limit = '100' } = req.query;

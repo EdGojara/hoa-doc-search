@@ -1767,9 +1767,12 @@
           <h3 style="margin:0;">📝 Journal Entries</h3>
           <div style="display:flex; gap:8px;">
             <button class="action-btn" onclick="bkOpenDepositModal()" title="Record money in and code it to an income account, by fund — the income counterpart to Enter Bills (AP).">💰 Record Deposit</button>
+            <button class="secondary-btn" onclick="bkOpenTransferModal()" title="Move money between the association's cash accounts. A transfer between funds settles the interfund balance.">⇄ Transfer</button>
             <button class="secondary-btn" onclick="bkOpenJEModal()">+ New Journal Entry</button>
           </div>
         </div>
+        <!-- Interfund reminder — nonzero balances between funds should be transferred before month-end so each fund's cash ties to its own claim. -->
+        <div id="bk-interfund-banner" style="display:none; margin-bottom:10px; padding:10px 13px; border-radius:8px; background:#fffbeb; border:1px solid #fde047; font-size:12.5px; color:#92400e;"></div>
         <div id="bk-je-container" style="font-size:13px;">Loading…</div>
       </div>
     </div>
@@ -1874,6 +1877,47 @@
           <div style="display:flex; gap:8px;">
             <button class="secondary-btn" onclick="bkCloseDepositModal()">Cancel</button>
             <button class="action-btn" id="bk-dep-post-btn" onclick="bkPostDeposit()" disabled>Post Deposit</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TRANSFER MODAL — move money between the association's cash accounts. A
+         cross-fund transfer settles the interfund Due To/Due From toward zero. -->
+    <div id="bk-xfer-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto;">
+      <div style="background:white; border-radius:10px; padding:22px; max-width:560px; width:100%;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <h3 style="margin:0;">⇄ Transfer funds</h3>
+          <button class="secondary-btn" onclick="bkCloseTransferModal()" style="font-size:12px;">×</button>
+        </div>
+        <p style="font-size:12px; color:#666; margin:0 0 16px;">Move money between the association's cash accounts. A transfer between funds settles the interfund balance.</p>
+        <div id="bk-xfer-hint" style="display:none; margin-bottom:12px; padding:9px 12px; border-radius:6px; background:#eff6ff; border:1px solid #bfdbfe; font-size:12px; color:#1e3a8a;"></div>
+
+        <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">From (source cash account)</label>
+        <select id="bk-xfer-from" onchange="bkXferUpdate()" style="padding:7px; width:100%; font-size:13px; margin-bottom:14px;"></select>
+
+        <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">To (destination cash account)</label>
+        <select id="bk-xfer-to" onchange="bkXferUpdate()" style="padding:7px; width:100%; font-size:13px; margin-bottom:14px;"></select>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Amount</label>
+            <input type="text" id="bk-xfer-amount" inputmode="decimal" placeholder="0.00" oninput="bkXferUpdate()" style="padding:7px; width:100%; font-size:13px; text-align:right; font-family:ui-monospace,monospace;">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Date</label>
+            <input type="date" id="bk-xfer-date" style="padding:7px; width:100%; font-size:13px;">
+          </div>
+        </div>
+
+        <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Memo (optional)</label>
+        <input type="text" id="bk-xfer-memo" placeholder="e.g. Reimburse Operating for Adopt-a-School donation" style="padding:7px; width:100%; font-size:13px;">
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; padding-top:14px; border-top:1px solid #d0d7de;">
+          <div id="bk-xfer-summary" style="font-size:12.5px; color:#5a7390;"></div>
+          <div style="display:flex; gap:8px;">
+            <button class="secondary-btn" onclick="bkCloseTransferModal()">Cancel</button>
+            <button class="action-btn" id="bk-xfer-post-btn" onclick="bkPostTransfer()" disabled>Post Transfer</button>
           </div>
         </div>
       </div>
@@ -45674,6 +45718,7 @@ ${questionsPage}
     async function bkLoadJEs() {
       const c = document.getElementById('bk-je-container');
       if (!c || !bkCommunityId) return;
+      try { if (typeof bkLoadInterfundBanner === 'function') bkLoadInterfundBanner(); } catch (_) {}
       c.innerHTML = 'Loading…';
       try {
         const r = await fetch('/api/books/journal-entries?community_id=' + encodeURIComponent(bkCommunityId) + '&limit=100');
@@ -46014,6 +46059,98 @@ ${questionsPage}
         try { bkLoadJEs(); bkLoadTrialBalance(); } catch (_) {}
         alert(`Deposit posted — ${j.entry ? j.entry.reference : ''} ${bkFmtCents(cents)}.`);
       } catch (e) { alert('Deposit failed: ' + e.message); btn.disabled = false; btn.textContent = label; }
+    };
+
+    // ----- TRANSFER — move money between the association's cash accounts. A
+    // cross-fund transfer settles the interfund Due To/Due From toward zero.
+    let _bkXferChart = null;
+    function _bkCashAccounts() {
+      return (_bkXferChart || []).filter((a) => !a.is_summary && (String(a.account_type || '') === 'asset' || /^1/.test(String(a.account_number || ''))));
+    }
+    function _bkAcctLabel(a) {
+      const f = a.account_funds && a.account_funds.fund_code ? ` · ${a.account_funds.fund_code}` : '';
+      return `${a.account_number} · ${a.account_name}${f}`;
+    }
+    window.bkOpenTransferModal = async function () {
+      if (!bkCommunityId) { alert('Pick a community first.'); return; }
+      document.getElementById('bk-xfer-date').value = new Date().toISOString().slice(0, 10);
+      document.getElementById('bk-xfer-amount').value = '';
+      document.getElementById('bk-xfer-memo').value = '';
+      document.getElementById('bk-xfer-hint').style.display = 'none';
+      const fromSel = document.getElementById('bk-xfer-from'), toSel = document.getElementById('bk-xfer-to');
+      fromSel.innerHTML = '<option value="">Loading…</option>'; toSel.innerHTML = '<option value="">Loading…</option>';
+      document.getElementById('bk-xfer-modal').style.display = 'flex';
+      try {
+        const r = await (window._authFetch || fetch)('/api/gl/' + encodeURIComponent(bkCommunityId) + '/chart-of-accounts');
+        const j = await r.json();
+        _bkXferChart = j.accounts || j.chart || (Array.isArray(j) ? j : []);
+      } catch (e) { fromSel.innerHTML = toSel.innerHTML = '<option value="">Could not load accounts</option>'; return; }
+      const cash = _bkCashAccounts();
+      const opts = cash.map((a) => `<option value="${bkEsc(a.id)}">${bkEsc(_bkAcctLabel(a))}</option>`).join('');
+      fromSel.innerHTML = '<option value="">— from —</option>' + opts;
+      toSel.innerHTML = '<option value="">— to —</option>' + opts;
+      const op = cash.find((a) => String(a.account_number) === '1000');
+      if (op) fromSel.value = op.id;
+      // Hint: any interfund balance to clear.
+      try {
+        const br = await (window._authFetch || fetch)('/api/books/interfund-balances?community_id=' + encodeURIComponent(bkCommunityId));
+        const bj = await br.json();
+        const nonzero = (bj.balances || []).filter((b) => b.owes_operating_cents);
+        if (nonzero.length) {
+          document.getElementById('bk-xfer-hint').style.display = 'block';
+          document.getElementById('bk-xfer-hint').innerHTML = '💡 To clear: ' + nonzero.map((b) => {
+            const owes = b.owes_operating_cents > 0;
+            return `<strong>${bkEsc(b.fund_name || b.fund_code)}</strong> ${owes ? 'owes Operating' : 'is owed by Operating'} ${bkFmtCents(Math.abs(b.owes_operating_cents))}`;
+          }).join('; ') + '. Transfer between that fund’s cash account and Operating to settle it.';
+        }
+      } catch (_) { /* hint is best-effort */ }
+      bkXferUpdate();
+    };
+    window.bkCloseTransferModal = function () { document.getElementById('bk-xfer-modal').style.display = 'none'; };
+    window.bkXferUpdate = function () {
+      const cents = parseMoney(document.getElementById('bk-xfer-amount').value);
+      const from = document.getElementById('bk-xfer-from'), to = document.getElementById('bk-xfer-to');
+      const fromA = (_bkXferChart || []).find((a) => a.id === from.value);
+      const toA = (_bkXferChart || []).find((a) => a.id === to.value);
+      const ready = cents > 0 && from.value && to.value && from.value !== to.value;
+      document.getElementById('bk-xfer-post-btn').disabled = !ready;
+      const crossFund = fromA && toA && (fromA.fund_id || null) !== (toA.fund_id || null);
+      document.getElementById('bk-xfer-summary').innerHTML = cents > 0 && fromA && toA
+        ? `Move <strong>${bkFmtCents(cents)}</strong> from ${bkEsc(fromA.account_number)} to ${bkEsc(toA.account_number)}${crossFund ? ' <span style="color:#92400e;">(settles interfund)</span>' : ''}`
+        : (from.value && to.value && from.value === to.value ? '<span style="color:#dc2626;">Pick two different accounts.</span>' : '');
+    };
+    window.bkPostTransfer = async function () {
+      const cents = parseMoney(document.getElementById('bk-xfer-amount').value);
+      const from_account_id = document.getElementById('bk-xfer-from').value;
+      const to_account_id = document.getElementById('bk-xfer-to').value;
+      const posting_date = document.getElementById('bk-xfer-date').value;
+      const memo = document.getElementById('bk-xfer-memo').value.trim() || null;
+      if (!(cents > 0) || !from_account_id || !to_account_id || from_account_id === to_account_id) { alert('Need an amount and two different accounts.'); return; }
+      const btn = document.getElementById('bk-xfer-post-btn'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Posting…';
+      try {
+        const r = await (window._authFetch || fetch)('/api/books/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ community_id: bkCommunityId, from_account_id, to_account_id, amount_cents: cents, posting_date, memo }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'transfer failed');
+        bkCloseTransferModal();
+        try { bkLoadJEs(); bkLoadTrialBalance(); bkLoadInterfundBanner(); } catch (_) {}
+        alert(`Transfer posted — ${j.entry ? j.entry.reference : ''} ${bkFmtCents(cents)}.`);
+      } catch (e) { alert('Transfer failed: ' + e.message); btn.disabled = false; btn.textContent = label; }
+    };
+
+    // Interfund reminder banner — nonzero balances between funds should be
+    // transferred before month-end so each fund's cash ties to its own claim.
+    window.bkLoadInterfundBanner = async function () {
+      const el = document.getElementById('bk-interfund-banner');
+      if (!el || !bkCommunityId) return;
+      try {
+        const r = await (window._authFetch || fetch)('/api/books/interfund-balances?community_id=' + encodeURIComponent(bkCommunityId));
+        const j = await r.json();
+        const nz = (j.balances || []).filter((b) => b.owes_operating_cents);
+        if (!nz.length) { el.style.display = 'none'; return; }
+        const parts = nz.map((b) => `<strong>${bkEsc(b.fund_name || b.fund_code)}</strong> ${b.owes_operating_cents > 0 ? 'owes Operating' : 'is owed by Operating'} ${bkFmtCents(Math.abs(b.owes_operating_cents))}`);
+        el.innerHTML = `⏳ <strong>Interfund balances to settle before month-end:</strong> ${parts.join('; ')}. Use <em>Transfer</em> to move the cash and clear it to zero.`;
+        el.style.display = 'block';
+      } catch (_) { el.style.display = 'none'; }
     };
 
     // Auto-load on tab activation
