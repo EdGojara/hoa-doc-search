@@ -55,6 +55,7 @@ const CHECKS = [
   'tests/test_ap_restatement.js',
   'tests/test_interfund.js',
   'tests/test_vendor_address.js',
+  'tests/test_lunch.js',
   'tests/test_property_resolution.js',
   'tests/test_reply_recipient.js',
   'tests/test_reply_learning.js',

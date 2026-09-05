@@ -956,4 +956,64 @@ router.delete('/outbox/:id', async (req, res) => {
   } catch (err) { console.error('[tessa] outbox cancel failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// ---------------------------------------------------------------------------
+// LUNCH — Tessa collects the team/guest lunch order, then assembles it for Ed.
+// Owner-only. She emails + captures replies; the actual placement on Lunchdrop
+// is a supervised browser step on Ed's own session (never here). See
+// lib/ea/lunch*.js and migration 407.
+// ---------------------------------------------------------------------------
+// Start a round: create it + email each recipient as Tessa.
+router.post('/lunch/round', express.json({ limit: '32kb' }), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { createRound, sendInvites } = require('../lib/ea/lunch');
+    const b = req.body || {};
+    const { round, invited } = await createRound({
+      title: b.title, restaurant: b.restaurant, lunch_date: b.lunch_date,
+      order_url: b.order_url, deadline: b.deadline, recipients: b.recipients,
+      created_by: owner.email || undefined,
+    });
+    let sends = [];
+    if (b.send !== false) sends = await sendInvites(round, { menuText: b.menuText });
+    res.json({ ok: true, round, invited: invited.length, sends });
+  } catch (err) { console.error('[tessa] lunch round failed:', err.message); res.status(err.code === 'invalid_input' ? 400 : 500).json({ error: safeErrorMessage(err) }); }
+});
+
+// A round's current state (who's in, who's waiting, the assembled summary).
+router.get('/lunch/round/:id', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { assembleOrder } = require('../lib/ea/lunch');
+    res.json({ ok: true, ...(await assembleOrder(req.params.id)) });
+  } catch (err) { res.status(err.code === 'invalid_input' ? 404 : 500).json({ error: safeErrorMessage(err) }); }
+});
+
+// Recent rounds (for the Tessa page).
+router.get('/lunch/rounds', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { data, error } = await supabase.from('lunch_order_rounds').select('*').order('created_at', { ascending: false }).limit(25);
+    if (error) throw error;
+    res.json({ ok: true, rounds: data || [] });
+  } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// Poll Tessa's mailbox for replies to lunch rounds and record each order.
+router.post('/lunch/poll-inbox', express.json({ limit: '4kb' }), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { pollLunchInbox } = require('../lib/ea/lunch_inbox');
+    res.json({ ok: true, stats: await pollLunchInbox({ max: (req.body && req.body.max) || 40 }) });
+  } catch (err) { console.error('[tessa] lunch poll failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// Assemble the responses and email the order to Ed for approve-to-place.
+router.post('/lunch/round/:id/assemble', express.json({ limit: '4kb' }), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const { sendAssemblyToEd } = require('../lib/ea/lunch');
+    res.json({ ok: true, ...(await sendAssemblyToEd(req.params.id)) });
+  } catch (err) { console.error('[tessa] lunch assemble failed:', err.message); res.status(err.code === 'invalid_input' ? 404 : 500).json({ error: safeErrorMessage(err) }); }
+});
+
 module.exports = { router };
