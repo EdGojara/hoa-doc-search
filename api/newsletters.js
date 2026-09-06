@@ -597,7 +597,21 @@ router.get('/submissions', async (req, res) => {
     if (status && status !== 'all') q = q.eq('status', status);
     const { data, error } = await q;
     if (error) throw error;
-    res.json({ submissions: data || [] });
+    const rows = data || [];
+    // Sign resident-uploaded photos (1h) so the Studio inbox can show them and
+    // staff can open/download the full image if they pick the submission.
+    const allPaths = rows.flatMap(r => (Array.isArray(r.photos) ? r.photos : []).map(p => p && p.path).filter(Boolean));
+    let urlByPath = {};
+    if (allPaths.length) {
+      const { data: signed } = await supabase.storage.from('documents').createSignedUrls(allPaths, 60 * 60);
+      for (const s of (signed || [])) { if (s && s.path && s.signedUrl) urlByPath[s.path] = s.signedUrl; }
+    }
+    for (const r of rows) {
+      r.photo_urls = (Array.isArray(r.photos) ? r.photos : [])
+        .map(p => p && p.path ? { url: urlByPath[p.path] || null, name: p.name || 'photo' } : null)
+        .filter(x => x && x.url);
+    }
+    res.json({ submissions: rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

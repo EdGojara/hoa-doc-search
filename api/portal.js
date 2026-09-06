@@ -4599,14 +4599,20 @@ router.get('/builder/master-plan-approvals', async (req, res) => {
 // authenticated portal member (owner or renter — all community members).
 // (Ed 2026-09-06 — resident-sourced newsletter.)
 // ============================================================================
-router.post('/newsletter-submissions', express.json({ limit: '16kb' }), async (req, res) => {
+// Residents may attach a few photos so staff can USE the image if they pick
+// the submission. Images only, capped — same memoryStorage pattern as ARC.
+const newsletterPhotoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 6 },
+});
+router.post('/newsletter-submissions', newsletterPhotoUpload.array('photos', 6), async (req, res) => {
   try {
     const roleCheck = await resolveUserWithRole(req, res);
     if (!roleCheck) return; // 401 already sent
     const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
     const prop = scoped.property;
     if (!prop || !prop.community_id) return res.status(400).json({ error: 'no_community_scope' });
-    const b = req.body || {};
+    const b = req.body || {}; // multipart text fields arrive as strings
     const CATS = ['neighbor_spotlight', 'local_business', 'idea', 'event', 'other'];
     const category = CATS.includes(b.category) ? b.category : null;
     if (!category) return res.status(400).json({ error: 'category_required' });
@@ -4619,11 +4625,32 @@ router.post('/newsletter-submissions', express.json({ limit: '16kb' }), async (r
       category, subject: String(b.subject || '').trim().slice(0, 200) || null, body,
       contact_info: String(b.contact_info || '').trim().slice(0, 300) || null,
       link: String(b.link || '').trim().slice(0, 500) || null,
+      photos: [],
       status: 'new',
     };
-    const { error } = await supabase.from('newsletter_submissions').insert(row);
+    const { data: inserted, error } = await supabase.from('newsletter_submissions').insert(row).select('id').single();
     if (error) throw error;
-    res.json({ ok: true });
+
+    // Upload any attached photos into the documents bucket, keyed by the row id
+    // so a submission's images are self-contained. Non-images are skipped.
+    const files = (req.files || []).filter(f => /^image\//i.test(f.mimetype || ''));
+    const photos = [];
+    for (const f of files) {
+      try {
+        const safeName = (f.originalname || 'photo').replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80) || 'photo';
+        const storagePath = `newsletter-submissions/${prop.community_id}/${inserted.id}/${Date.now()}_${safeName}`;
+        const { error: stErr } = await supabase.storage
+          .from('documents')
+          .upload(storagePath, f.buffer, { contentType: f.mimetype, upsert: false });
+        if (stErr) { console.warn('[portal] newsletter photo upload failed:', stErr.message); continue; }
+        photos.push({ path: storagePath, name: f.originalname || safeName, mime: f.mimetype, size: f.size });
+      } catch (e) { console.warn('[portal] newsletter photo record failed:', e.message); }
+    }
+    if (photos.length) {
+      const { error: upErr } = await supabase.from('newsletter_submissions').update({ photos }).eq('id', inserted.id);
+      if (upErr) console.warn('[portal] newsletter photos manifest update failed:', upErr.message);
+    }
+    res.json({ ok: true, photos: photos.length });
   } catch (err) { console.error('[portal] newsletter submission failed:', err.message); res.status(500).json({ error: 'submission_failed' }); }
 });
 

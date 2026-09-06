@@ -188,6 +188,7 @@ async function loadSubmissions(){
         <div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#B8860B;">${subEsc(SUB_CAT[s.category]||s.category)}</div>
         ${s.subject?`<div style="font-weight:700;color:var(--navy);margin-top:2px;">${subEsc(s.subject)}</div>`:''}
         <div style="font-size:13.5px;color:#274060;margin-top:3px;white-space:pre-wrap;">${subEsc(s.body||'')}</div>
+        ${(s.photo_urls&&s.photo_urls.length)?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">${s.photo_urls.map(p=>`<a href="${subEsc(p.url)}" target="_blank" rel="noopener" title="${subEsc(p.name)} — open full size"><img src="${subEsc(p.url)}" style="width:74px;height:74px;object-fit:cover;border-radius:7px;border:1px solid #e2e8f0;"></a>`).join('')}</div>`:''}
         ${meta?`<div style="font-size:12px;color:#5A7390;margin-top:4px;">${meta}</div>`:''}
         <div style="font-size:11.5px;color:#8A9BB0;margin-top:5px;">from ${subEsc(who)}${s.created_at?' · '+new Date(s.created_at).toLocaleDateString():''}</div>
         <div style="margin-top:8px;display:flex;gap:6px;">

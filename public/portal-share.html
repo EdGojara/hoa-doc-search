@@ -65,6 +65,10 @@
     <label for="link">Link <span class="hint">(optional)</span></label>
     <input id="link" type="url" maxlength="500" placeholder="https://…">
 
+    <label for="photos">Add photos <span class="hint">(optional — we may use them if we feature your submission)</span></label>
+    <input id="photos" type="file" accept="image/*" multiple onchange="previewPhotos()">
+    <div id="photoPreview" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;"></div>
+
     <button class="btn" id="submitBtn" onclick="submitShare()">Submit</button>
     <div class="status" id="status"></div>
   </div>
@@ -73,17 +77,33 @@
 
 <script>
 const $=id=>document.getElementById(id);
+const MAX_PHOTOS=6, MAX_BYTES=10*1024*1024;
+function previewPhotos(){
+  const files=Array.from($('photos').files||[]); const box=$('photoPreview'); box.innerHTML='';
+  if(files.length>MAX_PHOTOS){ $('status').innerHTML='<span class="err">Please choose up to '+MAX_PHOTOS+' photos.</span>'; }
+  else if(files.some(f=>f.size>MAX_BYTES)){ $('status').innerHTML='<span class="err">Each photo must be under 10 MB.</span>'; }
+  else { $('status').innerHTML=''; }
+  files.slice(0,MAX_PHOTOS).forEach(f=>{
+    if(!/^image\//.test(f.type)) return;
+    const img=document.createElement('img'); img.style.cssText='width:66px;height:66px;object-fit:cover;border-radius:8px;border:1px solid var(--line);';
+    img.src=URL.createObjectURL(f); img.onload=()=>URL.revokeObjectURL(img.src); box.appendChild(img);
+  });
+}
 async function submitShare(){
   const body=$('body').value.trim();
   if(!body){ $('status').innerHTML='<span class="err">Please add a few details before submitting.</span>'; return; }
+  const files=Array.from($('photos').files||[]);
+  if(files.length>MAX_PHOTOS){ $('status').innerHTML='<span class="err">Please choose up to '+MAX_PHOTOS+' photos.</span>'; return; }
+  if(files.some(f=>f.size>MAX_BYTES)){ $('status').innerHTML='<span class="err">Each photo must be under 10 MB.</span>'; return; }
   const btn=$('submitBtn'); btn.disabled=true; $('status').innerHTML='Sending…';
   try{
+    const fd=new FormData();
+    fd.append('category',$('category').value); fd.append('subject',$('subject').value.trim());
+    fd.append('body',body); fd.append('submitted_by_name',$('name').value.trim());
+    fd.append('contact_info',$('contact').value.trim()); fd.append('link',$('link').value.trim());
+    files.slice(0,MAX_PHOTOS).forEach(f=>{ if(/^image\//.test(f.type)) fd.append('photos',f); });
     const r=await fetch('/api/portal/newsletter-submissions',{
-      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        category:$('category').value, subject:$('subject').value.trim(), body,
-        submitted_by_name:$('name').value.trim(), contact_info:$('contact').value.trim(), link:$('link').value.trim(),
-      }),
+      method:'POST', credentials:'same-origin', body:fd,
     });
     if(r.status===401){ $('status').innerHTML='<span class="err">Please open this from your community portal link so we know which community you\'re in.</span>'; btn.disabled=false; return; }
     const j=await r.json().catch(()=>({}));
