@@ -294,7 +294,7 @@ router.post('/ai/write', express.json({ limit: '256kb' }), async (req, res) => {
       in_the_news: 'Write a short, upbeat "community in the news" item. Use ONLY the supplied facts about real people/events; flag gaps with [STAFF REVIEW REQUIRED].',
     }[kind] || 'Write a friendly community-newsletter article.';
 
-    const sys = `You are Phoebe Carter, Bedrock's community engagement coordinator (the warm, people-first voice of the community), writing for homeowners.
+    const sys = `You are Phoebe Hart, Bedrock's community engagement coordinator (the warm, people-first voice of the community), writing for homeowners.
 ${guidance}
 Rules: warm, welcoming, service-oriented; write for homeowners, not HOA professionals; no legal conclusions; do not describe covenant enforcement in an aggressive tone. NEVER invent dates, prices, names, statistics, or facts about real people or businesses beyond what is supplied. Return STRICT JSON only.`;
     const user = `Community: ${communityName || '(unspecified)'}
