@@ -4591,6 +4591,42 @@ router.get('/builder/master-plan-approvals', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// ============================================================================
+// POST /newsletter-submissions — a resident contributes community content for
+// the newsletter (a neighbor/family accomplishment, a local business worth
+// knowing, an idea, an event). Lands in newsletter_submissions for staff to
+// curate into an issue in Newsletter Studio — never auto-published. Any
+// authenticated portal member (owner or renter — all community members).
+// (Ed 2026-09-06 — resident-sourced newsletter.)
+// ============================================================================
+router.post('/newsletter-submissions', express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const roleCheck = await resolveUserWithRole(req, res);
+    if (!roleCheck) return; // 401 already sent
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    const prop = scoped.property;
+    if (!prop || !prop.community_id) return res.status(400).json({ error: 'no_community_scope' });
+    const b = req.body || {};
+    const CATS = ['neighbor_spotlight', 'local_business', 'idea', 'event', 'other'];
+    const category = CATS.includes(b.category) ? b.category : null;
+    if (!category) return res.status(400).json({ error: 'category_required' });
+    const body = String(b.body || '').trim().slice(0, 4000);
+    if (!body) return res.status(400).json({ error: 'body_required' });
+    const row = {
+      community_id: prop.community_id, property_id: prop.id || null,
+      submitted_by_name: (String(b.submitted_by_name || '').trim() || (roleCheck.user && roleCheck.user.full_name) || '').slice(0, 120) || null,
+      submitted_by_email: (roleCheck.user && roleCheck.user.email) || null,
+      category, subject: String(b.subject || '').trim().slice(0, 200) || null, body,
+      contact_info: String(b.contact_info || '').trim().slice(0, 300) || null,
+      link: String(b.link || '').trim().slice(0, 500) || null,
+      status: 'new',
+    };
+    const { error } = await supabase.from('newsletter_submissions').insert(row);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { console.error('[portal] newsletter submission failed:', err.message); res.status(500).json({ error: 'submission_failed' }); }
+});
+
 // Helpers
 // ----------------------------------------------------------------------------
 function escapeHtml(s) {

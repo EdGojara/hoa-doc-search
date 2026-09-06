@@ -897,6 +897,18 @@ const MODULES = [
     cta: 'Browse or add a vendor',
     buildLink: (_ctx) => `/portal/vendor-directory`,
   },
+  // Share Community News — residents contribute newsletter content (a neighbor
+  // to celebrate, a local business, an idea, an event). Curated by staff in
+  // Newsletter Studio. (Ed 2026-09-06 — resident-sourced newsletter.)
+  {
+    key: 'share_news',
+    title: 'Share Community News',
+    description: 'Celebrate a neighbor, recommend a local business, or send an idea or event — we may feature it in the community newsletter.',
+    icon: '📣',
+    section: 'requests',
+    cta: 'Share something',
+    buildLink: (_ctx) => `/portal/share`,
+  },
 
   // ── Row 3: Your community ─────────────────────────────────────────
   {
@@ -1408,6 +1420,7 @@ function defaultDemoModuleConfig(slug) {
     balance:          { status: 'live' },  // demo mode: renders mock $0 current account
     arc:              { status: 'live' },
     vendor_directory: { status: 'live' },  // homeowner-data-only directory, no finder's fees
+    share_news:       { status: 'live' },  // residents contribute newsletter content
     compliance:       { status: 'live' },  // demo mode: shows mock open + resolved notices
     key_fob:          { status: 'live' },
     clubhouse:        { status: 'live' },  // demo mode: clubhouse always shows the demo flow

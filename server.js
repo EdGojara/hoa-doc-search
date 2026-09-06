@@ -1510,6 +1510,7 @@ app.get('/portal/events',    (req, res) => res.sendFile(require('path').join(__d
 app.get('/portal/contacts',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-contacts.html')));
 app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-map.html')));
 app.get('/portal/arc',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-arc.html')));
+app.get('/portal/share',     (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-share.html')));
 app.get('/portal/vendor-feedback', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-vendor-feedback.html')));
 app.get('/portal/vendor-directory',          (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-vendor-directory.html')));
 app.get('/portal/vendor-directory/vendor',   (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-vendor-detail.html')));

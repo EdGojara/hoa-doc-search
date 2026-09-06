@@ -56,7 +56,7 @@
   <!-- Setup -->
   <div class="card">
     <div class="row">
-      <div><label>Community</label><br><select id="comm"><option value="">Choose…</option></select></div>
+      <div><label>Community</label><br><select id="comm" onchange="onCommChange()"><option value="">Choose…</option></select></div>
       <div><label>Month</label><br><input id="month" type="month"></div>
       <div><label>Format</label><br>
         <select id="format">
@@ -78,6 +78,16 @@
       <button class="btn-ghost btn-sm" onclick="loadIssues()">↻ Refresh</button>
     </div>
     <div id="issues" class="issues"><div class="muted">Pick a community to see its issues.</div></div>
+  </div>
+
+  <!-- Resident submissions — content residents sent from the portal -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <strong style="color:var(--navy);">Resident submissions <span id="subCount" class="muted"></span></strong>
+      <button class="btn-ghost btn-sm" onclick="loadSubmissions()">↻ Refresh</button>
+    </div>
+    <div class="muted" style="font-size:12.5px;margin-bottom:8px;">Neighbors, businesses, ideas and events residents sent in from the portal. Review, then build the good ones into an issue with the section blocks.</div>
+    <div id="submissions"><div class="muted">Pick a community to see submissions.</div></div>
   </div>
 
   <!-- Editor -->
@@ -155,6 +165,41 @@ function buildAddTypes(){
   Object.entries(SECTION_TYPES).sort((a,b)=>a[1].label.localeCompare(b[1].label)).forEach(([k,v])=>{
     const o=document.createElement('option'); o.value=k; o.textContent=v.icon+' '+v.label; sel.appendChild(o);
   });
+}
+
+function onCommChange(){ loadIssues(); loadSubmissions(); }
+
+const SUB_CAT={ neighbor_spotlight:'Neighbor / family', local_business:'Local business', idea:'Idea', event:'Event', other:'Other' };
+function subEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function loadSubmissions(){
+  const cid=$('comm').value; const box=$('submissions'); const cnt=$('subCount');
+  if(!cid){ box.innerHTML='<div class="muted">Pick a community to see submissions.</div>'; if(cnt)cnt.textContent=''; return; }
+  box.innerHTML='<div class="muted">Loading…</div>';
+  try{
+    const r=await af('/api/newsletters/submissions?status=new&community_id='+encodeURIComponent(cid)); const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'failed');
+    const list=j.submissions||[];
+    if(cnt) cnt.textContent=list.length?('· '+list.length+' new'):'';
+    if(!list.length){ box.innerHTML='<div class="muted">No new submissions.</div>'; return; }
+    box.innerHTML=list.map(s=>{
+      const who=[s.submitted_by_name,s.submitted_by_email].filter(Boolean).join(' · ')||'anonymous';
+      const meta=[s.contact_info,s.link].filter(Boolean).map(subEsc).join(' · ');
+      return `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:11px 13px;margin-bottom:8px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#B8860B;">${subEsc(SUB_CAT[s.category]||s.category)}</div>
+        ${s.subject?`<div style="font-weight:700;color:var(--navy);margin-top:2px;">${subEsc(s.subject)}</div>`:''}
+        <div style="font-size:13.5px;color:#274060;margin-top:3px;white-space:pre-wrap;">${subEsc(s.body||'')}</div>
+        ${meta?`<div style="font-size:12px;color:#5A7390;margin-top:4px;">${meta}</div>`:''}
+        <div style="font-size:11.5px;color:#8A9BB0;margin-top:5px;">from ${subEsc(who)}${s.created_at?' · '+new Date(s.created_at).toLocaleDateString():''}</div>
+        <div style="margin-top:8px;display:flex;gap:6px;">
+          <button class="btn-ghost btn-sm" onclick="setSubStatus('${s.id}','used')">✓ Used it</button>
+          <button class="btn-ghost btn-sm" onclick="setSubStatus('${s.id}','declined')">Dismiss</button>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){ box.innerHTML='<div class="muted">Could not load submissions: '+subEsc(e.message)+'</div>'; }
+}
+async function setSubStatus(id,status){
+  try{ const r=await af('/api/newsletters/submissions/'+id+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})}); if(!r.ok) throw new Error('failed'); loadSubmissions(); }catch(_){ alert('Could not update.'); }
 }
 
 async function loadIssues(){

@@ -584,4 +584,33 @@ router.post('/issues/:id/send-email', express.json({ limit: '1mb' }), async (req
   } catch (err) { console.error('[flyer.send-email]', err); res.status(500).json({ error: err.message }); }
 });
 
+// --- Resident submissions (portal → Studio inbox) --------------------------
+// Residents contribute community content from the portal (POST /api/portal/
+// newsletter-submissions); staff review here, mark used/declined, then build
+// them into an issue with the normal section blocks. (Ed 2026-09-06.)
+router.get('/submissions', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const { community_id, status = 'new' } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    let q = supabase.from('newsletter_submissions').select('*').eq('community_id', community_id).order('created_at', { ascending: false }).limit(100);
+    if (status && status !== 'all') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ submissions: data || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/submissions/:id/status', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const s = String((req.body || {}).status || '');
+    if (!['new', 'used', 'declined'].includes(s)) return res.status(400).json({ error: 'bad_status' });
+    const { error } = await supabase.from('newsletter_submissions')
+      .update({ status: s, reviewed_by: (staff && staff.email) || null }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

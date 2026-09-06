@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Share Community News</title>
+<style>
+  :root{ --navy:#0B1D34; --gold:#D4AF37; --ink:#274060; --muted:#5A7390; --line:#d8dee7; --paper:#eef0f4; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--navy);font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5;}
+  header{background:var(--navy);color:#fff;padding:20px 22px;}
+  header .eyebrow{color:var(--gold);font-size:11px;letter-spacing:2px;text-transform:uppercase;font-weight:700;}
+  header h1{margin:5px 0 0;font-size:22px;font-family:Georgia,serif;}
+  header p{margin:8px 0 0;color:#B9C8DA;font-size:13.5px;max-width:60ch;}
+  .wrap{max-width:640px;margin:0 auto;padding:20px 16px 60px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 22px;box-shadow:0 6px 22px rgba(11,29,52,.06);}
+  label{display:block;font-size:12.5px;font-weight:600;color:var(--ink);margin:14px 0 5px;}
+  .hint{font-weight:400;color:var(--muted);}
+  select,input,textarea{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;font-family:inherit;}
+  textarea{min-height:120px;resize:vertical;}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  @media(max-width:520px){ .row{grid-template-columns:1fr;} }
+  .btn{margin-top:18px;background:var(--navy);color:#fff;border:none;padding:12px 22px;border-radius:9px;font-weight:700;font-size:14px;cursor:pointer;}
+  .btn:disabled{opacity:.5;cursor:default;}
+  .status{margin-top:12px;font-size:13.5px;}
+  .ok{color:#166534;} .err{color:#b42318;}
+  .done{text-align:center;padding:36px 20px;}
+  .done .big{font-size:40px;}
+  a.back{color:var(--muted);font-size:13px;text-decoration:none;}
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">Your Community</div>
+  <h1>Share Community News</h1>
+  <p>Know a neighbor worth celebrating, a great local business, an idea, or something happening around the neighborhood? Send it our way and we may feature it in the community newsletter.</p>
+</header>
+<div class="wrap">
+  <div class="card" id="formCard">
+    <label for="category">What would you like to share?</label>
+    <select id="category">
+      <option value="neighbor_spotlight">A neighbor or family to celebrate</option>
+      <option value="local_business">A local business worth knowing</option>
+      <option value="idea">An idea or suggestion for the community</option>
+      <option value="event">An event or happening</option>
+      <option value="other">Something else</option>
+    </select>
+
+    <label for="subject">Title <span class="hint">(optional)</span></label>
+    <input id="subject" type="text" maxlength="200" placeholder="A short headline">
+
+    <label for="body">Tell us about it</label>
+    <textarea id="body" maxlength="4000" placeholder="Share the details — who, what, why it's worth sharing."></textarea>
+
+    <div class="row">
+      <div>
+        <label for="name">Your name <span class="hint">(optional)</span></label>
+        <input id="name" type="text" maxlength="120" placeholder="So we can thank you">
+      </div>
+      <div>
+        <label for="contact">Contact / where to find it <span class="hint">(optional)</span></label>
+        <input id="contact" type="text" maxlength="300" placeholder="A phone, address, or who to reach">
+      </div>
+    </div>
+    <label for="link">Link <span class="hint">(optional)</span></label>
+    <input id="link" type="url" maxlength="500" placeholder="https://…">
+
+    <button class="btn" id="submitBtn" onclick="submitShare()">Submit</button>
+    <div class="status" id="status"></div>
+  </div>
+  <p style="margin-top:14px;"><a class="back" href="/portal.html">← Back to your portal</a></p>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+async function submitShare(){
+  const body=$('body').value.trim();
+  if(!body){ $('status').innerHTML='<span class="err">Please add a few details before submitting.</span>'; return; }
+  const btn=$('submitBtn'); btn.disabled=true; $('status').innerHTML='Sending…';
+  try{
+    const r=await fetch('/api/portal/newsletter-submissions',{
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        category:$('category').value, subject:$('subject').value.trim(), body,
+        submitted_by_name:$('name').value.trim(), contact_info:$('contact').value.trim(), link:$('link').value.trim(),
+      }),
+    });
+    if(r.status===401){ $('status').innerHTML='<span class="err">Please open this from your community portal link so we know which community you\'re in.</span>'; btn.disabled=false; return; }
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error||'Something went wrong');
+    $('formCard').innerHTML='<div class="done"><div class="big">🎉</div><h2 style="margin:10px 0 6px;">Thank you!</h2><p style="color:var(--muted);">We\'ve received your submission. Our team reviews everything before it goes in the newsletter.</p><p style="margin-top:16px;"><a class="back" href="/portal/share">Share something else</a></p></div>';
+  }catch(e){ $('status').innerHTML='<span class="err">'+(e.message||'Could not submit')+'</span>'; btn.disabled=false; }
+}
+</script>
+</body>
+</html>
