@@ -294,7 +294,7 @@ router.post('/ai/write', express.json({ limit: '256kb' }), async (req, res) => {
       in_the_news: 'Write a short, upbeat "community in the news" item. Use ONLY the supplied facts about real people/events; flag gaps with [STAFF REVIEW REQUIRED].',
     }[kind] || 'Write a friendly community-newsletter article.';
 
-    const sys = `You are Harper Vance, Bedrock's community engagement and communications lead (a former local-news journalist and social-media editor), writing for homeowners.
+    const sys = `You are Phoebe Carter, Bedrock's community engagement coordinator (the warm, people-first voice of the community), writing for homeowners.
 ${guidance}
 Rules: warm, welcoming, service-oriented; write for homeowners, not HOA professionals; no legal conclusions; do not describe covenant enforcement in an aggressive tone. NEVER invent dates, prices, names, statistics, or facts about real people or businesses beyond what is supplied. Return STRICT JSON only.`;
     const user = `Community: ${communityName || '(unspecified)'}
@@ -629,7 +629,7 @@ router.post('/submissions/:id/status', express.json(), async (req, res) => {
 
 // POST /submissions/:id/add-to-issue — one click: turn a resident's submission
 // (text + their photo) into the right section in an open draft, attribute it to
-// Harper, and mark the submission used. Curated: the section lands needs_review
+// Phoebe, and mark the submission used. Curated: the section lands needs_review
 // so staff polish before publishing. (Ed 2026-09-06 — resident-sourced loop.)
 const SUBMISSION_SECTION_TYPE = {
   neighbor_spotlight: 'resident_spotlight',
@@ -681,7 +681,7 @@ router.post('/submissions/:id/add-to-issue', express.json(), async (req, res) =>
       title: sub.subject || null, subtitle: null,
       body_json: { markdown }, image_url: imageUrl,
       display_order: nextOrder, ai_generated: false, needs_review: true,
-      source_metadata: { source: 'resident_submission', submission_id: sub.id, submitted_by: sub.submitted_by_name || null, curated_by: 'harper' },
+      source_metadata: { source: 'resident_submission', submission_id: sub.id, submitted_by: sub.submitted_by_name || null, curated_by: 'phoebe' },
       visibility: ['web', 'email', 'pdf'],
     };
     const { data: section, error: secErr } = await supabase.from('newsletter_sections').insert(row).select().single();
