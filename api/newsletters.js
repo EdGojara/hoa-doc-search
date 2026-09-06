@@ -294,7 +294,7 @@ router.post('/ai/write', express.json({ limit: '256kb' }), async (req, res) => {
       in_the_news: 'Write a short, upbeat "community in the news" item. Use ONLY the supplied facts about real people/events; flag gaps with [STAFF REVIEW REQUIRED].',
     }[kind] || 'Write a friendly community-newsletter article.';
 
-    const sys = `You are the editorial assistant for Bedrock Association Management writing for homeowners.
+    const sys = `You are Harper Vance, Bedrock's community engagement and communications lead (a former local-news journalist and social-media editor), writing for homeowners.
 ${guidance}
 Rules: warm, welcoming, service-oriented; write for homeowners, not HOA professionals; no legal conclusions; do not describe covenant enforcement in an aggressive tone. NEVER invent dates, prices, names, statistics, or facts about real people or businesses beyond what is supplied. Return STRICT JSON only.`;
     const user = `Community: ${communityName || '(unspecified)'}
@@ -625,6 +625,71 @@ router.post('/submissions/:id/status', express.json(), async (req, res) => {
     if (error) throw error;
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /submissions/:id/add-to-issue — one click: turn a resident's submission
+// (text + their photo) into the right section in an open draft, attribute it to
+// Harper, and mark the submission used. Curated: the section lands needs_review
+// so staff polish before publishing. (Ed 2026-09-06 — resident-sourced loop.)
+const SUBMISSION_SECTION_TYPE = {
+  neighbor_spotlight: 'resident_spotlight',
+  local_business: 'vendor_spotlight',
+  event: 'event_feature',
+  idea: 'custom_article',
+  other: 'custom_article',
+};
+router.post('/submissions/:id/add-to-issue', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const issueId = String((req.body || {}).issue_id || '');
+    if (!issueId) return res.status(400).json({ error: 'issue_id_required' });
+    const { data: sub, error: subErr } = await supabase.from('newsletter_submissions').select('*').eq('id', req.params.id).maybeSingle();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'submission_not_found' });
+    const { data: issue, error: issErr } = await supabase.from('newsletter_issues').select('id, community_id').eq('id', issueId).maybeSingle();
+    if (issErr) throw issErr;
+    if (!issue) return res.status(404).json({ error: 'issue_not_found' });
+    if (issue.community_id !== sub.community_id) return res.status(400).json({ error: 'community_mismatch' });
+
+    const sectionType = SUBMISSION_SECTION_TYPE[sub.category] || 'custom_article';
+    // Build the body from what the resident sent — facts only, never invented.
+    const bodyLines = [];
+    if (sub.body) bodyLines.push(sub.body);
+    if (sub.contact_info) bodyLines.push(`\n*Contact / where to find it:* ${sub.contact_info}`);
+    if (sub.link) bodyLines.push(`\n${sub.link}`);
+    const attribution = sub.submitted_by_name ? `\n\n*Submitted by ${sub.submitted_by_name}.*` : '';
+    const markdown = `${bodyLines.join('\n')}${attribution}`.trim();
+
+    // The resident's first photo becomes the section image (long-lived signed URL
+    // so it survives in the published newsletter).
+    let imageUrl = null;
+    const firstPhoto = (Array.isArray(sub.photos) ? sub.photos : []).find(p => p && p.path);
+    if (firstPhoto) {
+      try {
+        const { data: signed } = await supabase.storage.from('documents').createSignedUrl(firstPhoto.path, 60 * 60 * 24 * 365);
+        if (signed && signed.signedUrl) imageUrl = signed.signedUrl;
+      } catch (e) { console.warn('[newsletters.add-to-issue] sign photo failed:', e.message); }
+    }
+
+    const { data: last } = await supabase.from('newsletter_sections')
+      .select('display_order').eq('newsletter_issue_id', issueId)
+      .order('display_order', { ascending: false }).limit(1).maybeSingle();
+    const nextOrder = (last && typeof last.display_order === 'number') ? last.display_order + 1 : 0;
+
+    const row = {
+      newsletter_issue_id: issueId, section_type: sectionType,
+      title: sub.subject || null, subtitle: null,
+      body_json: { markdown }, image_url: imageUrl,
+      display_order: nextOrder, ai_generated: false, needs_review: true,
+      source_metadata: { source: 'resident_submission', submission_id: sub.id, submitted_by: sub.submitted_by_name || null, curated_by: 'harper' },
+      visibility: ['web', 'email', 'pdf'],
+    };
+    const { data: section, error: secErr } = await supabase.from('newsletter_sections').insert(row).select().single();
+    if (secErr) throw secErr;
+
+    await supabase.from('newsletter_submissions').update({ status: 'used', reviewed_by: (staff && staff.email) || null }).eq('id', sub.id);
+    res.json({ ok: true, section });
+  } catch (err) { console.error('[newsletters.add-to-issue]', err); res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;

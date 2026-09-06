@@ -51,7 +51,7 @@
 <div class="wrap">
   <a class="back" href="/">&larr; Back to trustEd</a>
   <h1>🗞️ Newsletter Studio</h1>
-  <p class="sub">Trusted builds a first draft from your community's data — events, board, contacts, and resident trends. You edit the cards, preview, and publish to web + PDF.</p>
+  <p class="sub">Harper Vance, Bedrock's community engagement lead, drafts a first version from your community's data — events, board, contacts, and resident trends — and turns resident submissions into content. You edit the cards, preview, and publish to web + PDF.</p>
 
   <!-- Setup -->
   <div class="card">
@@ -86,7 +86,7 @@
       <strong style="color:var(--navy);">Resident submissions <span id="subCount" class="muted"></span></strong>
       <button class="btn-ghost btn-sm" onclick="loadSubmissions()">↻ Refresh</button>
     </div>
-    <div class="muted" style="font-size:12.5px;margin-bottom:8px;">Neighbors, businesses, ideas and events residents sent in from the portal. Review, then build the good ones into an issue with the section blocks.</div>
+    <div class="muted" style="font-size:12.5px;margin-bottom:8px;">Neighbors, businesses, ideas and events residents sent in from the portal. <strong>Open a draft above</strong>, then click <em>➕ Add to draft</em> on the good ones — Harper drops each into the right section (text + photo) for you to polish.</div>
     <div id="submissions"><div class="muted">Pick a community to see submissions.</div></div>
   </div>
 
@@ -192,7 +192,8 @@ async function loadSubmissions(){
         ${meta?`<div style="font-size:12px;color:#5A7390;margin-top:4px;">${meta}</div>`:''}
         <div style="font-size:11.5px;color:#8A9BB0;margin-top:5px;">from ${subEsc(who)}${s.created_at?' · '+new Date(s.created_at).toLocaleDateString():''}</div>
         <div style="margin-top:8px;display:flex;gap:6px;">
-          <button class="btn-ghost btn-sm" onclick="setSubStatus('${s.id}','used')">✓ Used it</button>
+          <button class="btn-navy btn-sm" onclick="addSubToIssue('${s.id}',this)">➕ Add to draft</button>
+          <button class="btn-ghost btn-sm" onclick="setSubStatus('${s.id}','used')">✓ Mark used</button>
           <button class="btn-ghost btn-sm" onclick="setSubStatus('${s.id}','declined')">Dismiss</button>
         </div>
       </div>`;
@@ -201,6 +202,16 @@ async function loadSubmissions(){
 }
 async function setSubStatus(id,status){
   try{ const r=await af('/api/newsletters/submissions/'+id+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})}); if(!r.ok) throw new Error('failed'); loadSubmissions(); }catch(_){ alert('Could not update.'); }
+}
+async function addSubToIssue(id,btn){
+  if(!curIssue||!curIssue.id){ alert('Open a draft first (click an issue above, or Generate one), then Add to draft.'); return; }
+  if(btn){ btn.disabled=true; btn.textContent='➕ Adding…'; }
+  try{
+    const r=await af('/api/newsletters/submissions/'+id+'/add-to-issue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({issue_id:curIssue.id})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    await openIssue(curIssue.id);   // refresh the editor with the new section
+    loadSubmissions();              // it's now marked used, drops off the "new" list
+  }catch(e){ alert('Could not add: '+(e.message||e)); if(btn){ btn.disabled=false; btn.textContent='➕ Add to draft'; } }
 }
 
 async function loadIssues(){
