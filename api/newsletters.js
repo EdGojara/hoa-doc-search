@@ -18,6 +18,7 @@ const { requireStaff } = require('./_require_admin');
 const { isValidSectionType, NEWSLETTER_SECTION_TYPES } = require('../lib/newsletters/section_types');
 const { generateNewsletterDraft } = require('../lib/newsletters/generate');
 const { scanCommunityEvents } = require('../lib/events/detect_events');
+const { listKeyEvents, captureKeyEvents, CATEGORIES: KEY_EVENT_CATEGORIES } = require('../lib/events/key_events');
 const { renderNewsletterHTML } = require('../lib/newsletters/render');
 const { sendEmail } = require('../lib/notifications/email');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -707,6 +708,59 @@ router.post('/events/scan', express.json(), async (req, res) => {
     const result = await scanCommunityEvents({ supabase, communityId: community_id, dryRun });
     res.json({ ok: true, ...result });
   } catch (err) { console.error('[newsletters.events.scan]', err); res.status(500).json({ error: err.message }); }
+});
+
+// --- Community key-events ledger (migration 412) ---------------------------
+// The per-community timeline of significant developments — feeds the newsletter's
+// "This Month at <Community>" and the annual year-in-review. (Ed 2026-09-07.)
+
+// GET /key-events?community_id=&from=&to=  (from/to are dates; omit for all)
+router.get('/key-events', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const { community_id, from, to } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const events = await listKeyEvents(supabase, community_id, { from, to });
+    res.json({ ok: true, events });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /key-events/scan { community_id } — Phoebe captures key events from email.
+router.post('/key-events/scan', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const community_id = String((req.body || {}).community_id || '');
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const result = await captureKeyEvents({ supabase, communityId: community_id });
+    res.json({ ok: true, ...result });
+  } catch (err) { console.error('[newsletters.key-events.scan]', err); res.status(500).json({ error: err.message }); }
+});
+
+// POST /key-events { community_id, event_date, title, summary, category, impact } — manual add.
+router.post('/key-events', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const b = req.body || {};
+    if (!b.community_id || !b.title || !b.event_date) return res.status(400).json({ error: 'community_id, title, event_date required' });
+    const category = KEY_EVENT_CATEGORIES.includes(b.category) ? b.category : 'update';
+    const impact = ['minor', 'normal', 'major'].includes(b.impact) ? b.impact : 'normal';
+    const { data, error } = await supabase.from('community_key_events').insert({
+      community_id: b.community_id, event_date: b.event_date, title: String(b.title).slice(0, 200),
+      summary: b.summary || null, category, impact, source: 'manual', created_by: (staff && staff.email) || null,
+    }).select().single();
+    if (error) throw error;
+    res.json({ ok: true, event: data });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /key-events/:id/hide — drop a captured miss from the timeline.
+router.post('/key-events/:id/hide', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const { error } = await supabase.from('community_key_events').update({ status: 'hidden' }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;

@@ -92,6 +92,19 @@
     <div id="submissions"><div class="muted">Pick a community to see submissions.</div></div>
   </div>
 
+  <!-- Key events — the community timeline (feeds the newsletter + annual recap) -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+      <strong style="color:var(--navy);">📌 Key events <span id="keCount" class="muted"></span></strong>
+      <div class="row" style="align-items:center;gap:6px;">
+        <button class="btn-ghost btn-sm" id="keScanBtn" onclick="scanKeyEvents()" title="Phoebe reads the community's email and logs the significant developments">🔎 Scan email for key events</button>
+        <button class="btn-ghost btn-sm" onclick="loadKeyEvents()">↻ Refresh</button>
+      </div>
+    </div>
+    <div class="muted" style="font-size:12.5px;margin-bottom:8px;">The community's timeline of significant developments — a security-provider change, a completed project, a board decision. Feeds "This Month in the Community" in the newsletter, and the <strong>annual year-in-review</strong>.</div>
+    <div id="keyEvents"><div class="muted">Pick a community to see its key events.</div></div>
+  </div>
+
   <!-- Editor -->
   <div id="editor" class="hidden">
     <div class="card">
@@ -169,7 +182,47 @@ function buildAddTypes(){
   });
 }
 
-function onCommChange(){ loadIssues(); loadSubmissions(); }
+function onCommChange(){ loadIssues(); loadSubmissions(); loadKeyEvents(); }
+
+const KE_CAT={ governance:'Governance', security:'Security', project:'Project', financial:'Financial', event:'Event', amenity:'Amenity', maintenance:'Maintenance', community:'Community', update:'Update' };
+async function loadKeyEvents(){
+  const cid=$('comm').value; const box=$('keyEvents'); const cnt=$('keCount');
+  if(!cid){ box.innerHTML='<div class="muted">Pick a community to see its key events.</div>'; if(cnt)cnt.textContent=''; return; }
+  box.innerHTML='<div class="muted">Loading…</div>';
+  try{
+    const r=await af('/api/newsletters/key-events?community_id='+encodeURIComponent(cid)); const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'failed');
+    const list=j.events||[];
+    if(cnt) cnt.textContent=list.length?('· '+list.length):'';
+    if(!list.length){ box.innerHTML='<div class="muted">No key events yet. Click “Scan email for key events” and Phoebe will build the timeline.</div>'; return; }
+    // group by YYYY-MM
+    const groups={}; list.forEach(e=>{ const k=(e.event_date||'').slice(0,7); (groups[k]=groups[k]||[]).push(e); });
+    box.innerHTML=Object.keys(groups).sort().reverse().map(mo=>{
+      const lbl=mo?new Date(mo+'-01T12:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'}):'Undated';
+      return '<div style="margin-bottom:10px;"><div style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#8A9BB0;margin-bottom:5px;">'+subEsc(lbl)+'</div>'
+        +groups[mo].map(e=>'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:9px 11px;margin-bottom:6px;">'
+          +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;"><span style="font-weight:700;color:var(--navy);font-size:13.5px;">'+subEsc(e.title)+'</span>'
+          +'<span style="flex:0 0 auto;font-size:10px;font-weight:700;text-transform:uppercase;color:#8a6d1f;background:#fbeecb;border-radius:20px;padding:2px 8px;">'+subEsc(KE_CAT[e.category]||e.category)+'</span></div>'
+          +(e.summary?'<div style="font-size:12.5px;color:#274060;margin-top:3px;">'+subEsc(e.summary)+'</div>':'')
+          +'<div style="margin-top:5px;font-size:11px;color:#8A9BB0;">'+subEsc((e.event_date||''))+(e.source==='ai'?' · Phoebe':'')+' <a href="#" onclick="hideKeyEvent(\''+e.id+'\');return false;" style="color:#b91c1c;margin-left:6px;">hide</a></div>'
+        +'</div>').join('')+'</div>';
+    }).join('');
+  }catch(e){ box.innerHTML='<div class="muted">Could not load key events: '+subEsc(e.message)+'</div>'; }
+}
+async function scanKeyEvents(){
+  const cid=$('comm').value; if(!cid){ alert('Pick a community first.'); return; }
+  const btn=$('keScanBtn'); btn.disabled=true; const t=btn.textContent; btn.textContent='🔎 Scanning…';
+  try{
+    const r=await af('/api/newsletters/key-events/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    alert('Phoebe logged '+((j.added||[]).length)+' new key event(s).');
+    loadKeyEvents();
+  }catch(e){ alert('Could not scan: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
+async function hideKeyEvent(id){
+  try{ const r=await af('/api/newsletters/key-events/'+id+'/hide',{method:'POST'}); if(!r.ok) throw new Error('failed'); loadKeyEvents(); }catch(_){ alert('Could not hide.'); }
+}
 
 const SUB_CAT={ neighbor_spotlight:'Neighbor / family', local_business:'Local business', idea:'Idea', event:'Event', other:'Other' };
 function subEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
