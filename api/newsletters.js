@@ -321,9 +321,10 @@ router.post('/images/generate', express.json(), async (req, res) => {
     if (!prompt) return res.status(400).json({ error: 'prompt required' });
     const size = req.body.size === 'portrait' ? '1024x1536' : (req.body.size === 'landscape' ? '1536x1024' : '1024x1024');
     const style = req.body.style === 'photo' ? 'photo' : 'illustration';
+    const noText = 'Absolutely NO signs, banners, storefronts, monuments, posters, or lettering of any kind, and no readable text, words, brand names, logos, or trademarks anywhere in the image.';
     const safe = style === 'photo'
-      ? `A realistic, high-quality photograph for a community (HOA) event flyer: ${prompt}. Photorealistic, natural lighting, candid, warm and welcoming, inclusive, family-friendly. Do NOT include any real brand names, company logos, trademarked characters, or readable text/words.`
-      : `A warm, friendly, high-quality illustration for a community (HOA) event flyer: ${prompt}. Bright, welcoming, inclusive, family-friendly. Flat modern illustration style. Do NOT include any real brand names, company logos, trademarked characters, mascots, or readable text/words.`;
+      ? `A realistic, high-quality photograph for a community (HOA) newsletter: ${prompt}. Photorealistic, natural lighting, candid, warm and welcoming, inclusive, family-friendly. ${noText}`
+      : `A warm, friendly, high-quality illustration for a community (HOA) newsletter: ${prompt}. Bright, welcoming, inclusive, family-friendly. Flat modern illustration style. ${noText}`;
     const OpenAI = require('openai');
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const result = await openai.images.generate({ model: 'gpt-image-1', prompt: safe, size, n: 1 });
