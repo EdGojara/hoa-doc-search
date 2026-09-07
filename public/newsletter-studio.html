@@ -67,8 +67,10 @@
       </div>
       <button class="btn-navy" id="genBtn" onclick="generate()">✨ Generate draft</button>
       <button class="btn-ghost" onclick="newBlank()">Start blank</button>
+      <button class="btn-ghost" id="scanBtn" onclick="scanEvents()" title="Phoebe reads the community's email and adds community events to the calendar">🔎 Find events in email</button>
     </div>
     <div id="genNotes" class="notes hidden"></div>
+    <div id="scanNotes" class="notes hidden"></div>
   </div>
 
   <!-- Existing issues -->
@@ -248,6 +250,27 @@ async function generate(){
     await loadIssues(); openIssue(j.issue_id);
   }catch(e){ alert('Could not generate: '+e.message); }
   finally{ btn.disabled=false; btn.textContent='✨ Generate draft'; }
+}
+async function scanEvents(){
+  const cid=$('comm').value;
+  if(!cid){ alert('Pick a community first.'); return; }
+  const btn=$('scanBtn'); btn.disabled=true; const t=btn.textContent; btn.textContent='🔎 Scanning…';
+  const box=$('scanNotes');
+  try{
+    const r=await af('/api/newsletters/events/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    const added=j.added||[];
+    let html='<strong>Phoebe scanned '+(j.candidates_scanned||0)+' email(s).</strong> ';
+    if(added.length){
+      html+='Added '+added.length+' community event'+(added.length>1?'s':'')+' to the calendar:'
+        +'<ul>'+added.map(e=>'<li>'+esc(e.title)+' — '+esc(e.date)+(e.start_time?(' · '+esc(e.start_time)):'')+(e.location?(' · '+esc(e.location)):'')+'</li>').join('')+'</ul>'
+        +'<span class="muted">On the calendar now, authored by Phoebe. Generate (or regenerate) to pull them into the newsletter.</span>';
+    } else {
+      html+='No new community events found (anything already on the calendar is skipped).';
+    }
+    box.innerHTML=html; box.classList.remove('hidden');
+  }catch(e){ box.innerHTML='<span class="err">Could not scan: '+esc(e.message)+'</span>'; box.classList.remove('hidden'); }
+  finally{ btn.disabled=false; btn.textContent=t; }
 }
 async function newBlank(){
   const cid=$('comm').value, month=$('month').value;

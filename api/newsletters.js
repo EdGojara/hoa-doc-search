@@ -17,6 +17,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { requireStaff } = require('./_require_admin');
 const { isValidSectionType, NEWSLETTER_SECTION_TYPES } = require('../lib/newsletters/section_types');
 const { generateNewsletterDraft } = require('../lib/newsletters/generate');
+const { scanCommunityEvents } = require('../lib/events/detect_events');
 const { renderNewsletterHTML } = require('../lib/newsletters/render');
 const { sendEmail } = require('../lib/notifications/email');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -691,6 +692,21 @@ router.post('/submissions/:id/add-to-issue', express.json(), async (req, res) =>
     await supabase.from('newsletter_submissions').update({ status: 'used', reviewed_by: (staff && staff.email) || null }).eq('id', sub.id);
     res.json({ ok: true, section });
   } catch (err) { console.error('[newsletters.add-to-issue]', err); res.status(500).json({ error: err.message }); }
+});
+
+// POST /events/scan — Phoebe reads the community's email, extracts community-WIDE
+// events, and adds the new ones to the calendar as herself (so they flow into
+// the newsletter's Looking Ahead). System runs it; staff supervise the result.
+// (Ed 2026-09-07.) body: { community_id, dry_run? }
+router.post('/events/scan', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const community_id = String((req.body || {}).community_id || '');
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const dryRun = !!(req.body || {}).dry_run;
+    const result = await scanCommunityEvents({ supabase, communityId: community_id, dryRun });
+    res.json({ ok: true, ...result });
+  } catch (err) { console.error('[newsletters.events.scan]', err); res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;
