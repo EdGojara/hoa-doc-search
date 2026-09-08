@@ -104,12 +104,22 @@ async function loadExceptions(){
   try{
     const r=await af('/api/ap-intake/exceptions'); const j=await r.json().catch(()=>({}));
     const items=(j&&j.exceptions)||[];
-    if(!items.length){ wrap.innerHTML=''; return; }
+    // Never silently hide. When the list is empty, say so — an invisible empty
+    // state is indistinguishable from "the check failed and hid the backlog", and
+    // a bill silently missing is the whole problem. (Ed 2026-09-08.)
+    if(!items.length){
+      wrap.innerHTML=`<div style="margin:0 0 14px;padding:9px 12px;border:1px solid #d1fadf;background:#f2faf5;border-radius:9px;color:#14532d;font-size:12.5px;">✓ No exceptions — every emailed bill posted or is in the review queue below.</div>`;
+      return;
+    }
     const commOpts=(window._comms||[]).map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
-    wrap.innerHTML=`<h2 style="color:#92400e;">🧾 Needs attention · ${items.length} bill${items.length===1?'':'s'} from email couldn’t auto-file</h2>
-      <div class="note" style="margin:-6px 0 10px;color:#64748b;">Emma saved the invoice but couldn’t place it. Pick the community (and vendor if asked), then send it to Payables — or dismiss it if it isn’t a bill.</div>
-      ${items.map(x=>excRow(x,commOpts)).join('')}`;
-  }catch(e){ wrap.innerHTML=''; }
+    const total=items.reduce((a,x)=>a+(Number(x.total_cents)||0),0);
+    wrap.innerHTML=`<div style="border:2px solid #f0b968;background:#fffaf0;border-radius:11px;padding:14px 16px;margin:0 0 16px;">
+      <h2 style="color:#92400e;margin:0 0 4px;">🧾 Exceptions · ${items.length} bill${items.length===1?'':'s'} couldn’t auto-file${total?` · ${money(total)} on hold`:''}</h2>
+      <div class="note" style="margin:0 0 10px;color:#7c5a1e;">Emma saved each invoice but couldn’t place it. Pick the community (and vendor if asked) to send it to Payables, or dismiss it if it isn’t a bill. Nothing here has posted yet.</div>
+      ${items.map(x=>excRow(x,commOpts)).join('')}</div>`;
+  }catch(e){
+    wrap.innerHTML=`<div style="margin:0 0 14px;padding:9px 12px;border:1px solid #f3c0c0;background:#fdecec;border-radius:9px;color:#b91c1c;font-size:12.5px;">Could not load the exceptions list (${escapeHtml(e.message||'error')}). Bills may be waiting — retry, don’t assume it’s empty.</div>`;
+  }
 }
 function excRow(x,commOpts){
   const needVendor = !x.suggested_vendor_id;
