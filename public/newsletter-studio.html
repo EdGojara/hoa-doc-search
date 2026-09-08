@@ -106,6 +106,19 @@
     <div id="keyEvents"><div class="muted">Pick a community to see its key events.</div></div>
   </div>
 
+  <!-- Project decisions from staff email — reconciles Project Watch with reality -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+      <strong style="color:var(--navy);">🚧 Project decisions <span id="pdCount" class="muted"></span></strong>
+      <div class="row" style="align-items:center;gap:6px;">
+        <button class="btn-ghost btn-sm" id="pdScanBtn" onclick="scanProjDecisions()" title="Read the team's staff email and pull the real project/vendor decisions">🔎 Scan staff email</button>
+        <button class="btn-ghost btn-sm" onclick="loadProjDecisions()">↻ Refresh</button>
+      </div>
+    </div>
+    <div class="muted" style="font-size:12.5px;margin-bottom:8px;">The projects the team decides in email (Martha, Celina, the rest of the team) — pulled from the archive with the source email on each. <strong>Confirm</strong> the ones that are right and they feed Project Watch in the newsletter. Nothing publishes to residents until you confirm.</div>
+    <div id="projDecisions"><div class="muted">Pick a community, then Scan staff email.</div></div>
+  </div>
+
   <!-- Editor -->
   <div id="editor" class="hidden">
     <div class="card">
@@ -183,7 +196,7 @@ function buildAddTypes(){
   });
 }
 
-function onCommChange(){ loadIssues(); loadSubmissions(); loadKeyEvents(); }
+function onCommChange(){ loadIssues(); loadSubmissions(); loadKeyEvents(); loadProjDecisions(); }
 
 const KE_CAT={ governance:'Governance', security:'Security', project:'Project', financial:'Financial', event:'Event', amenity:'Amenity', maintenance:'Maintenance', community:'Community', update:'Update' };
 async function loadKeyEvents(){
@@ -223,6 +236,49 @@ async function scanKeyEvents(){
 }
 async function hideKeyEvent(id){
   try{ const r=await af('/api/newsletters/key-events/'+id+'/hide',{method:'POST'}); if(!r.ok) throw new Error('failed'); loadKeyEvents(); }catch(_){ alert('Could not hide.'); }
+}
+
+// ---- Project decisions from staff email ----
+var PD_LABEL={approved:'✅ Approved',completed:'🏁 Complete',in_progress:'🔧 In progress',proposed:'🗳️ For board approval',deferred:'⏸️ On hold',declined:'🚫 Not approved'};
+async function loadProjDecisions(){
+  const cid=$('comm').value; const box=document.getElementById('projDecisions'); const cnt=document.getElementById('pdCount');
+  if(!cid){ box.innerHTML='<div class="muted">Pick a community, then Scan staff email.</div>'; if(cnt)cnt.textContent=''; return; }
+  try{
+    const r=await af('/api/newsletters/project-decisions?community_id='+encodeURIComponent(cid)); const j=await r.json();
+    const list=(j.decisions||[]);
+    const pending=list.filter(d=>d.review_status==='pending'); const confirmed=list.filter(d=>d.review_status==='confirmed');
+    if(cnt)cnt.textContent=pending.length?('· '+pending.length+' to review'):(confirmed.length?('· '+confirmed.length+' confirmed'):'');
+    if(!list.length){ box.innerHTML='<div class="muted">No project decisions yet. Click "Scan staff email" to pull them from the archive.</div>'; return; }
+    const card=(d)=>{
+      const amt=d.amount_cents!=null?(' · $'+(d.amount_cents/100).toLocaleString('en-US',{minimumFractionDigits:2})):'';
+      const src=d.source||{};
+      const pendingActions='<div style="margin-top:6px;display:flex;gap:6px;"><button class="btn-ghost btn-sm" style="color:#065f46;border-color:#a7d7be;" onclick="confirmPD(\''+d.id+'\')">✓ Confirm</button><button class="btn-ghost btn-sm" style="color:#b91c1c;" onclick="dismissPD(\''+d.id+'\')">Dismiss</button></div>';
+      return '<div style="border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:8px;'+(d.review_status==='confirmed'?'background:#f2faf5;':'')+'">'
+        +'<div style="font-weight:600;color:var(--navy);">'+subEsc(d.project)+' <span style="font-weight:500;color:#64748b;font-size:12px;">'+(PD_LABEL[d.status]||d.status)+amt+(d.vendor?(' · '+subEsc(d.vendor)):'')+'</span></div>'
+        +(d.quote?'<div style="font-size:12px;color:#475569;margin-top:3px;font-style:italic;">"'+subEsc(d.quote)+'"</div>':'')
+        +'<div style="font-size:11px;color:#8A9BB0;margin-top:4px;">'+(d.decided_by?('by '+subEsc(d.decided_by)+' · '):'')+(d.decided_on||'')+(src.from?(' · from '+subEsc(src.from)):'')+(src.subject?(' · "'+subEsc(String(src.subject).slice(0,50))+'"'):'')+'</div>'
+        +(d.review_status==='pending'?pendingActions:'<div style="margin-top:4px;font-size:11px;color:#065f46;">✓ confirmed'+(d.reviewed_by?(' by '+subEsc(d.reviewed_by)):'')+'</div>');
+    };
+    box.innerHTML=(pending.length?'<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">To review</div>'+pending.map(card).join(''):'')
+      +(confirmed.length?'<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:8px 0 4px;">Confirmed — in Project Watch</div>'+confirmed.map(card).join(''):'');
+  }catch(e){ box.innerHTML='<div class="muted">Could not load project decisions: '+subEsc(e.message)+'</div>'; }
+}
+async function scanProjDecisions(){
+  const cid=$('comm').value; if(!cid){ alert('Pick a community first.'); return; }
+  const btn=document.getElementById('pdScanBtn'); const t=btn.textContent; btn.textContent='Reading staff email…'; btn.disabled=true;
+  try{
+    const r=await af('/api/newsletters/project-decisions/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'scan failed');
+    if(j.note) alert('Found '+j.found+' decision(s), but they can\'t be saved yet — '+j.note+'.');
+    loadProjDecisions();
+  }catch(e){ alert('Scan failed: '+e.message); }
+  finally{ btn.textContent=t; btn.disabled=false; }
+}
+async function confirmPD(id){
+  try{ const r=await af('/api/newsletters/project-decisions/'+id+'/confirm',{method:'POST'}); if(!r.ok) throw new Error('failed'); loadProjDecisions(); }catch(_){ alert('Could not confirm.'); }
+}
+async function dismissPD(id){
+  try{ const r=await af('/api/newsletters/project-decisions/'+id+'/dismiss',{method:'POST'}); if(!r.ok) throw new Error('failed'); loadProjDecisions(); }catch(_){ alert('Could not dismiss.'); }
 }
 
 const SUB_CAT={ neighbor_spotlight:'Neighbor / family', local_business:'Local business', idea:'Idea', event:'Event', other:'Other' };

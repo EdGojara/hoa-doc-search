@@ -19,6 +19,7 @@ const { isValidSectionType, NEWSLETTER_SECTION_TYPES } = require('../lib/newslet
 const { generateNewsletterDraft } = require('../lib/newsletters/generate');
 const { scanCommunityEvents } = require('../lib/events/detect_events');
 const { listKeyEvents, captureKeyEvents, CATEGORIES: KEY_EVENT_CATEGORIES } = require('../lib/events/key_events');
+const { scanProjectDecisions, persistProposals } = require('../lib/events/project_decisions');
 const { buildAnnualRecapSections } = require('../lib/newsletters/annual_recap');
 const { renderNewsletterHTML } = require('../lib/newsletters/render');
 const { sendEmail } = require('../lib/notifications/email');
@@ -789,6 +790,79 @@ router.post('/key-events/:id/hide', express.json(), async (req, res) => {
   const staff = await requireStaff(req, res); if (!staff) return;
   try {
     const { error } = await supabase.from('community_key_events').update({ status: 'hidden' }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ===========================================================================
+// Project decisions from STAFF EMAIL (Ed 2026-09-08). trustEd reads the project/
+// vendor decisions the team makes in email (already archived) and PROPOSES them
+// for review; a human confirms before the newsletter's Project Watch reads them.
+// Every proposal carries its source email. See lib/events/project_decisions.js.
+// ===========================================================================
+
+// POST /project-decisions/scan { community_id } — read staff email, extract
+// project/vendor decisions, upsert them as PENDING proposals for review.
+router.post('/project-decisions/scan', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const community_id = String((req.body || {}).community_id || '');
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const { data: comm } = await supabase.from('communities').select('name').eq('id', community_id).maybeSingle();
+    if (!comm) return res.status(404).json({ error: 'community_not_found' });
+    const scan = await scanProjectDecisions({ communityName: comm.name });
+    const persisted = await persistProposals(supabase, community_id, scan.decisions);
+    res.json({ ok: true, scanned: scan.scanned, found: scan.decisions.length, ...persisted, note: persisted.error ? 'run migration 413 to store proposals' : undefined });
+  } catch (err) { console.error('[newsletters.project-decisions.scan]', err); res.status(500).json({ error: err.message }); }
+});
+
+// GET /project-decisions?community_id=&review_status=pending
+router.get('/project-decisions', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const { community_id, review_status } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    let q = supabase.from('project_email_decisions').select('*').eq('community_id', community_id)
+      .order('decided_on', { ascending: false, nullsFirst: false }).limit(100);
+    if (review_status) q = q.eq('review_status', String(review_status));
+    const { data, error } = await q;
+    if (error) return res.json({ ok: true, decisions: [], note: 'run migration 413' });
+    res.json({ ok: true, decisions: data || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /project-decisions/:id/confirm — a human confirms this decision. Also logs
+// it to the key-events ledger so the community record and the newsletter agree.
+router.post('/project-decisions/:id/confirm', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const { data: row, error } = await supabase.from('project_email_decisions')
+      .update({ review_status: 'confirmed', reviewed_by: (staff && staff.email) || 'staff', reviewed_at: new Date().toISOString() })
+      .eq('id', req.params.id).select().single();
+    if (error) throw error;
+    // Mirror a resident-meaningful decision into the key-events ledger (best-effort).
+    try {
+      if (row && ['approved', 'completed'].includes(row.status)) {
+        const verb = row.status === 'completed' ? 'completed' : 'approved';
+        await supabase.from('community_key_events').insert({
+          community_id: row.community_id, event_date: row.decided_on || new Date().toISOString().slice(0, 10),
+          title: `${row.project} ${verb}`, summary: row.quote || null, category: 'project', impact: 'normal',
+          source: 'email', created_by: (staff && staff.email) || null,
+        });
+      }
+    } catch (_) { /* key-events mirror is best-effort */ }
+    res.json({ ok: true, decision: row });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /project-decisions/:id/dismiss
+router.post('/project-decisions/:id/dismiss', express.json(), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    const { error } = await supabase.from('project_email_decisions')
+      .update({ review_status: 'dismissed', reviewed_by: (staff && staff.email) || 'staff', reviewed_at: new Date().toISOString() })
+      .eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
