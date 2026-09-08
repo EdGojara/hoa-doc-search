@@ -1833,10 +1833,13 @@ router.post('/vendor-process', express.json(), async (req, res) => {
 router.post('/pull', express.json(), async (req, res) => {
   try {
     if (!graphIngest.isConfigured()) return res.status(400).json({ error: 'graph_not_connected', detail: 'Outlook ingest needs the Azure app (Mail.Read) + GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET.' });
-    // ALWAYS pull both info@ and claire@ (union with any env override), so a
-    // single-value EMAIL_INGEST_MAILBOX on Render can't silently drop claire@.
+    // Pull EVERY AI inbox from the one canonical list (graphSend.TEAM_INGEST_MAILBOXES),
+    // union'd with any env override. The list used to be hand-maintained right here
+    // and had silently dropped darby@ and phoebe@ — so replies to those inboxes were
+    // never ingested and never owned (the same failure that hid Noreen's reply to
+    // Claire). Deriving from the shared list means a new teammate can't be forgotten.
     const extra = (process.env.EMAIL_INGEST_MAILBOX || '').split(',').map((m) => m.trim()).filter(Boolean);
-    const mailboxes = [...new Set(['info@bedrocktx.com', 'claire@bedrocktx.com', graphSend.EMMA_MAILBOX, graphSend.ANNIE_MAILBOX, graphSend.MIRANDA_MAILBOX, graphSend.PAIGE_MAILBOX, graphSend.REESE_MAILBOX, graphSend.KAT_MAILBOX, graphSend.AMANDA_MAILBOX, ...extra])];
+    const mailboxes = [...new Set([...graphSend.TEAM_INGEST_MAILBOXES, ...extra])];
     const days = Math.min(60, parseInt((req.body || {}).days, 10) || 14);
     const sinceISO = new Date(Date.now() - days * 864e5).toISOString();
     const results = {}; let kept = 0, drafted = 0, invoicesLoaded = 0, filed = 0;
