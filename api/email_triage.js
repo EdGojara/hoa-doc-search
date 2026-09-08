@@ -472,6 +472,24 @@ router.get('/doc/:id/url', async (req, res) => {
   } catch (err) { console.error('[email_triage] doc url failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// GET /draft-attachment/url?path=... — a signed URL to OPEN a file stashed on a
+// draft (extracted.draft.attachments[].storage_path), so the reviewer can view
+// exactly what will be sent BEFORE sending. This is the fix for the 2026-09-08
+// incident: a form was attached that nobody could open to check, and it turned
+// out to be another owner's completed application. Restricted to the outbound-
+// attachment prefix so it can't sign arbitrary storage paths.
+router.get('/draft-attachment/url', async (req, res) => {
+  try {
+    const path = String((req.query || {}).path || '');
+    if (!path || !/^email_outbound_attachments\//.test(path) || path.includes('..')) {
+      return res.status(400).json({ error: 'bad_path' });
+    }
+    const { data: signed, error } = await supabase.storage.from('documents').createSignedUrl(path, 600);
+    if (error || !signed) return res.status(404).json({ error: 'not_found' });
+    res.json({ url: signed.signedUrl });
+  } catch (err) { console.error('[email_triage] draft-attachment url failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // GET /:id
 router.get('/:id', async (req, res) => {
   try {
@@ -1330,16 +1348,18 @@ router.post('/:id/send', express.json(), async (req, res) => {
       fromMailbox = graphSend.CLAIRE_MAILBOX; senderLabel = 'Claire (Bedrock AI)';
     }
 
-    // Architectural request: attach the community's blank ARC application form so
-    // the homeowner gets the actual form to complete, not just a description of
-    // the process. (Ed 2026-07-14 — the Bishen Calloo shed thread.)
-    if (m.classification === 'acc_request' && m.community_id) {
-      try {
-        const { getArcApplicationAttachment } = require('../lib/email/arc_application');
-        const arc = await getArcApplicationAttachment(m.community_id);
-        if (arc && arc.attachment) attachments = [...(attachments || []), arc.attachment];
-      } catch (_) { /* best-effort — the reply still sends without the form */ }
-    }
+    // ARC form auto-attach DISABLED at send (Ed 2026-09-08 incident). This used
+    // to silently attach a "blank" ARC form to any acc_request reply, INVISIBLY —
+    // it never showed on the draft, so the reviewer couldn't see what was going
+    // out. It attached "Architectural Review Application - Waterview Estates.pdf",
+    // which was actually Andre Pham's COMPLETED, APPROVED application (his name,
+    // address, phone, email) saved under a generic title — so the title-only
+    // blank-form guard passed it, and one owner's PII was mailed to another owner
+    // (Noreen). Two rules this violated: (1) nothing gets attached that the
+    // reviewer did not SEE on the draft first; (2) a title heuristic cannot prove
+    // a PDF is blank. The form is now attached at DRAFT time (visible, reviewable)
+    // and only when it is a VERIFIED blank — see lib/email/arc_application.js.
+    // Nothing auto-attaches here anymore.
 
     // Files the AGENT generated when she drafted this reply.
     //
