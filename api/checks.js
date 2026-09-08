@@ -28,6 +28,11 @@ const stmtUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize:
 const router = express.Router();
 
 function handleErr(res, feature, err) {
+  // No mailing address = flag it, don't cut the check. Surface the exact vendor(s)
+  // and the message so Emma / the operator sees "No address on file for X".
+  if (err.code === 'vendor_no_address') {
+    return res.status(409).json({ error: err.message, code: err.code, vendors: err.vendors || [] });
+  }
   if (err.code === 'invalid_input' || err.code === 'invalid_state') {
     return res.status(400).json({ error: err.message, code: err.code });
   }
