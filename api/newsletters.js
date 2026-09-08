@@ -19,6 +19,7 @@ const { isValidSectionType, NEWSLETTER_SECTION_TYPES } = require('../lib/newslet
 const { generateNewsletterDraft } = require('../lib/newsletters/generate');
 const { scanCommunityEvents } = require('../lib/events/detect_events');
 const { listKeyEvents, captureKeyEvents, CATEGORIES: KEY_EVENT_CATEGORIES } = require('../lib/events/key_events');
+const { buildAnnualRecapSections } = require('../lib/newsletters/annual_recap');
 const { renderNewsletterHTML } = require('../lib/newsletters/render');
 const { sendEmail } = require('../lib/notifications/email');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -751,6 +752,36 @@ router.post('/key-events', express.json(), async (req, res) => {
     if (error) throw error;
     res.json({ ok: true, event: data });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /annual-recap/generate { community_id, year } — build a Year-in-Review
+// issue from the key-events ledger + the year's numbers + completed projects.
+// For the annual meeting. Renders/prints like a newsletter. (Ed 2026-09-07.)
+router.post('/annual-recap/generate', express.json(), async (req, res) => {
+  try {
+    const u = await requireStaff(req, res); if (!u) return;
+    const b = req.body || {};
+    if (!b.community_id) return res.status(400).json({ error: 'community_id required' });
+    const year = Number(b.year) || new Date().getFullYear();
+    let communityName = 'Your Community';
+    try { const { data } = await supabase.from('communities').select('name').eq('id', b.community_id).maybeSingle(); if (data) communityName = data.name; } catch (_) {}
+    const { sections, notes } = await buildAnnualRecapSections({ supabase, communityId: b.community_id, year, communityName });
+    const title = `${communityName} — ${year} Year in Review`;
+    const { data: issue, error: ie } = await supabase.from('newsletter_issues').insert({
+      community_id: b.community_id, title, slug: uniqueSlug(`${year}-year-in-review-${slugify(communityName)}`),
+      issue_month: `${year}-12-01`, format_key: 'community_magazine', template_key: 'community-update',
+      created_by: u.user.id, created_by_name: u.full_name || null,
+    }).select().single();
+    if (ie) return res.status(500).json({ error: ie.message });
+    const rows = (sections || []).map((s, i) => ({
+      newsletter_issue_id: issue.id,
+      section_type: isValidSectionType(s.section_type) ? s.section_type : 'custom_article',
+      title: s.title || null, subtitle: s.subtitle || null, body_json: s.body_json || {}, image_url: s.image_url || null,
+      display_order: i, ai_generated: !!s.ai_generated, needs_review: !!s.needs_review, source_metadata: s.source_metadata || {},
+    }));
+    if (rows.length) { const { error: se } = await supabase.from('newsletter_sections').insert(rows); if (se) return res.status(500).json({ error: se.message }); }
+    res.json({ ok: true, issue_id: issue.id, section_count: rows.length, notes });
+  } catch (err) { console.error('[newsletters.annual-recap]', err); res.status(500).json({ error: err.message }); }
 });
 
 // POST /key-events/:id/hide — drop a captured miss from the timeline.

@@ -68,6 +68,7 @@
       <button class="btn-navy" id="genBtn" onclick="generate()">✨ Generate draft</button>
       <button class="btn-ghost" onclick="newBlank()">Start blank</button>
       <button class="btn-ghost" id="scanBtn" onclick="scanEvents()" title="Phoebe reads the community's email and adds community events to the calendar">🔎 Find events in email</button>
+      <button class="btn-ghost" id="recapBtn" onclick="genAnnualRecap()" title="Build a Year-in-Review issue from the key-events timeline for the annual meeting">📅 Year in Review</button>
     </div>
     <div id="genNotes" class="notes hidden"></div>
     <div id="scanNotes" class="notes hidden"></div>
@@ -303,6 +304,19 @@ async function generate(){
     await loadIssues(); openIssue(j.issue_id);
   }catch(e){ alert('Could not generate: '+e.message); }
   finally{ btn.disabled=false; btn.textContent='✨ Generate draft'; }
+}
+async function genAnnualRecap(){
+  const cid=$('comm').value, month=$('month').value;
+  if(!cid){ alert('Pick a community first.'); return; }
+  const year=(month||'').slice(0,4)||String(new Date().getFullYear());
+  if(!confirm('Build a '+year+' Year in Review for this community? It creates a new issue from the key-events timeline, the year’s numbers, and completed projects.')) return;
+  const btn=$('recapBtn'); btn.disabled=true; const t=btn.textContent; btn.textContent='📅 Building…';
+  try{
+    const r=await af('/api/newsletters/annual-recap/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:cid,year:Number(year)})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed');
+    await loadIssues(); openIssue(j.issue_id);
+  }catch(e){ alert('Could not build the recap: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent=t; }
 }
 async function scanEvents(){
   const cid=$('comm').value;
