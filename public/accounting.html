@@ -1992,7 +1992,9 @@
     if (pay) pay.insertAdjacentHTML('afterbegin', `<div class="card" style="margin-bottom:12px; background:#f0fdf4; border:1px solid #86efac;">
       <div style="font-weight:700; color:#166534;">✓ ${n?`${n} check${n===1?'':'s'} issued`:'Checks issued'}${j.total_cents!=null?' · '+fmt(j.total_cents):''}.</div>
       <div class="muted" style="font-size:12.5px; margin:5px 0 10px;">The bills moved out of the pay list into the check register below.${win?'':' <b style="color:#92400e;">Your browser blocked the print window — use the button below.</b>'}</div>
-      <a href="${pdfUrl}" target="_blank" rel="noopener" style="${CHK_BTN} display:inline-block; text-decoration:none;">🖨 Open printable checks PDF</a></div>`);
+      <a href="${pdfUrl}" target="_blank" rel="noopener" style="${CHK_BTN} display:inline-block; text-decoration:none;">🖨 Open printable checks PDF</a>
+      <a href="/api/checks/run/${j.print_run_id}/positive-pay" style="${CHK_BTN} display:inline-block; text-decoration:none; margin-left:8px; background:#0B1D34;">⬇ Positive Pay file</a>
+      <div class="muted" style="font-size:11.5px; margin-top:6px;">For a NewFirst account: download the Positive Pay file and upload it in Treasury Management before the 10:00 am cutoff.</div></div>`);
   };
 
   async function chkLoadRegister() {
