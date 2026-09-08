@@ -1493,14 +1493,17 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         const description = obs.ai_description
           || obs.reviewer_notes
           || `Condition observed at the property consistent with ${(violation.enforcement_categories && violation.enforcement_categories.label) || 'the noted category'}.`;
+        // Freshest evidence: the latest re-inspection photo + date, not the
+        // opening observation's, so a continued violation's letter shows NOW.
+        // (Ed 2026-09-08.)
+        const { latestEvidence } = require('../lib/enforcement/latest_evidence');
+        const ev = await latestEvidence(supabase, violation.id, obs);
         observation = {
           ai_description: description,
           severity: obs.severity,
-          captured_at: (obs.inspection_photos && obs.inspection_photos.captured_at) || obs.created_at,
+          captured_at: ev.captured_at || obs.created_at,
         };
-        if (obs.inspection_photos && obs.inspection_photos.storage_path) {
-          photoStoragePath = obs.inspection_photos.storage_path;
-        }
+        if (ev.storage_path) photoStoragePath = ev.storage_path;
       }
     }
     // Fallback: pull the most recent close-up/single inspection_photo
@@ -2360,13 +2363,22 @@ async function _assembleBundlePdf({ group, letterDate }) {
     return new Date((va && va.opened_at) || 0) - new Date((vb && vb.opened_at) || 0);
   });
 
+  // FRESHEST evidence per violation — the latest re-inspection photo + date, not
+  // the opening observation's, so a Second Notice shows the property as it looks
+  // NOW (Ed 2026-09-08: a 2nd notice rendered the Aug 3 photo for a Sept 1 drive).
+  const { latestEvidence } = require('../lib/enforcement/latest_evidence');
+  const evByViolation = new Map();
+  for (const d of orderedGroup) {
+    const v = vById.get(d.violation_id);
+    if (v && !evByViolation.has(v.id)) evByViolation.set(v.id, await latestEvidence(supabase, v.id, oById.get(d.observation_id)));
+  }
   let widePhotoBuffer = null;
   for (const d of orderedGroup) {
-    const obs = oById.get(d.observation_id);
-    const photo = obs && obs.inspection_photos;
-    if (photo && photo.paired_wide_photo_id) {
+    const v = vById.get(d.violation_id);
+    const ev = v && evByViolation.get(v.id);
+    if (ev && ev.paired_wide_photo_id) {
       try {
-        const { data: wide } = await supabase.from('inspection_photos').select('storage_path').eq('id', photo.paired_wide_photo_id).maybeSingle();
+        const { data: wide } = await supabase.from('inspection_photos').select('storage_path').eq('id', ev.paired_wide_photo_id).maybeSingle();
         if (wide && wide.storage_path) {
           const { data: blob } = await supabase.storage.from('documents').download(wide.storage_path);
           if (blob) widePhotoBuffer = Buffer.from(await blob.arrayBuffer());
@@ -2408,10 +2420,10 @@ async function _assembleBundlePdf({ group, letterDate }) {
       .select('opened_at, current_stage').eq('property_id', propertyId).eq('primary_category_id', v.primary_category_id)
       .neq('id', v.id).gte('opened_at', yearAgo.toISOString()).neq('quality_status', 'superseded')
       .order('opened_at', { ascending: false }).limit(5);
+    const ev = evByViolation.get(v.id) || {};
     let closeUpBuf = null;
-    const photo = o && o.inspection_photos;
-    if (photo && photo.storage_path) {
-      try { const { data: blob } = await supabase.storage.from('documents').download(photo.storage_path); if (blob) closeUpBuf = Buffer.from(await blob.arrayBuffer()); } catch (_) {}
+    if (ev.storage_path) {
+      try { const { data: blob } = await supabase.storage.from('documents').download(ev.storage_path); if (blob) closeUpBuf = Buffer.from(await blob.arrayBuffer()); } catch (_) {}
     }
     const bundleFinding = (o && o.ai_description && o.ai_description.trim().length >= 10)
       ? o.ai_description
@@ -2420,7 +2432,7 @@ async function _assembleBundlePdf({ group, letterDate }) {
       violation_id: v.id,
       category_label: v.enforcement_categories && v.enforcement_categories.label,
       ai_description: bundleFinding,
-      observation_captured_at: (photo && photo.captured_at) || (o && o.created_at),
+      observation_captured_at: ev.captured_at || (o && o.created_at),
       governing_doc: govDoc,
       prior_notices: (priors || []).map((pv) => ({ date: pv.opened_at, stage: pv.current_stage })),
       close_up_photo_buffer: closeUpBuf,
@@ -3690,16 +3702,20 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             const finding = (obs.ai_description && obs.ai_description.trim().length >= 10)
               ? obs.ai_description
               : _cleanFinding(obs.reviewer_notes || '', catRow && catRow.label);
-            observation = { ai_description: finding, severity: obs.severity, captured_at: (obs.inspection_photos && obs.inspection_photos.captured_at) || obs.created_at };
+            // Freshest evidence: latest re-inspection photo + date, not the
+            // opening observation's (Ed 2026-09-08).
+            const { latestEvidence } = require('../lib/enforcement/latest_evidence');
+            const ev = await latestEvidence(supabase, vio.id, obs);
+            observation = { ai_description: finding, severity: obs.severity, captured_at: ev.captured_at || obs.created_at };
             // Close-up photo
-            if (obs.inspection_photos && obs.inspection_photos.storage_path) {
+            if (ev.storage_path) {
               try {
-                const { data: blob } = await supabase.storage.from('documents').download(obs.inspection_photos.storage_path);
+                const { data: blob } = await supabase.storage.from('documents').download(ev.storage_path);
                 if (blob) closeUpBuffer = Buffer.from(await blob.arrayBuffer());
               } catch (_) {}
             }
             // Paired wide photo
-            const widePhotoId = obs.inspection_photos && obs.inspection_photos.paired_wide_photo_id;
+            const widePhotoId = ev.paired_wide_photo_id;
             if (widePhotoId) {
               try {
                 const { data: wide } = await supabase
@@ -3890,18 +3906,22 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
 
         // Seal the EVIDENCE photo behind this letter (the §209 proof: image +
         // capture timestamp + GPS), so the chain photo→violation→letter is all
-        // immutable. Non-fatal.
-        if (vio.opened_from_observation_id) {
-          try {
-            const { data: evObs } = await supabase.from('property_observations')
-              .select('inspection_photo_id').eq('id', vio.opened_from_observation_id).maybeSingle();
-            if (evObs && evObs.inspection_photo_id) {
-              await _sealEvidencePhoto(evObs.inspection_photo_id, {
-                violation_id: vio.id, community_id: vio.community_id, property_id: vio.property_id, role: 'primary',
-              });
-            }
-          } catch (_) {}
-        }
+        // immutable. Seal the SAME photo the letter shows — the LATEST re-inspection
+        // when the case was continued, not the opening observation. (Ed 2026-09-08:
+        // a 2nd notice sealed the Aug 3 photo though the property was re-driven
+        // Sept 1.) Non-fatal.
+        try {
+          const { latestEvidence } = require('../lib/enforcement/latest_evidence');
+          const { data: _openObs } = vio.opened_from_observation_id
+            ? await supabase.from('property_observations').select('inspection_photo_id').eq('id', vio.opened_from_observation_id).maybeSingle()
+            : { data: null };
+          const _ev = await latestEvidence(supabase, vio.id, _openObs);
+          if (_ev && _ev.inspection_photo_id) {
+            await _sealEvidencePhoto(_ev.inspection_photo_id, {
+              violation_id: vio.id, community_id: vio.community_id, property_id: vio.property_id, role: 'primary',
+            });
+          }
+        } catch (_) {}
 
         // Mail channel delivery receipt — records the postmark side of the
         // evidence trail. Every channel send produces a delivery_receipts
@@ -6217,11 +6237,14 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
       .filter((l) => l.mailed_at || l.status === 'sent')
       .map((l) => ({ opened_at: l.mailed_at || l.sent_at || l.created_at, current_stage: _TYPE_TO_STAGE[l.type], mail_type: l.delivery_method || 'first_class_mail' }));
 
-    // Download photo if present
+    // Download photo if present — the LATEST re-inspection when continued, not the
+    // opening observation. (Ed 2026-09-08.)
+    const { latestEvidence: _latestEv6 } = require('../lib/enforcement/latest_evidence');
+    const _ev6 = await _latestEv6(supabase, violation.id, obsRow);
     let photoBuffer = null;
-    if (obsRow && obsRow.inspection_photos && obsRow.inspection_photos.storage_path) {
+    if (_ev6 && _ev6.storage_path) {
       try {
-        const { data: dl } = await supabase.storage.from('documents').download(obsRow.inspection_photos.storage_path);
+        const { data: dl } = await supabase.storage.from('documents').download(_ev6.storage_path);
         if (dl) photoBuffer = Buffer.from(await dl.arrayBuffer());
       } catch (_) {}
     }
@@ -6304,7 +6327,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId, 
           include_hearing_rights: true,
           remedy_mode: remedyMode,
           photo_buffer: photoBuffer,
-          photo_captured_at: (obsRow && obsRow.inspection_photos && obsRow.inspection_photos.captured_at) || null,
+          photo_captured_at: (_ev6 && _ev6.captured_at) || (obsRow && obsRow.inspection_photos && obsRow.inspection_photos.captured_at) || null,
         });
       } catch (e) { return { error: 'self-help letter render failed: ' + e.message }; }
       await _ensureLettersBucket();
@@ -8378,12 +8401,15 @@ router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) 
       if (violation.opened_from_observation_id) {
         const { data: obs } = await supabase
           .from('property_observations')
-          .select('inspection_photos(captured_at, storage_path)')
+          .select('inspection_photo_id, inspection_photos(captured_at, storage_path)')
           .eq('id', violation.opened_from_observation_id)
           .maybeSingle();
-        if (obs && obs.inspection_photos && obs.inspection_photos.storage_path) {
-          photoStoragePath = obs.inspection_photos.storage_path;
-          photoCapturedAt = obs.inspection_photos.captured_at || null;
+        // The LATEST re-inspection when continued, not the opening observation. (Ed 2026-09-08.)
+        const { latestEvidence: _le8 } = require('../lib/enforcement/latest_evidence');
+        const _ev8 = await _le8(supabase, violation.id, obs);
+        if (_ev8 && _ev8.storage_path) {
+          photoStoragePath = _ev8.storage_path;
+          photoCapturedAt = _ev8.captured_at || null;
         }
       }
       if (!photoStoragePath) {
