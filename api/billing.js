@@ -3068,4 +3068,24 @@ router.put('/communities/:communityId/billing-code', express.json(), async (req,
   }
 });
 
+// ---- Duplicate ACC decisions: catch the double-billed ARC fee -------------
+// A second decided ACC decision for the same project re-bills the ARC fee. This
+// flags the pairs so they're archived to one before billing. (Ed 2026-09-08.)
+router.get('/duplicate-acc-decisions', async (req, res) => {
+  try {
+    const { findDuplicateAccDecisions } = require('../lib/acc/duplicate_decisions');
+    const groups = await findDuplicateAccDecisions(supabase, { communityId: req.query.community_id || null });
+    res.json({ ok: true, groups });
+  } catch (err) { console.error('[billing] duplicate-acc-decisions failed:', err.message); res.status(500).json({ error: err.message }); }
+});
+
+router.post('/duplicate-acc-decisions/archive', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const { archiveDuplicateDecisions } = require('../lib/acc/duplicate_decisions');
+    const out = await archiveDuplicateDecisions(supabase, { keepId: b.keep_id, archiveIds: b.archive_ids || [], by: 'staff' });
+    res.json({ ok: true, ...out });
+  } catch (err) { console.error('[billing] archive duplicate acc failed:', err.message); res.status(400).json({ error: err.message }); }
+});
+
 module.exports = { router, dedupeArcRows, _arcKey };

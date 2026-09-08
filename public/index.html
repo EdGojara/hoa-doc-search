@@ -4265,8 +4265,38 @@
         <div id="billing-period-hint-activity" style="font-size:11px; color:#888; margin-bottom:10px;"></div>
         <div id="billing-draft-preview-activity" style="margin-bottom:8px;"></div>
         <div id="billing-draft-result-activity" style="font-size:14px;"></div>
+        <!-- Duplicate ACC decisions: a second decided decision for the same project
+             re-bills the ARC fee. Catch it before billing. (Ed 2026-09-08.) -->
+        <div id="dup-acc-panel" style="margin-top:10px;">
+          <button class="secondary-btn" onclick="loadDupAccPanel()" style="font-size:12px; padding:5px 11px;">🔎 Check for duplicate ACC decisions</button>
+        </div>
       </div>
     </div>
+    <script>
+    (function(){
+      function _e(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+      async function loadDupAccPanel(){
+        const wrap=document.getElementById('dup-acc-panel'); if(!wrap) return;
+        wrap.innerHTML='<div style="font-size:12px;color:#888;">Checking for duplicates…</div>';
+        try{
+          const f=window._authFetch||fetch;
+          const r=await f('/api/billing/duplicate-acc-decisions'); const j=await r.json();
+          const groups=(j&&j.groups)||[];
+          if(!groups.length){ wrap.innerHTML='<div style="padding:8px 11px;border:1px solid #d1fadf;background:#f2faf5;border-radius:8px;color:#14532d;font-size:12.5px;">✓ No duplicate ACC decisions — every project bills once. <a href="#" onclick="loadDupAccPanel();return false;" style="color:#14532d;">re-check</a></div>'; return; }
+          wrap.innerHTML='<div style="border:2px solid #f0b968;background:#fffaf0;border-radius:10px;padding:12px 14px;"><div style="font-weight:700;color:#92400e;margin-bottom:6px;">🏗️ Duplicate ACC decisions · '+groups.length+' to review</div><div style="font-size:12px;color:#7c5a1e;margin-bottom:8px;">Two or more decided ACC decisions for the same property re-bill the ARC fee. Keep the original (✓) and archive the duplicate — unless it is a genuine revision, then leave it.</div>'+groups.map(_dupAccGroup).join('')+'</div>';
+        }catch(e){ wrap.innerHTML='<div style="color:#b91c1c;font-size:12px;">Could not load duplicate check: '+_e(e.message||'error')+' <a href="#" onclick="loadDupAccPanel();return false;">retry</a></div>'; }
+      }
+      function _dupAccGroup(g){
+        const rows=g.decisions.map(function(d){ const keep=d.id===g.suggested_keep_id; return '<div style="display:flex;gap:8px;font-size:12px;padding:2px 0;"><span style="width:15px;color:#14532d;">'+(keep?'✓':'')+'</span><span style="color:#64748b;width:74px;">'+((d.created_at||'').slice(0,10))+'</span><span style="flex:1;color:'+(keep?'#14532d':'#334155')+';font-weight:'+(keep?'600':'400')+';">'+_e((d.project_summary||'').slice(0,80))+'</span></div>'; }).join('');
+        const archiveIds=g.decisions.map(function(d){return d.id;}).filter(function(id){return id!==g.suggested_keep_id;});
+        return '<div style="border:1px solid #e2e8f0;background:#fff;border-radius:8px;padding:8px 11px;margin-bottom:7px;"><div style="font-weight:600;color:#0B1D34;margin-bottom:3px;">'+_e(g.community_name||'')+' · '+_e(g.homeowner_address||g.homeowner_name||'')+'</div>'+rows+'<div style="margin-top:5px;"><button class="secondary-btn" style="font-size:11px;padding:4px 10px;" onclick=\'archiveDupAcc("'+g.suggested_keep_id+'",'+JSON.stringify(archiveIds).replace(/"/g,"&quot;")+')\'>Archive the duplicate(s), keep ✓</button></div></div>';
+      }
+      async function archiveDupAcc(keepId, archiveIds){
+        try{ const f=window._authFetch||fetch; const r=await f('/api/billing/duplicate-acc-decisions/archive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keep_id:keepId,archive_ids:archiveIds})}); const j=await r.json(); if(!r.ok) throw new Error(j.error||'failed'); loadDupAccPanel(); }catch(e){ alert('Could not archive: '+e.message); }
+      }
+      window.loadDupAccPanel=loadDupAccPanel; window.archiveDupAcc=archiveDupAcc;
+    })();
+    </script>
 
     <!-- One-off / ad-hoc charges — the SINGLE manual-add mechanism. Consolidated
          2026-07-16 (was split across "Pending billing items" above the builder +
