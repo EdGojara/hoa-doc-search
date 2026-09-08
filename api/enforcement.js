@@ -34,6 +34,7 @@ const { defaultWeightForSource } = require('../lib/enforcement/source_weights');
 const { expandCategoryToAliases } = require('../lib/enforcement/category_aliases');
 const { getLegalFlag } = require('../lib/enforcement/legal_flag');
 const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
+const { partitionMailable } = require('../lib/enforcement/stale_letter_guard');
 const { renderForceMowLetterPdf } = require('../lib/lawn_force_mow_renderer');
 const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_reminder');
 const { parseVantacaViolations, parseVantacaViolationsPdf, extractVantacaSummaryTotals } = require('../lib/enforcement/vantaca_violation_import');
@@ -3095,23 +3096,51 @@ router.post('/mail-queue/confirm-mailed', express.json(), async (req, res) => {
     const printedAt = req.body && req.body.printed_at; // scope to ONE print session
     let q = supabase
       .from('interactions')
-      .select('id')
+      .select('id, type, violation_id, status')
       .in('type', _MAIL_LETTER_TYPES)
       .eq('delivery_method', deliveryMethod)
       .not('printed_at', 'is', null)
-      .is('mailed_at', null);
+      .is('mailed_at', null)
+      .neq('status', 'rejected'); // a held/rejected letter never re-enters the mail run
     if (communityId) q = q.eq('community_id', communityId);
     if (printedAt) q = q.eq('printed_at', printedAt);
     const { data: letters, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
-    if (!letters || !letters.length) return res.json({ confirmed: 0 });
+    if (!letters || !letters.length) return res.json({ confirmed: 0, held: 0 });
+
+    // Truth cross-check at send time: a letter sealed before an over-escalation
+    // correction (or a void) is stale — hold it, never mail, never bill. This is
+    // the machine-readable enforcement of the old prose "do not mail" note that
+    // the mail run used to ignore (17715 Sunset River Lane's certified §209).
+    const { mailable, stale } = await partitionMailable(supabase, letters);
     const now = new Date().toISOString();
-    const { error: uErr } = await supabase
-      .from('interactions')
-      .update({ mailed_at: now, status: 'sent', sent_at: now })
-      .in('id', letters.map((l) => l.id));
-    if (uErr) return res.status(500).json({ error: uErr.message });
-    res.json({ confirmed: letters.length });
+
+    if (stale.length) {
+      await supabase.from('interactions')
+        .update({ status: 'rejected' })
+        .in('id', stale.map((l) => l.id));
+      // Leave an audit note per held letter so the hold is visible in the timeline.
+      const notes = stale.map((l) => ({
+        community_id: communityId || null,
+        violation_id: l.violation_id || null,
+        type: 'observation_note',
+        subject: 'Letter held at mail run — stale',
+        content: `Held from the ${deliveryMethod} mail run and not mailed: ${l.reason}. The case moved after this letter was sealed, so mailing it would send an escalation the case no longer supports. No fee was charged.`,
+        source: 'stale_letter_guard',
+        created_at: now,
+      }));
+      try { await supabase.from('interactions').insert(notes); } catch (e) { console.warn('[confirm-mailed] hold-note insert failed:', e.message); }
+      console.warn(`[confirm-mailed] held ${stale.length} stale letter(s):`, stale.map((l) => `${l.id.slice(0, 8)} (${l.reason})`).join('; '));
+    }
+
+    if (mailable.length) {
+      const { error: uErr } = await supabase
+        .from('interactions')
+        .update({ mailed_at: now, status: 'sent', sent_at: now })
+        .in('id', mailable.map((l) => l.id));
+      if (uErr) return res.status(500).json({ error: uErr.message });
+    }
+    res.json({ confirmed: mailable.length, held: stale.length });
   } catch (err) {
     console.error('[mail-queue.confirm-mailed]', err);
     res.status(500).json({ error: err.message });
