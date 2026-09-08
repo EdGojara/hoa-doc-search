@@ -206,6 +206,31 @@ router.post('/exceptions/:id/dismiss', express.json(), async (req, res) => {
   } catch (err) { console.error('[ap_intake] dismiss exception failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// ---- Duplicate vendors: the recurring silent blocker -----------------------
+// Two+ ACTIVE records for the same vendor make intake refuse to guess, so bills
+// pile up as exceptions. Surface them so they're merged BEFORE they block a bill.
+
+// GET /duplicate-vendors — groups of active vendors with the same normalized name.
+router.get('/duplicate-vendors', async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const { findDuplicateVendorGroups } = require('../lib/ap/duplicate_vendors');
+    const groups = await findDuplicateVendorGroups(supabase);
+    res.json({ ok: true, groups });
+  } catch (err) { console.error('[ap_intake] duplicate-vendors failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /duplicate-vendors/merge — { primary_id, dupe_ids:[] } -> consolidate.
+router.post('/duplicate-vendors/merge', express.json(), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const b = req.body || {};
+    const { mergeVendorGroup } = require('../lib/ap/duplicate_vendors');
+    const out = await mergeVendorGroup(supabase, { primaryId: b.primary_id, dupeIds: b.dupe_ids || [], resolvedBy: admin.full_name || 'staff' });
+    res.json({ ok: true, ...out });
+  } catch (err) { console.error('[ap_intake] merge vendors failed:', err.message); res.status(400).json({ error: safeErrorMessage(err) }); }
+});
+
 // POST /sweep-inbox — one-time: pull vendor bills already sitting in Emma's inbox
 // into Payables (or the exceptions list) using the PDF we archived at ingest, so
 // the existing backlog clears the same way new mail now does. Idempotent per

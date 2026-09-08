@@ -73,6 +73,7 @@ function shell(){
     <div id="preview"></div>
     <div style="margin:4px 0 10px;"><button class="btn ghost" id="sweepBtn" style="font-size:12px;padding:5px 11px;" onclick="sweepInbox(this)" title="Pull vendor bills already sitting in Emma's inbox into Payables (or the needs-attention list) using the archived PDF">🧹 Pull vendor bills from Emma’s inbox</button> <span id="sweepMsg" style="font-size:12px;color:#64748b;"></span></div>
     <div id="exceptionsWrap"></div>
+    <div id="dupVendorsWrap"></div>
     <h2>Review queue</h2>
     <div id="q-filter" style="display:none; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px;">
       <select id="q-comm" onchange="renderQueue()" style="font-size:12.5px; padding:6px 9px; border:1px solid #e2e8f0; border-radius:7px;"><option value="">All associations</option></select>
@@ -92,6 +93,44 @@ function shell(){
   analyze.addEventListener('click',()=>doIngest(chosen,document.getElementById('comm').value,analyze));
   loadQueue();
   loadExceptions();
+  loadDuplicateVendors();
+}
+
+// ---- Duplicate vendors: merge before they block a bill ---------------------
+async function loadDuplicateVendors(){
+  const wrap=document.getElementById('dupVendorsWrap'); if(!wrap) return;
+  try{
+    const r=await af('/api/ap-intake/duplicate-vendors'); const j=await r.json().catch(()=>({}));
+    const groups=(j&&j.groups)||[];
+    if(!groups.length){ wrap.innerHTML=''; return; }
+    wrap.innerHTML=`<div style="border:2px solid #c7b3ef;background:#f7f4fe;border-radius:11px;padding:14px 16px;margin:0 0 16px;">
+      <h2 style="color:#5b21b6;margin:0 0 4px;">👥 Duplicate vendors · ${groups.length} to merge</h2>
+      <div class="note" style="margin:0 0 10px;color:#5f4b8a;">Two or more active records for the same vendor make Emma hold a bill for review instead of posting it. Merge each into one record so bills post automatically. The kept record (marked ✓) is chosen for having a mailing address and the most history.</div>
+      ${groups.map(dupGroupRow).join('')}</div>`;
+  }catch(e){ wrap.innerHTML=''; }
+}
+function dupGroupRow(g){
+  const rows=g.vendors.map(v=>{
+    const keep=v.id===g.suggested_primary_id;
+    return `<div style="display:flex;align-items:center;gap:8px;font-size:12.5px;padding:3px 0;">
+      <span style="width:16px;">${keep?'✓':''}</span>
+      <span style="flex:1;color:${keep?'#14532d':'#64748b'};font-weight:${keep?'600':'400'};">${escapeHtml(v.name)}</span>
+      <span style="color:#64748b;">${v.invoice_count} inv${v.invoice_count===1?'':'s'}${v.has_address?' · has address':' · no address'}</span>
+    </div>`;
+  }).join('');
+  return `<div style="border:1px solid #e2e8f0;background:#fff;border-radius:9px;padding:9px 12px;margin-bottom:8px;">
+    <div style="font-weight:700;color:var(--navy);margin-bottom:4px;">${escapeHtml(g.name)} <span style="font-weight:400;color:#64748b;">— ${g.count} records</span></div>
+    ${rows}
+    <div style="margin-top:6px;"><button class="btn" style="font-size:12px;padding:5px 12px;" onclick="mergeDupVendors('${g.suggested_primary_id}',${JSON.stringify(g.vendors.map(v=>v.id).filter(id=>id!==g.suggested_primary_id)).replace(/"/g,'&quot;')},this)">Merge into ✓ record</button></div>
+  </div>`;
+}
+async function mergeDupVendors(primaryId, dupeIds, btn){
+  if(btn){ btn.disabled=true; btn.textContent='Merging…'; }
+  try{
+    const r=await af('/api/ap-intake/duplicate-vendors/merge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({primary_id:primaryId, dupe_ids:dupeIds})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'merge failed');
+    loadDuplicateVendors();
+  }catch(e){ alert('Could not merge: '+e.message); if(btn){ btn.disabled=false; btn.textContent='Merge into ✓ record'; } }
 }
 
 // ---- Intake exceptions: emailed bills that couldn't auto-file --------------
