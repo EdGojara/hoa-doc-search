@@ -367,7 +367,20 @@ router.get('/team', async (req, res) => {
   try {
     const { TEAM, TESSA_CARD } = require('../lib/email/persona');
     const owner = await isOwner(req);
-    const list = owner ? [...TEAM, TESSA_CARD] : TEAM;
+    // Internal-ops agents (HR/Growth) are OWNER-ONLY, like Tessa: their inboxes
+    // (jobs@ applications, growth mail) must be actionable by Ed but NEVER shown on
+    // a community-facing surface — so they're appended here for the owner, not put
+    // on the roster that feeds the prospect team screen. (Ed 2026-09-07.)
+    let opsCards = [];
+    if (owner) {
+      try {
+        opsCards = require('../lib/team/bedrock_ops').people().map((m) => ({
+          persona: m.persona, name: m.name, title: m.title,
+          mailbox: (m.self_mailbox || m.mailbox), emoji: m.emoji, internal: true,
+        }));
+      } catch (_) {}
+    }
+    const list = owner ? [...TEAM, ...opsCards, TESSA_CARD] : TEAM;
     // Each teammate's OWN address — used to split "addressed directly to them"
     // vs "came to info@ and was routed to them."
     const SELF = { claire: 'claire@', emma: 'emma@', annie: 'annie@', miranda: 'miranda@' };
