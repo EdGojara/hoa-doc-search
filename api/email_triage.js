@@ -1041,6 +1041,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       applicationOnFile: accFormCtx, // what they attached (address/project) — confirm, don't re-ask
       reportedIssue, // neighbor complaint: is the reported issue already an open case? (privacy-safe boolean)
       pendingApplications, // Annie: ACC applications already in our queue for this property
+      persona: m.persona || 'claire', // draft AS the owning teammate, so a specialist answers in their own lane
     });
     res.json({ ...draft, covers, auto_attachments: autoAttachments, community_id: communityId, ...recipientOut });
   } catch (err) {
