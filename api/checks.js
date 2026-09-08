@@ -529,6 +529,28 @@ router.get('/run/:printRunId/pdf', async (req, res) => {
   } catch (err) { handleErr(res, 'run-pdf', err); }
 });
 
+// GET /run/:printRunId/positive-pay — the NewFirst issued-check file for this run's
+// account, to upload through Treasury Management after the checks are cut. One file
+// per account (a run is one account), headerless CSV per the bank's sample.
+router.get('/run/:printRunId/positive-pay', async (req, res) => {
+  try {
+    const { data: checks, error } = await supabase.from('check_register')
+      .select('check_number, payee_name, amount_cents, issue_date, status')
+      .eq('print_run_id', req.params.printRunId)
+      .neq('status', 'void')
+      .order('check_number');
+    if (error) throw error;
+    if (!checks || !checks.length) return res.status(404).json({ error: 'run_not_found_or_empty' });
+    const { generatePositivePayCsv } = require('../lib/accounting/positive_pay');
+    const out = generatePositivePayCsv(checks);
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="positive-pay-${stamp}-${req.params.printRunId.slice(0, 8)}.csv"`);
+    res.setHeader('X-Bedrock-Check-Count', out.count);
+    res.send(out.csv);
+  } catch (err) { handleErr(res, 'run-positive-pay', err); }
+});
+
 router.get('/register', async (req, res) => {
   try {
     const { community_id, bank_account_id, limit = '500' } = req.query;
