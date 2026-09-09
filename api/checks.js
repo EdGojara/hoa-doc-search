@@ -529,20 +529,38 @@ router.get('/run/:printRunId/pdf', async (req, res) => {
   } catch (err) { handleErr(res, 'run-pdf', err); }
 });
 
-// GET /run/:printRunId/positive-pay — the NewFirst issued-check file for this run's
-// account, to upload through Treasury Management after the checks are cut. One file
-// per account (a run is one account), headerless CSV per the bank's sample.
+// GET /run/:printRunId/positive-pay — the NewFirst issued-check file for this run,
+// to upload through Treasury Management after the checks are cut. Combined format:
+// a header row + one row per check, with the ACCOUNT # column so all operating
+// accounts can go in one upload (Melody Hess confirmed 2026-09-09).
 router.get('/run/:printRunId/positive-pay', async (req, res) => {
   try {
     const { data: checks, error } = await supabase.from('check_register')
-      .select('check_number, payee_name, amount_cents, issue_date, status')
+      .select('check_number, payee_name, amount_cents, issue_date, status, bank_account_id')
       .eq('print_run_id', req.params.printRunId)
       .neq('status', 'void')
       .order('check_number');
     if (error) throw error;
     if (!checks || !checks.length) return res.status(404).json({ error: 'run_not_found_or_empty' });
+    // Resolve each check's FULL bank account number for the ACCOUNT # column. It
+    // is stored encrypted (account_number_encrypted); last4 is not enough for the
+    // bank to route the row, so we decrypt the full number and leave it blank if
+    // it was never captured — generatePositivePayCsv then flags it as missing.
+    const acctIds = [...new Set((checks || []).map((c) => c.bank_account_id).filter(Boolean))];
+    const acctMap = {};
+    if (acctIds.length) {
+      const { decryptField } = require('../lib/crypto_field');
+      const { data: accts } = await supabase.from('bank_accounts').select('id, account_number_encrypted').in('id', acctIds);
+      for (const a of accts || []) {
+        let full = '';
+        try { full = a.account_number_encrypted ? (decryptField(a.account_number_encrypted) || '') : ''; } catch (_) { full = ''; }
+        acctMap[a.id] = full;
+      }
+    }
+    const withAcct = (checks || []).map((c) => ({ ...c, account_number: acctMap[c.bank_account_id] || '' }));
     const { generatePositivePayCsv } = require('../lib/accounting/positive_pay');
-    const out = generatePositivePayCsv(checks);
+    const out = generatePositivePayCsv(withAcct);
+    if (out.missing_account) res.setHeader('X-Bedrock-Missing-Account', out.missing_account);
     const stamp = new Date().toISOString().slice(0, 10);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="positive-pay-${stamp}-${req.params.printRunId.slice(0, 8)}.csv"`);
