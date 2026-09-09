@@ -18,6 +18,7 @@
     "test:board-registry": "node tests/test_board_package_registry.js",
     "postinstall": "puppeteer browsers install chrome || true",
     "test:pagination": "node scripts/check_pagination.js",
+    "test:retrieval": "node scripts/check_retrieval_truncation.js",
     "test:credentials": "node scripts/check_credential_claims.js",
     "test:email-body": "node scripts/check_stored_email_body.js",
     "test:source-bytes": "node scripts/check_source_bytes.js",

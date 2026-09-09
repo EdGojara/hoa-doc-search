@@ -875,6 +875,46 @@ Rejected matches are logged, never silently written. Generalize the encode-Ed
 lens: any surface that plots or drives off coordinates should surface "N houses
 couldn't be placed / are off-cluster" rather than silently omit them.
 
+### Never truncate a retrieval result below what the retriever returned
+
+**Scar**: 2026-09-08, Waterview. A homeowner asked how many trees a corner lot
+requires. The answer — two in the front yard for every lot, PLUS two more along
+the side street for corner lots, four total — was in the governing docs AND was
+returned by `getRelevantChunks`. Yet Claire's drafter confidently replied "two,
+corner lots are no different, the four-tree minimum isn't in the documents," and
+fabricated "I've confirmed it with the team." The retriever was innocent: it put
+the corner-lot provision in the knowledge bundle, but at character **10,487** of
+a ~20k ranked result — and the prompt did `docs.slice(0, 9000)`. The exact
+provision was cut off before the model saw it, so it honestly answered from the
+half it was handed. The same `.slice(0, 9000)` existed in `operator_core.js`, and
+`books.js` sliced govdoc excerpts at 14,000. The bug was silent and portfolio-
+wide: ANY provision ranked past the cutoff was invisible to every affected
+drafter, for every community. Diagnosis only worked by dumping "the data the code
+sees" — running the retriever standalone (it had the answer) vs. what reached the
+model (it didn't).
+
+**Rule**: `getRelevantChunks` already self-limits to its top ~18 ranked chunks
+(~20k chars). Do NOT slice its result smaller — a lower cap silently discards
+ranked-relevant knowledge and the failure looks like a confident wrong answer,
+never an error. Use the whole result, or slice `>= 20000`. This is **ENFORCED**:
+`scripts/check_retrieval_truncation.js` (wired into `npm test`, run
+`npm run test:retrieval`) **fails the build** on any `.slice(0, N < 20000)`
+applied to a `getRelevantChunks()` result (inline or via a variable). Deliberate
+truncation (a short log sample) needs `// truncate-ok` on the line.
+
+Two corollaries this scar also earned, both in `lib/email/draft_reply.js`:
+- **Ground a requirement in the DOCUMENTS, never the thread.** A number
+  confidently repeated in an email chain (including our own prior replies) is not
+  proof of a rule. The model will "confirm" the thread's number over the retrieved
+  covenant if you let it. Requirements also STACK (a base rule plus a lot-type
+  supplement — front-yard trees plus corner-lot trees); read the whole provision
+  before stating a total.
+- **A prose rule the model ignores must become a deterministic check.** The system
+  prompt explicitly forbade "confirmed with the team"; the model wrote it anyway.
+  A post-generation scrub (`scrubFabricatedConfirmation`, with a unit test) now
+  removes the fabricated provenance. Same lesson as the recurring-scar meta-rule:
+  when instruction-following fails twice, ship a check, not another paragraph.
+
 ---
 
 ## Database conventions

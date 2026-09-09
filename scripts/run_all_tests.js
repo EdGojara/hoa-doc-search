@@ -98,6 +98,7 @@ const CHECKS = [
   'scripts/check_pagination.js',
   'scripts/check_credential_claims.js',
   'scripts/check_stored_email_body.js',
+  'scripts/check_retrieval_truncation.js',
   'scripts/check_source_bytes.js',
   'scripts/check_requires_tracked.js',
   'scripts/check_micr_pitch.js',
