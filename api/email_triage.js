@@ -1314,38 +1314,43 @@ router.post('/:id/send', express.json(), async (req, res) => {
       sentAt: m.received_at, subject: m.subject,
       bodyText: m.body_full || m.body_preview,
     });
+    // When we can reply IN THREAD (graph_id present), Outlook's createReply supplies
+    // the quoted history, so the body must NOT also embed its own quote — otherwise
+    // the history appears twice (Ed 2026-09-09). Only the fresh-message fallback
+    // embeds the inline quote.
+    const inlineQuote = m.graph_id ? '' : quoted;
     let html, attachments, fromMailbox, senderLabel;
     if (persona === 'emma') {
       const { buildEmmaEmail } = require('../lib/email/emma_signature');
-      ({ html, attachments } = buildEmmaEmail(String(body).trim(), commName, quoted));
+      ({ html, attachments } = buildEmmaEmail(String(body).trim(), commName, inlineQuote));
       fromMailbox = graphSend.EMMA_MAILBOX; senderLabel = 'Emma Brooks (Bedrock AI)';
     } else if (persona === 'miranda') {
       const { buildMirandaEmail } = require('../lib/email/miranda_signature');
-      ({ html, attachments } = buildMirandaEmail(String(body).trim(), commName, quoted));
+      ({ html, attachments } = buildMirandaEmail(String(body).trim(), commName, inlineQuote));
       fromMailbox = graphSend.MIRANDA_MAILBOX; senderLabel = 'Miranda Pierce (Bedrock AI)';
     } else if (persona === 'annie') {
       const { buildAnnieEmail } = require('../lib/email/annie_signature');
-      ({ html, attachments } = buildAnnieEmail(String(body).trim(), commName, quoted));
+      ({ html, attachments } = buildAnnieEmail(String(body).trim(), commName, inlineQuote));
       fromMailbox = graphSend.ANNIE_MAILBOX; senderLabel = 'Annie Reeves (Bedrock AI)';
     } else if (persona === 'paige') {
       const { buildPaigeEmail } = require('../lib/email/paige_signature');
-      ({ html, attachments } = buildPaigeEmail(String(body).trim(), commName, quoted));
+      ({ html, attachments } = buildPaigeEmail(String(body).trim(), commName, inlineQuote));
       fromMailbox = graphSend.PAIGE_MAILBOX; senderLabel = 'Paige Chandler (Bedrock AI)';
     } else if (persona === 'kat') {
       const { buildKatEmail } = require('../lib/email/kat_signature');
-      ({ html, attachments } = buildKatEmail(String(body).trim(), commName, quoted));
+      ({ html, attachments } = buildKatEmail(String(body).trim(), commName, inlineQuote));
       fromMailbox = graphSend.KAT_MAILBOX; senderLabel = 'Kat Reed (Bedrock AI)';
     } else if (persona === 'amanda') {
       const { buildAmandaEmail } = require('../lib/email/amanda_signature');
-      ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName, quoted));
+      ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName, inlineQuote));
       fromMailbox = graphSend.AMANDA_MAILBOX; senderLabel = 'Amanda Albright (Bedrock AI)';
     } else if (persona === 'reese') {
       const { buildReeseEmail } = require('../lib/email/reese_signature');
-      ({ html, attachments } = buildReeseEmail(String(body).trim(), commName, quoted));
+      ({ html, attachments } = buildReeseEmail(String(body).trim(), commName, inlineQuote));
       fromMailbox = graphSend.REESE_MAILBOX; senderLabel = 'Reese Calloway (Bedrock AI)';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
-      ({ html, attachments } = buildClaireEmail(String(body).trim(), commName, quoted));
+      ({ html, attachments } = buildClaireEmail(String(body).trim(), commName, inlineQuote));
       fromMailbox = graphSend.CLAIRE_MAILBOX; senderLabel = 'Claire (Bedrock AI)';
     }
 
@@ -1466,7 +1471,10 @@ router.post('/:id/send', express.json(), async (req, res) => {
     } else {
       // No source message id to reply to — fall back to a fresh message with our
       // reconstructed history block appended so the recipient still has context.
-      await graphSend.sendAs({ from: fromMailbox, to: recipient, cc: ccList || undefined, subject: subj, html: html + (quotedHtml || ''), attachments });
+      // Fallback: fresh message. The body already carries the inline quote
+      // (inlineQuote), so do NOT also append the reconstructed history block —
+      // that was the second copy. One history, from the inline quote.
+      await graphSend.sendAs({ from: fromMailbox, to: recipient, cc: ccList || undefined, subject: subj, html, attachments });
     }
 
     // Mark the inbound handled + log the outbound reply on the record.
