@@ -1455,10 +1455,19 @@ router.post('/:id/send', express.json(), async (req, res) => {
         <div style="color:#8a97a6;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Conversation history</div>
         ${msgBlock(m.sender_name || m.sender_email, fmtWhen(m.received_at), origBody)}${priorHtml}
       </div>`;
-      html = html + quotedHtml;
     } catch (_) { /* quoting best-effort — never block a send */ }
 
-    await graphSend.sendAs({ from: fromMailbox, to: recipient, cc: ccList || undefined, subject: subj, html, attachments });
+    if (m.graph_id) {
+      // Real threaded reply — Graph carries the actual Outlook quoted history and
+      // sets the In-Reply-To/References headers, so the recipient sees ONE growing
+      // thread instead of a fresh email each time (Melody Hess's ask, 2026-09-09).
+      // Graph adds the quote, so we send just our body (no reconstructed block).
+      await graphSend.sendReplyAs({ from: fromMailbox, sourceGraphId: m.graph_id, cc: ccList || undefined, html, attachments });
+    } else {
+      // No source message id to reply to — fall back to a fresh message with our
+      // reconstructed history block appended so the recipient still has context.
+      await graphSend.sendAs({ from: fromMailbox, to: recipient, cc: ccList || undefined, subject: subj, html: html + (quotedHtml || ''), attachments });
+    }
 
     // Mark the inbound handled + log the outbound reply on the record.
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', req.params.id);
