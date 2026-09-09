@@ -912,7 +912,7 @@ Rules:
 - quote must be verbatim from the excerpts, never paraphrased.
 
 EXCERPTS:
-${String(chunks).slice(0, 14000)}
+${String(chunks).slice(0, 24000)}
 
 Return ONLY the JSON.`;
     const resp = await _anthropic.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 1200, messages: [{ role: 'user', content: prompt }] });
