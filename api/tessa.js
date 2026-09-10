@@ -368,12 +368,13 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
       }
     }
 
-    // Before the invite, Tessa introduces herself to the external guest(s) and
-    // says an invite is coming (Ed 2026-09-10). Only to the people Ed named —
-    // never Ed himself. Staged AFTER the meeting so it sorts on top (newest
-    // first), signalling "release this one first."
+    // Intro email — ONLY when Ed asked for one (out.meeting.wants_intro), never
+    // by default (Ed 2026-09-10). When requested, Tessa introduces herself to the
+    // external guest(s) and says an invite is coming. Only to the people Ed named
+    // (never Ed himself). Staged AFTER the meeting so it sorts on top (release
+    // first).
     let staged_email = null;
-    if (out.meeting && out.meeting.direct_invite && out.to.length) {
+    if (out.meeting && out.meeting.direct_invite && out.meeting.wants_intro && out.to.length) {
       const introTo = out.to.map((p) => p.email).filter(Boolean);
       if (introTo.length) {
         const intro = await draftIntroEmail({
