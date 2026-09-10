@@ -875,8 +875,21 @@ router.get('/:communityId/computed', async (req, res) => {
 // ----------------------------------------------------------------------------
 // Helper for server.js: build a prompt-ready context block for a community
 // ----------------------------------------------------------------------------
+// This block is community-level and barely changes between turns, but it was
+// rebuilt from ~8 serial DB queries on EVERY Claire turn — 1.7-2.4s measured
+// against live data (Ed 2026-09-10, "Claire must respond faster to be taken
+// seriously"). Cache the built string briefly so a whole conversation (turns
+// seconds apart) pays it once, while an admin's profile edit still lands within
+// the TTL. This also unlocks the common-question fast-path: with the profile
+// block cached, answering a structured fact costs ~0ms of context, not ~2s.
+const _ctxBlockCache = new Map(); // key -> { text, at }
+const _CTX_BLOCK_TTL_MS = 60 * 1000;
+
 async function buildCommunityContextBlock(communityNameOrId) {
   if (!communityNameOrId) return '';
+  const _cacheKey = String(communityNameOrId).toLowerCase();
+  const _hit = _ctxBlockCache.get(_cacheKey);
+  if (_hit && (Date.now() - _hit.at) < _CTX_BLOCK_TTL_MS) return _hit.text;
 
   // Resolve community
   const q = supabase.from('communities')
@@ -1062,7 +1075,9 @@ async function buildCommunityContextBlock(communityNameOrId) {
     }
   } catch (_) { /* silent */ }
 
-  return lines.join('\n');
+  const _built = lines.join('\n');
+  _ctxBlockCache.set(_cacheKey, { text: _built, at: Date.now() });
+  return _built;
 }
 
 module.exports = { router, buildCommunityContextBlock };
