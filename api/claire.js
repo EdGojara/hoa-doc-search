@@ -390,7 +390,15 @@ router.post('/session/:id/turn', async (req, res) => {
     const { packFor } = require('../lib/team/persona_pack');
     const personaPack = packFor(who) || undefined;
 
-    for await (const chunk of streamTurn({ utterance: text, history, community, caller, personaPack })) {
+    // Portal answer model is configurable for the speed/quality A/B (Ed
+    // 2026-09-10). Unset -> reason.js default (claude-sonnet-4-6), so behavior
+    // is unchanged until CLAIRE_PORTAL_MODEL is set on Render. Measured: with
+    // the profile prompt, Haiku 4.5 answers a fast-lane fact in ~0.6s to first
+    // word vs ~2.6s for Sonnet — the grounding (retrieval/profile) is identical,
+    // so quality rides on the context, not the model.
+    const portalModel = process.env.CLAIRE_PORTAL_MODEL || undefined;
+
+    for await (const chunk of streamTurn({ utterance: text, history, community, caller, personaPack, model: portalModel })) {
       if (typeof chunk !== 'string') continue;  // control objects (passthrough tools) don't apply on video
       full += (full ? ' ' : '') + chunk;
       send('sentence', { text: chunk });
