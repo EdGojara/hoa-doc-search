@@ -298,7 +298,7 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
     const text = String((req.body || {}).request || '').trim();
     if (!text) return res.status(400).json({ error: 'request_required', detail: 'Tell Tessa what you need.' });
 
-    const { runRequest } = require('../lib/ea/tessa_request');
+    const { runRequest, draftMeetingInvite } = require('../lib/ea/tessa_request');
     const { searchMailbox } = require('../lib/email/graph_search');
     // Ed's own mailbox first (his inbox AND sent items — Graph /messages spans
     // both), then Tessa's, which holds anything he forwarded her.
@@ -333,6 +333,16 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
       const attendees = out.to.map((p) => p.email).filter(Boolean);
       if (wt && attendees.length) {
         const subject = out.meeting.title || `Meeting with ${out.to.map((p) => p.name).filter(Boolean).join(', ') || 'you'}`;
+        // Write a REAL invitation body, in Tessa's voice on Ed's behalf — never the
+        // raw parsed instruction, which reads as meta-noise in the invite.
+        let inviteBody = await draftMeetingInvite({
+          title: out.meeting.title, message: out.meeting.message,
+          attendeeNames: out.to.map((p) => p.name).filter(Boolean),
+        });
+        if (!inviteBody) {
+          const who = out.to.map((p) => (p.name || '').split(/\s+/)[0]).filter(Boolean).join(' and ') || 'there';
+          inviteBody = `Hi ${who}, I'm setting up this meeting on Ed's behalf${out.meeting.message ? ' — ' + out.meeting.message : (out.meeting.title ? ' to ' + out.meeting.title.toLowerCase() : '')}. The Teams join link is on this invite.`;
+        }
         try {
           const { data, error } = await supabase.from('tessa_outbox').insert({
             kind: 'meeting', status: 'queued', title: subject, subject,
@@ -340,8 +350,8 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
             meeting_start: wt.start, meeting_end: wt.end, meeting_time_zone: wt.tz,
             meeting_location: out.meeting.location || 'Microsoft Teams',
             meeting_attendees: attendees.join(', '),
-            body_text: out.parsed.instruction || '',
-            note: `Staged from: ${text}`.slice(0, 300),
+            body_text: inviteBody,
+            note: 'Set up on Ed’s behalf',
           }).select('id, subject, meeting_start, meeting_end, meeting_time_zone, meeting_attendees').single();
           if (!error && data) staged_meeting = { ...data, when_label: `${wt.date_label}, ${out.meeting.start_time}${out.meeting.end_time ? ' – ' + out.meeting.end_time : ''}` };
           else if (error) console.warn('[tessa] meeting stage failed:', error.message);
