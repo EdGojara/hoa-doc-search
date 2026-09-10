@@ -12636,6 +12636,7 @@
             </select>
           </label>
           <label class="prof-fld"><span>Fiscal year end</span><input id="prof-fiscal_year_end" placeholder="December 31" /></label>
+          <label class="prof-fld" style="grid-column: 1 / -1;"><span>Annual / board meeting</span><input id="prof-meeting_schedule" placeholder="e.g. Annual meeting each October; 2026 meeting Tue Oct 20, 6:30pm at the clubhouse" /></label>
           <label class="prof-fld"><span>Community website</span><input id="prof-community_website_url" placeholder="https://waterview-estates.com" /></label>
           <label class="prof-fld"><span>Homeowner portal URL</span><input id="prof-homeowner_portal_url" placeholder="home.bedrocktx.com (override per community if needed)" /></label>
           <label class="prof-fld" style="grid-column: 1 / -1;"><span>Amenities (comma-separated)</span><input id="prof-amenities" placeholder="pool, clubhouse, tennis courts, playground" /></label>
@@ -32410,6 +32411,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     set('prof-assessment_annual', profile.assessment_annual);
     set('prof-assessment_frequency', profile.assessment_frequency);
     set('prof-fiscal_year_end', profile.fiscal_year_end);
+    set('prof-meeting_schedule', profile.meeting_schedule);
     set('prof-community_website_url', profile.community_website_url);
     set('prof-homeowner_portal_url', profile.homeowner_portal_url);
     set('prof-amenities', Array.isArray(profile.amenities) ? profile.amenities.join(', ') : (profile.amenities || ''));
@@ -32562,6 +32564,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       assessment_annual: numOrNull('prof-assessment_annual'),
       assessment_frequency: val('prof-assessment_frequency') || null,
       fiscal_year_end: val('prof-fiscal_year_end') || null,
+      meeting_schedule: val('prof-meeting_schedule') || null,
       community_website_url: val('prof-community_website_url') || null,
       homeowner_portal_url: val('prof-homeowner_portal_url') || null,
       amenities: val('prof-amenities')
