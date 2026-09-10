@@ -965,6 +965,16 @@ function renderAsk(j){
        + j.created_contacts.map(function(c){ return '<div style="font-size:13px;color:#065f46;">✓ '+(c.existed?'Already had':'Added')+' <b>'+esc(c.name||'')+'</b> <span class="note">&lt;'+esc(c.email||'')+'&gt;</span>'+(c.existed?' — already in your contacts':' to your contacts')+'</div>'; }).join('')
        + '</div>';
   }
+  // Intro email she staged to send BEFORE the invite.
+  if(j.staged_email){
+    var se=j.staged_email;
+    h += '<div style="margin-bottom:10px;padding:9px 11px;background:#eef4ff;border:1px solid #bcdcff;border-radius:8px;">'
+       + '<div style="font-size:13px;font-weight:600;color:var(--navy);">✉️ Intro email staged <span class="note" style="font-weight:400;">— goes first</span></div>'
+       + '<div class="note"><b>To</b> '+esc(se.to_emails||'')+'</div>'
+       + '<div class="note"><b>Subject</b> '+esc(se.subject||'')+'</div>'
+       + (se.body_text ? '<div class="note" style="white-space:pre-wrap;margin-top:4px;color:var(--ink);">'+esc(se.body_text)+'</div>' : '')
+       + '</div>';
+  }
   // Meeting she staged (waits in the outbox for release — nothing booked).
   if(j.staged_meeting){
     var sm=j.staged_meeting;
@@ -1033,7 +1043,7 @@ function renderAsk(j){
     if(j.wants_meeting){
       h += '<div class="note" style="margin-top:8px;">You mentioned a meeting. Send this first, then book it once they say yes \u2014 she won\u2019t put an invite in a board member\u2019s calendar before they have agreed.</div>';
     }
-  } else if(!q.length && !j.staged_meeting){
+  } else if(!q.length && !j.staged_meeting && !j.staged_email){
     h += '<div class="note">No draft \u2014 she couldn\u2019t work out who this goes to.</div>';
   }
   h += '</div>';

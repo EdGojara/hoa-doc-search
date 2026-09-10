@@ -298,7 +298,7 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
     const text = String((req.body || {}).request || '').trim();
     if (!text) return res.status(400).json({ error: 'request_required', detail: 'Tell Tessa what you need.' });
 
-    const { runRequest, draftMeetingInvite } = require('../lib/ea/tessa_request');
+    const { runRequest, draftMeetingInvite, draftIntroEmail } = require('../lib/ea/tessa_request');
     const { searchMailbox } = require('../lib/email/graph_search');
     // Ed's own mailbox first (his inbox AND sent items — Graph /messages spans
     // both), then Tessa's, which holds anything he forwarded her.
@@ -330,7 +330,16 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
     let staged_meeting = null;
     if (out.meeting && out.meeting.direct_invite && out.to.length) {
       const wt = resolveMeetingWallTimes(out.meeting);
-      const attendees = out.to.map((p) => p.email).filter(Boolean);
+      // Tessa is the ORGANIZER on meetings she sets up (Ed 2026-09-10). Because
+      // she organizes on Ed's behalf, Ed is added as a required attendee — a
+      // meeting she books "for Ed to meet X" has to actually put Ed in the room.
+      // Dedup, case-insensitive, and never invite Tessa herself as a guest.
+      const tessaMbx = graphSend.TESSA_MAILBOX;
+      const seen = new Set();
+      const attendees = [...out.to.map((p) => p.email), graphSend.ED_MAILBOX]
+        .map((e) => String(e || '').trim())
+        .filter((e) => e && e.toLowerCase() !== String(tessaMbx || '').toLowerCase())
+        .filter((e) => { const k = e.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
       if (wt && attendees.length) {
         const subject = out.meeting.title || `Meeting with ${out.to.map((p) => p.name).filter(Boolean).join(', ') || 'you'}`;
         // Write a REAL invitation body, in Tessa's voice on Ed's behalf — never the
@@ -346,7 +355,7 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
         try {
           const { data, error } = await supabase.from('tessa_outbox').insert({
             kind: 'meeting', status: 'queued', title: subject, subject,
-            organizer: graphSend.ED_MAILBOX || graphSend.TESSA_MAILBOX,
+            organizer: graphSend.TESSA_MAILBOX || graphSend.ED_MAILBOX,
             meeting_start: wt.start, meeting_end: wt.end, meeting_time_zone: wt.tz,
             meeting_location: out.meeting.location || 'Microsoft Teams',
             meeting_attendees: attendees.join(', '),
@@ -356,6 +365,35 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
           if (!error && data) staged_meeting = { ...data, when_label: `${wt.date_label}, ${out.meeting.start_time}${out.meeting.end_time ? ' – ' + out.meeting.end_time : ''}` };
           else if (error) console.warn('[tessa] meeting stage failed:', error.message);
         } catch (e) { console.warn('[tessa] meeting stage skipped:', e.message); }
+      }
+    }
+
+    // Before the invite, Tessa introduces herself to the external guest(s) and
+    // says an invite is coming (Ed 2026-09-10). Only to the people Ed named —
+    // never Ed himself. Staged AFTER the meeting so it sorts on top (newest
+    // first), signalling "release this one first."
+    let staged_email = null;
+    if (out.meeting && out.meeting.direct_invite && out.to.length) {
+      const introTo = out.to.map((p) => p.email).filter(Boolean);
+      if (introTo.length) {
+        const intro = await draftIntroEmail({
+          attendeeNames: out.to.map((p) => p.name).filter(Boolean),
+          title: out.meeting.title, message: out.meeting.message,
+          whenLabel: staged_meeting ? staged_meeting.when_label : null,
+        });
+        if (intro && intro.body) {
+          try {
+            const { data, error } = await supabase.from('tessa_outbox').insert({
+              kind: 'email', status: 'queued',
+              title: intro.subject || 'Introduction from Bedrock',
+              subject: intro.subject || 'Introduction from Bedrock',
+              to_emails: introTo.join(', '), body_text: intro.body,
+              note: 'Intro to send before the invite — on Ed’s behalf',
+            }).select('id, subject, to_emails, body_text').single();
+            if (!error && data) staged_email = { ...data };
+            else if (error) console.warn('[tessa] intro email stage failed:', error.message);
+          } catch (e) { console.warn('[tessa] intro email stage skipped:', e.message); }
+        }
       }
     }
 
@@ -371,6 +409,7 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
       wants_meeting: out.wants_meeting,
       meeting: out.meeting,
       created_contacts,
+      staged_email,
       staged_meeting,
       resolved: out.resolved,
     });
