@@ -1965,9 +1965,17 @@ router.post('/compose', express.json(), async (req, res) => {
     // sent context-free replies from every teammate. (Ed 2026-08-20.)
     const { quotedOriginal } = require('../lib/email/quote_original');
     let quoted = '';
+    // If the operator already embedded the forwarded history in the body — the
+    // "Forward a sent email" flow (forwardFromSent) injects a full
+    // "----- Forwarded message -----" block, richer than a single-message quote
+    // because it carries the WHOLE conversation — do NOT also append the
+    // API-side quote. Doing both printed the original conversation TWICE at the
+    // bottom of every forward. source_email_id still drives the file re-attach
+    // below; it just no longer double-quotes. (Ed 2026-09-10.)
+    const _bodyHasForward = /-----\s*Forwarded message\s*-----/i.test(body);
     try {
       const _srcId = (req.body || {}).source_email_id;
-      if (_srcId) {
+      if (_srcId && !_bodyHasForward) {
         const { data: _src, error: _srcErr } = await supabase.from('email_messages')
           .select('sender_name, sender_email, subject, received_at, body_full, body_preview')
           .eq('id', _srcId).maybeSingle();
