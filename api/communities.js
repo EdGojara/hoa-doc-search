@@ -893,7 +893,7 @@ async function buildCommunityContextBlock(communityNameOrId) {
 
   // Resolve community
   const q = supabase.from('communities')
-    .select('id, name, total_lots, profile')
+    .select('id, name, total_lots, profile, trash_schedule')
     .eq('management_company_id', BEDROCK_MGMT_CO_ID)
     .limit(1);
   const isUuid = /^[0-9a-f-]{36}$/i.test(communityNameOrId);
@@ -914,6 +914,23 @@ async function buildCommunityContextBlock(communityNameOrId) {
     } else {
       lines.push(`  ${label}: ${v}`);
     }
+  }
+
+  // Trash / recycling schedule — the canonical column (communities.trash_schedule,
+  // the SSOT per CLAUDE.md). Audit 2026-09-10 found rich schedules populated but
+  // NOT reaching Claire (this block never selected or rendered the column), so the
+  // trash-day fast-lane would have whiffed on the very question it exists for.
+  const ts = comm.trash_schedule || {};
+  if (ts && (ts.notes || (Array.isArray(ts.collection_days) && ts.collection_days.length))) {
+    const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
+    const parts = [];
+    if (Array.isArray(ts.collection_days) && ts.collection_days.length) parts.push(`Trash ${ts.collection_days.map(cap).join(' & ')}`);
+    if (Array.isArray(ts.recycling_days) && ts.recycling_days.length) parts.push(`Recycling ${ts.recycling_days.map(cap).join(' & ')}`);
+    if (ts.curbside_deadline) parts.push(`containers out by ${ts.curbside_deadline}`);
+    lines.push('');
+    lines.push('TRASH & RECYCLING SCHEDULE');
+    if (parts.length) lines.push(`  ${parts.join('; ')}.`);
+    if (ts.notes) lines.push(`  ${ts.notes}`);
   }
 
   // Active manual facts (non-expired or recently-expired with override)
