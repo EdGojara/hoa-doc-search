@@ -12602,6 +12602,9 @@
 
     <div id="prof-body" style="display:none;">
 
+      <!-- ===== Claire readiness — which fast facts Claire can answer for this community ===== -->
+      <div id="prof-claire-coverage" style="margin-bottom:20px;"></div>
+
       <!-- ===== Profile (structured) ===== -->
       <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
@@ -32343,6 +32346,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       profFacts = j.facts || [];
       profComputed = j.computed_facts || [];
       profPopulateForm(j.profile || {}, j.community || {});
+      profRenderClaireCoverage(communityId);
       profRenderContacts();
       profRenderFacts();
       profRenderComputed();
@@ -32359,6 +32363,39 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (wrap.firstChild) wrap.insertBefore(banner, wrap.firstChild);
       else wrap.appendChild(banner);
     }
+  }
+
+  // "Claire readiness" — show which fast-lane operational facts Claire can answer
+  // for this community (populated / missing / not applicable), so staff know
+  // exactly what to fill in below. One detection engine shared with the CLI audit
+  // (lib/community/fastlane_coverage.js). (Ed 2026-09-10)
+  async function profRenderClaireCoverage(communityId) {
+    const host = document.getElementById('prof-claire-coverage');
+    if (!host) return;
+    host.innerHTML = '<div style="font-size:12px; color:#94a3b8;">Checking what Claire can answer…</div>';
+    try {
+      const r = await fetch(`/api/community-profile/${communityId}/claire-coverage`);
+      const j = await r.json();
+      if (!r.ok || !j.ok) { host.innerHTML = ''; return; }
+      const cov = j.coverage || [];
+      const chip = (c) => {
+        const st = c.status;
+        const bg = st === 'yes' ? '#ecfdf5' : st === 'gap' ? '#fef2f2' : '#f1f5f9';
+        const bd = st === 'yes' ? '#a7f3d0' : st === 'gap' ? '#fecaca' : '#e2e8f0';
+        const fg = st === 'yes' ? '#065f46' : st === 'gap' ? '#b91c1c' : '#94a3b8';
+        const ic = st === 'yes' ? '✓' : st === 'gap' ? '✗' : '–';
+        const tt = st === 'na' ? 'Not applicable to this community' : (st === 'gap' ? 'Missing — fill this in so Claire can answer it instantly' : 'Claire has this');
+        return `<span title="${tt}" style="display:inline-flex; align-items:center; gap:5px; background:${bg}; border:1px solid ${bd}; color:${fg}; border-radius:20px; padding:3px 10px; font-size:12px; font-weight:600;">${ic} ${escapeHtml(c.label)}</span>`;
+      };
+      const gapCount = j.gap_count || 0;
+      const head = gapCount === 0
+        ? '<span style="color:#065f46; font-weight:700;">✓ Claire has every fast fact for this community.</span>'
+        : `<span style="color:#b91c1c; font-weight:700;">${gapCount} missing</span> <span style="color:#64748b;">— fill these in below so Claire answers them instantly instead of searching documents.</span>`;
+      host.innerHTML = `<div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:14px 16px;">
+        <div style="font-size:13px; margin-bottom:9px;">🤖 <strong>Claire readiness</strong> — ${head}</div>
+        <div style="display:flex; flex-wrap:wrap; gap:7px;">${cov.map(chip).join('')}</div>
+      </div>`;
+    } catch (_) { host.innerHTML = ''; }
   }
 
   function profPopulateForm(profile, community) {
@@ -32546,6 +32583,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (j.error) throw new Error(j.error);
       status.textContent = '✓ Saved'; status.style.color = '#2d7a3a';
       setTimeout(() => { status.textContent = ''; }, 2500);
+      // Refresh the Claire-readiness panel so a filled-in fact flips from missing
+      // to covered right away (the server cleared its context-block cache on save).
+      profRenderClaireCoverage(profCurrent.id);
     } catch (err) {
       status.textContent = 'Error: ' + err.message; status.style.color = '#c0392b';
     }

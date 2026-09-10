@@ -491,9 +491,38 @@ router.patch('/:communityId/profile', express.json(), async (req, res) => {
       .single();
     if (setErr) throw setErr;
 
+    // A profile edit changes what Claire sees — drop the cached context block so
+    // the change (and the "Claire readiness" panel) reflect immediately, not after
+    // the 60s TTL. Profile writes are rare; clearing the whole small map is fine.
+    _ctxBlockCache.clear();
+
     res.json({ ok: true, profile: updated.profile });
   } catch (err) {
     console.error('[community-profile] PATCH /profile failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /:communityId/claire-coverage — which fast-lane operational facts Claire
+// has for this community (yes / gap / n/a), applicability-aware. Powers the
+// "Claire readiness" panel on the Community Profile page so staff see exactly
+// what to fill in. Shares one detection engine with scripts/audit_fastlane_facts.
+// (Ed 2026-09-10)
+// ----------------------------------------------------------------------------
+router.get('/:communityId/claire-coverage', async (req, res) => {
+  try {
+    const { communityId } = req.params;
+    const { computeCoverage } = require('../lib/community/fastlane_coverage');
+    const { data: comm, error } = await supabase
+      .from('communities').select('id, name, profile').eq('id', communityId).single();
+    if (error) throw error;
+    const block = await buildCommunityContextBlock(comm.id).catch(() => '');
+    const coverage = computeCoverage(block, comm.profile || {});
+    const gaps = coverage.filter((c) => c.status === 'gap').map((c) => c.label);
+    res.json({ ok: true, community: comm.name, coverage, gap_count: gaps.length, gaps });
+  } catch (err) {
+    console.error('[community-profile] claire-coverage failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
