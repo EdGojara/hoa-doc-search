@@ -257,6 +257,41 @@ router.post('/draft', express.json({ limit: '32kb' }), async (req, res) => {
 // any questions she has. Ed reviews, then POSTs /send. Booking a meeting is a
 // separate deliberate call to /meeting for the same reason: both put mail in
 // real board members' inboxes, so Ed clicking IS the approval.
+// Resolve a parsed meeting ("tomorrow", "3:00 PM"..) into local WALL times
+// 'YYYY-MM-DDTHH:mm:ss' + the Central zone, the exact shape createTeamsMeeting
+// wants. Day math is done on UTC-anchored dates (DST doesn't move a calendar
+// day), and the time is a bare wall time Graph applies in the zone — same
+// discipline as the CLAUDE.md date-boundary scar. Returns null if unusable.
+function resolveMeetingWallTimes(meeting) {
+  if (!meeting || !meeting.start_time) return null;
+  let DEFAULT_TZ = 'Central Standard Time';
+  try { DEFAULT_TZ = require('../lib/ea/tessa_meeting').DEFAULT_TZ || DEFAULT_TZ; } catch (_) {}
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const g = (t) => parts.find((p) => p.type === t)?.value;
+  const baseUTC = Date.UTC(+g('year'), +g('month') - 1, +g('day'));
+  const WD = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const raw = String(meeting.date || '').trim().toLowerCase();
+  let target = new Date(baseUTC);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) { const [y, m, d] = raw.split('-').map(Number); target = new Date(Date.UTC(y, m - 1, d)); }
+  else if (raw === 'tomorrow') target = new Date(baseUTC + 86400000);
+  else if (raw === 'today' || !raw) target = new Date(baseUTC);
+  else if (WD.includes(raw)) { let delta = (WD.indexOf(raw) - new Date(baseUTC).getUTCDay() + 7) % 7; if (delta === 0) delta = 7; target = new Date(baseUTC + delta * 86400000); }
+  const dateStr = `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, '0')}-${String(target.getUTCDate()).padStart(2, '0')}`;
+  const toHHMM = (s) => {
+    const m = String(s || '').trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?$/i);
+    if (!m) return null;
+    let h = +m[1]; const min = m[2] ? +m[2] : 0; const ap = (m[3] || '').replace(/\./g, '').toLowerCase();
+    if (ap === 'pm' && h < 12) h += 12; if (ap === 'am' && h === 12) h = 0;
+    if (h > 23 || min > 59) return null;
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00`;
+  };
+  const start = toHHMM(meeting.start_time); if (!start) return null;
+  let end = toHHMM(meeting.end_time);
+  if (!end) { const [h, mi] = start.split(':').map(Number); end = `${String((h + 1) % 24).padStart(2, '0')}:${String(mi).padStart(2, '0')}:00`; }
+  const dateLabel = new Date(target).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return { start: `${dateStr}T${start}`, end: `${dateStr}T${end}`, tz: DEFAULT_TZ, date_label: dateLabel };
+}
+
 router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
   const owner = await requireOwner(req, res); if (!owner) return;
   try {
@@ -274,6 +309,46 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
     const out = await runRequest(text, { resolveRecipient, searchMailbox, mailboxes });
     if (out.degraded) return res.status(503).json({ error: 'Tessa could not work that one out. Try saying it a different way.' });
 
+    // Create any contacts Ed asked her to add — into ea_contacts, the book she
+    // resolves from, so they're findable next time too. Dedupe by email. This is
+    // Ed's own directory (not outward), so she does it rather than staging it.
+    const created_contacts = [];
+    for (const c of (out.create_contacts || [])) {
+      try {
+        const { data: ex } = await supabase.from('ea_contacts').select('id, name, email').ilike('email', c.email).limit(1);
+        if (ex && ex.length) { created_contacts.push({ ...ex[0], existed: true }); continue; }
+        const { data, error } = await supabase.from('ea_contacts')
+          .insert({ name: c.name, email: c.email, category: null, created_by: owner.email || 'Ed' })
+          .select('id, name, email').single();
+        if (!error && data) created_contacts.push({ ...data, existed: false });
+      } catch (e) { console.warn('[tessa] contact create skipped:', e.message); }
+    }
+
+    // Stage a direct Teams invite — NOTHING is booked here; it waits in her outbox
+    // for Ed to release (same rule as every meeting). Only for a direct, timed
+    // invite to people we resolved to real addresses.
+    let staged_meeting = null;
+    if (out.meeting && out.meeting.direct_invite && out.to.length) {
+      const wt = resolveMeetingWallTimes(out.meeting);
+      const attendees = out.to.map((p) => p.email).filter(Boolean);
+      if (wt && attendees.length) {
+        const subject = out.meeting.title || `Meeting with ${out.to.map((p) => p.name).filter(Boolean).join(', ') || 'you'}`;
+        try {
+          const { data, error } = await supabase.from('tessa_outbox').insert({
+            kind: 'meeting', status: 'queued', title: subject, subject,
+            organizer: graphSend.ED_MAILBOX || graphSend.TESSA_MAILBOX,
+            meeting_start: wt.start, meeting_end: wt.end, meeting_time_zone: wt.tz,
+            meeting_location: out.meeting.location || 'Microsoft Teams',
+            meeting_attendees: attendees.join(', '),
+            body_text: out.parsed.instruction || '',
+            note: `Staged from: ${text}`.slice(0, 300),
+          }).select('id, subject, meeting_start, meeting_end, meeting_time_zone, meeting_attendees').single();
+          if (!error && data) staged_meeting = { ...data, when_label: `${wt.date_label}, ${out.meeting.start_time}${out.meeting.end_time ? ' – ' + out.meeting.end_time : ''}` };
+          else if (error) console.warn('[tessa] meeting stage failed:', error.message);
+        } catch (e) { console.warn('[tessa] meeting stage skipped:', e.message); }
+      }
+    }
+
     res.json({
       ok: true,
       request: text,
@@ -284,6 +359,9 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
       context: out.context,
       context_errors: out.context_errors,
       wants_meeting: out.wants_meeting,
+      meeting: out.meeting,
+      created_contacts,
+      staged_meeting,
       resolved: out.resolved,
     });
   } catch (err) {

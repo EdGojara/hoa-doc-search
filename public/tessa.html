@@ -959,9 +959,26 @@ function renderAsk(j){
   const to = j.to || [], cc = j.cc || [], q = j.questions || [];
   let h = '<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px;">';
 
+  // Contacts she added to your book (findable next time too).
+  if((j.created_contacts||[]).length){
+    h += '<div style="margin-bottom:10px;padding:8px 10px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;">'
+       + j.created_contacts.map(function(c){ return '<div style="font-size:13px;color:#065f46;">✓ '+(c.existed?'Already had':'Added')+' <b>'+esc(c.name||'')+'</b> <span class="note">&lt;'+esc(c.email||'')+'&gt;</span>'+(c.existed?' — already in your contacts':' to your contacts')+'</div>'; }).join('')
+       + '</div>';
+  }
+  // Meeting she staged (waits in the outbox for release — nothing booked).
+  if(j.staged_meeting){
+    var sm=j.staged_meeting;
+    h += '<div style="margin-bottom:10px;padding:9px 11px;background:#eef4ff;border:1px solid #bcdcff;border-radius:8px;">'
+       + '<div style="font-size:13px;font-weight:600;color:var(--navy);">📅 Teams invite staged</div>'
+       + '<div class="note"><b>When</b> '+esc(sm.when_label||'')+'</div>'
+       + '<div class="note"><b>Invite</b> '+esc(sm.meeting_attendees||'')+'</div>'
+       + '<div class="note" style="margin-top:5px;">It’s waiting in <b>Tessa’s outbox</b> above — review and release to book it and send the invitation. Nothing is booked until you do.</div>'
+       + '</div>';
+  }
+
   // Who it's going to. Named, always \u2014 a hidden recipient list is how the
   // wrong people get emailed.
-  if(to.length){
+  if(to.length && !j.staged_meeting){
     h += '<div style="margin-bottom:10px;"><div class="note" style="font-weight:600;color:var(--ink);">Sending to</div>'
        + to.map(function(p){ return '<div style="font-size:13px;">'+esc(p.name||'')+' <span class="note">&lt;'+esc(p.email||'')+'&gt;</span></div>'; }).join('')
        + '</div>';
@@ -1016,7 +1033,7 @@ function renderAsk(j){
     if(j.wants_meeting){
       h += '<div class="note" style="margin-top:8px;">You mentioned a meeting. Send this first, then book it once they say yes \u2014 she won\u2019t put an invite in a board member\u2019s calendar before they have agreed.</div>';
     }
-  } else if(!q.length){
+  } else if(!q.length && !j.staged_meeting){
     h += '<div class="note">No draft \u2014 she couldn\u2019t work out who this goes to.</div>';
   }
   h += '</div>';
