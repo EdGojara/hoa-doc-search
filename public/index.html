@@ -4917,7 +4917,15 @@
           ${cellLink(c.payment_plans, '/admin/payment-plans?community=' + encodeURIComponent(c.community_id), 'Open the payment plan panel for this community')}
         </tr>`).join('') || '<tr><td colspan="10" style="padding:16px; text-align:center; color:#888; font-size:13px;">No billable activity in this period.</td></tr>';
       const th = (label) => `<th style="padding:7px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#64748b; border-bottom:2px solid #e2e8f0;">${label}</th>`;
+      // Spillover note: a drive can happen at the end of a period while its
+      // letters mail (and bill) in the next one — an Aug 31 drive whose letters
+      // postmark Sep 1 reads as "0" on the August bill (Ed 2026-09-10). Surface it
+      // so an end-of-month drive never looks like nothing happened.
+      const _fmtD = (s) => { try { return new Date(s + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } catch (_) { return s; } };
+      const spillNotes = rows.filter(c => c.observed_in_period > 0 && c.spillover_letters > 0);
+      const spillBanner = spillNotes.length ? `<div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; padding:8px 10px; font-size:12px; color:#1e40af; margin-bottom:10px;">📬 <strong>Some drive activity bills next period.</strong> ${spillNotes.map(c => `${escapeHtml(c.name)}: ${c.observed_in_period} violation${c.observed_in_period === 1 ? '' : 's'} observed this period, but ${c.spillover_letters} letter${c.spillover_letters === 1 ? '' : 's'} mailed ${c.spillover_dates && c.spillover_dates.length ? 'on ' + c.spillover_dates.map(_fmtD).join(', ') : 'just after it'} — postage bills on the mail date, so those land in the next period. Run the following month to see them.`).join('<br>')}</div>` : '';
       host.innerHTML = `
+        ${spillBanner}
         ${!j.page_tracking ? '<div style="background:#fffbeb; border:1px solid #fbbf24; border-radius:6px; padding:8px 10px; font-size:12px; color:#92400e; margin-bottom:10px;">⚠ Pages-printed is not live yet — apply migration 257 and run the page-count backfill, then re-run. Notice + ARC counts are accurate now.</div>' : ''}
         <table style="width:100%; border-collapse:collapse;">
           <thead><tr>

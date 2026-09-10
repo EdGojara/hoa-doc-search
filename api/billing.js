@@ -2539,6 +2539,43 @@ router.get('/activity-report', async (req, res) => {
       } else { throw e; }
     }
 
+    // 1b) Violations OBSERVED (created) in the period, per community. This is NOT
+    // billable — postage bills on the MAIL date — but it lets the report warn when
+    // a drive happened in the window yet its letters mailed just after it. Ed
+    // 2026-09-10: an Aug 31 drive whose 124 letters postmarked Sep 1 read as "0"
+    // on the August bill, which looks like the drive vanished.
+    const observedRows = await fetchAll(() => {
+      let q = supabase.from('violations')
+        .select('community_id')
+        .gte('created_at', start + 'T00:00:00Z')
+        .lt('created_at', endEx + 'T00:00:00Z');
+      if (communityId) q = q.eq('community_id', communityId);
+      return q;
+    });
+    const observedByComm = {};
+    observedRows.forEach((v) => { if (v.community_id) observedByComm[v.community_id] = (observedByComm[v.community_id] || 0) + 1; });
+
+    // 1c) Letters mailed in the SHORT window just after this period — the spillover
+    // that will bill next period. Deduped to envelopes (same key as billable letters).
+    const SPILL_DAYS = 5;
+    const spillEndEx = (() => { const d = new Date(endEx + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + SPILL_DAYS); return d.toISOString().slice(0, 10); })();
+    const spillLetters = await fetchAll(() => {
+      let q = supabase.from('interactions')
+        .select('community_id, bundle_id, content, id, postmark_date')
+        .in('type', LETTER_TYPES)
+        .not('printed_at', 'is', null)
+        .gte('postmark_date', endEx)
+        .lt('postmark_date', spillEndEx);
+      if (communityId) q = q.eq('community_id', communityId);
+      return q;
+    });
+    const spillByComm = {};
+    spillLetters.forEach((l) => {
+      const c = (spillByComm[l.community_id] || (spillByComm[l.community_id] = { keys: new Set(), dates: new Set() }));
+      c.keys.add(l.bundle_id || l.content || ('id:' + l.id));
+      if (l.postmark_date) c.dates.add(l.postmark_date);
+    });
+
     // 2) ARC/ACC decisions rendered in the period. TWO sources — both matter and
     // are billed the same: builder ARC (builder_applications) AND resident ACC
     // (community_applications, final_decided_at/final_status). Counting only one
@@ -2667,6 +2704,11 @@ router.get('/activity-report', async (req, res) => {
     portalDecisions.forEach((d) => tallyArc(d.community_id, d.final_status));
     decisions.forEach((d) => { row(d.community_id).builder_arc += 1; });
     paymentPlans.forEach((p) => { if (p.community_id) row(p.community_id).payment_plans += 1; });
+    // Make sure a community with a drive but no mailed letters/decisions in the
+    // window still appears — otherwise the exact case we want to explain (observed
+    // this period, mailed just after) would show no row at all.
+    Object.keys(observedByComm).forEach((cid) => row(cid));
+    Object.keys(spillByComm).forEach((cid) => row(cid));
 
     const communities = Object.values(byComm)
       .map(({ _letters, ...r }) => {
@@ -2696,6 +2738,11 @@ router.get('/activity-report', async (req, res) => {
           pages_printed,
           payment_plans: r.payment_plans || 0,
           pages_unknown: letters_sent > 0 && pages_printed === 0,
+          // Spillover awareness (not billable) — violations observed in the window,
+          // and letters that mailed just after it and will bill next period.
+          observed_in_period: observedByComm[r.community_id] || 0,
+          spillover_letters: spillByComm[r.community_id] ? spillByComm[r.community_id].keys.size : 0,
+          spillover_dates: spillByComm[r.community_id] ? [...spillByComm[r.community_id].dates].sort() : [],
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
