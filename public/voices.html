@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Team Voices — Bedrock</title>
+<style>
+  :root{
+    --navy:#0B1D34; --ink:#1a2230; --muted:#64748b; --line:#e3e8ef;
+    --paper:#eef1f5; --surface:#fff; --surface-2:#f7f9fb; --gold:#B8892B; --gold-bar:#D4AF37;
+    --good:#166b46; --good-bg:#e7f4ec; --warn:#9a5510; --warn-bg:#fbefe0;
+    --crit:#a5271d; --crit-bg:#fbe9e7; --accent:#1d4ed8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;line-height:1.5;}
+  .wrap{max-width:1000px;margin:0 auto;padding:28px 20px 90px;}
+  .back{font-size:13px;color:var(--muted);text-decoration:none;}
+  h1{font-size:26px;font-weight:800;color:var(--navy);margin:6px 0 2px;letter-spacing:-.01em;}
+  .sub{font-size:13.5px;color:var(--muted);margin:0 0 18px;max-width:70ch;}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:12px;}
+  .prow{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+  .emoji{font-size:26px;width:34px;text-align:center;flex:none;}
+  .who{flex:1 1 200px;min-width:180px;}
+  .who .nm{font-weight:800;color:var(--navy);font-size:16px;}
+  .who .tt{font-size:12.5px;color:var(--muted);}
+  .cur{display:flex;align-items:center;gap:9px;flex:1 1 260px;}
+  .vname{font-weight:700;font-size:14px;}
+  .vname.none{color:var(--crit);font-weight:600;}
+  .badge{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;padding:2px 7px;border-radius:20px;}
+  .badge.override{background:var(--good-bg);color:var(--good);}
+  .badge.env{background:var(--surface-2);color:var(--muted);border:1px solid var(--line);}
+  .badge.none{background:var(--crit-bg);color:var(--crit);}
+
+  button{font:inherit;cursor:pointer;}
+  .play{border:1px solid var(--line);background:var(--surface-2);color:var(--navy);
+    width:32px;height:32px;border-radius:50%;font-size:13px;flex:none;display:inline-flex;align-items:center;justify-content:center;}
+  .play:hover{border-color:var(--navy);}
+  .play.on{background:var(--navy);color:#fff;border-color:var(--navy);}
+  .play:disabled{opacity:.4;cursor:default;}
+  .change{border:1px solid var(--navy);background:var(--navy);color:#fff;font-weight:700;font-size:13px;padding:7px 14px;border-radius:8px;}
+  .change.open{background:#fff;color:var(--navy);}
+
+  .picker{margin-top:14px;border-top:1px solid var(--line);padding-top:12px;}
+  .picker[hidden]{display:none;}
+  .hint{font-size:12px;color:var(--muted);margin:0 0 10px;}
+  .vlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px;}
+  .vrow{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:var(--surface-2);}
+  .vrow.sel{border-color:var(--good);background:var(--good-bg);}
+  .vmeta{flex:1;min-width:0;}
+  .vmeta .vn{font-weight:700;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .vmeta .vl{font-size:11.5px;color:var(--muted);}
+  .use{border:1px solid var(--good);background:#fff;color:var(--good);font-weight:700;font-size:12.5px;padding:5px 11px;border-radius:7px;flex:none;}
+  .use:hover{background:var(--good);color:#fff;}
+  .use:disabled{opacity:.5;cursor:default;}
+
+  .note{font-size:12px;color:var(--muted);margin-top:22px;padding-top:14px;border-top:1px dashed var(--line);}
+  .msg{padding:14px 16px;border-radius:10px;font-size:14px;margin-bottom:14px;}
+  .msg.err{background:var(--crit-bg);color:var(--crit);}
+  .loading{color:var(--muted);font-size:14px;padding:20px 0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/admin/ai-scorecard">&larr; AI Team Scorecard</a>
+  <h1>AI Team Voices</h1>
+  <p class="sub">Pick each teammate's voice by ear. Press play to audition, then Use to set it. A choice
+    takes effect immediately for the live avatar and any rendered video, with no redeploy. Only voices the
+    live avatar can actually speak are shown.</p>
+
+  <div id="msg"></div>
+  <div id="body"><div class="loading">Loading the team&hellip;</div></div>
+
+  <p class="note">Voices here are HeyGen voices that support the interactive (live) avatar. Clearing a choice
+    falls back to the environment setting. This page is owner-only.</p>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let CATALOG = [];
+let audio = null, playingBtn = null;
+
+function showErr(t){ $('msg').innerHTML = '<div class="msg err">'+t+'</div>'; }
+
+function stopAudio(){
+  if (audio){ try{ audio.pause(); }catch(_){}} audio = null;
+  if (playingBtn){ playingBtn.classList.remove('on'); playingBtn.textContent = '▶'; playingBtn = null; }
+}
+function play(url, btn){
+  if (!url){ return; }
+  if (playingBtn === btn){ stopAudio(); return; }
+  stopAudio();
+  audio = new Audio(url);
+  playingBtn = btn; btn.classList.add('on'); btn.textContent = '■';
+  audio.play().catch(()=>{ stopAudio(); });
+  audio.onended = () => stopAudio();
+}
+
+async function load(){
+  let cur;
+  try {
+    const [cr, cat] = await Promise.all([
+      fetch('/api/voices/current', {credentials:'same-origin'}),
+      fetch('/api/voices/catalog', {credentials:'same-origin'}),
+    ]);
+    if (cr.status === 403){ showErr('This is the owner’s workspace. Sign in as the owner to manage voices.'); $('body').innerHTML=''; return; }
+    if (!cr.ok) throw new Error('current '+cr.status);
+    cur = await cr.json();
+    CATALOG = (cat.ok ? (await cat.json()).voices : []) || [];
+    CATALOG.sort((a,b)=> String(a.name||'').localeCompare(String(b.name||'')));
+  } catch(e){ showErr('Could not load voices: '+e.message); $('body').innerHTML=''; return; }
+
+  const body = $('body');
+  body.innerHTML = '';
+  for (const p of cur.personas){ body.appendChild(personaCard(p)); }
+}
+
+function personaCard(p){
+  const el = document.createElement('div');
+  el.className = 'card';
+  const srcLabel = p.source==='override' ? 'chosen' : (p.source==='env' ? 'default' : 'not set');
+  const vname = p.voice_name || (p.voice_id ? p.voice_id.slice(0,10) : 'No voice');
+  el.innerHTML =
+    '<div class="prow">'
+    + '<div class="emoji">'+(p.emoji||'👤')+'</div>'
+    + '<div class="who"><div class="nm">'+esc(p.name)+'</div><div class="tt">'+esc(p.title||'')+'</div></div>'
+    + '<div class="cur">'
+    +   '<button class="play" '+(p.preview?'':'disabled')+' title="Play current voice">▶</button>'
+    +   '<span class="vname '+(p.voice_id?'':'none')+'">'+esc(vname)+'</span>'
+    +   '<span class="badge '+p.source+'">'+srcLabel+'</span>'
+    + '</div>'
+    + '<button class="change">Change voice</button>'
+    + '</div>'
+    + '<div class="picker" hidden></div>';
+
+  const playBtn = el.querySelector('.play');
+  if (p.preview) playBtn.onclick = () => play(p.preview, playBtn);
+
+  const changeBtn = el.querySelector('.change');
+  const picker = el.querySelector('.picker');
+  changeBtn.onclick = () => {
+    const opening = picker.hidden;
+    changeBtn.classList.toggle('open', opening);
+    changeBtn.textContent = opening ? 'Close' : 'Change voice';
+    picker.hidden = !opening;
+    if (opening && !picker.dataset.built){ buildPicker(picker, p); picker.dataset.built = '1'; }
+  };
+  return el;
+}
+
+function buildPicker(picker, p){
+  if (!CATALOG.length){ picker.innerHTML = '<p class="hint">No auditionable voices were returned.</p>'; return; }
+  picker.innerHTML = '<p class="hint">Audition and choose '+esc(p.name)+'’s voice:</p>';
+  const list = document.createElement('div'); list.className = 'vlist';
+  for (const v of CATALOG){
+    const row = document.createElement('div'); row.className = 'vrow' + (v.voice_id===p.voice_id?' sel':'');
+    row.innerHTML =
+      '<button class="play" '+(v.preview?'':'disabled')+'>▶</button>'
+      + '<div class="vmeta"><div class="vn">'+esc(v.name||'Voice')+'</div>'
+      +   '<div class="vl">'+esc(v.language||'')+(v.gender?' · '+esc(v.gender):'')+'</div></div>'
+      + '<button class="use">'+(v.voice_id===p.voice_id?'Current':'Use')+'</button>';
+    const pb = row.querySelector('.play');
+    if (v.preview) pb.onclick = () => play(v.preview, pb);
+    const ub = row.querySelector('.use');
+    ub.onclick = () => setVoice(p, v, ub);
+    list.appendChild(row);
+  }
+  picker.appendChild(list);
+}
+
+async function setVoice(p, v, btn){
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/voices/'+encodeURIComponent(p.persona), {
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ voice_id: v.voice_id, voice_name: v.name }),
+    });
+    if (!r.ok){ const j = await r.json().catch(()=>({})); throw new Error(j.detail||j.error||('HTTP '+r.status)); }
+    stopAudio();
+    await load(); // reflect new current + source badge
+  } catch(e){
+    btn.disabled = false; btn.textContent = 'Use';
+    showErr('Could not set '+esc(p.name)+'’s voice: '+e.message);
+  }
+}
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, (c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+load();
+</script>
+</body>
+</html>

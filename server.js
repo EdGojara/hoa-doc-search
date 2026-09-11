@@ -1108,6 +1108,9 @@ app.get('/admin/communications', (req, res) => {
 app.get('/admin/legal', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'legal-disclosures.html'));
 });
+app.get('/admin/voices', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'voices.html'));
+});
 app.use('/api/email-drafts', require('./api/email_drafts'));
 app.use('/api/email-attachments', require('./api/email_attachments'));
 app.use('/api/vendor-outreach', require('./api/vendor_outreach'));
@@ -1698,6 +1701,12 @@ app.use('/api/payment-plans', paymentPlansRouter);
 
 const { router: tessaRouter } = require('./api/tessa');
 app.use('/api/tessa', tessaRouter);
+
+const { router: voicesRouter, loadVoiceOverrides } = require('./api/voices');
+app.use('/api/voices', voicesRouter);
+// Load saved per-persona voice choices into the roster's override map at boot so
+// avatar sessions and rendered video use them without waiting for a redeploy.
+loadVoiceOverrides().catch((e) => console.warn('[voices] initial load failed:', e.message));
 
 const { router: apIntakeRouter } = require('./api/ap_intake');
 app.use('/api/ap-intake', apIntakeRouter);
