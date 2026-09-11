@@ -37,6 +37,7 @@ const { safeErrorMessage } = require('./_safe_error');
 const { requireStaff } = require('./_require_admin');
 const { resolveVisitor, resolveVisitCommunity } = require('../lib/claire/scope');
 const { screen } = require('../lib/claire/guardrails');
+const { stripEmDashes } = require('../lib/tone');
 const roster = require('../lib/team/roster');
 const { routeSpecialist } = require('../lib/email/route_specialist');
 const heygen = require('../lib/video/heygen');
@@ -415,8 +416,12 @@ router.post('/session/:id/turn', async (req, res) => {
 
     for await (const chunk of streamTurn({ utterance: text, history, community, caller, personaPack, model: portalModel })) {
       if (typeof chunk !== 'string') continue;  // control objects (passthrough tools) don't apply on video
-      full += (full ? ' ' : '') + chunk;
-      send('sentence', { text: chunk });
+      // No em dashes in what a resident reads on screen: Ed's rule covers
+      // conversations, not just email, and the model still slips them in. Scrub
+      // deterministically at the display boundary, same backstop as buildPersonaEmail.
+      const clean = stripEmDashes(chunk);
+      full += (full ? ' ' : '') + clean;
+      send('sentence', { text: clean });
     }
     if (!full) {
       full = 'Sorry, I lost that one. Could you say it again?';
