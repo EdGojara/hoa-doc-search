@@ -26,8 +26,13 @@
     font-family:Georgia,serif;font-size:34px;color:var(--gold);background:rgba(212,175,55,.07);}
   .stage .overlay-badge{position:absolute;top:14px;left:14px;z-index:3;}
   .stage .timer{position:absolute;top:16px;right:16px;z-index:3;font-size:11.5px;color:var(--faint);background:rgba(7,19,36,.72);border-radius:99px;padding:5px 11px;}
-  .speaking{position:absolute;bottom:0;left:0;right:0;z-index:2;padding:18px 18px 16px;background:linear-gradient(transparent,rgba(7,19,36,.94) 55%);}
-  .caption{font-size:15.5px;line-height:1.5;color:#f1f5f9;max-height:5.4em;overflow:hidden;}
+  .speaking{position:absolute;bottom:0;left:0;right:0;z-index:2;padding:26px 18px 16px;background:linear-gradient(transparent,rgba(7,19,36,.97) 30%);}
+  /* Roomy + scrollable so a full answer is readable and captured, not clipped to
+     a couple of lines. Auto-scrolls to the newest text as Claire streams. */
+  .caption{font-size:15.5px;line-height:1.55;color:#f1f5f9;max-height:11em;overflow-y:auto;padding-right:6px;
+    overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(203,213,225,.4) transparent;}
+  .caption::-webkit-scrollbar{width:6px}
+  .caption::-webkit-scrollbar-thumb{background:rgba(203,213,225,.35);border-radius:99px}
   .caption:empty{display:none}
 
   .bar{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap;}
@@ -50,7 +55,10 @@
   .t-row.claire .who{color:var(--gold);}
   .t-row.blocked{border-left:2px solid rgba(217,119,6,.7);padding-left:10px;}
   /* Who is on screen. Named, always, because several teammates speak here. */
-  .whois{position:absolute;bottom:14px;left:14px;z-index:4;display:flex;align-items:center;gap:9px;
+  /* Top-left, stacked under the AI badge, so it never sits on top of the
+     caption text at the bottom of the stage. (Ed 2026-09-11: it was blocking
+     the answer text.) */
+  .whois{position:absolute;top:52px;left:14px;z-index:4;display:flex;align-items:center;gap:9px;
     background:rgba(7,19,36,.8);border:1px solid var(--rule);border-radius:99px;padding:6px 14px 6px 10px;}
   .whois .em{font-size:15px}
   .whois .nm{font-size:12.5px;font-weight:700;color:#fff;line-height:1.25}
@@ -314,7 +322,7 @@ async function ask(text){
         // already on its way out.
         if(evt==='handoff'){ pending=pending.then(()=>swapPersona(data)).catch(()=>{}); }
         else if(evt==='sentence'){
-          full+=(full?' ':'')+data.text; $('cap').textContent=full;
+          full+=(full?' ':'')+data.text; const cap=$('cap'); cap.textContent=full; cap.scrollTop=cap.scrollHeight;
           const line=data.text; pending=pending.then(()=>speakAvatar(line)).catch(()=>{});
         }
       });
