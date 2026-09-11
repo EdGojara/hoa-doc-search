@@ -16,6 +16,11 @@
     font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;line-height:1.5;}
   .wrap{max-width:1000px;margin:0 auto;padding:28px 20px 90px;}
   .back{font-size:13px;color:var(--muted);text-decoration:none;}
+  .crumbs{font-size:13px;color:var(--muted);margin-bottom:2px;}
+  .crumbs a{color:var(--muted);text-decoration:none;}
+  .crumbs a:hover{color:var(--navy);text-decoration:underline;}
+  .crumbs .sep{margin:0 7px;color:var(--line);}
+  .crumbs .here{color:var(--navy);font-weight:700;}
   h1{font-size:26px;font-weight:800;color:var(--navy);margin:6px 0 2px;letter-spacing:-.01em;}
   .sub{font-size:13.5px;color:var(--muted);margin:0 0 18px;max-width:70ch;}
 
@@ -63,7 +68,13 @@
 </head>
 <body>
 <div class="wrap">
-  <a class="back" href="/admin/ai-scorecard">&larr; AI Team Scorecard</a>
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/admin/communications">Communications</a>
+    <span class="sep">&rsaquo;</span>
+    <a href="/admin/ai-scorecard">AI Team Scorecard</a>
+    <span class="sep">&rsaquo;</span>
+    <span class="here">Voices</span>
+  </nav>
   <h1>AI Team Voices</h1>
   <p class="sub">Pick each teammate's voice by ear. Press play to audition, then Use to set it. A choice
     takes effect immediately for the live avatar and any rendered video, with no redeploy. Only voices the
@@ -76,10 +87,15 @@
     falls back to the environment setting. This page is owner-only.</p>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 let CATALOG = [];
 let audio = null, playingBtn = null;
+// Authed fetch: owner-gated endpoints need the Supabase JWT as a Bearer header
+// (a cookie is not enough). Upgraded from /api/auth/config in boot(); until then
+// it is a plain fetch so the page still renders.
+let af = (u, o) => fetch(u, o || {});
 
 function showErr(t){ $('msg').innerHTML = '<div class="msg err">'+t+'</div>'; }
 
@@ -101,8 +117,8 @@ async function load(){
   let cur;
   try {
     const [cr, cat] = await Promise.all([
-      fetch('/api/voices/current', {credentials:'same-origin'}),
-      fetch('/api/voices/catalog', {credentials:'same-origin'}),
+      af('/api/voices/current'),
+      af('/api/voices/catalog'),
     ]);
     if (cr.status === 403){ showErr('This is the owner’s workspace. Sign in as the owner to manage voices.'); $('body').innerHTML=''; return; }
     if (!cr.ok) throw new Error('current '+cr.status);
@@ -172,8 +188,8 @@ function buildPicker(picker, p){
 async function setVoice(p, v, btn){
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
-    const r = await fetch('/api/voices/'+encodeURIComponent(p.persona), {
-      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+    const r = await af('/api/voices/'+encodeURIComponent(p.persona), {
+      method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ voice_id: v.voice_id, voice_name: v.name }),
     });
     if (!r.ok){ const j = await r.json().catch(()=>({})); throw new Error(j.detail||j.error||('HTTP '+r.status)); }
@@ -187,7 +203,18 @@ async function setVoice(p, v, btn){
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, (c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-load();
+(async function boot(){
+  try {
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if (cfg && cfg.enabled && window.supabase && cfg.supabase_url && cfg.supabase_anon_key){
+      const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      af = async (u,o)=>{ o=o||{}; const h=Object.assign({}, o.headers||{});
+        try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){}
+        return fetch(u, Object.assign({}, o, { headers:h })); };
+    }
+  } catch(_){}
+  load();
+})();
 </script>
 </body>
 </html>
