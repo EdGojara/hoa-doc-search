@@ -7044,8 +7044,14 @@ app.get('/api/presentations/story', async (req, res) => {
     // Resolve every referenced topic once, then attach urls to the video screens.
     // Includes both single-video screens (video_topic) and the team screen's
     // sequence (video_segments[].topic).
+    // A per_audience screen (the personalized welcome) resolves ONLY to this
+    // audience's own clip, stored under topic 'welcome:<audience>'. No fallback to
+    // a bare 'welcome', so one guest's by-name welcome can never play for another
+    // audience. (Ed 2026-09-11.) A generic shared welcome, if we add one later,
+    // would just be a non-per_audience screen.
+    const topicFor = (s) => (s.per_audience ? `${s.video_topic}:${audience}` : s.video_topic);
     const topics = [...new Set([
-      ...screens.filter((s) => s.video_topic).map((s) => s.video_topic),
+      ...screens.filter((s) => s.video_topic).map(topicFor),
       ...screens.flatMap((s) => (s.video_segments || []).map((seg) => seg.topic)),
     ])];
     const urls = {};
@@ -7111,7 +7117,7 @@ app.get('/api/presentations/story', async (req, res) => {
         return { ...s, members: teamMembers || [], video_segments: segments };
       }
       if (!s.video_topic) return s;
-      const v = urls[s.video_topic] || null;
+      const v = urls[topicFor(s)] || null;
       return {
         ...s,
         video_url: v ? v.video_url : null,
