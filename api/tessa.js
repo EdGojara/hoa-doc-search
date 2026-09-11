@@ -350,7 +350,7 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
         });
         if (!inviteBody) {
           const who = out.to.map((p) => (p.name || '').split(/\s+/)[0]).filter(Boolean).join(' and ') || 'there';
-          inviteBody = `Hi ${who}, I'm setting up this meeting on Ed's behalf${out.meeting.message ? ' — ' + out.meeting.message : (out.meeting.title ? ' to ' + out.meeting.title.toLowerCase() : '')}. The Teams join link is on this invite.`;
+          inviteBody = `Hi ${who}, I'm setting up this meeting on Ed's behalf${out.meeting.message ? ', ' + out.meeting.message : (out.meeting.title ? ' to ' + out.meeting.title.toLowerCase() : '')}. The Teams join link is on this invite.`;
         }
         try {
           const { data, error } = await supabase.from('tessa_outbox').insert({
@@ -362,7 +362,7 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
             body_text: inviteBody,
             note: 'Set up on Ed’s behalf',
           }).select('id, subject, meeting_start, meeting_end, meeting_time_zone, meeting_attendees').single();
-          if (!error && data) staged_meeting = { ...data, when_label: `${wt.date_label}, ${out.meeting.start_time}${out.meeting.end_time ? ' – ' + out.meeting.end_time : ''}` };
+          if (!error && data) staged_meeting = { ...data, when_label: `${wt.date_label}, ${out.meeting.start_time}${out.meeting.end_time ? ' to ' + out.meeting.end_time : ''}` };
           else if (error) console.warn('[tessa] meeting stage failed:', error.message);
         } catch (e) { console.warn('[tessa] meeting stage skipped:', e.message); }
       }
@@ -389,7 +389,7 @@ router.post('/request', express.json({ limit: '16kb' }), async (req, res) => {
               title: intro.subject || 'Introduction from Bedrock',
               subject: intro.subject || 'Introduction from Bedrock',
               to_emails: introTo.join(', '), body_text: intro.body,
-              note: 'Intro to send before the invite — on Ed’s behalf',
+              note: 'Intro to send before the invite, on Ed’s behalf',
             }).select('id, subject, to_emails, body_text').single();
             if (!error && data) staged_email = { ...data };
             else if (error) console.warn('[tessa] intro email stage failed:', error.message);
@@ -660,7 +660,7 @@ router.post('/followups/:id/nudge-draft', express.json(), async (req, res) => {
     if (!fu) return res.status(404).json({ error: 'not_found' });
     const to = String(fu.waiting_on || '').trim();
     if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) {
-      return res.status(400).json({ error: 'no_recipient', detail: 'This follow-up has no email to nudge — add one in "Waiting on".' });
+      return res.status(400).json({ error: 'no_recipient', detail: 'This follow-up has no email to nudge. Add one in "Waiting on".' });
     }
     // Recipient name: from the EA book, else a first name parsed out of the title
     // ("...with Melody", "Melody's availability"), else the address local-part.
@@ -675,12 +675,12 @@ router.post('/followups/:id/nudge-draft', express.json(), async (req, res) => {
       .replace(/\s+with\s+[A-Z][a-z]+\s*$/i, '')
       .trim() || 'this';
     // Thread on the original email's subject when we have it.
-    let subject = `Following up — ${topic}`;
+    let subject = `Following up on ${topic}`;
     if (fu.related_email_id) {
       try { const { data: e } = await supabase.from('email_messages').select('subject').eq('id', fu.related_email_id).maybeSingle(); if (e && e.subject) subject = /^re:/i.test(e.subject) ? e.subject : `Re: ${e.subject}`; } catch (_) {}
     }
     const topicPhrase = /^(the|a|an|our|your)\s/i.test(topic) ? topic : `the ${topic}`;
-    let body = `Hi ${first},\n\nJust circling back on ${topicPhrase} — whenever you have a moment, let me know what works for your schedule and I'll get it on the calendar. No rush at all.\n\nThank you!`;
+    let body = `Hi ${first},\n\nJust circling back on ${topicPhrase}. Whenever you have a moment, let me know what works for your schedule and I'll get it on the calendar. No rush at all.\n\nThank you!`;
 
     // Thread it on the original conversation: quote the history and Cc everyone
     // who was on it, so the nudge continues the thread with the same people
