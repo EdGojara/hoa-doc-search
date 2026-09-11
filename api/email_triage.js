@@ -1604,6 +1604,17 @@ router.post('/:id/send', express.json(), async (req, res) => {
       resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'association_record', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString(),
     }).select('id').maybeSingle();
 
+    // Capture any commitment this reply made — or asked the other side for — as a
+    // tracked follow-up, so "I'll schedule it" / "let me know what works" don't
+    // die in the sent folder. Ours -> open task; theirs -> waiting, with a nudge
+    // date so a quiet reply gets chased. Best-effort, never affects the send.
+    // (Ed 2026-09-11: Kat's ACH-walkthrough offer to Melody had no follow-through.)
+    try {
+      const { captureCommitments } = require('../lib/email/commitment_capture');
+      const cc = await captureCommitments(supabase, { body: String(body || ''), subject: subj, persona, recipient, sourceEmailId: outRow ? outRow.id : m.id });
+      if (cc.created && cc.created.length) console.log(`[email_triage] captured ${cc.created.length} follow-up(s) from ${persona}'s reply`);
+    } catch (e) { console.warn('[email_triage] commitment capture skipped:', e.message); }
+
     // Encode-Ed: capture Claire's original draft next to what was actually sent,
     // so her future drafts of this kind learn from the edit. Best-effort — never
     // affects the send. Single-teacher filtering happens at retrieval (edited_by).
