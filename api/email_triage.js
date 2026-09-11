@@ -414,6 +414,68 @@ router.get('/team', async (req, res) => {
   }
 });
 
+// GET /scorecard — the AI-team scorecard. Per teammate: throughput (handled in
+// the window), current backlog, autonomy (how often Ed sends the draft with only
+// a trivial edit), average handle time, and readiness. Owner-only. This is the
+// "what is the AI team getting done, and how much of it without me" view.
+// (Ed 2026-09-10.)
+router.get('/scorecard', async (req, res) => {
+  try {
+    const owner = await isOwner(req);
+    if (!owner) return res.status(403).json({ error: 'owner_only' });
+    const { TEAM } = require('../lib/email/persona');
+    const days = Math.min(120, Math.max(7, parseInt(req.query.days, 10) || 30));
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+    let readiness = {};
+    try { const { personaReadiness } = require('../lib/email/reply_learning'); readiness = await personaReadiness(supabase, { ownerEmail: OWNER_EMAIL }); } catch (_) {}
+
+    const cnt = async (build) => {
+      const { count, error } = await build(supabase.from('email_messages').select('id', { count: 'exact', head: true }));
+      if (error) { console.warn('[scorecard] count failed:', error.message); return 0; }
+      return count || 0;
+    };
+
+    const cards = [];
+    let tHandled = 0, tQueue = 0;
+    for (const t of TEAM) {
+      const p = t.persona;
+      const handled = await cnt((q) => q.eq('persona', p).eq('triage_status', 'handled').gte('reviewed_at', cutoff));
+      const inQueue = await cnt((q) => q.eq('persona', p).in('triage_status', ['needs_review', 'new', 'linked']));
+      // Handle time + last active over the recent handled sample (bounded).
+      let avgH = null, lastAt = null;
+      const { data: rows } = await supabase.from('email_messages')
+        .select('received_at, reviewed_at').eq('persona', p).eq('triage_status', 'handled')
+        .not('reviewed_at', 'is', null).order('reviewed_at', { ascending: false }).limit(150);
+      if (rows && rows.length) {
+        lastAt = rows[0].reviewed_at;
+        const diffs = rows.map((r) => (new Date(r.reviewed_at) - new Date(r.received_at)))
+          .filter((d) => d > 0 && d < 30 * 86400000);
+        if (diffs.length) avgH = Math.round((diffs.reduce((a, b) => a + b, 0) / diffs.length) / 3600000 * 10) / 10;
+      }
+      const rd = readiness[p] || null;
+      tHandled += handled; tQueue += inQueue;
+      cards.push({
+        persona: p, name: t.name, title: t.title, emoji: t.emoji || null,
+        handled, in_queue: inQueue, avg_handle_hours: avgH, last_active: lastAt,
+        clean_rate: rd ? rd.clean_rate : null, ready: rd ? !!rd.ready : null,
+        n: rd ? rd.n : 0, trend: rd ? rd.trend : null,
+      });
+    }
+    cards.sort((a, b) => b.handled - a.handled);
+    // Portfolio autonomy = volume-weighted clean rate across teammates with a signal.
+    let wSum = 0, wN = 0;
+    for (const c of cards) { if (c.clean_rate != null && c.n) { wSum += c.clean_rate * c.n; wN += c.n; } }
+    res.json({
+      ok: true, window_days: days, cards,
+      totals: { handled: tHandled, in_queue: tQueue, autonomy: wN ? Number((wSum / wN).toFixed(3)) : null },
+    });
+  } catch (err) {
+    console.error('[email_triage] scorecard failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // GET /stats — board header counts
 router.get('/stats', async (req, res) => {
   try {

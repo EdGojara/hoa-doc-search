@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Team Scorecard — Bedrock</title>
+<style>
+  :root{
+    --navy:#0B1D34; --ink:#1a2230; --muted:#64748b; --line:#e3e8ef;
+    --paper:#eef1f5; --surface:#fff; --surface-2:#f7f9fb; --gold:#B8892B; --gold-bar:#D4AF37;
+    --good:#166b46; --good-bg:#e7f4ec; --warn:#9a5510; --warn-bg:#fbefe0;
+    --crit:#a5271d; --crit-bg:#fbe9e7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;line-height:1.5;}
+  .wrap{max-width:1000px;margin:0 auto;padding:28px 20px 80px;}
+  .top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:6px;}
+  .back{font-size:13px;color:var(--muted);text-decoration:none;}
+  h1{font-size:26px;font-weight:800;color:var(--navy);margin:6px 0 2px;letter-spacing:-.01em;}
+  .sub{font-size:13.5px;color:var(--muted);margin:0;}
+  .win{display:flex;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:3px;}
+  .win button{border:none;background:none;font:inherit;font-size:13px;font-weight:600;color:var(--muted);
+    padding:6px 12px;border-radius:6px;cursor:pointer;}
+  .win button.on{background:var(--navy);color:#fff;}
+
+  .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:20px 0 8px;}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;}
+  .stat .n{font-size:30px;font-weight:800;color:var(--navy);font-variant-numeric:tabular-nums;line-height:1.1;}
+  .stat .l{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-top:3px;}
+  .stat .sub2{font-size:12px;color:var(--muted);margin-top:4px;}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:18px;
+    box-shadow:0 1px 2px rgba(11,29,52,.05),0 8px 22px rgba(11,29,52,.05);}
+  .hrow,.trow{display:grid;grid-template-columns:1.9fr .7fr .8fr 1.5fr .8fr .9fr;gap:12px;align-items:center;padding:12px 18px;}
+  .hrow{background:var(--surface-2);border-bottom:1px solid var(--line);position:sticky;top:0;}
+  .hrow span{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:700;}
+  .hrow .r,.trow .r{text-align:right;}
+  .trow{border-bottom:1px solid var(--line);}
+  .trow:last-child{border-bottom:none;}
+  .who{display:flex;flex-direction:column;}
+  .who b{font-size:15px;color:var(--navy);font-weight:700;}
+  .who small{font-size:12px;color:var(--muted);}
+  .num{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink);text-align:right;}
+  .queue{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;font-size:16px;}
+  .queue.hi{color:var(--crit);} .queue.mid{color:var(--warn);} .queue.lo{color:var(--good);}
+  .auton{display:flex;align-items:center;gap:9px;}
+  .bar{flex:1;height:7px;background:var(--line);border-radius:6px;overflow:hidden;min-width:44px;}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--gold-bar));border-radius:6px;}
+  .auton .pct{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink);width:38px;text-align:right;}
+  .auton .none{font-size:12px;color:var(--muted);font-style:italic;}
+  .chip{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.03em;padding:3px 8px;border-radius:20px;border:1px solid;white-space:nowrap;}
+  .c-ready{color:var(--good);background:var(--good-bg);border-color:#b6ddc6;}
+  .c-train{color:var(--warn);background:var(--warn-bg);border-color:#f0cfa6;}
+  .c-none{color:var(--muted);background:var(--surface-2);border-color:var(--line);}
+  .ago{font-size:12.5px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums;}
+  .empty{padding:40px;text-align:center;color:var(--muted);font-size:14px;}
+  .foot{margin-top:20px;font-size:12px;color:var(--muted);line-height:1.6;}
+  .foot b{color:var(--ink);font-weight:600;}
+  @media(max-width:720px){
+    .summary{grid-template-columns:1fr;}
+    .hrow{display:none;}
+    .trow{grid-template-columns:1fr auto;gap:6px 12px;padding:14px 16px;}
+    .trow .who{grid-column:1;} .trow .m{grid-column:1;font-size:13px;color:var(--muted);}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <a class="back" href="/admin/communications">&larr; Communications</a>
+      <h1>AI Team Scorecard</h1>
+      <p class="sub">What each teammate is getting done, how much they're clearing on their own, and where the backlog is.</p>
+    </div>
+    <div class="win" id="win">
+      <button data-d="7">7 days</button>
+      <button data-d="30" class="on">30 days</button>
+      <button data-d="90">90 days</button>
+    </div>
+  </div>
+
+  <div class="summary" id="summary"></div>
+  <div class="card"><div id="board"><div class="empty">Loading&hellip;</div></div></div>
+  <div class="foot" id="foot"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const $ = (id)=>document.getElementById(id);
+  const esc = (s)=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  let af = (u,o)=>fetch(u,o||{});
+  let days = 30;
+
+  function ago(ts){
+    if(!ts) return '—';
+    const d = (Date.now()-new Date(ts).getTime())/1000;
+    if(d<3600) return Math.max(1,Math.round(d/60))+'m ago';
+    if(d<86400) return Math.round(d/3600)+'h ago';
+    return Math.round(d/86400)+'d ago';
+  }
+  function queueClass(n){ return n>=40?'hi':n>=15?'mid':'lo'; }
+  function autonCell(c){
+    if(c.clean_rate==null || !c.n) return '<div class="auton"><span class="none">not enough yet</span></div>';
+    const pct = Math.round(c.clean_rate*100);
+    return '<div class="auton"><div class="bar"><i style="width:'+pct+'%"></i></div><span class="pct">'+pct+'%</span></div>';
+  }
+  function readyChip(c){
+    if(c.clean_rate==null || !c.n) return '<span class="chip c-none">no signal</span>';
+    return c.ready ? '<span class="chip c-ready">READY</span>' : '<span class="chip c-train">TRAINING</span>';
+  }
+
+  function render(j){
+    const t = j.totals||{};
+    $('summary').innerHTML =
+      '<div class="stat"><div class="n">'+(t.handled||0)+'</div><div class="l">Handled · last '+j.window_days+'d</div><div class="sub2">replies + actions completed</div></div>'
+     +'<div class="stat"><div class="n">'+(t.in_queue||0)+'</div><div class="l">In queue now</div><div class="sub2">waiting for review or reply</div></div>'
+     +'<div class="stat"><div class="n">'+(t.autonomy!=null?Math.round(t.autonomy*100)+'%':'—')+'</div><div class="l">Sent unedited</div><div class="sub2">drafts you approved as-is</div></div>';
+
+    const cards = (j.cards||[]).filter(c=>c.handled>0 || c.in_queue>0 || (c.n||0)>0);
+    if(!cards.length){ $('board').innerHTML='<div class="empty">No AI-team activity in this window yet.</div>'; return; }
+    let h = '<div class="hrow"><span>Teammate</span><span class="r">Handled</span><span class="r">In queue</span><span>Sent unedited</span><span class="r">Avg time</span><span class="r">Last active</span></div>';
+    for(const c of cards){
+      h += '<div class="trow">'
+        + '<div class="who"><b>'+(c.emoji?esc(c.emoji)+' ':'')+esc(c.name||c.persona)+'</b><small>'+esc(c.title||'')+'</small></div>'
+        + '<div class="num">'+c.handled+'</div>'
+        + '<div class="queue '+queueClass(c.in_queue)+'">'+c.in_queue+'</div>'
+        + '<div>'+autonCell(c)+' '+readyChip(c)+'</div>'
+        + '<div class="num" style="font-weight:600;font-size:14px;">'+(c.avg_handle_hours!=null?c.avg_handle_hours+'h':'—')+'</div>'
+        + '<div class="ago">'+ago(c.last_active)+'</div>'
+        + '</div>';
+    }
+    $('board').innerHTML = h;
+    $('foot').innerHTML = '<b>Handled</b> = replies and actions the teammate completed in the window. <b>In queue</b> = items still waiting (red = piling up). <b>Sent unedited</b> = how often you approved the draft with only a trivial edit — the autonomy signal; <b>Ready</b> means clean enough on enough volume to consider auto-send. <b>Avg time</b> = received to handled. A person still supervises the exceptions; nothing sends without approval.';
+  }
+
+  async function load(){
+    $('board').innerHTML='<div class="empty">Loading&hellip;</div>';
+    try{
+      const r = await af('/api/email-triage/scorecard?days='+days);
+      const j = await r.json();
+      if(r.status===403){ $('board').innerHTML='<div class="empty">Owner-only view. Sign in as the account owner.</div>'; $('summary').innerHTML=''; return; }
+      if(!r.ok || !j.ok) throw new Error(j.error||('HTTP '+r.status));
+      render(j);
+    }catch(e){ $('board').innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; }
+  }
+  $('win').addEventListener('click', (e)=>{
+    const b = e.target.closest('button'); if(!b) return;
+    days = parseInt(b.dataset.d,10)||30;
+    [...$('win').children].forEach(x=>x.classList.toggle('on', x===b));
+    load();
+  });
+  (async function boot(){
+    try{
+      const cfg = await (await fetch('/api/auth/config')).json();
+      if(cfg && cfg.enabled && window.supabase && cfg.supabase_url && cfg.supabase_anon_key){
+        const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+        af = async (u,o)=>{ o=o||{}; const h=Object.assign({}, o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){ } return fetch(u, Object.assign({}, o, { headers:h })); };
+      }
+    }catch(_){}
+    load();
+  })();
+</script>
+</body>
+</html>

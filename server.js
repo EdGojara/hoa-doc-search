@@ -1136,6 +1136,11 @@ app.get('/admin/bedrock-team', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'bedrock-team.html'));
 });
 
+// AI-team scorecard — throughput, backlog, autonomy per teammate (Ed 2026-09-10).
+app.get('/admin/ai-scorecard', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'ai-scorecard.html'));
+});
+
 app.use('/api/operations', require('./api/operations'));
 app.get('/admin/operations', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'operations.html'));
