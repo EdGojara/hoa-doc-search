@@ -2006,13 +2006,23 @@ router.post('/pull', express.json(), async (req, res) => {
         results[mbx] = s; kept += s.kept || 0; invoicesLoaded += s.invoices_loaded || 0; filed += s.filed || 0;
       } catch (e) { results[mbx] = { error: e.message }; }
     }));
+    // Also refresh Tessa's owner-only inbox (ea_inbox). Its 15-min scheduler poll
+    // can drift silently — it was two weeks behind while the general inbox stayed
+    // current, because that one has a button Ed presses and Tessa's didn't (Ed
+    // 2026-09-11: Johnny's signed NDA + Tiffany's replies never surfaced). Pin it
+    // to the pull that demonstrably runs. Best-effort — never blocks the pull.
+    let tessa_pulled = 0;
+    try {
+      const { pollTessaInbox, isConfigured } = require('../lib/ea/tessa_inbox');
+      if (isConfigured()) { const tp = await pollTessaInbox({ max: 40, mode: 'tessa' }); tessa_pulled = (tp && tp.drafted) || 0; }
+    } catch (e) { console.warn('[email_triage] tessa poll on pull skipped:', e.message); }
     // Count fresh drafts awaiting review (non-spam/internal inbound with a draft)
     try {
       const { count } = await supabase.from('email_messages').select('id', { count: 'exact', head: true })
         .eq('direction', 'inbound').eq('triage_status', 'needs_review').not('extracted->draft', 'is', null);
       drafted = count || 0;
     } catch (_) {}
-    res.json({ ok: true, since: sinceISO, mailboxes, kept, drafts_waiting: drafted, invoices_loaded: invoicesLoaded, filed, results });
+    res.json({ ok: true, since: sinceISO, mailboxes, kept, drafts_waiting: drafted, tessa_pulled, invoices_loaded: invoicesLoaded, filed, results });
   } catch (err) {
     console.error('[email_triage] pull failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
