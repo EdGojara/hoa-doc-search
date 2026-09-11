@@ -804,7 +804,10 @@ const MODULES = [
     icon: '💬',
     section: 'home',
     cta: 'Start a visit',
-    buildLink: (ctx) => `/claire`,
+    // Pin Claire to THIS community so the resident (or a manager previewing this
+    // homeowner's portal) never sees a picker of every community. The server
+    // still enforces access on the visit; this scopes the lobby to one.
+    buildLink: (ctx) => `/claire?community=${encodeURIComponent((ctx.community && ctx.community.id) || '')}`,
   },
   {
     key: 'balance',

@@ -85,6 +85,17 @@ async function boot(){
   ME=await r.json();
   // Selection lists are alphabetical by label, always.
   ME.communities=(ME.communities||[]).slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+  // Pinned to one community (e.g. opened from the homeowner portal's Ask Claire
+  // tile: /claire?community=<id>). Scope the lobby to just that community so a
+  // portfolio-scoped viewer (a manager previewing a homeowner's portal) is never
+  // shown, and can never pick, another community. The server independently
+  // enforces access on /session/start via resolveVisitCommunity, so this is UX
+  // scoping layered over a real server-side gate, not the gate itself.
+  // (Ed 2026-09-11: the portal picker was showing every community.)
+  try{
+    const pin=new URLSearchParams(location.search).get('community');
+    if(pin){ const match=ME.communities.find(c=>String(c.id)===String(pin)); if(match) ME.communities=[match]; }
+  }catch(_){}
   renderLobby();
 }
 
