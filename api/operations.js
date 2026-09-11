@@ -392,4 +392,42 @@ router.get('/:id/board-view', async (req, res) => {
   } catch (err) { console.error('[operations] board-view failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// GET /upcoming — the forward-looking status board: what's coming due across the
+// operation. Today it's driven by the enforcement pipeline (the work that IS
+// date-stamped ahead) — every violation whose cure period is closing needs a
+// re-inspection and a next-stage decision. Meetings, billing cycles and standing
+// tasks join here as those get scheduled dates. Per community + portfolio totals.
+// (Ed 2026-09-10.)
+router.get('/upcoming', async (req, res) => {
+  try {
+    const now = new Date();
+    const iso = now.toISOString();
+    const in7 = new Date(now.getTime() + 7 * 86400000).toISOString();
+    const in30 = new Date(now.getTime() + 30 * 86400000).toISOString();
+    const { data: comms, error: cErr } = await supabase.from('communities').select('id, name').order('name');
+    if (cErr) throw cErr;
+    const cnt = async (build) => {
+      const { count, error } = await build(supabase.from('violations').select('id', { count: 'exact', head: true }));
+      if (error) { console.warn('[operations] upcoming count failed:', error.message); return 0; }
+      return count || 0;
+    };
+    const rows = [];
+    const tot = { overdue: 0, week: 0, month: 0, certified: 0 };
+    for (const c of (comms || [])) {
+      const cid = c.id;
+      const overdue = await cnt((q) => q.eq('community_id', cid).lt('cure_period_ends_at', iso).not('cure_period_ends_at', 'is', null).neq('current_stage', 'resolved'));
+      const week = await cnt((q) => q.eq('community_id', cid).gte('cure_period_ends_at', iso).lte('cure_period_ends_at', in7));
+      const month = await cnt((q) => q.eq('community_id', cid).gt('cure_period_ends_at', in7).lte('cure_period_ends_at', in30));
+      const certified = await cnt((q) => q.eq('community_id', cid).eq('current_stage', 'certified_209'));
+      tot.overdue += overdue; tot.week += week; tot.month += month; tot.certified += certified;
+      if (overdue || week || month || certified) rows.push({ community: c.name, overdue, week, month, certified });
+    }
+    rows.sort((a, b) => (b.overdue + b.week + b.month) - (a.overdue + a.week + a.month));
+    res.json({ ok: true, as_of: iso, totals: tot, communities: rows });
+  } catch (err) {
+    console.error('[operations] upcoming failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = router;

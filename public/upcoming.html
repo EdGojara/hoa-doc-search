@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upcoming — Bedrock</title>
+<style>
+  :root{
+    --navy:#0B1D34; --ink:#1a2230; --muted:#64748b; --line:#e3e8ef; --line-strong:#b9c4d0;
+    --paper:#eef1f5; --surface:#fff; --surface-2:#f7f9fb; --gold:#B8892B;
+    --overdue:#a5271d; --overdue-bg:#fbe9e7; --week:#9a5510; --week-bg:#fbefe0;
+    --month:#166b46; --month-bg:#e7f4ec; --cert:#5b3ba8; --cert-bg:#efeafb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;line-height:1.5;}
+  .wrap{max-width:960px;margin:0 auto;padding:28px 20px 80px;}
+  .back{font-size:13px;color:var(--muted);text-decoration:none;}
+  h1{font-size:26px;font-weight:800;color:var(--navy);margin:6px 0 2px;letter-spacing:-.01em;}
+  .sub{font-size:13.5px;color:var(--muted);margin:0;}
+  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0 8px;}
+  .stat{border-radius:12px;padding:16px 18px;border:1px solid;}
+  .stat .n{font-size:32px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.05;}
+  .stat .l{font-size:11px;letter-spacing:.07em;text-transform:uppercase;font-weight:700;margin-top:4px;}
+  .stat .s{font-size:12px;color:var(--muted);margin-top:3px;}
+  .s-over{background:var(--overdue-bg);border-color:#f0c1bb;} .s-over .n,.s-over .l{color:var(--overdue);}
+  .s-week{background:var(--week-bg);border-color:#f0cfa6;} .s-week .n,.s-week .l{color:var(--week);}
+  .s-month{background:var(--month-bg);border-color:#b6ddc6;} .s-month .n,.s-month .l{color:var(--month);}
+  .s-cert{background:var(--cert-bg);border-color:#d6c9f2;} .s-cert .n,.s-cert .l{color:var(--cert);}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:18px;
+    box-shadow:0 1px 2px rgba(11,29,52,.05),0 8px 22px rgba(11,29,52,.05);}
+  .hrow,.trow{display:grid;grid-template-columns:1.7fr .8fr .8fr .8fr .9fr;gap:12px;align-items:center;padding:12px 18px;}
+  .hrow{background:var(--surface-2);border-bottom:1px solid var(--line);}
+  .hrow span{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:700;}
+  .hrow .r,.trow .r{text-align:right;}
+  .trow{border-bottom:1px solid var(--line);}
+  .trow:last-child{border-bottom:none;}
+  .trow .cm{font-size:14.5px;font-weight:700;color:var(--navy);}
+  .n2{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;font-size:15px;}
+  .n2.over{color:var(--overdue);} .n2.week{color:var(--week);} .n2.month{color:var(--month);} .n2.cert{color:var(--cert);} .n2.z{color:var(--line-strong);font-weight:500;}
+  .empty{padding:40px;text-align:center;color:var(--muted);font-size:14px;}
+  .foot{margin-top:20px;font-size:12.5px;color:var(--muted);line-height:1.65;}
+  .foot b{color:var(--ink);font-weight:600;}
+  @media(max-width:720px){.summary{grid-template-columns:repeat(2,1fr);} .hrow{display:none;} .trow{grid-template-columns:1fr auto;gap:5px 12px;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/admin/communications">&larr; Communications</a>
+  <h1>Upcoming</h1>
+  <p class="sub">What's coming due across the operation, by community. Right now this is the enforcement pipeline — every violation whose cure period is closing needs a re-inspection and a next-stage decision.</p>
+
+  <div class="summary" id="summary"></div>
+  <div class="card"><div id="board"><div class="empty">Loading&hellip;</div></div></div>
+  <div class="foot" id="foot"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const $=(id)=>document.getElementById(id);
+  const esc=(s)=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  let af=(u,o)=>fetch(u,o||{});
+  function nz(n,cls){ return n>0 ? '<div class="n2 '+cls+'">'+n+'</div>' : '<div class="n2 z">0</div>'; }
+
+  function render(j){
+    const t=j.totals||{};
+    $('summary').innerHTML =
+      '<div class="stat s-over"><div class="n">'+(t.overdue||0)+'</div><div class="l">Overdue</div><div class="s">cure period already passed</div></div>'
+     +'<div class="stat s-week"><div class="n">'+(t.week||0)+'</div><div class="l">Due this week</div><div class="s">next 7 days</div></div>'
+     +'<div class="stat s-month"><div class="n">'+(t.month||0)+'</div><div class="l">Due this month</div><div class="s">8–30 days out</div></div>'
+     +'<div class="stat s-cert"><div class="n">'+(t.certified||0)+'</div><div class="l">At certified §209</div><div class="s">human-only stage</div></div>';
+
+    const rows=j.communities||[];
+    if(!rows.length){ $('board').innerHTML='<div class="empty">Nothing coming due right now.</div>'; return; }
+    let h='<div class="hrow"><span>Community</span><span class="r">Overdue</span><span class="r">This week</span><span class="r">This month</span><span class="r">Certified §209</span></div>';
+    for(const r of rows){
+      h+='<div class="trow"><div class="cm">'+esc(r.community)+'</div>'
+        + nz(r.overdue,'over') + nz(r.week,'week') + nz(r.month,'month') + nz(r.certified,'cert')
+        + '</div>';
+    }
+    $('board').innerHTML=h;
+    const d = j.as_of ? new Date(j.as_of).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
+    $('foot').innerHTML='<b>Overdue</b> = the cure period ended and the violation isn’t resolved — these need action first. <b>This week / month</b> = cure periods closing soon, each one a re-inspection coming up. <b>Certified §209</b> is the human-only stage (never auto-advanced). Meetings, billing cycles and standing tasks will appear here as they get scheduled dates. As of '+esc(d)+'.';
+  }
+
+  async function load(){
+    try{
+      const r=await af('/api/operations/upcoming'); const j=await r.json();
+      if(r.status===403){ $('board').innerHTML='<div class="empty">Sign in as staff to see the board.</div>'; $('summary').innerHTML=''; return; }
+      if(!r.ok||!j.ok) throw new Error(j.error||('HTTP '+r.status));
+      render(j);
+    }catch(e){ $('board').innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; }
+  }
+  (async function boot(){
+    try{
+      const cfg=await (await fetch('/api/auth/config')).json();
+      if(cfg&&cfg.enabled&&window.supabase&&cfg.supabase_url&&cfg.supabase_anon_key){
+        const supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+        af=async(u,o)=>{o=o||{};const h=Object.assign({},o.headers||{});try{const s=(await supa.auth.getSession()).data.session;if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){}return fetch(u,Object.assign({},o,{headers:h}));};
+      }
+    }catch(_){}
+    load();
+  })();
+</script>
+</body>
+</html>
