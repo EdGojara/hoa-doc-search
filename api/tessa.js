@@ -680,8 +680,39 @@ router.post('/followups/:id/nudge-draft', express.json(), async (req, res) => {
       try { const { data: e } = await supabase.from('email_messages').select('subject').eq('id', fu.related_email_id).maybeSingle(); if (e && e.subject) subject = /^re:/i.test(e.subject) ? e.subject : `Re: ${e.subject}`; } catch (_) {}
     }
     const topicPhrase = /^(the|a|an|our|your)\s/i.test(topic) ? topic : `the ${topic}`;
-    const body = `Hi ${first},\n\nJust circling back on ${topicPhrase} — whenever you have a moment, let me know what works for your schedule and I'll get it on the calendar. No rush at all.\n\nThank you!`;
-    res.json({ ok: true, to, subject, body, followup_id: fu.id });
+    let body = `Hi ${first},\n\nJust circling back on ${topicPhrase} — whenever you have a moment, let me know what works for your schedule and I'll get it on the calendar. No rush at all.\n\nThank you!`;
+
+    // Thread it on the original conversation: quote the history and Cc everyone
+    // who was on it, so the nudge continues the thread with the same people
+    // looped in rather than arriving as a cold new email (Ed 2026-09-11).
+    let cc = '';
+    if (fu.related_email_id) {
+      try {
+        const { data: src } = await supabase.from('email_messages').select('conversation_id').eq('id', fu.related_email_id).maybeSingle();
+        if (src && src.conversation_id) {
+          const { data: thread } = await supabase.from('email_messages')
+            .select('direction, sender_email, sender_name, recipients, body_full, body_preview, received_at')
+            .eq('conversation_id', src.conversation_id).order('received_at', { ascending: false }).limit(10);
+          const SYS = /noreply|no-reply|do-not-reply|notification|@bedrocktxai\.com/i;
+          const tessa = String(graphSend.TESSA_MAILBOX || '').toLowerCase();
+          const parts = new Set();
+          const addAddr = (a) => { const e = String((typeof a === 'string' ? a : (a && ((a.emailAddress && a.emailAddress.address) || a.address))) || '').trim().toLowerCase(); if (e && e.includes('@')) parts.add(e); };
+          for (const m of (thread || [])) { addAddr(m.sender_email); (Array.isArray(m.recipients) ? m.recipients : []).forEach(addAddr); }
+          // Cc everyone on the thread except the To recipient and Tessa (the sender).
+          cc = [...parts].filter((e) => e !== to.toLowerCase() && e !== tessa && !SYS.test(e)).join(', ');
+          // Quoted history, newest first, our own sends attributed to Bedrock.
+          const { stripQuoted } = require('../lib/email/forward_hygiene');
+          const fmtWhen = (d) => { try { return new Date(d).toLocaleString('en-US', { timeZone: 'America/Chicago' }); } catch (_) { return ''; } };
+          const hist = (thread || []).map((m) => {
+            const who = m.direction === 'outbound' ? 'Bedrock' : (m.sender_name || m.sender_email || '');
+            const bt = stripQuoted(String(m.body_full || m.body_preview || '')).trim().slice(0, 1500);
+            return `On ${fmtWhen(m.received_at)}, ${who} wrote:\n${bt}`;
+          }).filter(Boolean).join('\n\n');
+          if (hist) body = `${body}\n\n----- Original conversation -----\n${hist}`;
+        }
+      } catch (e) { console.warn('[tessa] nudge thread build skipped:', e.message); }
+    }
+    res.json({ ok: true, to, cc, subject, body, followup_id: fu.id });
   } catch (err) { console.error('[tessa] nudge-draft failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 

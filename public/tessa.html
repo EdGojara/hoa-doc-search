@@ -1101,7 +1101,8 @@ async function followUpNow(id){
     const j=await r.json();
     if(!r.ok||!j.ok){ box.innerHTML='<div class="err note">'+esc(j.detail||j.error||'Could not draft this follow-up.')+'</div>'; return; }
     box.innerHTML='<div style="border:1px solid var(--line);border-radius:8px;padding:10px;background:#fbfcfe;">'
-      +'<div class="note">To <b>'+esc(j.to)+'</b> · sends from Tessa on your behalf</div>'
+      +'<div class="note">To <b>'+esc(j.to)+'</b> · sends from Tessa on your behalf · quotes the thread below</div>'
+      +'<input id="fud-cc-'+id+'" value="'+esc(j.cc||'')+'" placeholder="Cc — everyone on the thread" style="width:100%;margin:6px 0 0;box-sizing:border-box;font-size:12px;">'
       +'<input id="fud-subj-'+id+'" value="'+esc(j.subject)+'" style="width:100%;margin:6px 0;box-sizing:border-box;">'
       +'<textarea id="fud-body-'+id+'" rows="5" style="width:100%;box-sizing:border-box;">'+esc(j.body)+'</textarea>'
       +'<div class="row" style="margin-top:6px;gap:6px;align-items:center;"><button class="btn gold sm" id="fud-send-'+id+'" onclick="fuSend(\''+id+'\',\''+esc(j.to)+'\')">Send from Tessa</button><button class="btn ghost sm" onclick="document.getElementById(\'fudraft-'+id+'\').innerHTML=\'\';">Cancel</button><span id="fud-msg-'+id+'" class="note"></span></div>'
@@ -1111,10 +1112,11 @@ async function followUpNow(id){
 async function fuSend(id,to){
   const msg=document.getElementById('fud-msg-'+id), btn=document.getElementById('fud-send-'+id);
   const subj=document.getElementById('fud-subj-'+id).value, body=document.getElementById('fud-body-'+id).value;
+  const cc=(document.getElementById('fud-cc-'+id)||{}).value||'';
   if(!body.trim()){ if(msg) msg.textContent='The message is empty.'; return; }
   if(btn){ btn.disabled=true; } if(msg){ msg.style.color='#5a7390'; msg.textContent='Sending…'; }
   try{
-    const r=await af('/api/tessa/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to, subject:subj, body, mode:'tessa'})});
+    const r=await af('/api/tessa/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to, cc, subject:subj, body, mode:'tessa'})});
     const j=await r.json();
     if(!r.ok||!j.sent){ if(btn) btn.disabled=false; if(msg){ msg.style.color='#b91c1c'; msg.textContent=j.detail||j.error||'Send failed.'; } return; }
     // Stamp the nudge + push the next chase date, keep it in the waiting queue.
