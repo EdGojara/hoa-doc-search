@@ -380,7 +380,12 @@ router.get('/team', async (req, res) => {
         }));
       } catch (_) {}
     }
-    const list = owner ? [...TEAM, ...opsCards, TESSA_CARD] : TEAM;
+    // Dedupe by persona: Maggie is on BOTH the community roster (TEAM) and the
+    // internal-ops roster (opsCards), so the raw concat showed her twice. First
+    // occurrence wins — the community card. (Ed 2026-09-10.)
+    const _combined = owner ? [...TEAM, ...opsCards, TESSA_CARD] : [...TEAM];
+    const _seenP = new Set();
+    const list = _combined.filter((t) => { const k = t && t.persona; if (!k || _seenP.has(k)) return false; _seenP.add(k); return true; });
     // Each teammate's OWN address — used to split "addressed directly to them"
     // vs "came to info@ and was routed to them."
     const SELF = { claire: 'claire@', emma: 'emma@', annie: 'annie@', miranda: 'miranda@' };
@@ -491,8 +496,14 @@ router.get('/draft-attachment/url', async (req, res) => {
 });
 
 // GET /:id
-router.get('/:id', async (req, res) => {
+router.get('/:id', async (req, res, next) => {
   try {
+    // This param route is registered before the literal GET routes further down
+    // (/unattributed, /contact-search). Express matches in order, so without this
+    // guard GET /unattributed lands here as id="unattributed" and blows up casting
+    // it to a uuid ("invalid input syntax for type uuid"). Fall through to the
+    // literal route when the id isn't a uuid. (Ed 2026-09-10.)
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id)) return next();
     const { data, error } = await supabase.from('email_messages').select('*').eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'not_found' });
