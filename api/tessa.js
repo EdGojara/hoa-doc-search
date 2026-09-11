@@ -632,12 +632,57 @@ router.patch('/followups/:id', express.json(), async (req, res) => {
     if (b.detail !== undefined) patch.detail = b.detail || null;
     if (b.waiting_on !== undefined) patch.waiting_on = b.waiting_on || null;
     if (b.due_date !== undefined) patch.due_date = b.due_date || null;
+    // Stamp a nudge: sent a follow-up just now, so record it and push the next
+    // chase date out a few days (default 3) so it doesn't re-fire immediately.
+    if (b.nudged) {
+      patch.last_nudged_at = new Date().toISOString();
+      const d = new Date(); d.setDate(d.getDate() + (parseInt(b.next_in_days, 10) || 3));
+      patch.due_date = d.toISOString().slice(0, 10);
+      if (patch.status === undefined) patch.status = 'waiting';
+    }
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'no_fields' });
     patch.updated_at = new Date().toISOString();
     const { data, error } = await supabase.from('ea_followups').update(patch).eq('id', req.params.id).select('*').single();
     if (error) throw error;
     res.json({ followup: data });
   } catch (err) { res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /followups/:id/nudge-draft — draft the actual follow-up email to the
+// person we're waiting on, so a follow-up card becomes a one-click send instead
+// of a passive reminder. Sent as Tessa (the scheduler). Returns the draft; the
+// send goes through /send, then the card is stamped nudged. (Ed 2026-09-11.)
+router.post('/followups/:id/nudge-draft', express.json(), async (req, res) => {
+  const admin = await requireOwner(req, res); if (!admin) return;
+  try {
+    const { data: fu, error } = await supabase.from('ea_followups').select('*').eq('id', req.params.id).single();
+    if (error) throw error;
+    if (!fu) return res.status(404).json({ error: 'not_found' });
+    const to = String(fu.waiting_on || '').trim();
+    if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) {
+      return res.status(400).json({ error: 'no_recipient', detail: 'This follow-up has no email to nudge — add one in "Waiting on".' });
+    }
+    // Recipient name: from the EA book, else a first name parsed out of the title
+    // ("...with Melody", "Melody's availability"), else the address local-part.
+    let name = null;
+    try { const { data: c } = await supabase.from('ea_contacts').select('name').ilike('email', to).limit(1); if (c && c[0]) name = c[0].name; } catch (_) {}
+    if (!name) { const m = String(fu.title || '').match(/\bwith\s+([A-Z][a-z]+)|\b([A-Z][a-z]+)'s\b/); name = (m && (m[1] || m[2])) || to.split('@')[0]; }
+    const first = String(name).trim().split(/\s+/)[0];
+    // Topic: the title with the tracking verbs and the person stripped off.
+    let topic = String(fu.title || 'this')
+      .replace(/^\s*(schedule|set up|wait for|follow ?up on|confirm)\s+/i, '')
+      .replace(/\b([A-Z][a-z]+)'s\s+availability\s+for\s+/i, '')
+      .replace(/\s+with\s+[A-Z][a-z]+\s*$/i, '')
+      .trim() || 'this';
+    // Thread on the original email's subject when we have it.
+    let subject = `Following up — ${topic}`;
+    if (fu.related_email_id) {
+      try { const { data: e } = await supabase.from('email_messages').select('subject').eq('id', fu.related_email_id).maybeSingle(); if (e && e.subject) subject = /^re:/i.test(e.subject) ? e.subject : `Re: ${e.subject}`; } catch (_) {}
+    }
+    const topicPhrase = /^(the|a|an|our|your)\s/i.test(topic) ? topic : `the ${topic}`;
+    const body = `Hi ${first},\n\nJust circling back on ${topicPhrase} — whenever you have a moment, let me know what works for your schedule and I'll get it on the calendar. No rush at all.\n\nThank you!`;
+    res.json({ ok: true, to, subject, body, followup_id: fu.id });
+  } catch (err) { console.error('[tessa] nudge-draft failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
 // ---- Forwarded-inbox: emails Ed sends Tessa, she drafts a reply -------------

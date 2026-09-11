@@ -1084,12 +1084,45 @@ async function loadFu(){
     const list=j.followups||[];
     $('fuList').innerHTML = list.length ? list.map(f=>`<div class="fu">
       <div class="row" style="justify-content:space-between;"><span class="t">${esc(f.title)}</span><span class="pill p-${f.status}">${esc(f.status)}</span></div>
-      <div class="note">${esc(f.category)}${f.waiting_on?' · waiting on '+esc(f.waiting_on):''}${f.due_date?' · due '+esc(f.due_date):''}</div>
-      <div class="row" style="margin-top:6px;"><button class="btn ghost sm" onclick="setFu('${f.id}','waiting')">Waiting</button><button class="btn ghost sm" onclick="setFu('${f.id}','done')">Done</button></div>
+      <div class="note">${esc(f.category)}${f.waiting_on?' · waiting on '+esc(f.waiting_on):''}${f.due_date?' · due '+esc(f.due_date):''}${f.last_nudged_at?' · nudged '+esc(String(f.last_nudged_at).slice(0,10)):''}</div>
+      <div class="row" style="margin-top:6px;">${f.waiting_on?`<button class="btn gold sm" onclick="followUpNow('${f.id}')">✉️ Follow up now</button>`:''}<button class="btn ghost sm" onclick="setFu('${f.id}','waiting')">Waiting</button><button class="btn ghost sm" onclick="setFu('${f.id}','done')">Done</button></div>
+      <div id="fudraft-${f.id}" style="margin-top:8px;"></div>
     </div>`).join('') : '<div class="note">Nothing open. Add one, or send an email and track a follow-up.</div>';
   }catch(e){ $('fuList').innerHTML='<div class="err note">Could not load follow-ups.</div>'; }
 }
 async function setFu(id,status){ await af('/api/tessa/followups/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})}); loadFu(); }
+// Draft the actual follow-up email to the person we're waiting on, inline, ready
+// to review and send as Tessa — a follow-up you can DO, not just a reminder.
+async function followUpNow(id){
+  const box=document.getElementById('fudraft-'+id); if(!box) return;
+  box.innerHTML='<div class="note">Drafting the follow-up…</div>';
+  try{
+    const r=await af('/api/tessa/followups/'+id+'/nudge-draft',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j=await r.json();
+    if(!r.ok||!j.ok){ box.innerHTML='<div class="err note">'+esc(j.detail||j.error||'Could not draft this follow-up.')+'</div>'; return; }
+    box.innerHTML='<div style="border:1px solid var(--line);border-radius:8px;padding:10px;background:#fbfcfe;">'
+      +'<div class="note">To <b>'+esc(j.to)+'</b> · sends from Tessa on your behalf</div>'
+      +'<input id="fud-subj-'+id+'" value="'+esc(j.subject)+'" style="width:100%;margin:6px 0;box-sizing:border-box;">'
+      +'<textarea id="fud-body-'+id+'" rows="5" style="width:100%;box-sizing:border-box;">'+esc(j.body)+'</textarea>'
+      +'<div class="row" style="margin-top:6px;gap:6px;align-items:center;"><button class="btn gold sm" id="fud-send-'+id+'" onclick="fuSend(\''+id+'\',\''+esc(j.to)+'\')">Send from Tessa</button><button class="btn ghost sm" onclick="document.getElementById(\'fudraft-'+id+'\').innerHTML=\'\';">Cancel</button><span id="fud-msg-'+id+'" class="note"></span></div>'
+      +'</div>';
+  }catch(e){ box.innerHTML='<div class="err note">Couldn’t draft the follow-up.</div>'; }
+}
+async function fuSend(id,to){
+  const msg=document.getElementById('fud-msg-'+id), btn=document.getElementById('fud-send-'+id);
+  const subj=document.getElementById('fud-subj-'+id).value, body=document.getElementById('fud-body-'+id).value;
+  if(!body.trim()){ if(msg) msg.textContent='The message is empty.'; return; }
+  if(btn){ btn.disabled=true; } if(msg){ msg.style.color='#5a7390'; msg.textContent='Sending…'; }
+  try{
+    const r=await af('/api/tessa/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to, subject:subj, body, mode:'tessa'})});
+    const j=await r.json();
+    if(!r.ok||!j.sent){ if(btn) btn.disabled=false; if(msg){ msg.style.color='#b91c1c'; msg.textContent=j.detail||j.error||'Send failed.'; } return; }
+    // Stamp the nudge + push the next chase date, keep it in the waiting queue.
+    try{ await af('/api/tessa/followups/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({nudged:true})}); }catch(_){}
+    if(msg){ msg.style.color='#166534'; msg.textContent='✓ Sent — nudged.'; }
+    setTimeout(loadFu, 900);
+  }catch(e){ if(btn) btn.disabled=false; if(msg){ msg.style.color='#b91c1c'; msg.textContent='Send failed.'; } }
+}
 
 (async function boot(){
   try{
