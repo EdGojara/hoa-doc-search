@@ -205,6 +205,13 @@
     let supa = null;
 
     async function initAuth() {
+      // Honor a ?next= from the gate redirect. Stored in sessionStorage so it
+      // survives the Microsoft OAuth round-trip (which returns to /login.html
+      // without the query string), then used by exchangeAndRedirect.
+      try {
+        const qp = new URLSearchParams(location.search).get('next');
+        if (qp && /^\/[A-Za-z0-9/_-]*$/.test(qp)) sessionStorage.setItem('postLoginRedirect', qp);
+      } catch (_) {}
       const r = await fetch('/api/auth/config');
       const cfg = await r.json();
       if (!cfg.enabled) {

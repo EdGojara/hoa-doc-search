@@ -639,7 +639,13 @@ app.use((req, res, next) => {
   // Browser HTML GET → friendly redirect; API or non-GET → 401 JSON.
   const accepts = String(req.headers.accept || '');
   if (req.method === 'GET' && (accepts.includes('text/html') || req.path === '/')) {
-    return res.redirect('/staff-login.html?next=' + encodeURIComponent(req.originalUrl));
+    // Send a lapsed session to the MICROSOFT sign-in the team actually uses, not
+    // the shared-password page. When a gate cookie expires (30-day TTL), staff
+    // were landing on /staff-login.html and typing their personal O365 password
+    // into the shared-gate box, which reads as "password incorrect." (Ed
+    // 2026-09-11: Lizette Cano, first cookie to lapse past 30 days.) The
+    // shared-password page still exists at its own URL as a fallback.
+    return res.redirect('/login.html?next=' + encodeURIComponent(req.originalUrl));
   }
   return res.status(401).json({ error: 'authentication required' });
 });
