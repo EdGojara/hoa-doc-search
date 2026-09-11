@@ -163,6 +163,8 @@
       <option value="bank">Banking partner</option>
       <option value="board">Board</option>
       <option value="partner">Operator</option>
+      <option value="referral">Referral / content</option>
+      <option value="tech">Tech partner</option>
     </select>
     <button class="btn" id="btnCover">Cover</button>
     <button class="btn" id="btnPptx">Export PowerPoint</button>
@@ -447,7 +449,7 @@
   loadCover();
   // Honor ?audience= so a run can be opened straight into a given audience.
   const qAud = new URLSearchParams(location.search).get('audience');
-  if (qAud && ['general','bank','board','partner'].includes(qAud)) {
+  if (qAud && ['general','bank','board','partner','referral','tech'].includes(qAud)) {
     // Set the audience but START ON THE COVER (focusFit=false) — opening a run
     // via ?audience= is the beginning of a live walk-through, not a jump to the
     // audience screen. The jump-to-fit is only for a deliberate mid-talk switch
