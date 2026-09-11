@@ -436,8 +436,36 @@ router.get('/scorecard', async (req, res) => {
       return count || 0;
     };
 
+    // Work PRODUCED per teammate — the non-email output, drawn from each
+    // function's own tables (assigned by how the team is built: Ed 2026-09-10).
+    // These are the board reports, financials, decisions and letters that never
+    // touch the inbox. Each entry: { table, date column, optional eq filter }.
+    const PRODUCE = {
+      annie:   [{ table: 'acc_decisions', date: 'decided_at', eq: { status: 'decided' }, label: 'ACC decisions' }],
+      kat:     [{ table: 'financial_statements', date: 'created_at', label: 'Financial statements' },
+                { table: 'bank_reconciliations', date: 'prepared_at', label: 'Reconciliations' }],
+      paige:   [{ table: 'board_packets', date: 'finalized_at', label: 'Board packets' },
+                { table: 'meeting_minutes', date: 'updated_at', eq: { status: 'final' }, label: 'Minutes' }],
+      miranda: [{ table: 'sent_letter_archive', date: 'sent_at', label: 'Letters mailed' }],
+      phoebe:  [{ table: 'newsletter_issues', date: 'published_at', label: 'Newsletters' }],
+    };
+    const producedFor = async (persona) => {
+      const specs = PRODUCE[persona]; if (!specs) return { total: 0, items: [] };
+      const items = [];
+      for (const s of specs) {
+        try {
+          let q = supabase.from(s.table).select('id', { count: 'exact', head: true }).gte(s.date, cutoff);
+          if (s.eq) for (const [k, v] of Object.entries(s.eq)) q = q.eq(k, v);
+          const { count, error } = await q;
+          if (error) { console.warn(`[scorecard] produce ${s.table} failed:`, error.message); continue; }
+          if (count) items.push({ label: s.label, count });
+        } catch (e) { console.warn(`[scorecard] produce ${s.table} skipped:`, e.message); }
+      }
+      return { total: items.reduce((a, b) => a + b.count, 0), items };
+    };
+
     const cards = [];
-    let tHandled = 0, tQueue = 0;
+    let tHandled = 0, tQueue = 0, tProduced = 0;
     for (const t of TEAM) {
       const p = t.persona;
       const handled = await cnt((q) => q.eq('persona', p).eq('triage_status', 'handled').gte('reviewed_at', cutoff));
@@ -454,21 +482,24 @@ router.get('/scorecard', async (req, res) => {
         if (diffs.length) avgH = Math.round((diffs.reduce((a, b) => a + b, 0) / diffs.length) / 3600000 * 10) / 10;
       }
       const rd = readiness[p] || null;
-      tHandled += handled; tQueue += inQueue;
+      const prod = await producedFor(p);
+      tHandled += handled; tQueue += inQueue; tProduced += prod.total;
       cards.push({
         persona: p, name: t.name, title: t.title, emoji: t.emoji || null,
         handled, in_queue: inQueue, avg_handle_hours: avgH, last_active: lastAt,
+        produced: prod.total, produced_items: prod.items,
         clean_rate: rd ? rd.clean_rate : null, ready: rd ? !!rd.ready : null,
         n: rd ? rd.n : 0, trend: rd ? rd.trend : null,
       });
     }
-    cards.sort((a, b) => b.handled - a.handled);
+    // Sort by total contribution (email handled + work produced), not email alone.
+    cards.sort((a, b) => (b.handled + b.produced) - (a.handled + a.produced));
     // Portfolio autonomy = volume-weighted clean rate across teammates with a signal.
     let wSum = 0, wN = 0;
     for (const c of cards) { if (c.clean_rate != null && c.n) { wSum += c.clean_rate * c.n; wN += c.n; } }
     res.json({
       ok: true, window_days: days, cards,
-      totals: { handled: tHandled, in_queue: tQueue, autonomy: wN ? Number((wSum / wN).toFixed(3)) : null },
+      totals: { handled: tHandled, produced: tProduced, in_queue: tQueue, autonomy: wN ? Number((wSum / wN).toFixed(3)) : null },
     });
   } catch (err) {
     console.error('[email_triage] scorecard failed:', err.message);

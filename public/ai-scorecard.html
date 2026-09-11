@@ -24,7 +24,7 @@
     padding:6px 12px;border-radius:6px;cursor:pointer;}
   .win button.on{background:var(--navy);color:#fff;}
 
-  .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:20px 0 8px;}
+  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0 8px;}
   .stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;}
   .stat .n{font-size:30px;font-weight:800;color:var(--navy);font-variant-numeric:tabular-nums;line-height:1.1;}
   .stat .l{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-top:3px;}
@@ -32,7 +32,11 @@
 
   .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:18px;
     box-shadow:0 1px 2px rgba(11,29,52,.05),0 8px 22px rgba(11,29,52,.05);}
-  .hrow,.trow{display:grid;grid-template-columns:1.9fr .7fr .8fr 1.5fr .8fr .9fr;gap:12px;align-items:center;padding:12px 18px;}
+  .hrow,.trow{display:grid;grid-template-columns:1.6fr .6fr 1.2fr .6fr 1.25fr .8fr;gap:12px;align-items:center;padding:12px 18px;}
+  .prod{display:flex;flex-direction:column;line-height:1.25;}
+  .prod b{font-size:16px;font-weight:700;color:var(--navy);font-variant-numeric:tabular-nums;}
+  .prod small{font-size:11px;color:var(--muted);}
+  .prod .pz{font-size:13px;color:var(--line-strong,#b9c4d0);}
   .hrow{background:var(--surface-2);border-bottom:1px solid var(--line);position:sticky;top:0;}
   .hrow span{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:700;}
   .hrow .r,.trow .r{text-align:right;}
@@ -109,24 +113,30 @@
     if(c.clean_rate==null || !c.n) return '<span class="chip c-none">no signal</span>';
     return c.ready ? '<span class="chip c-ready">READY</span>' : '<span class="chip c-train">TRAINING</span>';
   }
+  function producedCell(c){
+    if(!c.produced) return '<div class="prod"><span class="pz">—</span></div>';
+    const items = (c.produced_items||[]).map(i=>i.count+' '+esc(String(i.label||'').toLowerCase())).join(' · ');
+    return '<div class="prod"><b>'+c.produced+'</b><small>'+items+'</small></div>';
+  }
 
   function render(j){
     const t = j.totals||{};
     $('summary').innerHTML =
-      '<div class="stat"><div class="n">'+(t.handled||0)+'</div><div class="l">Handled · last '+j.window_days+'d</div><div class="sub2">replies + actions completed</div></div>'
+      '<div class="stat"><div class="n">'+(t.handled||0)+'</div><div class="l">Email handled · '+j.window_days+'d</div><div class="sub2">replies + actions completed</div></div>'
+     +'<div class="stat"><div class="n">'+(t.produced||0)+'</div><div class="l">Work produced · '+j.window_days+'d</div><div class="sub2">decisions, statements, packets, letters</div></div>'
      +'<div class="stat"><div class="n">'+(t.in_queue||0)+'</div><div class="l">In queue now</div><div class="sub2">waiting for review or reply</div></div>'
      +'<div class="stat"><div class="n">'+(t.autonomy!=null?Math.round(t.autonomy*100)+'%':'—')+'</div><div class="l">Sent unedited</div><div class="sub2">drafts you approved as-is</div></div>';
 
     const cards = (j.cards||[]).filter(c=>c.handled>0 || c.in_queue>0 || (c.n||0)>0);
     if(!cards.length){ $('board').innerHTML='<div class="empty">No AI-team activity in this window yet.</div>'; return; }
-    let h = '<div class="hrow"><span>Teammate</span><span class="r">Handled</span><span class="r">In queue</span><span>Sent unedited</span><span class="r">Avg time</span><span class="r">Last active</span></div>';
+    let h = '<div class="hrow"><span>Teammate</span><span class="r">Email</span><span>Produced</span><span class="r">In queue</span><span>Sent unedited</span><span class="r">Last active</span></div>';
     for(const c of cards){
       h += '<div class="trow">'
         + '<div class="who"><b>'+(c.emoji?esc(c.emoji)+' ':'')+esc(c.name||c.persona)+'</b><small>'+esc(c.title||'')+'</small></div>'
         + '<div class="num">'+c.handled+'</div>'
+        + producedCell(c)
         + '<div class="queue '+queueClass(c.in_queue)+'">'+c.in_queue+'</div>'
         + '<div>'+autonCell(c)+' '+readyChip(c)+'</div>'
-        + '<div class="num" style="font-weight:600;font-size:14px;">'+(c.avg_handle_hours!=null?c.avg_handle_hours+'h':'—')+'</div>'
         + '<div class="ago">'+ago(c.last_active)+'</div>'
         + '</div>';
     }
