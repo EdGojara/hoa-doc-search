@@ -411,13 +411,20 @@ router.get('/upcoming', async (req, res) => {
       if (error) { console.warn('[operations] upcoming count failed:', error.message); return 0; }
       return count || 0;
     };
+    // "Open" = not resolved and not in a terminal stage. There is NO 'resolved'
+    // stage — the terminal stages are 'cured' and 'voided', and resolved_at is
+    // set when a violation closes. The first cut filtered on stage!='resolved'
+    // (a value that doesn't exist), so it counted every cured/voided violation as
+    // overdue and inflated the number ~2.6x (3,395 vs the real 1,304). Ed caught
+    // it by eye. (Ed 2026-09-11.)
+    const openV = (q) => q.is('resolved_at', null).neq('current_stage', 'cured').neq('current_stage', 'voided');
     const rows = [];
     const tot = { overdue: 0, week: 0, month: 0, certified: 0 };
     for (const c of (comms || [])) {
       const cid = c.id;
-      const overdue = await cnt((q) => q.eq('community_id', cid).lt('cure_period_ends_at', iso).not('cure_period_ends_at', 'is', null).neq('current_stage', 'resolved'));
-      const week = await cnt((q) => q.eq('community_id', cid).gte('cure_period_ends_at', iso).lte('cure_period_ends_at', in7));
-      const month = await cnt((q) => q.eq('community_id', cid).gt('cure_period_ends_at', in7).lte('cure_period_ends_at', in30));
+      const overdue = await cnt((q) => openV(q.eq('community_id', cid)).lt('cure_period_ends_at', iso).not('cure_period_ends_at', 'is', null));
+      const week = await cnt((q) => openV(q.eq('community_id', cid)).gte('cure_period_ends_at', iso).lte('cure_period_ends_at', in7));
+      const month = await cnt((q) => openV(q.eq('community_id', cid)).gt('cure_period_ends_at', in7).lte('cure_period_ends_at', in30));
       const certified = await cnt((q) => q.eq('community_id', cid).eq('current_stage', 'certified_209'));
       tot.overdue += overdue; tot.week += week; tot.month += month; tot.certified += certified;
       if (overdue || week || month || certified) rows.push({ community: c.name, overdue, week, month, certified });
