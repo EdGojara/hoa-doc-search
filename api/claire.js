@@ -360,8 +360,23 @@ router.post('/session/:id/turn', async (req, res) => {
   let full = '';
   try {
     const community = await communityById(session.community_id);
+    // The signed-in visitor's own property address, so Claire can answer their
+    // account questions for THEIR property without asking them to state an
+    // address (they are logged in). reason.js reads flat caller fields
+    // (full_name / property_address / verified), so build that shape.
+    let property_address = null;
+    if (session.property_id) {
+      const { data: p } = await supabase.from('properties').select('street_address').eq('id', session.property_id).maybeSingle();
+      property_address = (p && p.street_address) || null;
+    }
     const caller = {
-      contact: { first_name: (visitor.name || '').trim().split(/\s+/)[0] || null, full_name: visitor.name || null },
+      first_name: (visitor.name || '').trim().split(/\s+/)[0] || null,
+      full_name: visitor.name || null,
+      property_address,
+      // Portal/board sign-in is a strong, unspoofable identity (unlike phone
+      // caller ID), and the property is provably theirs — so Claire answers their
+      // own account questions straight from the login, no address re-ask.
+      verified: !!visitor.portalUserId && !!session.property_id && (visitor.role === 'homeowner' || visitor.role === 'board'),
       property: session.property_id ? { id: session.property_id, community_id: session.community_id } : null,
       community,
     };
