@@ -716,6 +716,21 @@ router.post('/followups/:id/nudge-draft', express.json(), async (req, res) => {
   } catch (err) { console.error('[tessa] nudge-draft failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// POST /test-sms — owner-only. Fire a test text to OWNER_MOBILE so Ed can
+// verify SMS the moment it's provisioned, without waiting for a real trigger.
+router.post('/test-sms', express.json(), async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  const { textOwner } = require('../lib/notifications/notify_owner');
+  const msg = String((req.body && req.body.message) || '').trim() || 'Test from Tessa via trustEd. If you got this, SMS is live.';
+  const r = await textOwner(msg, { force: true });
+  if (r.ok) return res.json({ sent: true, to: r.to });
+  const detail = r.error === 'not_configured'
+    ? 'SMS is not configured yet. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER on Render.'
+    : r.error === 'no_owner_number' ? 'Set OWNER_MOBILE on Render (your mobile number).'
+    : (r.error || 'Could not send.');
+  return res.status(400).json({ error: detail });
+});
+
 // ---- Forwarded-inbox: emails Ed sends Tessa, she drafts a reply -------------
 
 // POST /poll-inbox — pull new tessa@ mail, draft a reply for each, queue it.
