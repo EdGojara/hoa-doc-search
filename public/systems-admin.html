@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Systems Admin — Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+  :root{ --navy:#0B1D34; --ink:#16233a; --muted:#5a6b83; --line:#dce3ec; --paper:#eef1f5; --surface:#fff; --surface-2:#f6f8fb; --gold:#B8892B; --live:#166b46; --live-bg:#e7f4ec; --warn:#8a5a12; --warn-bg:#fbf0dd;
+    --sans:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --serif:"Fraunces",Georgia,serif; }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--surface-2:#132a44;--gold:#e0b352;--live:#7fd6a6;--live-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f; }}
+  :root[data-theme="dark"]{ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--surface-2:#132a44;--gold:#e0b352;--live:#7fd6a6;--live-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f; }
+  *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.55;}
+  .wrap{max-width:960px;margin:0 auto;padding:26px 18px 90px;}
+  .crumbs{font-size:13px;color:var(--muted);margin-bottom:2px;} .crumbs a{color:var(--muted);text-decoration:none;} .crumbs a:hover{color:var(--navy);text-decoration:underline;} .crumbs .sep{margin:0 7px;color:var(--line);} .crumbs .here{color:var(--navy);font-weight:700;}
+  h1{font-family:var(--serif);font-weight:600;font-size:30px;color:var(--navy);margin:5px 0 4px;}
+  .sub{font-size:14px;color:var(--muted);margin:0 0 8px;max-width:74ch;}
+  .ownerchip{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:var(--warn);background:var(--warn-bg);border-radius:20px;padding:4px 11px;margin:6px 0 20px;}
+  h2{font-size:12.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:26px 0 12px;border-bottom:1px solid var(--line);padding-bottom:7px;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;}
+  a.card{display:block;background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:15px 16px;text-decoration:none;color:inherit;transition:border-color .12s, transform .12s;}
+  a.card:hover{border-color:var(--gold);transform:translateY(-1px);}
+  a.card.off{opacity:.62;} a.card.off:hover{transform:none;border-color:var(--line);cursor:default;}
+  .card .ic{font-size:22px;} .card .nm{font-weight:800;color:var(--navy);margin:6px 0 3px;font-size:15.5px;}
+  .card .ds{font-size:13px;color:var(--muted);line-height:1.5;}
+  .tag{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;border-radius:20px;padding:2px 8px;margin-top:9px;}
+  .tag.live{background:var(--live-bg);color:var(--live);} .tag.exp{background:var(--warn-bg);color:var(--warn);} .tag.soon{background:var(--surface-2);color:var(--muted);border:1px solid var(--line);}
+  .gate{max-width:520px;margin:14vh auto 0;text-align:center;padding:0 20px;}
+  .gate h1{font-size:24px;} .gate p{color:var(--muted);font-size:14px;}
+</style>
+</head>
+<body>
+<div id="gate" class="gate" hidden>
+  <h1>Owner only</h1>
+  <p>This area is for the platform owner. If you think you should have access, check that you are signed in with the owner account.</p>
+</div>
+
+<div id="app" class="wrap" hidden>
+  <nav class="crumbs"><a href="/">Home</a><span class="sep">&rsaquo;</span><span class="here">Systems Admin</span></nav>
+  <h1>Systems Admin</h1>
+  <p class="sub">Where we build and tune the platform. Owner-only. These are the levers for Claire, the AI team, and the plumbing, kept out of the everyday operator view.</p>
+  <div class="ownerchip">🔒 Owner only · <span id="who"></span></div>
+
+  <h2>Claire &amp; the AI team</h2>
+  <div class="grid">
+    <a class="card" href="/agent-training.html">
+      <div class="ic">🎙️</div><div class="nm">Train Agents</div>
+      <div class="ds">Chat with Claire and askEd, see their reasoning, and save corrections. Changes take effect on the very next call or chat, no redeploy.</div>
+      <span class="tag live">Live</span>
+    </a>
+    <a class="card" href="/admin/voices">
+      <div class="ic">🔊</div><div class="nm">Voice Picker</div>
+      <div class="ds">Change each teammate's voice by ear, with previews. No Render redeploy to swap a voice.</div>
+      <span class="tag live">Live</span>
+    </a>
+    <a class="card" href="/claire" target="_blank" rel="noopener">
+      <div class="ic">🗣️</div><div class="nm">Claire (voice + text)</div>
+      <div class="ds">The production Claire homeowners use. Tap the mic for hands-free conversation mode. Pick a community first.</div>
+      <span class="tag live">Live</span>
+    </a>
+    <a class="card" href="/claire-live" target="_blank" rel="noopener">
+      <div class="ic">🧪</div><div class="nm">Claire Voice Test (GPT-Live-1)</div>
+      <div class="ds">The full-duplex voice experiment. Shelved behind a flag; kept for R&D only. Not the production Claire.</div>
+      <span class="tag exp">Experiment</span>
+    </a>
+  </div>
+
+  <h2>Platform tools</h2>
+  <div class="grid">
+    <a class="card" href="/admin/w9">
+      <div class="ic">🧾</div><div class="nm">W-9 Generator</div>
+      <div class="ds">Filled IRS W-9 for Bedrock, each association, or any vendor.</div>
+      <span class="tag live">Live</span>
+    </a>
+    <a class="card" href="/admin/shadow">
+      <div class="ic">👁️</div><div class="nm">Shadow Mode</div>
+      <div class="ds">Watch what the system would do before it does it. Propose then execute.</div>
+      <span class="tag live">Live</span>
+    </a>
+    <a class="card" href="/admin/errors">
+      <div class="ic">🛑</div><div class="nm">System Errors</div>
+      <div class="ds">Live error feed across the platform, for catching failures fast.</div>
+      <span class="tag live">Live</span>
+    </a>
+    <a class="card" href="/admin-library-audit.html">
+      <div class="ic">📒</div><div class="nm">Library Audit</div>
+      <div class="ds">Per-community document inventory, what Claire can and can't retrieve.</div>
+      <span class="tag live">Live</span>
+    </a>
+  </div>
+
+  <h2>Diagnostics</h2>
+  <div class="grid">
+    <a class="card off">
+      <div class="ic">⏱️</div><div class="nm">Voice Latency</div>
+      <div class="ds">Per-turn phone-call timing (first sentence, first audio, total). Lands here once we have real call data from the instrumented pipeline.</div>
+      <span class="tag soon">Coming</span>
+    </a>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const OWNER_EMAIL='egojara@bedrocktx.com';
+const $=id=>document.getElementById(id);
+(async function boot(){
+  let email=null;
+  try{
+    const cfg=await (await fetch('/api/auth/config')).json();
+    if(cfg&&cfg.enabled&&window.supabase&&cfg.supabase_url&&cfg.supabase_anon_key){
+      const supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+      const s=(await supa.auth.getSession()).data.session;
+      if(s&&s.access_token){
+        const me=await (await fetch('/api/me',{headers:{Authorization:'Bearer '+s.access_token}})).json();
+        email=me&&me.user&&me.user.email ? me.user.email : null;
+      }
+    }
+  }catch(_){}
+  if(email && String(email).toLowerCase()===OWNER_EMAIL){
+    $('who').textContent=email;
+    $('app').hidden=false;
+  } else {
+    $('gate').hidden=false;
+  }
+})();
+</script>
+</body>
+</html>

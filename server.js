@@ -1114,6 +1114,13 @@ app.get('/admin/communications', (req, res) => {
 app.get('/admin/legal', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'legal-disclosures.html'));
 });
+// Systems Admin — owner-only launcher for platform-building tools (Claire
+// training, voice picker, W-9, shadow, errors, diagnostics). Page is static;
+// it self-gates to the owner email client-side and every tool's API hard-gates
+// server-side. (Ed 2026-09-12.)
+app.get('/admin/systems', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'systems-admin.html'));
+});
 // Bedrock Back Office — W-9 generator (Bedrock, each HOA, and vendors/custom).
 app.get('/admin/w9', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'w9.html'));
