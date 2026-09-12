@@ -35,15 +35,20 @@
   .caption::-webkit-scrollbar-thumb{background:rgba(203,213,225,.35);border-radius:99px}
   .caption:empty{display:none}
 
-  .bar{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap;}
-  .ask{flex:1 1 320px;display:flex;gap:8px;}
+  .bar{display:flex;flex-direction:column;gap:10px;align-items:stretch;margin-top:14px;}
+  .ask{display:flex;gap:8px;}
+  .ask input{flex:1 1 auto;}
   input[type=text],select{width:100%;padding:12px 14px;border:1px solid var(--rule);border-radius:11px;font-size:14.5px;background:#0d2038;color:#e2e8f0;}
   input[type=text]::placeholder{color:#5b708f}
   .btn{background:var(--gold);color:var(--navy);border:none;border-radius:11px;padding:12px 20px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap;}
   .btn:disabled{opacity:.45;cursor:default}
   .ghost{background:transparent;border:1px solid var(--rule);color:#cbd5e1;border-radius:11px;padding:11px 16px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap;}
-  .mic{width:48px;height:48px;border-radius:50%;border:1px solid var(--rule);background:#0d2038;color:#cbd5e1;font-size:19px;cursor:pointer;flex:0 0 auto;}
-  .mic.on{background:var(--gold);color:var(--navy);border-color:var(--gold);}
+  /* Primary call-to-action: start a spoken conversation with Claire. */
+  .convo-btn{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;background:var(--gold);color:var(--navy);border:none;border-radius:13px;padding:15px 18px;font-weight:800;font-size:16px;cursor:pointer;letter-spacing:.01em;box-shadow:0 2px 10px rgba(212,175,55,.25);}
+  .convo-btn:hover{filter:brightness(1.04);}
+  .convo-btn.on{background:#3a2020;color:#f0b3a8;box-shadow:none;}
+  @keyframes convoPulse{0%,100%{box-shadow:0 0 0 0 rgba(240,179,168,.0)}50%{box-shadow:0 0 0 5px rgba(240,179,168,.18)}}
+  .convo-btn.on{animation:convoPulse 1.8s ease-in-out infinite;}
   .muted{color:var(--faint);font-size:12.5px;}
   .note{margin-top:12px;font-size:12.5px;color:var(--faint);line-height:1.55;}
   .warn{margin-top:12px;background:rgba(180,83,9,.16);border:1px solid rgba(217,119,6,.45);color:#fcd9a4;border-radius:11px;padding:11px 14px;font-size:13px;}
@@ -198,13 +203,11 @@ function renderRoom(){
       <div class="speaking"><div class="caption" id="cap"></div></div>
     </div>
     <div class="bar">
-      <button class="mic" id="mic" title="Speak to Claire">🎙</button>
+      <button class="convo-btn" id="mic">🎙 <span id="micLabel">Start conversation with Claire</span></button>
       <div class="ask">
-        <input type="text" id="q" placeholder="Ask Claire anything about ${esc(SESSION.community.name)}" autocomplete="off">
+        <input type="text" id="q" placeholder="…or type your question" autocomplete="off">
         <button class="btn" id="send">Ask</button>
       </div>
-      <button class="ghost" id="human">Talk to a person</button>
-      <button class="ghost" id="tt">Transcript</button>
     </div>
     <div id="banner"></div>
     <div class="transcript" id="transcript"></div>
@@ -212,9 +215,7 @@ function renderRoom(){
   $('send').onclick=()=>ask($('q').value);
   $('q').addEventListener('keydown',e=>{ if(e.key==='Enter') ask($('q').value); });
   $('mic').onclick=toggleMic;
-  $('human').onclick=handoff;
   $('end').onclick=()=>endVisit('visitor_ended');
-  $('tt').onclick=()=>$('transcript').classList.toggle('on');
   window.addEventListener('beforeunload',()=>{ try{ navigator.sendBeacon(A+'/session/'+SESSION.id+'/end'); }catch(_){} });
 }
 
@@ -439,11 +440,12 @@ function toggleMic(){ CONVO ? stopConvo() : startConvo(); }
 
 async function startConvo(){
   CONVO=true; $('mic').classList.add('on'); $('mic').title='End the conversation';
+  if($('micLabel')) $('micLabel').textContent='End conversation';
   stopSpeaking();          // if she was mid-sentence, tapping to talk cuts her off
   try{ await startDeepgram(); }
   catch(e){ console.warn('[claire] Deepgram STT unavailable, using browser STT:', e && e.message); startBrowserSTT(); }
 }
-function stopConvo(){ CONVO=false; $('mic').title='Talk with Claire'; stopDeepgram(); stopMic(); setRest(); }
+function stopConvo(){ CONVO=false; $('mic').classList.remove('on'); $('mic').title='Start a conversation with Claire'; if($('micLabel')) $('micLabel').textContent='Start conversation with Claire'; stopDeepgram(); stopMic(); setRest(); }
 
 // ---- Deepgram streaming path (primary) -----------------------------------
 async function startDeepgram(){
@@ -497,7 +499,7 @@ function b64FromBytes(bytes){ let s=''; const CH=0x8000; for(let i=0;i<bytes.len
 // ---- Browser SpeechRecognition (fallback) --------------------------------
 function startBrowserSTT(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){ banner('This browser will not let Claire hear you. Type your question instead, or open the visit in Chrome or Edge.'); CONVO=false; $('mic').classList.remove('on'); $('mic').title='Talk with Claire'; return; }
+  if(!SR){ banner('This browser will not let Claire hear you. Type your question instead, or open the visit in Chrome or Edge.'); CONVO=false; $('mic').classList.remove('on'); $('mic').title='Start a conversation with Claire'; if($('micLabel')) $('micLabel').textContent='Start conversation with Claire'; return; }
   STT_MODE='browser'; listenTurn();
 }
 // Open the mic for ONE of your turns. Accumulates speech and only treats you as

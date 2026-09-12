@@ -414,7 +414,7 @@ router.post('/session/:id/turn', async (req, res) => {
     // so quality rides on the context, not the model.
     const portalModel = process.env.CLAIRE_PORTAL_MODEL || undefined;
 
-    for await (const chunk of streamTurn({ utterance: text, history, community, caller, personaPack, model: portalModel })) {
+    for await (const chunk of streamTurn({ utterance: text, history, community, caller, personaPack, model: portalModel, channel: 'portal' })) {
       if (typeof chunk !== 'string') continue;  // control objects (passthrough tools) don't apply on video
       // No em dashes in what a resident reads on screen: Ed's rule covers
       // conversations, not just email, and the model still slips them in. Scrub
