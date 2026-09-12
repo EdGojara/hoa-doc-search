@@ -1117,6 +1117,12 @@ app.get('/admin/legal', (req, res) => {
 app.get('/admin/voices', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'voices.html'));
 });
+// GPT-Live-1 portal PoC (Claire B). The page loads for anyone, but the WS it
+// connects to is gated behind GPT_LIVE_ENABLED, so it is inert until Ed flips
+// the switch for a test. (Ed 2026-09-12.)
+app.get('/claire-live', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'claire-live.html'));
+});
 app.use('/api/email-drafts', require('./api/email_drafts'));
 app.use('/api/email-attachments', require('./api/email_attachments'));
 app.use('/api/vendor-outreach', require('./api/vendor_outreach'));
@@ -11346,6 +11352,13 @@ httpServer.on('upgrade', (req, socket, head) => {
   if (pathname === '/api/voice/stream') {
     voiceWss.handleUpgrade(req, socket, head, (ws) => {
       handleVoiceWs(ws, req);
+    });
+  } else if (pathname === '/api/claire-live/stream') {
+    // Isolated GPT-Live-1 portal PoC (Claire B). Gated behind GPT_LIVE_ENABLED
+    // inside the handler; production /api/voice/stream (Claire A) is untouched.
+    voiceWss.handleUpgrade(req, socket, head, (ws) => {
+      try { require('./lib/voice/claire_live_ws').handleClaireLiveWs(ws, req); }
+      catch (e) { console.error('[claire-live] handler failed:', e.message); try { ws.close(); } catch (_) {} }
     });
   } else {
     socket.destroy();

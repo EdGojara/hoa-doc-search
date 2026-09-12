@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claire Live (B) — Bedrock</title>
+<style>
+  :root{ --navy:#0B1D34; --gold:#D4AF37; --ink:#e8ecf3; --faint:#8fa0bd; --rule:#22354f; --live:#2ec17c; }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 50% -10%, #12325a 0%, #081426 60%);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;min-height:100vh;}
+  .shell{max-width:560px;margin:0 auto;padding:22px 18px 60px;}
+  .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+  .brand{font-weight:800;letter-spacing:.02em;} .brand small{display:block;font-weight:600;color:var(--faint);font-size:12px;}
+  .flag{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);border:1px solid var(--rule);border-radius:99px;padding:4px 10px;}
+  .stage{position:relative;background:#0a1a2f;border:1px solid var(--rule);border-radius:18px;aspect-ratio:16/11;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;overflow:hidden;text-align:center;padding:26px;}
+  .mono{width:104px;height:104px;border-radius:50%;border:1px solid rgba(212,175,55,.5);display:flex;align-items:center;justify-content:center;
+    font-family:Georgia,serif;font-size:40px;color:var(--gold);background:rgba(212,175,55,.07);transition:box-shadow .12s,transform .12s;}
+  .mono.speaking{box-shadow:0 0 0 6px rgba(46,193,124,.18), 0 0 30px rgba(46,193,124,.35);transform:scale(1.03);}
+  .name{font-family:Georgia,serif;font-size:20px;} .sub{color:var(--faint);font-size:13.5px;max-width:400px;line-height:1.55;}
+  .ai{position:absolute;top:14px;left:14px;font-size:11px;color:var(--faint);border:1px solid var(--rule);border-radius:99px;padding:4px 10px;background:rgba(7,19,36,.6);}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--faint);margin-right:6px;vertical-align:middle;}
+  .dot.on{background:var(--live);box-shadow:0 0 8px var(--live);}
+  .bar{display:flex;gap:10px;align-items:center;margin-top:16px;}
+  .btn{flex:1;background:var(--gold);color:var(--navy);border:none;border-radius:12px;padding:15px;font-weight:800;font-size:15px;cursor:pointer;}
+  .btn.stop{background:#3a2020;color:#f0b3a8;border:1px solid #6b2f2f;}
+  .btn:disabled{opacity:.5;cursor:default;}
+  .status{margin-top:12px;font-size:13px;color:var(--faint);min-height:20px;text-align:center;}
+  .cc{margin-top:16px;border-top:1px solid var(--rule);padding-top:12px;font-size:14px;line-height:1.6;color:#cdd8ea;max-height:150px;overflow-y:auto;}
+  .cc:empty{display:none}
+  input{background:#0d2038;border:1px solid var(--rule);color:var(--ink);border-radius:9px;padding:9px 11px;font-size:13px;width:100%;}
+  label{font-size:12px;color:var(--faint);display:block;margin:14px 0 4px;}
+  .warn{margin-top:12px;background:rgba(180,83,9,.16);border:1px solid rgba(217,119,6,.45);color:#fcd9a4;border-radius:11px;padding:11px 14px;font-size:13px;}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="top">
+    <div class="brand">Bedrock<small>Claire, live voice test</small></div>
+    <span class="flag">Claire B · GPT-Live-1</span>
+  </div>
+
+  <div class="stage">
+    <span class="ai"><span class="dot" id="dot"></span><span id="aiText">not connected</span></span>
+    <div class="mono" id="mono">C</div>
+    <div class="name">Talk to Claire</div>
+    <div class="sub" id="sub">Full-duplex voice test. Press Start, allow the mic, and just talk, you can interrupt her. Same brain as production Claire; only the voice layer is new.</div>
+  </div>
+
+  <label for="comm">Community id (scopes her answers)</label>
+  <input id="comm" placeholder="paste a community id, or add ?community=<id> to the URL">
+
+  <div class="bar">
+    <button class="btn" id="start">Start talking</button>
+    <button class="btn stop" id="stop" disabled>Stop</button>
+  </div>
+  <div class="status" id="status"></div>
+  <div class="cc" id="cc"></div>
+  <div class="warn" id="warn" style="display:none"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const RATE = 24000;
+let ws = null, actx = null, micStream = null, node = null, srcNode = null;
+let playHead = 0, speaking = false, speakTimer = null;
+
+const qsCommunity = new URLSearchParams(location.search).get('community') || '';
+if (qsCommunity) $('comm').value = qsCommunity;
+
+function setStatus(t){ $('status').textContent = t || ''; }
+function setAi(on, text){ $('dot').classList.toggle('on', !!on); $('aiText').textContent = text; }
+function warn(t){ const w=$('warn'); if(!t){ w.style.display='none'; return;} w.textContent=t; w.style.display='block'; }
+
+function b64FromBytes(bytes){ let s=''; const CH=0x8000; for(let i=0;i<bytes.length;i+=CH){ s+=String.fromCharCode.apply(null, bytes.subarray(i,i+CH)); } return btoa(s); }
+function bytesFromB64(b64){ const bin=atob(b64); const out=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) out[i]=bin.charCodeAt(i); return out; }
+
+function floatToPcm16(float32){
+  const out=new Int16Array(float32.length);
+  for(let i=0;i<float32.length;i++){ let s=Math.max(-1,Math.min(1,float32[i])); out[i]= s<0 ? s*0x8000 : s*0x7fff; }
+  return out;
+}
+function pcm16ToFloat(int16){
+  const out=new Float32Array(int16.length);
+  for(let i=0;i<int16.length;i++){ out[i]= int16[i] / (int16[i]<0 ? 0x8000 : 0x7fff); }
+  return out;
+}
+
+function markSpeaking(){
+  speaking=true; $('mono').classList.add('speaking');
+  clearTimeout(speakTimer);
+  speakTimer=setTimeout(()=>{ speaking=false; $('mono').classList.remove('speaking'); }, 350);
+}
+
+function playChunk(b64){
+  if(!actx) return;
+  const bytes=bytesFromB64(b64);
+  const int16=new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength/2));
+  const float=pcm16ToFloat(int16);
+  const buf=actx.createBuffer(1, float.length, RATE);
+  buf.getChannelData(0).set(float);
+  const src=actx.createBufferSource(); src.buffer=buf; src.connect(actx.destination);
+  const now=actx.currentTime;
+  if(playHead < now) playHead = now + 0.05;
+  src.start(playHead); playHead += buf.duration;
+  markSpeaking();
+}
+
+async function start(){
+  const community = $('comm').value.trim();
+  warn(''); setStatus('connecting…'); $('start').disabled=true;
+  try{
+    micStream = await navigator.mediaDevices.getUserMedia({ audio:{ channelCount:1, echoCancellation:true, noiseSuppression:true, autoGainControl:true } });
+  }catch(e){ setStatus(''); $('start').disabled=false; warn('Microphone access is needed. Allow it and press Start again.'); return; }
+
+  actx = new (window.AudioContext||window.webkitAudioContext)({ sampleRate: RATE });
+  if(actx.sampleRate !== RATE){ /* some browsers ignore the hint; audio still works, pitch-safe enough for a test */ }
+  playHead = actx.currentTime;
+
+  const wsUrl = location.origin.replace(/^http/,'ws') + '/api/claire-live/stream' + (community?('?community='+encodeURIComponent(community)):'');
+  ws = new WebSocket(wsUrl);
+  ws.onopen = ()=> setStatus('handshaking…');
+  ws.onmessage = (e)=>{
+    let m; try{ m=JSON.parse(e.data); }catch(_){ return; }
+    if(m.type==='ready'){ setAi(true, 'live · AI assistant'); setStatus(m.community?('Connected · '+m.community+'. Go ahead and talk.'):'Connected. Go ahead and talk.'); beginCapture(); $('stop').disabled=false; }
+    else if(m.type==='audio' && m.delta){ playChunk(m.delta); }
+    else if(m.type==='transcript' && m.delta){ const cc=$('cc'); cc.textContent=(cc.textContent+ ' ' + m.delta).slice(-1200); cc.scrollTop=cc.scrollHeight; }
+    else if(m.type==='error'){ warn(m.message||'Claire Live error.'); stop(); }
+  };
+  ws.onclose = ()=>{ setAi(false,'disconnected'); if($('stop').disabled===false) setStatus('Call ended.'); cleanup(); };
+  ws.onerror = ()=>{ warn('Connection error.'); };
+}
+
+function beginCapture(){
+  srcNode = actx.createMediaStreamSource(micStream);
+  node = actx.createScriptProcessor(2048, 1, 1);
+  node.onaudioprocess = (ev)=>{
+    if(!ws || ws.readyState!==1) return;
+    const input = ev.inputBuffer.getChannelData(0);
+    const pcm = floatToPcm16(input);
+    const bytes = new Uint8Array(pcm.buffer);
+    ws.send(JSON.stringify({ type:'audio', audio: b64FromBytes(bytes) }));
+  };
+  srcNode.connect(node); node.connect(actx.destination); // destination keeps the node alive; it outputs silence
+}
+
+function cleanup(){
+  try{ node && node.disconnect(); }catch(_){}
+  try{ srcNode && srcNode.disconnect(); }catch(_){}
+  try{ micStream && micStream.getTracks().forEach(t=>t.stop()); }catch(_){}
+  try{ actx && actx.state!=='closed' && actx.close(); }catch(_){}
+  node=srcNode=micStream=actx=null;
+  $('start').disabled=false; $('stop').disabled=true;
+}
+function stop(){
+  try{ ws && ws.readyState===1 && ws.send(JSON.stringify({type:'bye'})); }catch(_){}
+  try{ ws && ws.close(); }catch(_){}
+  cleanup(); setStatus('Stopped.'); setAi(false,'not connected');
+}
+
+$('start').onclick=start;
+$('stop').onclick=stop;
+setAi(false,'not connected');
+</script>
+</body>
+</html>
