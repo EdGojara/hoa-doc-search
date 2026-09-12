@@ -24,21 +24,15 @@ const { CallBridge } = require('../lib/voice/bridge');
 const { streamTurn, PASSTHROUGH_CONTROL_MARKER } = require('../lib/voice/reason');
 const { VOICE_TOOLS, VOICE_TOOL_HANDLERS } = require('../lib/voice/tools');
 const { buildOpener } = require('../lib/voice/persona');
-const { buildIsabellaSystemPromptParts } = require('../lib/voice/reason_isabella');
-const {
-  buildOpener: buildIsabellaOpener,
-  BANNED_PATTERNS: ISABELLA_BANNED_PATTERNS,
-} = require('../lib/voice/persona_isabella');
+const { buildOpener: buildIsabellaOpener } = require('../lib/voice/persona_isabella');
 const { resolveCallerByPhone } = require('../lib/voice/caller_lookup');
 
-// Isabella's persona pack — passed into streamTurn to swap the system prompt
-// builder + the language-specific banned-phrase list. Claire is the implicit
-// default when no personaPack is supplied. See lib/voice/reason.js streamTurn
-// and project_multilingual_voice_architecture.md.
-const ISABELLA_PERSONA_PACK = {
-  buildSystemPromptParts: buildIsabellaSystemPromptParts,
-  bannedPatterns: ISABELLA_BANNED_PATTERNS,
-};
+// Isabella's persona pack — the SAME thin, rule-inheriting pack the portal uses
+// (lib/team/persona_pack.packFor). It wraps Claire's shared prompt with a
+// Spanish language+identity layer, so phone and portal Spanish can NEVER drift
+// apart and every rule Claire gains, Isabella gets automatically. (Ed
+// 2026-09-12: replaced the old forked Spanish prompt that had gone stale.)
+const ISABELLA_PERSONA_PACK = require('../lib/team/persona_pack').packFor('isabella');
 const { buildCommunityContextBlock } = require('./communities');
 const { getCall: cacheGet, setCall: cacheSet, clearCall: cacheClear } = require('../lib/voice/call_cache');
 const { safeErrorMessage } = require('./_safe_error');

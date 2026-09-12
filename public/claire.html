@@ -156,7 +156,8 @@ function renderLobby(){
              :`<div class="muted">${one?esc(one.name):'No community linked to your account yet.'}</div>`}
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
         <button class="btn" id="go" ${ME.communities.length?'':'disabled'}>Start a visit</button>
-        <button class="ghost" id="go-es" ${ME.communities.length?'':'disabled'} title="Habla en español con Isabella, la asistente en español de Bedrock. Da las mismas respuestas que Claire.">🗣️ Habla con Isabella · Español</button>
+        <button class="ghost" id="go-es" ${ME.communities.length?'':'disabled'} title="Habla en español con Isabella. Da las mismas respuestas que Claire.">🗣️ Habla con Isabella · Español</button>
+        <button class="ghost" id="go-zh" ${ME.communities.length?'':'disabled'} title="用中文和 Mei 对话。她提供与 Claire 相同的答案。">🗣️ 和 Mei 对话 · 中文</button>
       </div>
     </div>
     ${ME.video.available?'':`<div class="warn">Claire is on voice and text right now, the video presenter is switched off. Everything else works the same.</div>`}
@@ -164,17 +165,21 @@ function renderLobby(){
   </div>`;
   $('go').onclick=()=>startVisit('en');
   if($('go-es')) $('go-es').onclick=()=>startVisit('es');
+  if($('go-zh')) $('go-zh').onclick=()=>startVisit('zh');
 }
 
 // ---------------------------------------------------------------------------
 // The visit.
 // ---------------------------------------------------------------------------
-// English -> Claire, Spanish -> Isabella (same brain, same answers, her voice).
+// English -> Claire, Spanish -> Isabella, Mandarin -> Mei (same brain, same
+// answers, their language + voice).
 async function startVisit(language){
-  language = language==='es' ? 'es' : 'en';
-  const btn = language==='es' ? $('go-es') : $('go');
-  const label = language==='es' ? 'Conectando…' : 'Connecting…';
-  if(btn){ btn.disabled=true; btn.textContent=label; }
+  language = ['es','zh'].includes(language) ? language : 'en';
+  const btnId = language==='es' ? 'go-es' : language==='zh' ? 'go-zh' : 'go';
+  const btn = $(btnId);
+  const busyLabel = { es:'Conectando…', zh:'连接中…', en:'Connecting…' }[language];
+  const resetLabel = { es:'🗣️ Habla con Isabella · Español', zh:'🗣️ 和 Mei 对话 · 中文', en:'Start a visit' }[language];
+  if(btn){ btn.disabled=true; btn.textContent=busyLabel; }
   const community_id=$('c-pick')?$('c-pick').value:(ME.communities[0]||{}).id;
   let j;
   try{
@@ -182,7 +187,7 @@ async function startVisit(language){
       headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id,language})});
     j=await r.json();
     if(!r.ok) throw new Error(j.detail||j.error||'could not start');
-  }catch(e){ if(btn){ btn.disabled=false; btn.textContent = language==='es' ? 'Habla con Isabella' : 'Start a visit'; } alert('Could not start the visit: '+e.message); return; }
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent=resetLabel; } alert('Could not start the visit: '+e.message); return; }
 
   SESSION=j.session; SESSION.language=language;
   PERSONA=SESSION.persona;
@@ -456,7 +461,8 @@ function stopConvo(){ CONVO=false; $('mic').classList.remove('on'); $('mic').tit
 // ---- Deepgram streaming path (primary) -----------------------------------
 async function startDeepgram(){
   MIC_STREAM=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
-  const wsUrl=location.origin.replace(/^http/,'ws')+'/api/claire/stt-stream';
+  const lang=(SESSION&&SESSION.language)||'en';
+  const wsUrl=location.origin.replace(/^http/,'ws')+'/api/claire/stt-stream'+(lang&&lang!=='en'?('?lang='+encodeURIComponent(lang)):'');
   await new Promise((resolve,reject)=>{
     STT_WS=new WebSocket(wsUrl);
     let opened=false;

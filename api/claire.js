@@ -221,7 +221,9 @@ router.post('/session/start', async (req, res) => {
     const community = await communityById(communityId);
     if (!community) return res.status(404).json({ error: 'community_not_found' });
 
-    const language = (req.body || {}).language === 'es' ? 'es' : 'en';
+    const reqLang = String((req.body || {}).language || '').toLowerCase();
+    const language = ['es', 'zh'].includes(reqLang) ? reqLang : 'en';
+    const LANG_PERSONA = { es: 'isabella', zh: 'mei' };
     const surface = ['visit', 'chamber', 'kiosk'].includes((req.body || {}).surface) ? (req.body || {}).surface : 'visit';
 
     // Who opens the door. Spanish starts with Isabella; otherwise Claire is the
@@ -231,7 +233,7 @@ router.post('/session/start', async (req, res) => {
     const askedFor = asked ? roster.get(asked) : null;
     const startPersona = (askedFor && askedFor.visit && !askedFor.owner_only)
       ? asked
-      : (language === 'es' ? 'isabella' : 'claire');
+      : (LANG_PERSONA[language] || 'claire');
 
     const row = {
       community_id: communityId,
