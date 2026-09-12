@@ -1,0 +1,2702 @@
+{
+  "generated_for": "lopf-merge-review-2026-09-01",
+  "primary_inspection": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+  "photos_original": [
+    {
+      "id": "025ab57c-b9f7-4885-bebc-09a86f01e2f7",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "04ec4f53-8c01-4cc3-8904-87672486633e",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "05668432-57bb-47e1-8d20-8787e02b08d2",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "0813dd4e-dc52-4618-b631-eb863acfa3ab",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf"
+    },
+    {
+      "id": "09214008-d676-4b23-8dab-18ec4542d081",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "09ff6465-12bc-4866-9e39-8a7a522f2957",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "0bec3189-416c-4c7c-bd2c-269f7f592de9",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "0c2963dc-4ee1-4f5a-be02-855683a827ce",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "0c685b8f-8384-45b5-8b5f-86249162deac",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "0d2d0c7b-1618-41fa-99af-457a4341af3d",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "0e90d6eb-a32b-4394-a646-fb521961a7f9",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "12816248-a64d-4a61-8dd2-9e21a4b0d2bb",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "153cce27-d1be-4bc4-bb83-cc52b897d778",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "15ffe2cd-db44-4f08-9bec-2a381da4c570",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "19e89e81-8bbb-4f94-ab31-99e33c97115b",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "1a216a42-cb48-47cb-aace-7e862fc57c8b",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "1cd6b596-2aee-488c-b128-45db47e23347",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "1d607a4b-9532-46a0-b0cb-2b5614257f69",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "1ef7a76a-022b-481d-8c40-13348216039c",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "2072a23e-a1c4-4a01-9858-2f0705f517a1",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "21e63ec4-4f25-43da-bea0-dc7cb7199331",
+      "inspection_id": "fc4e28c3-d2b9-4e27-b857-ad72f9767ae7"
+    },
+    {
+      "id": "286c270f-ca25-4db9-800b-12305ce3e400",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "28b669c7-ade8-4986-bd5b-2445ab9879f9",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "2c8fd176-13c1-4a1f-a615-26abc9452a56",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "2db86aea-544a-472d-9c84-cf50dc58aa1e",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "3054df92-5649-4831-814e-0dea6c7d7e34",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "32112d3e-710b-4af4-b788-52a068b70b29",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "330037d2-f383-4f78-b791-19f4cf0a6914",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "351542c3-223f-48f3-a712-f838b101e171",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "36eb6523-d548-40cd-bf58-9b060d34d0d9",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "3a3a18c8-2398-4840-bb21-0b8da87ac209",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "3af23ec8-426d-4b30-b442-bb3216a4d971",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "3b63a511-0e8f-45ac-81cf-3566826e2007",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "3c6edbc8-8d11-4a5e-86f4-c1c8e0ee67af",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "3dc295ba-3002-428d-a7dc-8a8880dc07eb",
+      "inspection_id": "494f13b7-69ac-4f38-b5c2-f6190c1ca743"
+    },
+    {
+      "id": "3f6c9f5a-2ac3-4b65-b098-64a623246ef9",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "4084357e-a455-408e-950c-1096ebb2df8a",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "4167b7b5-e02f-4b26-920d-709869471b22",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "4b696376-8b99-4189-851e-909e92e8d573",
+      "inspection_id": "494f13b7-69ac-4f38-b5c2-f6190c1ca743"
+    },
+    {
+      "id": "4cf77eca-9fc6-4c56-9e82-35a60ef0c471",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "4e8c166f-4beb-453e-b54d-663d58f8d2cc",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "4ef67440-0c79-4bef-8c37-b93eb4e2e779",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "4ffc869a-6c76-4dea-983a-0188a0e99d69",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "506b5ed9-4b34-46a4-babf-41ce927f7f1e",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "54651791-fd6e-48fa-93cc-762680f4fb71",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "546790ee-30b7-434c-80d2-b552abfc991e",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "563ecee6-8e58-43cd-9dc6-7a77bfe7284a",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "5736487a-cb1c-4c53-bd54-8541285e8ed4",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "5822cd1c-ef89-4f4a-8488-61b29ea4337c",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "5ab5b746-b398-4397-8305-324d310f1a16",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "5ad1c195-679e-474e-a502-6e8f921fae70",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "5ad6bfc6-299c-46e1-9d85-48e2b1508885",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "5cc83eff-62f1-490e-97bb-f6dcae8d07e7",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "5d3af77a-3310-4498-bd74-be88c90bdc8e",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "5db2f092-6c08-49bb-a226-e1f1dc91e0cc",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "5f0dffc5-a835-4aaa-b04e-4ee2ffa8f3ed",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "6168f086-eb74-4118-899d-bfacda90f94e",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "61e27949-4c16-4cae-b688-d21cdc123ee2",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "62131560-6559-41ef-9fc5-c0fe4427c8a3",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "6633edf0-f2cd-47cc-8e22-52cacd34e2dd",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "664bc110-e4f4-4bed-8125-efe3591c89cb",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf"
+    },
+    {
+      "id": "668ef19f-9c87-4c4b-bf94-29824cddb2f9",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "67b22464-317d-4774-baa5-d00dffc4192b",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "6901d233-19c6-4993-a29f-cc94ba2b16f9",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "691d9349-acf4-4d02-8cbb-1c07779baadc",
+      "inspection_id": "494f13b7-69ac-4f38-b5c2-f6190c1ca743"
+    },
+    {
+      "id": "6a139cb1-b483-4c0f-87fc-ff23d6058ad8",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "6a60093e-ed63-4421-83a6-cf2562b9377c",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf"
+    },
+    {
+      "id": "6ac0338e-d348-459f-976c-024460944383",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "6b5fe71f-bd78-414a-810b-aae9150bef0c",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf"
+    },
+    {
+      "id": "6fb3b895-3e19-4d87-8957-4bb75c9b358e",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "6fc613fa-823d-411e-833a-551927854e81",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "71626620-30d7-4f85-ac68-f3dd9bd4a807",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "74f38f06-6fa9-418d-9e1d-1f8932ce4cbe",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "751dca61-ecd9-490c-9458-c2ad0de5d1a2",
+      "inspection_id": "fc4e28c3-d2b9-4e27-b857-ad72f9767ae7"
+    },
+    {
+      "id": "778785c9-c061-46d9-96ef-34a9c2b53abf",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "77f432ac-f2e6-46a3-b20b-dd326444d895",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "7cb6e54a-b5f6-4545-ab3e-17a3363ac32b",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "7d73d59c-5e59-4821-9e51-65037191f75a",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "7ddd3bf8-ecbd-489d-8993-9815438edc69",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "7fc95642-d481-479b-9922-c1e20c0d0e2a",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "804f46c3-2ce0-4d4e-9b4c-cf9141358e06",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "817569b9-d7bc-4426-b3ce-8b2979894dc7",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "864c477e-d82b-4054-9a72-a811ba9acd24",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "8acc8c1c-4fff-4ab3-b613-b09fc0abdd85",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "8ba85314-1e67-4d2b-bc7b-b467a09c3379",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "8ca852c7-eab3-4c6f-b102-c9462fc88a2c",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "8da1acba-cff7-43f8-bd5c-c19add63f371",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "8e2a4f87-f5fc-4552-902f-795b053fe77c",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf"
+    },
+    {
+      "id": "8ebfd3d1-bec0-4d1d-9610-c280e8f4f0c6",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "8ff72b43-b64c-46e5-a963-8346b89d8722",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf"
+    },
+    {
+      "id": "904518a7-b749-49d7-8559-47b58389d3f6",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "91bfdddf-3f5e-4ded-9ea2-4ad3909ff5ab",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "91c07715-7273-436d-8503-67a6a73026f8",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "95054e0c-6480-4ee1-8d27-e56f662b9f13",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "95e21139-53b3-432f-94f2-c3a72253f70e",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "95e651d7-f247-4f2f-8120-7cb8e6ce04bc",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "96e4b961-e7d9-4194-bf3a-d74172568700",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "96fb8475-5137-4fb1-9dea-659260fdceeb",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "98e9c3ac-66eb-4f8e-a9af-86d264af982a",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf"
+    },
+    {
+      "id": "9f21dec7-8890-4432-a18e-ef6afb67bc1f",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "9f4d5947-4ea3-47d5-adc0-7fd0156c9de0",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "a1761a9c-12de-4755-bb64-333dcd79a9b6",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "a24d5ff2-432f-4c69-82c5-1a97fe2d4d85",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "a26e0790-d766-4068-ae34-89375ef00223",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "a364a24b-9356-4934-849d-f1d7704168bb",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "a4df6bba-67a3-4d71-b586-0c65598601b8",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "a5aa5f57-b777-469b-85e2-a705e2502ffa",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "a63533b2-5753-4e5a-85c4-c20f48a75e81",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "a654e9ea-c6d7-4856-8378-5e4a198d39fe",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "a840de95-7fad-42b8-bee8-12499bd06a8c",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "a92ba1d5-02f5-428b-841d-809b2b743791",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "afcc43b4-432f-4b58-9f0a-8caa8c1a5cdf",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "b073fd94-d901-4392-bebc-8c83170ce96b",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "b36d7734-0b51-4fbb-afc9-33e5c0b32906",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "b4ec849e-932b-4884-bf29-3e98c2486c7a",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "b8f6b4e7-c050-402f-9dc1-f6fc6564cd8c",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "b97b2609-2c87-4c6f-9abb-7cebd726a90a",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "ba86d828-3ee6-4e1c-a319-348fd6002132",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "bbdfdb4d-a2b8-4b61-86d0-ebc3c20576ac",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "be184df4-1658-488b-8a68-c9954c1bfd4f",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "be9dacfe-42ce-4c01-a60d-8956b98f89cd",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "c08dc305-159d-4ee3-acd8-ce03c1a59e9f",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "c110ebf7-4bf0-48e5-9ca0-4278bb63bcb3",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "c19eae90-a21f-40a0-8c4c-02b7b2db2f64",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "c28a2296-5bc0-47f6-9324-258eeeeddde8",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "c2a7004f-5532-4639-a38a-7bdb4079e39c",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "c314e86b-a6ad-4ceb-9eab-c712742503fd",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "c602fed2-3584-4949-8654-f5ec833974dc",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "c6337fda-709b-47ff-8373-552c70f5d128",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "c6c67e49-64a9-4f0d-81a2-14812c008887",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "c6ddb59c-2359-4ecd-9f22-f3b4a05744db",
+      "inspection_id": "494f13b7-69ac-4f38-b5c2-f6190c1ca743"
+    },
+    {
+      "id": "c8c67f40-ea83-43ff-b6ec-47176f55fa6b",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "cad15840-9e16-4f1c-b860-d5dbcdfb8faa",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "caebb025-d2bf-47b1-a115-bc3c8c60c871",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "cfaa58b8-3d1e-44ac-b09e-283eefb2ae27",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "d0972b78-e026-4091-9538-7fdf78bf1de8",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "d1690347-6df2-44bd-9c8d-096e87a2f742",
+      "inspection_id": "fc4e28c3-d2b9-4e27-b857-ad72f9767ae7"
+    },
+    {
+      "id": "d556f735-a392-44ef-8fa4-8ec35e48ba3e",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf"
+    },
+    {
+      "id": "d7511f1f-0104-4a31-af42-c214d7c185f8",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "d991e84c-c431-4a84-9d19-0921f0e62be2",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "da273ff8-f7c3-4d2e-a184-2c3574d2c0ed",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "daf12701-b0e6-412b-819f-bd670c26f7ea",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "db78cad5-70ff-4ef3-8544-11523e926390",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "df70c7e7-87d8-4f6f-a6b5-236bb21c8b85",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "dfad6aaf-5b96-4a19-b441-d40b0e280021",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "e2f7d4d7-acf7-425e-8e76-96f94ec9a0a3",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "e5033c0c-629c-4042-8af4-c73c34643a79",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84"
+    },
+    {
+      "id": "e5085652-6543-4010-9a10-33f1935f091d",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "e5c9f54b-f285-47a1-b1fc-15c12ec0cdfa",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    },
+    {
+      "id": "e87f070e-bd15-4864-8438-a4a570702402",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "ed52af9d-edec-4aa8-8a18-957c93f6121f",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "edef69a8-ff5a-4032-89c1-c66d1a8c7f16",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "f06bf817-04e5-41f7-b4a8-0cd34d3710b3",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "f1116a6b-91b4-4f88-ba2d-12c21ea0ee87",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9"
+    },
+    {
+      "id": "f2647d95-280f-479d-88c8-117e8a4b0846",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "f9ad4d96-95bd-4860-83b6-c698c6256441",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "fb316afd-1167-4715-acc2-2528f55d06cb",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf"
+    },
+    {
+      "id": "fc6f44d0-547c-4496-ad01-1b8ca3cdb6aa",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5"
+    },
+    {
+      "id": "fe3a675a-f7b7-42dc-8fa4-764d7e805a67",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd"
+    }
+  ],
+  "observations_original": [
+    {
+      "id": "4c66b3b1-cfdf-4b5f-879b-83dc8a0de323",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:31:48.071+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "adfa211a-9e6a-4c5d-8047-5a8417ce955b",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T15:46:02.37+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "1df7f57c-d330-474d-81cb-183f2e4de7d3",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T15:46:25.84+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "e55bd9ab-0a89-49db-9ea0-768659d3e8e4",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:57:07.628+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "c3363816-341b-49b0-89cc-f478c2e1d310",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T15:51:26.218+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "37eadec2-2219-490e-b4e8-6645505ab208",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T15:59:24.976+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "4784c4a4-4a2e-4a79-94fd-dacc696d5197",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T15:50:37.824+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "769cca99-f891-4ba4-b907-3d00aa976604",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-08-31T15:04:23.143+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "AI: no violation visible — auto-filed for documentation only."
+    },
+    {
+      "id": "b5af10df-9317-4455-8224-2e011277f27e",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:00:26.776+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "cfa05cbb-1335-4226-85f1-0c5bf1daa1ba",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:01:18.91+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "d0b903b0-3786-437a-a9d0-cc0511e027da",
+      "inspection_id": "fc4e28c3-d2b9-4e27-b857-ad72f9767ae7",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:30:48.848+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "b389bbfd-ad52-4fbf-9850-b7ff1d7eb448",
+      "inspection_id": "fc4e28c3-d2b9-4e27-b857-ad72f9767ae7",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:30:40.831+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "64737c33-740b-4077-a875-366632576291",
+      "inspection_id": "fc4e28c3-d2b9-4e27-b857-ad72f9767ae7",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-09-01T03:30:32.235+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "no violation visible"
+    },
+    {
+      "id": "f1e1a06f-6447-4836-9492-39ab6ddf59a8",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:30:03.934+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "77be10ea-f563-44d4-b136-a7916207cfb8",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:28:59.923+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "27418189-fc56-4b52-bb1b-84064e979b51",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:26:19.641+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "91d34de5-550b-4cc4-9ee0-d71d3646c72a",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:24:09.32+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "751cef54-9d33-41ef-b77e-22e88edb7b28",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:22:59.273+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "75a4d7e7-1046-4ec0-8ec8-756840a97f27",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:26:24.488+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "70a1590e-e200-4e97-860c-5c07603c6b39",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:26:41.267+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "6523a48a-870c-454f-8f92-2423ea032141",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:24:12.549+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "16c5d550-eecd-4d19-afb2-be52a477031d",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-08-31T15:45:50.711+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "AI: no violation visible — auto-filed for documentation only."
+    },
+    {
+      "id": "9efbfb12-1eb0-47b2-8e9b-98a2817f80fc",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:27:18.753+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "7cf3d287-77c0-4a42-9060-2c7268c33a1f",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:27:46.947+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "1eb91431-03d2-44f5-8e9b-6fc2d65fb5c2",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:29:18.65+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "a31bd0a8-acfa-452b-86af-d3be20e9b21f",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:28:41.823+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "c52ae821-34bc-4ec6-b018-9412676f1c0f",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:27:57.828+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "bbe3e20a-b792-4264-a701-48b5fdcc2667",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:28:07.012+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "39ae44a6-9d39-4b1b-a888-641669497a4b",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-09-01T16:29:04.832+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "no violations found"
+    },
+    {
+      "id": "42b8f0b7-058b-42e7-aa27-52661611e207",
+      "inspection_id": "f4d4be2e-446f-40c6-8d57-9aefd4c215cf",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:24:17.783+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "4b368523-5324-4ece-a91b-5efe40b177e2",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:20:32.245+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "bcfe40a1-15a0-4adf-8a72-82c912da7369",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:24:23.301+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "82cf2632-a7d4-46f6-be7a-2cb263538747",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:25:23.208+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "da74b8f3-b4dc-4104-9f4d-0db1739e8c0e",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:31:19.419+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "25eae252-2459-4954-bd82-a0efa87a19d4",
+      "inspection_id": "494f13b7-69ac-4f38-b5c2-f6190c1ca743",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-08-31T16:13:58.776+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "AI: no violation visible — auto-filed for documentation only."
+    },
+    {
+      "id": "b3c963ca-acf5-458e-b5bb-9f92b607c000",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:31:48.633+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "f5b17994-7927-446d-9da1-1bed544662e6",
+      "inspection_id": "494f13b7-69ac-4f38-b5c2-f6190c1ca743",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:33:40.254+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "392c3afa-8c83-46a3-a881-60857c3b10e2",
+      "inspection_id": "494f13b7-69ac-4f38-b5c2-f6190c1ca743",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:20:26.847+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "1fc90e25-4ad9-42f0-9690-31e7ed40432b",
+      "inspection_id": "494f13b7-69ac-4f38-b5c2-f6190c1ca743",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:19:37.294+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "7b178a37-a1b3-4d88-82c0-9fcedcaf784b",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:18:47.28+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "b08f94d8-33e1-4f89-89e4-b6d4dfb65a8e",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:33:39.547+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "807f341c-e22d-47a0-9937-429daeab49a2",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:18:38.699+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "63031dbe-9229-4aa1-aabe-739fd6a80851",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:18:33.629+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "4535978e-600a-4332-b8ad-a392dfc93b8e",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:41:14.938+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "e107ae50-9676-4629-9f7d-ee440e4827d2",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:18:28.429+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "d6f9cba5-f4dc-49fa-ae73-05944c97bd9b",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:41:08.861+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "2d5b8619-ede6-4cc8-8b31-3513ff28c722",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:35:52.413+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "89338f1b-9dbd-4076-afac-6e927b4e2f5f",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:35:43.204+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "f51ab633-fa24-432e-9ec4-c3b80d98dbde",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:35:33.32+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "dea8ab96-cf1c-4e79-8e5d-4e98978f8fcd",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T17:33:38.817+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "1f96b742-47cb-4a51-8b2a-bc9f916e3d62",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:30:20.12+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "83e92b07-4891-41b1-b266-5d0bf609f9bd",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:33:40.772+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "8ca04826-25f2-4dd6-bada-b29ee7cc4c41",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:30:01.351+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "240ccb5b-a702-4171-b8f7-e44d93c31e32",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:35:21.488+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "d448a222-9425-4f8d-8022-3b2e37cb832a",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:29:44.633+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "aac6d561-d898-44f6-89f1-b99502c3e5c4",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:26:07.446+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "1b63594b-69af-4681-a200-45964333e013",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:25:56.047+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "653ca297-74aa-4a25-b81c-e4e9d4cc23d2",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:29:31.028+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "64e602dd-da33-4d7d-8dd6-d174d1cdf0b2",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:25:37.048+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "000547a9-fb9c-4468-92bc-85e5bd5e2794",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:25:31.511+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "145df6eb-b060-4420-84d2-da876a32d045",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:25:22.086+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "23161daa-9366-4ea5-9a50-0d0e38b20aef",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:25:13.344+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "3af43c1d-0e52-40f9-b769-2a4cdb9d6d45",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:16:48.616+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "8bb47093-bb19-4123-b696-89477788a5ec",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:16:39.137+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "ee032531-fc10-470c-872f-1571efa667a1",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:14:53.415+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "a9c476bf-17e5-4462-9143-7e3aa358f8ec",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:14:38.682+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "ed8282de-6563-4ee2-8e44-961eade60a57",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:13:30.932+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "df5d46ff-d492-4025-9b58-760db17a7545",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:13:04.968+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "d327071b-9e5e-40f8-9eb6-6be7f9eafa46",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:06:15.106+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "d3a6d99c-1b89-48cd-8d88-a15f0dd2976c",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:12:01.817+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "46e5b538-a217-4bbb-9a6c-4a204737ee4c",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:06:04.013+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "6ae2fd04-dbc5-4d09-95e3-2735daacfae9",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-08-31T18:18:25.514+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "AI: no violation visible — auto-filed for documentation only."
+    },
+    {
+      "id": "0d36fac4-c3ff-442f-afd5-22f582f579f3",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-08-31T18:18:43.017+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "AI: no violation visible — auto-filed for documentation only."
+    },
+    {
+      "id": "6d56910b-8924-4cd2-9bdb-7d0fea2645cf",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-08-31T18:19:29.246+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "AI: no violation visible — auto-filed for documentation only."
+    },
+    {
+      "id": "c65bc70a-586d-4719-a695-0c8a33f1e85f",
+      "inspection_id": "54ad190f-f1b6-4f03-8540-99e644a18a84",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:05:47.096+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "4ce5eb82-1fb2-4b70-ae2c-0cd79edf4363",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:04:35.018+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "ac888ef9-c2b3-4a7a-85a0-4f06968c497c",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:04:23.919+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "de7c56b7-21db-4319-a12e-1a3ab77aab27",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T16:03:49.508+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "45fd1ae6-9bc8-49c5-a539-cd5b570943e3",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T15:38:53.425+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "4088564a-d9dd-427c-b0af-b6a68aa40ddd",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-09-01T15:37:45.941+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "duplicate "
+    },
+    {
+      "id": "03a7d7b6-7667-4d7e-9348-200e3e87610c",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-08-31T18:41:39.418+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "AI: no violation visible — auto-filed for documentation only."
+    },
+    {
+      "id": "899beede-d67e-4d11-a3e9-21873fce0d53",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T15:37:10.46+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "45b559ea-2d95-425e-866a-3e72a33582fc",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-08-31T18:41:49.726+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "AI: no violation visible — auto-filed for documentation only."
+    },
+    {
+      "id": "cbc919e2-c97c-4fd8-a090-8d13750de038",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T15:33:48.417+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "8c7d4bb8-99c6-4cf8-914b-0ef50a2a8714",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:27:23.214+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "03423194-737b-4bcb-aada-677a8be4ecb5",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:26:13.026+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "aeab00b4-0989-44c6-9599-53f7c6e8702a",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:25:00.961+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "87c102a8-8c97-432c-a8b5-f29c87b4a48a",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:25:42.506+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "8a3b1aa3-c3d5-419e-bc2f-cd8281cb5c26",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T15:27:31.277+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "2938a932-c577-4066-8b4a-a752e96aa00b",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:55:19.662+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "857b4e0a-fd40-456d-96eb-812027abeeb5",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:55:03.48+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "e1244ddb-3fa1-4fba-9809-0835e0bd9794",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:53:43.074+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "ebae86fa-0d8a-4923-87df-2ea7d1d2f347",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:52:57.288+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "58418527-4325-43b9-9764-8ddcacd2d952",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:24:49.123+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "8ab20471-39f0-4987-aaa1-0d16188ce810",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:24:12.285+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "3b67ddd2-1641-452f-b9e6-45c90133dd5d",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T15:19:14.641+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "b250c2e9-60c9-4fc5-8c98-e3dcd189d999",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:20:30.448+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "fb59312d-edce-4751-864b-63ae558861c3",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:19:47.844+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "50059b10-b5a1-4e57-87ad-8cc703a64626",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:19:06.689+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "7d3c8600-929e-462f-a9f4-704ae76a7aeb",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:23:23.244+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "3572e690-36dc-4adb-987d-4124377a0fda",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:22:40.154+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "10d76b9f-bbfc-44fe-80b4-39b53ddf2735",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:21:09.09+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "14af4910-1925-4fd8-a62e-1209ba165ae8",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:14:06.528+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "7cc9f475-7ac0-4343-87e4-18fa5208209a",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:13:22.677+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "33378fb0-4be5-4ce5-851b-ba9cafc77c32",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:13:00.642+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "312daf92-a00c-4fea-9603-80b582c2767e",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-09-01T03:16:21.991+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "no violation visible. "
+    },
+    {
+      "id": "13fcd0e1-28f1-499e-8ce4-7ed28361de8d",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:12:52.635+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "c4e2389a-f03e-4f1a-8146-17a380fb52d2",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:12:44.611+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "c7a9b5b3-b435-448b-9a75-613f764f037a",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:12:36.982+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "4bc990de-d785-4046-bf64-90be072207de",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:11:50.081+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "98efbacc-9d87-4ab8-aca4-b7b306e6df9a",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:10:53.532+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "bea267de-e8ff-413b-ae78-eb8eb137510c",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:10:34.598+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "73a16819-f757-49bc-bea2-e761a5daa39c",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:10:22.943+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "12d10988-cba4-40ad-9121-e908cbc05fe9",
+      "inspection_id": "3897c90d-1627-4af5-b0e8-fec9b7b091bd",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:10:14.093+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "6def3831-4d60-4375-8bcd-f5889d21bdc1",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:10:07.157+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "1b23db48-7903-45e0-aabb-9573a35b358d",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:10:00.907+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "2198c1f2-fbea-4e0c-a8e1-7b829bc3c8cc",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:09:08.125+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "8cbcdedf-ee59-48cb-b8ab-ddabc58bade5",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:08:59.411+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "a61a87c5-c8fe-403f-8e24-5a4357d34ac0",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:06:12.624+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "d9561e7d-e579-487a-8f82-79ff7b9109a6",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:05:18.663+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "6b0d5e80-ad50-4991-bdd7-3c14e1fc79c2",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:05:06.781+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "82680e94-4fb8-4bfd-b298-22af1a299a20",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:03:57.606+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "bf043933-8ee8-4714-9b39-62247180daa7",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:03:41.552+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "fccf9405-27fc-4d73-bf18-062cae56975c",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:03:25.252+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "210f4c6c-f585-4ac9-8f9f-834309a5f3b9",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:02:34.566+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "e0e49e16-9d1d-44d5-a7e7-35adcf385797",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:02:26.786+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "165d775d-bb39-4bb6-96a3-0dc97581d796",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:02:17.308+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "babec9ef-60c8-48af-b051-248986767e85",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T03:01:55.17+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "ed67510c-9de6-4cdc-9737-445809da5b46",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:48:57.033+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "f1c46f6f-a963-48c1-a065-eb502d3774b4",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:47:26.175+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "3cf97e68-03ac-4bce-a299-614966ed0a16",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:46:23.733+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "5f30e34c-929f-4c58-9f6f-77f80597a51b",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:45:12.382+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "531cf7c5-a3a9-4dac-babf-553d947e53ac",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:44:34.909+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "d37b49bd-d629-4abd-8ebc-70ec24f344c4",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:44:22.813+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "08972b2b-5626-4e0b-9398-c3b325956a5c",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:44:11.96+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "2ed4a201-f531-4c00-8bc2-739ff02b6fc3",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:44:01.973+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "5d707a78-7478-489a-9966-3d379b4822a6",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:43:47.839+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "10861d1c-ce7e-4370-a758-3cfe308c5e5f",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:43:02.375+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "569fd831-6bd5-48e4-b5a8-8123fac23a42",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:42:02.476+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "47be4f08-da24-460e-9100-591072618aa9",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:41:00.633+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "62383d83-ec1a-4fff-8a5e-5c4e2d97ef9d",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:40:45.677+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "adea3cbe-b26e-470d-952f-cfc498f43785",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:40:36.54+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "4f945604-53fc-4d58-892a-ef97b139cbfb",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:40:20.414+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "045f57bb-257e-4e33-86b4-9bfb576e0262",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:39:16.494+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "f1eea79a-d988-40ef-8ed2-5fedb7208e8c",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:38:33.914+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "2cb8b85b-8d8f-4ab9-b374-981f9de2f13a",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:38:25.34+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "3e8853ad-24e8-4a07-b480-1cd6af098981",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:38:16.085+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "48a381b1-661a-4fd7-b334-f3592a0ef26c",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:37:17.323+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "bb294e52-6569-40a5-8127-cdc6f13cc515",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:36:57.948+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "113818b1-5a71-4591-bd45-09957579b6be",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:36:43.954+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "5a73f1bd-a250-4e10-89e9-984ad7489c5d",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:35:59.314+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    },
+    {
+      "id": "02f66596-3bc3-485b-9b00-900d906e2e47",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:35:29.397+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "ef78e1d0-0c4f-48d3-9890-993a47674f04",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "rejected",
+      "reviewed_at": "2026-09-01T02:35:19.112+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "photo didnt load"
+    },
+    {
+      "id": "c4ab0f00-f9ac-4d8d-8e0a-ffcf00c9217d",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:34:47.624+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "2032f90f-3bcd-4a2c-be5a-21a7163aa5ae",
+      "inspection_id": "038877ce-9060-4c4f-b7cb-6bb698a222c5",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:34:14.698+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "43219afb-eba1-4652-bd0c-e390945fde43",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:33:45.809+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "c08c0d3c-34d9-4665-9743-8310cad7946f",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:33:24.372+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "17af9155-dc9c-4a57-8d69-a74d2e0883d9",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:33:14.58+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": "[Continuation of open violation — no new letter drafted]"
+    },
+    {
+      "id": "0d1f8fbd-45cf-4a60-b7d1-4827d01fdd42",
+      "inspection_id": "b69e661a-0749-49a6-b02c-cfad1299eef9",
+      "reviewer_status": "confirmed",
+      "reviewed_at": "2026-09-01T02:32:24.147+00:00",
+      "reviewer_user_id": null,
+      "reviewer_notes": null
+    }
+  ],
+  "voided_violations": [
+    {
+      "id": "3b10b184-2822-4ab6-ab0c-9a67d84a9f74",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "d08d9e75-4149-4b6b-9a2d-965c4fd7e0c3",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "c748cb7b-53c9-44a0-8e8c-739150831587",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "84d4899e-9779-4309-91de-9cade2c1279d",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "8800cbef-8bbd-43c1-bb13-4d38136b10d5",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "6b5dee78-96ab-4f52-af99-1a4aef6a407f",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "6e63275a-52da-4309-83ce-1b86e6013c57",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "fe8b6e17-10d0-41d9-923f-93c0af39fc6a",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "7c07b666-d0c7-45f7-8d4f-bdae90710efa",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "4b2199aa-ee9a-4eb5-8162-0693b9f90bff",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "9ab433cb-cc61-46aa-834e-f7562232fa7c",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "546ff743-28da-48e1-956e-27bffb3b7181",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "445a74a8-4999-4ba2-b300-e1a4982ec63a",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "4dc1cb56-9506-4492-95a1-f0ace000ebfa",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "55803729-4561-4ca9-a4fb-d15beb30a2e7",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "a0b70cc6-891a-4c72-afe7-b8e05c807ffc",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "3a3a33cc-2cc5-456f-9e2d-8200d091caf3",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "e3bf4df5-50df-45dc-9f8f-c7f471d8cfe2",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "3cc5f23e-ca2d-4ff6-8ca8-246a72e75407",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "cc31b75e-9d09-473e-afca-882abdc4c159",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "a2ca6b8c-a0c4-4958-a294-bef2ac200b20",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "a8c7ad55-eb00-4dfd-8a9f-e0a80a7fa07e",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "bb506133-6aaf-47ec-be68-63ec3d2178cd",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "779c68cc-b0ac-423f-aa5e-bd22becd0303",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "2ac1d6d2-b538-433c-834d-e950df825736",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "19b94beb-b3b1-42a5-a11d-0513aaaa2070",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "c0fd4858-60de-4303-a427-cc9f2f6b3fbd",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "8655705a-c5f8-41ce-b7d0-3d6d0715ee60",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "67ba77f9-006e-413a-b8e9-fc01d4e801b6",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "7a3fbe70-b09a-47b1-926b-4762e835867c",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "bf791ab8-76dd-484f-9d9e-de4126bd4ab3",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "82e08ab9-c5a8-4cc7-ba4a-fefe4e57bfa7",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "57052dcd-98c8-464d-bc42-3908e45ee7d0",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "d5153afb-6479-407d-bb9d-3833316b7f28",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "b2ea8d44-cdf6-4da6-8084-06062d21adcd",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "2507202c-6e0c-4136-9afa-d7eefdedb404",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "327e562d-5462-4550-ac2b-e3ed22355280",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "86233690-72a5-4bbf-a1e3-70b85cdbe50d",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "4ff81d53-f17c-4c3a-82bb-d36ec44b95af",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "bff36475-0fd3-489a-8cb9-1906e2bff84e",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "1738ebc5-f357-4e2d-a132-8d1eb0b45b84",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "5d3a72f5-7a60-4935-b3cc-c37901e24272",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "b7a2e63a-5091-454b-ad81-4d5df2f53091",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "a9cccd4e-4110-4e30-9761-49525515ca85",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "62736dfd-6054-4490-9d89-f0ffed0beb55",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "31c53489-2f3d-4df1-90f7-51ed830ac488",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "8ae3a08c-eef7-4c9a-9823-3ad0c351b2fe",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "bb5ab2b6-bc98-42d0-9f04-5fb5b01de6c0",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "2113d14f-4c1b-4b1d-8878-f082f1a11fbd",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "3c580853-7d3d-4e54-9cf3-6da9f3d212ff",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "ecb40bec-4775-4d37-9a2f-46b67548c4ad",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "2d1724b9-46db-48c6-9c0f-d79a652e3acc",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "82764257-6d08-4368-9a0a-f65957244f48",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "ecccd7b5-8d9f-4767-859c-ab6373a50f4b",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "91ded310-f977-4c05-b239-085288c9a148",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "5f1d5a04-7aef-435b-a570-30c586d3dfb4",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "4f9fbf57-8b8a-48a1-aa56-1cb8d0aeb437",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "461365d5-e18a-4c6a-9287-d9bfda101663",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "64badf9d-7e1d-45d4-adbe-0b0ee359e1eb",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "ad272534-6212-4e8a-aaf7-be3608257123",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "1edd73a8-e180-440f-97be-4da1c754c070",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "9737e31e-069c-4b15-896a-cc645cfa2195",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "52096f08-4ffa-42f9-bfc7-3e433ff151e5",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "0c6175f4-752a-4347-b53c-8992ad06632f",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "cb8253df-1c87-4939-a96c-c9b023bed9fa",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "c607082b-1f2e-48c5-b08f-2fafaad1aa9b",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "c9da7aa9-df72-4b98-83af-27bbe2a9ccfa",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "c0bcbeea-fc8c-49a0-8a30-27a535616f3c",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "0e168530-fdf8-4e1d-9ab9-29f3724802d3",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "3d8dc423-fbd8-4c5b-945c-0ae8b7817589",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "85c06f48-6343-4ffb-a075-3baab1d7db98",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "7d35997c-86b8-42ab-8ad0-2cffc82e302e",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "e5d60117-e38d-4ab9-9548-56f6a275a362",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "a1343e99-4a54-4c26-8a02-0dcfab774d27",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "4be660be-711b-48bf-9f1a-b54c47e44df6",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "6aadd230-5377-49b5-8f85-95a5e71736d0",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "07fa5389-33f3-47e3-856b-cecbe985f050",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "9fb29d76-d011-404a-b933-41668269e9e3",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "c12bacb9-52e4-438c-a3f9-f0185e385da7",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "bb0589cd-838c-4c45-9367-bfc658ae159d",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "bb51c798-951c-481c-8e24-23360a8daf98",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "6e6eaf6d-0f43-4b84-aa63-0fd9e3b21453",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "bdba037a-ee62-448a-b178-12c74d6e8f4b",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "e3b46a63-5fbe-449d-9655-535107da4685",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "91843ede-7c81-48f9-a631-a8db4fa8b0f7",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "050f4ceb-ceb3-4674-9408-37c8dbd2ce61",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "372f6d5b-6096-4401-80bb-f62a8e2965bf",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "2f119f1f-9521-4875-a7af-b70e602039cb",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "bfb834e3-96f5-4370-b0c4-fef01fc4283a",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "234563a7-a354-456a-be8b-8ea1643b3f7c",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "fb67df4f-4736-4a86-9afd-0a1bfc37fff8",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "06f03e3e-ae88-40a2-ab11-faaab9920b4b",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "875b29c3-379c-4903-8f31-cd681bbb80c3",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "ad278747-1c46-4fcd-9393-acaa55979e58",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "2a9b15dc-21c1-44b6-839d-5c95ab62900d",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "73581c8c-ae5b-4f8f-b8ba-72c2602fae0b",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "dc76eecb-d07b-4ad2-8ab2-526c8c30736e",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "9db50d38-6774-46b2-bc59-c9800da574f5",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "0b9ac037-1dea-41c8-a278-5570938b2493",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "5168c2d0-2f98-45c2-b6da-418b219df905",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "16090393-1fbe-4b53-943a-387997eb81cd",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "28b494e4-7a47-4c19-a2b6-166447adafd1",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "b69710ef-b58d-4148-a22a-4b65a0e8455e",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "6a6fa09b-a4bb-49c2-8a10-6fc1889b0011",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "31afa544-9991-4805-a3a3-1eb54f5418cf",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "587aa5fb-c6c2-4df3-b70c-51c3de7082be",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "f802fa39-c8fc-4027-87dc-cf7ecc599e2a",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "3c5166c1-0ebc-4594-8aa7-b562d150922f",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "289de2d4-d3e0-46aa-9271-f7f3374cac23",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "e3e54e8f-668f-4c9e-ad88-0f02714c6142",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "5a75bbab-ab84-41c6-96bb-5274ce35ac4e",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    },
+    {
+      "id": "b6f473c2-9fb7-4e04-ba7a-969e68d8fb3b",
+      "current_stage": "courtesy_1",
+      "resolved_via": null,
+      "resolved_at": null,
+      "resolved_notes": null
+    }
+  ]
+}
