@@ -65,6 +65,12 @@ const $ = (id) => document.getElementById(id);
 const RATE = 24000;
 let ws = null, actx = null, micStream = null, node = null, srcNode = null;
 let playHead = 0, speaking = false, speakTimer = null;
+// While Claire is speaking, hold the mic so her own voice (played on the
+// speaker) is not captured and fed back as "you." The mic/server round-trip is
+// far too slow for browser echo-cancellation to catch, so this gate is what
+// stops her answering herself. Tail keeps it closed briefly after audio drains.
+let speakingUntil = 0;
+const ECHO_TAIL = 0.25; // seconds
 
 const qsCommunity = new URLSearchParams(location.search).get('community') || '';
 if (qsCommunity) $('comm').value = qsCommunity;
@@ -104,6 +110,7 @@ function playChunk(b64){
   const now=actx.currentTime;
   if(playHead < now) playHead = now + 0.05;
   src.start(playHead); playHead += buf.duration;
+  speakingUntil = playHead;   // hold the mic until her audio has drained
   markSpeaking();
 }
 
@@ -137,6 +144,9 @@ function beginCapture(){
   node = actx.createScriptProcessor(2048, 1, 1);
   node.onaudioprocess = (ev)=>{
     if(!ws || ws.readyState!==1) return;
+    // Echo gate: while Claire is speaking (plus a short tail), do not send mic
+    // audio, otherwise her own voice loops back and she answers herself.
+    if(actx && actx.currentTime < speakingUntil + ECHO_TAIL) return;
     const input = ev.inputBuffer.getChannelData(0);
     const pcm = floatToPcm16(input);
     const bytes = new Uint8Array(pcm.buffer);
