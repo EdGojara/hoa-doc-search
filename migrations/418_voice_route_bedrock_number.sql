@@ -2,14 +2,14 @@
 -- 418_voice_route_bedrock_number.sql  (Ed 2026-09-12)
 -- ----------------------------------------------------------------------------
 -- Register Bedrock's Twilio number (+1 832-430-2956) as an inbound voice route
--- so a call to it reaches Claire scoped to a community. Mapped to Waterview
--- Estates for now (Ed's launch-prep test community).
+-- for TESTING ONLY. Per Ed 2026-09-12: this number is NOT to be used for
+-- anything client-facing for now (it is a test line, not A2P-cleared). So it is
+-- mapped to the DEMO community (Drama Creek Estates), never a real client
+-- community — a stray call can never land in a real association's context.
 --
--- Routing model note: this is "Model B" (a dedicated number per community).
--- Today Bedrock has ONE number, so any caller to it is scoped to Waterview.
--- Before real multi-community launch we either (a) get a number per community,
--- or (b) rely on caller-ID community detection with a "which community?" prompt.
--- Change the community here by editing this row (inbound_phone_number is UNIQUE).
+-- Routing model note: "Model B" (a dedicated number per community). When Ed is
+-- ready to connect Claire to the real/main number for clients, add that number
+-- here mapped to the right community. Do NOT point this test number at a client.
 --
 -- Idempotent: safe to re-run.
 -- ============================================================================
@@ -19,8 +19,8 @@ INSERT INTO voice_phone_routes
   (inbound_phone_number, community_id, community_display_name, enabled, off_hours_behavior)
 VALUES
   ('+18324302956',
-   (SELECT id FROM communities WHERE name ILIKE '%Waterview Estates%' LIMIT 1),
-   'Waterview Estates',
+   (SELECT id FROM communities WHERE name ILIKE '%Drama Creek%' LIMIT 1),
+   'Drama Creek Estates (TEST)',
    TRUE,
    'voicemail')
 ON CONFLICT (inbound_phone_number) DO UPDATE
