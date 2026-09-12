@@ -604,11 +604,11 @@ async function loadInbox(){
       }
       _ibmode[it.id]='tessa';   // she signs as herself, always
       _ibitems[it.id]=it;       // the toggle reads reply_to_all from here
-      const snip=esc((it.body_preview||'').slice(0,240))+((it.body_preview||'').length>240?'…':'');
+      const fullThread=esc(it.body_full||it.body_preview||'');
       return `<div class="fu" id="ib-${it.id}">
         <div class="t">${esc(it.subject||'(no subject)')}</div>
         <div class="note">from ${esc(it.from_name||it.from_email||'unknown')}${it.received_at?' · '+new Date(it.received_at).toLocaleString():''}</div>
-        <details style="margin:6px 0;"><summary class="note" style="cursor:pointer;">Show original</summary><div class="note" style="white-space:pre-wrap;margin-top:4px;">${snip}</div></details>
+        <details style="margin:6px 0;"><summary class="note" style="cursor:pointer;">Show full thread</summary><div class="note" style="white-space:pre-wrap;margin-top:4px;max-height:260px;overflow:auto;border-left:2px solid var(--rule,#22354f);padding-left:10px;">${fullThread}</div></details>
         <!-- Ed 2026-08-21: "also want the field where i can type thoughts on
              response and tessa can modify it for me to make it sound good."
              Same box, but it never said it would take his actual answer, only
@@ -623,7 +623,7 @@ async function loadInbox(){
         <label>Tessa’s draft</label><textarea id="ib-body-${it.id}" rows="7">${esc(it.draft_body||'')}</textarea>
         <div class="row" style="justify-content:space-between;margin-top:8px;">
           <div class="modewrap">
-            <span class="note" style="font-size:11.5px;">Replies as Tessa, on your behalf</span>
+            <span class="note" style="font-size:11.5px;">Replies as Tessa, on your behalf · the full thread is quoted below your reply</span>
 
           </div>
           <div class="row">
