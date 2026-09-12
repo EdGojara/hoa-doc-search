@@ -11374,6 +11374,14 @@ httpServer.on('upgrade', (req, socket, head) => {
       try { require('./lib/voice/claire_live_ws').handleClaireLiveWs(ws, req); }
       catch (e) { console.error('[claire-live] handler failed:', e.message); try { ws.close(); } catch (_) {} }
     });
+  } else if (pathname === '/api/claire/stt-stream') {
+    // Browser mic -> Deepgram STT relay for the /claire web voice (so the web
+    // voice hears as well as the phone). STT only; answers still come from the
+    // existing /api/claire turn endpoint.
+    voiceWss.handleUpgrade(req, socket, head, (ws) => {
+      try { require('./lib/voice/claire_stt_ws').handleClaireSttWs(ws, req); }
+      catch (e) { console.error('[claire-stt] handler failed:', e.message); try { ws.close(); } catch (_) {} }
+    });
   } else {
     socket.destroy();
   }

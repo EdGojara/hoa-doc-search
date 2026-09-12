@@ -82,8 +82,8 @@ let ME=null, SESSION=null, AVATAR=null, LISTENING=false, RECOG=null, ELAPSED=0, 
 // Conversation mode: hands-free loop (listen -> answer -> listen). CONVO stays
 // true across turns so she reopens the mic after speaking; SIL_TIMER debounces
 // end-of-speech so she waits through pauses instead of finalizing early.
-let CONVO=false, SIL_TIMER=null, HEARD='';
-const SILENCE_MS=1300; // how long a pause must last before we treat you as done
+let CONVO=false, SIL_TIMER=null, HEARD='', SPEAKING=false;
+const SILENCE_MS=1300; // how long a pause must last before we treat you as done (browser-STT fallback)
 // Who is on screen right now. The SERVER owns this; the page only reflects it.
 let PERSONA=null;
 
@@ -308,7 +308,7 @@ function speakAvatar(text){
 // ---------------------------------------------------------------------------
 async function ask(text){
   text=String(text||'').trim(); if(!text||BUSY) return;
-  BUSY=true; $('send').disabled=true; $('q').value=''; stopMic(); stopSpeaking();
+  BUSY=true; SPEAKING=true; $('send').disabled=true; $('q').value=''; stopMic(); stopSpeaking();
   setRest('thinking');
   say('visitor',text);
   $('cap').textContent='';
@@ -347,9 +347,10 @@ async function ask(text){
       // her from hearing her own tail and answering herself.
       setRest('speaking');
       try{ await AUDIO_Q; }catch(_){}
-      if(CONVO && !BUSY){ setRest('listening'); listenTurn(); }
+      SPEAKING=false; SEND_MUTE_UNTIL=Date.now()+350;   // reopen mic (Deepgram streams continuously; browser path re-arms below)
+      if(CONVO){ setRest('listening'); if(STT_MODE==='browser') listenTurn(); }
     } else {
-      setRest(); $('q').focus();
+      SPEAKING=false; setRest(); $('q').focus();
     }
   }
 }
@@ -426,21 +427,79 @@ async function swapPersona(h){
 // than clicking a button that does nothing.
 // ---------------------------------------------------------------------------
 // The mic button toggles CONVERSATION mode: tap once and Claire holds a
-// hands-free back-and-forth. She listens, you talk, she answers, then she
-// listens again on her own. Tap again to end. Half-duplex on purpose: the mic
-// is closed while she speaks so she never transcribes her own voice (the echo
-// trap). To interrupt her, just tap the mic.
+// hands-free back-and-forth. Primary path streams your mic to DEEPGRAM (the
+// same engine the phone uses, far more accurate than the browser recognizer);
+// it falls back to the browser's speech recognition if the stream can't open.
+// Half-duplex on purpose: the mic is muted while she speaks so she never
+// transcribes her own voice (the echo trap). Tap again to end.
+let STT_MODE=null, STT_WS=null, MIC_STREAM=null, ACTX=null, SRC_NODE=null, PROC_NODE=null, SEND_MUTE_UNTIL=0;
+const STT_RATE=16000;
+
 function toggleMic(){ CONVO ? stopConvo() : startConvo(); }
 
-function startConvo(){
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){ banner('This browser will not let Claire hear you. Type your question instead, or open the visit in Chrome or Edge.'); return; }
+async function startConvo(){
   CONVO=true; $('mic').classList.add('on'); $('mic').title='End the conversation';
   stopSpeaking();          // if she was mid-sentence, tapping to talk cuts her off
-  listenTurn();
+  try{ await startDeepgram(); }
+  catch(e){ console.warn('[claire] Deepgram STT unavailable, using browser STT:', e && e.message); startBrowserSTT(); }
 }
-function stopConvo(){ CONVO=false; $('mic').title='Talk with Claire'; stopMic(); }
+function stopConvo(){ CONVO=false; $('mic').title='Talk with Claire'; stopDeepgram(); stopMic(); setRest(); }
 
+// ---- Deepgram streaming path (primary) -----------------------------------
+async function startDeepgram(){
+  MIC_STREAM=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+  const wsUrl=location.origin.replace(/^http/,'ws')+'/api/claire/stt-stream';
+  await new Promise((resolve,reject)=>{
+    STT_WS=new WebSocket(wsUrl);
+    let opened=false;
+    const to=setTimeout(()=>{ if(!opened){ try{STT_WS.close();}catch(_){}; reject(new Error('stt open timeout')); } },6000);
+    STT_WS.onmessage=e=>{ let m; try{m=JSON.parse(e.data);}catch(_){return;}
+      if(m.type==='ready'){ opened=true; clearTimeout(to); STT_MODE='deepgram'; beginCapture(); setRest('listening'); resolve(); }
+      else if(m.type==='partial'){ if(!BUSY && m.text){ $('q').value=m.text; } }
+      else if(m.type==='utterance'){ if(m.text && !BUSY) ask(m.text); }
+      else if(m.type==='error'){ if(!opened){ clearTimeout(to); reject(new Error(m.message||'stt error')); } else { console.warn('[claire] stt:',m.message); } }
+    };
+    STT_WS.onerror=()=>{ if(!opened){ clearTimeout(to); reject(new Error('stt ws error')); } };
+    STT_WS.onclose=()=>{ if(CONVO && STT_MODE==='deepgram'){ setTimeout(()=>{ if(CONVO && !BUSY){ stopDeepgram(); startConvo(); } },600); } };
+  });
+}
+function beginCapture(){
+  ACTX=new (window.AudioContext||window.webkitAudioContext)();
+  SRC_NODE=ACTX.createMediaStreamSource(MIC_STREAM);
+  PROC_NODE=ACTX.createScriptProcessor(2048,1,1);
+  PROC_NODE.onaudioprocess=ev=>{
+    if(!STT_WS||STT_WS.readyState!==1) return;
+    // Half-duplex: while Claire speaks (or a short tail after), send SILENCE
+    // instead of the mic so we never feed her own voice back in, but the
+    // Deepgram socket stays warm (it drops after ~10s of no audio, which would
+    // kill the mic on a long answer).
+    const muted = SPEAKING || Date.now()<SEND_MUTE_UNTIL;
+    const src = ev.inputBuffer.getChannelData(0);
+    const frame = muted ? new Float32Array(src.length) : src;
+    const pcm=floatToPcm16(resampleTo(frame, ACTX.sampleRate, STT_RATE));
+    try{ STT_WS.send(JSON.stringify({type:'audio', audio:b64FromBytes(new Uint8Array(pcm.buffer))})); }catch(_){}
+  };
+  SRC_NODE.connect(PROC_NODE); PROC_NODE.connect(ACTX.destination);
+}
+function stopDeepgram(){
+  try{ STT_WS && STT_WS.readyState===1 && STT_WS.send(JSON.stringify({type:'bye'})); }catch(_){}
+  try{ STT_WS && (STT_WS.onclose=null, STT_WS.close()); }catch(_){}
+  try{ PROC_NODE && PROC_NODE.disconnect(); }catch(_){}
+  try{ SRC_NODE && SRC_NODE.disconnect(); }catch(_){}
+  try{ MIC_STREAM && MIC_STREAM.getTracks().forEach(t=>t.stop()); }catch(_){}
+  try{ ACTX && ACTX.state!=='closed' && ACTX.close(); }catch(_){}
+  STT_WS=SRC_NODE=PROC_NODE=MIC_STREAM=ACTX=null; if(STT_MODE==='deepgram') STT_MODE=null;
+}
+function floatToPcm16(f32){ const o=new Int16Array(f32.length); for(let i=0;i<f32.length;i++){ let s=Math.max(-1,Math.min(1,f32[i])); o[i]=s<0?s*0x8000:s*0x7fff; } return o; }
+function resampleTo(f32,inR,outR){ if(inR===outR) return f32; const r=inR/outR,n=Math.max(1,Math.round(f32.length/r)),o=new Float32Array(n); for(let i=0;i<n;i++){ const idx=i*r,i0=Math.floor(idx),i1=Math.min(i0+1,f32.length-1),fr=idx-i0; o[i]=f32[i0]*(1-fr)+f32[i1]*fr; } return o; }
+function b64FromBytes(bytes){ let s=''; const CH=0x8000; for(let i=0;i<bytes.length;i+=CH){ s+=String.fromCharCode.apply(null,bytes.subarray(i,i+CH)); } return btoa(s); }
+
+// ---- Browser SpeechRecognition (fallback) --------------------------------
+function startBrowserSTT(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ banner('This browser will not let Claire hear you. Type your question instead, or open the visit in Chrome or Edge.'); CONVO=false; $('mic').classList.remove('on'); $('mic').title='Talk with Claire'; return; }
+  STT_MODE='browser'; listenTurn();
+}
 // Open the mic for ONE of your turns. Accumulates speech and only treats you as
 // finished after a real pause (SILENCE_MS), so a mid-thought breath doesn't get
 // sent as a half-question.
@@ -511,7 +570,7 @@ async function handoff(){
 }
 
 async function endVisit(reason,capped){
-  CONVO=false; clearInterval(TICK); clearInterval(BEAT); stopMic(); stopSpeaking();
+  CONVO=false; clearInterval(TICK); clearInterval(BEAT); stopDeepgram(); stopMic(); stopSpeaking();
   try{ if(AVATAR&&AVATAR.stopAvatar) await AVATAR.stopAvatar(); }catch(_){}
   try{ await fetch(A+'/session/'+SESSION.id+'/end',{method:'POST',credentials:'same-origin',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({avatar_seconds:ELAPSED,reason})}); }catch(_){}
