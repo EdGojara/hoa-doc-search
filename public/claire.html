@@ -79,6 +79,11 @@ const A='/api/claire';
 const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const $=id=>document.getElementById(id);
 let ME=null, SESSION=null, AVATAR=null, LISTENING=false, RECOG=null, ELAPSED=0, TICK=null, BEAT=null, BUSY=false;
+// Conversation mode: hands-free loop (listen -> answer -> listen). CONVO stays
+// true across turns so she reopens the mic after speaking; SIL_TIMER debounces
+// end-of-speech so she waits through pauses instead of finalizing early.
+let CONVO=false, SIL_TIMER=null, HEARD='';
+const SILENCE_MS=1300; // how long a pause must last before we treat you as done
 // Who is on screen right now. The SERVER owns this; the page only reflects it.
 let PERSONA=null;
 
@@ -304,6 +309,7 @@ function speakAvatar(text){
 async function ask(text){
   text=String(text||'').trim(); if(!text||BUSY) return;
   BUSY=true; $('send').disabled=true; $('q').value=''; stopMic(); stopSpeaking();
+  setRest('thinking');
   say('visitor',text);
   $('cap').textContent='';
   try{
@@ -322,6 +328,7 @@ async function ask(text){
         // already on its way out.
         if(evt==='handoff'){ pending=pending.then(()=>swapPersona(data)).catch(()=>{}); }
         else if(evt==='sentence'){
+          if(!full) setRest('speaking');
           full+=(full?' ':'')+data.text; const cap=$('cap'); cap.textContent=full; cap.scrollTop=cap.scrollHeight;
           const line=data.text; pending=pending.then(()=>speakAvatar(line)).catch(()=>{});
         }
@@ -332,7 +339,19 @@ async function ask(text){
   }catch(e){
     const msg='Sorry, that did not go through. Want me to get someone from the team to follow up?';
     $('cap').textContent=msg; say('claire',msg);
-  }finally{ BUSY=false; $('send').disabled=false; $('q').focus(); }
+  }finally{
+    BUSY=false; $('send').disabled=false;
+    if(CONVO){
+      // Hands-free loop: wait for her audio to finish playing, THEN reopen the
+      // mic. Waiting on the real playback queue (not `pending`) is what keeps
+      // her from hearing her own tail and answering herself.
+      setRest('speaking');
+      try{ await AUDIO_Q; }catch(_){}
+      if(CONVO && !BUSY){ setRest('listening'); listenTurn(); }
+    } else {
+      setRest(); $('q').focus();
+    }
+  }
 }
 
 async function readSSE(response,onEvent){
@@ -406,24 +425,59 @@ async function swapPersona(h){
 // the browser has no support the visitor types, and is told so plainly rather
 // than clicking a button that does nothing.
 // ---------------------------------------------------------------------------
-function toggleMic(){ LISTENING?stopMic():startMic(); }
-function startMic(){
+// The mic button toggles CONVERSATION mode: tap once and Claire holds a
+// hands-free back-and-forth. She listens, you talk, she answers, then she
+// listens again on her own. Tap again to end. Half-duplex on purpose: the mic
+// is closed while she speaks so she never transcribes her own voice (the echo
+// trap). To interrupt her, just tap the mic.
+function toggleMic(){ CONVO ? stopConvo() : startConvo(); }
+
+function startConvo(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ banner('This browser will not let Claire hear you. Type your question instead, or open the visit in Chrome or Edge.'); return; }
+  CONVO=true; $('mic').classList.add('on'); $('mic').title='End the conversation';
+  stopSpeaking();          // if she was mid-sentence, tapping to talk cuts her off
+  listenTurn();
+}
+function stopConvo(){ CONVO=false; $('mic').title='Talk with Claire'; stopMic(); }
+
+// Open the mic for ONE of your turns. Accumulates speech and only treats you as
+// finished after a real pause (SILENCE_MS), so a mid-thought breath doesn't get
+// sent as a half-question.
+function listenTurn(){
+  if(!CONVO||BUSY) return;
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR) return;
+  try{ if(RECOG){ RECOG.onend=null; RECOG.stop(); } }catch(_){}
+  HEARD='';
   RECOG=new SR();
   RECOG.lang=SESSION.language==='es'?'es-US':'en-US';
-  RECOG.interimResults=true; RECOG.continuous=false;
+  RECOG.interimResults=true; RECOG.continuous=true;
   RECOG.onresult=e=>{
-    let finalText='';
-    for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) finalText+=e.results[i][0].transcript; }
-    if(finalText.trim()){ stopMic(); ask(finalText); }
-    else $('q').value=e.results[e.resultIndex][0].transcript;
+    let interim='', finalAdd='';
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const seg=e.results[i][0].transcript;
+      if(e.results[i].isFinal) finalAdd+=seg; else interim+=seg;
+    }
+    if(finalAdd) HEARD=(HEARD?HEARD+' ':'')+finalAdd.trim();
+    $('q').value=(HEARD?HEARD+' ':'')+interim;
+    // Reset the end-of-speech timer on every bit of speech.
+    clearTimeout(SIL_TIMER);
+    SIL_TIMER=setTimeout(()=>{
+      const said=(HEARD||interim||'').trim();
+      if(said){ stopMic(); ask(said); }   // ask() will reopen the mic when she's done
+    }, SILENCE_MS);
   };
-  RECOG.onerror=()=>stopMic();
-  RECOG.onend=()=>stopMic();
-  try{ RECOG.start(); LISTENING=true; $('mic').classList.add('on'); }catch(_){ stopMic(); }
+  RECOG.onerror=()=>{ if(CONVO && !BUSY) setTimeout(listenTurn, 400); };
+  RECOG.onend=()=>{ /* keep listening across the loop unless we sent a turn */ if(CONVO && !BUSY && !SIL_TIMER) setTimeout(listenTurn, 200); };
+  try{ RECOG.start(); LISTENING=true; $('mic').classList.add('on'); setRest('listening'); }catch(_){ /* start can throw if one is already running */ }
 }
-function stopMic(){ LISTENING=false; const m=$('mic'); if(m) m.classList.remove('on'); if(RECOG){ try{RECOG.stop();}catch(_){} RECOG=null; } }
+function stopMic(){ LISTENING=false; clearTimeout(SIL_TIMER); SIL_TIMER=null; if(RECOG){ try{RECOG.onend=null; RECOG.stop();}catch(_){} RECOG=null; } if(!CONVO){ const m=$('mic'); if(m) m.classList.remove('on'); } }
+// Small status line under the avatar so it's obvious whose turn it is.
+function setRest(state){ const r=$('restText'); if(!r) return;
+  const nm=(SESSION&&SESSION.persona&&SESSION.persona.name)||'Claire';
+  r.textContent = state==='listening' ? 'Listening…' : state==='thinking' ? `${nm} is thinking…` : state==='speaking' ? `${nm} is speaking…` : `${nm} is listening`;
+}
 
 // ---------------------------------------------------------------------------
 // The meter. The browser counts, the SERVER decides. A client-side timer is a
@@ -457,7 +511,7 @@ async function handoff(){
 }
 
 async function endVisit(reason,capped){
-  clearInterval(TICK); clearInterval(BEAT); stopMic(); stopSpeaking();
+  CONVO=false; clearInterval(TICK); clearInterval(BEAT); stopMic(); stopSpeaking();
   try{ if(AVATAR&&AVATAR.stopAvatar) await AVATAR.stopAvatar(); }catch(_){}
   try{ await fetch(A+'/session/'+SESSION.id+'/end',{method:'POST',credentials:'same-origin',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({avatar_seconds:ELAPSED,reason})}); }catch(_){}
