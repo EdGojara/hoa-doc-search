@@ -112,6 +112,15 @@ function floatToPcm16(float32){
   for(let i=0;i<float32.length;i++){ let s=Math.max(-1,Math.min(1,float32[i])); out[i]= s<0 ? s*0x8000 : s*0x7fff; }
   return out;
 }
+// Resample mic audio from the AudioContext's ACTUAL rate to 24k. Chrome often
+// ignores the 24k hint and runs at 48k; if we send 48k samples labeled 24k, the
+// model hears garble and transcribes almost nothing (the sttChars~0 symptom).
+function resampleTo(float32, inRate, outRate){
+  if(inRate===outRate) return float32;
+  const ratio=inRate/outRate, outLen=Math.max(1,Math.round(float32.length/ratio)), out=new Float32Array(outLen);
+  for(let i=0;i<outLen;i++){ const idx=i*ratio, i0=Math.floor(idx), i1=Math.min(i0+1,float32.length-1); const f=idx-i0; out[i]=float32[i0]*(1-f)+float32[i1]*f; }
+  return out;
+}
 function pcm16ToFloat(int16){
   const out=new Float32Array(int16.length);
   for(let i=0;i<int16.length;i++){ out[i]= int16[i] / (int16[i]<0 ? 0x8000 : 0x7fff); }
@@ -173,7 +182,7 @@ function beginCapture(){
     // audio, otherwise her own voice loops back and she answers herself.
     if(actx && actx.currentTime < speakingUntil + ECHO_TAIL) return;
     const input = ev.inputBuffer.getChannelData(0);
-    const pcm = floatToPcm16(input);
+    const pcm = floatToPcm16(resampleTo(input, actx.sampleRate, RATE));
     const bytes = new Uint8Array(pcm.buffer);
     ws.send(JSON.stringify({ type:'audio', audio: b64FromBytes(bytes) }));
   };
