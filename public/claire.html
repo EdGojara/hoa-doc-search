@@ -152,9 +152,8 @@ function renderLobby(){
       </div>
     </div>
     <div class="bar">
-      ${many?`<select id="c-pick" style="flex:1 1 240px;">${ME.communities.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`
+      ${many?`<select id="c-pick" style="flex:1 1 auto;max-width:320px;">${ME.communities.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`
              :`<div class="muted" style="flex:1 1 auto;">${one?esc(one.name):'No community linked to your account yet.'}</div>`}
-      <select id="lang" style="flex:0 0 130px;"><option value="en">English</option><option value="es">Español</option></select>
       <button class="btn" id="go" ${ME.communities.length?'':'disabled'}>Start a visit</button>
     </div>
     ${ME.video.available?'':`<div class="warn">Claire is on voice and text right now, the video presenter is switched off. Everything else works the same.</div>`}
@@ -169,7 +168,7 @@ function renderLobby(){
 async function startVisit(){
   const btn=$('go'); btn.disabled=true; btn.textContent='Connecting…';
   const community_id=$('c-pick')?$('c-pick').value:(ME.communities[0]||{}).id;
-  const language=$('lang').value;
+  const language=$('lang')?$('lang').value:'en';  // default English; Spanish switches in-conversation, not an upfront picker
   let j;
   try{
     const r=await fetch(A+'/session/start',{method:'POST',credentials:'same-origin',
