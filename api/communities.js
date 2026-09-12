@@ -29,6 +29,44 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
+// ---------------------------------------------------------------------------
+// Seasonal amenity schedules (date-aware). A pool runs summer-daily then
+// shoulder weekends-only then closed; a single stored "hours" line goes stale
+// and Claire reads the wrong season (Ed 2026-09-12: she gave daily hours in
+// September when the pool was weekends-only). season_schedule.phases is an
+// ordered list of { from:"MM-DD", to:"MM-DD", label?, hours } and we compute
+// which one covers TODAY (America/Chicago) so Claire states only what's in
+// effect now. offseason_note (e.g. swim-at-your-own-risk waiver) is appended.
+// ---------------------------------------------------------------------------
+function _chicagoNow() {
+  try { return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })); }
+  catch (_) { return new Date(); }
+}
+function amenityTodayLabel() {
+  try { return _chicagoNow().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+  catch (_) { return ''; }
+}
+function _todayMD() {
+  const d = _chicagoNow();
+  return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function _mdInRange(md, from, to) {
+  if (!from || !to) return false;
+  return from <= to ? (md >= from && md <= to) : (md >= from || md <= to); // wrap = winter season
+}
+// Returns the human hours line in effect today, or '' if we're outside every
+// phase (i.e. the closed/off-season window — caller shows offseason_note).
+function currentSeasonStatus(schedule) {
+  try {
+    const phases = schedule && Array.isArray(schedule.phases) ? schedule.phases : null;
+    if (!phases || !phases.length) return '';
+    const md = _todayMD();
+    const p = phases.find((ph) => _mdInRange(md, ph.from, ph.to));
+    if (!p) return schedule.closed_text || 'closed for the season';
+    return p.label ? `${p.label} — ${p.hours}` : p.hours;
+  } catch (_) { return ''; }
+}
+
 // Separate multer config for design-guidelines upload — bigger limit since
 // recorded DGs run 500KB-2MB and Exhibit B docs can be larger. Up to 5 files
 // per upload (DG + Exhibit B + amendments + cover letter etc.).
@@ -1025,17 +1063,27 @@ async function buildCommunityContextBlock(communityNameOrId) {
   try {
     const { data: amenities } = await supabase
       .from('amenities')
-      .select('name, amenity_type, hours_text, contact_name, contact_phone, contact_email, description, is_rentable, offseason_hours_text, status')
+      .select('name, amenity_type, hours_text, contact_name, contact_phone, contact_email, description, is_rentable, offseason_hours_text, season_schedule, status')
       .eq('community_id', comm.id)
       .eq('status', 'active')
       .order('amenity_type', { ascending: true });
     if (amenities && amenities.length > 0) {
       lines.push('');
       lines.push('AMENITIES (operational schedule + contact — quote hours verbatim, do not paraphrase)');
+      lines.push(`(Today is ${amenityTodayLabel()}. For any amenity with a CURRENT line below, that is the schedule in effect RIGHT NOW — lead with it and do NOT quote a different season's hours.)`);
       for (const a of amenities) {
         const parts = [];
-        if (a.hours_text) parts.push(`hours: ${a.hours_text}`);
-        if (a.offseason_hours_text) parts.push(`off-season: ${a.offseason_hours_text}`);
+        // Seasonal, date-aware schedule (e.g. pool: summer daily -> shoulder
+        // weekends-only -> closed). When present, compute what is in effect
+        // TODAY so Claire never reads a stale off-season "daily" answer.
+        const nowStatus = a.season_schedule ? currentSeasonStatus(a.season_schedule) : null;
+        if (nowStatus) {
+          parts.push(`CURRENT (as of ${amenityTodayLabel()}): ${nowStatus}`);
+          if (a.season_schedule.offseason_note) parts.push(`off-season: ${a.season_schedule.offseason_note}`);
+        } else {
+          if (a.hours_text) parts.push(`hours: ${a.hours_text}`);
+          if (a.offseason_hours_text) parts.push(`off-season: ${a.offseason_hours_text}`);
+        }
         if (a.contact_name) parts.push(a.contact_name);
         if (a.contact_phone) parts.push(`phone: ${a.contact_phone}`);
         if (a.contact_email) parts.push(`email: ${a.contact_email}`);
