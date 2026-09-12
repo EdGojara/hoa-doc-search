@@ -152,30 +152,37 @@ function renderLobby(){
       </div>
     </div>
     <div class="bar">
-      ${many?`<select id="c-pick" style="flex:1 1 auto;max-width:320px;">${ME.communities.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`
-             :`<div class="muted" style="flex:1 1 auto;">${one?esc(one.name):'No community linked to your account yet.'}</div>`}
-      <button class="btn" id="go" ${ME.communities.length?'':'disabled'}>Start a visit</button>
+      ${many?`<select id="c-pick" style="max-width:340px;">${ME.communities.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`
+             :`<div class="muted">${one?esc(one.name):'No community linked to your account yet.'}</div>`}
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn" id="go" ${ME.communities.length?'':'disabled'}>Start a visit</button>
+        <button class="ghost" id="go-es" ${ME.communities.length?'':'disabled'} title="Habla en español con Isabella, la asistente en español de Bedrock. Da las mismas respuestas que Claire.">🗣️ Habla con Isabella · Español</button>
+      </div>
     </div>
     ${ME.video.available?'':`<div class="warn">Claire is on voice and text right now, the video presenter is switched off. Everything else works the same.</div>`}
     <div class="note">Visits are limited to ${Math.round(v.seconds_cap/60)} minutes and are recorded as part of your association's records. Claire does not decide violations, waive charges, approve requests, or give legal advice. For anything in that territory she brings in a person.</div>
   </div>`;
-  $('go').onclick=startVisit;
+  $('go').onclick=()=>startVisit('en');
+  if($('go-es')) $('go-es').onclick=()=>startVisit('es');
 }
 
 // ---------------------------------------------------------------------------
 // The visit.
 // ---------------------------------------------------------------------------
-async function startVisit(){
-  const btn=$('go'); btn.disabled=true; btn.textContent='Connecting…';
+// English -> Claire, Spanish -> Isabella (same brain, same answers, her voice).
+async function startVisit(language){
+  language = language==='es' ? 'es' : 'en';
+  const btn = language==='es' ? $('go-es') : $('go');
+  const label = language==='es' ? 'Conectando…' : 'Connecting…';
+  if(btn){ btn.disabled=true; btn.textContent=label; }
   const community_id=$('c-pick')?$('c-pick').value:(ME.communities[0]||{}).id;
-  const language=$('lang')?$('lang').value:'en';  // default English; Spanish switches in-conversation, not an upfront picker
   let j;
   try{
     const r=await fetch(A+'/session/start',{method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id,language})});
     j=await r.json();
     if(!r.ok) throw new Error(j.detail||j.error||'could not start');
-  }catch(e){ btn.disabled=false; btn.textContent='Start a visit'; alert('Could not start the visit: '+e.message); return; }
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent = language==='es' ? 'Habla con Isabella' : 'Start a visit'; } alert('Could not start the visit: '+e.message); return; }
 
   SESSION=j.session; SESSION.language=language;
   PERSONA=SESSION.persona;
