@@ -49,6 +49,12 @@ function personaFor(m) {
   // Senior Community Manager (escalations): mail to amanda@ is Amanda's.
   if (mailbox === String(graphSend.AMANDA_MAILBOX || '').toLowerCase()) return 'amanda';
   if (mailbox === String(graphSend.EMMA_MAILBOX || '').toLowerCase()) return 'emma';
+  // Language front office: mail to isabella@/mei@/priya@ is owned by that persona.
+  // She is the same front-office brain as Claire, in her language; the send path
+  // still drafts in English for review and translates at send.
+  if (mailbox === String(graphSend.ISABELLA_MAILBOX || '').toLowerCase()) return 'isabella';
+  if (mailbox === String(graphSend.MEI_MAILBOX || '').toLowerCase()) return 'mei';
+  if (mailbox === String(graphSend.PRIYA_MAILBOX || '').toLowerCase()) return 'priya';
   if (m.resolved_vendor_id) return 'emma';
   if (['vendor_financial', 'vendor_general'].includes(m.classification)) return 'emma';
   return 'claire';
@@ -687,6 +693,7 @@ router.get('/:id/thread', async (req, res) => {
 const SYSTEM_MAILBOXES = new Set([
   graphSend.CLAIRE_MAILBOX, graphSend.EMMA_MAILBOX, graphSend.ANNIE_MAILBOX, graphSend.MIRANDA_MAILBOX,
   graphSend.PAIGE_MAILBOX, graphSend.REESE_MAILBOX, graphSend.KAT_MAILBOX, graphSend.AMANDA_MAILBOX,
+  graphSend.ISABELLA_MAILBOX, graphSend.MEI_MAILBOX, graphSend.PRIYA_MAILBOX,
   'info@bedrocktx.com', 'archive1emails@bedrocktx.com', 'archive2@bedrocktx.com', 'scans@bedrocktx.com',
 ].filter(Boolean).map((s) => String(s).toLowerCase()));
 
@@ -1481,6 +1488,15 @@ router.post('/:id/send', express.json(), async (req, res) => {
       const { buildReeseEmail } = require('../lib/email/reese_signature');
       ({ html, attachments } = buildReeseEmail(sendBody, commName, inlineQuote));
       fromMailbox = graphSend.REESE_MAILBOX; senderLabel = 'Reese Calloway (Bedrock AI)';
+    } else if (persona === 'isabella' || persona === 'mei' || persona === 'priya') {
+      // Language front office: one generic, roster-driven signature builder — no
+      // per-persona file needed. sendBody is already translated to the resident's
+      // language above; her signature (name + language title + reply-to mailbox)
+      // comes straight off the roster.
+      const { buildPersonaEmail } = require('../lib/email/persona_signature');
+      ({ html, attachments } = buildPersonaEmail(persona, sendBody, commName, inlineQuote));
+      const L = { isabella: ['Isabella Reyes', graphSend.ISABELLA_MAILBOX], mei: ['Mei Chen', graphSend.MEI_MAILBOX], priya: ['Priya Sharma', graphSend.PRIYA_MAILBOX] }[persona];
+      fromMailbox = L[1]; senderLabel = `${L[0]} (Bedrock AI)`;
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
       ({ html, attachments } = buildClaireEmail(sendBody, commName, inlineQuote));

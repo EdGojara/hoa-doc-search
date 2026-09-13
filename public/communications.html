@@ -274,7 +274,7 @@ let communityByMsg = {};// messageId -> community_id (scopes the document search
 let recipientByMsg = {};// messageId -> {to, source} suggested reply recipient (body email vs envelope sender)
 let genAttsByMsg = {};  // messageId -> [{name, size, ...}] files the agent generated (RFP PDF, nominations) — shown read-only; attached server-side at send
 let originalDraftByMsg = {};// messageId -> Claire's FIRST autonomous draft (the encode-Ed learning baseline vs what Ed actually sends)
-const PNAME = { claire:'Claire', emma:'Emma Brooks', kat:'Kat Reed', annie:'Annie Reeves', miranda:'Miranda Pierce', amanda:'Amanda Albright', reese:'Reese Calloway', paige:'Paige Chandler', general:'General inbox' };
+const PNAME = { claire:'Claire', emma:'Emma Brooks', kat:'Kat Reed', annie:'Annie Reeves', miranda:'Miranda Pierce', amanda:'Amanda Albright', reese:'Reese Calloway', paige:'Paige Chandler', isabella:'Isabella Reyes', mei:'Mei Chen', priya:'Priya Sharma', general:'General inbox' };
 // Every sending persona's mailbox, matching lib/email/graph_send.js. A missing
 // entry silently fell back to claire@ — Amanda's contract review showed "sends
 // from claire@" though she has her own mailbox (Ed 2026-09-01).
@@ -282,6 +282,7 @@ const PMAIL = {
   claire:'claire@bedrocktx.com', emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com',
   miranda:'miranda@bedrocktx.com', amanda:'amandaalbright@bedrocktx.com',
   kat:'kat@bedrocktx.com', paige:'paige@bedrocktx.com', reese:'reese@bedrocktx.com',
+  isabella:'isabella@bedrocktx.com', mei:'mei@bedrocktx.com', priya:'priya@bedrocktx.com',
   tessa:'tessa@bedrocktx.com', darby:'darby@bedrocktx.com',
 };
 let openPersona = null;   // which teammate's emails are expanded
@@ -1143,7 +1144,7 @@ async function loadBoardGroups(){
 }
 // persona key -> AI teammate mailbox, so a router suggestion can preselect the
 // right person. Mirrors lib/email/graph_send.js persona mailboxes.
-var AI_MAILBOX = { emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com', miranda:'miranda@bedrocktx.com', kat:'kat@bedrocktx.com', reese:'reese@bedrocktx.com', paige:'paige@bedrocktx.com', amanda:'amanda@bedrocktx.com' };
+var AI_MAILBOX = { emma:'emma@bedrocktx.com', annie:'annie@bedrocktx.com', miranda:'miranda@bedrocktx.com', kat:'kat@bedrocktx.com', reese:'reese@bedrocktx.com', paige:'paige@bedrocktx.com', amanda:'amanda@bedrocktx.com', isabella:'isabella@bedrocktx.com', mei:'mei@bedrocktx.com', priya:'priya@bedrocktx.com' };
 function forwardPrompt(id, senderEmail, preselectPersona){
   const box = document.getElementById('fwd-'+id);
   if(!box) return;
@@ -1152,7 +1153,7 @@ function forwardPrompt(id, senderEmail, preselectPersona){
   // AI teammates as forward targets — hand an item to the AI persona who owns it
   // and it lands in their queue. The full specialist bench, so a router
   // suggestion always has a matching target.
-  const aiOpts = `<optgroup label="AI team"><option value="emma@bedrocktx.com" data-name="Emma">Emma Brooks — accounts payable</option><option value="kat@bedrocktx.com" data-name="Kat">Kat Reed — accounting</option><option value="annie@bedrocktx.com" data-name="Annie">Annie Reeves — architectural (ACC/ARC)</option><option value="miranda@bedrocktx.com" data-name="Miranda">Miranda Pierce — compliance / DRV</option><option value="reese@bedrocktx.com" data-name="Reese">Reese Calloway — resale / estoppels</option><option value="paige@bedrocktx.com" data-name="Paige">Paige Chandler — board operations</option><option value="amanda@bedrocktx.com" data-name="Amanda">Amanda Albright — senior community manager</option></optgroup>`;
+  const aiOpts = `<optgroup label="AI team"><option value="emma@bedrocktx.com" data-name="Emma">Emma Brooks — accounts payable</option><option value="kat@bedrocktx.com" data-name="Kat">Kat Reed — accounting</option><option value="annie@bedrocktx.com" data-name="Annie">Annie Reeves — architectural (ACC/ARC)</option><option value="miranda@bedrocktx.com" data-name="Miranda">Miranda Pierce — compliance / DRV</option><option value="reese@bedrocktx.com" data-name="Reese">Reese Calloway — resale / estoppels</option><option value="paige@bedrocktx.com" data-name="Paige">Paige Chandler — board operations</option><option value="amanda@bedrocktx.com" data-name="Amanda">Amanda Albright — senior community manager</option><option value="isabella@bedrocktx.com" data-name="Isabella">Isabella Reyes — front office (Español)</option><option value="mei@bedrocktx.com" data-name="Mei">Mei Chen — front office (中文)</option><option value="priya@bedrocktx.com" data-name="Priya">Priya Sharma — front office (हिन्दी)</option></optgroup>`;
   box.innerHTML = `<div class="draftbox">
     <div class="note">↪ Forward to a teammate — or hand to an AI teammate (Emma/Annie/Miranda) who owns it — to check before we reply. They get this email, the full conversation history, and your note. Claire's draft is not included. Nothing goes to the homeowner.</div>
     <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:6px 0;">
@@ -1258,6 +1259,9 @@ const COMPOSE_PERSONAS = {
   kat:     {name:'Katherine "Kat" Reed', first:'Kat',  mail:'kat@bedrocktx.com'},
   amanda:  {name:'Amanda Albright',   first:'Amanda',  mail:'amanda@bedrocktx.com'},
   reese:   {name:'Reese Calloway',    first:'Reese',   mail:'reese@bedrocktx.com'},
+  isabella:{name:'Isabella Reyes',    first:'Isabella',mail:'isabella@bedrocktx.com'},
+  mei:     {name:'Mei Chen',          first:'Mei',     mail:'mei@bedrocktx.com'},
+  priya:   {name:'Priya Sharma',      first:'Priya',   mail:'priya@bedrocktx.com'},
 };
 // When forwarding, the quoted history is kept here so it survives a "Have Claire
 // write it" redraft and is ALWAYS included on send — the board needs it. (Ed
@@ -1404,6 +1408,9 @@ async function loadDraftCount(){
         <option value="kat">Katherine &quot;Kat&quot; Reed — accounting manager</option>
         <option value="amanda">Amanda Albright — senior community manager</option>
         <option value="reese">Reese Calloway — resale &amp; estoppels</option>
+        <option value="isabella">Isabella Reyes — front office (Español)</option>
+        <option value="mei">Mei Chen — front office (中文)</option>
+        <option value="priya">Priya Sharma — front office (हिन्दी)</option>
       </select>
       <div id="nmFromHint" style="font-size:12px; color:var(--muted); margin-bottom:12px;">Sends from <strong>claire@bedrocktx.com</strong> with the Bedrock logo + honest-AI signature. Logged on the homeowner's record when the address matches one on file.</div>
       <div style="display:flex; gap:11px; margin-bottom:11px;">
