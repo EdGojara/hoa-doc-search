@@ -222,8 +222,8 @@ router.post('/session/start', async (req, res) => {
     if (!community) return res.status(404).json({ error: 'community_not_found' });
 
     const reqLang = String((req.body || {}).language || '').toLowerCase();
-    const language = ['es', 'zh'].includes(reqLang) ? reqLang : 'en';
-    const LANG_PERSONA = { es: 'isabella', zh: 'mei' };
+    const language = ['es', 'zh', 'hi'].includes(reqLang) ? reqLang : 'en';
+    const LANG_PERSONA = { es: 'isabella', zh: 'mei', hi: 'priya' };
     const surface = ['visit', 'chamber', 'kiosk'].includes((req.body || {}).surface) ? (req.body || {}).surface : 'visit';
 
     // Who opens the door. Spanish starts with Isabella; otherwise Claire is the

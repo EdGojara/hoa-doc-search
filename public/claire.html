@@ -158,6 +158,7 @@ function renderLobby(){
         <button class="btn" id="go" ${ME.communities.length?'':'disabled'}>Start a visit</button>
         <button class="ghost" id="go-es" ${ME.communities.length?'':'disabled'} title="Habla en español con Isabella. Da las mismas respuestas que Claire.">🗣️ Habla con Isabella · Español</button>
         <button class="ghost" id="go-zh" ${ME.communities.length?'':'disabled'} title="用中文和 Mei 对话。她提供与 Claire 相同的答案。">🗣️ 和 Mei 对话 · 中文</button>
+        <button class="ghost" id="go-hi" ${ME.communities.length?'':'disabled'} title="प्रिया से हिन्दी में बात करें। वे वही जानकारी देती हैं जो Claire देती हैं।">🗣️ प्रिया से बात करें · हिन्दी</button>
       </div>
     </div>
     ${ME.video.available?'':`<div class="warn">Claire is on voice and text right now, the video presenter is switched off. Everything else works the same.</div>`}
@@ -166,6 +167,7 @@ function renderLobby(){
   $('go').onclick=()=>startVisit('en');
   if($('go-es')) $('go-es').onclick=()=>startVisit('es');
   if($('go-zh')) $('go-zh').onclick=()=>startVisit('zh');
+  if($('go-hi')) $('go-hi').onclick=()=>startVisit('hi');
 }
 
 // ---------------------------------------------------------------------------
@@ -174,11 +176,11 @@ function renderLobby(){
 // English -> Claire, Spanish -> Isabella, Mandarin -> Mei (same brain, same
 // answers, their language + voice).
 async function startVisit(language){
-  language = ['es','zh'].includes(language) ? language : 'en';
-  const btnId = language==='es' ? 'go-es' : language==='zh' ? 'go-zh' : 'go';
+  language = ['es','zh','hi'].includes(language) ? language : 'en';
+  const btnId = language==='es' ? 'go-es' : language==='zh' ? 'go-zh' : language==='hi' ? 'go-hi' : 'go';
   const btn = $(btnId);
-  const busyLabel = { es:'Conectando…', zh:'连接中…', en:'Connecting…' }[language];
-  const resetLabel = { es:'🗣️ Habla con Isabella · Español', zh:'🗣️ 和 Mei 对话 · 中文', en:'Start a visit' }[language];
+  const busyLabel = { es:'Conectando…', zh:'连接中…', hi:'कनेक्ट हो रहा है…', en:'Connecting…' }[language];
+  const resetLabel = { es:'🗣️ Habla con Isabella · Español', zh:'🗣️ 和 Mei 对话 · 中文', hi:'🗣️ प्रिया से बात करें · हिन्दी', en:'Start a visit' }[language];
   if(btn){ btn.disabled=true; btn.textContent=busyLabel; }
   const community_id=$('c-pick')?$('c-pick').value:(ME.communities[0]||{}).id;
   let j;
