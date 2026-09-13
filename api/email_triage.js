@@ -1406,6 +1406,35 @@ router.post('/:id/send', express.json(), async (req, res) => {
     const commName = m.community ? m.community.name : '';
     const subj = subject || (/^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || 'your message'}`);
 
+    // LANGUAGE BRIDGE (Ed 2026-09-13): the reply was drafted, reviewed, and
+    // edited in English (English governs the record and it works for our
+    // English-speaking team). If the resident's contact record says they prefer
+    // another language, translate the approved English at SEND time so they read
+    // it in their language; keep the English as the original. Formal statutory
+    // letters are a separate path and are NOT translated. A translation failure
+    // never blocks the send — it falls back to English.
+    // `body` stays ENGLISH everywhere below (the record, the encode-Ed learning
+    // capture, commitment/DRV logging all read it). Only `sendBody` — the text
+    // that actually goes into the outgoing email HTML — is translated.
+    let sendBody = String(body).trim();
+    let sentLanguage = 'en';
+    try {
+      let pl = null;
+      if (m.resolved_contact_id) {
+        const { data: c } = await supabase.from('contacts').select('preferred_language').eq('id', m.resolved_contact_id).maybeSingle();
+        pl = c && c.preferred_language;
+      }
+      if (pl && String(pl).toLowerCase() !== 'en') {
+        const { translateForResident } = require('../lib/email/translate');
+        const translated = await translateForResident(sendBody, pl);
+        if (translated && translated.trim() && translated.trim() !== sendBody) {
+          sendBody = translated.trim();
+          sentLanguage = String(pl).toLowerCase();
+          console.log(`[email-triage] reply translated to ${sentLanguage} for contact ${m.resolved_contact_id}`);
+        }
+      }
+    } catch (e) { console.warn('[email-triage] resident translation skipped:', e.message); }
+
     // Send in the right voice: Emma from emma@ for vendor/AP, Claire from claire@
     // otherwise. Both carry the branded logo + their own honest-AI signature.
     // The message being replied to travels with the reply. Ed 2026-08-20:
@@ -1426,35 +1455,35 @@ router.post('/:id/send', express.json(), async (req, res) => {
     let html, attachments, fromMailbox, senderLabel;
     if (persona === 'emma') {
       const { buildEmmaEmail } = require('../lib/email/emma_signature');
-      ({ html, attachments } = buildEmmaEmail(String(body).trim(), commName, inlineQuote));
+      ({ html, attachments } = buildEmmaEmail(sendBody, commName, inlineQuote));
       fromMailbox = graphSend.EMMA_MAILBOX; senderLabel = 'Emma Brooks (Bedrock AI)';
     } else if (persona === 'miranda') {
       const { buildMirandaEmail } = require('../lib/email/miranda_signature');
-      ({ html, attachments } = buildMirandaEmail(String(body).trim(), commName, inlineQuote));
+      ({ html, attachments } = buildMirandaEmail(sendBody, commName, inlineQuote));
       fromMailbox = graphSend.MIRANDA_MAILBOX; senderLabel = 'Miranda Pierce (Bedrock AI)';
     } else if (persona === 'annie') {
       const { buildAnnieEmail } = require('../lib/email/annie_signature');
-      ({ html, attachments } = buildAnnieEmail(String(body).trim(), commName, inlineQuote));
+      ({ html, attachments } = buildAnnieEmail(sendBody, commName, inlineQuote));
       fromMailbox = graphSend.ANNIE_MAILBOX; senderLabel = 'Annie Reeves (Bedrock AI)';
     } else if (persona === 'paige') {
       const { buildPaigeEmail } = require('../lib/email/paige_signature');
-      ({ html, attachments } = buildPaigeEmail(String(body).trim(), commName, inlineQuote));
+      ({ html, attachments } = buildPaigeEmail(sendBody, commName, inlineQuote));
       fromMailbox = graphSend.PAIGE_MAILBOX; senderLabel = 'Paige Chandler (Bedrock AI)';
     } else if (persona === 'kat') {
       const { buildKatEmail } = require('../lib/email/kat_signature');
-      ({ html, attachments } = buildKatEmail(String(body).trim(), commName, inlineQuote));
+      ({ html, attachments } = buildKatEmail(sendBody, commName, inlineQuote));
       fromMailbox = graphSend.KAT_MAILBOX; senderLabel = 'Kat Reed (Bedrock AI)';
     } else if (persona === 'amanda') {
       const { buildAmandaEmail } = require('../lib/email/amanda_signature');
-      ({ html, attachments } = buildAmandaEmail(String(body).trim(), commName, inlineQuote));
+      ({ html, attachments } = buildAmandaEmail(sendBody, commName, inlineQuote));
       fromMailbox = graphSend.AMANDA_MAILBOX; senderLabel = 'Amanda Albright (Bedrock AI)';
     } else if (persona === 'reese') {
       const { buildReeseEmail } = require('../lib/email/reese_signature');
-      ({ html, attachments } = buildReeseEmail(String(body).trim(), commName, inlineQuote));
+      ({ html, attachments } = buildReeseEmail(sendBody, commName, inlineQuote));
       fromMailbox = graphSend.REESE_MAILBOX; senderLabel = 'Reese Calloway (Bedrock AI)';
     } else {
       const { buildClaireEmail } = require('../lib/email/claire_signature');
-      ({ html, attachments } = buildClaireEmail(String(body).trim(), commName, inlineQuote));
+      ({ html, attachments } = buildClaireEmail(sendBody, commName, inlineQuote));
       fromMailbox = graphSend.CLAIRE_MAILBOX; senderLabel = 'Claire (Bedrock AI)';
     }
 
@@ -1599,7 +1628,7 @@ router.post('/:id/send', express.json(), async (req, res) => {
       body_full: String(body).trim(),
       conversation_id: m.conversation_id || null,
       received_at: new Date().toISOString(),
-      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `${senderLabel.split(' ')[0]} replied to ${recipient}`, persona,
+      classification: 'outbound_reply', classification_confidence: 'high', ai_summary: `${senderLabel.split(' ')[0]} replied to ${recipient}${sentLanguage !== 'en' ? ` (sent in ${sentLanguage}; body stored in English)` : ''}`, persona,
       community_id: m.community_id, resolved_contact_id: m.resolved_contact_id, resolved_property_id: m.resolved_property_id, resolved_vendor_id: m.resolved_vendor_id,
       resolution_confidence: 'high', triage_status: 'handled', record_ownership: 'association_record', reviewed_by: reviewed_by || 'staff', reviewed_at: new Date().toISOString(),
     }).select('id').maybeSingle();
