@@ -590,6 +590,13 @@ router.get('/explainers', async (req, res) => {
 // parameter, so no request can widen it.
 router.get('/public/explainers', async (req, res) => {
   try {
+    // Public library temporarily taken down (Ed 2026-09-13: "they expose too much
+    // of us right now"). Videos stay STORED and the authenticated /explainers
+    // surface is unaffected; only this no-login /learn feed is gated. Flip back on
+    // by setting LEARN_LIBRARY_PUBLIC=true.
+    if (String(process.env.LEARN_LIBRARY_PUBLIC || 'false').toLowerCase() !== 'true') {
+      return res.json({ explainers: [] });
+    }
     let q = supabase.from('claire_explainers')
       .select('id, topic, language, title, video_url, duration_seconds')
       .eq('status', 'ready')
