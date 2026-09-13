@@ -23,6 +23,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
 const Anthropic = require('@anthropic-ai/sdk');
+const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -697,6 +698,77 @@ router.delete('/facts/:factId', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// KEY ISSUES — per-community living matters (MUD dispute, capital project,
+// lawsuit). Staff-gated at the middleware level like the facts endpoints.
+// Current + future feed the community context block (AI awareness); the UI at
+// /admin/community-issues shows all three states to the human team.
+// ----------------------------------------------------------------------------
+const KI_FIELDS = ['title', 'status', 'category', 'summary', 'facts', 'history', 'approach', 'owner_persona', 'opened_on', 'closed_on'];
+
+router.get('/:communityId/key-issues', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('community_key_issues')
+      .select('*')
+      .eq('community_id', req.params.communityId)
+      .order('status', { ascending: true })
+      .order('updated_at', { ascending: false });
+    if (error) throw error;
+    res.json({ issues: data || [] });
+  } catch (err) {
+    console.error('[community-issues] list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/:communityId/key-issues', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.title || !String(b.title).trim()) return res.status(400).json({ error: 'title_required' });
+    const row = { community_id: req.params.communityId };
+    for (const f of KI_FIELDS) if (b[f] !== undefined) row[f] = b[f] === '' ? null : b[f];
+    row.title = String(b.title).trim();
+    if (!row.status) row.status = 'current';
+    const { data, error } = await supabase.from('community_key_issues').insert(row).select().single();
+    if (error) throw error;
+    res.json({ ok: true, issue: data });
+  } catch (err) {
+    console.error('[community-issues] create failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.patch('/key-issues/:issueId', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const patch = {};
+    for (const f of KI_FIELDS) if (b[f] !== undefined) patch[f] = b[f] === '' ? null : b[f];
+    // Closing an issue stamps the date if not given; reopening clears it.
+    if (b.status === 'closed' && !b.closed_on && patch.closed_on === undefined) patch.closed_on = new Date().toISOString().slice(0, 10);
+    if (b.status && b.status !== 'closed') patch.closed_on = null;
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'no_fields' });
+    const { data, error } = await supabase.from('community_key_issues').update(patch).eq('id', req.params.issueId).select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true, issue: data });
+  } catch (err) {
+    console.error('[community-issues] update failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.delete('/key-issues/:issueId', async (req, res) => {
+  try {
+    const { error } = await supabase.from('community_key_issues').delete().eq('id', req.params.issueId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[community-issues] delete failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // POST /:communityId/ingest-design-guidelines — ingest PDFs as design_document
 // for this community. Two modes via form field `supersede_current`:
 //   "true"  → mark all existing current design_document rows as superseded
@@ -1017,6 +1089,37 @@ async function buildCommunityContextBlock(communityNameOrId) {
       lines.push(`  • ${label}: ${f.value}${stamp}${stale}`);
     }
   }
+
+  // KEY ISSUES — the community's living matters (a MUD dispute, a capital
+  // project, a lawsuit). Current + potential-future only; closed ones live in
+  // the UI as history, not in the live context. This is what makes Amanda and
+  // the whole AI team AWARE of what's going on so they answer consistently.
+  try {
+    const { data: issues } = await supabase
+      .from('community_key_issues')
+      .select('title, status, summary, facts, approach')
+      .eq('community_id', comm.id)
+      .in('status', ['current', 'future'])
+      .order('status', { ascending: true })
+      .order('updated_at', { ascending: false })
+      .limit(20);
+    if (issues && issues.length > 0) {
+      lines.push('');
+      lines.push('KEY ISSUES (active community matters). State the settled facts and the community\'s stated position. For anything contested, legal, or a dollar/negotiation specific, do NOT argue a side or invent details — say the team is handling it and route it to a person.');
+      let budget = 3000; // keep the block bounded
+      for (const it of issues) {
+        const tag = it.status === 'future' ? 'POTENTIAL' : 'CURRENT';
+        const parts = [`  • [${tag}] ${it.title}`];
+        if (it.summary) parts.push(`      ${String(it.summary).trim()}`);
+        if (it.facts) parts.push(`      Facts: ${String(it.facts).replace(/\s+/g, ' ').trim()}`);
+        if (it.approach) parts.push(`      Approach: ${String(it.approach).replace(/\s+/g, ' ').trim()}`);
+        const chunk = parts.join('\n');
+        if (budget - chunk.length < 0) break;
+        budget -= chunk.length;
+        lines.push(chunk);
+      }
+    }
+  } catch (_) { /* table may not exist yet; silent */ }
 
   // Computed facts (current vendors etc.) — only include those NOT shadowed by a manual override
   const computed = await getComputedFacts(comm.id);

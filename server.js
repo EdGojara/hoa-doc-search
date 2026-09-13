@@ -1139,6 +1139,10 @@ app.get('/admin/video-share', (req, res) => {
 app.get('/v/:token', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'watch.html'));
 });
+// Community Key Issues — per-community living matters (staff-gated by the global gate).
+app.get('/admin/community-issues', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'community-issues.html'));
+});
 // GPT-Live-1 portal PoC (Claire B). The page loads for anyone, but the WS it
 // connects to is gated behind GPT_LIVE_ENABLED, so it is inert until Ed flips
 // the switch for a test. (Ed 2026-09-12.)

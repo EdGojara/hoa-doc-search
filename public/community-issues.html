@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Key Issues — Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+  :root{ --navy:#0B1D34; --ink:#1c2635; --muted:#5a6b83; --line:#dce3ec; --paper:#eef1f5; --surface:#fff; --surface-2:#f6f8fb; --gold:#B8892B; --good:#166b46; --good-bg:#e7f4ec; --warn:#8a5a12; --warn-bg:#fbf0dd; --future:#3a5ca8; --future-bg:#e8eefb; --closed:#5a6b83; --closed-bg:#eef1f5;
+    --sans:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --serif:"Fraunces",Georgia,serif; }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--surface-2:#132a44;--gold:#e0b352;--good:#7fd6a6;--good-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f;--future:#9db8f0;--future-bg:#16233d;--closed:#9fb0c9;--closed-bg:#132033; }}
+  :root[data-theme="dark"]{ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--surface-2:#132a44;--gold:#e0b352;--good:#7fd6a6;--good-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f;--future:#9db8f0;--future-bg:#16233d;--closed:#9fb0c9;--closed-bg:#132033; }
+  *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.55;}
+  .wrap{max-width:900px;margin:0 auto;padding:26px 18px 90px;}
+  .crumbs{font-size:13px;color:var(--muted);margin-bottom:2px;} .crumbs a{color:var(--muted);text-decoration:none;} .crumbs .sep{margin:0 7px;color:var(--line);} .crumbs .here{color:var(--navy);font-weight:700;}
+  h1{font-family:var(--serif);font-weight:600;font-size:29px;color:var(--navy);margin:5px 0 4px;}
+  .sub{font-size:14px;color:var(--muted);margin:0 0 18px;max-width:74ch;}
+  h2{font-size:12px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:26px 0 10px;border-bottom:1px solid var(--line);padding-bottom:7px;}
+  button{font:inherit;cursor:pointer;} .btn{background:var(--gold);color:#fff;border:none;border-radius:9px;padding:9px 15px;font-weight:700;font-size:13.5px;} .btn:disabled{opacity:.5;cursor:default;}
+  .btn.ghost{background:var(--surface);border:1px solid var(--line);color:var(--navy);} .btn.sm{padding:6px 11px;font-size:12.5px;} .btn.danger{background:var(--surface);border:1px solid #8a1c1c;color:#8a1c1c;}
+  label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:10px 0 4px;}
+  input,select,textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font:inherit;font-size:14px;background:var(--surface-2);color:var(--ink);}
+  textarea{resize:vertical;line-height:1.55;}
+  .topbar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;}
+  .topbar .grow{flex:1;min-width:220px;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;} @media(max-width:640px){.grid{grid-template-columns:1fr}}
+  form.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;}
+  .msg{margin:10px 0;font-size:13.5px;color:var(--warn);min-height:18px;}
+  .issue{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px;}
+  .issue .hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .issue .ti{font-weight:800;color:var(--navy);font-size:15.5px;flex:1;min-width:180px;}
+  .stat{font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:3px 9px;border-radius:20px;}
+  .stat.current{background:var(--warn-bg);color:var(--warn);} .stat.future{background:var(--future-bg);color:var(--future);} .stat.closed{background:var(--closed-bg);color:var(--closed);}
+  .cat{font-size:11px;color:var(--muted);text-transform:capitalize;}
+  .issue .field{margin-top:9px;} .issue .field b{display:block;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:2px;}
+  .issue .field div{white-space:pre-wrap;font-size:13.5px;}
+  .issue .acts{margin-top:11px;display:flex;gap:7px;flex-wrap:wrap;}
+  .empty{color:var(--muted);font-size:14px;padding:12px;text-align:center;}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="crumbs"><a href="/">Home</a><span class="sep">&rsaquo;</span><span class="here">Key Issues</span></nav>
+  <h1>Community Key Issues</h1>
+  <p class="sub">The living matters for each community: a MUD dispute, a capital project, a lawsuit. Current and potential issues are shown to the AI team so they answer homeowners consistently. Closed issues stay here as history.</p>
+
+  <div class="topbar">
+    <div class="grow">
+      <label>Community</label>
+      <select id="community" onchange="onCommunity()"><option value="">Loading…</option></select>
+    </div>
+    <button class="btn" id="newBtn" onclick="showForm()" disabled>+ New issue</button>
+  </div>
+  <div id="msg" class="msg"></div>
+
+  <form class="card" id="form" style="display:none;" onsubmit="return save(event)">
+    <input type="hidden" id="f-id">
+    <label>Title *</label>
+    <input id="f-title" placeholder="e.g. Barker Cypress MUD — lake maintenance cost-sharing">
+    <div class="grid">
+      <div><label>Status</label><select id="f-status">
+        <option value="current">Current</option>
+        <option value="future">Potential / future</option>
+        <option value="closed">Closed</option>
+      </select></div>
+      <div><label>Category</label><select id="f-category">
+        <option value="governance">Governance</option>
+        <option value="financial">Financial</option>
+        <option value="legal">Legal</option>
+        <option value="infrastructure">Infrastructure</option>
+        <option value="vendor">Vendor</option>
+        <option value="amenity">Amenity</option>
+        <option value="enforcement">Enforcement</option>
+        <option value="security">Security</option>
+        <option value="environmental">Environmental</option>
+        <option value="general">General</option>
+      </select></div>
+    </div>
+    <div class="grid">
+      <div><label>Owner (AI teammate)</label><select id="f-owner">
+        <option value="">— none —</option>
+        <option value="amanda">Amanda Albright</option>
+        <option value="claire">Claire</option>
+        <option value="kat">Kat Reed</option>
+        <option value="annie">Annie Reeves</option>
+        <option value="miranda">Miranda Pierce</option>
+        <option value="paige">Paige Chandler</option>
+        <option value="reese">Reese Calloway</option>
+        <option value="emma">Emma Brooks</option>
+        <option value="phoebe">Phoebe Hart</option>
+      </select></div>
+      <div><label>Opened on</label><input id="f-opened" type="date"></div>
+    </div>
+    <label>Summary <span style="font-weight:400">(the overview the AI team leads with)</span></label>
+    <textarea id="f-summary" rows="3" placeholder="One short paragraph: what this is and where it stands."></textarea>
+    <label>Relevant facts <span style="font-weight:400">(settled, non-contested)</span></label>
+    <textarea id="f-facts" rows="4" placeholder="Bullet the facts everyone agrees on."></textarea>
+    <label>Approach <span style="font-weight:400">(internal guidance for the team)</span></label>
+    <textarea id="f-approach" rows="2" placeholder="e.g. Ground in fact, aim for a negotiated agreement, do not antagonize. Route contested/legal points to the board + counsel."></textarea>
+    <label>History <span style="font-weight:400">(background / chronology, human-facing)</span></label>
+    <textarea id="f-history" rows="4" placeholder="The timeline and background."></textarea>
+    <div style="margin-top:14px;display:flex;gap:9px;">
+      <button class="btn" type="submit" id="saveBtn">Save issue</button>
+      <button class="btn ghost" type="button" onclick="hideForm()">Cancel</button>
+    </div>
+    <div class="hint">Summary, facts, and approach on Current and Potential issues are read by the AI team. Keep them factual. Contested or legal specifics should say "the team is handling it," not take a side.</div>
+  </form>
+
+  <div id="list"></div>
+</div>
+
+<script>
+const $=(id)=>document.getElementById(id);
+const esc=(s)=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const API='/api/community-profile';
+let COMMUNITY='';
+function msg(t,ok){ const m=$('msg'); m.textContent=t||''; m.style.color=ok?'var(--good)':'var(--warn)'; }
+async function jf(url,opts){ const r=await fetch(url,Object.assign({credentials:'same-origin'},opts||{})); let j={}; try{j=await r.json();}catch(_){} if(!r.ok) throw new Error(j.detail||j.error||('HTTP '+r.status)); return j; }
+
+async function loadCommunities(){
+  try{
+    const j=await jf(API+'/');
+    const opts=(j.communities||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+    $('community').innerHTML='<option value="">Select a community…</option>'+opts;
+  }catch(err){ $('community').innerHTML='<option value="">Could not load</option>'; msg(err.message); }
+}
+function onCommunity(){ COMMUNITY=$('community').value; hideForm(); $('newBtn').disabled=!COMMUNITY; if(COMMUNITY) load(); else $('list').innerHTML=''; }
+
+function showForm(issue){
+  $('form').style.display='block';
+  $('f-id').value = issue?issue.id:'';
+  $('f-title').value = issue?issue.title||'':'';
+  $('f-status').value = issue?issue.status||'current':'current';
+  $('f-category').value = issue?issue.category||'general':'governance';
+  $('f-owner').value = issue?issue.owner_persona||'':'';
+  $('f-opened').value = issue&&issue.opened_on?String(issue.opened_on).slice(0,10):'';
+  $('f-summary').value = issue?issue.summary||'':'';
+  $('f-facts').value = issue?issue.facts||'':'';
+  $('f-approach').value = issue?issue.approach||'':'';
+  $('f-history').value = issue?issue.history||'':'';
+  $('saveBtn').textContent = issue?'Save changes':'Save issue';
+  $('form').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function hideForm(){ $('form').style.display='none'; $('form').reset&&$('form').reset(); $('f-id').value=''; msg(''); }
+
+async function save(e){
+  e.preventDefault();
+  if(!$('f-title').value.trim()){ msg('Title is required.'); return false; }
+  const body={ title:$('f-title').value.trim(), status:$('f-status').value, category:$('f-category').value,
+    owner_persona:$('f-owner').value||null, opened_on:$('f-opened').value||null,
+    summary:$('f-summary').value.trim()||null, facts:$('f-facts').value.trim()||null,
+    approach:$('f-approach').value.trim()||null, history:$('f-history').value.trim()||null };
+  const id=$('f-id').value;
+  try{
+    if(id){ await jf(API+'/key-issues/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+    else { await jf(API+'/'+COMMUNITY+'/key-issues',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+    hideForm(); msg('Saved.',true); load();
+  }catch(err){ msg(err.message); }
+  return false;
+}
+
+async function setStatus(id,status){ try{ await jf(API+'/key-issues/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})}); load(); }catch(err){ msg(err.message); } }
+async function del(id){ if(!confirm('Delete this issue permanently?')) return; try{ await jf(API+'/key-issues/'+id,{method:'DELETE'}); load(); }catch(err){ msg(err.message); } }
+
+function field(label,val){ return val?`<div class="field"><b>${esc(label)}</b><div>${esc(val)}</div></div>`:''; }
+function card(it){
+  const acts = '<button class="btn ghost sm" onclick=\'edit("'+it.id+'")\'>Edit</button>'
+    + (it.status!=='closed' ? '<button class="btn ghost sm" onclick="setStatus(\''+it.id+'\',\'closed\')">Mark closed</button>' : '<button class="btn ghost sm" onclick="setStatus(\''+it.id+'\',\'current\')">Reopen</button>')
+    + (it.status!=='future' ? '<button class="btn ghost sm" onclick="setStatus(\''+it.id+'\',\'future\')">Mark potential</button>' : '')
+    + '<button class="btn danger sm" onclick="del(\''+it.id+'\')">Delete</button>';
+  return '<div class="issue"><div class="hd"><span class="ti">'+esc(it.title)+'</span>'
+    + '<span class="stat '+esc(it.status)+'">'+({current:'Current',future:'Potential',closed:'Closed'}[it.status]||esc(it.status))+'</span>'
+    + '<span class="cat">'+esc(it.category||'')+'</span></div>'
+    + field('Summary',it.summary) + field('Facts',it.facts) + field('Approach',it.approach) + field('History',it.history)
+    + (it.owner_persona?'<div class="field"><b>Owner</b><div>'+esc(it.owner_persona)+'</div></div>':'')
+    + '<div class="acts">'+acts+'</div></div>';
+}
+let CACHE=[];
+function edit(id){ const it=CACHE.find(x=>x.id===id); if(it) showForm(it); }
+
+async function load(){
+  $('list').innerHTML='<div class="empty">Loading…</div>';
+  try{
+    const j=await jf(API+'/'+COMMUNITY+'/key-issues');
+    CACHE=j.issues||[];
+    if(!CACHE.length){ $('list').innerHTML='<div class="empty">No key issues yet for this community. Add one above.</div>'; return; }
+    const groups=[['current','Current'],['future','Potential / future'],['closed','Closed']];
+    let html='';
+    for(const [st,label] of groups){
+      const rows=CACHE.filter(x=>x.status===st);
+      if(!rows.length) continue;
+      html+='<h2>'+label+' ('+rows.length+')</h2>'+rows.map(card).join('');
+    }
+    $('list').innerHTML=html;
+  }catch(err){ $('list').innerHTML='<div class="empty">'+esc(err.message||'Could not load')+'</div>'; }
+}
+
+loadCommunities();
+</script>
+</body>
+</html>
