@@ -62,6 +62,16 @@
     </div>
     <label>Internal title <span style="font-weight:400">(only you see this)</span></label>
     <input id="title" placeholder="e.g. Priya intro for the Sharma family">
+
+    <label style="display:flex;align-items:center;gap:9px;margin-top:16px;cursor:pointer;">
+      <input id="demo" type="checkbox" onchange="demoToggle()" style="width:auto;margin:0;"> This is a demo for a prospect or referral source
+    </label>
+    <div id="demoOpts" style="display:none;">
+      <div class="note" style="margin-top:6px;">Adds a soft "Want this for your community?" prompt with a way to reach us, under the video. Leave it off for a personal message to a resident.</div>
+      <label>Caption <span style="font-weight:400">(optional one line under the video)</span></label>
+      <input id="caption" placeholder="e.g. This is how your residents would hear from us, in their own language.">
+    </div>
+
     <div class="prog" id="prog"><i id="progBar"></i></div>
     <div style="margin-top:16px;">
       <button class="btn" id="upBtn" type="submit">Create link &amp; upload</button>
@@ -96,6 +106,7 @@ function pickedFile(){
   const f=$('file').files[0];
   if(f && !$('title').value) $('title').value = f.name.replace(/\.[^.]+$/,'');
 }
+function demoToggle(){ $('demoOpts').style.display = $('demo').checked ? 'block' : 'none'; }
 
 async function startUpload(e){
   e.preventDefault();
@@ -106,7 +117,8 @@ async function startUpload(e){
   try{
     const create=await jf('/api/video-share/create',{ method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({ title:$('title').value.trim()||null, recipient_name:$('recipient').value.trim()||null,
-        persona:$('persona').value||null, filename:f.name, content_type:f.type||'video/mp4' }) });
+        persona:$('persona').value||null, filename:f.name, content_type:f.type||'video/mp4',
+        demo:$('demo').checked, caption:$('caption').value.trim()||null }) });
     // Direct upload to the private bucket via the one-time signed URL (XHR for a progress bar).
     $('prog').style.display='block'; $('progBar').style.width='0';
     await new Promise((resolve,reject)=>{
@@ -129,7 +141,7 @@ async function startUpload(e){
 
 function copyShare(){ navigator.clipboard.writeText(lastShareUrl).then(()=>msg('Link copied.',true)); }
 function openShare(){ window.open(lastShareUrl,'_blank'); }
-function resetForm(){ $('upForm').reset(); $('linkOut').style.display='none'; msg(''); }
+function resetForm(){ $('upForm').reset(); $('demoOpts').style.display='none'; $('linkOut').style.display='none'; msg(''); }
 
 async function copyRow(token){ const u=location.origin+'/v/'+token; try{ await navigator.clipboard.writeText(u); msg('Link copied.',true);}catch(_){ msg(u);} }
 async function act(token, path, confirmMsg){
@@ -148,7 +160,7 @@ async function load(){
     $('list').innerHTML = vids.map(v=>{
       const stat = !v.uploaded ? '<span class="stat pending">Uploading</span>'
         : v.active ? '<span class="stat live">Live</span>' : '<span class="stat down">Taken down</span>';
-      const meta=[ v.persona_name, v.recipient_name?('for '+v.recipient_name):'', when(v.created_at) ].filter(Boolean).join(' · ');
+      const meta=[ v.persona_name, v.recipient_name?('for '+v.recipient_name):'', v.demo?'Demo':'', when(v.created_at) ].filter(Boolean).join(' · ');
       const acts = !v.uploaded ? '' :
         '<button class="btn sm" onclick="copyRow(\''+v.token+'\')">Copy link</button>'
         + (v.active

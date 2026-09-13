@@ -31,6 +31,13 @@ const router = express.Router();
 
 const BUCKET = 'videos';
 const PLAY_TTL = 60 * 60 * 4;   // signed playback URL good for 4 hours per view
+// Where a prospect's "get in touch" goes on a demo video: Maggie Sullivan, our
+// BD / Director of Growth (Ed 2026-09-13). Pulled from the one mailbox constant
+// so it can't drift; overridable per deployment.
+let MAGGIE_MAILBOX = 'maggie@bedrocktx.com';
+try { MAGGIE_MAILBOX = require('../lib/email/graph_send').MAGGIE_MAILBOX || MAGGIE_MAILBOX; } catch (_) {}
+const CTA_EMAIL = process.env.DEMO_CTA_EMAIL || MAGGIE_MAILBOX;
+const CTA_PHONE = process.env.DEMO_CTA_PHONE || '(832) 588-2485';
 
 // Friendly display name for the featured teammate, straight off the one roster.
 function personaName(persona) {
@@ -47,7 +54,7 @@ router.get('/list', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('video_shares')
-      .select('token, title, recipient_name, persona, community_id, content_type, file_size, uploaded, active, view_count, last_viewed_at, created_at')
+      .select('token, title, recipient_name, persona, community_id, content_type, file_size, uploaded, active, view_count, last_viewed_at, created_at, demo, caption')
       .order('created_at', { ascending: false })
       .limit(500);
     if (error) throw error;
@@ -80,7 +87,7 @@ router.post('/create', async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   try {
-    const { title, recipient_name, persona, community_id, filename, content_type } = req.body || {};
+    const { title, recipient_name, persona, community_id, filename, content_type, demo, caption } = req.body || {};
     if (!content_type || !/^video\//.test(String(content_type))) {
       return res.status(400).json({ error: 'video_file_required', detail: 'Pick a video file.' });
     }
@@ -96,6 +103,7 @@ router.post('/create', async (req, res) => {
       token, title: title || null, recipient_name: recipient_name || null,
       persona: persona || null, community_id: community_id || null,
       storage_path, content_type, uploaded: false, active: true,
+      demo: !!demo, caption: (caption && String(caption).trim()) || null,
       created_by: admin.email || admin.full_name || null,
     });
     if (iErr) throw iErr;
@@ -164,7 +172,7 @@ router.delete('/:token', async (req, res) => {
 router.get('/play/:token', async (req, res) => {
   try {
     const { data: row, error } = await supabase.from('video_shares')
-      .select('token, title, recipient_name, persona, community_id, storage_path, content_type, uploaded, active, view_count')
+      .select('token, title, recipient_name, persona, community_id, storage_path, content_type, uploaded, active, view_count, demo, caption')
       .eq('token', req.params.token).maybeSingle();
     if (error) throw error;
     // One shape for every "can't play" case so the token can't be probed for
@@ -195,6 +203,10 @@ router.get('/play/:token', async (req, res) => {
       community: communityName,
       content_type: row.content_type || 'video/mp4',
       play_url: signed.signedUrl,
+      caption: row.caption || null,
+      // The soft call-to-action is shown only on videos flagged as a demo, so a
+      // resident's personal message never carries a sales prompt.
+      cta: row.demo ? { email: CTA_EMAIL, phone: CTA_PHONE } : null,
     });
   } catch (err) {
     console.error('[video-share] play failed:', err.message);

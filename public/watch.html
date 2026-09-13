@@ -20,6 +20,13 @@
   .from b{color:var(--ink);font-weight:700;}
   .player{background:#000;border-radius:14px;overflow:hidden;border:1px solid var(--line);box-shadow:0 10px 30px rgba(11,29,52,.16);}
   video{width:100%;display:block;max-height:76vh;background:#000;}
+  .cap{margin:14px 2px 0;font-size:15px;color:var(--ink);line-height:1.6;}
+  .cta{margin-top:20px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px 22px;}
+  .cta .h{font-family:var(--serif);font-weight:600;font-size:20px;color:var(--navy);margin:0 0 6px;}
+  .cta p{font-size:14px;color:var(--muted);margin:0 0 14px;line-height:1.6;}
+  .cta .acts{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .cta a.btn{background:var(--gold);color:#fff;text-decoration:none;border-radius:9px;padding:10px 18px;font-weight:700;font-size:14px;}
+  .cta a.tel{color:var(--navy);text-decoration:none;font-weight:700;font-size:14px;}
   .foot{margin-top:22px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted);line-height:1.7;}
   .foot b{color:var(--ink);}
   .center{min-height:70vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;}
@@ -58,10 +65,26 @@ function gone(){
     ? ('A quick message from <b>'+who+'</b>'+(j.community?', '+esc(j.community):'')+'.')
     : ('A quick message from <b>Bedrock</b>'+(j.community?', '+esc(j.community):'')+'.');
 
+  const caption = j.caption ? '<p class="cap">'+esc(j.caption)+'</p>' : '';
+  let cta = '';
+  if (j.cta) {
+    const mail = j.cta.email ? String(j.cta.email) : '';
+    const phone = j.cta.phone ? String(j.cta.phone) : '';
+    const subject = encodeURIComponent('Bedrock for our community');
+    cta = '<div class="cta"><div class="h">Want this for your community?</div>'
+      + '<p>This is the kind of service our AI team gives every resident, in their own language, around the clock. We would love to show you what it would look like for your association.</p>'
+      + '<div class="acts">'
+      + (mail ? '<a class="btn" href="mailto:'+esc(mail)+'?subject='+subject+'">Get in touch</a>' : '')
+      + (phone ? '<a class="tel" href="tel:'+esc(phone.replace(/[^0-9+]/g,''))+'">or call '+esc(phone)+'</a>' : '')
+      + '</div></div>';
+  }
+
   document.getElementById('app').innerHTML =
     '<h1 class="greet">'+greet+'</h1>'
     + '<p class="from">'+fromLine+'</p>'
     + '<div class="player"><video id="v" controls playsinline preload="metadata"></video></div>'
+    + caption
+    + cta
     + '<div class="foot">You are watching a video from <b>Bedrock Association Management</b>. '
     + (j.persona_name ? esc(j.persona_name)+' is part of our AI team. ' : '')
     + 'A member of our team is always available if you need a person.</div>';
