@@ -21,7 +21,12 @@
   .btn.danger{background:var(--surface);border:1px solid var(--down);color:var(--down);}
   form.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;}
   label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 4px;}
-  input,select{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font:inherit;font-size:14px;background:var(--surface-2);color:var(--ink);}
+  input,select,textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font:inherit;font-size:14px;background:var(--surface-2);color:var(--ink);}
+  textarea{resize:vertical;line-height:1.55;}
+  .modetabs{display:flex;gap:8px;margin-bottom:14px;}
+  .mt{flex:1;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-weight:700;font-size:13.5px;color:var(--muted);}
+  .mt.on{background:var(--navy);color:#fff;border-color:var(--navy);}
+  @media (prefers-color-scheme:dark){.mt.on{color:var(--paper);}}
   input[type=file]{padding:22px 11px;border:1.5px dashed var(--line);background:var(--surface-2);cursor:pointer;}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;} @media(max-width:560px){.grid{grid-template-columns:1fr}}
   .msg{margin:10px 0;font-size:13.5px;color:var(--warn);min-height:18px;}
@@ -47,9 +52,22 @@
   <div id="msg" class="msg"></div>
 
   <h2>New video link</h2>
-  <form class="card" id="upForm" onsubmit="return startUpload(event)">
-    <label>Video file *</label>
-    <input id="file" type="file" accept="video/*" required onchange="pickedFile()">
+  <form class="card" id="upForm" onsubmit="return submitForm(event)">
+    <div class="modetabs">
+      <button type="button" class="mt on" id="mtGen" onclick="setMode('generate')">Generate with the AI team</button>
+      <button type="button" class="mt" id="mtUp" onclick="setMode('upload')">Upload a file</button>
+    </div>
+
+    <div id="modeGenerate">
+      <label>Script <span style="font-weight:400">(what the teammate says, in their language)</span></label>
+      <textarea id="script" rows="5" placeholder="e.g. नमस्ते, मैं प्रिया हूँ, Bedrock की AI टीम से…"></textarea>
+    </div>
+
+    <div id="modeUpload" style="display:none;">
+      <label>Video file</label>
+      <input id="file" type="file" accept="video/*" onchange="pickedFile()">
+    </div>
+
     <div class="grid">
       <div>
         <label>Featured teammate</label>
@@ -74,8 +92,9 @@
 
     <div class="prog" id="prog"><i id="progBar"></i></div>
     <div style="margin-top:16px;">
-      <button class="btn" id="upBtn" type="submit">Create link &amp; upload</button>
+      <button class="btn" id="upBtn" type="submit">Generate &amp; create link</button>
     </div>
+    <div id="genStatus" class="note" style="display:none;"></div>
     <div class="link-out" id="linkOut">
       <div style="font-weight:700;color:var(--good);">Ready to send</div>
       <div class="u" id="shareUrl"></div>
@@ -85,7 +104,7 @@
         <button class="btn ghost sm" type="button" onclick="resetForm()">New video</button>
       </div>
     </div>
-    <div class="note">Big files upload straight to storage, so there's no size limit here. Keep them short and it's quick.</div>
+    <div class="note" id="formNote">Type the script, pick the teammate, and we render it with their avatar and voice. Priya renders in Hindi, Mei in Mandarin, Isabella in Spanish.</div>
   </form>
 
   <h2>Your videos</h2>
@@ -97,8 +116,22 @@
 const $=(id)=>document.getElementById(id);
 const esc=(s)=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let af=(u,o)=>fetch(u,o||{});
-let supa=null, lastShareUrl='';
+let supa=null, lastShareUrl='', MODE='generate';
 function msg(t,ok){ const m=$('msg'); m.textContent=t||''; m.style.color=ok?'var(--good)':'var(--warn)'; }
+
+function setMode(m){
+  MODE=m;
+  $('mtGen').classList.toggle('on', m==='generate');
+  $('mtUp').classList.toggle('on', m==='upload');
+  $('modeGenerate').style.display = m==='generate' ? 'block':'none';
+  $('modeUpload').style.display   = m==='upload' ? 'block':'none';
+  $('upBtn').textContent = m==='generate' ? 'Generate & create link' : 'Create link & upload';
+  $('formNote').textContent = m==='generate'
+    ? 'Type the script, pick the teammate, and we render it with their avatar and voice. Priya renders in Hindi, Mei in Mandarin, Isabella in Spanish.'
+    : 'Big files upload straight to storage, so there is no size limit here. Keep them short and it is quick.';
+  $('linkOut').style.display='none'; $('genStatus').style.display='none'; msg('');
+}
+function submitForm(e){ return MODE==='generate' ? startGenerate(e) : startUpload(e); }
 
 async function jf(url,opts){ const r=await af(url,opts); let j={}; try{j=await r.json();}catch(_){} if(!r.ok) throw new Error(j.detail||j.error||('HTTP '+r.status)); return j; }
 
@@ -139,6 +172,45 @@ async function startUpload(e){
   $('upBtn').disabled=false; return false;
 }
 
+async function startGenerate(e){
+  e.preventDefault();
+  const script=$('script').value.trim();
+  if(!script){ msg('Write the script first.'); return false; }
+  if(!$('persona').value){ msg('Pick which teammate is speaking.'); return false; }
+  if(!supa){ msg('Admin sign-in required. Open this from the platform while signed in.'); return false; }
+  $('upBtn').disabled=true; $('linkOut').style.display='none';
+  $('genStatus').style.display='block'; $('genStatus').textContent='Sending the script to the studio…'; msg('',true);
+  try{
+    const g=await jf('/api/video-share/generate',{ method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ script, persona:$('persona').value, title:$('title').value.trim()||null,
+        recipient_name:$('recipient').value.trim()||null, demo:$('demo').checked, caption:$('caption').value.trim()||null }) });
+    $('genStatus').textContent='Rendering the video… this usually takes a minute or two. You can leave this open.';
+    pollGenerate(g.token);
+  }catch(err){ msg(err.message||'Could not start'); $('genStatus').style.display='none'; $('upBtn').disabled=false; }
+  return false;
+}
+function pollGenerate(token){
+  let tries=0;
+  const tick=async()=>{
+    tries++;
+    try{
+      const s=await jf('/api/video-share/generate-status/'+token);
+      if(s.render_status==='ready'){
+        lastShareUrl=location.origin+'/v/'+token;
+        $('shareUrl').textContent=lastShareUrl; $('linkOut').style.display='block';
+        $('genStatus').style.display='none'; msg('Video is ready. Link is live.',true);
+        $('upBtn').disabled=false; load(); return;
+      }
+      if(s.render_status==='failed'){
+        $('genStatus').style.display='none'; msg('Render failed: '+(s.error||'unknown')); $('upBtn').disabled=false; load(); return;
+      }
+    }catch(err){ /* transient; keep polling */ }
+    if(tries>60){ $('genStatus').textContent='Still rendering. It will show under "Your videos" when done.'; $('upBtn').disabled=false; load(); return; }
+    setTimeout(tick, 5000);
+  };
+  setTimeout(tick, 4000);
+}
+
 function copyShare(){ navigator.clipboard.writeText(lastShareUrl).then(()=>msg('Link copied.',true)); }
 function openShare(){ window.open(lastShareUrl,'_blank'); }
 function resetForm(){ $('upForm').reset(); $('demoOpts').style.display='none'; $('linkOut').style.display='none'; msg(''); }
@@ -158,7 +230,8 @@ async function load(){
     const vids=j.videos||[];
     if(!vids.length){ $('list').innerHTML='<div class="empty">No videos yet. Create one above.</div>'; return; }
     $('list').innerHTML = vids.map(v=>{
-      const stat = !v.uploaded ? '<span class="stat pending">Uploading</span>'
+      const stat = v.render_status==='failed' ? '<span class="stat down">Failed</span>'
+        : !v.uploaded ? '<span class="stat pending">'+(v.source==='generated'?'Rendering':'Uploading')+'</span>'
         : v.active ? '<span class="stat live">Live</span>' : '<span class="stat down">Taken down</span>';
       const meta=[ v.persona_name, v.recipient_name?('for '+v.recipient_name):'', v.demo?'Demo':'', when(v.created_at) ].filter(Boolean).join(' · ');
       const acts = !v.uploaded ? '' :
@@ -187,7 +260,7 @@ async function loadPersonas(){
       af=async(u,o)=>{o=o||{};const h=Object.assign({},o.headers||{});try{const s=(await supa.auth.getSession()).data.session;if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){}return fetch(u,Object.assign({},o,{headers:h}));};
     }
   }catch(_){}
-  loadPersonas(); load();
+  setMode('generate'); loadPersonas(); load();
 })();
 </script>
 </body>

@@ -25,6 +25,8 @@ const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { requireAdmin } = require('./_require_admin');
 const { safeErrorMessage } = require('./_safe_error');
+const heygen = require('../lib/video/heygen');
+const roster = require('../lib/team/roster');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
@@ -54,7 +56,7 @@ router.get('/list', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('video_shares')
-      .select('token, title, recipient_name, persona, community_id, content_type, file_size, uploaded, active, view_count, last_viewed_at, created_at, demo, caption')
+      .select('token, title, recipient_name, persona, community_id, content_type, file_size, uploaded, active, view_count, last_viewed_at, created_at, demo, caption, source, render_status, render_error')
       .order('created_at', { ascending: false })
       .limit(500);
     if (error) throw error;
@@ -164,6 +166,100 @@ router.delete('/:token', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[video-share] delete failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---- Admin: GENERATE a video from a script (HeyGen), kept private -------
+// Reuses the SAME render pipeline as the explainer library (heygen.renderExplainer
+// + videoStatus), but the finished mp4 lands in the PRIVATE videos bucket and
+// becomes a one-off private link, not a public explainer.
+router.post('/generate', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const { script, persona, title, recipient_name, demo, caption } = req.body || {};
+    if (!script || !String(script).trim()) return res.status(400).json({ error: 'script_required', detail: 'Write what the teammate should say.' });
+    if (!heygen.heygenEnabled()) return res.status(503).json({ error: 'heygen_not_configured', detail: 'Video generation is not turned on.' });
+    const who = String(persona || '').trim();
+    const m = roster.get(who);
+    if (!who || !m) return res.status(400).json({ error: 'persona_required', detail: 'Pick which teammate is speaking.' });
+    if (!heygen.avatarIdFor(who)) return res.status(400).json({ error: 'no_avatar', detail: `${m.name || who} has no video avatar configured yet.` });
+
+    // The teammate's own language (Priya = Hindi), so the script and the render
+    // can never disagree. Falls back to English for the general front office.
+    const lang = ['en', 'es', 'zh', 'hi'].includes(m.language) ? m.language : 'en';
+    const token = crypto.randomBytes(16).toString('hex');
+    const storage_path = `${token}/generated.mp4`;
+
+    let videoId;
+    try {
+      videoId = await heygen.renderExplainer({ script: String(script).trim(), language: lang, persona: who, title: title || null });
+    } catch (e) {
+      return res.status(502).json({ error: safeErrorMessage(e) });
+    }
+
+    const { error: iErr } = await supabase.from('video_shares').insert({
+      token, title: title || null, recipient_name: recipient_name || null,
+      persona: who, storage_path, content_type: 'video/mp4',
+      source: 'generated', provider_video_id: videoId, render_status: 'rendering',
+      language: lang, script: String(script).trim(),
+      demo: !!demo, caption: (caption && String(caption).trim()) || null,
+      uploaded: false, active: true,
+      created_by: admin.email || admin.full_name || null,
+    });
+    if (iErr) throw iErr;
+    res.json({ token, render_status: 'rendering' });
+  } catch (err) {
+    console.error('[video-share] generate failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Poll a generation. When HeyGen reports done, copy the mp4 into the PRIVATE
+// bucket (the provider URL expires), then mark it uploaded + ready.
+router.get('/generate-status/:token', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  try {
+    const { data: row, error } = await supabase.from('video_shares')
+      .select('token, storage_path, provider_video_id, render_status, uploaded')
+      .eq('token', req.params.token).maybeSingle();
+    if (error) throw error;
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    if (row.render_status !== 'rendering' || !row.provider_video_id) {
+      return res.json({ render_status: row.render_status, uploaded: row.uploaded });
+    }
+
+    const st = await heygen.videoStatus(row.provider_video_id);
+    if (st.status === 'completed' && st.video_url) {
+      let bytes = 0;
+      try {
+        const r = await fetch(st.video_url);
+        if (!r.ok) throw new Error(`provider fetch ${r.status}`);
+        const buf = Buffer.from(await r.arrayBuffer());
+        if (!buf.length) throw new Error('provider returned an empty file');
+        bytes = buf.length;
+        const { error: upErr } = await supabase.storage.from(BUCKET)
+          .upload(row.storage_path, buf, { contentType: 'video/mp4', upsert: true });
+        if (upErr) throw upErr;
+      } catch (copyErr) {
+        // Rendered but not copied yet; stay 'rendering' so the next poll retries
+        // while the provider link is still alive.
+        return res.json({ render_status: 'rendering', note: 'finishing' });
+      }
+      await supabase.from('video_shares').update({
+        render_status: 'ready', uploaded: true, file_size: bytes,
+        duration_seconds: st.duration || null,
+      }).eq('token', row.token);
+      return res.json({ render_status: 'ready', uploaded: true });
+    }
+    if (st.status === 'failed') {
+      await supabase.from('video_shares').update({ render_status: 'failed', render_error: (st.error || 'render failed').slice(0, 500) }).eq('token', row.token);
+      return res.json({ render_status: 'failed', error: st.error || 'render failed' });
+    }
+    res.json({ render_status: 'rendering' });
+  } catch (err) {
+    console.error('[video-share] generate-status failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
