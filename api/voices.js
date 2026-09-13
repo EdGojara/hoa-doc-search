@@ -226,18 +226,25 @@ router.get('/tts-current', async (req, res) => {
   if (!(await requireOwner(req, res))) return;
   try {
     await getTtsCatalog().catch(() => []); // warm _ttsById for names/previews
+    // The shared default voice everyone falls back to when no per-teammate
+    // choice is set, so the UI shows "default · <name>" instead of a scary
+    // "no voice / not set" on a teammate who actually does speak.
+    let defaultVoiceId = null;
+    try { defaultVoiceId = require('../lib/voice/persona').PERSONA.tts.voice_id; } catch (_) {}
     const list = roster.people()
       .filter((m) => m.face && m.visit)
       .map((m) => {
         const info = roster.ttsVoiceInfoFor(m.persona) || {};
-        const cat = info.voice_id ? _ttsById.get(info.voice_id) : null;
+        let { voice_id, voice_name, source } = info;
+        if (!voice_id && defaultVoiceId) { voice_id = defaultVoiceId; source = 'default'; }
+        const cat = voice_id ? _ttsById.get(voice_id) : null;
         return {
           persona: m.persona, name: m.name, title: m.title, face: m.face, emoji: m.emoji || null,
           language: m.language || 'en',
-          voice_id: info.voice_id || null,
-          voice_name: info.voice_name || (cat && cat.name) || null,
+          voice_id: voice_id || null,
+          voice_name: voice_name || (cat && cat.name) || null,
           preview: cat ? cat.preview : null,
-          source: info.source,
+          source: source || 'none',
         };
       });
     res.json({ personas: list });

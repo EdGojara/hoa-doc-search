@@ -36,6 +36,7 @@
   .badge{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;padding:2px 7px;border-radius:20px;}
   .badge.override{background:var(--good-bg);color:var(--good);}
   .badge.env{background:var(--surface-2);color:var(--muted);border:1px solid var(--line);}
+  .badge.default{background:var(--warn-bg);color:var(--warn);}
   .badge.none{background:var(--crit-bg);color:var(--crit);}
 
   button{font:inherit;cursor:pointer;}
@@ -160,7 +161,7 @@ async function load(){
 function personaCard(p){
   const el = document.createElement('div');
   el.className = 'card';
-  const srcLabel = p.source==='override' ? 'chosen' : (p.source==='env' ? 'default' : 'not set');
+  const srcLabel = p.source==='override' ? 'chosen' : (p.source==='env' ? 'env' : (p.source==='default' ? 'shared default' : 'not set'));
   const vname = p.voice_name || (p.voice_id ? p.voice_id.slice(0,10) : 'No voice');
   el.innerHTML =
     '<div class="prow">'
