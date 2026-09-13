@@ -193,15 +193,31 @@ function personaCard(p){
 
 function buildPicker(picker, p){
   if (!CATALOG.length){ picker.innerHTML = '<p class="hint">No auditionable voices were returned.</p>'; return; }
-  // For a non-English teammate, surface voices that list their language first.
-  let voices = CATALOG;
   const plang = (p.language||'').toLowerCase();
-  if (plang && plang !== 'en'){
-    const key = plang==='zh' ? /chinese|mandarin|zh/i : plang==='es' ? /spanish|españ|es/i : new RegExp(plang,'i');
-    const match = (v)=> key.test(MODE.langsOf(v)+' '+(v.accent||'')+' '+(v.name||''));
-    voices = CATALOG.slice().sort((a,b)=> (match(b)?1:0)-(match(a)?1:0));
-  }
-  picker.innerHTML = '<p class="hint">Audition and choose '+esc(p.name)+'’s voice'+(plang&&plang!=='en'?' (voices that list '+esc(plang.toUpperCase())+' are shown first)':'')+':</p>';
+  const pgender = (p.gender||'').toLowerCase();
+  // Language match: the voice must list this teammate's language (Mandarin for
+  // Mei, Spanish for Isabella). English teammates aren't language-filtered.
+  const langOk = (v) => {
+    if (!plang || plang === 'en') return true;
+    const langs = (v.languages||[]).map((x)=>String(x).toLowerCase());
+    if (langs.includes(plang)) return true;
+    const re = plang==='zh' ? /chinese|mandarin/i : plang==='es' ? /spanish|españ/i : new RegExp(plang,'i');
+    return re.test(MODE.langsOf(v)+' '+(v.name||''));
+  };
+  const genderOk = (v) => !pgender || String(v.gender||'').toLowerCase() === pgender;
+  let voices = CATALOG.filter((v)=> langOk(v) && genderOk(v));
+
+  const parts = [];
+  if (pgender) parts.push(pgender);
+  if (plang && plang !== 'en') parts.push(plang.toUpperCase());
+  const filterLabel = parts.length ? ' — showing '+esc(parts.join(' '))+' voices only' : '';
+
+  let fellBack = false;
+  if (!voices.length){ voices = CATALOG.filter(genderOk); fellBack = !!voices.length; }
+  if (!voices.length){ voices = CATALOG; fellBack = true; }
+
+  picker.innerHTML = '<p class="hint">Audition and choose '+esc(p.name)+'’s voice'+filterLabel
+    + (fellBack ? ' <b>(no exact match found — showing more voices)</b>' : '') + ':</p>';
   const list = document.createElement('div'); list.className = 'vlist';
   for (const v of voices){
     const langs = MODE.langsOf(v);

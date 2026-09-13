@@ -103,6 +103,7 @@ router.get('/current', async (req, res) => {
         const cat = info.voice_id ? _v2ById.get(info.voice_id) : null;
         return {
           persona: m.persona, name: m.name, title: m.title, face: m.face, emoji: m.emoji || null,
+          language: m.language || 'en', gender: m.gender || 'female',
           voice_id: info.voice_id || null,
           voice_name: info.voice_name || (cat && cat.name) || null,
           preview: cat ? cat.preview : null,
@@ -240,7 +241,7 @@ router.get('/tts-current', async (req, res) => {
         const cat = voice_id ? _ttsById.get(voice_id) : null;
         return {
           persona: m.persona, name: m.name, title: m.title, face: m.face, emoji: m.emoji || null,
-          language: m.language || 'en',
+          language: m.language || 'en', gender: m.gender || 'female',
           voice_id: voice_id || null,
           voice_name: voice_name || (cat && cat.name) || null,
           preview: cat ? cat.preview : null,
