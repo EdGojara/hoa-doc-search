@@ -154,4 +154,133 @@ router.delete('/:persona', async (req, res) => {
   }
 });
 
-module.exports = { router, loadVoiceOverrides };
+// ============================================================================
+// ElevenLabs SPOKEN-voice picker (separate from the HeyGen avatar voice above).
+// This is the audio a homeowner hears on the /claire portal voice + the phone.
+// Same by-ear pattern: audition ElevenLabs voices, assign per teammate, saved to
+// persona_tts_voices and pushed into the roster's in-memory TTS map — no
+// redeploy. Fixes "everyone speaks in Ava" and lets Isabella/Mei have a real
+// Spanish/Mandarin voice.
+//
+//   GET    /api/voices/tts-catalog      auditionable ElevenLabs voices (cached)
+//   GET    /api/voices/tts-current      each teammate's current spoken voice
+//   POST   /api/voices/tts/:persona     set { voice_id, voice_name }
+//   DELETE /api/voices/tts/:persona     clear the override (fall back to env)
+// ============================================================================
+async function loadTtsVoiceOverrides() {
+  try {
+    const { data, error } = await supabase.from('persona_tts_voices').select('face, voice_id, voice_name');
+    if (error) { console.warn('[voices] TTS override load failed:', error.message); return; }
+    const map = {};
+    for (const r of data || []) map[r.face] = { voice_id: r.voice_id, voice_name: r.voice_name };
+    roster.setTtsVoiceOverrides(map);
+    console.log(`[voices] loaded ${Object.keys(map).length} TTS voice override(s)`);
+  } catch (e) { console.warn('[voices] TTS override load threw:', e.message); }
+}
+
+let _ttsCatalog = null;
+let _ttsById = new Map();
+let _ttsCatalogAt = 0;
+async function fetchElevenVoices() {
+  const https = require('https');
+  const key = process.env.ELEVENLABS_API_KEY;
+  if (!key) { const e = new Error('ELEVENLABS_API_KEY not set'); e.code = 'ELEVENLABS_NOT_CONFIGURED'; throw e; }
+  const j = await new Promise((res, rej) => {
+    https.get('https://api.elevenlabs.io/v2/voices?page_size=100', { headers: { 'xi-api-key': key } }, (r) => {
+      let d = ''; r.on('data', (c) => (d += c)); r.on('end', () => { try { res(JSON.parse(d)); } catch (e) { rej(e); } });
+    }).on('error', rej);
+  });
+  return j.voices || [];
+}
+async function getTtsCatalog() {
+  if (_ttsCatalog && (Date.now() - _ttsCatalogAt) < CATALOG_TTL_MS) return _ttsCatalog;
+  const raw = await fetchElevenVoices();
+  _ttsById = new Map(raw.map((v) => {
+    const langs = (v.verified_languages || []).map((x) => x.language).filter(Boolean);
+    return [v.voice_id, {
+      voice_id: v.voice_id,
+      name: v.name,
+      gender: (v.labels && v.labels.gender) || null,
+      accent: (v.labels && v.labels.accent) || null,
+      descriptive: (v.labels && (v.labels.descriptive || v.labels.description)) || null,
+      languages: langs,
+      preview: v.preview_url || null,
+    }];
+  }));
+  _ttsCatalog = Array.from(_ttsById.values());
+  _ttsCatalogAt = Date.now();
+  return _ttsCatalog;
+}
+
+router.get('/tts-catalog', async (req, res) => {
+  if (!(await requireOwner(req, res))) return;
+  try {
+    res.json({ voices: await getTtsCatalog() });
+  } catch (e) {
+    console.error('[voices] tts-catalog failed:', e.message);
+    res.status(e.code === 'ELEVENLABS_NOT_CONFIGURED' ? 503 : 500).json({ error: safeErrorMessage(e) });
+  }
+});
+
+router.get('/tts-current', async (req, res) => {
+  if (!(await requireOwner(req, res))) return;
+  try {
+    await getTtsCatalog().catch(() => []); // warm _ttsById for names/previews
+    const list = roster.people()
+      .filter((m) => m.face && m.visit)
+      .map((m) => {
+        const info = roster.ttsVoiceInfoFor(m.persona) || {};
+        const cat = info.voice_id ? _ttsById.get(info.voice_id) : null;
+        return {
+          persona: m.persona, name: m.name, title: m.title, face: m.face, emoji: m.emoji || null,
+          language: m.language || 'en',
+          voice_id: info.voice_id || null,
+          voice_name: info.voice_name || (cat && cat.name) || null,
+          preview: cat ? cat.preview : null,
+          source: info.source,
+        };
+      });
+    res.json({ personas: list });
+  } catch (e) {
+    console.error('[voices] tts-current failed:', e.message);
+    res.status(500).json({ error: safeErrorMessage(e) });
+  }
+});
+
+router.post('/tts/:persona', async (req, res) => {
+  const owner = await requireOwner(req, res);
+  if (!owner) return;
+  try {
+    const m = roster.get(req.params.persona);
+    if (!m || !m.face) return res.status(404).json({ error: 'unknown_persona' });
+    const voice_id = String((req.body && req.body.voice_id) || '').trim();
+    if (!voice_id) return res.status(400).json({ error: 'voice_id_required' });
+    const voice_name = (req.body && req.body.voice_name ? String(req.body.voice_name) : '').trim() || null;
+    const { error } = await supabase.from('persona_tts_voices').upsert({
+      face: m.face, voice_id, voice_name, updated_by: owner.email,
+    }, { onConflict: 'face' });
+    if (error) throw error;
+    await loadTtsVoiceOverrides();
+    res.json({ ok: true, persona: m.persona, face: m.face, voice_id, voice_name });
+  } catch (e) {
+    console.error('[voices] tts set failed:', e.message);
+    res.status(500).json({ error: safeErrorMessage(e) });
+  }
+});
+
+router.delete('/tts/:persona', async (req, res) => {
+  if (!(await requireOwner(req, res))) return;
+  try {
+    const m = roster.get(req.params.persona);
+    if (!m || !m.face) return res.status(404).json({ error: 'unknown_persona' });
+    const { error } = await supabase.from('persona_tts_voices').delete().eq('face', m.face);
+    if (error) throw error;
+    await loadTtsVoiceOverrides();
+    res.json({ ok: true, persona: m.persona, face: m.face, source: 'env' });
+  } catch (e) {
+    console.error('[voices] tts clear failed:', e.message);
+    res.status(500).json({ error: safeErrorMessage(e) });
+  }
+});
+
+module.exports = { router, loadVoiceOverrides, loadTtsVoiceOverrides };

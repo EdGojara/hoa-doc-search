@@ -1725,7 +1725,7 @@ app.use('/api/payment-plans', paymentPlansRouter);
 const { router: tessaRouter } = require('./api/tessa');
 app.use('/api/tessa', tessaRouter);
 
-const { router: voicesRouter, loadVoiceOverrides } = require('./api/voices');
+const { router: voicesRouter, loadVoiceOverrides, loadTtsVoiceOverrides } = require('./api/voices');
 app.use('/api/voices', voicesRouter);
 
 const { router: w9Router } = require('./api/w9');
@@ -1733,6 +1733,7 @@ app.use('/api/w9', w9Router);
 // Load saved per-persona voice choices into the roster's override map at boot so
 // avatar sessions and rendered video use them without waiting for a redeploy.
 loadVoiceOverrides().catch((e) => console.warn('[voices] initial load failed:', e.message));
+loadTtsVoiceOverrides().catch((e) => console.warn('[voices] initial TTS load failed:', e.message));
 
 const { router: apIntakeRouter } = require('./api/ap_intake');
 app.use('/api/ap-intake', apIntakeRouter);

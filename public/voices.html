@@ -64,6 +64,9 @@
   .msg{padding:14px 16px;border-radius:10px;font-size:14px;margin-bottom:14px;}
   .msg.err{background:var(--crit-bg);color:var(--crit);}
   .loading{color:var(--muted);font-size:14px;padding:20px 0;}
+  .toggle{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:2px 0 18px;background:var(--surface);}
+  .tg{border:none;background:var(--surface);color:var(--muted);font-weight:700;font-size:13.5px;padding:9px 16px;}
+  .tg.on{background:var(--navy);color:#fff;}
 </style>
 </head>
 <body>
@@ -76,20 +79,41 @@
     <span class="here">Voices</span>
   </nav>
   <h1>AI Team Voices</h1>
-  <p class="sub">Pick each teammate's voice by ear. Press play to audition, then Use to set it. A choice
-    takes effect immediately for the live avatar and any rendered video, with no redeploy. Only voices the
-    live avatar can actually speak are shown.</p>
+  <p class="sub">Pick each teammate's voice by ear. Press play to audition, then Use to set it. Takes effect
+    immediately, no redeploy. Two layers: the <b>spoken voice</b> (what a homeowner hears on the Claire portal
+    voice and the phone) and the <b>video avatar</b> voice (the on-screen face).</p>
+
+  <div class="toggle" id="toggle">
+    <button class="tg on" data-mode="tts">🔊 Spoken voice</button>
+    <button class="tg" data-mode="avatar">🎬 Video avatar</button>
+  </div>
 
   <div id="msg"></div>
   <div id="body"><div class="loading">Loading the team&hellip;</div></div>
 
-  <p class="note">Voices here are HeyGen voices that support the interactive (live) avatar. Clearing a choice
-    falls back to the environment setting. This page is owner-only.</p>
+  <p class="note" id="note"></p>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const $ = (id) => document.getElementById(id);
+// Two voice layers, same picker. tts = ElevenLabs spoken voice (portal + phone);
+// avatar = HeyGen on-screen face voice.
+const MODES = {
+  tts: {
+    current: '/api/voices/tts-current', catalog: '/api/voices/tts-catalog',
+    save: (p) => '/api/voices/tts/' + encodeURIComponent(p),
+    note: 'Spoken voices are ElevenLabs voices (the audio on the Claire portal voice and the phone). Any voice can speak any language with the multilingual model; for Isabella pick a Spanish-native voice, for Mei a Mandarin one. Clearing falls back to the env/default. Owner-only.',
+    langsOf: (v) => (v.languages || []).join(', '),
+  },
+  avatar: {
+    current: '/api/voices/current', catalog: '/api/voices/catalog',
+    save: (p) => '/api/voices/' + encodeURIComponent(p),
+    note: 'Video avatar voices are HeyGen voices that support the interactive (live) avatar. Clearing falls back to the env setting. Owner-only.',
+    langsOf: (v) => v.language || '',
+  },
+};
+let MODE = MODES.tts;
 let CATALOG = [];
 let audio = null, playingBtn = null;
 // Authed fetch: owner-gated endpoints need the Supabase JWT as a Bearer header
@@ -114,17 +138,18 @@ function play(url, btn){
 }
 
 async function load(){
+  $('msg').innerHTML = '';
+  $('note').textContent = MODE.note;
+  $('body').innerHTML = '<div class="loading">Loading the team&hellip;</div>';
   let cur;
   try {
-    const [cr, cat] = await Promise.all([
-      af('/api/voices/current'),
-      af('/api/voices/catalog'),
-    ]);
+    const [cr, cat] = await Promise.all([ af(MODE.current), af(MODE.catalog) ]);
     if (cr.status === 403){ showErr('This is the owner’s workspace. Sign in as the owner to manage voices.'); $('body').innerHTML=''; return; }
     if (!cr.ok) throw new Error('current '+cr.status);
     cur = await cr.json();
     CATALOG = (cat.ok ? (await cat.json()).voices : []) || [];
     CATALOG.sort((a,b)=> String(a.name||'').localeCompare(String(b.name||'')));
+    if (!CATALOG.length && !cat.ok && MODE===MODES.tts) showErr('No spoken voices loaded — ElevenLabs may not be configured on this environment.');
   } catch(e){ showErr('Could not load voices: '+e.message); $('body').innerHTML=''; return; }
 
   const body = $('body');
@@ -167,14 +192,23 @@ function personaCard(p){
 
 function buildPicker(picker, p){
   if (!CATALOG.length){ picker.innerHTML = '<p class="hint">No auditionable voices were returned.</p>'; return; }
-  picker.innerHTML = '<p class="hint">Audition and choose '+esc(p.name)+'’s voice:</p>';
+  // For a non-English teammate, surface voices that list their language first.
+  let voices = CATALOG;
+  const plang = (p.language||'').toLowerCase();
+  if (plang && plang !== 'en'){
+    const key = plang==='zh' ? /chinese|mandarin|zh/i : plang==='es' ? /spanish|españ|es/i : new RegExp(plang,'i');
+    const match = (v)=> key.test(MODE.langsOf(v)+' '+(v.accent||'')+' '+(v.name||''));
+    voices = CATALOG.slice().sort((a,b)=> (match(b)?1:0)-(match(a)?1:0));
+  }
+  picker.innerHTML = '<p class="hint">Audition and choose '+esc(p.name)+'’s voice'+(plang&&plang!=='en'?' (voices that list '+esc(plang.toUpperCase())+' are shown first)':'')+':</p>';
   const list = document.createElement('div'); list.className = 'vlist';
-  for (const v of CATALOG){
+  for (const v of voices){
+    const langs = MODE.langsOf(v);
     const row = document.createElement('div'); row.className = 'vrow' + (v.voice_id===p.voice_id?' sel':'');
     row.innerHTML =
       '<button class="play" '+(v.preview?'':'disabled')+'>▶</button>'
       + '<div class="vmeta"><div class="vn">'+esc(v.name||'Voice')+'</div>'
-      +   '<div class="vl">'+esc(v.language||'')+(v.gender?' · '+esc(v.gender):'')+'</div></div>'
+      +   '<div class="vl">'+esc(langs||'')+(v.gender?' · '+esc(v.gender):'')+(v.accent?' · '+esc(v.accent):'')+'</div></div>'
       + '<button class="use">'+(v.voice_id===p.voice_id?'Current':'Use')+'</button>';
     const pb = row.querySelector('.play');
     if (v.preview) pb.onclick = () => play(v.preview, pb);
@@ -188,7 +222,7 @@ function buildPicker(picker, p){
 async function setVoice(p, v, btn){
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
-    const r = await af('/api/voices/'+encodeURIComponent(p.persona), {
+    const r = await af(MODE.save(p.persona), {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ voice_id: v.voice_id, voice_name: v.name }),
     });
@@ -213,6 +247,17 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, (c)=>({'&':'&am
         return fetch(u, Object.assign({}, o, { headers:h })); };
     }
   } catch(_){}
+  // Toggle between spoken (ElevenLabs) and video-avatar (HeyGen) voices.
+  document.querySelectorAll('#toggle .tg').forEach((b)=>{
+    b.onclick = () => {
+      if (b.classList.contains('on')) return;
+      document.querySelectorAll('#toggle .tg').forEach((x)=>x.classList.remove('on'));
+      b.classList.add('on');
+      MODE = MODES[b.dataset.mode] || MODES.tts;
+      stopAudio();
+      load();
+    };
+  });
   load();
 })();
 </script>

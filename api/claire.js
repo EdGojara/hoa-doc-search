@@ -458,11 +458,13 @@ router.post('/session/:id/speak', async (req, res) => {
 
     const { speakOnce } = require('../lib/voice/speak');
     const { PERSONA } = require('../lib/voice/persona');
-    // Spanish gets Isabella's own voice; everything else is Claire's, which is
-    // the persona voice the phone already uses.
-    const voiceId = ctx.session.language === 'es'
-      ? (process.env.ISABELLA_TTS_VOICE_ID || PERSONA.tts.voice_id)
-      : PERSONA.tts.voice_id;
+    // Each teammate speaks in their OWN assigned ElevenLabs voice (picked by ear
+    // in /admin/voices → persona_tts_voices, or a ${FACE}_TTS_VOICE_ID env).
+    // Fallbacks: the legacy Spanish env, then Claire's default persona voice.
+    const who = ctx.session.active_persona || 'claire';
+    const voiceId = roster.ttsVoiceIdFor(who)
+      || (ctx.session.language === 'es' ? process.env.ISABELLA_TTS_VOICE_ID : null)
+      || PERSONA.tts.voice_id;
 
     const audio = await speakOnce(text, { voiceId, outputFormat: 'mp3_44100_128' });
     res.setHeader('Content-Type', 'audio/mpeg');
