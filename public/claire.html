@@ -214,7 +214,7 @@ function renderRoom(){
       <div class="speaking"><div class="caption" id="cap"></div></div>
     </div>
     <div class="bar">
-      <button class="convo-btn" id="mic">🎙 <span id="micLabel">Start conversation with Claire</span></button>
+      <button class="convo-btn" id="mic">🎙 <span id="micLabel">Start conversation with ${esc(SESSION.persona.name)}</span></button>
       <div class="ask">
         <input type="text" id="q" placeholder="…or type your question" autocomplete="off">
         <button class="btn" id="send">Ask</button>
@@ -456,7 +456,8 @@ async function startConvo(){
   try{ await startDeepgram(); }
   catch(e){ console.warn('[claire] Deepgram STT unavailable, using browser STT:', e && e.message); startBrowserSTT(); }
 }
-function stopConvo(){ CONVO=false; $('mic').classList.remove('on'); $('mic').title='Start a conversation with Claire'; if($('micLabel')) $('micLabel').textContent='Start conversation with Claire'; stopDeepgram(); stopMic(); setRest(); }
+function personaName(){ return (SESSION&&SESSION.persona&&SESSION.persona.name)||'Claire'; }
+function stopConvo(){ CONVO=false; $('mic').classList.remove('on'); $('mic').title='Start a conversation with '+personaName(); if($('micLabel')) $('micLabel').textContent='Start conversation with '+personaName(); stopDeepgram(); stopMic(); setRest(); }
 
 // ---- Deepgram streaming path (primary) -----------------------------------
 async function startDeepgram(){
@@ -511,7 +512,7 @@ function b64FromBytes(bytes){ let s=''; const CH=0x8000; for(let i=0;i<bytes.len
 // ---- Browser SpeechRecognition (fallback) --------------------------------
 function startBrowserSTT(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){ banner('This browser will not let Claire hear you. Type your question instead, or open the visit in Chrome or Edge.'); CONVO=false; $('mic').classList.remove('on'); $('mic').title='Start a conversation with Claire'; if($('micLabel')) $('micLabel').textContent='Start conversation with Claire'; return; }
+  if(!SR){ banner('This browser will not let '+personaName()+' hear you. Type your question instead, or open the visit in Chrome or Edge.'); CONVO=false; $('mic').classList.remove('on'); $('mic').title='Start a conversation with '+personaName(); if($('micLabel')) $('micLabel').textContent='Start conversation with '+personaName(); return; }
   STT_MODE='browser'; listenTurn();
 }
 // Open the mic for ONE of your turns. Accumulates speech and only treats you as
