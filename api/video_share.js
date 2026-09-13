@@ -27,6 +27,7 @@ const { requireAdmin } = require('./_require_admin');
 const { safeErrorMessage } = require('./_safe_error');
 const heygen = require('../lib/video/heygen');
 const roster = require('../lib/team/roster');
+const QRCode = require('qrcode');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
@@ -261,6 +262,29 @@ router.get('/generate-status/:token', async (req, res) => {
   } catch (err) {
     console.error('[video-share] generate-status failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---- Public: QR code for a link (scan to open, no typing/photographing) -
+// Public like the BD card QR: it only encodes the shareable /v/ URL, which is
+// not sensitive, and an <img> tag can't send an auth header. Encodes the URL
+// as given without a DB lookup, so it reveals nothing about whether a video
+// exists.
+router.get('/:token/qr.svg', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').replace(/[^a-f0-9]/gi, '').slice(0, 64);
+    const base = process.env.TRUSTED_URL || (req.protocol + '://' + req.get('host'));
+    const url = `${base.replace(/\/$/, '')}/v/${token}`;
+    const svg = await QRCode.toString(url, {
+      type: 'svg', errorCorrectionLevel: 'H', margin: 1,
+      color: { dark: '#0B1D34', light: '#FFFFFF' },
+    });
+    res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    return res.send(svg);
+  } catch (err) {
+    console.error('[video-share] qr failed:', err.message);
+    return res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 

@@ -491,6 +491,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/community-map\.html$/,                // the shared Community Map page — auth checked inside via /api/community-map/* (requireBoardViewer + canSeeCommunity)
   /^\/v\/[^/]+$/,                           // /v/:token — branded watch page for a shared video (recipient has no login; gated by the unguessable token + active flag)
   /^\/api\/video-share\/play\/[^/]+$/,      // GET video metadata + short-lived signed playback URL (only this one video-share route is public; admin routes stay gated)
+  /^\/api\/video-share\/[^/]+\/qr\.svg$/,   // QR image for a share link (encodes only the public /v/ url; safe like the BD card QR)
   /^\/clubhouse\/[^/]+$/,                   // /clubhouse/:slug — public clubhouse rental form (gated server-side by amenity_bookings_active)
   /^\/clubhouse\/[^/]+\/preview-checkout$/, // checkout preview — charges nothing, writes nothing, and /api/payments/preview refuses once Stripe is configured
   // BD digital business cards. Public is the entire point: the person scanning

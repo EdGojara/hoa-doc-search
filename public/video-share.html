@@ -42,6 +42,14 @@
   .stat.live{background:var(--good-bg);color:var(--good);} .stat.down{background:var(--down-bg);color:var(--down);} .stat.pending{background:var(--warn-bg);color:var(--warn);}
   .views{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;}
   .empty{color:var(--muted);font-size:14px;padding:14px;text-align:center;}
+  .qrmask{position:fixed;inset:0;background:rgba(11,29,52,.55);display:none;align-items:center;justify-content:center;padding:20px;z-index:50;}
+  .qrmask.on{display:flex;}
+  .qrcard{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:360px;width:100%;text-align:center;}
+  .qrcard h3{margin:0 0 4px;color:var(--navy);font-size:16px;}
+  .qrcard p{margin:0 0 14px;color:var(--muted);font-size:12.5px;}
+  .qrcard .qrbox{background:#fff;border-radius:10px;padding:14px;display:inline-block;}
+  .qrcard .qrbox img{width:220px;height:220px;display:block;}
+  .qrcard .row2{display:flex;gap:8px;justify-content:center;margin-top:16px;}
 </style>
 </head>
 <body>
@@ -100,6 +108,7 @@
       <div class="u" id="shareUrl"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn sm" type="button" onclick="copyShare()">Copy link</button>
+        <button class="btn ghost sm" type="button" onclick="showQR(lastToken)">QR code</button>
         <button class="btn ghost sm" type="button" onclick="openShare()">Open</button>
         <button class="btn ghost sm" type="button" onclick="resetForm()">New video</button>
       </div>
@@ -111,12 +120,26 @@
   <div id="list"><div class="empty">Loading…</div></div>
 </div>
 
+<div class="qrmask" id="qrmask" onclick="if(event.target===this)hideQR()">
+  <div class="qrcard">
+    <h3>Scan to watch</h3>
+    <p>Point a phone camera at this. No typing, no login.</p>
+    <div class="qrbox"><img id="qrimg" alt="QR code"></div>
+    <div class="row2">
+      <a class="btn sm" id="qrdl" download="bedrock-video-qr.svg" href="#">Download</a>
+      <button class="btn ghost sm" type="button" onclick="hideQR()">Close</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const $=(id)=>document.getElementById(id);
 const esc=(s)=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let af=(u,o)=>fetch(u,o||{});
-let supa=null, lastShareUrl='', MODE='generate';
+let supa=null, lastShareUrl='', lastToken='', MODE='generate';
+function showQR(token){ if(!token) return; $('qrimg').src='/api/video-share/'+token+'/qr.svg'; $('qrdl').href='/api/video-share/'+token+'/qr.svg'; $('qrmask').classList.add('on'); }
+function hideQR(){ $('qrmask').classList.remove('on'); }
 function msg(t,ok){ const m=$('msg'); m.textContent=t||''; m.style.color=ok?'var(--good)':'var(--warn)'; }
 
 function setMode(m){
@@ -164,7 +187,7 @@ async function startUpload(e){
       xhr.send(f);
     });
     await jf('/api/video-share/'+create.token+'/finalize',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ file_size:f.size }) });
-    lastShareUrl = location.origin+'/v/'+create.token;
+    lastToken = create.token; lastShareUrl = location.origin+'/v/'+create.token;
     $('shareUrl').textContent=lastShareUrl; $('linkOut').style.display='block';
     msg('Uploaded. Link is live.',true); $('prog').style.display='none';
     load();
@@ -196,7 +219,7 @@ function pollGenerate(token){
     try{
       const s=await jf('/api/video-share/generate-status/'+token);
       if(s.render_status==='ready'){
-        lastShareUrl=location.origin+'/v/'+token;
+        lastToken=token; lastShareUrl=location.origin+'/v/'+token;
         $('shareUrl').textContent=lastShareUrl; $('linkOut').style.display='block';
         $('genStatus').style.display='none'; msg('Video is ready. Link is live.',true);
         $('upBtn').disabled=false; load(); return;
@@ -236,6 +259,7 @@ async function load(){
       const meta=[ v.persona_name, v.recipient_name?('for '+v.recipient_name):'', v.demo?'Demo':'', when(v.created_at) ].filter(Boolean).join(' · ');
       const acts = !v.uploaded ? '' :
         '<button class="btn sm" onclick="copyRow(\''+v.token+'\')">Copy link</button>'
+        + '<button class="btn ghost sm" onclick="showQR(\''+v.token+'\')">QR</button>'
         + (v.active
             ? '<button class="btn ghost sm" onclick="act(\''+v.token+'\',\'/takedown\')">Take down</button>'
             : '<button class="btn ghost sm" onclick="act(\''+v.token+'\',\'/restore\')">Restore</button>')
