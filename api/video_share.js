@@ -34,6 +34,16 @@ const router = express.Router();
 
 const BUCKET = 'videos';
 const PLAY_TTL = 60 * 60 * 4;   // signed playback URL good for 4 hours per view
+const DEFAULT_TTL_HOURS = 48;   // a one-off link retires itself after this by default
+
+// Turn a requested lifetime into an expires_at ISO string. Accepts a number of
+// hours, or 'never'/0/null for a link that does not expire. Defaults to 48h.
+function expiryFrom(hours) {
+  if (hours === 'never' || hours === 0 || hours === '0') return null;
+  const n = Number(hours);
+  const h = Number.isFinite(n) && n > 0 ? n : DEFAULT_TTL_HOURS;
+  return new Date(Date.now() + h * 3600 * 1000).toISOString();
+}
 // Where a prospect's "get in touch" goes on a demo video: Maggie Sullivan, our
 // BD / Director of Growth (Ed 2026-09-13). Pulled from the one mailbox constant
 // so it can't drift; overridable per deployment.
@@ -57,7 +67,7 @@ router.get('/list', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('video_shares')
-      .select('token, title, recipient_name, persona, community_id, content_type, file_size, uploaded, active, view_count, last_viewed_at, created_at, demo, caption, source, render_status, render_error')
+      .select('token, title, recipient_name, persona, community_id, content_type, file_size, uploaded, active, view_count, last_viewed_at, created_at, demo, caption, source, render_status, render_error, expires_at')
       .order('created_at', { ascending: false })
       .limit(500);
     if (error) throw error;
@@ -90,7 +100,7 @@ router.post('/create', async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   try {
-    const { title, recipient_name, persona, community_id, filename, content_type, demo, caption } = req.body || {};
+    const { title, recipient_name, persona, community_id, filename, content_type, demo, caption, expires_hours } = req.body || {};
     if (!content_type || !/^video\//.test(String(content_type))) {
       return res.status(400).json({ error: 'video_file_required', detail: 'Pick a video file.' });
     }
@@ -107,6 +117,7 @@ router.post('/create', async (req, res) => {
       persona: persona || null, community_id: community_id || null,
       storage_path, content_type, uploaded: false, active: true,
       demo: !!demo, caption: (caption && String(caption).trim()) || null,
+      expires_at: expiryFrom(expires_hours),
       created_by: admin.email || admin.full_name || null,
     });
     if (iErr) throw iErr;
@@ -179,7 +190,7 @@ router.post('/generate', async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   try {
-    const { script, persona, title, recipient_name, demo, caption } = req.body || {};
+    const { script, persona, title, recipient_name, demo, caption, expires_hours } = req.body || {};
     if (!script || !String(script).trim()) return res.status(400).json({ error: 'script_required', detail: 'Write what the teammate should say.' });
     if (!heygen.heygenEnabled()) return res.status(503).json({ error: 'heygen_not_configured', detail: 'Video generation is not turned on.' });
     const who = String(persona || '').trim();
@@ -206,6 +217,7 @@ router.post('/generate', async (req, res) => {
       source: 'generated', provider_video_id: videoId, render_status: 'rendering',
       language: lang, script: String(script).trim(),
       demo: !!demo, caption: (caption && String(caption).trim()) || null,
+      expires_at: expiryFrom(expires_hours),
       uploaded: false, active: true,
       created_by: admin.email || admin.full_name || null,
     });
@@ -292,12 +304,13 @@ router.get('/:token/qr.svg', async (req, res) => {
 router.get('/play/:token', async (req, res) => {
   try {
     const { data: row, error } = await supabase.from('video_shares')
-      .select('token, title, recipient_name, persona, community_id, storage_path, content_type, uploaded, active, view_count, demo, caption')
+      .select('token, title, recipient_name, persona, community_id, storage_path, content_type, uploaded, active, view_count, demo, caption, expires_at')
       .eq('token', req.params.token).maybeSingle();
     if (error) throw error;
     // One shape for every "can't play" case so the token can't be probed for
     // whether a given video ever existed.
-    if (!row || !row.uploaded || !row.active) return res.status(410).json({ gone: true });
+    const expired = row && row.expires_at && Date.now() > new Date(row.expires_at).getTime();
+    if (!row || !row.uploaded || !row.active || expired) return res.status(410).json({ gone: true });
 
     const { data: signed, error: pErr } = await supabase.storage
       .from(BUCKET).createSignedUrl(row.storage_path, PLAY_TTL);

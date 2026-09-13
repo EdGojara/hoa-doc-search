@@ -89,6 +89,14 @@
     <label>Internal title <span style="font-weight:400">(only you see this)</span></label>
     <input id="title" placeholder="e.g. Priya intro for the Sharma family">
 
+    <label>Link stays up for</label>
+    <select id="ttl">
+      <option value="48">48 hours (recommended)</option>
+      <option value="24">24 hours</option>
+      <option value="168">7 days</option>
+      <option value="never">No expiry</option>
+    </select>
+
     <label style="display:flex;align-items:center;gap:9px;margin-top:16px;cursor:pointer;">
       <input id="demo" type="checkbox" onchange="demoToggle()" style="width:auto;margin:0;"> This is a demo for a prospect or referral source
     </label>
@@ -174,7 +182,7 @@ async function startUpload(e){
     const create=await jf('/api/video-share/create',{ method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({ title:$('title').value.trim()||null, recipient_name:$('recipient').value.trim()||null,
         persona:$('persona').value||null, filename:f.name, content_type:f.type||'video/mp4',
-        demo:$('demo').checked, caption:$('caption').value.trim()||null }) });
+        demo:$('demo').checked, caption:$('caption').value.trim()||null, expires_hours:$('ttl').value }) });
     // Direct upload to the private bucket via the one-time signed URL (XHR for a progress bar).
     $('prog').style.display='block'; $('progBar').style.width='0';
     await new Promise((resolve,reject)=>{
@@ -206,7 +214,7 @@ async function startGenerate(e){
   try{
     const g=await jf('/api/video-share/generate',{ method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({ script, persona:$('persona').value, title:$('title').value.trim()||null,
-        recipient_name:$('recipient').value.trim()||null, demo:$('demo').checked, caption:$('caption').value.trim()||null }) });
+        recipient_name:$('recipient').value.trim()||null, demo:$('demo').checked, caption:$('caption').value.trim()||null, expires_hours:$('ttl').value }) });
     $('genStatus').textContent='Rendering the video… this usually takes a minute or two. You can leave this open.';
     pollGenerate(g.token);
   }catch(err){ msg(err.message||'Could not start'); $('genStatus').style.display='none'; $('upBtn').disabled=false; }
@@ -246,6 +254,7 @@ async function act(token, path, confirmMsg){
 }
 
 function when(ts){ if(!ts) return ''; const d=new Date(ts); return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
+function timeLeft(ms){ if(ms<=0) return 'expiring'; const h=ms/3600000; if(h<1) return 'expires in '+Math.max(1,Math.round(ms/60000))+'m'; if(h<48) return 'expires in '+Math.round(h)+'h'; return 'expires in '+Math.round(h/24)+'d'; }
 
 async function load(){
   try{
@@ -253,9 +262,14 @@ async function load(){
     const vids=j.videos||[];
     if(!vids.length){ $('list').innerHTML='<div class="empty">No videos yet. Create one above.</div>'; return; }
     $('list').innerHTML = vids.map(v=>{
-      const stat = v.render_status==='failed' ? '<span class="stat down">Failed</span>'
-        : !v.uploaded ? '<span class="stat pending">'+(v.source==='generated'?'Rendering':'Uploading')+'</span>'
-        : v.active ? '<span class="stat live">Live</span>' : '<span class="stat down">Taken down</span>';
+      const exp = v.expires_at ? new Date(v.expires_at).getTime() : null;
+      const isExpired = exp && Date.now() > exp;
+      let stat;
+      if (v.render_status==='failed') stat='<span class="stat down">Failed</span>';
+      else if (!v.uploaded) stat='<span class="stat pending">'+(v.source==='generated'?'Rendering':'Uploading')+'</span>';
+      else if (!v.active) stat='<span class="stat down">Taken down</span>';
+      else if (isExpired) stat='<span class="stat down">Expired</span>';
+      else stat='<span class="stat live">Live'+(exp?' · '+timeLeft(exp-Date.now()):'')+'</span>';
       const meta=[ v.persona_name, v.recipient_name?('for '+v.recipient_name):'', v.demo?'Demo':'', when(v.created_at) ].filter(Boolean).join(' · ');
       const acts = !v.uploaded ? '' :
         '<button class="btn sm" onclick="copyRow(\''+v.token+'\')">Copy link</button>'
