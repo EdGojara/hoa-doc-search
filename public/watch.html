@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap">
+<style>
+  :root{ --navy:#0B1D34; --ink:#1c2635; --muted:#5a6b83; --line:#dce3ec; --paper:#eef1f5; --surface:#fff; --gold:#B8892B;
+    --sans:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --serif:"Fraunces",Georgia,serif; }
+  @media (prefers-color-scheme:dark){:root{ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#233549;--paper:#070f1c;--surface:#0f2137;--gold:#e0b352; }}
+  *{box-sizing:border-box} html,body{margin:0;} body{background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.55;min-height:100vh;}
+  .top{border-top:4px solid var(--gold);}
+  .bar{max-width:860px;margin:0 auto;padding:16px 20px;display:flex;align-items:center;gap:10px;}
+  .bar img{height:26px;width:auto;display:block;}
+  .bar .word{font-family:var(--serif);font-weight:700;font-size:19px;color:var(--navy);letter-spacing:.01em;}
+  .wrap{max-width:860px;margin:0 auto;padding:8px 20px 60px;}
+  .greet{font-family:var(--serif);font-weight:600;font-size:26px;color:var(--navy);margin:14px 0 2px;}
+  .from{font-size:14.5px;color:var(--muted);margin:0 0 16px;}
+  .from b{color:var(--ink);font-weight:700;}
+  .player{background:#000;border-radius:14px;overflow:hidden;border:1px solid var(--line);box-shadow:0 10px 30px rgba(11,29,52,.16);}
+  video{width:100%;display:block;max-height:76vh;background:#000;}
+  .foot{margin-top:22px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted);line-height:1.7;}
+  .foot b{color:var(--ink);}
+  .center{min-height:70vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;}
+  .card{max-width:440px;}
+  .card .big{font-family:var(--serif);font-weight:600;font-size:24px;color:var(--navy);margin:0 0 8px;}
+  .card p{font-size:14.5px;color:var(--muted);margin:0;}
+  .skel{color:var(--muted);font-size:14px;}
+</style>
+</head>
+<body>
+<div class="top"><div class="bar"><img src="/brand-assets/bedrock-mark.svg" alt="" onerror="this.style.display='none'"><span class="word">Bedrock</span></div></div>
+
+<div id="app" class="wrap"><div class="center"><div class="skel">Loading…</div></div></div>
+
+<script>
+const esc=(s)=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function gone(){
+  document.getElementById('app').innerHTML =
+    '<div class="center"><div class="card"><div class="big">This video is no longer available</div>'
+    + '<p>The link may have expired or been taken down. If you were expecting to see something, reply to the message that sent you here and we\'ll sort it out.</p></div></div>';
+}
+(async function(){
+  const token=(location.pathname.split('/v/')[1]||'').replace(/\/.*$/,'').trim();
+  if(!token){ gone(); return; }
+  let j;
+  try{
+    const r=await fetch('/api/video-share/play/'+encodeURIComponent(token));
+    if(r.status===410){ gone(); return; }
+    if(!r.ok){ gone(); return; }
+    j=await r.json();
+  }catch(_){ gone(); return; }
+
+  const greet = j.recipient_name ? ('Hi '+esc(j.recipient_name)+',') : 'A message for you';
+  const who = j.persona_name ? esc(j.persona_name) : 'the Bedrock team';
+  const fromLine = j.persona_name
+    ? ('A quick message from <b>'+who+'</b>'+(j.community?', '+esc(j.community):'')+'.')
+    : ('A quick message from <b>Bedrock</b>'+(j.community?', '+esc(j.community):'')+'.');
+
+  document.getElementById('app').innerHTML =
+    '<h1 class="greet">'+greet+'</h1>'
+    + '<p class="from">'+fromLine+'</p>'
+    + '<div class="player"><video id="v" controls playsinline preload="metadata"></video></div>'
+    + '<div class="foot">You are watching a video from <b>Bedrock Association Management</b>. '
+    + (j.persona_name ? esc(j.persona_name)+' is part of our AI team. ' : '')
+    + 'A member of our team is always available if you need a person.</div>';
+
+  const v=document.getElementById('v');
+  const src=document.createElement('source');
+  src.src=j.play_url; src.type=j.content_type||'video/mp4';
+  v.appendChild(src);
+  v.onerror=gone;
+})();
+</script>
+</body>
+</html>

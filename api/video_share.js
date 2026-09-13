@@ -1,0 +1,205 @@
+// ============================================================================
+// api/video_share.js  (Ed 2026-09-13)
+// ----------------------------------------------------------------------------
+// Quick, private, revocable video links for demoing the AI team (or a one-off
+// message like Priya in Hindi for a single resident). Ed uploads a mini video,
+// gets ONE unguessable link, sends it, and takes it down when done.
+//
+// The file lives in a PRIVATE 'videos' bucket. The public watch route mints a
+// short-lived signed playback URL on each view, so "take down" (active=false)
+// truly revokes access: no new playback URL is ever issued after that.
+//
+//   Admin (requireAdmin):
+//     GET    /api/video-share/list                list every share, newest first
+//     POST   /api/video-share/create              start one; returns a signed UPLOAD url
+//     POST   /api/video-share/:token/finalize     mark upload complete (uploaded=true)
+//     POST   /api/video-share/:token/takedown     active=false (link goes dead)
+//     POST   /api/video-share/:token/restore      active=true
+//     DELETE /api/video-share/:token              delete file + row (permanent)
+//
+//   Public (no auth) — the recipient with the link:
+//     GET    /api/video-share/play/:token         metadata + short-lived play url
+// ============================================================================
+const express = require('express');
+const crypto = require('crypto');
+const { createClient } = require('@supabase/supabase-js');
+const { requireAdmin } = require('./_require_admin');
+const { safeErrorMessage } = require('./_safe_error');
+
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const router = express.Router();
+
+const BUCKET = 'videos';
+const PLAY_TTL = 60 * 60 * 4;   // signed playback URL good for 4 hours per view
+
+// Friendly display name for the featured teammate, straight off the one roster.
+function personaName(persona) {
+  if (!persona) return null;
+  try { const m = require('../lib/team/roster').get(persona); if (m) return m.name; } catch (_) {}
+  return null;
+}
+
+const safeName = (s) => String(s || 'video').replace(/[^\w.-]+/g, '_').slice(-80) || 'video';
+
+// ---- Admin: list --------------------------------------------------------
+router.get('/list', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  try {
+    const { data, error } = await supabase
+      .from('video_shares')
+      .select('token, title, recipient_name, persona, community_id, content_type, file_size, uploaded, active, view_count, last_viewed_at, created_at')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (error) throw error;
+    const rows = (data || []).map((r) => ({ ...r, persona_name: personaName(r.persona) }));
+    res.json({ videos: rows });
+  } catch (err) {
+    console.error('[video-share] list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---- Admin: the AI teammates you can feature (from the one roster) ------
+router.get('/personas', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  try {
+    const people = require('../lib/team/roster').people();
+    // Front-office + specialist faces a resident/prospect would meet; skip the
+    // owner-only and internal-ops people.
+    const list = people
+      .filter((m) => m.persona && m.name && !m.owner_only && m.tier !== 'internal_ops')
+      .map((m) => ({ persona: m.persona, name: m.name, title: m.title || '' }));
+    res.json({ personas: list });
+  } catch (err) {
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---- Admin: create (returns a signed upload URL) ------------------------
+router.post('/create', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const { title, recipient_name, persona, community_id, filename, content_type } = req.body || {};
+    if (!content_type || !/^video\//.test(String(content_type))) {
+      return res.status(400).json({ error: 'video_file_required', detail: 'Pick a video file.' });
+    }
+    const token = crypto.randomBytes(16).toString('hex');       // 32 chars, unguessable
+    const storage_path = `${token}/${safeName(filename)}`;
+
+    const { data: signed, error: sErr } = await supabase.storage
+      .from(BUCKET)
+      .createSignedUploadUrl(storage_path);
+    if (sErr) throw sErr;
+
+    const { error: iErr } = await supabase.from('video_shares').insert({
+      token, title: title || null, recipient_name: recipient_name || null,
+      persona: persona || null, community_id: community_id || null,
+      storage_path, content_type, uploaded: false, active: true,
+      created_by: admin.email || admin.full_name || null,
+    });
+    if (iErr) throw iErr;
+
+    // signed.token is the ONE-TIME upload token the browser passes to
+    // uploadToSignedUrl(path, token, file). Distinct from our share token.
+    res.json({ token, path: storage_path, uploadToken: signed.token, signedUrl: signed.signedUrl });
+  } catch (err) {
+    console.error('[video-share] create failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---- Admin: finalize (browser finished the direct upload) ---------------
+router.post('/:token/finalize', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  try {
+    const { file_size } = req.body || {};
+    const { data, error } = await supabase.from('video_shares')
+      .update({ uploaded: true, file_size: file_size || null })
+      .eq('token', req.params.token).select('token').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[video-share] finalize failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---- Admin: take down / restore ----------------------------------------
+async function setActive(req, res, active) {
+  if (!(await requireAdmin(req, res))) return;
+  try {
+    const { data, error } = await supabase.from('video_shares')
+      .update({ active }).eq('token', req.params.token).select('token').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true, active });
+  } catch (err) {
+    console.error('[video-share] setActive failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+}
+router.post('/:token/takedown', (req, res) => setActive(req, res, false));
+router.post('/:token/restore', (req, res) => setActive(req, res, true));
+
+// ---- Admin: delete (permanent) -----------------------------------------
+router.delete('/:token', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  try {
+    const { data: row, error } = await supabase.from('video_shares')
+      .select('storage_path').eq('token', req.params.token).maybeSingle();
+    if (error) throw error;
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    try { await supabase.storage.from(BUCKET).remove([row.storage_path]); } catch (e) { console.warn('[video-share] file remove:', e.message); }
+    await supabase.from('video_shares').delete().eq('token', req.params.token);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[video-share] delete failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---- Public: play (the recipient with the link) ------------------------
+router.get('/play/:token', async (req, res) => {
+  try {
+    const { data: row, error } = await supabase.from('video_shares')
+      .select('token, title, recipient_name, persona, community_id, storage_path, content_type, uploaded, active, view_count')
+      .eq('token', req.params.token).maybeSingle();
+    if (error) throw error;
+    // One shape for every "can't play" case so the token can't be probed for
+    // whether a given video ever existed.
+    if (!row || !row.uploaded || !row.active) return res.status(410).json({ gone: true });
+
+    const { data: signed, error: pErr } = await supabase.storage
+      .from(BUCKET).createSignedUrl(row.storage_path, PLAY_TTL);
+    if (pErr || !signed) return res.status(410).json({ gone: true });
+
+    let communityName = null;
+    if (row.community_id) {
+      try { const { data: c } = await supabase.from('communities').select('name').eq('id', row.community_id).maybeSingle(); communityName = c && c.name; } catch (_) {}
+    }
+
+    // Best-effort view metering; never blocks playback.
+    try {
+      await supabase.from('video_shares')
+        .update({ view_count: (row.view_count || 0) + 1, last_viewed_at: new Date().toISOString() })
+        .eq('token', row.token);
+    } catch (_) {}
+
+    res.json({
+      title: row.title || null,
+      recipient_name: row.recipient_name || null,
+      persona: row.persona || null,
+      persona_name: personaName(row.persona),
+      community: communityName,
+      content_type: row.content_type || 'video/mp4',
+      play_url: signed.signedUrl,
+    });
+  } catch (err) {
+    console.error('[video-share] play failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+module.exports = { router };

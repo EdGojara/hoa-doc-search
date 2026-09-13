@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Links — Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+  :root{ --navy:#0B1D34; --ink:#1c2635; --muted:#5a6b83; --line:#dce3ec; --paper:#eef1f5; --surface:#fff; --surface-2:#f6f8fb; --gold:#B8892B; --good:#166b46; --good-bg:#e7f4ec; --warn:#8a5a12; --warn-bg:#fbf0dd; --down:#8a1c1c; --down-bg:#fbe4e4;
+    --sans:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --serif:"Fraunces",Georgia,serif; }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--surface-2:#132a44;--gold:#e0b352;--good:#7fd6a6;--good-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f;--down:#f0a3a3;--down-bg:#3a1414; }}
+  :root[data-theme="dark"]{ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--surface-2:#132a44;--gold:#e0b352;--good:#7fd6a6;--good-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f;--down:#f0a3a3;--down-bg:#3a1414; }
+  *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.55;}
+  .wrap{max-width:880px;margin:0 auto;padding:26px 18px 90px;}
+  .crumbs{font-size:13px;color:var(--muted);margin-bottom:2px;} .crumbs a{color:var(--muted);text-decoration:none;} .crumbs a:hover{color:var(--navy);text-decoration:underline;} .crumbs .sep{margin:0 7px;color:var(--line);} .crumbs .here{color:var(--navy);font-weight:700;}
+  h1{font-family:var(--serif);font-weight:600;font-size:29px;color:var(--navy);margin:5px 0 4px;}
+  .sub{font-size:14px;color:var(--muted);margin:0 0 18px;max-width:72ch;}
+  h2{font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:26px 0 10px;border-bottom:1px solid var(--line);padding-bottom:7px;}
+  button{font:inherit;cursor:pointer;} .btn{background:var(--gold);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-weight:700;font-size:13.5px;white-space:nowrap;} .btn:disabled{opacity:.5;cursor:default;}
+  .btn.ghost{background:var(--surface);border:1px solid var(--line);color:var(--navy);} .btn.sm{padding:6px 11px;font-size:12.5px;}
+  .btn.danger{background:var(--surface);border:1px solid var(--down);color:var(--down);}
+  form.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;}
+  label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 4px;}
+  input,select{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font:inherit;font-size:14px;background:var(--surface-2);color:var(--ink);}
+  input[type=file]{padding:22px 11px;border:1.5px dashed var(--line);background:var(--surface-2);cursor:pointer;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;} @media(max-width:560px){.grid{grid-template-columns:1fr}}
+  .msg{margin:10px 0;font-size:13.5px;color:var(--warn);min-height:18px;}
+  .note{font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.6;}
+  .prog{height:8px;background:var(--surface-2);border:1px solid var(--line);border-radius:20px;overflow:hidden;margin-top:12px;display:none;}
+  .prog > i{display:block;height:100%;width:0;background:var(--gold);transition:width .2s;}
+  .link-out{background:var(--good-bg);border:1px solid var(--good);border-radius:11px;padding:13px 15px;margin-top:14px;display:none;}
+  .link-out .u{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:var(--navy);word-break:break-all;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0;}
+  .vid{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:13px 15px;margin-bottom:9px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .vid .nm{font-weight:700;color:var(--navy);flex:1 1 260px;min-width:200px;} .vid .nm small{display:block;font-weight:400;color:var(--muted);font-size:12.5px;}
+  .vid .acts{display:flex;gap:7px;flex-wrap:wrap;}
+  .stat{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:20px;}
+  .stat.live{background:var(--good-bg);color:var(--good);} .stat.down{background:var(--down-bg);color:var(--down);} .stat.pending{background:var(--warn-bg);color:var(--warn);}
+  .views{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .empty{color:var(--muted);font-size:14px;padding:14px;text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="crumbs"><a href="/admin/systems">Systems Admin</a><span class="sep">&rsaquo;</span><span class="here">Video Links</span></nav>
+  <h1>Video Links</h1>
+  <p class="sub">Record a quick video (an AI teammate for a resident, a demo of the team for a prospect), upload it here, and send one private link. The link is unguessable, plays on a branded Bedrock page, and dies the moment you take it down.</p>
+  <div id="msg" class="msg"></div>
+
+  <h2>New video link</h2>
+  <form class="card" id="upForm" onsubmit="return startUpload(event)">
+    <label>Video file *</label>
+    <input id="file" type="file" accept="video/*" required onchange="pickedFile()">
+    <div class="grid">
+      <div>
+        <label>Featured teammate</label>
+        <select id="persona"><option value="">— none —</option></select>
+      </div>
+      <div>
+        <label>Recipient's name <span style="font-weight:400">(greets them on the page)</span></label>
+        <input id="recipient" placeholder="e.g. Anjali">
+      </div>
+    </div>
+    <label>Internal title <span style="font-weight:400">(only you see this)</span></label>
+    <input id="title" placeholder="e.g. Priya intro for the Sharma family">
+    <div class="prog" id="prog"><i id="progBar"></i></div>
+    <div style="margin-top:16px;">
+      <button class="btn" id="upBtn" type="submit">Create link &amp; upload</button>
+    </div>
+    <div class="link-out" id="linkOut">
+      <div style="font-weight:700;color:var(--good);">Ready to send</div>
+      <div class="u" id="shareUrl"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn sm" type="button" onclick="copyShare()">Copy link</button>
+        <button class="btn ghost sm" type="button" onclick="openShare()">Open</button>
+        <button class="btn ghost sm" type="button" onclick="resetForm()">New video</button>
+      </div>
+    </div>
+    <div class="note">Big files upload straight to storage, so there's no size limit here. Keep them short and it's quick.</div>
+  </form>
+
+  <h2>Your videos</h2>
+  <div id="list"><div class="empty">Loading…</div></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $=(id)=>document.getElementById(id);
+const esc=(s)=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let af=(u,o)=>fetch(u,o||{});
+let supa=null, lastShareUrl='';
+function msg(t,ok){ const m=$('msg'); m.textContent=t||''; m.style.color=ok?'var(--good)':'var(--warn)'; }
+
+async function jf(url,opts){ const r=await af(url,opts); let j={}; try{j=await r.json();}catch(_){} if(!r.ok) throw new Error(j.detail||j.error||('HTTP '+r.status)); return j; }
+
+function pickedFile(){
+  const f=$('file').files[0];
+  if(f && !$('title').value) $('title').value = f.name.replace(/\.[^.]+$/,'');
+}
+
+async function startUpload(e){
+  e.preventDefault();
+  const f=$('file').files[0];
+  if(!f){ msg('Pick a video file.'); return false; }
+  if(!supa){ msg('Admin sign-in required. Open this from the platform while signed in.'); return false; }
+  $('upBtn').disabled=true; $('linkOut').style.display='none'; msg('Preparing…',true);
+  try{
+    const create=await jf('/api/video-share/create',{ method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ title:$('title').value.trim()||null, recipient_name:$('recipient').value.trim()||null,
+        persona:$('persona').value||null, filename:f.name, content_type:f.type||'video/mp4' }) });
+    // Direct upload to the private bucket via the one-time signed URL (XHR for a progress bar).
+    $('prog').style.display='block'; $('progBar').style.width='0';
+    await new Promise((resolve,reject)=>{
+      const xhr=new XMLHttpRequest();
+      xhr.open('PUT', create.signedUrl, true);
+      xhr.setRequestHeader('content-type', f.type||'video/mp4');
+      xhr.upload.onprogress=(ev)=>{ if(ev.lengthComputable){ $('progBar').style.width=Math.round(ev.loaded/ev.total*100)+'%'; } };
+      xhr.onload=()=> (xhr.status>=200&&xhr.status<300) ? resolve() : reject(new Error('Upload failed ('+xhr.status+')'));
+      xhr.onerror=()=>reject(new Error('Upload failed (network)'));
+      xhr.send(f);
+    });
+    await jf('/api/video-share/'+create.token+'/finalize',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ file_size:f.size }) });
+    lastShareUrl = location.origin+'/v/'+create.token;
+    $('shareUrl').textContent=lastShareUrl; $('linkOut').style.display='block';
+    msg('Uploaded. Link is live.',true); $('prog').style.display='none';
+    load();
+  }catch(err){ msg(err.message||'Upload failed'); $('prog').style.display='none'; }
+  $('upBtn').disabled=false; return false;
+}
+
+function copyShare(){ navigator.clipboard.writeText(lastShareUrl).then(()=>msg('Link copied.',true)); }
+function openShare(){ window.open(lastShareUrl,'_blank'); }
+function resetForm(){ $('upForm').reset(); $('linkOut').style.display='none'; msg(''); }
+
+async function copyRow(token){ const u=location.origin+'/v/'+token; try{ await navigator.clipboard.writeText(u); msg('Link copied.',true);}catch(_){ msg(u);} }
+async function act(token, path, confirmMsg){
+  if(confirmMsg && !confirm(confirmMsg)) return;
+  try{ await jf('/api/video-share/'+token+path, { method: path==='' ? 'DELETE':'POST' }); load(); }
+  catch(err){ msg(err.message); }
+}
+
+function when(ts){ if(!ts) return ''; const d=new Date(ts); return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
+
+async function load(){
+  try{
+    const j=await jf('/api/video-share/list');
+    const vids=j.videos||[];
+    if(!vids.length){ $('list').innerHTML='<div class="empty">No videos yet. Create one above.</div>'; return; }
+    $('list').innerHTML = vids.map(v=>{
+      const stat = !v.uploaded ? '<span class="stat pending">Uploading</span>'
+        : v.active ? '<span class="stat live">Live</span>' : '<span class="stat down">Taken down</span>';
+      const meta=[ v.persona_name, v.recipient_name?('for '+v.recipient_name):'', when(v.created_at) ].filter(Boolean).join(' · ');
+      const acts = !v.uploaded ? '' :
+        '<button class="btn sm" onclick="copyRow(\''+v.token+'\')">Copy link</button>'
+        + (v.active
+            ? '<button class="btn ghost sm" onclick="act(\''+v.token+'\',\'/takedown\')">Take down</button>'
+            : '<button class="btn ghost sm" onclick="act(\''+v.token+'\',\'/restore\')">Restore</button>')
+        + '<button class="btn danger sm" onclick="act(\''+v.token+'\',\'\',\'Delete this video permanently? The link stops working for everyone.\')">Delete</button>';
+      return '<div class="vid"><div class="nm">'+esc(v.title||'(untitled)')+(meta?'<small>'+esc(meta)+'</small>':'')+'</div>'
+        + '<span class="views">'+(v.view_count||0)+' view'+(v.view_count===1?'':'s')+'</span>'
+        + stat + '<div class="acts">'+acts+'</div></div>';
+    }).join('');
+  }catch(err){ $('list').innerHTML='<div class="empty">'+esc(err.message||'Could not load')+'</div>'; }
+}
+
+async function loadPersonas(){
+  try{ const j=await jf('/api/video-share/personas');
+    $('persona').innerHTML='<option value="">— none —</option>'+(j.personas||[]).map(p=>'<option value="'+esc(p.persona)+'">'+esc(p.name)+'</option>').join('');
+  }catch(_){}
+}
+
+(async function boot(){
+  try{ const cfg=await (await fetch('/api/auth/config')).json();
+    if(cfg&&cfg.enabled&&window.supabase&&cfg.supabase_url&&cfg.supabase_anon_key){
+      supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+      af=async(u,o)=>{o=o||{};const h=Object.assign({},o.headers||{});try{const s=(await supa.auth.getSession()).data.session;if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){}return fetch(u,Object.assign({},o,{headers:h}));};
+    }
+  }catch(_){}
+  loadPersonas(); load();
+})();
+</script>
+</body>
+</html>

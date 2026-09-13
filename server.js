@@ -489,6 +489,8 @@ const _STAFF_GATE_PUBLIC = [
   /^\/board-portal$/,                       // board portal landing — auth checked inside via board/staff session (board member's own homeowner magic-link cookie is honored); every /api/board-portal route enforces requireBoardViewer + canSeeCommunity
   /^\/board-portal\.html$/,                 // same page at the static path (self-referencing year-view share links + portal-login hint use .html?community=…)
   /^\/community-map\.html$/,                // the shared Community Map page — auth checked inside via /api/community-map/* (requireBoardViewer + canSeeCommunity)
+  /^\/v\/[^/]+$/,                           // /v/:token — branded watch page for a shared video (recipient has no login; gated by the unguessable token + active flag)
+  /^\/api\/video-share\/play\/[^/]+$/,      // GET video metadata + short-lived signed playback URL (only this one video-share route is public; admin routes stay gated)
   /^\/clubhouse\/[^/]+$/,                   // /clubhouse/:slug — public clubhouse rental form (gated server-side by amenity_bookings_active)
   /^\/clubhouse\/[^/]+\/preview-checkout$/, // checkout preview — charges nothing, writes nothing, and /api/payments/preview refuses once Stripe is configured
   // BD digital business cards. Public is the entire point: the person scanning
@@ -1128,6 +1130,14 @@ app.get('/admin/w9', (req, res) => {
 app.get('/admin/voices', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'voices.html'));
 });
+// Video Links — record a mini video, upload it, send one private revocable link.
+app.get('/admin/video-share', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'video-share.html'));
+});
+// Public branded watch page for a shared video (the recipient with the link).
+app.get('/v/:token', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'watch.html'));
+});
 // GPT-Live-1 portal PoC (Claire B). The page loads for anyone, but the WS it
 // connects to is gated behind GPT_LIVE_ENABLED, so it is inert until Ed flips
 // the switch for a test. (Ed 2026-09-12.)
@@ -1730,6 +1740,8 @@ app.use('/api/voices', voicesRouter);
 
 const { router: w9Router } = require('./api/w9');
 app.use('/api/w9', w9Router);
+const { router: videoShareRouter } = require('./api/video_share');
+app.use('/api/video-share', videoShareRouter);
 // Load saved per-persona voice choices into the roster's override map at boot so
 // avatar sessions and rendered video use them without waiting for a redeploy.
 loadVoiceOverrides().catch((e) => console.warn('[voices] initial load failed:', e.message));
