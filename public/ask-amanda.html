@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="apple-touch-icon" href="/logos/bedrock_logo.png">
+  <title>Ask Amanda · Bedrock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/brand.css">
+  <style>
+    :root{ --navy:#0B1D34; --navy-soft:#142847; --gold:#D4AF37; --gold-bright:#E8C96E;
+      --ink:#1a1a1a; --ink-soft:#4a4a4a; --ink-muted:#6e7886; --rule:#E5E7EB; --cream:#F2F2F2; --paper:#fff; }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:var(--cream);color:var(--ink);font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh;}
+    .topbar{background:var(--navy);color:#fff;padding:12px 18px;position:sticky;top:0;z-index:20;box-shadow:0 2px 6px rgba(0,0,0,.12);}
+    .topbar-inner{max-width:900px;margin:0 auto;display:flex;align-items:center;gap:12px;}
+    .brand{font-family:'Cormorant Garamond',Georgia,serif;font-size:20px;font-weight:600;}
+    .brand em{color:var(--gold-bright);font-style:italic;font-size:14px;}
+    .home-link{margin-left:auto;color:rgba(255,255,255,.85);text-decoration:none;font-size:12.5px;border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:5px 12px;}
+    .home-link:hover{background:rgba(255,255,255,.1);}
+    .wrap{max-width:900px;margin:0 auto;padding:20px 16px 60px;}
+    .hero{background:linear-gradient(135deg,#0B1D34,#142847);border-radius:16px;padding:22px;color:#fff;box-shadow:0 8px 24px rgba(11,29,52,.18);}
+    .hero-head{display:flex;align-items:center;gap:14px;margin-bottom:16px;}
+    .avatar{width:50px;height:50px;border-radius:50%;background:rgba(212,175,55,.18);border:1px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:26px;flex:0 0 auto;}
+    .hero-name{font-family:'Cormorant Garamond',Georgia,serif;font-size:25px;font-weight:600;line-height:1.05;}
+    .hero-sub{font-size:12.5px;color:#CADCFC;margin-top:3px;}
+    label{display:block;font-size:11px;font-weight:700;color:#9fb4d4;text-transform:uppercase;letter-spacing:.06em;margin:0 0 5px;}
+    select,input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.15);font-size:14px;background:#fff;color:var(--ink);}
+    .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
+    .row input{flex:1;min-width:240px;border:none;}
+    .btn{background:var(--gold);color:var(--navy);border:none;border-radius:10px;padding:12px 22px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap;}
+    .btn:disabled{opacity:.6;cursor:default;}
+    .chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:11px;}
+    .chip{background:rgba(255,255,255,.08);color:#CADCFC;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:6px 13px;font-size:12px;cursor:pointer;}
+    .chip:hover{background:rgba(255,255,255,.16);}
+    #answer{margin-top:16px;}
+    .bubble{background:#fff;color:#1f2937;border-radius:12px;padding:16px 18px;}
+    .bubble-head{display:flex;align-items:center;gap:8px;margin-bottom:9px;font-size:12.5px;color:#64748b;}
+    .bubble-head b{color:var(--navy);}
+    .bubble-body{font-size:14.5px;line-height:1.62;}
+    .src{margin-top:10px;font-size:11.5px;color:#94a3b8;}
+    .disc{margin-top:12px;font-size:11.5px;color:#8a6d00;background:#fdf6e3;border-radius:7px;padding:8px 11px;}
+    .thinking{color:#CADCFC;font-size:13px;padding:6px 2px;}
+    .err{color:#fca5a5;font-size:13px;}
+    .note{max-width:900px;margin:16px auto 0;font-size:12px;color:var(--ink-muted);padding:0 4px;}
+    .locked{background:#fff;border:1px solid var(--rule);border-radius:14px;padding:40px 24px;text-align:center;color:var(--ink-muted);}
+  </style>
+</head>
+<body>
+  <div class="topbar"><div class="topbar-inner">
+    <span class="brand">Bedrock <em>Ask Amanda</em></span>
+    <a class="home-link" href="/">← Home</a>
+  </div></div>
+
+  <div class="wrap">
+    <div id="locked" class="locked" style="display:none;">This is a staff tool. <a href="/login.html">Sign in</a> to continue.</div>
+
+    <div id="app" style="display:none;">
+      <div class="hero">
+        <div class="hero-head">
+          <div class="avatar">🏘️</div>
+          <div>
+            <div class="hero-name">Ask Amanda</div>
+            <div class="hero-sub">Your senior community manager. Pick a community and ask about the budget, reserves, delinquencies, architectural activity, or open issues. She sees the whole community, aggregate only, and keeps individual homes private.</div>
+          </div>
+        </div>
+
+        <label for="community">Community</label>
+        <select id="community" onchange="rememberCommunity()"><option value="">Loading…</option></select>
+
+        <div class="row">
+          <input id="q" onkeydown="if(event.key==='Enter')ask()" placeholder="e.g. How are we tracking against budget, and how many owners are past due?">
+          <button id="btn" class="btn" onclick="ask()">Ask Amanda</button>
+        </div>
+        <div class="chips" id="chips"></div>
+        <div id="answer"></div>
+      </div>
+    </div>
+  </div>
+  <div class="note">Amanda is Bedrock's AI community manager. Information to support decisions, grounded in each community's own records and documents. Not legal advice. For an individual homeowner's account, use the property view in the board portal, which is scoped and logged.</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  const QUICK = [
+    ['Budget health', 'How are we doing against our operating budget this year?'],
+    ['Delinquencies', 'How many owners are past due, and what is the total outstanding?'],
+    ['Reserves', 'What are the biggest reserve items coming up?'],
+    ['Open issues', 'What active issues should the board be aware of right now?'],
+  ];
+  let SUPA = null;
+
+  // Tiny markdown: paragraphs, bold, bullet/numbered lists. Mirrors the board portal.
+  function mdLite(text) {
+    const lines = String(text || '').split('\n');
+    const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    let html = '', list = null;
+    const close = () => { if (list) { html += list === 'ul' ? '</ul>' : '</ol>'; list = null; } };
+    for (const raw of lines) {
+      const line = raw.trim();
+      const ul = line.match(/^[-*]\s+(.*)/);
+      const ol = line.match(/^\d+[.)]\s+(.*)/);
+      if (ul) { if (list !== 'ul') { close(); html += '<ul style="margin:6px 0;padding-left:20px;">'; list = 'ul'; } html += `<li style="margin-bottom:3px;">${inline(ul[1])}</li>`; }
+      else if (ol) { if (list !== 'ol') { close(); html += '<ol style="margin:6px 0;padding-left:20px;">'; list = 'ol'; } html += `<li style="margin-bottom:3px;">${inline(ol[1])}</li>`; }
+      else if (!line) { close(); }
+      else { close(); html += `<p style="margin:0 0 10px;">${inline(line)}</p>`; }
+    }
+    close();
+    return html;
+  }
+
+  async function authHeaders() {
+    const h = { 'Content-Type': 'application/json' };
+    try { if (SUPA) { const s = (await SUPA.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; } } catch (_) {}
+    return h;
+  }
+  async function apiGet(url) {
+    const r = await fetch(url, { headers: await authHeaders(), credentials: 'same-origin' });
+    if (r.status === 401) throw new Error('not_signed_in');
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  }
+  async function apiPost(url, body) {
+    const r = await fetch(url, { method: 'POST', headers: await authHeaders(), credentials: 'same-origin', body: JSON.stringify(body || {}) });
+    if (r.status === 401) throw new Error('not_signed_in');
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  }
+
+  function rememberCommunity() { try { localStorage.setItem('amanda_last_community', $('community').value); } catch (_) {} }
+
+  async function boot() {
+    try {
+      const cfg = await (await fetch('/api/auth/config')).json();
+      if (cfg.supabase_url && cfg.supabase_anon_key) {
+        if (!window.supabase) { await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
+        SUPA = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      }
+    } catch (_) {}
+    // Chips
+    $('chips').innerHTML = QUICK.map((x, i) => `<button class="chip" onclick="quick(${i})">${esc(x[0])}</button>`).join('');
+    // Communities (staff scope = all; this also proves we're signed in)
+    try {
+      const j = await apiGet('/api/board-portal/communities');
+      const comms = (j.communities || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      $('app').style.display = 'block';
+      if (!comms.length) { $('community').innerHTML = '<option value="">No communities available</option>'; return; }
+      let last = ''; try { last = localStorage.getItem('amanda_last_community') || ''; } catch (_) {}
+      $('community').innerHTML = comms.map((c) => `<option value="${esc(c.id)}"${c.id === last ? ' selected' : ''}>${esc(c.name)}${c.is_demo ? ' (demo)' : ''}</option>`).join('');
+    } catch (err) {
+      if (err.message === 'not_signed_in') { $('locked').style.display = 'block'; return; }
+      $('app').style.display = 'block';
+      $('community').innerHTML = '<option value="">' + esc(err.message) + '</option>';
+    }
+  }
+
+  function quick(i) { if (QUICK[i]) $('q').value = QUICK[i][1]; ask(); }
+
+  async function ask() {
+    const communityId = $('community').value;
+    const q = $('q').value;
+    const box = $('answer');
+    const btn = $('btn');
+    if (!communityId) { box.innerHTML = '<div class="err">Pick a community first.</div>'; return; }
+    if (!q || !q.trim()) return;
+    const cname = $('community').options[$('community').selectedIndex].text;
+    btn.disabled = true; btn.textContent = 'Thinking…';
+    box.innerHTML = `<div class="thinking">Amanda is reviewing the numbers for ${esc(cname)}…</div>`;
+    try {
+      const j = await apiPost('/api/board-portal/ask', { community_id: communityId, question: q.trim() });
+      const p = j.persona || {};
+      const src = (j.sources || []).length ? `<div class="src">Based on: ${j.sources.map((x) => esc(x.document)).join(', ')}</div>` : '';
+      box.innerHTML = `<div class="bubble">
+        <div class="bubble-head"><span style="font-size:16px;">${esc(p.emoji || '🏘️')}</span> <b>${esc(p.name || 'Amanda')}</b> · ${esc(p.title || 'Senior Community Manager')} · <span style="color:#94a3b8;">${esc(cname)}</span></div>
+        <div class="bubble-body">${mdLite(j.answer)}</div>
+        ${src}
+        <div class="disc">${esc(j.disclaimer || '')}</div>
+      </div>`;
+    } catch (err) {
+      if (err.message === 'not_signed_in') { box.innerHTML = '<div class="err">Your session expired. <a href="/login.html">Sign in</a> again.</div>'; }
+      else { box.innerHTML = `<div class="err">Couldn't answer that right now: ${esc(err.message)}</div>`; }
+    } finally {
+      btn.disabled = false; btn.textContent = 'Ask Amanda';
+    }
+  }
+
+  boot();
+</script>
+</body>
+</html>
