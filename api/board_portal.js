@@ -1386,4 +1386,33 @@ Answer the board member as Amanda, following your rules. Cite the snapshot numbe
   }
 });
 
+// POST /api/board-portal/speak — read an Amanda answer aloud in her own voice.
+// Click-to-listen only (the page never auto-plays), so this fires on a user tap,
+// which keeps ElevenLabs usage tied to intent. Voice is an enhancement, never a
+// dependency: a TTS outage returns a clean 503 the page is built to ignore.
+router.post('/speak', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const text = String((req.body && req.body.text) || '').trim();
+    if (!text) return res.status(400).json({ error: 'text_required' });
+    if (text.length > 4000) return res.status(400).json({ error: 'text_too_long' });
+
+    const { speakOnce } = require('../lib/voice/speak');
+    const { PERSONA } = require('../lib/voice/persona');
+    let voiceId = null;
+    try { const roster = require('../lib/team/roster'); voiceId = roster.ttsVoiceIdFor && roster.ttsVoiceIdFor('amanda'); } catch (_) {}
+    voiceId = voiceId || process.env.AMANDA_VOICE_ID || PERSONA.tts.voice_id;
+
+    const audio = await speakOnce(text, { voiceId, outputFormat: 'mp3_44100_128' });
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(audio);
+  } catch (err) {
+    const missing = err && err.code === 'ELEVENLABS_NOT_CONFIGURED';
+    if (!missing) console.error('[board_portal] amanda speak failed:', err.message);
+    res.status(503).json({ error: missing ? 'voice_not_configured' : 'voice_unavailable' });
+  }
+});
+
 module.exports = { router };

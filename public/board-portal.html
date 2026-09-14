@@ -1797,6 +1797,27 @@
     if (el && AMANDA_QUICK[i]) el.value = AMANDA_QUICK[i];
     amandaAsk();
   }
+  let amandaLastAnswer = '';
+  let amandaAudio = null;
+  function amandaPlainForSpeech(t) {
+    return String(t || '').replace(/\*\*/g, '').replace(/^[ \t]*[-*]\s+/gm, '').replace(/^[ \t]*\d+[.)]\s+/gm, '').replace(/\n{2,}/g, '. ').trim();
+  }
+  function amandaStopAudio() { if (amandaAudio) { try { amandaAudio.pause(); } catch (_) {} amandaAudio = null; } }
+  async function amandaListen(btn) {
+    try {
+      if (amandaAudio && !amandaAudio.paused) { amandaStopAudio(); btn.textContent = '🔊 Listen'; return; }
+      if (!amandaLastAnswer) return;
+      btn.disabled = true; btn.textContent = '…';
+      const r = await fetch('/api/board-portal/speak', { method: 'POST', headers: await authHeaders(), credentials: 'same-origin', body: JSON.stringify({ text: amandaLastAnswer }) });
+      if (r.status === 503) { btn.style.display = 'none'; return; }
+      if (!r.ok) throw new Error('tts');
+      const url = URL.createObjectURL(await r.blob());
+      amandaAudio = new Audio(url);
+      amandaAudio.onended = () => { btn.textContent = '🔊 Listen'; try { URL.revokeObjectURL(url); } catch (_) {} };
+      btn.disabled = false; btn.textContent = '⏹ Stop';
+      await amandaAudio.play();
+    } catch (e) { btn.disabled = false; btn.textContent = '🔊 Listen'; }
+  }
   async function amandaAsk() {
     const el = document.getElementById('amanda-q');
     const box = document.getElementById('amanda-a');
@@ -1805,16 +1826,19 @@
     if (!q || !q.trim()) return;
     if (!currentCommunityId) { if (box) box.innerHTML = '<div style="color:#fca5a5;font-size:13px;">Pick a community first.</div>'; return; }
     const cname = (communityIndex[currentCommunityId] && communityIndex[currentCommunityId].name) || 'your community';
+    amandaStopAudio();
     if (btn) { btn.disabled = true; btn.textContent = 'Thinking…'; }
     if (box) box.innerHTML = `<div style="color:#CADCFC;font-size:13px;padding:4px 2px;">Amanda is reviewing the numbers for ${esc(cname)}…</div>`;
     try {
       const j = await fetchPost('/api/board-portal/ask', { community_id: currentCommunityId, question: q.trim() });
       const p = j.persona || {};
+      amandaLastAnswer = amandaPlainForSpeech(j.answer);
       const src = (j.sources || []).length ? `<div style="margin-top:9px;font-size:11.5px;color:#94a3b8;">Based on: ${j.sources.map((x) => esc(x.document)).join(', ')}</div>` : '';
       box.innerHTML = `<div style="background:#fff;color:#1f2937;border-radius:12px;padding:15px 17px;">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12.5px;color:#64748b;">
-          <span style="font-size:16px;">${esc(p.emoji || '🏘️')}</span>
-          <b style="color:#0B1D34;">${esc(p.name || 'Amanda')}</b> · ${esc(p.title || 'Senior Community Manager')}
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12.5px;color:#64748b;">
+          <span><span style="font-size:16px;">${esc(p.emoji || '🏘️')}</span>
+          <b style="color:#0B1D34;">${esc(p.name || 'Amanda')}</b> · ${esc(p.title || 'Senior Community Manager')}</span>
+          <button onclick="amandaListen(this)" style="background:#0B1D34;color:#fff;border:none;border-radius:999px;padding:5px 12px;font-size:12px;cursor:pointer;flex:0 0 auto;white-space:nowrap;">🔊 Listen</button>
         </div>
         <div style="font-size:14px;line-height:1.6;">${_mdLite(j.answer)}</div>
         ${src}

@@ -92,6 +92,27 @@
     ['Open issues', 'What active issues should the board be aware of right now?'],
   ];
   let SUPA = null;
+  let lastAnswer = '';
+  let amandaAudio = null;
+  function plainForSpeech(t) {
+    return String(t || '').replace(/\*\*/g, '').replace(/^[ \t]*[-*]\s+/gm, '').replace(/^[ \t]*\d+[.)]\s+/gm, '').replace(/\n{2,}/g, '. ').trim();
+  }
+  function stopAudio() { if (amandaAudio) { try { amandaAudio.pause(); } catch (_) {} amandaAudio = null; } }
+  async function playAmanda(btn) {
+    try {
+      if (amandaAudio && !amandaAudio.paused) { stopAudio(); btn.textContent = '🔊 Listen'; return; }
+      if (!lastAnswer) return;
+      btn.disabled = true; btn.textContent = '…';
+      const r = await fetch('/api/board-portal/speak', { method: 'POST', headers: await authHeaders(), credentials: 'same-origin', body: JSON.stringify({ text: lastAnswer }) });
+      if (r.status === 503) { btn.style.display = 'none'; return; }
+      if (!r.ok) throw new Error('tts');
+      const url = URL.createObjectURL(await r.blob());
+      amandaAudio = new Audio(url);
+      amandaAudio.onended = () => { btn.textContent = '🔊 Listen'; try { URL.revokeObjectURL(url); } catch (_) {} };
+      btn.disabled = false; btn.textContent = '⏹ Stop';
+      await amandaAudio.play();
+    } catch (e) { btn.disabled = false; btn.textContent = '🔊 Listen'; }
+  }
 
   // Tiny markdown: paragraphs, bold, bullet/numbered lists. Mirrors the board portal.
   function mdLite(text) {
@@ -169,14 +190,19 @@
     if (!communityId) { box.innerHTML = '<div class="err">Pick a community first.</div>'; return; }
     if (!q || !q.trim()) return;
     const cname = $('community').options[$('community').selectedIndex].text;
+    stopAudio();
     btn.disabled = true; btn.textContent = 'Thinking…';
     box.innerHTML = `<div class="thinking">Amanda is reviewing the numbers for ${esc(cname)}…</div>`;
     try {
       const j = await apiPost('/api/board-portal/ask', { community_id: communityId, question: q.trim() });
       const p = j.persona || {};
+      lastAnswer = plainForSpeech(j.answer);
       const src = (j.sources || []).length ? `<div class="src">Based on: ${j.sources.map((x) => esc(x.document)).join(', ')}</div>` : '';
       box.innerHTML = `<div class="bubble">
-        <div class="bubble-head"><span style="font-size:16px;">${esc(p.emoji || '🏘️')}</span> <b>${esc(p.name || 'Amanda')}</b> · ${esc(p.title || 'Senior Community Manager')} · <span style="color:#94a3b8;">${esc(cname)}</span></div>
+        <div class="bubble-head" style="justify-content:space-between;">
+          <span><span style="font-size:16px;">${esc(p.emoji || '🏘️')}</span> <b>${esc(p.name || 'Amanda')}</b> · ${esc(p.title || 'Senior Community Manager')} · <span style="color:#94a3b8;">${esc(cname)}</span></span>
+          <button onclick="playAmanda(this)" style="background:var(--navy);color:#fff;border:none;border-radius:999px;padding:5px 12px;font-size:12px;cursor:pointer;flex:0 0 auto;white-space:nowrap;">🔊 Listen</button>
+        </div>
         <div class="bubble-body">${mdLite(j.answer)}</div>
         ${src}
         <div class="disc">${esc(j.disclaimer || '')}</div>
