@@ -432,7 +432,7 @@
       communityIndex = {};
       (j.communities || []).forEach(c => { communityIndex[c.id] = { name: c.name, is_demo: c.is_demo === true }; });
       sel.innerHTML = '<option value="">— Select a community —</option>' +
-        (j.communities || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.is_demo ? ' (Demo)' : ''}</option>`).join('');
+        (j.communities || []).map(c => `<option value="${esc(c.id)}">${c.management_status === 'prospect' ? '✕ ' : ''}${esc(c.name)}${c.management_status === 'prospect' ? ' (proposal)' : ''}${c.is_demo ? ' (Demo)' : ''}</option>`).join('');
       boardViewer = j.viewer || null;
       // Staff get the "View as" tool; when actively viewing-as, a banner + exit.
       renderActingBanner(boardViewer);

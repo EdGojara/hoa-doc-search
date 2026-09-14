@@ -172,7 +172,7 @@
       $('app').style.display = 'block';
       if (!comms.length) { $('community').innerHTML = '<option value="">No communities available</option>'; return; }
       let last = ''; try { last = localStorage.getItem('amanda_last_community') || ''; } catch (_) {}
-      $('community').innerHTML = comms.map((c) => `<option value="${esc(c.id)}"${c.id === last ? ' selected' : ''}>${esc(c.name)}${c.is_demo ? ' (demo)' : ''}</option>`).join('');
+      $('community').innerHTML = comms.map((c) => `<option value="${esc(c.id)}"${c.id === last ? ' selected' : ''}>${c.management_status === 'prospect' ? '✕ ' : ''}${esc(c.name)}${c.management_status === 'prospect' ? ' (proposal)' : ''}${c.is_demo ? ' (demo)' : ''}</option>`).join('');
     } catch (err) {
       if (err.message === 'not_signed_in') { $('locked').style.display = 'block'; return; }
       $('app').style.display = 'block';

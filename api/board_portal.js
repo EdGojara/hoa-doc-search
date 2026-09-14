@@ -49,7 +49,7 @@ router.get('/communities', async (req, res) => {
     if (!viewer) return;
     let q = supabase
       .from('communities')
-      .select('id, name, is_demo')
+      .select('id, name, is_demo, management_status')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('name', { ascending: true });
     // Board members only enumerate their own community(ies); staff see all.
