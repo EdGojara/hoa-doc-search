@@ -1169,4 +1169,221 @@ Answer as board education, following your rules. If the excerpts don't cover it,
   }
 });
 
+// =============================================================================
+// Ask Amanda — the board portal's interactive assistant (Ed 2026-09-14)
+// -----------------------------------------------------------------------------
+// The SAME one brain as Claire, wearing Amanda's face (our Senior Community
+// Manager), but pointed at the WHOLE community instead of one homeowner, and
+// available only behind the board door. The privacy line Ed drew is baked in
+// structurally: AGGREGATE ONLY. This surface never puts an individual owner's
+// ledger, name, address, or personal detail in front of the model. A board
+// member who needs a specific account uses the property tile (itself scoped and
+// logged). So even asked "what does unit 12 owe," Amanda has no individual rows
+// to answer from and points them there.
+//
+// Every number Amanda cites comes from the SAME canonical views the board tiles
+// read (v_property_summary, v_reserve_community_summary, community_budgets,
+// v_homeowner_current_balance, property_enforcement_states). Two readers of one
+// view agree, so Amanda's figures match the dashboard. She also inherits the
+// Community Key Issues via buildCommunityContextBlock, so she knows live matters
+// like the LOPF / Barker Cypress MUD negotiation without being told twice.
+// =============================================================================
+const AMANDA_SYSTEM = `You are Amanda Albright, the Senior Community Manager on the Bedrock team for this community. You are speaking with a board member inside the private board portal.
+
+WHAT YOU CAN SEE (aggregate only):
+- The community's operating budget (adopted, by fund), reserve study health, accounts-receivable TOTALS and delinquency COUNTS, open violations by stage, architectural-review activity, and the community's active Key Issues.
+- You do NOT have individual homeowner accounts in this view: no names, addresses, balances, or personal history for any specific owner. If a board member asks about a specific homeowner or unit, explain that individual accounts are kept private on this screen, and point them to the property map in the board portal (where access is scoped and logged) or to their Bedrock manager. Never guess an individual's balance or history.
+
+YOUR ROLE:
+- You are informational, not decisional. You surface the facts, the budget context, the process, and the options. The board decides and votes. Never direct the board to take an action, grant a waiver, or assert a legal position.
+- For anything consequential (a fine, a lien, foreclosure, litigation, an executive-session boundary, a records-request denial, a specific legal deadline) recommend confirming with the association's attorney or your Bedrock manager before acting. Do not improvise the specifics.
+
+HOW TO ANSWER:
+- Use the community snapshot and document excerpts below. Cite the actual numbers plainly. If the snapshot does not contain what was asked, say so rather than guessing.
+- For governing-document or Texas-law questions, ground your answer in the excerpts provided. If they do not cover it, say so and point to the documents or counsel. Never invent a statute subsection; refer to "Chapter 209 of the Texas Property Code" generally if unsure.
+- Be warm, plain, brief, and confident, the way a good senior manager briefs a board. Assume a smart volunteer who is new to this. No legalese.
+- Commas, not em-dashes. Write in English.
+- Never claim you "confirmed with the team" or invent a source. Answer only from what you were given.`;
+
+// Assemble the community's AGGREGATE operating snapshot from the same canonical
+// views the board tiles read. Best-effort throughout: a missing sub-source means
+// a thinner briefing, never a 500 and never a fabricated number.
+async function buildBoardAggregateContext(communityId, communityName) {
+  const money = (c) => (c == null ? 'n/a' : '$' + Math.round(Number(c) / 100).toLocaleString('en-US'));
+  const parts = [];
+
+  // Community profile + LIVE Key Issues — the same block every AI surface reads.
+  try {
+    const { buildCommunityContextBlock } = require('./communities');
+    const block = await buildCommunityContextBlock(communityName);
+    if (block && String(block).trim()) parts.push(String(block).trim());
+  } catch (e) { console.warn('[board_portal] amanda profile skipped:', e.message); }
+
+  // Homes, compliance, architectural — aggregate over v_property_summary.
+  try {
+    const { data: rows } = await supabase.from('v_property_summary')
+      .select('open_violations, worst_open_stage, arc_decisions_count, arc_approved_count, arc_denied_count')
+      .eq('community_id', communityId).limit(5000);
+    const r = rows || [];
+    const withOpen = r.filter((x) => x.open_violations > 0).length;
+    const certOrFine = r.filter((x) => ['certified_209', 'fine_assessed'].includes(x.worst_open_stage)).length;
+    const arc = r.reduce((s, x) => s + (x.arc_decisions_count || 0), 0);
+    const arcA = r.reduce((s, x) => s + (x.arc_approved_count || 0), 0);
+    const arcD = r.reduce((s, x) => s + (x.arc_denied_count || 0), 0);
+    parts.push(`COMMUNITY SIZE & COMPLIANCE (aggregate):
+- Homes in the community: ${r.length}
+- Homes with an open violation: ${withOpen}${certOrFine ? ` (of these, ${certOrFine} at certified 209 or fine stage)` : ''}
+- Architectural decisions on record: ${arc} (${arcA} approved, ${arcD} denied)`);
+  } catch (e) { console.warn('[board_portal] amanda props skipped:', e.message); }
+
+  // Accounts receivable — AGGREGATE ONLY (counts + total; never per-owner).
+  // Ledger-first, exactly like the /summary tile: prefer v_homeowner_current_balance,
+  // with enforcement flags from the SSOT property_enforcement_states.
+  try {
+    const { fetchAllQuery } = require('../lib/db/fetch_all');
+    const bals = await fetchAllQuery(() => supabase.from('v_homeowner_current_balance')
+      .select('property_id, balance_cents').eq('community_id', communityId), { orderBy: 'property_id' });
+    const ledger = (bals || []).filter((b) => b.property_id);
+    if (ledger.length) {
+      const owing = ledger.filter((b) => Number(b.balance_cents) > 0);
+      const { data: esRows } = await supabase.from('property_enforcement_states')
+        .select('state').eq('community_id', communityId).is('ended_at', null).limit(5000);
+      const es = esRows || [];
+      const atLegal = es.filter((c) => ['at_legal', 'lien_filed', 'judgment', 'foreclosure'].includes(c.state)).length;
+      const inColl = es.filter((c) => c.state === 'in_collections').length;
+      const onPlan = es.filter((c) => c.state === 'on_payment_plan').length;
+      const totalOwed = owing.reduce((s, b) => s + Number(b.balance_cents || 0), 0);
+      parts.push(`ACCOUNTS RECEIVABLE (aggregate):
+- Owners past due: ${owing.length} of ${ledger.length}
+- Total outstanding: ${money(totalOwed)}
+- Enforcement: ${atLegal} at legal, ${inColl} in collections, ${onPlan} on a payment plan`);
+    }
+  } catch (e) { console.warn('[board_portal] amanda AR skipped:', e.message); }
+
+  // Reserve study health.
+  try {
+    const { data: rh } = await supabase.from('v_reserve_community_summary')
+      .select('active_components, total_current_cost_cents, total_future_cost_cents, critical_2yr_count, soon_5yr_count, spent_last_12mo_cents')
+      .eq('community_id', communityId).maybeSingle();
+    if (rh) parts.push(`RESERVE STUDY (aggregate):
+- Active components: ${rh.active_components || 0}
+- Projected future replacement cost: ${money(rh.total_future_cost_cents)}
+- Critical within 2 years: ${rh.critical_2yr_count || 0}; due within 5 years: ${rh.soon_5yr_count || 0}
+- Reserve spending last 12 months: ${money(rh.spent_last_12mo_cents)}`);
+  } catch (e) { console.warn('[board_portal] amanda reserve skipped:', e.message); }
+
+  // Adopted operating budget headline (annual, by fund) — same computation as the
+  // /summary budget tile. YTD-vs-actual is on the Budget tile; not recomputed here.
+  try {
+    const fy = new Date().getUTCFullYear();
+    const { data: bdg } = await supabase.from('community_budgets')
+      .select('id, fiscal_year, status').eq('community_id', communityId)
+      .eq('fiscal_year', fy).in('status', ['approved', 'active']).maybeSingle();
+    if (bdg) {
+      const { data: lines } = await supabase.from('budget_line_items')
+        .select('annual_amount_cents, chart_of_accounts ( account_type, account_funds ( fund_code ) )')
+        .eq('budget_id', bdg.id);
+      let opRev = 0, opExp = 0, resContrib = 0;
+      for (const l of (lines || [])) {
+        const amt = Number(l.annual_amount_cents) || 0;
+        const coa = l.chart_of_accounts || {};
+        const fund = coa.account_funds?.fund_code || 'OPR';
+        if (fund === 'RES') { if (coa.account_type === 'revenue') resContrib += amt; }
+        else if (coa.account_type === 'revenue') opRev += amt;
+        else if (coa.account_type === 'expense') opExp += amt;
+      }
+      parts.push(`OPERATING BUDGET (FY ${bdg.fiscal_year}, ${bdg.status}):
+- Budgeted operating revenue: ${money(opRev)}
+- Budgeted operating expense: ${money(opExp)}
+- Net operating: ${money(opRev - opExp)}
+- Annual reserve contribution: ${money(Math.abs(resContrib))}
+(For how the year is tracking against this, point the board to the Budget tile.)`);
+    } else {
+      parts.push(`OPERATING BUDGET: no adopted budget on file for FY ${fy} yet.`);
+    }
+  } catch (e) { console.warn('[board_portal] amanda budget skipped:', e.message); }
+
+  return parts.join('\n\n');
+}
+
+// POST /api/board-portal/ask — Amanda answers a board member's question.
+router.post('/ask', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const viewer = await requireBoardViewer(req, res);
+    if (!viewer) return;
+    const communityId = String((req.body && req.body.community_id) || '').trim();
+    const question = String((req.body && req.body.question) || '').trim();
+    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
+    if (!question) return res.status(400).json({ error: 'question_required' });
+    if (question.length > 2000) return res.status(400).json({ error: 'question_too_long' });
+    if (!canSeeCommunity(viewer, communityId)) return res.status(403).json({ error: 'forbidden_community' });
+
+    const { data: community } = await supabase.from('communities')
+      .select('id, name').eq('id', communityId).maybeSingle();
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+    // Aggregate operating snapshot (same canonical views as the board tiles).
+    let snapshot = '';
+    try { snapshot = await buildBoardAggregateContext(community.id, community.name); }
+    catch (e) { console.warn('[board_portal] amanda snapshot failed:', e.message); }
+
+    // Governing-doc + statute grounding for policy questions (hybrid retrieval).
+    let docContext = ''; let sources = [];
+    try {
+      const { getRelevantChunksWithSources } = require('../lib/hybrid_retrieval');
+      const r = await getRelevantChunksWithSources(question, community.name);
+      docContext = r.context || '';
+      sources = (r.sources || []).map((s) => ({ document: s.filename }));
+    } catch (e) { console.warn('[board_portal] amanda retrieval failed:', e.message); }
+
+    // Amanda's identity from the one roster (face + title), with a safe default.
+    let amanda = { name: 'Amanda Albright', title: 'Senior Community Manager', emoji: '🏘️' };
+    try {
+      const roster = require('../lib/team/roster');
+      const a = roster.get && roster.get('amanda');
+      if (a) amanda = { name: a.name || amanda.name, title: a.signature_title || a.title || amanda.title, emoji: a.emoji || amanda.emoji };
+    } catch (_) { /* default */ }
+
+    const userContent = `Community: ${community.name}
+
+The board member asks:
+"${question}"
+
+COMMUNITY SNAPSHOT (aggregate, from ${community.name}'s live records):
+${snapshot || '(no snapshot data available)'}
+
+GOVERNING-DOCUMENT & TEXAS-LAW EXCERPTS that may be relevant (may be empty):
+${docContext || '(no document excerpts were retrieved for this question)'}
+
+Answer the board member as Amanda, following your rules. Cite the snapshot numbers where they answer the question. If something asked for is not in the snapshot or excerpts, say so plainly.`;
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const completion = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 1000,
+      system: AMANDA_SYSTEM,
+      messages: [{ role: 'user', content: userContent }],
+    });
+    const answer = (completion.content && completion.content[0] && completion.content[0].text) || '';
+
+    // Aggregate-only surface, but log who asked what for the board's own trail.
+    // No individual PII is exposed here by construction.
+    console.log('[board_portal] amanda ask', JSON.stringify({
+      community: community.name, viewer: viewer.email, kind: viewer.kind, q: question.slice(0, 200),
+    }));
+
+    res.json({
+      answer,
+      persona: amanda,
+      sources,
+      grounded: !!(snapshot || docContext),
+      disclaimer: 'Amanda is Bedrock’s AI community manager. This is information to help the board, grounded in your community’s own records and documents. It is not legal advice and no substitute for your association’s attorney.',
+    });
+  } catch (err) {
+    console.error('[board_portal] amanda ask failed:', err.message);
+    res.status(500).json({ error: 'amanda_unavailable' });
+  }
+});
+
 module.exports = { router };

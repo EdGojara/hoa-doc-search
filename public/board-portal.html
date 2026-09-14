@@ -1783,6 +1783,72 @@
     }
   }
 
+  // ── Ask Amanda ──────────────────────────────────────────────────────
+  // The board portal's interactive assistant. Same brain as Claire, Amanda's
+  // face, community-wide (aggregate) scope. English only.
+  const AMANDA_QUICK = [
+    'How are we doing against our operating budget this year?',
+    'How many owners are past due, and what is the total outstanding?',
+    'What are the biggest reserve items coming up?',
+    'What active issues should the board be aware of right now?',
+  ];
+  function amandaQuick(i) {
+    const el = document.getElementById('amanda-q');
+    if (el && AMANDA_QUICK[i]) el.value = AMANDA_QUICK[i];
+    amandaAsk();
+  }
+  async function amandaAsk() {
+    const el = document.getElementById('amanda-q');
+    const box = document.getElementById('amanda-a');
+    const btn = document.getElementById('amanda-btn');
+    const q = el ? el.value : '';
+    if (!q || !q.trim()) return;
+    if (!currentCommunityId) { if (box) box.innerHTML = '<div style="color:#fca5a5;font-size:13px;">Pick a community first.</div>'; return; }
+    const cname = (communityIndex[currentCommunityId] && communityIndex[currentCommunityId].name) || 'your community';
+    if (btn) { btn.disabled = true; btn.textContent = 'Thinking…'; }
+    if (box) box.innerHTML = `<div style="color:#CADCFC;font-size:13px;padding:4px 2px;">Amanda is reviewing the numbers for ${esc(cname)}…</div>`;
+    try {
+      const j = await fetchPost('/api/board-portal/ask', { community_id: currentCommunityId, question: q.trim() });
+      const p = j.persona || {};
+      const src = (j.sources || []).length ? `<div style="margin-top:9px;font-size:11.5px;color:#94a3b8;">Based on: ${j.sources.map((x) => esc(x.document)).join(', ')}</div>` : '';
+      box.innerHTML = `<div style="background:#fff;color:#1f2937;border-radius:12px;padding:15px 17px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12.5px;color:#64748b;">
+          <span style="font-size:16px;">${esc(p.emoji || '🏘️')}</span>
+          <b style="color:#0B1D34;">${esc(p.name || 'Amanda')}</b> · ${esc(p.title || 'Senior Community Manager')}
+        </div>
+        <div style="font-size:14px;line-height:1.6;">${_mdLite(j.answer)}</div>
+        ${src}
+        <div style="margin-top:11px;font-size:11.5px;color:#8a6d00;background:#fdf6e3;border-radius:7px;padding:7px 10px;">${esc(j.disclaimer || '')}</div>
+      </div>`;
+    } catch (e) {
+      box.innerHTML = `<div style="color:#fca5a5;font-size:13px;">Couldn't answer that right now: ${esc(e.message)}</div>`;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Ask Amanda'; }
+    }
+  }
+  function amandaHero() {
+    const chips = AMANDA_QUICK.map((q, i) => {
+      const lbl = ['Budget health', 'Delinquencies', 'Reserves', 'Open issues'][i];
+      return `<button onclick="amandaQuick(${i})" style="background:rgba(255,255,255,.08);color:#CADCFC;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:6px 13px;font-size:12px;cursor:pointer;">${lbl}</button>`;
+    }).join('');
+    return `
+      <div style="background:linear-gradient(135deg,#0B1D34,#142847);border-radius:16px;padding:20px 22px;margin-bottom:22px;color:#fff;box-shadow:0 8px 24px rgba(11,29,52,.18);">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+          <div style="width:46px;height:46px;border-radius:50%;background:rgba(212,175,55,.18);border:1px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:24px;flex:0 0 auto;">🏘️</div>
+          <div>
+            <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:23px;font-weight:600;line-height:1.05;">Ask Amanda</div>
+            <div style="font-size:12.5px;color:#CADCFC;margin-top:3px;">Your Bedrock senior community manager. Ask about the budget, reserves, delinquencies, architectural activity, or what is going on in the community. She sees the whole community, aggregate only, and keeps individual homes private.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <input id="amanda-q" onkeydown="if(event.key==='Enter')amandaAsk()" placeholder="e.g. How are we tracking against budget, and how many owners are past due?" style="flex:1;min-width:240px;padding:12px 14px;border-radius:10px;border:none;font-size:14px;color:#1a1a1a;">
+          <button id="amanda-btn" onclick="amandaAsk()" style="background:var(--gold);color:#0B1D34;border:none;border-radius:10px;padding:12px 22px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap;">Ask Amanda</button>
+        </div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:11px;">${chips}</div>
+        <div id="amanda-a" style="margin-top:14px;"></div>
+      </div>`;
+  }
+
   function renderDashboardCards(s, projects, motions, threads) {
     const fmtMoney = (cents) => {
       if (cents == null) return '—';
@@ -2013,6 +2079,7 @@
 
     return `
       ${comfortBanner(s, projects, motions)}
+      ${amandaHero()}
       <div class="tile-section-label">Financial health</div>
       <div class="board-tile-grid">
         ${budgetTile}
