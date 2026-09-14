@@ -236,4 +236,149 @@ router.patch('/transactions/:txnId', async (req, res) => {
   } catch (err) { console.error('[vault] txn update failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// ---- Receipts: photo -> extract -> support a card charge ------------------
+// Suggest the card charges a receipt most likely supports: same entity, amount
+// matches (a card charge is stored NEGATIVE, the receipt total is POSITIVE),
+// dated near the receipt. Never auto-links; it only ranks candidates.
+async function suggestMatches(receipt) {
+  if (!receipt || receipt.total_cents == null) return [];
+  const total = Math.abs(Number(receipt.total_cents));
+  const base = receipt.receipt_date ? new Date(receipt.receipt_date + 'T00:00:00Z').getTime() : Date.now();
+  const lo = new Date(base - 21 * 86400000).toISOString().slice(0, 10);
+  const hi = new Date(base + 21 * 86400000).toISOString().slice(0, 10);
+  const { data } = await supabase.from('vault_transactions')
+    .select('id, txn_date, description, amount_cents, source, reconciled, bank_account_id')
+    .eq('entity_id', receipt.entity_id)
+    .gte('txn_date', lo).lte('txn_date', hi)
+    .limit(500);
+  return (data || [])
+    .map((t) => {
+      const amtDiff = Math.abs(Math.abs(Number(t.amount_cents)) - total);
+      const dayDiff = receipt.receipt_date ? Math.abs((new Date(t.txn_date).getTime() - base) / 86400000) : 0;
+      return { ...t, amt_diff_cents: amtDiff, day_diff: Math.round(dayDiff) };
+    })
+    .filter((t) => t.amt_diff_cents <= 200)          // within $2
+    .sort((a, b) => (a.amt_diff_cents - b.amt_diff_cents) || (a.day_diff - b.day_diff))
+    .slice(0, 6);
+}
+
+// POST /entities/:id/receipts — upload a receipt photo, extract, store as support.
+router.post('/entities/:id/receipts', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    const entity_id = req.params.id;
+    const bank_account_id = (req.body && req.body.bank_account_id) || null;
+    const { extractReceipt } = require('../lib/vault/receipt_extract');
+    const ex = await extractReceipt(req.file.buffer, req.file.mimetype);
+
+    const safe = (req.file.originalname || 'receipt.jpg').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+    const path = `owner-vault/${entity_id}/receipts/${Date.now()}-${safe}`;
+    let stored = null;
+    try {
+      const { error: upErr } = await supabase.storage.from('documents')
+        .upload(path, req.file.buffer, { contentType: req.file.mimetype || 'image/jpeg', upsert: false });
+      if (upErr) throw upErr;
+      stored = path;
+    } catch (e) { console.warn('[vault] receipt store failed:', e.message); }
+    if (!stored) return res.status(500).json({ error: 'could_not_store_image' });
+
+    const e = ex.extracted || {};
+    const { data: row, error } = await supabase.from('vault_receipts').insert({
+      entity_id, bank_account_id, storage_path: stored, content_type: req.file.mimetype || 'image/jpeg',
+      vendor_name: e.vendor_name || null, receipt_date: e.receipt_date || null,
+      total_cents: e.total_cents == null ? null : e.total_cents, tax_cents: e.tax_cents == null ? null : e.tax_cents,
+      currency: e.currency || 'USD', card_last4: e.card_last4 || null,
+      notes: e.category_guess ? ('Category guess: ' + e.category_guess) : null,
+      status: 'unmatched', raw_extracted: ex.raw ? { raw: ex.raw, extracted: e } : null,
+      created_by: req.owner.email,
+    }).select('*').single();
+    if (error) throw error;
+
+    const suggestions = await suggestMatches(row).catch(() => []);
+    res.json({ ok: true, receipt: row, extract_ok: ex.ok, extract_error: ex.error || null, suggestions });
+  } catch (err) { console.error('[vault] receipt upload failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// GET /entities/:id/receipts — list, newest first, with a short-lived image URL.
+router.get('/entities/:id/receipts', async (req, res) => {
+  try {
+    let q = supabase.from('vault_receipts').select('*').eq('entity_id', req.params.id).order('created_at', { ascending: false }).limit(1000);
+    if (req.query.status) q = q.eq('status', req.query.status);
+    const { data, error } = await q;
+    if (error) throw error;
+    const rows = await Promise.all((data || []).map(async (r) => {
+      let image_url = null;
+      try { const { data: s } = await supabase.storage.from('documents').createSignedUrl(r.storage_path, 3600); image_url = s && s.signedUrl; } catch (_) {}
+      return { ...r, image_url };
+    }));
+    res.json({ receipts: rows });
+  } catch (err) { console.error('[vault] receipts list failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// GET /receipts/:receiptId/suggest — candidate card charges to match.
+router.get('/receipts/:receiptId/suggest', async (req, res) => {
+  try {
+    const { data: r } = await supabase.from('vault_receipts').select('*').eq('id', req.params.receiptId).maybeSingle();
+    if (!r) return res.status(404).json({ error: 'not_found' });
+    res.json({ suggestions: await suggestMatches(r) });
+  } catch (err) { console.error('[vault] suggest failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// PATCH /receipts/:receiptId — correct the extracted fields.
+router.patch('/receipts/:receiptId', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const allowed = ['vendor_name', 'receipt_date', 'total_cents', 'tax_cents', 'currency', 'category_account_id', 'card_last4', 'notes', 'bank_account_id', 'status'];
+    const patch = {};
+    for (const f of allowed) if (b[f] !== undefined) patch[f] = b[f] === '' ? null : b[f];
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'nothing_to_update' });
+    const { data, error } = await supabase.from('vault_receipts').update(patch).eq('id', req.params.receiptId).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true, receipt: data });
+  } catch (err) { console.error('[vault] receipt patch failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /receipts/:receiptId/match — tie a receipt to its card charge, and
+// reconcile that charge (and inherit the receipt's GL category if the charge
+// has none).
+router.post('/receipts/:receiptId/match', async (req, res) => {
+  try {
+    const transaction_id = req.body && req.body.transaction_id;
+    if (!transaction_id) return res.status(400).json({ error: 'transaction_id_required' });
+    const { data: r } = await supabase.from('vault_receipts').select('*').eq('id', req.params.receiptId).maybeSingle();
+    if (!r) return res.status(404).json({ error: 'receipt_not_found' });
+    const { data: t } = await supabase.from('vault_transactions').select('id, category_account_id').eq('id', transaction_id).maybeSingle();
+    if (!t) return res.status(404).json({ error: 'transaction_not_found' });
+
+    const { error: rErr } = await supabase.from('vault_receipts')
+      .update({ matched_transaction_id: transaction_id, status: 'matched' }).eq('id', r.id);
+    if (rErr) throw rErr;
+    const txnPatch = { reconciled: true, needs_review: false };
+    if (!t.category_account_id && r.category_account_id) txnPatch.category_account_id = r.category_account_id;
+    await supabase.from('vault_transactions').update(txnPatch).eq('id', transaction_id);
+    res.json({ ok: true });
+  } catch (err) { console.error('[vault] receipt match failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /receipts/:receiptId/unmatch — undo the link (leaves the charge as-is).
+router.post('/receipts/:receiptId/unmatch', async (req, res) => {
+  try {
+    const { error } = await supabase.from('vault_receipts')
+      .update({ matched_transaction_id: null, status: 'unmatched' }).eq('id', req.params.receiptId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { console.error('[vault] receipt unmatch failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// DELETE /receipts/:receiptId — remove the image + row.
+router.delete('/receipts/:receiptId', async (req, res) => {
+  try {
+    const { data: r } = await supabase.from('vault_receipts').select('storage_path').eq('id', req.params.receiptId).maybeSingle();
+    if (r && r.storage_path) { try { await supabase.storage.from('documents').remove([r.storage_path]); } catch (_) {} }
+    await supabase.from('vault_receipts').delete().eq('id', req.params.receiptId);
+    res.json({ ok: true });
+  } catch (err) { console.error('[vault] receipt delete failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 module.exports = { router };

@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Receipt Capture — Vault</title>
+<style>
+  :root{ --navy:#0B1D34; --gold:#D4AF37; --ink:#334155; --faint:#94a3b8; --rule:#e6e9ee; --bg:#f4f5f7; --good:#166b46; --good-bg:#e7f4ec; }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;line-height:1.5;}
+  .wrap{max-width:520px;margin:0 auto;padding:18px 16px 60px;}
+  .brand{font-family:Georgia,serif;color:var(--navy);font-weight:700;font-size:15px;}
+  h1{font-family:Georgia,serif;color:var(--navy);font-size:22px;margin:8px 0 2px;}
+  .sub{color:var(--faint);font-size:13.5px;margin:0 0 16px;}
+  .card{background:#fff;border:1px solid var(--rule);border-radius:12px;padding:14px 15px;margin-bottom:12px;}
+  label{display:block;font-size:12px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 5px;}
+  select,input{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;font-size:15px;background:#fff;color:var(--ink);}
+  .capture{display:block;width:100%;background:var(--gold);color:var(--navy);border:none;border-radius:12px;padding:20px;font-weight:800;font-size:17px;text-align:center;cursor:pointer;margin-top:6px;}
+  .capture .h{display:block;font-size:11.5px;font-weight:600;opacity:.8;margin-top:4px;text-transform:uppercase;letter-spacing:.06em;}
+  input[type=file]{display:none;}
+  .btn{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:10px 16px;font-weight:700;font-size:14px;cursor:pointer;}
+  .ghost{background:#fff;border:1px solid #cbd5e1;color:var(--navy);border-radius:9px;padding:9px 14px;font-weight:600;font-size:13px;cursor:pointer;}
+  .muted{color:var(--faint);font-size:13px;}
+  .locked{text-align:center;padding:40px 20px;color:var(--faint);}
+  .kv{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--rule);font-size:14.5px;}
+  .kv b{color:var(--navy);}
+  .thumb{width:100%;max-height:230px;object-fit:contain;border-radius:9px;background:#000;margin-bottom:10px;}
+  .ok{background:var(--good-bg);color:var(--good);border:1px solid #b6e0c6;border-radius:9px;padding:8px 11px;font-size:13px;font-weight:600;margin-bottom:10px;}
+  .sug{border:1px solid var(--rule);border-radius:9px;padding:9px 11px;margin-bottom:7px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+  .sug .d{font-size:13px;} .sug .a{font-weight:700;color:var(--navy);font-variant-numeric:tabular-nums;}
+  .spin{display:inline-block;width:16px;height:16px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-3px;} @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">Bedrock · The Vault</div>
+  <h1>Receipt Capture</h1>
+  <p class="sub">Snap a receipt. It uploads to the entity's books and reconciles against the card charge.</p>
+
+  <div id="locked" class="locked" style="display:none;">This workspace is private. Sign in as the owner on this device.</div>
+
+  <div id="app" style="display:none;">
+    <div class="card">
+      <label>Entity</label>
+      <select id="entity" onchange="loadCards()"><option value="">Loading…</option></select>
+      <label style="margin-top:12px;">Card (optional)</label>
+      <select id="card"><option value="">— which card —</option></select>
+    </div>
+
+    <label for="cam" class="capture" id="camBtn">📷 Take a photo of the receipt<span class="h">Camera opens · uploads automatically</span></label>
+    <input id="cam" type="file" accept="image/*" capture="environment" onchange="onPick()">
+    <div id="status" class="muted" style="text-align:center;min-height:20px;"></div>
+
+    <div id="result" class="card" style="display:none;"></div>
+  </div>
+</div>
+
+<script>
+const $=(id)=>document.getElementById(id);
+const esc=(s)=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const money=(c)=>c==null?'—':'$'+(Number(c)/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+let SUPA=null;
+async function authHeader(){ try{ if(SUPA){ const {data:{session}}=await SUPA.auth.getSession(); if(session&&session.access_token) return {Authorization:'Bearer '+session.access_token}; } }catch(_){}; return {}; }
+async function api(url,opts){ opts=opts||{}; const h=Object.assign({},opts.headers||{},await authHeader()); const r=await fetch(url,Object.assign({},opts,{headers:h})); let j={}; try{j=await r.json();}catch(_){} if(r.status===403){ throw new Error('forbidden'); } if(!r.ok) throw new Error(j.detail||j.error||('HTTP '+r.status)); return j; }
+
+async function boot(){
+  try{ const cfg=await fetch('/api/auth/config').then(r=>r.json());
+    if(cfg.supabase_url&&cfg.supabase_anon_key){
+      if(!window.supabase){ await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';s.onload=res;s.onerror=rej;document.head.appendChild(s);}); }
+      SUPA=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+    }
+  }catch(_){}
+  try{ await api('/api/vault/whoami'); }catch(_){ $('locked').style.display='block'; return; }
+  $('app').style.display='block';
+  loadEntities();
+}
+async function loadEntities(){
+  try{ const j=await api('/api/vault/entities');
+    const ents=j.entities||j||[];
+    $('entity').innerHTML=(ents.length?'':'<option value="">No entities yet</option>')+ents.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('');
+    if(ents.length) loadCards();
+  }catch(err){ $('entity').innerHTML='<option value="">'+esc(err.message)+'</option>'; }
+}
+async function loadCards(){
+  const id=$('entity').value; if(!id){ $('card').innerHTML='<option value="">— which card —</option>'; return; }
+  try{ const j=await api('/api/vault/entities/'+id+'/bank-accounts');
+    const list=(j.bank_accounts||j||[]).filter(a=>!a.kind||a.kind==='credit_card');
+    $('card').innerHTML='<option value="">— which card —</option>'+list.map(a=>`<option value="${esc(a.id)}">${esc(a.name||a.kind)}${a.last4?' ····'+esc(a.last4):''}</option>`).join('');
+  }catch(_){ $('card').innerHTML='<option value="">— which card —</option>'; }
+}
+
+async function onPick(){
+  const f=$('cam').files&&$('cam').files[0]; if(!f) return;
+  const entity=$('entity').value; if(!entity){ $('status').textContent='Pick an entity first.'; return; }
+  $('status').innerHTML='<span class="spin"></span> Uploading and reading the receipt…';
+  $('result').style.display='none';
+  const fd=new FormData(); fd.append('file',f); if($('card').value) fd.append('bank_account_id',$('card').value);
+  try{
+    const j=await api('/api/vault/entities/'+entity+'/receipts',{method:'POST',body:fd});
+    $('status').textContent='';
+    renderResult(j);
+  }catch(err){ $('status').textContent='Upload failed: '+err.message; }
+  $('cam').value='';
+}
+
+function renderResult(j){
+  const r=j.receipt||{}; const box=$('result'); box.style.display='block';
+  const warn = j.extract_ok===false ? '<div class="muted" style="color:#8a5a12;">Could not auto-read the receipt ('+esc(j.extract_error||'')+'). You can still keep it and fill in the details in the Vault.</div>' : '';
+  const sug=(j.suggestions||[]);
+  const sugHtml = sug.length ? ('<label style="margin-top:12px;">Matches these card charges</label>'+sug.map(s=>`
+    <div class="sug"><div class="d"><b>${esc(s.txn_date)}</b> · ${esc((s.description||'').slice(0,40))}<br><span class="muted">${s.day_diff}d away · ${s.amt_diff_cents===0?'exact':('off '+money(s.amt_diff_cents))}</span></div>
+    <div style="text-align:right;"><div class="a">${money(Math.abs(s.amount_cents))}</div><button class="btn" style="margin-top:4px;padding:6px 12px;" onclick="match('${r.id}','${s.id}',this)">Match</button></div></div>`).join(''))
+    : '<div class="muted" style="margin-top:10px;">No card charge found to match yet. Import the card statement, then match it in the Vault.</div>';
+  box.innerHTML='<div class="ok">Saved to the books.</div>'
+    + (r.image_url?'<img class="thumb" src="'+esc(r.image_url)+'">':'')
+    + '<div class="kv"><span>Vendor</span><b>'+esc(r.vendor_name||'—')+'</b></div>'
+    + '<div class="kv"><span>Date</span><b>'+esc(r.receipt_date||'—')+'</b></div>'
+    + '<div class="kv"><span>Total</span><b>'+money(r.total_cents)+'</b></div>'
+    + '<div class="kv"><span>Tax</span><b>'+money(r.tax_cents)+'</b></div>'
+    + (r.card_last4?'<div class="kv"><span>Card</span><b>····'+esc(r.card_last4)+'</b></div>':'')
+    + warn + sugHtml
+    + '<div style="margin-top:14px;text-align:center;"><button class="ghost" onclick="$(\'cam\').click()">Capture another</button></div>';
+}
+async function match(receiptId,txnId,btn){
+  btn.disabled=true; btn.textContent='…';
+  try{ await api('/api/vault/receipts/'+receiptId+'/match',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({transaction_id:txnId})});
+    btn.textContent='✓ Matched'; btn.style.background='#166b46';
+  }catch(err){ btn.disabled=false; btn.textContent='Match'; $('status').textContent=err.message; }
+}
+boot();
+</script>
+</body>
+</html>
