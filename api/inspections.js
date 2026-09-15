@@ -3365,6 +3365,13 @@ router.get('/inspections/observations/confirm-preview', async (req, res) => {
       cases.set(`${o.property_id}|${o.category_id}`, { propertyId: o.property_id, categoryId: o.category_id });
     }
     const caseList = [...cases.values()];
+    // Observations still awaiting confirm. A violation opened from one of these
+    // is that observation's OWN case (analyze auto-opens it, leaves the obs
+    // pending) — confirm will DRAFT its first notice, not continue it. Exclude
+    // those from the open-case match so the preview counts them as to-be-drafted,
+    // never as "held". Keeps the preview in lockstep with the confirm action
+    // (the preview-diverges scar) and the self-continuation fix.
+    const pendingObsIds = new Set((pend || []).map((o) => o.id).filter(Boolean));
 
     // 2) Confirmed category-alias groups, ONE fetch → union-find so a case under
     //    a sibling label still matches its open case (same rule as intake).
@@ -3380,7 +3387,7 @@ router.get('/inspections/observations/confirm-preview', async (req, res) => {
     //    property_id → its open rows (we pick the furthest-advanced in-memory).
     const openViols = await fetchAllQuery(() => {
       let q = supabase.from('violations')
-        .select('id, property_id, primary_category_id, current_stage, current_stage_started_at')
+        .select('id, property_id, primary_category_id, current_stage, current_stage_started_at, opened_from_observation_id')
         .not('current_stage', 'in', '(cured,closed,voided)')
         .is('resolved_at', null);
       if (communityId) q = q.eq('community_id', communityId);
@@ -3396,7 +3403,9 @@ router.get('/inspections/observations/confirm-preview', async (req, res) => {
     let newCount = 0;
     for (const c of caseList) {
       const gk = groupKey(c.categoryId);
-      const rows = (openByProp.get(c.propertyId) || []).filter((v) => groupKey(v.primary_category_id) === gk);
+      const rows = (openByProp.get(c.propertyId) || [])
+        .filter((v) => groupKey(v.primary_category_id) === gk)
+        .filter((v) => !pendingObsIds.has(v.opened_from_observation_id)); // exclude own-case (drafted at confirm)
       if (!rows.length) { newCount++; continue; }
       const open = rows.slice().sort((a, b) => (STAGE_RANK[b.current_stage] || 0) - (STAGE_RANK[a.current_stage] || 0))[0];
       matched.push(open);
@@ -3597,6 +3606,11 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
     // within-6-month recurrence of a cured movable violation (§209.006(d)) opens
     // straight at certified §209. Null for everything else.
     let recurrenceSignal = null;
+    // Set when findOrContinueViolation reports the only open case is the one THIS
+    // observation already opened (analyze auto-drafts the violation, leaves the
+    // obs pending). We then draft its first notice through the normal open path
+    // below instead of inserting a duplicate or logging a self-continuation.
+    let preOpenedViolationId = null;
     try {
       const { findOrContinueViolation } = require('../lib/enforcement/find_or_continue_violation');
       const cont = await findOrContinueViolation({
@@ -3610,6 +3624,13 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         notes:             reviewerNotes,
       });
       if (cont.type === 'new') recurrenceSignal = cont.recurrence || null;
+      if (cont.type === 'own_case') {
+        // The violation this observation opened is still awaiting its first
+        // notice. Fall through to the open path below, which will draft that
+        // notice for the EXISTING violation (guarded by preOpenedViolationId)
+        // rather than insert a twin. No continuation logged.
+        preOpenedViolationId = cont.violation_id;
+      }
       if (cont.type === 'continuation') {
         // A re-observation of an already-open case. Ed's policy (2026-09-01):
         // the cure window does NOT gate courtesy notices — only §209. So:
@@ -3736,42 +3757,63 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       priority_weight:  priorityRow ? priorityRow.priority_weight : 'standard',
     });
 
-    if (!decision.should_open) {
-      return res.json({ ok: true, opened: false, reason: decision.rationale });
-    }
+    let violation, letterStage, letterCureEndsAt;
+    if (preOpenedViolationId) {
+      // OWN-CASE: the violation already exists (the analyze step opened it and
+      // left the observation pending for this confirm). Load it and draft its
+      // first notice below — no new row, no escalation recompute (the stage was
+      // set when it opened). This is the fix for the self-continuation bug that
+      // left confirmed violations with no notice (2026-09-14).
+      const { data: existingVio, error: exErr } = await supabase
+        .from('violations')
+        .select('id, current_stage, cure_period_ends_at')
+        .eq('id', preOpenedViolationId)
+        .maybeSingle();
+      if (exErr || !existingVio) return res.status(500).json({ error: 'own-case violation load failed' });
+      violation = existingVio;
+      letterStage = existingVio.current_stage;              // the stage it was opened at (may be certified for a recurrence)
+      letterCureEndsAt = existingVio.cure_period_ends_at || null;
+    } else {
+      if (!decision.should_open) {
+        return res.json({ ok: true, opened: false, reason: decision.rationale });
+      }
 
-    // Recurrence (§209.006(d)): a movable violation cured within 6 months and now
-    // back. Skip the courtesy and open at certified §209 — every community sends
-    // certifieds (only Lakes of Pine Forest fines, so this never auto-fines). An
-    // operator can always restage up or down afterward. (Ed 2026-07-25.)
-    const isRepeat = !!(recurrenceSignal && recurrenceSignal.is_repeat);
-    const openStage = isRepeat ? 'certified_209' : decision.stage;
-    const cureEndsAt = decision.cure_days > 0
-      ? new Date(Date.now() + decision.cure_days * 24 * 60 * 60 * 1000).toISOString()
-      : null;
+      // Recurrence (§209.006(d)): a movable violation cured within 6 months and now
+      // back. Skip the courtesy and open at certified §209 — every community sends
+      // certifieds (only Lakes of Pine Forest fines, so this never auto-fines). An
+      // operator can always restage up or down afterward. (Ed 2026-07-25.)
+      const isRepeat = !!(recurrenceSignal && recurrenceSignal.is_repeat);
+      const openStage = isRepeat ? 'certified_209' : decision.stage;
+      const cureEndsAt = decision.cure_days > 0
+        ? new Date(Date.now() + decision.cure_days * 24 * 60 * 60 * 1000).toISOString()
+        : null;
 
-    const violationRow = {
-      property_id:              obs.property_id,
-      community_id:             obs.community_id,
-      opened_from_observation_id: obs.id,
-      primary_category_id:      obs.category_id,
-      board_priority_at_open:   priorityRow ? priorityRow.priority_weight : 'standard',
-      current_stage:            openStage,
-      cure_period_ends_at:      cureEndsAt,
-    };
-    // Only a genuine recurrence touches the new columns (migration 337), so the
-    // normal path keeps working even if the code deploys before that migration.
-    if (isRepeat) {
-      violationRow.is_recurrence = true;
-      violationRow.recurrence_of_violation_id = recurrenceSignal.prior_violation_id;
-      violationRow.review_notes = `Recurrence within 6 months of a cured same/similar violation (Tex. Prop. Code §209.006(d)) — opened at certified §209, skipping courtesy. Review before sending; adjust severity with Advance/Reduce if needed.`;
+      const violationRow = {
+        property_id:              obs.property_id,
+        community_id:             obs.community_id,
+        opened_from_observation_id: obs.id,
+        primary_category_id:      obs.category_id,
+        board_priority_at_open:   priorityRow ? priorityRow.priority_weight : 'standard',
+        current_stage:            openStage,
+        cure_period_ends_at:      cureEndsAt,
+      };
+      // Only a genuine recurrence touches the new columns (migration 337), so the
+      // normal path keeps working even if the code deploys before that migration.
+      if (isRepeat) {
+        violationRow.is_recurrence = true;
+        violationRow.recurrence_of_violation_id = recurrenceSignal.prior_violation_id;
+        violationRow.review_notes = `Recurrence within 6 months of a cured same/similar violation (Tex. Prop. Code §209.006(d)) — opened at certified §209, skipping courtesy. Review before sending; adjust severity with Advance/Reduce if needed.`;
+      }
+      const insertRes = await supabase
+        .from('violations')
+        .insert(violationRow)
+        .select('id, current_stage, cure_period_ends_at')
+        .single();
+      if (insertRes.error) return res.status(500).json({ error: 'violation insert failed: ' + insertRes.error.message });
+      violation = insertRes.data;
+      letterStage = openStage;
+      letterCureEndsAt = cureEndsAt;
     }
-    const { data: violation, error: vErr } = await supabase
-      .from('violations')
-      .insert(violationRow)
-      .select('id, current_stage, cure_period_ends_at')
-      .single();
-    if (vErr) return res.status(500).json({ error: 'violation insert failed: ' + vErr.message });
 
     // Mark observation confirmed
     await supabase
@@ -3896,8 +3938,8 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       const pdfBuffer = await renderViolationLetterPdf({
         violation: {
           id: violation.id,
-          current_stage: decision.stage,
-          cure_period_ends_at: cureEndsAt,
+          current_stage: letterStage,
+          cure_period_ends_at: letterCureEndsAt,
           opened_at: new Date().toISOString(),
           category_label: catRow && catRow.label,
           category_description: catRow && catRow.description,
@@ -3943,7 +3985,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
 
       const LETTERS_BUCKET = 'violation-letters';
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const letterPath = `${violation.id}/${decision.stage}-${stamp}.pdf`;
+      const letterPath = `${violation.id}/${letterStage}-${stamp}.pdf`;
       const { error: upErr } = await supabase.storage
         .from(LETTERS_BUCKET)
         .upload(letterPath, pdfBuffer, { contentType: 'application/pdf', upsert: false });
@@ -3965,11 +4007,11 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         property_id:     obs.property_id,
         violation_id:    violation.id,
         observation_id:  obs.id,
-        type:            stageToType[decision.stage] || 'ai_draft',
+        type:            stageToType[letterStage] || 'ai_draft',
         direction:       'outbound',
-        subject:         `Violation letter (${decision.stage})`,
+        subject:         `Violation letter (${letterStage})`,
         content:         letterPath,
-        delivery_method: (decision.mail_type === 'certified_mail') ? 'certified_mail' : 'first_class_mail',
+        delivery_method: (letterStage === 'certified_209' || letterStage === 'fine_assessed' || decision.mail_type === 'certified_mail') ? 'certified_mail' : 'first_class_mail',
         status:          'draft',
         ai_drafted:      true,
         ai_model:        'reviewer_confirm',
