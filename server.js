@@ -1374,6 +1374,7 @@ app.use('/api/portal-admin', portalAdminRouter);
 const { router: vaultRouter } = require('./api/vault');
 app.use('/api/vault', vaultRouter);
 app.get('/admin/vault', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'vault.html')));
+app.get('/admin/notices-not-sent', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'notices-not-sent.html')));
 app.get('/admin/vault/receipt', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'vault-receipt.html')));
 
 // Virtual Claire — the embodied assistant. One door for homeowners, board

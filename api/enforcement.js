@@ -11789,4 +11789,64 @@ router.post('/attorney-update/generate', express.json({ limit: '512kb' }), async
   } catch (err) { console.error('[enforcement] attorney generate failed:', err.message); res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/enforcement/notices-not-sent
+//   ?community_id=X  -> detailed cases for one community (address/owner/category/drive)
+//   (no community_id) -> per-community summary counts across the portfolio
+// The one authoritative "who never got a notice" report (lib/enforcement/
+// notices_not_sent.js). One definition, so the number never drifts.
+router.get('/notices-not-sent', async (req, res) => {
+  try {
+    const { noticesNotSent } = require('../lib/enforcement/notices_not_sent');
+    const communityId = req.query.community_id;
+
+    if (!communityId) {
+      const { data: comms, error } = await supabase.from('communities')
+        .select('id, name, is_demo, management_status')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID).order('name');
+      if (error) throw error;
+      const rows = [];
+      for (const c of (comms || [])) {
+        let count = 0;
+        try { count = (await noticesNotSent(supabase, c.id)).length; }
+        catch (e) { console.warn('[notices-not-sent]', c.name, 'failed:', e.message); }
+        rows.push({ community_id: c.id, community: c.name, is_demo: !!c.is_demo, prospect: c.management_status === 'prospect', count });
+      }
+      rows.sort((a, b) => b.count - a.count || String(a.community).localeCompare(String(b.community)));
+      return res.json({ scope: 'all', total: rows.reduce((s, r) => s + r.count, 0), communities: rows });
+    }
+
+    const cases = await noticesNotSent(supabase, communityId);
+    const { data: comm } = await supabase.from('communities').select('name').eq('id', communityId).maybeSingle();
+    const propIds = [...new Set(cases.map((c) => c.property_id))];
+    const propMap = new Map();
+    for (let i = 0; i < propIds.length; i += 300) {
+      const { data } = await supabase.from('v_property_summary')
+        .select('property_id, street_address, unit, owner_name').in('property_id', propIds.slice(i, i + 300));
+      for (const p of (data || [])) propMap.set(p.property_id, p);
+    }
+    const catIds = [...new Set(cases.map((c) => c.category_id))];
+    const catMap = new Map();
+    for (let i = 0; i < catIds.length; i += 300) {
+      const { data } = await supabase.from('enforcement_categories').select('id, label').in('id', catIds.slice(i, i + 300));
+      for (const cc of (data || [])) catMap.set(cc.id, cc.label);
+    }
+    const items = cases.map((c) => {
+      const p = propMap.get(c.property_id) || {};
+      return {
+        property_id: c.property_id,
+        address: (p.street_address || '(unknown)') + (p.unit ? ' #' + p.unit : ''),
+        owner: p.owner_name || '',
+        category: catMap.get(c.category_id) || '(uncategorized)',
+        opened_at: c.opened_at ? String(c.opened_at).slice(0, 10) : null,
+      };
+    }).sort((a, b) => String(a.address).localeCompare(String(b.address)));
+    const byDrive = {};
+    for (const it of items) { const d = it.opened_at || 'unknown'; byDrive[d] = (byDrive[d] || 0) + 1; }
+    return res.json({ scope: 'community', community_id: communityId, community: comm ? comm.name : null, count: items.length, by_drive: byDrive, items });
+  } catch (err) {
+    console.error('[enforcement] notices-not-sent failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations, _draftLetterForBumpedViolation, renderNotCuredBoardLetter, _assembleBundlePdf };

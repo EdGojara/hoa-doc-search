@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Notices Not Sent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{ --navy:#0B1D34; --gold:#D4AF37; --ink:#1a2230; --soft:#5b6673; --faint:#94a3b8; --rule:#e7e9ee; --bg:#f4f5f7; --paper:#fff; --warn:#b45309; --warn-bg:#fef6e7; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;}
+  .top{background:var(--navy);color:#fff;padding:12px 18px;position:sticky;top:0;z-index:10;}
+  .top .in{max-width:1000px;margin:0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .brand{font-family:'Cormorant Garamond',Georgia,serif;font-size:19px;font-weight:600;}
+  .brand em{color:#E8C96E;font-style:italic;font-size:13px;}
+  .top a{margin-left:auto;color:rgba(255,255,255,.85);text-decoration:none;font-size:12.5px;border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:5px 12px;}
+  .wrap{max-width:1000px;margin:0 auto;padding:20px 16px 60px;}
+  h1{font-family:'Cormorant Garamond',Georgia,serif;color:var(--navy);font-size:26px;margin:6px 0 2px;}
+  .sub{color:var(--soft);margin:0 0 16px;font-size:13px;}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;}
+  select{padding:10px 12px;border:1px solid #cbd5e1;border-radius:9px;font-size:14px;background:#fff;min-width:260px;}
+  button{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:10px 16px;font-weight:600;font-size:13px;cursor:pointer;}
+  button.ghost{background:#fff;border:1px solid #cbd5e1;color:var(--navy);}
+  .kpi{background:var(--warn-bg);border:1px solid #f0d9a8;border-radius:10px;padding:14px 16px;margin-bottom:14px;}
+  .kpi b{font-size:26px;color:var(--navy);} .kpi span{color:var(--soft);}
+  .drives{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px;}
+  .drive{background:#fff;border:1px solid var(--rule);border-radius:8px;padding:7px 12px;font-size:12.5px;}
+  .drive b{color:var(--navy);} .drive.cur{border-color:var(--gold);background:#fffdf5;}
+  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--rule);border-radius:10px;overflow:hidden;}
+  th{background:var(--navy);color:#fff;text-align:left;padding:8px 10px;font-size:11px;letter-spacing:.03em;text-transform:uppercase;}
+  td{padding:7px 10px;border-bottom:1px solid var(--rule);font-size:13px;vertical-align:top;}
+  tr:nth-child(even) td{background:#fafbfc;}
+  td.n{color:var(--faint);width:30px;} td.c{white-space:nowrap;color:var(--soft);}
+  .comm-row{cursor:pointer;} .comm-row:hover td{background:#f0f4f9;}
+  .pill{display:inline-block;background:#0B1D34;color:#fff;border-radius:999px;padding:1px 9px;font-size:12px;font-variant-numeric:tabular-nums;}
+  .pill.zero{background:#e7efe9;color:#166534;}
+  .muted{color:var(--faint);font-size:12px;}
+  .loading{color:var(--soft);padding:30px;text-align:center;}
+  .err{color:#b91c1c;padding:16px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;}
+  @media print{
+    .top,.bar,.top a{display:none!important;}
+    body{background:#fff;} .wrap{max-width:none;padding:0;}
+    .kpi{background:#f6f4ec;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    th{background:#0B1D34!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    @page{margin:0.6in;}
+  }
+</style>
+</head>
+<body>
+  <div class="top"><div class="in">
+    <span class="brand">Bedrock <em>Enforcement</em></span>
+    <a href="/">← Home</a>
+  </div></div>
+  <div class="wrap">
+    <h1>Notices Not Sent</h1>
+    <p class="sub">Open violations with no courtesy or certified notice ever sent. Counted per violation (property + category). Vantaca-era imports excluded. This is the single source of truth, defined once.</p>
+    <div class="bar">
+      <select id="pick" onchange="load()"><option value="">All communities (summary)</option></select>
+      <button class="ghost" onclick="load()">Refresh</button>
+      <button id="printBtn" onclick="window.print()" style="display:none;">🖨️ Print</button>
+    </div>
+    <div id="out"><div class="loading">Loading…</div></div>
+  </div>
+
+<script>
+  const $=(id)=>document.getElementById(id);
+  const esc=(s)=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  async function api(url){ const r=await fetch(url,{credentials:'same-origin'}); if(r.status===401){ throw new Error('Sign in required'); } const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; }
+  const today=new Date().toISOString().slice(0,10);
+
+  async function loadCommunities(){
+    try{ const j=await api('/api/communities'); const list=(j.communities||j||[]).filter(Boolean).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+      $('pick').innerHTML='<option value="">All communities (summary)</option>'+list.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+    }catch(_){}
+  }
+
+  async function load(){
+    const cid=$('pick').value;
+    $('printBtn').style.display = cid ? 'inline-block' : 'none';
+    $('out').innerHTML='<div class="loading">Loading…</div>';
+    try{
+      if(!cid){ return renderAll(await api('/api/enforcement/notices-not-sent')); }
+      renderCommunity(await api('/api/enforcement/notices-not-sent?community_id='+encodeURIComponent(cid)));
+    }catch(e){ $('out').innerHTML='<div class="err">'+esc(e.message)+'</div>'; }
+  }
+
+  function renderAll(j){
+    const rows=(j.communities||[]).map(c=>`<tr class="comm-row" onclick="$('pick').value='${esc(c.community_id)}';load();">
+      <td>${esc(c.community)}${c.prospect?' <span class="muted">(proposal)</span>':''}${c.is_demo?' <span class="muted">(demo)</span>':''}</td>
+      <td style="text-align:right;"><span class="pill ${c.count===0?'zero':''}">${c.count}</span></td></tr>`).join('');
+    $('out').innerHTML=`<div class="kpi"><b>${j.total}</b> <span>open violations across the portfolio have no notice sent. Click a community to see the list and print it.</span></div>
+      <table><thead><tr><th>Community</th><th style="text-align:right;">Not sent</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  function renderCommunity(j){
+    const items=j.items||[];
+    const drives=Object.entries(j.by_drive||{}).sort((a,b)=>b[0].localeCompare(a[0]));
+    const driveHtml=drives.map(([d,n])=>`<div class="drive ${d===today?'cur':''}"><b>${esc(d)}</b> · ${n}${d===today?' <span class="muted">current drive</span>':''}</div>`).join('');
+    const rows=items.map((it,i)=>`<tr><td class="n">${i+1}</td><td>${esc(it.address)}</td><td>${esc(it.owner)}</td><td>${esc(it.category)}</td><td class="c">${esc(it.opened_at||'')}</td></tr>`).join('');
+    $('out').innerHTML=`<div class="kpi"><b>${j.count}</b> <span>open violations in ${esc(j.community||'this community')} have no notice sent (per violation).</span></div>
+      ${drives.length?('<div class="muted" style="margin-bottom:6px;">By drive date opened:</div><div class="drives">'+driveHtml+'</div>'):''}
+      ${items.length?`<table><thead><tr><th>#</th><th>Address</th><th>Owner</th><th>Violation</th><th>Opened</th></tr></thead><tbody>${rows}</tbody></table>`:'<div class="loading">Nothing outstanding. Every open violation has a notice on record.</div>'}`;
+  }
+
+  loadCommunities().then(load);
+</script>
+</body>
+</html>
