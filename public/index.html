@@ -21899,8 +21899,13 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const inspCommunitySel = document.getElementById('inspCommunity');
     const mvCommunitySel = document.getElementById('manualVioCommunity');
 
-    // Populate community dropdown (clone options from Start Inspection
-    // dropdown — same source, no need to refetch)
+    // Populate the community dropdown INDEPENDENTLY of the Start Inspection
+    // flow, so staff can file a manual letter without ever starting an
+    // inspection. inspLoadCommunities() fetches /api/communities (only if the
+    // Start Inspection dropdown isn't already loaded), so the manual entry has
+    // the full community list on its own. (Ed 2026-09-15: "when you do a manual
+    // letter I want to add community there and not go through start inspection.")
+    try { await inspLoadCommunities(); } catch (_) { /* modal still opens; picker may be empty */ }
     if (mvCommunitySel.options.length <= 1 && inspCommunitySel.options.length > 1) {
       mvCommunitySel.innerHTML = '';
       for (const opt of inspCommunitySel.options) {
