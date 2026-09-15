@@ -3412,9 +3412,12 @@ router.get('/inspections/observations/confirm-preview', async (req, res) => {
 
     // 6) Classify in-memory via the SHARED decider (pre-fetched letters, no per-case query).
     const counts = { new: newCount, advance_courtesy_2: 0, recover_courtesy_1: 0, awaiting_first_mail: 0, eligible_209: 0, continuation: 0 };
+    // Why each "held" case is held, so the UI can spell it out (Ed 2026-09-15).
+    const held_reasons = { already_certified: 0, at_fine: 0, opened_today: 0, first_notice_not_mailed: 0 };
     for (const open of matched) {
-      const { outcome } = await decideReobservationOutcome(supabase, open, { courtesy1Letters: lettersByViol.get(open.id) || [] });
+      const { outcome, reason } = await decideReobservationOutcome(supabase, open, { courtesy1Letters: lettersByViol.get(open.id) || [] });
       counts[outcome] = (counts[outcome] || 0) + 1;
+      if (reason && held_reasons[reason] !== undefined) held_reasons[reason] += 1;
     }
 
     res.json({
@@ -3423,6 +3426,7 @@ router.get('/inspections/observations/confirm-preview', async (req, res) => {
       cases: caseList.length,
       skipped_no_property_or_category: skipped,
       counts,
+      held_reasons,
     });
   } catch (err) {
     console.error('[inspections.confirm-preview]', err);

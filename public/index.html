@@ -24277,6 +24277,12 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (!j.cases) { box.style.display = 'none'; return; }
       const chip = (n, label, bg, fg) => n ? `<span style="display:inline-block; padding:2px 9px; border-radius:20px; background:${bg}; color:${fg}; font-weight:700; margin:2px 4px 2px 0;">${n} ${label}</span>` : '';
       const held = (c.awaiting_first_mail || 0) + (c.continuation || 0);
+      const hr = j.held_reasons || {};
+      const heldParts = [];
+      if (hr.already_certified) heldParts.push(`${hr.already_certified} already at §209 certified`);
+      if (hr.at_fine) heldParts.push(`${hr.at_fine} at fine stage`);
+      if (hr.opened_today) heldParts.push(`${hr.opened_today} opened on this drive (same day)`);
+      if (hr.first_notice_not_mailed) heldParts.push(`${hr.first_notice_not_mailed} awaiting first mailing`);
       box.innerHTML = `<div style="border:1px solid #bfdbfe; background:#eff6ff; border-radius:8px; padding:9px 12px;">
         <span style="color:#1e40af; font-weight:700;">Confirming all ${j.cases} will:</span>
         ${chip(c.new, 'new courtesy', '#dcfce7', '#166534')}
@@ -24284,7 +24290,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         ${chip(c.recover_courtesy_1, 'recover 1st notice', '#e0f2fe', '#075985')}
         ${chip(c.eligible_209, '→ §209 eligible', '#fee2e2', '#991b1b')}
         ${held ? `<span style="display:inline-block; padding:2px 9px; border-radius:20px; background:#f1f5f9; color:#475569; font-weight:600; margin:2px 4px 2px 0;">${held} held (no new letter)</span>` : ''}
-        <div style="color:#64748b; font-size:11px; margin-top:4px;">Second notices (Courtesy 2) only draft where the first notice was already mailed. §209 certified is flagged for you, never auto-sent.</div>
+        ${heldParts.length ? `<div style="color:#475569; font-size:11px; margin-top:4px;"><b>Why held:</b> ${heldParts.join(' &middot; ')}.</div>` : ''}
+        <div style="color:#64748b; font-size:11px; margin-top:3px;">A case already at §209 certified or fine is not re-noticed (it would break the §209 chain). A case opened on this same drive is not double-advanced. A second notice needs the first notice mailed first.</div>
       </div>`;
     } catch (e) {
       box.innerHTML = `<span style="color:#b91c1c;">Couldn't preview: ${escapeHtml(e.message)}</span>`;
