@@ -106,6 +106,7 @@
         if(r.status==='verified'){acts+='<button class="btn sm g" onclick="reveal(\''+r.id+'\')">Reveal</button>';}
         if(r.authorization_pdf_path){acts+=' <button class="btn sm g" onclick="downloadDoc(\''+r.id+'\',\'authorization\')">Auth PDF</button>';}
         if(r.supporting_doc_name){acts+=' <button class="btn sm g" onclick="downloadDoc(\''+r.id+'\',\'support\')" title="'+esc(r.supporting_doc_name)+'">Voided check</button>';}
+        if(r.w9_doc_name){acts+=' <button class="btn sm g" onclick="downloadDoc(\''+r.id+'\',\'w9\')" title="'+esc(r.w9_doc_name)+'">W-9</button>';}
         if(r.status==='sent'||r.status==='submitted'){acts+=' <button class="btn sm g" onclick="cancelReq(\''+r.id+'\')">Cancel</button>';}
         h+='<tr id="row-'+r.id+'"><td><b>'+esc(r.vendor_name)+'</b>'+(r.contact_email?('<br><span style="color:#6b7a8d;font-size:12px">'+esc(r.contact_email)+'</span>'):'')+'</td>'+
            '<td>'+(r.community_id?'✓':'<span style="color:#96a0ad">company</span>')+'</td>'+

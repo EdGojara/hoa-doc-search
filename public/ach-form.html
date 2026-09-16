@@ -71,9 +71,13 @@
         </div>
       </div>
 
-      <label for="doc" style="margin-top:20px">Supporting document (recommended)</label>
+      <label for="doc" style="margin-top:20px">Voided check or signed ACH form (recommended)</label>
       <input id="doc" type="file" accept="application/pdf,image/*" style="padding:8px 10px">
-      <div class="hint">Attach a voided check or your own signed ACH form (PDF or photo). This helps us confirm the account. Optional.</div>
+      <div class="hint">Helps us confirm the account. PDF or photo. Optional.</div>
+
+      <label for="w9doc" style="margin-top:16px">W-9 (recommended)</label>
+      <input id="w9doc" type="file" accept="application/pdf,image/*" style="padding:8px 10px">
+      <div class="hint">Attach your current IRS Form W-9 so we have it on file for tax reporting. PDF or photo. Optional.</div>
 
       <div style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px">
         <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:8px">Authorization &amp; electronic signature</div>
@@ -146,6 +150,7 @@
     fd.append('signer_title',$('title').value.trim());
     fd.append('authorization_agreed','true');
     if($('doc').files && $('doc').files[0]) fd.append('document',$('doc').files[0]);
+    if($('w9doc').files && $('w9doc').files[0]) fd.append('w9',$('w9doc').files[0]);
     $('submit').disabled=true; $('submit').textContent='Submitting…';
     fetch('/api/ach/form/'+encodeURIComponent(token),{method:'POST',body:fd})
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})

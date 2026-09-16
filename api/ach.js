@@ -36,14 +36,15 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const DOCS_BUCKET = 'documents'; // same private, server-gated bucket the document library uses
 
-// Accept ONE supporting file (voided check / signed ACH form): images or PDF, <= 10MB.
+// Accept a supporting file (voided check / signed ACH form) and a W-9: images
+// or PDF, <= 10MB each.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 10 * 1024 * 1024, files: 2 },
 });
 const OK_UPLOAD_MIME = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/jpg', 'image/heic', 'image/webp']);
 
-const SAFE_COLS = 'id, community_id, vendor_id, vendor_name, contact_name, contact_email, status, expires_at, account_holder_name, bank_name, account_type, account_number_last4, signer_name, signer_title, signed_at, authorization_agreed, supporting_doc_name, authorization_pdf_path, library_document_id, submitted_at, verified_by, verified_at, verification_notes, created_by, created_at, updated_at';
+const SAFE_COLS = 'id, community_id, vendor_id, vendor_name, contact_name, contact_email, status, expires_at, account_holder_name, bank_name, account_type, account_number_last4, signer_name, signer_title, signed_at, authorization_agreed, supporting_doc_name, w9_doc_name, authorization_pdf_path, library_document_id, submitted_at, verified_by, verified_at, verification_notes, created_by, created_at, updated_at';
 
 const isEmail = (s) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(s || '').trim());
 const digits = (s) => String(s || '').replace(/\D/g, '');
@@ -232,7 +233,7 @@ router.get('/form/:token', async (req, res) => {
   }
 });
 
-router.post('/form/:token', upload.single('document'), async (req, res) => {
+router.post('/form/:token', upload.fields([{ name: 'document', maxCount: 1 }, { name: 'w9', maxCount: 1 }]), async (req, res) => {
   try {
     let row = await loadByToken(req.params.token);
     if (!row) return res.status(404).json({ error: 'invalid_link' });
@@ -264,8 +265,12 @@ router.post('/form/:token', upload.single('document'), async (req, res) => {
     if (account !== confirm) return res.status(400).json({ error: 'The account numbers do not match.' });
     if (!signer_name) return res.status(400).json({ error: 'Please type your full name to sign.' });
     if (!agreed) return res.status(400).json({ error: 'Please check the authorization box to sign.' });
-    if (req.file && !OK_UPLOAD_MIME.has(String(req.file.mimetype || '').toLowerCase())) {
-      return res.status(400).json({ error: 'Please upload a PDF or an image (a voided check works well).' });
+    const supportFile = req.files && req.files.document && req.files.document[0];
+    const w9File = req.files && req.files.w9 && req.files.w9[0];
+    for (const f of [supportFile, w9File]) {
+      if (f && !OK_UPLOAD_MIME.has(String(f.mimetype || '').toLowerCase())) {
+        return res.status(400).json({ error: 'Uploads must be a PDF or an image (a voided check and a W-9 work well).' });
+      }
     }
 
     const now = new Date().toISOString();
@@ -294,15 +299,42 @@ router.post('/form/:token', upload.single('document'), async (req, res) => {
       if (up.error) { console.warn('[ach] auth pdf upload failed:', up.error.message); authorization_pdf_path = null; }
     } catch (e) { console.warn('[ach] auth pdf render failed:', e.message); }
 
+    const extFor = (m) => ({ 'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/heic': 'heic', 'image/webp': 'webp' })[String(m).toLowerCase()] || 'bin';
+
     // 2) Store the optional supporting upload (voided check / their signed form).
     let supporting_doc_path = null, supporting_doc_name = null, supporting_doc_mime = null;
-    if (req.file) {
-      const ext = ({ 'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/heic': 'heic', 'image/webp': 'webp' })[String(req.file.mimetype).toLowerCase()] || 'bin';
+    if (supportFile) {
+      const ext = extFor(supportFile.mimetype);
       supporting_doc_path = `${base}/${row.id}-support.${ext}`;
-      supporting_doc_name = String(req.file.originalname || `support.${ext}`).slice(0, 180);
-      supporting_doc_mime = req.file.mimetype;
-      const su = await supabase.storage.from(DOCS_BUCKET).upload(supporting_doc_path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+      supporting_doc_name = String(supportFile.originalname || `support.${ext}`).slice(0, 180);
+      supporting_doc_mime = supportFile.mimetype;
+      const su = await supabase.storage.from(DOCS_BUCKET).upload(supporting_doc_path, supportFile.buffer, { contentType: supportFile.mimetype, upsert: true });
       if (su.error) { console.warn('[ach] support upload failed:', su.error.message); supporting_doc_path = null; }
+    }
+
+    // 2b) Store the optional W-9 and file it to the library as a 'w9' record.
+    let w9_doc_path = null, w9_doc_name = null, w9_doc_mime = null, w9_library_document_id = null;
+    if (w9File) {
+      const ext = extFor(w9File.mimetype);
+      w9_doc_path = `${base}/${row.id}-w9.${ext}`;
+      w9_doc_name = String(w9File.originalname || `W-9.${ext}`).slice(0, 180);
+      w9_doc_mime = w9File.mimetype;
+      const wu = await supabase.storage.from(DOCS_BUCKET).upload(w9_doc_path, w9File.buffer, { contentType: w9File.mimetype, upsert: true });
+      if (wu.error) { console.warn('[ach] w9 upload failed:', wu.error.message); w9_doc_path = null; }
+      else {
+        try {
+          const wId = crypto.randomUUID();
+          const { data: wdoc, error: wErr } = await supabase.from('library_documents').insert({
+            id: wId, management_company_id: BEDROCK_MGMT_CO_ID, community_id: row.community_id || null,
+            category: 'w9', status: 'current',
+            title: `W-9 - ${row.vendor_name}`,
+            file_name_original: w9_doc_name, file_name_normalized: `w9-${row.id}.${ext}`,
+            file_path: w9_doc_path,
+          }).select('id').single();
+          if (wErr) console.warn('[ach] w9 library filing skipped:', wErr.message);
+          else w9_library_document_id = wdoc.id;
+        } catch (e) { console.warn('[ach] w9 library filing failed:', e.message); }
+      }
     }
 
     // 3) File the authorization into the community document library (best-effort;
@@ -330,6 +362,7 @@ router.post('/form/:token', upload.single('document'), async (req, res) => {
       routing_number: routing, account_number_full: account, account_number_last4: account.slice(-4),
       signer_name, signer_title, authorization_agreed: true, signed_at: now, signer_user_agent: ua,
       supporting_doc_path, supporting_doc_name, supporting_doc_mime,
+      w9_doc_path, w9_doc_name, w9_doc_mime, w9_library_document_id,
       authorization_pdf_path, library_document_id,
       submitted_at: now, submitter_ip: ip, status: 'submitted',
     }).eq('id', row.id).eq('status', 'sent');
@@ -349,7 +382,7 @@ router.get('/requests/:id/doc', async (req, res) => {
   const owner = await requireOwner(req, res); if (!owner) return;
   try {
     const which = String(req.query.which || 'authorization');
-    const col = which === 'support' ? 'supporting_doc_path' : 'authorization_pdf_path';
+    const col = which === 'support' ? 'supporting_doc_path' : (which === 'w9' ? 'w9_doc_path' : 'authorization_pdf_path');
     const { data, error } = await supabase.from('vendor_ach_requests').select(`id, vendor_name, ${col}`).eq('id', req.params.id).maybeSingle();
     if (error) throw error;
     if (!data || !data[col]) return res.status(404).json({ error: 'not_found' });
