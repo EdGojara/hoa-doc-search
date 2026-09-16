@@ -69,26 +69,30 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
   var $=function(id){return document.getElementById(id);};
+  var af=function(u,o){return fetch(u,o||{});};  // replaced with an authed fetch after boot()
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function fmt(d){if(!d)return '';try{return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}catch(e){return '';}}
 
   // communities picker
-  fetch('/api/ach/communities').then(function(r){return r.json();}).then(function(j){
-    (j.communities||[]).forEach(function(c){
-      var o=document.createElement('option'); o.value=c.id;
-      o.textContent=c.name+(c.management_status==='prospect'?' (prospect)':'');
-      $('c-comm').appendChild(o);
-    });
-  }).catch(function(){});
+  function loadCommunities(){
+    af('/api/ach/communities').then(function(r){return r.json();}).then(function(j){
+      (j.communities||[]).forEach(function(c){
+        var o=document.createElement('option'); o.value=c.id;
+        o.textContent=c.name+(c.management_status==='prospect'?' (prospect)':'');
+        $('c-comm').appendChild(o);
+      });
+    }).catch(function(){});
+  }
 
   $('c-btn').addEventListener('click',function(){
     var msg=$('c-msg'); msg.className='msg'; msg.style.display='none';
     var body={vendor_name:$('c-vendor').value.trim(),contact_name:$('c-contact').value.trim(),contact_email:$('c-email').value.trim(),community_id:$('c-comm').value||null,ttl_days:$('c-ttl').value};
     if(!body.vendor_name){msg.textContent='Enter a vendor name.';msg.className='msg err';return;}
     $('c-btn').disabled=true;$('c-btn').textContent='Generating…';
-    fetch('/api/ach/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    af('/api/ach/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
       .then(function(res){
         $('c-btn').disabled=false;$('c-btn').textContent='Generate secure link';
@@ -109,7 +113,7 @@
     if(!window._lastAch){sm.textContent='Generate a link first.';sm.className='msg err';return;}
     if(!to){sm.textContent='Enter the vendor email.';sm.className='msg err';return;}
     $('c-send').disabled=true; $('c-send').textContent='Sending…';
-    fetch('/api/ach/requests/'+window._lastAch.id+'/send-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email:to,token:window._lastAch.token})})
+    af('/api/ach/requests/'+window._lastAch.id+'/send-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email:to,token:window._lastAch.token})})
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
       .then(function(res){
         $('c-send').disabled=false; $('c-send').textContent='✉️ Email via Emma';
@@ -120,7 +124,7 @@
   });
 
   function load(){
-    fetch('/api/ach/requests').then(function(r){return r.json();}).then(function(j){
+    af('/api/ach/requests').then(function(r){return r.json();}).then(function(j){
       var rows=j.requests||[];
       if(!rows.length){$('list').innerHTML='<div class="empty">No enrollment links yet.</div>';return;}
       var h='<table><thead><tr><th>Vendor</th><th>Community</th><th>Status</th><th>Account</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody>';
@@ -145,7 +149,7 @@
   }
 
   window.reveal=function(id){
-    fetch('/api/ach/requests/'+id+'/reveal').then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){
+    af('/api/ach/requests/'+id+'/reveal').then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){
       if(!res.ok){alert(res.j.error==='forbidden'||res.j.error?('Owner access required to reveal full banking details.'):'Could not reveal.');return;}
       var b=res.j.banking;
       var box=document.createElement('div');box.className='reveal';
@@ -156,24 +160,37 @@
   window.verify=function(id){
     var notes=prompt('How did you confirm these details? (e.g. "Called UPS AP at 800-xxx from the contract, confirmed routing + account")');
     if(!notes)return;
-    fetch('/api/ach/requests/'+id+'/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:notes})})
+    af('/api/ach/requests/'+id+'/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:notes})})
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){
         if(!res.ok){alert(res.j.error||'Could not verify. Owner access is required.');return;} load();
       });
   };
   window.downloadDoc=function(id,which){
-    fetch('/api/ach/requests/'+id+'/doc?which='+encodeURIComponent(which)).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){
+    af('/api/ach/requests/'+id+'/doc?which='+encodeURIComponent(which)).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){
       if(!res.ok||!res.j.url){alert(res.j.error==='not_found'?'No document on file.':'Owner access is required to download banking documents.');return;}
       window.open(res.j.url,'_blank');
     }).catch(function(){alert('Network error.');});
   };
   window.cancelReq=function(id){
     if(!confirm('Revoke this link? The vendor will no longer be able to use it.'))return;
-    fetch('/api/ach/requests/'+id+'/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    af('/api/ach/requests/'+id+'/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){if(!res.ok){alert(res.j.error||'Could not cancel.');return;}load();});
   };
 
-  load();
+  // Authed boot: attach the Supabase JWT to every API call (admin endpoints
+  // require it), then load. Without this the API returns 403 and the dropdown
+  // stays empty + Generate does nothing.
+  (async function boot(){
+    try{
+      const cfg = await (await fetch('/api/auth/config')).json();
+      if(cfg && cfg.enabled && window.supabase && cfg.supabase_url && cfg.supabase_anon_key){
+        const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+        af = async function(u,o){ o=o||{}; const h=Object.assign({},o.headers||{}); try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){} return fetch(u, Object.assign({},o,{headers:h})); };
+      }
+    }catch(_){}
+    loadCommunities();
+    load();
+  })();
 </script>
 </body>
 </html>
