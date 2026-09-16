@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secure ACH Enrollment · Bedrock Association Management</title>
+<style>
+  :root{--navy:#0B1D34;--gold:#D4AF37;--ink:#1a2230;--body:#3a4656;--muted:#6b7a8d;--line:#e3e6ec;--bg:#eef1f5;--card:#fff;--good:#2f7d55;--err:#c0392b;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--body);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.55}
+  .wrap{max-width:560px;margin:0 auto;padding:24px 16px 60px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 6px 24px rgba(11,29,52,.08)}
+  .hd{background:var(--navy);color:#fff;padding:22px 24px;border-bottom:3px solid var(--gold)}
+  .hd .co{font-family:Georgia,serif;font-size:18px;font-weight:700}
+  .hd .t{font-size:13px;color:#c6d2e2;margin-top:3px}
+  .lock{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#aebbcb;margin-top:10px}
+  .bd{padding:22px 24px}
+  .ctx{background:#f7f9fc;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:14px;margin-bottom:18px}
+  .ctx b{color:var(--ink)}
+  label{display:block;font-size:13px;font-weight:600;color:var(--ink);margin:14px 0 5px}
+  input,select{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9px;font-size:15px;color:var(--ink);background:#fff}
+  input:focus,select:focus{outline:2px solid var(--gold);border-color:var(--gold)}
+  .row{display:flex;gap:12px}.row>div{flex:1}
+  .hint{font-size:12px;color:var(--muted);margin-top:4px}
+  button{width:100%;margin-top:22px;background:var(--navy);color:#fff;border:0;border-radius:10px;padding:14px;font-size:15px;font-weight:700;cursor:pointer}
+  button:disabled{opacity:.55;cursor:default}
+  .msg{margin-top:14px;padding:11px 13px;border-radius:9px;font-size:14px;display:none}
+  .msg.err{background:#fdecea;color:var(--err);display:block}
+  .foot{font-size:11.5px;color:var(--muted);text-align:center;margin-top:16px;line-height:1.5}
+  .state{padding:40px 24px;text-align:center}
+  .state .big{font-family:Georgia,serif;font-size:22px;color:var(--ink);margin:10px 0 6px}
+  .state p{color:var(--body);font-size:15px;max-width:420px;margin:0 auto}
+  .ok-badge{width:54px;height:54px;border-radius:50%;background:#e6f0ea;color:var(--good);display:inline-flex;align-items:center;justify-content:center;font-size:28px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="hd">
+      <div class="co">Bedrock Association Management</div>
+      <div class="t">Secure vendor ACH enrollment</div>
+      <div class="lock">🔒 Encrypted connection. Your details are not sent by email.</div>
+    </div>
+    <div id="loading" class="state"><p>Loading your secure form…</p></div>
+
+    <div id="form" class="bd" hidden>
+      <div class="ctx" id="ctx"></div>
+      <p style="font-size:13.5px;color:var(--body);margin:0 0 4px">Please enter the bank account where you would like to receive electronic (ACH) payments.</p>
+
+      <label for="holder">Account holder name (as it appears on the account)</label>
+      <input id="holder" autocomplete="off" maxlength="120">
+
+      <label for="bank">Bank name</label>
+      <input id="bank" autocomplete="off" maxlength="120">
+
+      <label for="atype">Account type</label>
+      <select id="atype"><option value="">Select…</option><option value="checking">Checking</option><option value="savings">Savings</option></select>
+
+      <label for="routing">Routing number (9 digits)</label>
+      <input id="routing" inputmode="numeric" autocomplete="off" maxlength="9">
+      <div class="hint">The 9-digit number in the bottom-left of a check.</div>
+
+      <div class="row">
+        <div>
+          <label for="acct">Account number</label>
+          <input id="acct" inputmode="numeric" autocomplete="off" maxlength="17">
+        </div>
+        <div>
+          <label for="acct2">Confirm account number</label>
+          <input id="acct2" inputmode="numeric" autocomplete="off" maxlength="17">
+        </div>
+      </div>
+
+      <button id="submit">Submit securely</button>
+      <div id="msg" class="msg"></div>
+      <div class="foot">Bedrock verifies every enrollment by phone before any payment is processed. If you did not expect this request, please do not enter anything and contact us.</div>
+    </div>
+
+    <div id="done" class="state" hidden>
+      <div class="ok-badge">✓</div>
+      <div class="big">Thank you</div>
+      <p>Your banking information was received securely. A member of the Bedrock team will confirm the details with you by phone before any payment is set up.</p>
+    </div>
+
+    <div id="unusable" class="state" hidden>
+      <div class="big" id="unusable-t">This link is no longer active</div>
+      <p id="unusable-p">Please contact Bedrock Association Management for a new secure link.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  var token = location.pathname.split('/').filter(Boolean).pop();
+  var $ = function(id){return document.getElementById(id);};
+  function show(id){['loading','form','done','unusable'].forEach(function(x){$(x).hidden = (x!==id);});}
+
+  fetch('/api/ach/form/'+encodeURIComponent(token)).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){
+    if(!res.ok){ show('unusable'); return; }
+    var j = res.j;
+    if(!j.usable){
+      show('unusable');
+      $('unusable-t').textContent = j.status==='submitted' ? 'Already submitted' : (j.status==='expired' ? 'This link has expired' : 'This link is no longer active');
+      $('unusable-p').textContent = j.status==='submitted' ? 'We have already received your banking information. Thank you.' : 'Please contact Bedrock Association Management for a new secure link.';
+      return;
+    }
+    var ctx = '<b>'+esc(j.vendor_name)+'</b>, you are enrolling to receive ACH payments'+(j.community_name?(' for <b>'+esc(j.community_name)+'</b>'):'')+', requested by '+esc(j.requested_by)+'.';
+    $('ctx').innerHTML = ctx;
+    show('form');
+  }).catch(function(){ show('unusable'); });
+
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+
+  ['routing','acct','acct2'].forEach(function(id){$(id).addEventListener('input',function(){this.value=this.value.replace(/\D/g,'');});});
+
+  $('submit').addEventListener('click', function(){
+    var msg=$('msg'); msg.className='msg'; msg.style.display='none';
+    var body={
+      account_holder_name:$('holder').value.trim(),
+      bank_name:$('bank').value.trim(),
+      account_type:$('atype').value,
+      routing_number:$('routing').value,
+      account_number:$('acct').value,
+      confirm_account_number:$('acct2').value
+    };
+    $('submit').disabled=true; $('submit').textContent='Submitting…';
+    fetch('/api/ach/form/'+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+      .then(function(res){
+        if(res.ok && res.j.ok){ show('done'); return; }
+        msg.textContent = (res.j && res.j.error) || 'Something went wrong. Please try again.';
+        msg.className='msg err';
+        $('submit').disabled=false; $('submit').textContent='Submit securely';
+      }).catch(function(){
+        msg.textContent='Could not submit. Please check your connection and try again.';
+        msg.className='msg err';
+        $('submit').disabled=false; $('submit').textContent='Submit securely';
+      });
+  });
+</script>
+</body>
+</html>

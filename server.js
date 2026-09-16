@@ -492,6 +492,8 @@ const _STAFF_GATE_PUBLIC = [
   /^\/v\/[^/]+$/,                           // /v/:token — branded watch page for a shared video (recipient has no login; gated by the unguessable token + active flag)
   /^\/api\/video-share\/play\/[^/]+$/,      // GET video metadata + short-lived signed playback URL (only this one video-share route is public; admin routes stay gated)
   /^\/api\/video-share\/[^/]+\/qr\.svg$/,   // QR image for a share link (encodes only the public /v/ url; safe like the BD card QR)
+  /^\/ach\/[^/]+$/,                          // /ach/:token — public vendor ACH enrollment form (recipient has no login; gated by the unguessable single-use token). Bank data is never returned by the public context route.
+  /^\/api\/ach\/form\/[^/]+$/,              // public ACH form: GET safe context + POST submission (token only). ADMIN routes (/api/ach/requests, /reveal, /verify) stay gated + requireAdmin/requireOwner.
   /^\/clubhouse\/[^/]+$/,                   // /clubhouse/:slug — public clubhouse rental form (gated server-side by amenity_bookings_active)
   /^\/clubhouse\/[^/]+\/preview-checkout$/, // checkout preview — charges nothing, writes nothing, and /api/payments/preview refuses once Stripe is configured
   // BD digital business cards. Public is the entire point: the person scanning
@@ -1139,6 +1141,14 @@ app.get('/admin/video-share', (req, res) => {
 app.get('/v/:token', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'watch.html'));
 });
+// Public vendor ACH enrollment form (recipient has no login; the single-use
+// token in the path is the credential). Admin console is /admin/ach (gated).
+app.get('/ach/:token', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'ach-form.html'));
+});
+app.get('/admin/ach', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'ach-admin.html'));
+});
 // Community Key Issues — per-community living matters (staff-gated by the global gate).
 app.get('/admin/community-issues', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'community-issues.html'));
@@ -1749,6 +1759,8 @@ const { router: w9Router } = require('./api/w9');
 app.use('/api/w9', w9Router);
 const { router: videoShareRouter } = require('./api/video_share');
 app.use('/api/video-share', videoShareRouter);
+const { router: achRouter } = require('./api/ach');
+app.use('/api/ach', achRouter);
 // Load saved per-persona voice choices into the roster's override map at boot so
 // avatar sessions and rendered video use them without waiting for a redeploy.
 loadVoiceOverrides().catch((e) => console.warn('[voices] initial load failed:', e.message));

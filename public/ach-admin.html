@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vendor ACH Enrollment · trustEd</title>
+<style>
+  :root{--navy:#0B1D34;--gold:#D4AF37;--ink:#1a2230;--body:#3a4656;--muted:#6b7a8d;--line:#e3e6ec;--bg:#eef1f5;--card:#fff;
+    --sent:#3d7fc4;--submitted:#e0a52b;--verified:#2f7d55;--cancelled:#96a0ad;--expired:#c0392b;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--body);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:20px 16px 60px}
+  h1{font-family:Georgia,serif;color:var(--ink);font-size:24px;margin:6px 0 2px}
+  .sub{color:var(--muted);font-size:14px;margin-bottom:20px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:22px}
+  .panel h2{font-size:15px;color:var(--ink);margin:0 0 12px;text-transform:uppercase;letter-spacing:.04em}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+  label{display:block;font-size:12px;font-weight:600;color:var(--ink);margin-bottom:4px}
+  input,select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:#fff}
+  .btn{background:var(--navy);color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer}
+  .btn.sm{padding:5px 10px;font-size:12px}
+  .btn.g{background:#eef1f5;color:var(--navy)}
+  .linkbox{margin-top:14px;background:#f7f9fc;border:1px solid var(--line);border-radius:8px;padding:12px;display:none}
+  .linkbox code{display:block;word-break:break-all;font-size:13px;color:var(--navy);margin:6px 0 8px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:8px 10px;border-bottom:2px solid var(--line)}
+  td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+  .chip{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:3px 8px;border-radius:5px;color:#fff}
+  .chip.sent{background:var(--sent)}.chip.submitted{background:var(--submitted)}.chip.verified{background:var(--verified)}.chip.cancelled{background:var(--cancelled)}.chip.expired{background:var(--expired)}
+  .acts{display:flex;gap:6px;flex-wrap:wrap}
+  .msg{padding:10px 12px;border-radius:8px;font-size:13px;margin-top:10px;display:none}
+  .msg.err{background:#fdecea;color:#c0392b;display:block}.msg.ok{background:#e6f0ea;color:#2f7d55;display:block}
+  .reveal{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;background:#fff8e6;border:1px solid #e8d9a8;border-radius:6px;padding:8px 10px;margin-top:6px}
+  .empty{color:var(--muted);padding:18px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Vendor ACH Enrollment</h1>
+  <div class="sub">Send a vendor a secure one-time link to enter their banking details. Nothing is collected by email, and no payment is set up until you verify by phone.</div>
+
+  <div class="panel">
+    <h2>Create a secure link</h2>
+    <div class="grid">
+      <div><label>Vendor name</label><input id="c-vendor" placeholder="e.g. UPS"></div>
+      <div><label>Contact name</label><input id="c-contact" placeholder="optional"></div>
+      <div><label>Contact email</label><input id="c-email" placeholder="optional"></div>
+      <div><label>Community</label><select id="c-comm"><option value="">— none / company level —</option></select></div>
+      <div><label>Link valid for</label><select id="c-ttl"><option value="14">14 days</option><option value="7">7 days</option><option value="30">30 days</option></select></div>
+    </div>
+    <div style="margin-top:14px"><button class="btn" id="c-btn">Generate secure link</button></div>
+    <div class="msg" id="c-msg"></div>
+    <div class="linkbox" id="c-linkbox">
+      <label>Send this link to the vendor (shown once):</label>
+      <code id="c-link"></code>
+      <button class="btn sm g" id="c-copy">Copy link</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Enrollment requests</h2>
+    <div id="list"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<script>
+  var $=function(id){return document.getElementById(id);};
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function fmt(d){if(!d)return '';try{return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}catch(e){return '';}}
+
+  // communities picker
+  fetch('/api/ach/communities').then(function(r){return r.json();}).then(function(j){
+    (j.communities||[]).forEach(function(c){
+      var o=document.createElement('option'); o.value=c.id;
+      o.textContent=c.name+(c.management_status==='prospect'?' (prospect)':'');
+      $('c-comm').appendChild(o);
+    });
+  }).catch(function(){});
+
+  $('c-btn').addEventListener('click',function(){
+    var msg=$('c-msg'); msg.className='msg'; msg.style.display='none';
+    var body={vendor_name:$('c-vendor').value.trim(),contact_name:$('c-contact').value.trim(),contact_email:$('c-email').value.trim(),community_id:$('c-comm').value||null,ttl_days:$('c-ttl').value};
+    if(!body.vendor_name){msg.textContent='Enter a vendor name.';msg.className='msg err';return;}
+    $('c-btn').disabled=true;$('c-btn').textContent='Generating…';
+    fetch('/api/ach/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+      .then(function(res){
+        $('c-btn').disabled=false;$('c-btn').textContent='Generate secure link';
+        if(!res.ok){msg.textContent=res.j.error||'Could not create link.';msg.className='msg err';return;}
+        $('c-link').textContent=res.j.link; $('c-linkbox').style.display='block';
+        $('c-vendor').value='';$('c-contact').value='';$('c-email').value='';
+        load();
+      }).catch(function(){$('c-btn').disabled=false;$('c-btn').textContent='Generate secure link';msg.textContent='Network error.';msg.className='msg err';});
+  });
+  $('c-copy').addEventListener('click',function(){navigator.clipboard.writeText($('c-link').textContent).then(function(){$('c-copy').textContent='Copied';setTimeout(function(){$('c-copy').textContent='Copy link';},1500);});});
+
+  function load(){
+    fetch('/api/ach/requests').then(function(r){return r.json();}).then(function(j){
+      var rows=j.requests||[];
+      if(!rows.length){$('list').innerHTML='<div class="empty">No enrollment links yet.</div>';return;}
+      var h='<table><thead><tr><th>Vendor</th><th>Community</th><th>Status</th><th>Account</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        var acct = r.account_number_last4 ? ('••••'+r.account_number_last4+' · '+(r.bank_name||'')) : '<span style="color:#96a0ad">—</span>';
+        var acts='';
+        if(r.status==='submitted'){acts+='<button class="btn sm" onclick="reveal(\''+r.id+'\')">Reveal</button> <button class="btn sm" onclick="verify(\''+r.id+'\')">Verify</button>';}
+        if(r.status==='verified'){acts+='<button class="btn sm g" onclick="reveal(\''+r.id+'\')">Reveal</button>';}
+        if(r.status==='sent'||r.status==='submitted'){acts+=' <button class="btn sm g" onclick="cancelReq(\''+r.id+'\')">Cancel</button>';}
+        h+='<tr id="row-'+r.id+'"><td><b>'+esc(r.vendor_name)+'</b>'+(r.contact_email?('<br><span style="color:#6b7a8d;font-size:12px">'+esc(r.contact_email)+'</span>'):'')+'</td>'+
+           '<td>'+(r.community_id?'✓':'<span style="color:#96a0ad">company</span>')+'</td>'+
+           '<td><span class="chip '+r.status+'">'+r.status+'</span></td>'+
+           '<td>'+acct+'</td><td>'+fmt(r.created_at)+'</td><td>'+fmt(r.expires_at)+'</td><td><div class="acts">'+acts+'</div></td></tr>';
+        if(r.status==='verified'&&r.verification_notes){h+='<tr><td colspan="7" style="color:#2f7d55;font-size:12px;padding-top:0">✓ Verified '+fmt(r.verified_at)+' by '+esc(r.verified_by||'')+' — '+esc(r.verification_notes)+'</td></tr>';}
+      });
+      h+='</tbody></table>';
+      $('list').innerHTML=h;
+    }).catch(function(){$('list').innerHTML='<div class="empty">Could not load.</div>';});
+  }
+
+  window.reveal=function(id){
+    fetch('/api/ach/requests/'+id+'/reveal').then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){
+      if(!res.ok){alert(res.j.error==='forbidden'||res.j.error?('Owner access required to reveal full banking details.'):'Could not reveal.');return;}
+      var b=res.j.banking;
+      var box=document.createElement('div');box.className='reveal';
+      box.innerHTML='Holder: '+esc(b.account_holder_name)+'<br>Bank: '+esc(b.bank_name)+' ('+esc(b.account_type)+')<br>Routing: '+esc(b.routing_number)+'<br>Account: '+esc(b.account_number_full);
+      var row=$('row-'+id); var cell=row.querySelector('td:nth-child(4)'); cell.innerHTML=''; cell.appendChild(box);
+    }).catch(function(){alert('Network error.');});
+  };
+  window.verify=function(id){
+    var notes=prompt('How did you confirm these details? (e.g. "Called UPS AP at 800-xxx from the contract, confirmed routing + account")');
+    if(!notes)return;
+    fetch('/api/ach/requests/'+id+'/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:notes})})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){
+        if(!res.ok){alert(res.j.error||'Could not verify. Owner access is required.');return;} load();
+      });
+  };
+  window.cancelReq=function(id){
+    if(!confirm('Revoke this link? The vendor will no longer be able to use it.'))return;
+    fetch('/api/ach/requests/'+id+'/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){if(!res.ok){alert(res.j.error||'Could not cancel.');return;}load();});
+  };
+
+  load();
+</script>
+</body>
+</html>
