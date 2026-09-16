@@ -51,9 +51,15 @@
     <div style="margin-top:14px"><button class="btn" id="c-btn">Generate secure link</button></div>
     <div class="msg" id="c-msg"></div>
     <div class="linkbox" id="c-linkbox">
-      <label>Send this link to the vendor (shown once):</label>
+      <label>Secure link (shown once):</label>
       <code id="c-link"></code>
-      <button class="btn sm g" id="c-copy">Copy link</button>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+        <button class="btn sm g" id="c-copy">Copy link</button>
+        <span style="color:var(--muted);font-size:12px">or have Emma email it:</span>
+        <input id="c-sendto" placeholder="vendor email" style="flex:1;min-width:200px;padding:8px 10px">
+        <button class="btn sm" id="c-send">✉️ Email via Emma</button>
+      </div>
+      <div class="msg" id="c-sendmsg"></div>
     </div>
   </div>
 
@@ -88,11 +94,30 @@
         $('c-btn').disabled=false;$('c-btn').textContent='Generate secure link';
         if(!res.ok){msg.textContent=res.j.error||'Could not create link.';msg.className='msg err';return;}
         $('c-link').textContent=res.j.link; $('c-linkbox').style.display='block';
+        $('c-sendmsg').style.display='none'; $('c-sendmsg').className='msg';
+        $('c-sendto').value=$('c-email').value.trim();
+        window._lastAch={ id:res.j.request.id, token:res.j.link.split('/').filter(Boolean).pop() };
         $('c-vendor').value='';$('c-contact').value='';$('c-email').value='';
         load();
       }).catch(function(){$('c-btn').disabled=false;$('c-btn').textContent='Generate secure link';msg.textContent='Network error.';msg.className='msg err';});
   });
   $('c-copy').addEventListener('click',function(){navigator.clipboard.writeText($('c-link').textContent).then(function(){$('c-copy').textContent='Copied';setTimeout(function(){$('c-copy').textContent='Copy link';},1500);});});
+
+  $('c-send').addEventListener('click',function(){
+    var sm=$('c-sendmsg'); sm.className='msg'; sm.style.display='none';
+    var to=$('c-sendto').value.trim();
+    if(!window._lastAch){sm.textContent='Generate a link first.';sm.className='msg err';return;}
+    if(!to){sm.textContent='Enter the vendor email.';sm.className='msg err';return;}
+    $('c-send').disabled=true; $('c-send').textContent='Sending…';
+    fetch('/api/ach/requests/'+window._lastAch.id+'/send-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email:to,token:window._lastAch.token})})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+      .then(function(res){
+        $('c-send').disabled=false; $('c-send').textContent='✉️ Email via Emma';
+        if(!res.ok){sm.textContent=res.j.error||'Could not send.';sm.className='msg err';return;}
+        sm.textContent='Emailed to '+res.j.emailed_to+' from emma@bedrocktx.com.';sm.className='msg ok';
+        load();
+      }).catch(function(){$('c-send').disabled=false;$('c-send').textContent='✉️ Email via Emma';sm.textContent='Network error.';sm.className='msg err';});
+  });
 
   function load(){
     fetch('/api/ach/requests').then(function(r){return r.json();}).then(function(j){

@@ -27,6 +27,8 @@ const { createClient } = require('@supabase/supabase-js');
 const { requireAdmin, requireOwner } = require('./_require_admin');
 const { safeErrorMessage } = require('./_safe_error');
 const { newToken, hashToken, achLink } = require('../lib/ach/token');
+const graphSend = require('../lib/email/graph_send');
+const { buildPersonaEmail } = require('../lib/email/persona_signature');
 const { renderAchAuthorizationPdf } = require('../lib/ach/authorization_pdf');
 const crypto = require('crypto');
 const multer = require('multer');
@@ -143,6 +145,57 @@ router.post('/requests/:id/cancel', express.json(), async (req, res) => {
     res.json({ ok: true, status: data.status });
   } catch (err) {
     console.error('[ach] cancel failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ADMIN — email the secure link to the vendor, from Emma's mailbox. Requires
+// the raw token (held in the browser from create) so you can only email a link
+// you actually hold; we never store or reconstruct the raw token server-side.
+router.post('/requests/:id/send-link', express.json({ limit: '4kb' }), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    if (!graphSend.isConfigured()) return res.status(400).json({ error: 'Email is not connected yet (Microsoft Graph must be set up).' });
+    const b = req.body || {};
+    const to_email = String(b.to_email || '').trim();
+    const token = String(b.token || '').trim();
+    if (!isEmail(to_email)) return res.status(400).json({ error: 'Enter a valid vendor email.' });
+    if (!token) return res.status(400).json({ error: 'missing_token' });
+
+    const { data: row, error } = await supabase.from('vendor_ach_requests')
+      .select('id, vendor_name, community_id, status, token_hash, contact_name').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    if (row.token_hash !== hashToken(token)) return res.status(400).json({ error: 'link_mismatch' }); // the raw link must match this request
+    if (row.status !== 'sent') return res.status(409).json({ error: 'This link is no longer sendable (already submitted, cancelled, or expired).' });
+
+    let community_name = null;
+    if (row.community_id) {
+      const { data: c } = await supabase.from('communities').select('name, legal_name').eq('id', row.community_id).maybeSingle();
+      community_name = c ? (c.legal_name || c.name) : null;
+    }
+    const link = achLink(token, process.env.TRUSTED_URL || (req.protocol + '://' + req.get('host')));
+    const greeting = row.contact_name ? `Hi ${row.contact_name.split(/\s+/)[0]},` : 'Hello,';
+    const bodyText = [
+      greeting,
+      `To set up electronic (ACH) payments${community_name ? ' for ' + community_name : ''}, please use the secure link below to enter your banking details. It is a one-time, encrypted form, so there is no need to send any account information by email.`,
+      link,
+      'The link expires in a few days. If you have any questions, just reply to this email.',
+      'Thank you,',
+    ].join('\n\n');
+    const { html, attachments } = buildPersonaEmail('emma', bodyText, community_name);
+
+    await graphSend.sendAs({
+      from: graphSend.EMMA_MAILBOX, to: to_email,
+      subject: `Secure ACH enrollment${community_name ? ' — ' + community_name : ''}`,
+      html, attachments,
+    });
+    // Remember who we sent to (does not change the single-use token).
+    await supabase.from('vendor_ach_requests').update({ contact_email: to_email }).eq('id', row.id);
+    console.log(`[ach] link emailed by Emma: request=${row.id} to=${to_email} by=${admin.email}`);
+    res.json({ ok: true, emailed_to: to_email });
+  } catch (err) {
+    console.error('[ach] send-link failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
