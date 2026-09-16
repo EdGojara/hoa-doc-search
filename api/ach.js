@@ -27,12 +27,23 @@ const { createClient } = require('@supabase/supabase-js');
 const { requireAdmin, requireOwner } = require('./_require_admin');
 const { safeErrorMessage } = require('./_safe_error');
 const { newToken, hashToken, achLink } = require('../lib/ach/token');
+const { renderAchAuthorizationPdf } = require('../lib/ach/authorization_pdf');
+const crypto = require('crypto');
+const multer = require('multer');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const DOCS_BUCKET = 'documents'; // same private, server-gated bucket the document library uses
 
-const SAFE_COLS = 'id, community_id, vendor_id, vendor_name, contact_name, contact_email, status, expires_at, account_holder_name, bank_name, account_type, account_number_last4, submitted_at, verified_by, verified_at, verification_notes, created_by, created_at, updated_at';
+// Accept ONE supporting file (voided check / signed ACH form): images or PDF, <= 10MB.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+});
+const OK_UPLOAD_MIME = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/jpg', 'image/heic', 'image/webp']);
+
+const SAFE_COLS = 'id, community_id, vendor_id, vendor_name, contact_name, contact_email, status, expires_at, account_holder_name, bank_name, account_type, account_number_last4, signer_name, signer_title, signed_at, authorization_agreed, supporting_doc_name, authorization_pdf_path, library_document_id, submitted_at, verified_by, verified_at, verification_notes, created_by, created_at, updated_at';
 
 const isEmail = (s) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(s || '').trim());
 const digits = (s) => String(s || '').replace(/\D/g, '');
@@ -221,7 +232,7 @@ router.get('/form/:token', async (req, res) => {
   }
 });
 
-router.post('/form/:token', express.json({ limit: '16kb' }), async (req, res) => {
+router.post('/form/:token', upload.single('document'), async (req, res) => {
   try {
     let row = await loadByToken(req.params.token);
     if (!row) return res.status(404).json({ error: 'invalid_link' });
@@ -234,13 +245,16 @@ router.post('/form/:token', express.json({ limit: '16kb' }), async (req, res) =>
       return res.status(409).json({ error: msg });
     }
 
-    const b = req.body || {};
+    const b = req.body || {}; // multer parses text fields as strings
     const account_holder_name = String(b.account_holder_name || '').trim();
     const bank_name = String(b.bank_name || '').trim();
     const account_type = String(b.account_type || '').trim().toLowerCase();
     const routing = digits(b.routing_number);
     const account = digits(b.account_number);
     const confirm = digits(b.confirm_account_number);
+    const signer_name = String(b.signer_name || '').trim();
+    const signer_title = String(b.signer_title || '').trim() || null;
+    const agreed = b.authorization_agreed === true || b.authorization_agreed === 'true' || b.authorization_agreed === 'on' || b.authorization_agreed === '1';
 
     if (!account_holder_name) return res.status(400).json({ error: 'Account holder name is required.' });
     if (!bank_name) return res.status(400).json({ error: 'Bank name is required.' });
@@ -248,19 +262,103 @@ router.post('/form/:token', express.json({ limit: '16kb' }), async (req, res) =>
     if (!validRouting(routing)) return res.status(400).json({ error: 'That routing number is not valid. Please check the 9 digits.' });
     if (account.length < 4 || account.length > 17) return res.status(400).json({ error: 'Account number should be 4 to 17 digits.' });
     if (account !== confirm) return res.status(400).json({ error: 'The account numbers do not match.' });
+    if (!signer_name) return res.status(400).json({ error: 'Please type your full name to sign.' });
+    if (!agreed) return res.status(400).json({ error: 'Please check the authorization box to sign.' });
+    if (req.file && !OK_UPLOAD_MIME.has(String(req.file.mimetype || '').toLowerCase())) {
+      return res.status(400).json({ error: 'Please upload a PDF or an image (a voided check works well).' });
+    }
 
+    const now = new Date().toISOString();
     const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || null;
+    const ua = String(req.headers['user-agent'] || '').slice(0, 250);
+
+    // Community name for the authorization document.
+    let community_name = null;
+    if (row.community_id) {
+      const { data: c } = await supabase.from('communities').select('name, legal_name').eq('id', row.community_id).maybeSingle();
+      community_name = c ? (c.legal_name || c.name) : null;
+    }
+
+    const base = `${BEDROCK_MGMT_CO_ID}/${row.community_id || 'unassigned'}/vendor_ach`;
+    // 1) Generate + store the signed authorization PDF (the retained record).
+    let authorization_pdf_path = null;
+    try {
+      const pdf = await renderAchAuthorizationPdf({
+        vendor_name: row.vendor_name, community_name,
+        account_holder_name, bank_name, account_type,
+        routing_number: routing, account_number_full: account,
+        signer_name, signer_title, signed_at: now, submitted_at: now, submitter_ip: ip, signer_user_agent: ua,
+      });
+      authorization_pdf_path = `${base}/${row.id}-authorization.pdf`;
+      const up = await supabase.storage.from(DOCS_BUCKET).upload(authorization_pdf_path, pdf, { contentType: 'application/pdf', upsert: true });
+      if (up.error) { console.warn('[ach] auth pdf upload failed:', up.error.message); authorization_pdf_path = null; }
+    } catch (e) { console.warn('[ach] auth pdf render failed:', e.message); }
+
+    // 2) Store the optional supporting upload (voided check / their signed form).
+    let supporting_doc_path = null, supporting_doc_name = null, supporting_doc_mime = null;
+    if (req.file) {
+      const ext = ({ 'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/heic': 'heic', 'image/webp': 'webp' })[String(req.file.mimetype).toLowerCase()] || 'bin';
+      supporting_doc_path = `${base}/${row.id}-support.${ext}`;
+      supporting_doc_name = String(req.file.originalname || `support.${ext}`).slice(0, 180);
+      supporting_doc_mime = req.file.mimetype;
+      const su = await supabase.storage.from(DOCS_BUCKET).upload(supporting_doc_path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+      if (su.error) { console.warn('[ach] support upload failed:', su.error.message); supporting_doc_path = null; }
+    }
+
+    // 3) File the authorization into the community document library (best-effort;
+    //    never blocks the submission). Category 'vendor_contract' is canonical.
+    let library_document_id = null;
+    if (authorization_pdf_path) {
+      try {
+        const docId = crypto.randomUUID();
+        const { data: doc, error: dErr } = await supabase.from('library_documents').insert({
+          id: docId, management_company_id: BEDROCK_MGMT_CO_ID, community_id: row.community_id || null,
+          category: 'vendor_contract', status: 'current',
+          title: `ACH Authorization - ${row.vendor_name}`,
+          file_name_original: `ACH Authorization - ${row.vendor_name}.pdf`,
+          file_name_normalized: `ach-authorization-${row.id}.pdf`,
+          file_path: authorization_pdf_path,
+        }).select('id').single();
+        if (dErr) console.warn('[ach] library filing skipped:', dErr.message);
+        else library_document_id = doc.id;
+      } catch (e) { console.warn('[ach] library filing failed:', e.message); }
+    }
+
+    // 4) Persist submission + e-sign attribution. Re-check status to avoid a double-submit race.
     const { error } = await supabase.from('vendor_ach_requests').update({
       account_holder_name, bank_name, account_type,
       routing_number: routing, account_number_full: account, account_number_last4: account.slice(-4),
-      submitted_at: new Date().toISOString(), submitter_ip: ip, status: 'submitted',
-    }).eq('id', row.id).eq('status', 'sent'); // re-check status to avoid a double-submit race
+      signer_name, signer_title, authorization_agreed: true, signed_at: now, signer_user_agent: ua,
+      supporting_doc_path, supporting_doc_name, supporting_doc_mime,
+      authorization_pdf_path, library_document_id,
+      submitted_at: now, submitter_ip: ip, status: 'submitted',
+    }).eq('id', row.id).eq('status', 'sent');
     if (error) throw error;
 
-    console.log(`[ach] submission received: request=${row.id} vendor="${row.vendor_name}"`);
+    console.log(`[ach] submission received: request=${row.id} vendor="${row.vendor_name}" signer="${signer_name}" upload=${!!supporting_doc_path}`);
     res.json({ ok: true });
   } catch (err) {
     console.error('[ach] submit failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// OWNER — download a stored doc (authorization PDF or the vendor's upload). Both
+// contain full banking details, so owner-gated + short-lived signed URL, logged.
+router.get('/requests/:id/doc', async (req, res) => {
+  const owner = await requireOwner(req, res); if (!owner) return;
+  try {
+    const which = String(req.query.which || 'authorization');
+    const col = which === 'support' ? 'supporting_doc_path' : 'authorization_pdf_path';
+    const { data, error } = await supabase.from('vendor_ach_requests').select(`id, vendor_name, ${col}`).eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!data || !data[col]) return res.status(404).json({ error: 'not_found' });
+    const { data: signed, error: sErr } = await supabase.storage.from(DOCS_BUCKET).createSignedUrl(data[col], 60);
+    if (sErr) throw sErr;
+    console.log(`[ach][AUDIT] doc downloaded: request=${data.id} which=${which} by=${owner.email} at=${new Date().toISOString()}`);
+    res.json({ url: signed.signedUrl });
+  } catch (err) {
+    console.error('[ach] doc download failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

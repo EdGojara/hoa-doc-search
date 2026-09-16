@@ -104,6 +104,8 @@
         var acts='';
         if(r.status==='submitted'){acts+='<button class="btn sm" onclick="reveal(\''+r.id+'\')">Reveal</button> <button class="btn sm" onclick="verify(\''+r.id+'\')">Verify</button>';}
         if(r.status==='verified'){acts+='<button class="btn sm g" onclick="reveal(\''+r.id+'\')">Reveal</button>';}
+        if(r.authorization_pdf_path){acts+=' <button class="btn sm g" onclick="downloadDoc(\''+r.id+'\',\'authorization\')">Auth PDF</button>';}
+        if(r.supporting_doc_name){acts+=' <button class="btn sm g" onclick="downloadDoc(\''+r.id+'\',\'support\')" title="'+esc(r.supporting_doc_name)+'">Voided check</button>';}
         if(r.status==='sent'||r.status==='submitted'){acts+=' <button class="btn sm g" onclick="cancelReq(\''+r.id+'\')">Cancel</button>';}
         h+='<tr id="row-'+r.id+'"><td><b>'+esc(r.vendor_name)+'</b>'+(r.contact_email?('<br><span style="color:#6b7a8d;font-size:12px">'+esc(r.contact_email)+'</span>'):'')+'</td>'+
            '<td>'+(r.community_id?'✓':'<span style="color:#96a0ad">company</span>')+'</td>'+
@@ -132,6 +134,12 @@
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){
         if(!res.ok){alert(res.j.error||'Could not verify. Owner access is required.');return;} load();
       });
+  };
+  window.downloadDoc=function(id,which){
+    fetch('/api/ach/requests/'+id+'/doc?which='+encodeURIComponent(which)).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(res){
+      if(!res.ok||!res.j.url){alert(res.j.error==='not_found'?'No document on file.':'Owner access is required to download banking documents.');return;}
+      window.open(res.j.url,'_blank');
+    }).catch(function(){alert('Network error.');});
   };
   window.cancelReq=function(id){
     if(!confirm('Revoke this link? The vendor will no longer be able to use it.'))return;
