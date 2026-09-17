@@ -274,6 +274,7 @@ let communityByMsg = {};// messageId -> community_id (scopes the document search
 let recipientByMsg = {};// messageId -> {to, source} suggested reply recipient (body email vs envelope sender)
 let genAttsByMsg = {};  // messageId -> [{name, size, ...}] files the agent generated (RFP PDF, nominations) — shown read-only; attached server-side at send
 let originalDraftByMsg = {};// messageId -> Claire's FIRST autonomous draft (the encode-Ed learning baseline vs what Ed actually sends)
+let verificationByMsg = {}; // messageId -> independent number-check result, so Send can warn if a flagged figure wasn't resolved
 const PNAME = { claire:'Claire', emma:'Emma Brooks', kat:'Kat Reed', annie:'Annie Reeves', miranda:'Miranda Pierce', amanda:'Amanda Albright', reese:'Reese Calloway', paige:'Paige Chandler', isabella:'Isabella Reyes', mei:'Mei Chen', priya:'Priya Sharma', general:'General inbox' };
 // Every sending persona's mailbox, matching lib/email/graph_send.js. A missing
 // entry silently fell back to claire@ — Amanda's contract review showed "sends
@@ -1100,6 +1101,7 @@ async function doDraft(id, persona){
   // Baseline for encode-Ed: this fresh draft is what Claire produced on her own.
   // A regenerate resets it; a Rewrite-with-notes deliberately keeps the FIRST one.
   originalDraftByMsg[id] = j.body || '';
+  verificationByMsg[id] = j.verification || null;
   box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id], genAttsByMsg[id]) + groundingPanelHtml(j.grounding, j.verification);
 }
 // Rewrite the open draft incorporating the reviewer's notes (Ed's thoughts).
@@ -1126,12 +1128,22 @@ async function doRewrite(id, persona){
   const manual = (attachByMsg[id]||[]).filter(a=>!a.auto);
   attachByMsg[id] = [...(j.auto_attachments||[]), ...manual];
   communityByMsg[id] = j.community_id || communityByMsg[id] || '';
+  verificationByMsg[id] = j.verification || null;
   box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id], genAttsByMsg[id]) + groundingPanelHtml(j.grounding, j.verification);
 }
 async function doSend(id, btn, careful, persona){
   const who = (PNAME[persona]||'Claire').split(' ')[0];
   const covers = coversByMsg[id] || [];
   if(careful && !confirm(`This is a compliance-sensitive reply (legal / violation / ACC / money). Send it as ${who} now?`)) return;
+  // Soft-block: the independent number check flagged one or more figures in this
+  // draft that don't match the source documents. Make the reviewer acknowledge
+  // before it goes out (Ed 2026-09-17 — the 18-vs-27 miscount).
+  const _v = verificationByMsg[id];
+  if(_v && _v.counts && _v.counts.mismatches>0){
+    const lines = (_v.claims||[]).filter(c=>c.status==='mismatch')
+      .map(c=>`• ${c.claim||''}\n   draft: ${c.draft_value||'?'}   source: ${c.source_value||'?'}`).join('\n');
+    if(!confirm(`Hold on — the document check flagged ${_v.counts.mismatches} figure(s) that don't match the source:\n\n${lines}\n\nSend anyway?`)) return;
+  }
   // A file still uploading? Don't send without it. (Ed 2026-08-01.)
   if((attachByMsg[id]||[]).some(a=>a.upload&&a.uploading)){ alert('A file is still uploading — give it a second, then send.'); return; }
   const body = document.getElementById('dt-'+id).value;
@@ -1152,7 +1164,7 @@ async function doSend(id, btn, careful, persona){
     const fu = j.followups||{};
     const fuMsg = (fu.queued&&fu.queued.length) ? `<div class="note" style="color:#166534;margin-top:4px;">✉️ Also queued a follow-up draft to ${fu.queued.map(q=>esc(q.name||q.email)).join(', ')} — review it in the <a href="/admin/draft-queue" style="color:#0B1D34;font-weight:600;">Draft Queue</a>.</div>` : '';
     const fuWarn = (fu.unresolved&&fu.unresolved.length) ? `<div class="note" style="color:#8a6d00;margin-top:4px;">⚠ Couldn't find an address for ${fu.unresolved.map(esc).join(', ')} — reach them separately so it doesn't fall through.</div>` : '';
-    document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}${j.also_handled?` — cleared ${j.also_handled+1} emails`:''}.</div>${fuMsg}${fuWarn}</div>`; delete coversByMsg[id]; loadStats(); setTimeout(loadList, 800); }
+    document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}${j.also_handled?` — cleared ${j.also_handled+1} emails`:''}.</div>${fuMsg}${fuWarn}</div>`; delete coversByMsg[id]; delete verificationByMsg[id]; loadStats(); setTimeout(loadList, 800); }
   else { btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert(j.detail || j.error || 'Send failed'); }
 }
 // ---- Forward to a teammate (loop someone in before replying) --------------
