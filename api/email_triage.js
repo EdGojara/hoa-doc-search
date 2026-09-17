@@ -974,7 +974,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
     if (persona === 'emma') {
       const { draftEmmaReply } = require('../lib/email/emma_reply');
       const draft = await draftEmmaReply({
-        email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full },
+        email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, mailbox: m.mailbox, graph_id: m.graph_id },
         vendorId: m.resolved_vendor_id, vendorName: m.resolved_vendor ? m.resolved_vendor.name : (m.sender_name || null),
         notes, currentDraft, examples: await loadExamples('emma'),
       });
@@ -994,7 +994,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       if (isStaffAskingForHelp({ sender_email: m.sender_email })) {
         const d = await draftAmandaStaffAssist({
           email: { subject: m.subject, body_full: m.body_full, body_preview: m.body_preview,
-                   sender_name: m.sender_name, sender_email: m.sender_email },
+                   sender_name: m.sender_name, sender_email: m.sender_email, mailbox: m.mailbox, graph_id: m.graph_id },
           communityName: m.community ? m.community.name : null,
         });
         if (d && d.draftable) {
@@ -1012,7 +1012,7 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
       const { draftPersonaReply } = require('../lib/email/persona_reply');
       const draft = await draftPersonaReply({
         persona,
-        email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, sender_name: m.sender_name, sender_email: m.sender_email },
+        email: { subject: m.subject, body_preview: m.body_preview, body_full: m.body_full, sender_name: m.sender_name, sender_email: m.sender_email, mailbox: m.mailbox, graph_id: m.graph_id },
         context: {
           communityName: m.community ? m.community.name : null,
           contactName: (m.resolved_contact && m.resolved_contact.full_name) || m.sender_name || null,
