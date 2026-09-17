@@ -577,6 +577,44 @@ async function fileToAcc(id, btn){
     setTimeout(()=>{ loadStats(); loadList(); }, 800);
   }catch(e){ btn.disabled=false; btn.textContent=prev; alert('Could not file to ACC: '+e.message); }
 }
+// "Receipts" panel — shows what the AI could verify from the source documents
+// (facts with sources), what is its own recommendation, what it could NOT verify,
+// and any number an independent check flagged as not matching the source. Only
+// appears for document-based drafts (grounding/verification come back on the
+// draft response). Human still approves; this makes that call informed.
+function groundingPanelHtml(grounding, verification){
+  if(!grounding && !verification) return '';
+  let inner = '';
+  if(verification && Array.isArray(verification.claims) && verification.claims.length){
+    const mis = verification.claims.filter(c=>c.status==='mismatch');
+    const unv = verification.claims.filter(c=>c.status==='unverifiable');
+    const ok  = verification.claims.filter(c=>c.status==='match');
+    if(mis.length){
+      inner += `<div style="margin:6px 0;padding:8px 10px;border:1px solid #fecaca;background:#fef2f2;border-radius:6px;">`
+        + `<div style="font-weight:700;color:#b91c1c;font-size:12px;">🚩 ${mis.length} number${mis.length>1?'s':''} to double-check before sending</div>`
+        + mis.map(c=>`<div style="font-size:12px;margin-top:4px;">• ${esc(c.claim||'')}<br><span style="color:#64748b;">draft says <b>${esc(c.draft_value||'?')}</b>, source shows <b>${esc(c.source_value||'?')}</b>${c.where?' ('+esc(c.where)+')':''}</span></div>`).join('')
+        + `</div>`;
+    }
+    inner += `<div style="font-size:11.5px;color:#166534;margin:4px 0;">✅ ${ok.length} verified · ⚠️ ${unv.length} could not verify · 🚩 ${mis.length} mismatch${mis.length===1?'':'es'}</div>`;
+    if(unv.length){
+      inner += `<div style="font-size:12px;color:#92400e;margin:2px 0;">⚠️ Not confirmed from the documents: `+unv.map(c=>esc(c.claim||'')).join('; ')+`</div>`;
+    }
+  }
+  if(grounding && Array.isArray(grounding.claims) && grounding.claims.length){
+    const facts = grounding.claims.filter(c=>c.type==='fact');
+    const recs  = grounding.claims.filter(c=>c.type==='recommendation');
+    const gaps  = grounding.claims.filter(c=>c.type==='gap');
+    const row = (c,icon)=>`<li style="margin:3px 0;">${icon} ${esc(c.statement)}${c.source?` <span style="color:#64748b;">— ${esc(c.source)}</span>`:''}</li>`;
+    if(facts.length) inner += `<div style="font-size:11.5px;font-weight:700;color:#334155;margin-top:6px;">Facts (from the documents)</div><ul style="margin:2px 0 0 16px;padding:0;font-size:12px;">`+facts.map(c=>row(c,'✅')).join('')+`</ul>`;
+    if(recs.length)  inner += `<div style="font-size:11.5px;font-weight:700;color:#334155;margin-top:6px;">Recommendations (the team's judgment)</div><ul style="margin:2px 0 0 16px;padding:0;font-size:12px;">`+recs.map(c=>row(c,'💡')).join('')+`</ul>`;
+    if(gaps.length)  inner += `<div style="font-size:11.5px;font-weight:700;color:#92400e;margin-top:6px;">Couldn't verify from the documents</div><ul style="margin:2px 0 0 16px;padding:0;font-size:12px;">`+gaps.map(c=>row(c,'⚠️')).join('')+`</ul>`;
+  }
+  if(!inner) return '';
+  const hasMismatch = verification && verification.counts && verification.counts.mismatches>0;
+  return `<details ${hasMismatch?'open':''} style="margin-top:8px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fbfcff;">`
+    + `<summary style="cursor:pointer;font-size:12px;font-weight:700;color:#0B1D34;">Sources &amp; confidence${hasMismatch?' <span style="color:#b91c1c;">· check flagged numbers</span>':''}</summary>`
+    + `<div style="margin-top:6px;">${inner}</div></details>`;
+}
 function draftBoxHtml(id, subject, body, careful, persona, covers, genAtts, sender){
   persona = persona || 'claire';
   const who = PNAME[persona] || 'Claire';
@@ -1062,7 +1100,7 @@ async function doDraft(id, persona){
   // Baseline for encode-Ed: this fresh draft is what Claire produced on her own.
   // A regenerate resets it; a Rewrite-with-notes deliberately keeps the FIRST one.
   originalDraftByMsg[id] = j.body || '';
-  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id], genAttsByMsg[id]);
+  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id], genAttsByMsg[id]) + groundingPanelHtml(j.grounding, j.verification);
 }
 // Rewrite the open draft incorporating the reviewer's notes (Ed's thoughts).
 async function doRewrite(id, persona){
@@ -1088,7 +1126,7 @@ async function doRewrite(id, persona){
   const manual = (attachByMsg[id]||[]).filter(a=>!a.auto);
   attachByMsg[id] = [...(j.auto_attachments||[]), ...manual];
   communityByMsg[id] = j.community_id || communityByMsg[id] || '';
-  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id], genAttsByMsg[id]);
+  box.innerHTML = draftBoxHtml(id, j.subject, j.body, j.careful, persona, coversByMsg[id], genAttsByMsg[id]) + groundingPanelHtml(j.grounding, j.verification);
 }
 async function doSend(id, btn, careful, persona){
   const who = (PNAME[persona]||'Claire').split(' ')[0];
