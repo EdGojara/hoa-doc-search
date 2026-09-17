@@ -60,7 +60,15 @@ async function signPhotoUrls(paths, opts = {}) {
   const quality = opts.quality || 72;
   const uniq = [...new Set((paths || []).filter(Boolean))];
   const out = new Map();
-  const CHUNK = 30;
+  // Each createSignedUrl is one round-trip to Supabase (token signing, no image
+  // work), so the wall-clock is dominated by round-trip latency × count. The
+  // Step-1 review queue signs a thumbnail for EVERY pending photo; at 493 photos
+  // CHUNK=30 took ~7.8s ("why is it taking so long to load observations", Ed
+  // 2026-09-17). Raising concurrency to 200 drops that to ~2s while still
+  // returning the real 600px thumbnails (the batch createSignedUrls API can't
+  // apply the resize transform, so it's not an option here). Capped, not
+  // unbounded, so a very large community can't open thousands of sockets at once.
+  const CHUNK = 200;
   for (let i = 0; i < uniq.length; i += CHUNK) {
     const chunk = uniq.slice(i, i + CHUNK);
     await Promise.all(chunk.map(async (path) => {
