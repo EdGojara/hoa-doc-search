@@ -915,6 +915,45 @@ Two corollaries this scar also earned, both in `lib/email/draft_reply.js`:
   removes the fabricated provenance. Same lesson as the recurring-scar meta-rule:
   when instruction-following fails twice, ship a check, not another paragraph.
 
+### The AI team must READ every attachment — one code path per fetch behavior
+
+**Scar**: 2026-09-17. A vendor (Zane Hickman) emailed three security proposals
+for Canyon Gate; Amanda's drafted reply asked him to "send me the contract along
+with the other two proposals" — the exact files he had already attached. The
+drafter was innocent: it calls `fetchAttachmentBlocks` and the system prompt
+already says "read the attachments, don't ask them to forward what's in front of
+you." The failure was in `fetchAttachmentBlocks` itself:
+- It pulled EVERY attachment's bytes in ONE `/attachments` call with no `$select`.
+  On a message with a 6.3MB bid that response is huge and slow, and on failure the
+  whole thing returned `{blocks:[], summary:''}` — so NOTHING reached the model.
+- It read only inline `a.contentBytes`, which **Graph omits for large files** — the
+  identical omission that `fetchAllAttachmentBuffers` had already been fixed for on
+  2026-08-21 (Martha's `.docx` that Paige "didn't have"). One sibling learned the
+  lesson; the other didn't.
+- A `4.5MB` cap dropped a normal-size proposal as "too large" even though Claude
+  reads far bigger PDFs.
+
+So this is a **recurrence of a known class**: an attachment silently not reaching
+the AI-team reader, and the reader then telling a real customer to resend what
+they already sent — which reads as incompetent.
+
+**Rule**: every attachment-fetch path uses the SAME robust pattern —
+1. **List metadata first** (`$select=id,name,contentType,size,isInline`), cheap and
+   reliable; never pull all bytes inline in one shot.
+2. **Fetch each wanted file's bytes BY ID** via `/$value` (falls back to the by-id
+   object's `contentBytes`), so large files whose bytes Graph omits still load.
+3. **Expand `itemAttachment`** (a forwarded email carries its real docs nested).
+4. Caps sized to what the model can actually take (per-file + a total-request byte
+   budget), not a fear number.
+5. Any file that still can't be shown is **named in the summary**, and the summary
+   instructs the drafter to acknowledge it and never ask the sender to resend.
+
+And the consuming call (`draft_reply`) **retries text-only** if a document block is
+rejected, so a pathological attachment degrades to "acknowledge by name," never a
+failed draft. The next time a NEW attachment-fetch helper is added, it copies this
+shape or it will reproduce the bug. (`fetchAttachmentBlocks`, `fetchAllAttachmentBuffers`,
+`fetchInvoicePdf` in `lib/email/graph_attachments.js` now all list-then-fetch-by-id.)
+
 ---
 
 ## Database conventions
