@@ -999,7 +999,8 @@ router.post('/:id/draft-reply', express.json(), async (req, res) => {
         });
         if (d && d.draftable) {
           return res.json({ subject: d.subject, body: d.body, careful: !!d.careful,
-                            persona: 'amanda', review_hint: d.review_hint, ...recipientOut });
+                            persona: 'amanda', review_hint: d.review_hint,
+                            grounding: d.grounding, verification: d.verification, ...recipientOut });
         }
       }
     }
