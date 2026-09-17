@@ -24524,18 +24524,35 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   async function inspReviewSetCategory(obsId, categoryId) {
     if (!categoryId) return;
     try {
+      // When the category changes, the description sentence must follow it —
+      // that sentence PRINTS ON THE LETTER (violation_letter.js). Leaving the
+      // AI's old text (e.g. "grass in the expansion joints") on a reclassified
+      // observation ships a wrong letter — the 5818 Acacia Rose Court problem.
+      // So we also swap ai_description to the new category's standard
+      // observation_template. The operator can still ✎ edit text to add detail.
+      const cat = (window._inspCats || []).find((c) => c && c.id === categoryId);
+      const newText = (cat && cat.observation_template && cat.observation_template.trim()) || '';
+      const patch = { category_id: categoryId };
+      if (newText) patch.ai_description = newText;
       const r = await fetch(`/api/inspections/observations/${obsId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category_id: categoryId }),
+        body: JSON.stringify(patch),
       });
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
       // Update THIS row in place — don't reload the whole queue. Reloading every
       // row + photo after each edit is what made edits feel slow (Ed 2026-08-25).
-      const cat = (window._inspCats || []).find((c) => c && c.id === categoryId);
       const lbl = document.getElementById('revcatlabel-' + obsId);
       if (lbl && cat) lbl.textContent = cat.label;
       const selEl = document.getElementById('revcat-' + obsId);
       if (selEl) selEl.style.display = 'none';
+      if (newText) {
+        // Reflect the new sentence in the read view AND the hidden edit textarea.
+        const dv = document.getElementById('descview-' + obsId);
+        const span = dv ? dv.querySelector('span') : null;
+        if (span) span.textContent = '"' + newText + '"';
+        const ta = document.getElementById('revdesc-' + obsId);
+        if (ta) ta.value = newText;
+      }
     } catch (e) { alert('Could not change category: ' + e.message); }
   }
   function inspReviewToggleDesc(obsId) {
