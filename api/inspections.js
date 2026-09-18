@@ -3899,6 +3899,12 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
 
     void (async () => {
     let letterResult = { error: 'letter not generated' };
+    // Retry the render. The confirm-loss bug (16 Waterview letters silently lost
+    // on 2026-09-18) was transient background-render failures: the violation
+    // opened, the render threw, and NOTHING landed in the queue — invisible until
+    // someone ran Generate-missing. Retry a few times, then surface a visible
+    // placeholder below so a confirmed violation can never sit with no letter.
+    for (let attempt = 1; attempt <= 3 && letterResult.error; attempt++) {
     try {
       const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
 
@@ -4070,8 +4076,26 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
 
       letterResult = { interaction_id: inter && inter.id, letter_path: letterPath };
     } catch (letterErr) {
-      console.error('[inspections.confirm] letter draft FAILED (violation opened, no draft):', letterErr.message);
+      console.error(`[inspections.confirm] letter draft attempt ${attempt}/3 FAILED (violation opened, no draft):`, letterErr.message);
       letterResult = { error: letterErr.message };
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
+    }  // end retry loop
+    if (letterResult && letterResult.error) {
+      // Never let a failed render vanish. Queue a VISIBLE placeholder draft the
+      // operator can Regenerate, so a confirmed violation can never be invisible
+      // with no letter. (Ed 2026-09-18 — the confirm-loss silent-failure gap.)
+      try {
+        const _stageToType = { courtesy_1: 'letter_courtesy_1', courtesy_2: 'letter_courtesy_2', certified_209: 'letter_209', fine_assessed: 'letter_209' };
+        await supabase.from('interactions').insert({
+          community_id: obs.community_id, property_id: obs.property_id, violation_id: violation.id, observation_id: obs.id,
+          type: _stageToType[letterStage] || 'ai_draft', direction: 'outbound',
+          subject: `Violation letter (${letterStage}) — RENDER FAILED, click Regenerate`,
+          content: null, status: 'draft', ai_drafted: true, ai_model: 'reviewer_confirm',
+          notes: 'RENDER_FAILED after 3 attempts: ' + String(letterResult.error).slice(0, 300),
+        });
+        console.error('[inspections.confirm] render failed after 3 attempts; placeholder queued for regenerate, violation', violation.id);
+      } catch (phErr) { console.error('[inspections.confirm] placeholder insert also failed:', phErr.message, 'violation', violation.id); }
     }
     })().catch((e) => console.warn('[inspections.confirm] background draft crashed:', e.message));
   } catch (err) {
@@ -4086,15 +4110,40 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
 // ---------------------------------------------------------------------------
 router.post('/inspections/observations/:id/reject', express.json(), async (req, res) => {
   try {
+    const obsId = req.params.id;
     const reason = (req.body && req.body.reason) || null;
+    const now = new Date().toISOString();
     await supabase
       .from('property_observations')
-      .update({
-        reviewer_status: 'rejected',
-        reviewer_notes: reason,
-        reviewed_at: new Date().toISOString(),
-      })
-      .eq('id', req.params.id);
+      .update({ reviewer_status: 'rejected', reviewer_notes: reason, reviewed_at: now })
+      .eq('id', obsId);
+
+    // Rejecting an observation means "not a violation." If a violation was
+    // auto-opened FROM this observation and has NOT been noticed yet, void it and
+    // reject its draft letters, so it can never linger open and resurface later as
+    // a "missing letter" (the 18 rejected-observation orphans, Ed 2026-09-18). A
+    // case whose notice already MAILED is left alone — rejecting a re-observation
+    // does not unsend a letter.
+    try {
+      const { data: ownVios } = await supabase
+        .from('violations')
+        .select('id')
+        .eq('opened_from_observation_id', obsId)
+        .not('current_stage', 'in', '(cured,closed,voided)')
+        .is('resolved_at', null);
+      for (const v of (ownVios || [])) {
+        const { data: sent } = await supabase.from('interactions')
+          .select('id').eq('violation_id', v.id).ilike('type', 'letter%').eq('status', 'sent').limit(1);
+        if (sent && sent.length) continue;                 // noticed — do not void
+        await supabase.from('violations')
+          .update({ current_stage: 'voided', resolved_via: 'voided', resolved_at: now })
+          .eq('id', v.id);
+        await supabase.from('interactions')
+          .update({ status: 'rejected' })
+          .eq('violation_id', v.id).ilike('type', 'letter%').in('status', ['draft', 'awaiting_approval', 'approved']);
+      }
+    } catch (e) { console.warn('[inspections.reject] void own-case violation failed:', e.message); }
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message || 'reject failed' });
