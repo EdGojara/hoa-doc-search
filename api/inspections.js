@@ -35,6 +35,16 @@ const { getLegalFlag } = require('../lib/enforcement/legal_flag');
 // THEN letters generate for the approved set. Flip true to restore old behavior.
 const AUTO_DRAFT_LETTERS_ON_INSPECTION = false;
 
+// CONFIRM IS THE ONLY GATE (Ed 2026-09-17). A drive produces pending OBSERVATIONS
+// only. The violation and its draft notice are born at the HUMAN confirm (the
+// confirm endpoint's 'new' path opens the case + drafts), and reject = trash.
+// Auto-opening a violation at capture is what orphaned Eaglewood's queue: a batch
+// path mailed the letters while the observations sat 'pending' forever, never
+// reconciled, and the confirm preview then wanted to re-draft duplicates. With
+// this off, nothing exists to orphan until a person confirms. Kept as a flag
+// (not deleted) so it's reversible; confirm has always been able to open cold.
+const AUTO_OPEN_VIOLATIONS_ON_INSPECTION = false;
+
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 // Bedrock management company id — matches the seed in 001_foundation.sql and
@@ -988,7 +998,7 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                 priority_weight: priorityWeight,
               });
 
-              if (decision.should_open) {
+              if (AUTO_OPEN_VIOLATIONS_ON_INSPECTION && decision.should_open) {
                 const cureEnd = decision.cure_days > 0
                   ? new Date(Date.now() + decision.cure_days * 24 * 60 * 60 * 1000).toISOString()
                   : null;
