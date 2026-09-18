@@ -2951,6 +2951,7 @@ router.get('/mail-queue/summary', async (req, res) => {
         .in('type', letterTypes)
         .not('printed_at', 'is', null)
         .is('mailed_at', null)
+        .neq('status', 'rejected') // a held/pulled letter (e.g. on a voided case) is NOT awaiting confirmation — it must not reappear in the locked queue (Ed 2026-09-18: three voided-case letters kept popping up)
         .order('printed_at', { ascending: false });
       if (communityId) lq = lq.eq('community_id', communityId);
       const { data: locked } = await lq;
@@ -3000,6 +3001,7 @@ router.post('/mail-queue/redownload', express.json(), async (req, res) => {
       .eq('delivery_method', deliveryMethod)
       .not('printed_at', 'is', null)
       .is('mailed_at', null)
+      .neq('status', 'rejected') // don't re-download a held/pulled letter back into a batch
       .order('created_at', { ascending: true });
     if (communityId) q = q.eq('community_id', communityId);
     if (printedAt) q = q.eq('printed_at', printedAt);
