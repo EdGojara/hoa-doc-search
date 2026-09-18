@@ -3405,21 +3405,32 @@ router.get('/inspections/observations/confirm-preview', async (req, res) => {
     const openByProp = new Map();
     for (const v of openViols) { (openByProp.get(v.property_id) || openByProp.set(v.property_id, []).get(v.property_id)).push(v); }
 
-    // 4) Match each case to its open violation (property + same alias group,
-    //    furthest-advanced). Collect matched courtesy_1 ids for a single letter fetch.
-    const matched = [];
+    // 4) Match each case. Split OTHER open cases (real continuations) from this
+    //    observation's OWN case (auto-opened at analyze). An own case is NOT
+    //    automatically "new": if its first courtesy was already MAILED, confirming
+    //    must not redraft it — counting it as "new courtesy" is the Eaglewood
+    //    duplicate bug (Ed 2026-09-17: 472 "new" when 205 were already mailed).
+    const matched = [];            // OTHER open cases → run the re-observation decider
+    const ownCases = [];           // this obs's own case → new (draft) vs already_noticed
     let newCount = 0;
     for (const c of caseList) {
       const gk = groupKey(c.categoryId);
-      const rows = (openByProp.get(c.propertyId) || [])
-        .filter((v) => groupKey(v.primary_category_id) === gk)
-        .filter((v) => !pendingObsIds.has(v.opened_from_observation_id)); // exclude own-case (drafted at confirm)
-      if (!rows.length) { newCount++; continue; }
-      const open = rows.slice().sort((a, b) => (STAGE_RANK[b.current_stage] || 0) - (STAGE_RANK[a.current_stage] || 0))[0];
-      matched.push(open);
+      const atProp = (openByProp.get(c.propertyId) || []).filter((v) => groupKey(v.primary_category_id) === gk);
+      const others = atProp.filter((v) => !pendingObsIds.has(v.opened_from_observation_id));
+      if (others.length) {
+        matched.push(others.slice().sort((a, b) => (STAGE_RANK[b.current_stage] || 0) - (STAGE_RANK[a.current_stage] || 0))[0]);
+        continue;
+      }
+      const own = atProp.filter((v) => pendingObsIds.has(v.opened_from_observation_id));
+      if (!own.length) { newCount++; continue; }   // truly new — no violation at all
+      ownCases.push(own.slice().sort((a, b) => (STAGE_RANK[b.current_stage] || 0) - (STAGE_RANK[a.current_stage] || 0))[0]);
     }
-    // 5) All letter_courtesy_1 rows for matched courtesy_1 violations, ONE fetch.
-    const c1Ids = matched.filter((v) => v.current_stage === 'courtesy_1').map((v) => v.id);
+    // 5) One letter fetch for every courtesy_1 case we still need to judge —
+    //    matched continuations AND own cases (to see if the first notice was mailed).
+    const c1Ids = [
+      ...matched.filter((v) => v.current_stage === 'courtesy_1').map((v) => v.id),
+      ...ownCases.filter((v) => v.current_stage === 'courtesy_1').map((v) => v.id),
+    ];
     const lettersByViol = new Map();
     for (let i = 0; i < c1Ids.length; i += 200) {
       const { data: lts } = await supabase.from('interactions')
@@ -3427,8 +3438,15 @@ router.get('/inspections/observations/confirm-preview', async (req, res) => {
       for (const l of (lts || [])) (lettersByViol.get(l.violation_id) || lettersByViol.set(l.violation_id, []).get(l.violation_id)).push(l);
     }
 
-    // 6) Classify in-memory via the SHARED decider (pre-fetched letters, no per-case query).
-    const counts = { new: newCount, advance_courtesy_2: 0, recover_courtesy_1: 0, awaiting_first_mail: 0, eligible_209: 0, continuation: 0 };
+    // 6) Classify. Own cases: already-mailed → already_noticed (no new letter);
+    //    not-yet-mailed → new (confirm drafts the first notice).
+    let alreadyNoticed = 0;
+    for (const v of ownCases) {
+      const mailed = (v.current_stage && v.current_stage !== 'courtesy_1')
+        || (lettersByViol.get(v.id) || []).some((l) => l.status === 'sent' || l.mailed_at);
+      if (mailed) alreadyNoticed++; else newCount++;
+    }
+    const counts = { new: newCount, already_noticed: alreadyNoticed, advance_courtesy_2: 0, recover_courtesy_1: 0, awaiting_first_mail: 0, eligible_209: 0, continuation: 0 };
     // Why each "held" case is held, so the UI can spell it out (Ed 2026-09-15).
     const held_reasons = { already_certified: 0, at_fine: 0, opened_today: 0, first_notice_not_mailed: 0 };
     for (const open of matched) {
@@ -3633,6 +3651,20 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       });
       if (cont.type === 'new') recurrenceSignal = cont.recurrence || null;
       if (cont.type === 'own_case') {
+        if (cont.first_notice_mailed) {
+          // ALREADY NOTICED: this observation's own case already had its first
+          // courtesy mailed (analyze auto-drafted+mailed it during onboarding),
+          // the observation was just never cleared. Do NOT draft a duplicate.
+          // Mark it reviewed and stop. (Ed 2026-09-17 — the 205 duplicate risk.)
+          await supabase.from('property_observations').update({
+            reviewer_status:  'confirmed',
+            reviewer_notes:   reviewerNotes ? `[already noticed] ${reviewerNotes}` : '[already noticed — first courtesy already mailed for this case]',
+            reviewer_user_id: reviewerUserId,
+            reviewed_at:      new Date().toISOString(),
+          }).eq('id', obsId);
+          return res.json({ ok: true, outcome: 'already_noticed', violation_id: cont.violation_id, drafted: false,
+            message: 'First courtesy notice was already mailed for this case — marked reviewed, no duplicate letter drafted.' });
+        }
         // The violation this observation opened is still awaiting its first
         // notice. Fall through to the open path below, which will draft that
         // notice for the EXISTING violation (guarded by preOpenedViolationId)
