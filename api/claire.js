@@ -35,7 +35,7 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { requireStaff } = require('./_require_admin');
-const { resolveVisitor, resolveVisitCommunity } = require('../lib/claire/scope');
+const { resolveVisitor, resolveVisitCommunity, canAccessCommunity } = require('../lib/claire/scope');
 const { screen } = require('../lib/claire/guardrails');
 const { stripEmDashes } = require('../lib/tone');
 const roster = require('../lib/team/roster');
@@ -178,6 +178,18 @@ router.get('/me', async (req, res) => {
     } else if (visitor.communityIds.length) {
       const { data } = await supabase.from('communities').select('id, name').in('id', visitor.communityIds).order('name');
       communities = data || [];
+    }
+    // Scoped entry: the homeowner portal's Ask Claire tile opens
+    // /claire?community=<id>. When a community is named AND the visitor may
+    // access it, lock the lobby to just that one — SERVER-side, so a
+    // portfolio-scoped viewer (staff, or a manager previewing one community's
+    // portal) is never shown, and can never pick, another community. This is the
+    // real gate, not the client-side trim in claire.html (Ed 2026-09-18: the
+    // portal's Ask Claire still listed every community). A named community the
+    // visitor may NOT access is ignored, never leaked.
+    const pinnedCommunity = String((req.query && req.query.community) || '').trim();
+    if (pinnedCommunity && canAccessCommunity(visitor, pinnedCommunity)) {
+      communities = communities.filter((c) => String(c.id) === String(pinnedCommunity));
     }
     res.json({
       visitor: {

@@ -97,7 +97,12 @@ let PERSONA=null;
 // ---------------------------------------------------------------------------
 async function boot(){
   let r;
-  try{ r=await fetch(A+'/me',{credentials:'same-origin'}); }catch(_){ return renderGate('offline'); }
+  // Carry the scoped-community param (the homeowner portal opens
+  // /claire?community=<id>) through to /me so the server locks the lobby to that
+  // one community, not just the client-side trim below. (Ed 2026-09-18.)
+  const _pin=new URLSearchParams(location.search).get('community');
+  const _meUrl=A+'/me'+(_pin?('?community='+encodeURIComponent(_pin)):'');
+  try{ r=await fetch(_meUrl,{credentials:'same-origin'}); }catch(_){ return renderGate('offline'); }
   if(r.status===401) return renderGate('signin');
   if(!r.ok) return renderGate('error');
   ME=await r.json();
