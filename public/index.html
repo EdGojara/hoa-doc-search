@@ -27446,7 +27446,11 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div style="margin-top:12px; padding:12px; border:1.5px solid #fbbf24; border-radius:10px; background:#fffbeb;">
         <div style="font-size:12px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">🔒 Locked — printed, awaiting mail confirmation</div>
         <div style="font-size:11.5px; color:#78350f; margin-bottom:9px;">Each row below is ONE print run. Re-download or confirm that specific batch — exactly what you printed together, not everything merged. They stay here until you confirm they're in the mail.</div>
-        ${(summary.locked_batches && summary.locked_batches.length) ? summary.locked_batches.map((b) => {
+        ${(summary.locked_batches && summary.locked_batches.length) ? (`
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:9px; padding:7px 9px; background:#fff7e6; border:1px solid #fcd34d; border-radius:7px;">
+          <label style="font-size:12px; font-weight:600; color:#92400e; cursor:pointer; display:flex; align-items:center; gap:6px;"><input type="checkbox" id="mqSelectAll" onclick="inspMQToggleAllBatches(this)" style="width:15px; height:15px; cursor:pointer;"> Select all batches</label>
+          <button onclick="inspMailQueueConfirmSelected()" style="margin-left:auto; padding:7px 14px; background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer;">✓ Confirm selected mailed</button>
+        </div>` + summary.locked_batches.map((b) => {
           const isCert = b.delivery_method === 'certified_mail';
           const dLabel = isCert ? '⚠ Certified' : '📨 First-class';
           const dColor = isCert ? '#7f1d1d' : '#0B1D34';
@@ -27455,14 +27459,15 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           const batchKey = (b.delivery_method + '|' + b.printed_at).replace(/[^a-zA-Z0-9]/g, '');
           return `<div style="margin-bottom:7px; padding:8px 9px; background:#fff; border:1px solid #fde68a; border-radius:7px;">
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <span style="font-size:12.5px; font-weight:600; color:${dColor}; min-width:160px; line-height:1.35;">${dLabel}: ${b.count} letter${b.count === 1 ? '' : 's'}<br><span style="font-weight:400; color:#92400e; font-size:11px;">printed ${when}${pm}</span></span>
+            <input type="checkbox" class="mqBatchCb" data-method="${b.delivery_method}" data-printed="${b.printed_at || ''}" style="width:16px; height:16px; cursor:pointer; flex:none;" title="Select this batch">
+            <span style="font-size:12.5px; font-weight:600; color:${dColor}; min-width:150px; line-height:1.35;">${dLabel}: ${b.count} letter${b.count === 1 ? '' : 's'}<br><span style="font-weight:400; color:#92400e; font-size:11px;">printed ${when}${pm}</span></span>
             <button onclick="inspMailQueueRedownload('${b.delivery_method}','${b.printed_at}')" style="flex:1; min-width:120px; padding:7px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⬇ Re-download this batch</button>
             <button onclick="inspMailQueueConfirmMailed('${b.delivery_method}','${b.printed_at}')" style="flex:1; min-width:120px; padding:7px; background:#15803d; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✓ Confirm this batch mailed</button>
             </div>
             <div style="margin-top:6px;"><button onclick="inspMailQueueBatchManifest('${b.delivery_method}','${b.printed_at}','${batchKey}')" id="mfbtn-${batchKey}" style="background:none; border:1px solid #cbd5e1; color:#0B1D34; padding:4px 11px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">👁 Show these ${b.count} letters</button></div>
             <div id="mf-${batchKey}" style="display:none; margin-top:8px;"></div>
           </div>`;
-        }).join('') : `
+        }).join('')) : `
         ${lfc ? `<div style="display:flex; gap:8px; align-items:center; margin-bottom:7px; flex-wrap:wrap;">
           <span style="font-size:12.5px; font-weight:600; color:#0B1D34; min-width:110px;">📨 First-class: ${lfc}</span>
           <button onclick="inspMailQueueRedownload('first_class_mail')" style="flex:1; min-width:130px; padding:7px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⬇ Re-download PDF</button>
@@ -27566,6 +27571,42 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     } catch (e) { alert('Confirm failed: ' + e.message); }
   }
   window.inspMailQueueConfirmMailed = inspMailQueueConfirmMailed;
+
+  // Select-all across locked batches.
+  window.inspMQToggleAllBatches = function (cb) {
+    document.querySelectorAll('.mqBatchCb').forEach((x) => { x.checked = cb.checked; });
+  };
+
+  // Confirm several locked batches mailed in one action, instead of one at a
+  // time (Ed 2026-09-18). Reuses the per-batch confirm endpoint once per
+  // selected batch; each batch is (delivery_method + printed_at). Surfaces the
+  // combined confirmed / held totals so stale letters held by the guard are visible.
+  async function inspMailQueueConfirmSelected() {
+    const boxes = [...document.querySelectorAll('.mqBatchCb:checked')];
+    if (!boxes.length) { alert('Tick at least one batch first (or use “Select all batches”).'); return; }
+    const hasCert = boxes.some((b) => b.dataset.method === 'certified_mail');
+    const filterCid = (typeof inspQueueEffectiveCid === 'function') ? inspQueueEffectiveCid() : '';
+    let msg = `Confirm ${boxes.length} selected batch${boxes.length === 1 ? '' : 'es'} were printed and physically mailed?\n\nThis marks their letters mailed and clears them from “awaiting confirmation.” Only do this once they're actually in the mail.`;
+    if (hasCert) msg += '\n\n⚠ Your selection includes CERTIFIED §209 letters — only confirm those if they truly went out certified.';
+    if (!confirm(msg)) return;
+    let confirmed = 0, held = 0, failed = 0;
+    for (const b of boxes) {
+      try {
+        const r = await window._authFetch('/api/enforcement/mail-queue/confirm-mailed', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ delivery_method: b.dataset.method, printed_at: b.dataset.printed || undefined, community_id: filterCid || undefined }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        confirmed += (j.confirmed || 0); held += (j.held || 0);
+      } catch (e) { failed++; console.warn('[mail-queue.confirm-selected]', e.message); }
+    }
+    alert(`✓ ${confirmed} letter${confirmed === 1 ? '' : 's'} confirmed mailed`
+      + (held ? ` · ${held} held (stale / on a voided case — not mailed)` : '')
+      + (failed ? ` · ${failed} batch(es) failed` : '') + '.');
+    await inspMailQueueLoad();
+  }
+  window.inspMailQueueConfirmSelected = inspMailQueueConfirmSelected;
 
   // Send letters via Lob — Lob prints + mails + tracks. Bedrock never
   // touches the physical letter. Works for BOTH certified (with tracking +
