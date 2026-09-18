@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLMA Demo Kit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+  :root{ --navy:#0B1D34; --navy2:#14294A; --gold:#B8892B; --gold-br:#D4AF37; --ink:#1c2635; --muted:#5a6b83; --line:#dce3ec; --paper:#eef1f5; --surface:#fff; --good:#166b46; --good-bg:#e7f4ec;
+    --sans:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --serif:"Fraunces",Georgia,serif; }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ --navy:#dbe7fb;--navy2:#c7d6ee;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--gold:#e0b352;--good:#7fd6a6;--good-bg:#123526; }}
+  :root[data-theme="dark"]{ --navy:#dbe7fb;--navy2:#c7d6ee;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--gold:#e0b352;--good:#7fd6a6;--good-bg:#123526; }
+  *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.55}
+  .wrap{max-width:940px;margin:0 auto;padding:26px 18px 90px}
+  .crumbs{font-size:13px;color:var(--muted);margin-bottom:4px}
+  h1{font-family:var(--serif);font-weight:600;font-size:30px;color:var(--navy);margin:6px 0 4px}
+  .sub{font-size:15px;color:var(--muted);margin:0 0 8px;max-width:72ch}
+  .tag{display:inline-block;background:var(--good-bg);color:var(--good);font-size:12px;font-weight:700;padding:4px 11px;border-radius:20px;margin-bottom:18px}
+  h2{font-size:12.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:26px 0 12px;border-bottom:1px solid var(--line);padding-bottom:7px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px} @media(max-width:640px){.grid{grid-template-columns:1fr}}
+  a.tile{display:block;text-decoration:none;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;color:var(--ink);box-shadow:0 2px 10px rgba(11,29,52,.05);transition:transform .08s,box-shadow .08s}
+  a.tile:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(11,29,52,.10)}
+  a.tile.primary{background:var(--navy);border-color:var(--navy)}
+  a.tile.primary .t,a.tile.primary .d{color:#fff} a.tile.primary .d{color:#b9c6dc}
+  .tile .t{font-family:var(--serif);font-weight:600;font-size:18px;color:var(--navy);margin-bottom:3px}
+  .tile .d{font-size:13px;color:var(--muted)}
+  .tile .go{float:right;color:var(--gold);font-weight:700;font-size:13px}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:0 2px 10px rgba(11,29,52,.05)}
+  .panel p{margin:0 0 10px;font-size:14px}
+  ul{margin:6px 0 0;padding-left:20px} li{font-size:13.5px;margin:5px 0}
+  .say{color:var(--ink);font-style:italic}
+  .four{font-family:var(--serif);font-weight:600;font-size:19px;color:var(--navy);text-align:center;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .four b{color:var(--gold)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumbs">Bedrock Office &rsaquo; <span style="color:var(--navy);font-weight:700">CLMA Demo</span></div>
+  <h1>CLMA Demo Kit</h1>
+  <p class="sub">The Cinco Landscape Management Association capability demo. A one-hour presentation, then a live walkthrough and Q&amp;A. The goal of this session is to earn the proposal, so show the machine working, do not tour every feature.</p>
+  <span class="tag">Capability demo &middot; example data where noted</span>
+
+  <h2>Launch</h2>
+  <div class="grid">
+    <a class="tile primary" href="/clma/asset-map.html" target="_blank"><span class="go">Open &rarr;</span><div class="t" style="color:#fff">Asset Map</div><div class="d">Interactive Cinco Ranch satellite. Click the red esplanade pin (dead tree) and the red irrigation pin (over budget). Open in Chrome for the live tiles.</div></a>
+    <a class="tile" href="/clma/CLMA_trustEd_Demo.pptx" download><span class="go">Download &darr;</span><div class="t">The Deck</div><div class="d">15-slide one-hour presentation. Speaker notes on every slide.</div></a>
+    <a class="tile" href="/clma/Landscape_Maintenance_Proposal_SAMPLE.pdf" target="_blank"><span class="go">Open &rarr;</span><div class="t">Sample Landscape Bid</div><div class="d">Hand this to Amanda for the live review. Pre-stage the review that morning.</div></a>
+    <a class="tile" href="/clma/CLMA_Demo_Run_of_Show.pdf" target="_blank"><span class="go">Open &rarr;</span><div class="t">Run of Show</div><div class="d">The hour minute-by-minute: the lines to say and the pins to click.</div></a>
+  </div>
+
+  <h2>Ask Amanda &mdash; safe live questions</h2>
+  <div class="panel">
+    <p>She cites CLMA's own bylaws and maintenance agreement on these. Ask two, and show the citation each time:</p>
+    <ul>
+      <li>What is the quorum for a board meeting under CLMA's bylaws?</li>
+      <li>What areas is CLMA responsible for maintaining under the maintenance agreement?</li>
+      <li>How can the bylaws be amended? &nbsp;/&nbsp; What is the collection policy for delinquent accounts?</li>
+    </ul>
+    <p style="margin-top:12px">Then ask one she cannot answer, on purpose:</p>
+    <ul><li>"What is our irrigation variance year to date?" &rarr; she says she does not have it in the records available and offers to flag it for the team. <span class="say">"That answer matters to me. One thing we have spent real time on is teaching these agents when not to answer."</span></li></ul>
+  </div>
+
+  <h2>Before the room</h2>
+  <div class="panel">
+    <ul>
+      <li>Pre-stage the bid review that morning so you click into it, not wait on email live.</li>
+      <li>Open the asset map in Chrome and confirm the satellite tiles load.</li>
+      <li>Do not show another community's real data. Name Canyon Gate at Cinco Ranch and Waterview verbally as area proof.</li>
+      <li>Do not tour every feature. Two map pins, one bid review, two or three Amanda questions.</li>
+    </ul>
+  </div>
+
+  <h2>What they should remember</h2>
+  <div class="four"><b>Map.</b> &nbsp; <b>Amanda.</b> &nbsp; <b>Vendor intelligence.</b> &nbsp; <b>Board visibility.</b></div>
+</div>
+</body>
+</html>

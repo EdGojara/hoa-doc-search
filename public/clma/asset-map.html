@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cinco Ranch Asset Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+  :root{
+    --navy:#0B1D34; --navy2:#14294A; --gold:#D4AF37; --gold-dk:#B8892B;
+    --ink:#1c2635; --muted:#5a6b83; --line:#dce3ec; --paper:#eef1f5; --surface:#fff;
+    --good:#166b46; --good-bg:#e7f4ec; --warn:#8a5a12; --warn-bg:#fbf0dd; --crit:#a3261f; --crit-bg:#fbe9e7;
+    --sans:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    --serif:"Fraunces",Georgia,serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{font-family:var(--sans);color:var(--ink);background:var(--navy);display:flex;flex-direction:column;overflow:hidden}
+  header{background:var(--navy);color:#fff;padding:12px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;border-bottom:1px solid #1e3a5c}
+  .mark{width:34px;height:34px;border-radius:8px;background:var(--gold);color:var(--navy);font-family:var(--serif);font-weight:600;font-size:20px;display:flex;align-items:center;justify-content:center}
+  .brand b{font-family:var(--serif);font-weight:600;font-size:18px;letter-spacing:.2px}
+  .brand small{display:block;color:#9fb0c9;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+  .demo-tag{margin-left:auto;background:#1e3a5c;color:#cfe0f5;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:5px 10px;border-radius:20px}
+  .stats{display:flex;gap:10px;flex-wrap:wrap}
+  .stat{background:var(--navy2);border:1px solid #1e3a5c;border-radius:9px;padding:6px 12px;min-width:96px}
+  .stat b{display:block;font-size:18px;color:#fff;font-variant-numeric:tabular-nums}
+  .stat span{font-size:10.5px;color:#9fb0c9;text-transform:uppercase;letter-spacing:.05em}
+  .wrap{flex:1;display:flex;min-height:0}
+  #map{flex:1;min-width:0;background:#0b1626}
+  aside{width:370px;max-width:42vw;background:var(--paper);border-left:1px solid var(--line);overflow-y:auto;padding:16px}
+  .empty{color:var(--muted);font-size:13.5px;line-height:1.5;padding:24px 6px;text-align:center}
+  .empty .big{font-size:15px;color:var(--ink);font-weight:700;margin-bottom:6px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(11,29,52,.06)}
+  .photo{height:150px;background:#c9d6e4 center/cover no-repeat;position:relative}
+  .photo .type{position:absolute;left:10px;top:10px;background:rgba(11,29,52,.82);color:#fff;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:4px 9px;border-radius:20px}
+  .card h2{font-family:var(--serif);font-weight:600;font-size:19px;color:var(--navy);margin:12px 14px 2px}
+  .loc{margin:0 14px 10px;color:var(--muted);font-size:12.5px}
+  .status{margin:0 14px 12px;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:4px 10px;border-radius:20px}
+  .st-good{background:var(--good-bg);color:var(--good)} .st-warn{background:var(--warn-bg);color:var(--warn)} .st-crit{background:var(--crit-bg);color:var(--crit)}
+  .rows{border-top:1px solid var(--line);margin-top:2px}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line);font-size:13px}
+  .row:last-child{border-bottom:none}
+  .row .k{color:var(--muted)} .row .v{color:var(--ink);font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+  .issue{margin:12px 14px 0;background:var(--warn-bg);border:1px solid #eacb8f;border-radius:9px;padding:9px 11px;font-size:12.5px;color:#6b4a12}
+  .issue.crit{background:var(--crit-bg);border-color:#f0b3ad;color:#7a1f19}
+  .issue b{display:block;margin-bottom:2px}
+  .docs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 14px 16px}
+  .doc{background:#eef4ff;border:1px solid #c9dcff;color:#274b8a;font-size:11px;font-weight:600;padding:4px 9px;border-radius:6px}
+  .hint{color:var(--muted);font-size:11.5px;margin-top:14px;text-align:center;line-height:1.5}
+  .leaflet-container{font-family:var(--sans)}
+  .pin{width:26px;height:26px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center}
+  .pin b{transform:rotate(45deg);color:#fff;font-size:12px;font-weight:800}
+  .pin.good{background:#1f9d5e} .pin.warn{background:#d69a2a} .pin.crit{background:#cf3b30}
+  .legend{position:absolute;right:388px;bottom:16px;z-index:500;background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:12px;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+  .legend div{display:flex;align-items:center;gap:7px;margin:3px 0;color:var(--ink)}
+  .dot{width:11px;height:11px;border-radius:50%}
+  @media(max-width:760px){ aside{position:fixed;right:0;top:0;bottom:0;z-index:1000;box-shadow:-4px 0 20px rgba(0,0,0,.3);transform:translateX(100%);transition:transform .2s} aside.open{transform:none} .legend{right:12px} }
+</style>
+</head>
+<body>
+<header>
+  <div class="mark">B</div>
+  <div class="brand"><b>trustEd</b><small>Bedrock Association Management</small></div>
+  <div class="stats">
+    <div class="stat"><b>6</b><span>Assets mapped</span></div>
+    <div class="stat"><b id="openN">3</b><span>Open issues</span></div>
+    <div class="stat"><b>$182.4k</b><span>YTD landscape spend</span></div>
+  </div>
+  <div class="demo-tag">Capability demo &middot; example data</div>
+</header>
+<div class="wrap">
+  <div id="map"></div>
+  <div class="legend">
+    <div><span class="dot" style="background:#1f9d5e"></span> On track</div>
+    <div><span class="dot" style="background:#d69a2a"></span> Needs attention</div>
+    <div><span class="dot" style="background:#cf3b30"></span> Open work order</div>
+  </div>
+  <aside id="panel">
+    <div class="empty"><div class="big">Cinco Ranch common-area assets</div>Click any location on the map to open its record: vendor, service history, open issues, work orders, and budget.<div class="hint">Monuments &middot; esplanades &middot; irrigation zones &middot; tree corridors &middot; major intersections</div></div>
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const ASSETS = [
+  { id:1, name:"Grand Parkway Entry Monument", type:"Monument", status:"good", lat:29.7392, lng:-95.8010,
+    vendor:"Yellowstone Landscape", history:"12 service visits YTD", lastWO:"Sep 3 — seasonal color rotation",
+    spend:"$28,400 YTD", budget:"On track, 4% under", issue:null,
+    docs:["Maintenance Agreement","3 invoices","Photos"] },
+  { id:2, name:"Westheimer & Grand Pkwy Monument", type:"Monument", status:"warn", lat:29.7290, lng:-95.8020,
+    vendor:"Yellowstone Landscape", history:"9 service visits YTD", lastWO:"Aug 22 — bed cleanup + mulch",
+    spend:"$19,800 YTD", budget:"On track", issue:{lvl:"warn", t:"Uplighting out on north face", d:"Reported Sep 10. Lighting is Cinco Residential's scope under the shared maintenance agreement — coordination note sent."},
+    docs:["Maintenance Agreement","Photos"] },
+  { id:3, name:"Cinco Ranch Blvd Central Esplanade", type:"Esplanade", status:"crit", lat:29.7378, lng:-95.7810,
+    vendor:"Yellowstone Landscape", history:"16 mow/edge visits YTD", lastWO:"Sep 5 — mow, edge, trim",
+    spend:"$41,250 YTD", budget:"6% over", issue:{lvl:"crit", t:"Dead live oak, replacement quoted", d:"Flagged on the Sep 5 drive. Earthcare quote received ($1,850). Awaiting board approval before work order is issued."},
+    docs:["Yellowstone contract","Earthcare quote","4 invoices","Photos"] },
+  { id:4, name:"Spring Green Irrigation Zone 7", type:"Irrigation zone", status:"crit", lat:29.7460, lng:-95.7930,
+    vendor:"Earthcare Management", history:"controller + 38 heads", lastWO:"Aug 28 — emergency main line repair",
+    spend:"$22,600 YTD", budget:"31% over", issue:{lvl:"crit", t:"Third repair this year", d:"Recurring failures in Zone 7 are driving the irrigation budget overage. Trend flagged for the board; a zone rebuild vs. repair analysis is recommended."},
+    docs:["3 repair invoices","Work orders","Photos"] },
+  { id:5, name:"Cinco Ranch Blvd Tree Corridor (West)", type:"Tree corridor", status:"warn", lat:29.7385, lng:-95.7690,
+    vendor:"Earthcare Management", history:"84 trees inventoried", lastWO:"Jul 18 — structural pruning (22 trees)",
+    spend:"$31,900 YTD", budget:"On track", issue:{lvl:"warn", t:"6 trees due for pruning", d:"Identified in the summer canopy inspection. Batched for the fall pruning cycle to control mobilization cost."},
+    docs:["Tree inventory","Pruning map","2 invoices"] },
+  { id:6, name:"Mason & Highland Knolls Intersection", type:"Intersection", status:"good", lat:29.7480, lng:-95.7585,
+    vendor:"Yellowstone Landscape", history:"12 service visits YTD", lastWO:"Sep 1 — bed maintenance",
+    spend:"$38,450 YTD", budget:"On track, 2% under", issue:null,
+    docs:["Maintenance Agreement","2 invoices","Photos"] },
+];
+
+const map = L.map('map', { zoomControl:true, scrollWheelZoom:true }).setView([29.739, -95.782], 14);
+const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom:19, attribution:'Imagery © Esri' });
+const esriLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom:19 });
+const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution:'© OpenStreetMap' });
+const hybrid = L.layerGroup([esriSat, esriLabels]).addTo(map);
+L.control.layers({ 'Hybrid':hybrid, 'Satellite':esriSat, 'Street':street }, null, { position:'topright' }).addTo(map);
+
+function money(){ return; }
+function pinIcon(a){ return L.divIcon({ className:'', html:`<div class="pin ${a.status}"><b>${a.id}</b></div>`, iconSize:[26,26], iconAnchor:[13,26] }); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+const panel = document.getElementById('panel');
+function show(a){
+  const stClass = a.status==='good'?'st-good':a.status==='warn'?'st-warn':'st-crit';
+  const stTxt = a.status==='good'?'On track':a.status==='warn'?'Needs attention':'Open work order';
+  const issue = a.issue ? `<div class="issue ${a.issue.lvl==='crit'?'crit':''}"><b>${esc(a.issue.t)}</b>${esc(a.issue.d)}</div>` : '';
+  panel.innerHTML = `<div class="card">
+    <div class="photo" style="background-image:linear-gradient(135deg,#8fae86,#5f7f66)"><span class="type">${esc(a.type)}</span></div>
+    <h2>${esc(a.name)}</h2>
+    <div class="loc">Cinco Ranch &middot; Katy, TX</div>
+    <div class="status ${stClass}" style="margin-left:14px">● ${stTxt}</div>
+    <div class="rows">
+      <div class="row"><span class="k">Responsible vendor</span><span class="v">${esc(a.vendor)}</span></div>
+      <div class="row"><span class="k">Service history</span><span class="v">${esc(a.history)}</span></div>
+      <div class="row"><span class="k">Last work order</span><span class="v">${esc(a.lastWO)}</span></div>
+      <div class="row"><span class="k">Spend</span><span class="v">${esc(a.spend)}</span></div>
+      <div class="row"><span class="k">Budget</span><span class="v">${esc(a.budget)}</span></div>
+    </div>
+    ${issue}
+    <div class="docs">${a.docs.map(d=>`<span class="doc">${esc(d)}</span>`).join('')}</div>
+  </div>
+  <div class="hint">Example record shown for the capability demo. In production these fields are the asset's live data.</div>`;
+  panel.classList.add('open');
+}
+ASSETS.forEach(a=>{
+  L.marker([a.lat,a.lng],{icon:pinIcon(a)}).addTo(map).on('click',()=>show(a));
+});
+document.getElementById('openN').textContent = ASSETS.filter(a=>a.issue).length;
+</script>
+</body>
+</html>
