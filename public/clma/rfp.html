@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Landscape RFP Comparison</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+  :root{ --navy:#0B1D34; --navy2:#14294A; --gold:#B8892B; --gold-br:#D4AF37; --ink:#1c2635; --muted:#5a6b83; --line:#dce3ec; --paper:#eef1f5; --surface:#fff;
+    --good:#166b46; --good-bg:#e7f4ec; --warn:#8a5a12; --warn-bg:#fbf0dd; --crit:#a3261f; --crit-bg:#fbe9e7;
+    --sans:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --serif:"Fraunces",Georgia,serif; }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--gold:#e0b352;--good:#7fd6a6;--good-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f;--crit:#f0a79f;--crit-bg:#3a1512; }}
+  :root[data-theme="dark"]{ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--gold:#e0b352;--good:#7fd6a6;--good-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f;--crit:#f0a79f;--crit-bg:#3a1512; }
+  *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.5}
+  .wrap{max-width:1120px;margin:0 auto;padding:22px 18px 80px}
+  .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  .mark{width:32px;height:32px;border-radius:8px;background:var(--gold-br);color:#0B1D34;font-family:var(--serif);font-weight:600;font-size:19px;display:flex;align-items:center;justify-content:center}
+  .brand b{font-family:var(--serif);font-weight:600;font-size:17px;color:var(--navy)} .brand small{display:block;color:var(--muted);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+  .tag{margin-left:auto;background:var(--good-bg);color:var(--good);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px}
+  h1{font-family:var(--serif);font-weight:600;font-size:26px;color:var(--navy);margin:8px 0 2px}
+  .sub{color:var(--muted);font-size:13.5px;margin:0 0 16px}
+  .rec{background:var(--navy);color:#fff;border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;gap:14px;align-items:flex-start}
+  .rec .rl{background:var(--gold-br);color:#0B1D34;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:5px 10px;border-radius:20px;white-space:nowrap}
+  .rec p{margin:0;font-size:14px;color:#e7ecf4}
+  .rec b{color:#fff}
+  .tblwrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 2px 10px rgba(11,29,52,.05)}
+  table{border-collapse:collapse;width:100%;min-width:820px;font-size:13px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{background:var(--navy);color:#fff;font-size:12.5px;position:sticky;top:0}
+  thead th.win{background:#123a26}
+  th.dim,td.dim{color:var(--muted);font-weight:600;width:200px}
+  td.v{font-variant-numeric:tabular-nums}
+  .col-win{background:var(--good-bg)}
+  .flag{color:var(--crit);font-weight:600}
+  .ok{color:var(--good);font-weight:600}
+  .pill{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:3px 8px;border-radius:20px}
+  .pill.fin{background:var(--good-bg);color:var(--good)} .pill.inc{background:#eef4ff;color:#274b8a} .pill.elim{background:var(--crit-bg);color:var(--crit)}
+  h2{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:26px 0 10px;border-bottom:1px solid var(--line);padding-bottom:7px}
+  .caught{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:6px 4px}
+  .caught .row{display:flex;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line);font-size:13.5px} .caught .row:last-child{border-bottom:none}
+  .caught .ic{color:var(--crit);font-weight:800}
+  .log{font-size:12.5px;color:var(--muted)} .log div{padding:6px 0;border-bottom:1px solid var(--line)} .log div:last-child{border:none}
+  .hint{color:var(--muted);font-size:11.5px;margin-top:16px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="mark">B</div>
+    <div class="brand"><b>trustEd</b><small>Bedrock Association Management</small></div>
+    <div class="tag">Capability demo &middot; example bids</div>
+  </div>
+  <h1>Landscape Maintenance RFP &mdash; Bid Comparison</h1>
+  <p class="sub">Cinco Landscape Maintenance Association &middot; 3 bids received &middot; scope normalized onto the same lines by trustEd</p>
+
+  <div class="rec">
+    <span class="rl">Recommendation</span>
+    <p><b>TerraCare Grounds</b> is the recommended finalist: it covers the full acreage including irrigation responsibility, carries the required insurance, and its all-in annual cost is competitive once the excluded items in the other bids are added back. <b>GreenSpan</b> looks cheapest on the base fee but excludes irrigation and carries a 6% annual escalation, so its true multi-year cost is highest. Every figure below is drawn from the bid documents, with the source page on file.</p>
+  </div>
+
+  <div class="tblwrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="dim">Compared</th>
+          <th>GreenSpan Grounds</th>
+          <th class="win">TerraCare Grounds</th>
+          <th>Lone Star Landscape</th>
+          <th>trustEd flag</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="dim">Status</td><td><span class="pill inc">Incumbent</span></td><td class="col-win"><span class="pill fin">Finalist</span></td><td><span class="pill">Bid</span></td><td></td></tr>
+        <tr><td class="dim">Base fee (annual)</td><td class="v">$171,000</td><td class="col-win v">$184,500</td><td class="v">$178,200</td><td>Base alone is misleading, see true annual</td></tr>
+        <tr><td class="dim">Seasonal color</td><td class="v">$24,800 (billed as performed)</td><td class="col-win v">Included</td><td class="v">$18,000</td><td class="flag">GreenSpan color is extra</td></tr>
+        <tr><td class="dim">True annual (yr 1)</td><td class="v flag">$195,800</td><td class="col-win v ok">$184,500</td><td class="v">$196,200</td><td>Normalized, all inclusions added</td></tr>
+        <tr><td class="dim">Acreage covered</td><td class="v">38 ac</td><td class="col-win v">41 ac</td><td class="v">41 ac</td><td class="flag">GreenSpan scope is smaller</td></tr>
+        <tr><td class="dim">Pruning frequency</td><td class="v">2x / yr</td><td class="col-win v">4x / yr</td><td class="v">3x / yr</td><td>More service on the right</td></tr>
+        <tr><td class="dim">Irrigation responsibility</td><td class="v flag">Excluded</td><td class="col-win v ok">Included</td><td class="v flag">Excluded</td><td class="flag">Excluded bids shift cost to CLMA</td></tr>
+        <tr><td class="dim">Annual escalation</td><td class="v flag">6% / yr</td><td class="col-win v">3% / yr</td><td class="v">Not stated</td><td class="flag">6% compounds; ask Lone Star to confirm</td></tr>
+        <tr><td class="dim">Insurance / additional insured</td><td class="v flag">Not stated</td><td class="col-win v ok">$2M, names CLMA</td><td class="v">$1M</td><td class="flag">Require COI before signing</td></tr>
+        <tr><td class="dim">Termination notice</td><td class="v">90 days + 2-mo penalty</td><td class="col-win v ok">30 days, no penalty</td><td class="v">60 days</td><td class="flag">GreenSpan hardest to exit</td></tr>
+        <tr><td class="dim">Price basis</td><td class="v flag">Budgetary, subject to change</td><td class="col-win v ok">Firm</td><td class="v">Firm</td><td class="flag">GreenSpan not a firm price</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>What trustEd caught that a spreadsheet would miss</h2>
+  <div class="caught">
+    <div class="row"><span class="ic">!</span><div>The cheapest base fee (GreenSpan) has the <b>highest true multi-year cost</b> once excluded irrigation and 6% escalation are added back.</div></div>
+    <div class="row"><span class="ic">!</span><div>Two bids <b>exclude irrigation entirely</b>, so they are not comparable to TerraCare on scope without adding an irrigation line.</div></div>
+    <div class="row"><span class="ic">!</span><div>GreenSpan reserves the right to change price after a site walk. <b>Not a firm bid.</b></div></div>
+    <div class="row"><span class="ic">!</span><div>Only TerraCare names CLMA as additional insured. The others need a certificate of insurance before any signature.</div></div>
+  </div>
+
+  <h2>Decision log</h2>
+  <div class="log">
+    <div>Sep 12 &middot; RFP opened, 3 bids received, scope normalized by trustEd.</div>
+    <div>Sep 14 &middot; GreenSpan flagged: budgetary pricing + irrigation excluded. Held pending clarification.</div>
+    <div>Sep 15 &middot; TerraCare marked finalist: full scope, firm price, insurance confirmed.</div>
+    <div>Pending &middot; Board vote. Amanda has prepared the recommendation memo with source pages.</div>
+  </div>
+
+  <p class="hint">Capability demonstration with example bids. In production every figure links to the source page in the bid PDF, and each state change is written to the RFP decision log.</p>
+</div>
+</body>
+</html>

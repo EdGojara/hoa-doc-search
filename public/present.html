@@ -58,6 +58,11 @@
   .dark .body { color:var(--ice); }
   .footnote { margin-top:auto; font-size:17px; line-height:1.5; color:var(--faint); max-width:70ch; font-style:italic; }
   .dark .footnote { color:var(--ice); opacity:.8; }
+  .ctawrap { margin-top:28px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .ctabtn { display:inline-block; background:#D4AF37; color:#0B1D34; font-weight:700; font-size:18px; text-decoration:none; padding:13px 22px; border-radius:10px; box-shadow:0 4px 14px rgba(0,0,0,.18); }
+  .ctabtn:hover { filter:brightness(1.06); }
+  .ctanote { font-size:15px; color:var(--faint); font-style:italic; }
+  .dark .ctanote { color:var(--ice); opacity:.8; }
 
   .shot { margin-top:26px; }
   .shot img { display:block; width:100%; max-width:900px; max-height:52vh; object-fit:contain; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.08); }
@@ -165,6 +170,7 @@
       <option value="partner">Operator</option>
       <option value="referral">Referral / content</option>
       <option value="tech">Tech partner</option>
+      <option value="clma">Cinco LMA (landscape)</option>
     </select>
     <button class="btn" id="btnCover">Cover</button>
     <button class="btn" id="btnPptx">Export PowerPoint</button>
@@ -235,7 +241,7 @@
         <h1 class="cover" style="font-size:88px;">${esc(s.title||'')}</h1>
         <div class="kicker" style="margin-top:24px;">${esc(s.kicker||'')}</div></div>`;
     } else if (s.type === 'statement') {
-      inner = `${label(s)}<h2>${esc(s.headline||'')}</h2><div class="body">${esc(s.body||'')}</div>${shot(s)}${cols(s)}${foot(s)}`;
+      inner = `${label(s)}<h2>${esc(s.headline||'')}</h2><div class="body">${esc(s.body||'')}</div>${shot(s)}${cols(s)}${cta(s)}${foot(s)}`;
     } else if (s.type === 'points') {
       inner = `${label(s)}<h2>${esc(s.headline||'')}</h2>${s.body?`<div class="body">${esc(s.body)}</div>`:''}
         <div class="points">${(s.points||[]).map(p=>`<div class="point">
@@ -297,6 +303,8 @@
   }
   const label = (s) => s.label ? `<div class="label">${esc(s.label)}</div>` : '';
   const foot = (s) => s.footnote ? `<div class="footnote">${esc(s.footnote)}</div>` : '';
+  // A "launch the live tool" button — talk to the slide, then click to demo it.
+  const cta = (s) => s.cta && s.cta.href ? `<div class="ctawrap"><a class="ctabtn" href="${esc(s.cta.href)}" target="_blank" rel="noopener">${esc(s.cta.label||'Open')} &nbsp;&rarr;</a>${s.cta.note?`<span class="ctanote">${esc(s.cta.note)}</span>`:''}</div>` : '';
   const cols = (s) => (s.columns && s.columns.length) ? `<div class="cols">${s.columns.map(c=>`<div class="col">
       <div class="ch">${esc(c.header)}</div><ul>${(c.items||[]).map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}</div>` : '';
   // Optional showcase image (e.g. a live product screenshot dropped into a slide).
