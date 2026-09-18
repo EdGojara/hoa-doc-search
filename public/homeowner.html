@@ -215,6 +215,49 @@ window.doResolve=async function(id){
   }catch(e){if(st)st.textContent='';alert('Could not resolve: '+e.message);}
 };
 
+// ── Certified mail number (§209 letters) ────────────────────────────────────
+// The certified letter goes out the day it's printed; staff just want to drop
+// the USPS certified number somewhere easy and click through to track it.
+// (Ed 2026-09-18.) Shows on certified_209 violation rows.
+function uspsTrack(n){ return 'https://tools.usps.com/go/TrackConfirmAction?tLabels='+encodeURIComponent(n); }
+function fmtCert(n){ return String(n||'').replace(/(.{4})/g,'$1 ').trim(); }
+function certifiedCtrl(v){
+  const cl = v.certified_letter;
+  // Only show where there's an actual trustEd certified letter to attach a
+  // number to. Vantaca-imported certifieds (notice sent through the old system)
+  // have no letter on file and nothing to track here.
+  if(!cl || !cl.interaction_id) return '';
+  const iid = cl.interaction_id;
+  const num = cl.certified_tracking_number || '';
+  const shown = num
+    ? `<span style="font-size:11.5px;color:#334155;">📮 Certified #: <a href="${uspsTrack(num)}" target="_blank" rel="noopener" style="color:#0B1D34;font-weight:700;text-decoration:none;" title="Track on USPS">${esc(fmtCert(num))}</a></span>
+       <span onclick="showCert('${iid}')" title="Edit certified number" style="cursor:pointer;color:#0B1D34;font-weight:700;margin-left:8px;">✎</span>`
+    : `<button onclick="showCert('${iid}')" style="font-size:11.5px;padding:3px 11px;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc;color:#0B1D34;cursor:pointer;font-weight:700;">📮 Add certified #</button>`;
+  return `<div style="margin-top:7px;">
+    ${shown}
+    <div id="cert-${iid}" style="display:none;margin-top:7px;padding:9px 11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;max-width:420px;">
+      <div style="font-size:11px;color:#5a7390;margin-bottom:4px;font-weight:600;">USPS certified mail number</div>
+      <input id="cert-in-${iid}" value="${esc(num)}" placeholder="9589 0710 5270 ..." inputmode="numeric" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:5px;font-size:13px;box-sizing:border-box;font-variant-numeric:tabular-nums;">
+      <div style="margin-top:8px;display:flex;gap:7px;align-items:center;">
+        <button onclick="saveCert('${iid}')" style="font-size:11.5px;padding:4px 12px;border:none;border-radius:6px;background:#0B1D34;color:#fff;cursor:pointer;font-weight:600;">Save</button>
+        <button onclick="document.getElementById('cert-${iid}').style.display='none'" style="font-size:11.5px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer;">Cancel</button>
+        <span id="cert-st-${iid}" style="font-size:11px;color:#5a7390;"></span>
+      </div>
+    </div></div>`;
+}
+window.showCert=function(iid){const el=document.getElementById('cert-'+iid);if(el){el.style.display=el.style.display==='none'?'block':'none';if(el.style.display==='block'){const inp=document.getElementById('cert-in-'+iid);if(inp)inp.focus();}}};
+window.saveCert=async function(iid){
+  const inp=document.getElementById('cert-in-'+iid);const st=document.getElementById('cert-st-'+iid);
+  const val=inp?inp.value.trim():'';
+  if(st)st.textContent='Saving…';
+  try{
+    const hdr=Object.assign({'Content-Type':'application/json'}, await hoAuthHeader());
+    const r=await fetch(API+'/interactions/'+encodeURIComponent(iid)+'/certified-number',{method:'POST',headers:hdr,body:JSON.stringify({certified_tracking_number:val})});
+    const j=await r.json();if(!r.ok)throw new Error(j.detail||j.error||'failed');
+    if(window._ho&&window._ho.cid)openProfile(window._ho.cid);
+  }catch(e){if(st)st.textContent='';alert('Could not save: '+e.message);}
+};
+
 async function openProfile(cid){
   document.getElementById('results').innerHTML='';
   document.getElementById('profile').innerHTML='<div class="spin">Loading homeowner…</div>';
@@ -311,7 +354,7 @@ async function openProfile(cid){
       </div>`:''}
       <div class="card">
         <div class="sec-title">⚠️ Violations (${vios.length})</div>
-        ${vios.slice(0,10).map(v=>`<div class="li">${esc(v.category)} ${v.open?`<span class="badge" style="background:#dbeafe;color:#1e40af;font-weight:700;">OPEN</span> <span class="badge b-open">${esc(String(v.current_stage).replace(/_/g,' '))}</span>`:`<span class="badge b-res">${esc(v.status_label||'resolved')}</span>`}${v.detail?`<div style="font-size:12.5px;color:#33414f;margin-top:3px;">${esc(v.detail)}</div>`:''}<div class="t">opened ${d10(v.opened_at)}${v.resolved_at?' · resolved '+d10(v.resolved_at)+(v.resolved_notes?' — '+esc(v.resolved_notes):''):''}${v.photo_path?` · <a href="/api/homeowner/file?kind=photo&path=${encodeURIComponent(v.photo_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📷 Photo</a>`:''}${(v.letters&&v.letters.length)?v.letters.map(L=>` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(L.path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter${L.sent_at?' sent '+d10(L.sent_at):''}</a>`).join(''):(v.letter_path?` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(v.letter_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter</a>`:'')}</div>${v.open&&v.id?resolveCtrl(v):''}</div>`).join('')||'<div class="empty">No violations.</div>'}
+        ${vios.slice(0,10).map(v=>`<div class="li">${esc(v.category)} ${v.open?`<span class="badge" style="background:#dbeafe;color:#1e40af;font-weight:700;">OPEN</span> <span class="badge b-open">${esc(String(v.current_stage).replace(/_/g,' '))}</span>`:`<span class="badge b-res">${esc(v.status_label||'resolved')}</span>`}${v.detail?`<div style="font-size:12.5px;color:#33414f;margin-top:3px;">${esc(v.detail)}</div>`:''}<div class="t">opened ${d10(v.opened_at)}${v.resolved_at?' · resolved '+d10(v.resolved_at)+(v.resolved_notes?' — '+esc(v.resolved_notes):''):''}${v.photo_path?` · <a href="/api/homeowner/file?kind=photo&path=${encodeURIComponent(v.photo_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📷 Photo</a>`:''}${(v.letters&&v.letters.length)?v.letters.map(L=>` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(L.path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter${L.sent_at?' sent '+d10(L.sent_at):''}</a>`).join(''):(v.letter_path?` · <a href="/api/homeowner/file?kind=letter&path=${encodeURIComponent(v.letter_path)}" target="_blank" style="color:#0B1D34;font-weight:700;text-decoration:none;">📄 Letter</a>`:'')}</div>${certifiedCtrl(v)}${v.open&&v.id?resolveCtrl(v):''}</div>`).join('')||'<div class="empty">No violations.</div>'}
       </div>
       <div class="card">
         ${(()=>{

@@ -308,7 +308,7 @@ async function assemble(contactId) {
 
   // Correspondence: interactions (letters/calls/notes) + emails from the hub
   const interactions = await safe(() => supabase.from('interactions')
-    .select('id, type, direction, subject, content, delivery_method, status, sent_at, mailed_at, printed_at, created_at, updated_at, violation_id, sent_by_user_id')
+    .select('id, type, direction, subject, content, delivery_method, status, sent_at, mailed_at, printed_at, postmark_date, certified_tracking_number, created_at, updated_at, violation_id, sent_by_user_id')
     .or(`contact_id.eq.${contactId}${propIds.length ? ',property_id.in.(' + propIds.join(',') + ')' : ''}`)
     .order('created_at', { ascending: false }).limit(60));
   // Match emails by resolved contact OR by any owned property — mirrors the
@@ -381,11 +381,43 @@ async function assemble(contactId) {
   for (const vid of Object.keys(lettersByViolation)) {
     lettersByViolation[vid].sort((a, b) => String(b.sent_at || '').localeCompare(String(a.sent_at || '')));
   }
-  violations = violations.map((v) => ({
-    ...v,
-    letters: lettersByViolation[v.id] || [],
-    letter_path: (lettersByViolation[v.id] && lettersByViolation[v.id][0] && lettersByViolation[v.id][0].path) || null, // back-compat
-  }));
+  // Certified letter per violation — the §209 certified notice (or any letter
+  // mailed certified). Surfaced so staff can record the USPS certified-mail
+  // number on the 360 once the letter is printed and taken to the post office
+  // (Ed 2026-09-18: "add a certified number once we print those out so we can
+  // track it"). Unlike lettersByViolation this does NOT require the letter to
+  // have gone out — a printed-but-not-yet-mailed §209 letter is exactly when the
+  // tracking number gets entered — so we include any status and pick the latest.
+  const CERT_SKIP_STATUS = new Set(['rejected', 'failed', 'cancelled', 'error', 'superseded']);
+  const certifiedByViolation = {};
+  for (const it of (interactions || [])) {
+    if (!it.violation_id) continue;
+    const isCertified = it.type === 'letter_209' || it.delivery_method === 'certified_mail';
+    if (!isCertified) continue;
+    if (it.status && CERT_SKIP_STATUS.has(String(it.status))) continue; // a rejected/superseded letter isn't going out — nothing to track
+    const cur = certifiedByViolation[it.violation_id];
+    const ts = it.created_at || it.sent_at || '';
+    if (!cur || String(ts) > String(cur._ts)) {
+      certifiedByViolation[it.violation_id] = {
+        interaction_id: it.id,
+        status: it.status || null,
+        certified_tracking_number: it.certified_tracking_number || null,
+        mailed_at: it.mailed_at || null,
+        postmark_date: it.postmark_date || null,
+        _ts: ts,
+      };
+    }
+  }
+  violations = violations.map((v) => {
+    const cl = certifiedByViolation[v.id];
+    if (cl) delete cl._ts;
+    return {
+      ...v,
+      letters: lettersByViolation[v.id] || [],
+      letter_path: (lettersByViolation[v.id] && lettersByViolation[v.id][0] && lettersByViolation[v.id][0].path) || null, // back-compat
+      certified_letter: cl || null,
+    };
+  });
 
   // Assessment-delinquency / amenity-access status — the SAME engine the pool
   // gate uses, so 360 shows exactly what would block a fob. Assessments only
@@ -851,6 +883,56 @@ router.post('/violations/:id/resolve', express.json(), async (req, res) => {
     res.json({ ok: true, resolved_via: via, note });
   } catch (err) {
     console.error('[homeowner360] resolve violation failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /interactions/:id/certified-number — record the USPS certified-mail
+// number on a letter, from Homeowner 360. Deliberately LIGHT: the certified
+// letter goes out the same day it's printed, so the mail date + cure clock are
+// already correct — staff just want to drop the tracking number somewhere easy
+// and be able to click through to USPS (Ed 2026-09-18: "the letter will go out
+// the day we print it, I just want to be able to track it by adding the number
+// somewhere easy"). This does NOT touch dates, the cure clock, or the sealed
+// PDF — that is what the Mail Queue's record-mailing does when a date actually
+// needs correcting. Pass an empty number to clear it.
+router.post('/interactions/:id/certified-number', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Keep it to what a USPS label carries (digits + spaces), cap length, allow
+    // clearing. Store normalized (no spaces) so the tracking link is clean.
+    const raw = String((req.body || {}).certified_tracking_number || '').trim();
+    const normalized = raw.replace(/[^0-9A-Za-z]/g, '');
+    if (raw && normalized.length < 8) {
+      return res.status(400).json({ error: 'invalid_tracking_number', detail: 'A USPS certified number is ~20 digits. Check the number and try again.' });
+    }
+    const tracking = normalized ? normalized.slice(0, 40) : null;
+
+    const { data: ix, error: ie } = await supabase.from('interactions')
+      .select('id, type, delivery_method, notes').eq('id', id).maybeSingle();
+    if (ie) throw ie;
+    if (!ix) return res.status(404).json({ error: 'not_found' });
+    if (!/^letter/.test(String(ix.type || ''))) {
+      return res.status(400).json({ error: 'not_a_letter', detail: 'A certified number can only be recorded on a letter.' });
+    }
+
+    const who = String((req.body || {}).user_name || 'Staff').slice(0, 80);
+    const audit = tracking
+      ? `[Certified # recorded ${new Date().toISOString().slice(0, 10)} by ${who}: ${tracking}]`
+      : `[Certified # cleared ${new Date().toISOString().slice(0, 10)} by ${who}]`;
+    const patch = {
+      certified_tracking_number: tracking,
+      notes: ix.notes ? `${audit}\n${ix.notes}` : audit,
+    };
+    // Mark the method certified when a number is added and it wasn't set — but
+    // never override an explicit method that's already there.
+    if (tracking && !ix.delivery_method) patch.delivery_method = 'certified_mail';
+
+    const { error: ue } = await supabase.from('interactions').update(patch).eq('id', id);
+    if (ue) throw ue;
+    res.json({ ok: true, certified_tracking_number: tracking });
+  } catch (err) {
+    console.error('[homeowner360] certified-number failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
