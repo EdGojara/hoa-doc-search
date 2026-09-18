@@ -4840,21 +4840,14 @@ router.patch('/inspections/observations/:id', express.json(), async (req, res) =
           if (v.primary_category_id === patch.category_id) continue; // already right
           const priorLabel = (v.enforcement_categories && v.enforcement_categories.label) || '(unknown)';
           const snapshot = { ...v }; delete snapshot.enforcement_categories;
-          const { error: uErr } = await supabase.from('violations')
-            .update({ primary_category_id: patch.category_id }).eq('id', v.id);
-          if (uErr) throw uErr;
-          await supabase.from('violation_corrections').insert({
-            original_violation_id: v.id,
-            correction_type: 'reclassified',
-            replacement_violation_id: null,
-            reason: `Category propagated from corrected observation: ${priorLabel} -> ${newCat ? newCat.label : patch.category_id}`,
-            corrected_by_user_id: (req.body || {}).user_id || null,
-            original_state: snapshot,
-            notes: 'Observation category was corrected; the open case it opened was re-labeled to match (record kept active).',
-          });
-          // Does the property already have ANOTHER open case in the new category?
-          // Warn, do not auto-merge (merging is a §209 judgment, same rule as the
-          // change-category endpoint).
+
+          // CHECK FIRST: does the property already have ANOTHER open case in the
+          // corrected category? If so, re-pointing this one would collide with the
+          // one-open-case-per-category index (migration 340), throw, and leave the
+          // WRONG label in place — exactly the 5818 Acacia Rose Court phantom
+          // (Mow and Edge kept after the obs was corrected to Sod Yard, which
+          // already had an open case). In that case this violation is a duplicate
+          // under the wrong label: VOID it + reject its drafts, keep the real case.
           const { data: dup } = await supabase.from('violations')
             .select('id, current_stage, opened_at')
             .eq('property_id', v.property_id)
@@ -4865,12 +4858,40 @@ router.patch('/inspections/observations/:id', express.json(), async (req, res) =
             .neq('quality_status', 'superseded')
             .order('opened_at', { ascending: true })
             .limit(1).maybeSingle();
-          category_propagation = {
-            violation_id: v.id,
-            from: priorLabel,
-            to: newCat ? newCat.label : patch.category_id,
-            duplicate_open_case: dup ? { id: dup.id, current_stage: dup.current_stage, opened_at: dup.opened_at } : null,
-          };
+
+          if (dup) {
+            await supabase.from('violations')
+              .update({ current_stage: 'voided', resolved_via: 'voided', resolved_at: new Date().toISOString(),
+                        review_notes: `Observation recategorized to ${newCat ? newCat.label : patch.category_id}; that category already has open case ${dup.id}. This ${priorLabel} case was a wrong-label phantom and has been voided.` })
+              .eq('id', v.id);
+            await supabase.from('interactions')
+              .update({ status: 'rejected', notes: '[category-change: wrong-label phantom voided]' })
+              .eq('violation_id', v.id).ilike('type', 'letter%').in('status', ['draft', 'awaiting_approval', 'approved']);
+            await supabase.from('violation_corrections').insert({
+              original_violation_id: v.id, correction_type: 'reclassified', replacement_violation_id: dup.id,
+              reason: `Observation recategorized from ${priorLabel}; corrected category already open (${dup.id}). Phantom voided.`,
+              corrected_by_user_id: (req.body || {}).user_id || null, original_state: snapshot,
+              notes: 'Category corrected; the wrong-label case it had opened was voided in favor of the existing correct case, and its draft letters rejected.',
+            });
+            category_propagation = { violation_id: v.id, from: priorLabel, to: newCat ? newCat.label : patch.category_id, action: 'voided_phantom', kept_case: dup.id };
+            continue;
+          }
+
+          // No collision — re-point the case in place and reject any stale draft
+          // (the drafted letter cites the OLD category), so a correct one regenerates.
+          const { error: uErr } = await supabase.from('violations')
+            .update({ primary_category_id: patch.category_id }).eq('id', v.id);
+          if (uErr) throw uErr;
+          await supabase.from('interactions')
+            .update({ status: 'rejected', notes: '[category-change: draft cited old category, regenerate]' })
+            .eq('violation_id', v.id).ilike('type', 'letter%').in('status', ['draft', 'awaiting_approval']);
+          await supabase.from('violation_corrections').insert({
+            original_violation_id: v.id, correction_type: 'reclassified', replacement_violation_id: null,
+            reason: `Category propagated from corrected observation: ${priorLabel} -> ${newCat ? newCat.label : patch.category_id}`,
+            corrected_by_user_id: (req.body || {}).user_id || null, original_state: snapshot,
+            notes: 'Observation category was corrected; the open case it opened was re-labeled to match, stale draft rejected for regeneration.',
+          });
+          category_propagation = { violation_id: v.id, from: priorLabel, to: newCat ? newCat.label : patch.category_id, action: 'reclassified' };
         }
       } catch (propErr) {
         // Surface, never silently swallow — the observation patch succeeded but
