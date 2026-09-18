@@ -4789,14 +4789,81 @@ router.post('/violations/:id/change-category', express.json(), async (req, res) 
     const snapshot = { ...v };
     delete snapshot.enforcement_categories;
 
-    // Change the category in place.
+    // CHECK DUP FIRST — before mutating anything. If the property already has
+    // ANOTHER open case in the target category, re-pointing this one collides
+    // with the one-open-case-per-(property,category) index (migration 340): the
+    // UPDATE throws, the response is a 500, and the WRONG label stays in place.
+    // That is the 5818 Acacia Rose Court bug — and it lived here, in the
+    // violation-first path, even after the observation-first PATCH path was
+    // fixed. Both paths must behave the same: recategorizing must CHANGE the one
+    // record, never leave two, and never throw (Ed 2026-09-18: "anything that
+    // gets recategorized, the old one is not in the system — it should change,
+    // not create 2 violations").
+    const { data: dup } = await supabase.from('violations')
+      .select('id, current_stage, opened_at')
+      .eq('property_id', v.property_id)
+      .eq('primary_category_id', newCategoryId)
+      .neq('id', violationId)
+      .not('current_stage', 'in', '(cured,closed,voided)')
+      .is('resolved_at', null)
+      .neq('quality_status', 'superseded')
+      .order('opened_at', { ascending: true })
+      .limit(1).maybeSingle();
+
+    const obsId = v.opened_from_observation_id;
+
+    if (dup) {
+      // The corrected category already has a live case. Re-pointing would create
+      // a second one, so instead: the case being reclassified is a wrong-label
+      // duplicate of the existing correct case. Retire the wrong-label one in
+      // favor of the real case — EXCEPT never auto-void a certified §209 /
+      // fine_assessed case (merging those is a human §209 decision, not a side
+      // effect of a typo fix). For certified, change nothing and surface the
+      // conflict for the operator.
+      if (['certified_209', 'fine_assessed'].includes(v.current_stage)) {
+        return res.status(409).json({
+          error: 'duplicate_open_case_certified',
+          detail: `This is a certified §209 case, and the property already has an open ${newCat.label} case (${dup.id}). Merging certified cases is a manual §209 decision — resolve it by hand rather than changing the category here.`,
+          duplicate_open_case: { id: dup.id, current_stage: dup.current_stage, opened_at: dup.opened_at },
+        });
+      }
+      // Courtesy stage: void the wrong-label case, keep the existing correct one,
+      // reject the wrong-label case's drafts, and move the observation onto the
+      // correct case so it doesn't re-open the phantom on a future confirm.
+      await supabase.from('violations')
+        .update({ current_stage: 'voided', resolved_via: 'voided', resolved_at: new Date().toISOString(),
+                  review_notes: `Category corrected to ${newCat.label}; that category already has open case ${dup.id}. This ${priorLabel} case was a wrong-label duplicate and was voided in favor of it.` })
+        .eq('id', violationId);
+      await supabase.from('interactions')
+        .update({ status: 'rejected', notes: '[category-change: wrong-label duplicate voided]' })
+        .eq('violation_id', violationId).ilike('type', 'letter%').in('status', ['draft', 'awaiting_approval', 'approved']);
+      if (obsId) {
+        // Move the observation onto the corrected category so a future confirm
+        // continues the real case (dup) rather than re-opening this voided one.
+        const auditNote = `[Category corrected ${new Date().toISOString().slice(0, 10)}: ${priorLabel} → ${newCat.label}; wrong-label case voided in favor of ${dup.id}]`;
+        const { data: obs } = await supabase.from('property_observations').select('reviewer_notes').eq('id', obsId).maybeSingle();
+        const opatch = { category_id: newCategoryId, reviewer_notes: obs && obs.reviewer_notes ? `${auditNote}\n${obs.reviewer_notes}` : auditNote };
+        if (newDescription) opatch.ai_description = newDescription;
+        await supabase.from('property_observations').update(opatch).eq('id', obsId);
+      }
+      await supabase.from('violation_corrections').insert({
+        original_violation_id: violationId, correction_type: 'reclassified', replacement_violation_id: dup.id,
+        reason: `Category corrected: ${priorLabel} → ${newCat.label}; corrected category already open (${dup.id}). Wrong-label case voided.`,
+        corrected_by_user_id: (req.body || {}).user_id || null, original_state: snapshot,
+        notes: 'Category corrected; the wrong-label case was voided in favor of the existing correct case, its drafts rejected.',
+      });
+      scheduleBundleRebuild(v.property_id);
+      return res.json({ ok: true, action: 'voided_wrong_label', category_label: newCat.label, prior_label: priorLabel, kept_case: dup.id });
+    }
+
+    // No collision — change the category in place (keeps the same case, stage,
+    // cure clock, and history).
     const { error: uErr } = await supabase.from('violations')
       .update({ primary_category_id: newCategoryId }).eq('id', violationId);
     if (uErr) return res.status(500).json({ error: uErr.message });
 
     // Best-effort: move the linked observation to the new category + description
     // so any future letter renders consistently.
-    const obsId = v.opened_from_observation_id;
     if (obsId) {
       const auditNote = `[Category changed ${new Date().toISOString().slice(0, 10)}: ${priorLabel} → ${newCat.label} by operator]`;
       const { data: obs } = await supabase.from('property_observations')
@@ -4817,20 +4884,7 @@ router.post('/violations/:id/change-category', express.json(), async (req, res) 
       notes: 'In-place category change (record kept active).',
     });
 
-    // Does the property already have ANOTHER open case in the new category? Warn,
-    // don't merge. (Alias-aware would be better; category-id match is the floor.)
-    let duplicate_open_case = null;
-    const { data: dup } = await supabase.from('violations')
-      .select('id, current_stage, opened_at')
-      .eq('property_id', v.property_id)
-      .eq('primary_category_id', newCategoryId)
-      .neq('id', violationId)
-      .not('current_stage', 'in', '(cured,closed,voided)')
-      .is('resolved_at', null)
-      .neq('quality_status', 'superseded')
-      .order('opened_at', { ascending: true })
-      .limit(1).maybeSingle();
-    if (dup) duplicate_open_case = { id: dup.id, current_stage: dup.current_stage, opened_at: dup.opened_at };
+    const duplicate_open_case = null; // no collision reached this branch
 
     // Re-render this property's DRAFT letter(s) from the NEW category so the
     // reviewed preview matches what ships. Without this the draft PDF stays a
