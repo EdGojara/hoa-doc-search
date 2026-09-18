@@ -129,6 +129,25 @@ async function _ensureLettersBucket() {
 const router = express.Router();
 
 // ---------------------------------------------------------------------------
+// GET /api/enforcement/health — one comprehensive enforcement-data-health
+// report across ALL divergence classes, per community, so there is a single
+// number to drive to zero and keep at zero (Ed 2026-09-18: "you need a better
+// way to track these"). Powered by lib/enforcement/health.js — the same source
+// the CLI audit uses, so the two can never disagree.
+// ---------------------------------------------------------------------------
+router.get('/health', async (req, res) => {
+  try {
+    const { enforcementHealth } = require('../lib/enforcement/health');
+    const communityId = req.query.community_id || null;
+    const report = await enforcementHealth(supabase, { communityId });
+    res.json(report);
+  } catch (err) {
+    console.error('[enforcement.health]', err);
+    res.status(500).json({ error: err.message || 'health check failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // _fireSupplementalNotices — multi-channel evidence trail
 // Fires email + SMS supplemental notices alongside the postal mailing of a
 // violation letter. The mail is the legal artifact; email + SMS are belt-

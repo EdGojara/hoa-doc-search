@@ -1404,6 +1404,7 @@ app.get('/learn', (req, res) => res.sendFile(require('path').join(__dirname, 'pu
 app.get('/present', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'present.html')));
 // Staff review + editing for Board Learning modules (staff-gated by the API).
 app.get('/admin/board-learning', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'board-learning-admin.html')));
+app.get('/admin/enforcement-health', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'enforcement-health.html')));
 // Sweep visits whose tab was closed without ending them, so their metered
 // minutes still land in the cost ledger instead of sitting 'active' forever.
 setInterval(() => { expireIdleSessions().catch((e) => console.warn('[claire] sweep:', e.message)); }, 120000).unref();

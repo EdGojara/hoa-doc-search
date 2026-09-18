@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enforcement Health</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+  :root{ --navy:#0B1D34; --gold:#B8892B; --ink:#1c2635; --muted:#5a6b83; --line:#dce3ec; --paper:#eef1f5; --surface:#fff;
+    --good:#166b46; --good-bg:#e7f4ec; --bad:#a3261f; --bad-bg:#fbe9e7; --warn:#8a5a12; --warn-bg:#fbf0dd;
+    --sans:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --serif:"Fraunces",Georgia,serif; }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--gold:#e0b352;--good:#7fd6a6;--good-bg:#123526;--bad:#f0a79f;--bad-bg:#3a1512;--warn:#e6bd77;--warn-bg:#33260f; }}
+  *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.5}
+  .wrap{max-width:1180px;margin:0 auto;padding:24px 18px 90px}
+  .crumbs{font-size:13px;color:var(--muted)} .crumbs b{color:var(--navy)}
+  h1{font-family:var(--serif);font-weight:600;font-size:28px;color:var(--navy);margin:6px 0 4px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 16px;max-width:80ch}
+  .bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+  .status{font-family:var(--serif);font-weight:600;font-size:22px;padding:8px 18px;border-radius:12px}
+  .status.ok{background:var(--good-bg);color:var(--good)} .status.bad{background:var(--bad-bg);color:var(--bad)}
+  button{font:inherit;cursor:pointer;background:var(--gold);color:#0B1D34;border:none;border-radius:9px;padding:9px 16px;font-weight:700}
+  .gen{color:var(--muted);font-size:12px}
+  .tblwrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 2px 10px rgba(11,29,52,.05)}
+  table{border-collapse:collapse;width:100%;min-width:900px;font-size:13px;font-variant-numeric:tabular-nums}
+  th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  thead th{background:var(--navy);color:#fff;font-size:12px;position:sticky;top:0}
+  tbody tr:hover{background:rgba(0,0,0,.02)}
+  .z{color:var(--muted)} .n{color:var(--bad);font-weight:700}
+  .rowclean td:first-child::before{content:'● ';color:var(--good)}
+  .rowbad td:first-child::before{content:'● ';color:var(--bad)}
+  tfoot td{font-weight:800;background:var(--paper);border-top:2px solid var(--navy)}
+  h2{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:26px 0 10px;border-bottom:1px solid var(--line);padding-bottom:7px}
+  .legend{display:grid;grid-template-columns:1fr 1fr;gap:8px 22px} @media(max-width:640px){.legend{grid-template-columns:1fr}}
+  .legend div{font-size:13px} .legend b{color:var(--navy)}
+  .msg{color:var(--warn);font-size:13.5px;min-height:18px;margin:8px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumbs">Bedrock Office &rsaquo; <b>Enforcement Health</b></div>
+  <h1>Enforcement Health</h1>
+  <p class="sub">One view of every way the enforcement records can drift out of sync, per community. Every number here is a bug when it is above zero. Drive the total to zero and it stays the single source of truth, no more chasing one symptom at a time.</p>
+  <div class="bar">
+    <span id="status" class="status">Loading…</span>
+    <button id="refresh" onclick="load()">Refresh</button>
+    <span id="gen" class="gen"></span>
+  </div>
+  <div id="msg" class="msg"></div>
+
+  <div class="tblwrap">
+    <table>
+      <thead><tr>
+        <th>Community</th><th>Pending obs</th><th>Open violations</th>
+        <th>Dup risk</th><th>Phantom (void)</th><th>Phantom (recat)</th><th>Rejected still open</th><th>Orphan drafts</th><th>Open, no letter</th><th>Problems</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+      <tfoot id="foot"></tfoot>
+    </table>
+  </div>
+
+  <h2>What each column means</h2>
+  <div class="legend">
+    <div><b>Dup risk</b> — pending observation whose case already had its notice mailed. Confirming it would send a duplicate.</div>
+    <div><b>Phantom (void)</b> — violation whose category no longer matches its observation, and the corrected category already has a case. Safe to void.</div>
+    <div><b>Phantom (recat)</b> — same mismatch, but the corrected category has no case yet. Needs re-pointing, not voiding.</div>
+    <div><b>Rejected still open</b> — violation whose observation was rejected but the case was never voided.</div>
+    <div><b>Orphan drafts</b> — a draft letter sitting on a voided or cured violation. Should never mail.</div>
+    <div><b>Open, no letter</b> — open courtesy_1 with no letter at all. Either a lost render or a case that needs a first notice.</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+let af = (u,o)=>fetch(u,o||{});
+const $=id=>document.getElementById(id);
+const cell=(n)=>`<td class="${n>0?'n':'z'}">${n}</td>`;
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function load(){
+  $('msg').textContent=''; $('status').textContent='Loading…'; $('status').className='status';
+  let j;
+  try{ const r=await af('/api/enforcement/health'); if(r.status===403){ $('msg').textContent='Admin sign-in required.'; $('status').textContent='—'; return; } j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); }
+  catch(e){ $('msg').textContent='Could not load: '+e.message; $('status').textContent='—'; return; }
+  const t=j.totals||{};
+  $('status').textContent = j.clean ? 'All clean ✓' : (t.problems+' problems');
+  $('status').className = 'status '+(j.clean?'ok':'bad');
+  $('gen').textContent = 'as of '+new Date(j.generated_at).toLocaleString();
+  $('rows').innerHTML = (j.communities||[]).map(c=>`<tr class="${c.problems>0?'rowbad':'rowclean'}">
+    <td>${esc(c.name)}</td><td class="z">${c.pending}</td><td class="z">${c.open_violations}</td>
+    ${cell(c.dup_risk)}${cell(c.phantom_void_safe)}${cell(c.phantom_needs_recategorize)}${cell(c.rejected_open)}${cell(c.orphan_drafts)}${cell(c.open_no_letter)}
+    <td class="${c.problems>0?'n':'z'}">${c.problems}</td></tr>`).join('');
+  $('foot').innerHTML = `<tr><td>All communities</td><td>${t.pending}</td><td>${t.open_violations}</td>${cell(t.dup_risk)}${cell(t.phantom_void_safe)}${cell(t.phantom_needs_recategorize)}${cell(t.rejected_open)}${cell(t.orphan_drafts)}${cell(t.open_no_letter)}<td class="${t.problems>0?'n':'z'}">${t.problems}</td></tr>`;
+}
+(async function boot(){
+  try{ const cfg=await (await fetch('/api/auth/config')).json();
+    if(cfg&&cfg.enabled&&window.supabase&&cfg.supabase_url&&cfg.supabase_anon_key){
+      const supa=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+      af=async(u,o)=>{o=o||{};const h=Object.assign({},o.headers||{});try{const s=(await supa.auth.getSession()).data.session;if(s&&s.access_token)h.Authorization='Bearer '+s.access_token;}catch(_){}
+        return fetch(u,Object.assign({},o,{headers:h}));};
+    }
+  }catch(_){}
+  load();
+})();
+</script>
+</body>
+</html>
