@@ -47,6 +47,9 @@ async function main() {
   for (const m of models) {
     process.stdout.write(`running ${m.key} ...`);
     const r = await callModel({ provider: m.provider, model: m.model, system: theCase.system, prompt: theCase.prompt, maxTokens: theCase.maxTokens });
+    // Empty output is a FAILED generation (usually reasoning ate the token cap),
+    // not a 0%/BLOCK model result — scoring it would manufacture a false finding.
+    if (!r.error && !r.text) r.error = 'empty output (no text — likely truncated by reasoning; raise maxTokens)';
     if (r.error) { console.log(` ERROR: ${r.error}`); runs.push({ m, error: r.error }); continue; }
     const sc = scoreOutput(r.text, theCase.rubric);
     const cost = costUSD(r.usage, m);

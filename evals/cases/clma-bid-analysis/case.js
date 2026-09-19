@@ -86,7 +86,7 @@ module.exports = {
   title: 'CLMA landscape + irrigation bid comparison',
   system: SYSTEM,
   prompt: PROMPT,
-  maxTokens: 2200,
+  maxTokens: 3200,
   rubric: RUBRIC,
   meta: { required_gl: REQUIRED_GL, truth: { a_annual: 69600, b_annual: 77400, c_annual: 71400 } },
 };

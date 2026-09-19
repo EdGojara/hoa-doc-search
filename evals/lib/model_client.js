@@ -51,15 +51,29 @@ async function _openai({ model, system, prompt, maxTokens }) {
   const base = { model, messages: [] };
   if (system) base.messages.push({ role: 'system', content: system });
   base.messages.push({ role: 'user', content: prompt });
+  // reasoning_effort: 'low' keeps reasoning models from spending the whole
+  // completion budget thinking and returning empty text (gpt-terra did exactly
+  // that on the long CLMA case). Fall back gracefully if the field/param is rejected.
+  const want = { ...base, max_completion_tokens: maxTokens || 2048, reasoning_effort: 'low' };
   let resp;
   try {
-    resp = await openai.chat.completions.create({ ...base, max_completion_tokens: maxTokens || 2048 });
+    resp = await openai.chat.completions.create(want);
   } catch (e) {
-    if (/max_completion_tokens|unsupported/i.test(e.message || '')) {
-      resp = await openai.chat.completions.create({ ...base, max_tokens: maxTokens || 2048 });
+    const msg = e.message || '';
+    if (/reasoning_effort|unsupported|unknown|not supported/i.test(msg)) {
+      const { reasoning_effort, ...noEffort } = want;
+      try { resp = await openai.chat.completions.create(noEffort); }
+      catch (e2) {
+        if (/max_completion_tokens/i.test(e2.message || '')) resp = await openai.chat.completions.create({ ...base, max_tokens: maxTokens || 2048 });
+        else throw e2;
+      }
+    } else if (/max_completion_tokens/i.test(msg)) {
+      resp = await openai.chat.completions.create({ ...base, max_tokens: maxTokens || 2048, reasoning_effort: 'low' }).catch(() => openai.chat.completions.create({ ...base, max_tokens: maxTokens || 2048 }));
     } else { throw e; }
   }
+  const fin = resp.choices && resp.choices[0] && resp.choices[0].finish_reason;
   const text = (resp.choices && resp.choices[0] && resp.choices[0].message && resp.choices[0].message.content || '').trim();
+  if (!text && fin === 'length') throw new Error('empty output: hit the token cap during reasoning (raise maxTokens or lower reasoning)');
   const u = resp.usage || {};
   return {
     text,
