@@ -40,12 +40,13 @@ function tally(arr) { const m = {}; arr.forEach((x) => { const k = x == null ? '
   if (error) { console.error('read failed:', error.message); process.exit(1); }
   if (!rows.length) { console.log('no shadow rows yet — run scripts/acc_shadow_run.js first.'); return; }
 
-  // pull summaries for subclass classification
+  // pull summaries + human condition text (letter_body/review_text) for subclass +
+  // condition-level comparison
   const ids = [...new Set(rows.map((r) => r.source_acc_decision_id).filter(Boolean))];
-  const sums = {};
+  const sums = {}; const humanCond = {};
   for (let i = 0; i < ids.length; i += 200) {
-    const { data } = await s.from('acc_decisions').select('id, project_summary').in('id', ids.slice(i, i + 200));
-    (data || []).forEach((a) => { sums[a.id] = a.project_summary; });
+    const { data } = await s.from('acc_decisions').select('id, project_summary, letter_body, review_text').in('id', ids.slice(i, i + 200));
+    (data || []).forEach((a) => { sums[a.id] = a.project_summary; humanCond[a.id] = (a.letter_body || '') + '\n' + (a.review_text || ''); });
   }
   rows.forEach((r) => { r._subclass = subclassOf(sums[r.source_acc_decision_id]); });
 
@@ -103,5 +104,44 @@ function tally(arr) { const m = {}; arr.forEach((x) => { const k = x == null ? '
   show('most instructive PRIORITY adjudication cases', priorityAdjud);
   show('most instructive true reasoning disagreements', trueReasoning);
   if (failed.length) show('system/parse failures', failed.map((r) => ({ ...r, _subclass: r._subclass || '?' })));
+
+  // ---- CONDITION-LEVEL agreement (top-level match is NOT enough) ----
+  // 79/86 human outcomes are approved_with_conditions, so agreeing on the
+  // top-level disposition proves little. Compare the actual conditions. Human
+  // conditions live in prose (letter_body/review_text), not structured fields —
+  // so this is a best-effort objective-token comparison, and the limitation is
+  // stated, not hidden. A rigorous condition match needs a model judge (next step
+  // if warranted) — not built yet by design.
+  const OBJ = (text) => {
+    const t = String(text || '').toLowerCase();
+    const toks = new Set();
+    (t.match(/\d+(?:\.\d+)?\s?(?:ft|feet|'|"|inch|inches|sq|%)/g) || []).forEach((x) => toks.add(x.replace(/\s+/g, '')));
+    ['brick', 'stone', 'stucco', 'cedar', 'wrought iron', 'board-on-board', 'masonry', 'shingle', 'metal', 'vinyl', 'composite', 'setback', 'height', 'gray', 'grey', 'beige', 'tan', 'white', 'black', 'earth tone', 'palette', 'match existing', 'screen', 'not visible', 'side street']
+      .forEach((w) => { if (t.includes(w)) toks.add(w); });
+    return toks;
+  };
+  const mirandaConditionText = (struct) => {
+    if (!struct) return '';
+    return (struct.items || []).flatMap((i) => (i.requirements || []).map((r) => `${i.type} ${r.requirement || ''} ${r.submitted_value || ''} ${r.threshold_num != null ? r.operator + r.threshold_num : ''}`)).join(' ');
+  };
+  const matchedAWC = comparable.filter((r) => r.overall_match && /condition/i.test(r.human_decision_type || '') && r.business_decision === 'APPROVE');
+  let granular = 0, withOverlap = 0; const condRows = [];
+  for (const r of matchedAWC) {
+    const hText = humanCond[r.source_acc_decision_id] || '';
+    const hTok = OBJ(hText), mTok = OBJ(mirandaConditionText(r.primary_structured));
+    const overlap = [...mTok].filter((x) => hTok.has(x));
+    const isGranular = hText.replace(/\s/g, '').length > 200 && hTok.size > 0;
+    if (isGranular) granular++;
+    if (overlap.length) withOverlap++;
+    condRows.push({ sub: r._subclass, summary: (sums[r.source_acc_decision_id] || '').slice(0, 50), hChars: hText.replace(/\s/g, '').length, hTok: hTok.size, mTok: mTok.size, overlap: overlap.length, overlapTok: overlap.slice(0, 6) });
+  }
+  console.log('\n---- CONDITION-LEVEL AGREEMENT (beyond top-level match) ----');
+  console.log(`matched approved-with-conditions cases: ${matchedAWC.length}`);
+  console.log(`  human conditions captured granularly (letter_body/review_text >200 chars w/ objective tokens): ${granular}/${matchedAWC.length}`);
+  console.log(`  cases with any objective-token overlap (height/setback/material/color): ${withOverlap}/${matchedAWC.length}`);
+  console.log('  NOTE: top-level agreement != condition agreement. Human conditions are prose, not structured;');
+  console.log('        this is a best-effort token overlap. A rigorous condition match needs a model judge (not built yet).');
+  condRows.slice(0, 8).forEach((c) => console.log(`     [${c.sub}] ${c.summary} | humanCondChars:${c.hChars} hTok:${c.hTok} mTok:${c.mTok} overlap:${c.overlap} ${c.overlapTok.join(',')}`));
+
   console.log('\n========================================================\n');
 })().catch((e) => { console.error(e.message); process.exit(1); });
