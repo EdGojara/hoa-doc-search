@@ -40,6 +40,17 @@ const ROOT = path.resolve(__dirname, '..');
 // fixtures, then the live-data checks.
 const CHECKS = [
   'scripts/check_constraint_values.js',
+  // AI decision layer — all OFFLINE/deterministic (no API): the router safety
+  // gate, the ACC contract semantics, the six adjudicated ACC fixtures, the
+  // shadow no-execution/failure-isolation guarantees, and the eval-of-the-
+  // evaluator. These are the regression lock on "everything we learned" about
+  // the ACC autonomy work (Ed/ChatGPT 2026-09-19).
+  'lib/ai/selftest.js',
+  'lib/ai/tasks/acc.selftest.js',
+  'lib/ai/tasks/acc.fixtures.test.js',
+  'lib/ai/shadow/acc_shadow.selftest.js',
+  'lib/ai/shadow/acc_stability.selftest.js',
+  'evals/evaluator-check.js',
   'tests/test_vantaca_extraction.js',
   'tests/test_retrieval_regression.js',
   'tests/test_fact_fastpath.js',

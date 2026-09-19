@@ -1,5 +1,5 @@
 {
-  "_comment": "Adjudicated ACC diagnostic cases -> regression fixtures + institutional ACC knowledge (Ed/ChatGPT 2026-09-19). Each is the INTENDED V2 outcome given the real evidence + Bedrock policy, keyed to the real acc_decisions row. Bedrock policy encoded here: a missing SIGNATURE is an ADMINISTRATIVE deficiency, NOT substantive grounds to deny — Miranda performs the substantive review, records administrative_status=PENDING_SIGNATURE, obtains the signature from the homeowner herself, and completes automatically; no human escalation merely for a missing signature. administrative_status is a forthcoming contract field (keep administrative completeness separate from substantive ACC compliance); the executable regression runner + that contract field land AFTER the V2 dry-run results are reviewed, so the running experiment stays clean.",
+  "_comment": "Adjudicated ACC diagnostic cases -> regression fixtures + institutional ACC knowledge (Ed/ChatGPT 2026-09-19). Each is the INTENDED V2 outcome given the real evidence + Bedrock policy, keyed to the real acc_decisions row. Each fixture now carries a `structured` block: the canonical contract JSON Miranda SHOULD produce for that case. acc.fixtures.test.js runs those structs through the live framework (applyDeterministicChecks -> severity -> assess -> administrativeStatus -> agree) OFFLINE (no model calls) and asserts the invariants we adjudicated hold. This is deterministic regression protection for everything we learned; it does NOT re-call the model (that is livecheck's job and is non-deterministic). Bedrock policy encoded here: a missing SIGNATURE is an ADMINISTRATIVE deficiency, NOT substantive grounds to deny — Miranda performs the substantive review, records administrative_status=PENDING_SIGNATURE, obtains the signature from the homeowner herself, and completes automatically; no human escalation merely for a missing signature.",
   "policy": {
     "administrative_vs_substantive": "Administrative completeness (signature, dates, owner acknowledgment, contractor info) is tracked separately from substantive architectural compliance and must not contaminate the substantive decision.",
     "missing_signature": "administrative deficiency -> substantive review proceeds; administrative_status=PENDING_SIGNATURE; Miranda CONTACTS THE HOMEOWNER to collect THEIR signature, records/attaches it, then auto-resumes and completes. She never signs or attests on the homeowner's behalf. Not an escalation.",
@@ -22,6 +22,18 @@
         "curing_conditions": ["panels installed to minimize visual impact per guidelines", "battery/equipment screened from public view"],
         "expected_escalation": "none",
         "note": "V1 said NEED_INFO partly because the application PDF failed to read — an EVIDENCE/ingestion issue, not judgment. With the PDF read, this should resolve to APPROVE_WITH_CONDITIONS."
+      },
+      "structured": {
+        "decision": "APPROVE_WITH_CONDITIONS",
+        "administrative_status": "COMPLETE",
+        "administrative_deficiencies": [],
+        "items": [
+          { "type": "solar panels", "disposition": "APPROVE_WITH_CONDITIONS", "requirements": [
+            { "rule": "Solar Energy Devices (Tex. Prop. Code §202.010)", "rule_type": "SUBJECTIVE", "requirement": "roof-mounted solar permitted; screening/visibility governs", "submitted_value": "roof-mounted array", "resolved_from": "governing_docs", "condition": "panels installed to minimize visual impact per guidelines", "complies": false } ] },
+          { "type": "battery storage", "disposition": "APPROVE_WITH_CONDITIONS", "requirements": [
+            { "rule": "Mechanical equipment screening", "rule_type": "SUBJECTIVE", "requirement": "equipment screened from public view", "submitted_value": "Tesla Powerwall", "resolved_from": "governing_docs", "condition": "battery/equipment screened from public view", "complies": false } ] }
+        ],
+        "variance_required": false
       }
     },
     {
@@ -33,11 +45,23 @@
       "expected": {
         "substantive_decision": "APPROVE_WITH_CONDITIONS",
         "administrative_status": "COMPLETE",
-        "item_dispositions": { "brick_repair": "APPROVE", "roof_to_wall_flashing": "APPROVE" },
+        "item_dispositions": { "brick_repair": "APPROVE_WITH_CONDITIONS", "roof_to_wall_flashing": "APPROVE" },
         "governing_requirements": ["Exterior materials must complement/match existing"],
         "objective_findings": "brick product documented (brand/line/color) and cleared; flashing is like-for-like repair",
         "curing_conditions": ["repaired/replaced materials must match existing exterior in color, finish, and coursing"],
         "expected_escalation": "none"
+      },
+      "structured": {
+        "decision": "APPROVE_WITH_CONDITIONS",
+        "administrative_status": "COMPLETE",
+        "administrative_deficiencies": [],
+        "items": [
+          { "type": "brick repair", "disposition": "APPROVE_WITH_CONDITIONS", "requirements": [
+            { "rule": "Exterior materials must complement/match existing", "rule_type": "SUBJECTIVE", "requirement": "repaired materials match existing exterior", "submitted_value": "documented brick brand/line/color", "resolved_from": "evidence", "condition": "repaired/replaced materials must match existing exterior in color, finish, and coursing", "complies": false } ] },
+          { "type": "roof-to-wall flashing", "disposition": "APPROVE", "requirements": [
+            { "rule": "Like-for-like exterior repair", "rule_type": "SUBJECTIVE", "requirement": "flashing is a like-for-like repair", "submitted_value": "roof-to-wall flashing replacement", "resolved_from": "evidence", "complies": true } ] }
+        ],
+        "variance_required": false
       }
     },
     {
@@ -54,6 +78,21 @@
         "objective_findings": "in-ground is permitted; colors resolvable via precedent; barrier is code, curable by condition",
         "curing_conditions": ["pool + equipment must meet required setbacks and not encroach easements", "equipment screened from public view", "code-compliant self-closing/self-latching barrier"],
         "expected_escalation": "none"
+      },
+      "structured": {
+        "decision": "APPROVE_WITH_CONDITIONS",
+        "administrative_status": "COMPLETE",
+        "administrative_deficiencies": [],
+        "items": [
+          { "type": "pool", "disposition": "APPROVE_WITH_CONDITIONS", "requirements": [
+            { "rule": "in-ground pools permitted; above-ground prohibited", "rule_type": "BOOLEAN", "requirement": "pool is in-ground", "submitted_value": "in-ground", "resolved_from": "evidence", "complies": true },
+            { "rule": "rear/side setback + easements", "rule_type": "SUBJECTIVE", "requirement": "meet setbacks; no easement encroachment", "submitted_value": "21'4\" x 10'6\" rear-yard pool", "resolved_from": "condition", "condition": "pool + equipment must meet required setbacks and not encroach easements", "complies": false } ] },
+          { "type": "equipment", "disposition": "APPROVE_WITH_CONDITIONS", "requirements": [
+            { "rule": "equipment screening", "rule_type": "SUBJECTIVE", "requirement": "screen equipment from public view", "submitted_value": "pool equipment pad", "resolved_from": "condition", "condition": "equipment screened from public view", "complies": false } ] },
+          { "type": "barrier fencing", "disposition": "APPROVE_WITH_CONDITIONS", "requirements": [
+            { "rule": "Texas pool barrier / self-latching gate", "rule_type": "BOOLEAN", "requirement": "code-compliant barrier present", "submitted_value": "existing perimeter fence", "resolved_from": "condition", "condition": "code-compliant self-closing/self-latching barrier", "complies": false } ] }
+        ],
+        "variance_required": false
       }
     },
     {
@@ -70,6 +109,17 @@
         "objective_findings": "peak height ~8.2ft <= 12ft (COMPLIES); patio covers permitted; materials-complement resolvable via precedent",
         "curing_conditions": ["metal frame painted an approved color", "maintain positive drainage / no runoff onto adjacent property", "meet property-line setbacks"],
         "expected_escalation": "none"
+      },
+      "structured": {
+        "decision": "APPROVE_WITH_CONDITIONS",
+        "administrative_status": "COMPLETE",
+        "administrative_deficiencies": [],
+        "items": [
+          { "type": "pergola", "disposition": "APPROVE_WITH_CONDITIONS", "requirements": [
+            { "rule": "§3.21.5 max height 12ft", "rule_type": "NUMERIC", "requirement": "peak height <= 12ft", "submitted_value": "8.2 ft peak", "submitted_value_num": 8.2, "threshold_num": 12, "operator": "<=", "resolved_from": "evidence", "complies": true },
+            { "rule": "metal must be painted", "rule_type": "SUBJECTIVE", "requirement": "metal frame painted an approved color", "submitted_value": "gray metal", "resolved_from": "condition", "condition": "metal frame painted an approved color; maintain positive drainage; meet property-line setbacks", "complies": false } ] }
+        ],
+        "variance_required": false
       }
     },
     {
@@ -87,6 +137,16 @@
         "curing_conditions": [],
         "expected_escalation": "none",
         "note": "The clean case V1 already handled correctly — Miranda, verifier, and human all aligned including the condition (Barbados Sand 1094 / match existing)."
+      },
+      "structured": {
+        "decision": "APPROVE",
+        "administrative_status": "COMPLETE",
+        "administrative_deficiencies": [],
+        "items": [
+          { "type": "exterior paint", "disposition": "APPROVE", "requirements": [
+            { "rule": "color consistent with existing; same-color repaint", "rule_type": "SUBJECTIVE", "requirement": "color consistent with existing/precedent", "submitted_value": "Benjamin Moore Barbados Sand 1094 (match existing)", "resolved_from": "evidence", "complies": true } ] }
+        ],
+        "variance_required": false
       }
     },
     {
@@ -104,6 +164,19 @@
         "objective_findings": "sod species must be an approved variety (curable by condition); trimming scope resolvable; SIGNATURE MISSING = administrative only",
         "curing_conditions": ["sod must be an ACC-approved turfgrass variety", "trimming to standard arborist practice"],
         "expected_escalation": "none — Miranda contacts the homeowner to collect THEIR signature, records it, and auto-completes (she never signs on their behalf); a missing signature is NOT substantive grounds to deny or to escalate"
+      },
+      "structured": {
+        "decision": "APPROVE_WITH_CONDITIONS",
+        "administrative_status": "PENDING_SIGNATURE",
+        "administrative_deficiencies": ["application unsigned and undated"],
+        "items": [
+          { "type": "tree trimming", "disposition": "APPROVE_WITH_CONDITIONS", "requirements": [
+            { "rule": "tree trimming scope per arborist standards", "rule_type": "SUBJECTIVE", "requirement": "trimming to standard practice", "submitted_value": "oak canopy trim", "resolved_from": "precedent", "condition": "trimming to standard arborist practice", "complies": false },
+            { "rule": "application must be signed/dated", "rule_type": "DOCUMENT", "requirement": "signed + dated application", "document_provided": false, "administrative": true, "complies": false } ] },
+          { "type": "lawn resod", "disposition": "APPROVE_WITH_CONDITIONS", "requirements": [
+            { "rule": "approved turfgrass species", "rule_type": "ENUM", "requirement": "sod is an approved variety", "submitted_value": "(species not specified)", "allowed_values": ["St. Augustine", "Bermuda", "Zoysia"], "resolved_from": "condition", "condition": "sod must be an ACC-approved turfgrass variety", "complies": false } ] }
+        ],
+        "variance_required": false
       }
     }
   ]
