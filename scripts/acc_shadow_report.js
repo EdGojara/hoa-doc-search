@@ -124,24 +124,41 @@ function tally(arr) { const m = {}; arr.forEach((x) => { const k = x == null ? '
     if (!struct) return '';
     return (struct.items || []).flatMap((i) => (i.requirements || []).map((r) => `${i.type} ${r.requirement || ''} ${r.submitted_value || ''} ${r.threshold_num != null ? r.operator + r.threshold_num : ''}`)).join(' ');
   };
+  const ftVals = (text) => new Set((String(text).toLowerCase().match(/\d+(?:\.\d+)?\s?(?:ft|feet|')/g) || []).map((x) => x.replace(/\s|feet|ft|'/g, '')));
+  // Three-way, per ChatGPT: low overlap is NOT a disagreement. Only call a conflict
+  // when objective values actually clash on the same dimension.
+  const classifyCondition = (hText, struct) => {
+    const hTok = OBJ(hText), mTok = OBJ(mirandaConditionText(struct));
+    const overlap = [...mTok].filter((x) => hTok.has(x));
+    const granular = String(hText).replace(/\s/g, '').length > 200 && hTok.size > 0;
+    if (!granular) return { cls: 'INDETERMINATE', overlap, hTok: hTok.size, mTok: mTok.size };
+    if (overlap.length) return { cls: 'CONFIRMED_MATCH', overlap, hTok: hTok.size, mTok: mTok.size };
+    // conflict only if both cite the same dimension AND give differing ft values
+    const dim = (t) => /setback|height/.test(String(t).toLowerCase());
+    const mText = mirandaConditionText(struct);
+    if (dim(hText) && dim(mText)) {
+      const hf = ftVals(hText), mf = ftVals(mText);
+      if (hf.size && mf.size && ![...hf].some((x) => mf.has(x))) return { cls: 'CONFIRMED_DISAGREEMENT', overlap, hTok: hTok.size, mTok: mTok.size };
+    }
+    return { cls: 'INDETERMINATE', overlap, hTok: hTok.size, mTok: mTok.size };
+  };
   const matchedAWC = comparable.filter((r) => r.overall_match && /condition/i.test(r.human_decision_type || '') && r.business_decision === 'APPROVE');
-  let granular = 0, withOverlap = 0; const condRows = [];
+  const condCls = { CONFIRMED_MATCH: 0, CONFIRMED_DISAGREEMENT: 0, INDETERMINATE: 0 }; const condRows = [];
   for (const r of matchedAWC) {
     const hText = humanCond[r.source_acc_decision_id] || '';
-    const hTok = OBJ(hText), mTok = OBJ(mirandaConditionText(r.primary_structured));
-    const overlap = [...mTok].filter((x) => hTok.has(x));
-    const isGranular = hText.replace(/\s/g, '').length > 200 && hTok.size > 0;
-    if (isGranular) granular++;
-    if (overlap.length) withOverlap++;
-    condRows.push({ sub: r._subclass, summary: (sums[r.source_acc_decision_id] || '').slice(0, 50), hChars: hText.replace(/\s/g, '').length, hTok: hTok.size, mTok: mTok.size, overlap: overlap.length, overlapTok: overlap.slice(0, 6) });
+    const c = classifyCondition(hText, r.primary_structured);
+    condCls[c.cls]++;
+    condRows.push({ sub: r._subclass, summary: (sums[r.source_acc_decision_id] || '').slice(0, 46), cls: c.cls, hChars: hText.replace(/\s/g, '').length, overlap: c.overlap });
   }
-  console.log('\n---- CONDITION-LEVEL AGREEMENT (beyond top-level match) ----');
+  console.log('\n---- CONDITION-LEVEL AGREEMENT (top-level match is NOT enough) ----');
   console.log(`matched approved-with-conditions cases: ${matchedAWC.length}`);
-  console.log(`  human conditions captured granularly (letter_body/review_text >200 chars w/ objective tokens): ${granular}/${matchedAWC.length}`);
-  console.log(`  cases with any objective-token overlap (height/setback/material/color): ${withOverlap}/${matchedAWC.length}`);
-  console.log('  NOTE: top-level agreement != condition agreement. Human conditions are prose, not structured;');
-  console.log('        this is a best-effort token overlap. A rigorous condition match needs a model judge (not built yet).');
-  condRows.slice(0, 8).forEach((c) => console.log(`     [${c.sub}] ${c.summary} | humanCondChars:${c.hChars} hTok:${c.hTok} mTok:${c.mTok} overlap:${c.overlap} ${c.overlapTok.join(',')}`));
+  console.log(`  condition_evidence_overlap classification (NOT pass/fail):`);
+  console.log(`    CONFIRMED_MATCH (objective details align):        ${condCls.CONFIRMED_MATCH}`);
+  console.log(`    CONFIRMED_DISAGREEMENT (objective values clash):  ${condCls.CONFIRMED_DISAGREEMENT}`);
+  console.log(`    INDETERMINATE (human prose too thin to tell):    ${condCls.INDETERMINATE}`);
+  console.log('  NOTE: heuristic token/value comparison, not a match verdict. Human conditions are prose,');
+  console.log('        not structured. A rigorous condition match would need a model judge (not built yet, by design).');
+  condRows.slice(0, 10).forEach((c) => console.log(`     [${c.sub}] ${c.summary} | ${c.cls} | humanCondChars:${c.hChars} overlap:${c.overlap.join(',') || '-'}`));
 
   console.log('\n========================================================\n');
 })().catch((e) => { console.error(e.message); process.exit(1); });
