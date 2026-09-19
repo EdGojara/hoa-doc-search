@@ -14,18 +14,33 @@ homeowner directly, decides, sends, logs, and closes — and brings Ed only genu
 assisted software, which is the wrong product.
 
 But autonomous-by-default is the **architecture target**, not the launch switch.
-Activation is earned per task class through an **autonomy state**:
+Activation is earned through an **autonomy state that is configured per task
+SUBCLASS, not per class**. "ACC" never graduates as a block — paint/approved-
+palette, standard fence, and roof replacement may each prove extraordinarily
+reliable and earn autonomy long before pool/major-structure, while variance and
+subjective-aesthetic subclasses may stay exception-oriented indefinitely. Each
+subclass carries its own evidence and its own state:
 
 - `shadow` — Miranda reaches the decision and logs what she *would* do; a human
-  still sends. Used to accumulate fixtures and measure the false-negative rate.
-- `assist` — Miranda sends; Ed is notified for a beat (spot-check window).
-- `autonomous` — Miranda acts; Ed hears only exceptions.
+  still executes. Accumulates fixtures and measures the would-be error rate.
+- `assist` — Miranda **executes autonomously**, everything is logged to an audit
+  dashboard, and a **stratified, risk-weighted sample** (over-sampling higher-risk
+  cases) gets a *real* human review. This sample is how the live **false-negative
+  rate** is measured — not by CC'ing Ed on every transaction (that just rebuilds
+  the management queue we're removing).
+- `autonomous` — Miranda executes; only exceptions reach a human.
 
-A class graduates `shadow → assist → autonomous` when its eval + shadow fixtures
-hold clean (no false negatives). This gives the autonomous end-state without
-betting a homeowner-facing decision on thin evidence. Core finding that forces
-this discipline: **model tier is not a proxy for safety** — the economy model was
-fine on three classes and produced a catastrophic ACC error on another.
+**Graduation is performance-based, not a volume count** — do not set an arbitrary
+"N applications" bar now. Record the metrics that will decide it: zero severe
+false executions (FN at severity ≥ compliance), human-override rate below a
+threshold set from the data, adequate sample size, stable primary/verifier
+agreement, and zero evaluator false negatives. **The dial is reversible**: a
+severe false execution auto-demotes the subclass (autonomous → assist → shadow)
+and opens an incident — earning trust is not permanent, one bad run pulls it back.
+
+Core finding that forces this discipline: **model tier is not a proxy for
+safety** — the economy model was fine on three classes and produced a catastrophic
+ACC error on another.
 
 ## Two separate axes (the key correction)
 Do not conflate the business outcome with permission to act.
@@ -100,8 +115,49 @@ decision needed from Ed. After Ed resolves it, Miranda **continues automatically
 the rationale in the audit log, and closes/continues.
 
 Cross-provider verification is kept for autonomous ACC approvals **and** denials.
-Outbound homeowner communication follows the AI-team signature/tone + honest-AI
-rules. At launch ACC runs in `shadow`, graduating per evidence.
+An autonomous **DENY** fires only on: objective violation + complete retrieval +
+exact cited restriction + primary/verifier agreement + deterministic checks pass
+(e.g. "fence 8ft, max 6ft"). A subjective standard ("harmonious with the
+neighborhood") never auto-denies — it escalates. Outbound homeowner communication
+follows the AI-team signature/tone + honest-AI rules. At launch **every ACC
+subclass runs in `shadow`**, each graduating independently on its own evidence.
+
+## Exception notification levels
+Once there are thousands of transactions, "email Ed on exception" is itself a
+noise source. Three levels, mapped to reason codes:
+
+- **DECISION_REQUIRED** — Trusted genuinely needs human judgment. Email
+  immediately, as a **decision-ready** package. Reason codes: `VERIFY_DISAGREEMENT`,
+  `SUBJECTIVE_STANDARD`, `CONFLICTING_PROVISIONS`, `VARIANCE_REQUEST`,
+  `PRECEDENT_SETTING`.
+- **OPERATIONAL_EXCEPTION** — something failed or couldn't complete (retrieval
+  incomplete, integration down, verifier unavailable). Self-recover first; email
+  only if it can't, and only if intervention is needed. Reason codes:
+  `HEALTH_*`, `VERIFY_UNAVAILABLE`, `ERROR`.
+- **ANOMALY / WATCH** — Trusted completed the task but saw something unusual (an
+  approval that's an outlier vs precedent, a cost variance). Log it; surface in a
+  periodic **digest** unless severity warrants immediate notice.
+
+**Decision-ready exception format** (DECISION_REQUIRED) — Miranda does the work
+before she emails, so Ed decides, not researches:
+> **ACC Exception — 123 Main Street**
+> Request: Exterior paint — Sherwin-Williams Naval
+> Issue: Restrictions require colors "consistent with the neighborhood"; no approved palette.
+> Primary: Approve · Independent verifier: Uncertain
+> Checked: Declaration §8.3, ACC guidelines, prior approvals
+> Why I stopped: no objective standard establishes compliance
+> My recommendation: Approve (three comparable prior approvals)
+> Decision needed: [Approve] [Deny] [Request info]
+
+## Feedback loop & precedent (how exceptions stop being exceptions)
+Every human resolution is captured as: exception → evidence → Miranda's
+recommendation → the human decision → rationale. Each becomes (a) an **eval
+fixture** and (b) a **precedent candidate**, so the same question may stop being an
+exception once Trusted has an established, validated decision pattern. **Precedent
+is scoped to preserve community isolation**: a *subjective-standard* resolution
+(a paint color deemed neighborhood-consistent) is **that community's** precedent
+only; an *objective-rule* interpretation is portfolio-wide. One community's
+aesthetic call must never leak into another's decisions.
 
 ## Routing matrix (five tested classes + adjacent surfaces)
 
@@ -137,14 +193,26 @@ near enough to claim reliability. Do not read any "100%" as proof — it is the
 AI do HOA work, when must another AI check it, and when must a person decide" —
 proprietary operational knowledge, not model access.
 
-## Open questions for pressure-testing (before any code)
-1. The `shadow → assist → autonomous` **graduation bar** per class — how many
-   clean fixtures / how long in shadow before a class earns autonomy?
-2. **Autonomous denials** — comfortable with DENY+EXECUTE on an objective rule
-   violation at launch (in shadow first), or hold all denials for a human longer
-   than approvals?
-3. The **verification trigger** thresholds (consequence/severity/reversibility).
-4. What counts as **material disagreement** on the structured decision.
-5. The **confidence signal** — build one (sample-verify a % of EXECUTE traffic to
-   measure the false-negative rate) or stay proxy-based.
-6. **NEED_INFO loop bounds** — max clarification rounds before ESCALATE.
+## Settled (this review round)
+- Autonomy dial kept, **per subclass**, **reversible** (auto-demote on a severe
+  false execution).
+- **Autonomous denials: yes**, once a subclass earns it, on an objective cited
+  violation only; subjective standards escalate.
+- **ASSIST executes autonomously** with audit logging + stratified sampled human
+  review — not CC-on-everything.
+- **Graduation is performance-based**, not a volume count.
+- Three **notification levels** (DECISION_REQUIRED / OPERATIONAL_EXCEPTION /
+  ANOMALY_WATCH); decision-ready exception format; every resolution → fixture +
+  scoped precedent.
+
+## Still open (calibrate from data, not now)
+1. The **graduation thresholds** — the actual override-rate ceiling, minimum
+   sample size, and agreement-rate floor. Record the metrics now; set the numbers
+   once real traffic exists.
+2. The **verification trigger** thresholds (consequence/severity/reversibility) —
+   which combinations pull the second model.
+3. What counts as **material disagreement** on the structured decision (a wrong
+   rule/decision is clear; a different-but-equivalent rationale is not).
+4. The **confidence signal** — build one (sampled cross-check on EXECUTE traffic
+   to measure the live false-negative rate) or stay proxy-based on class+severity.
+5. **NEED_INFO loop bounds** — max clarification rounds before ESCALATE (~2).
