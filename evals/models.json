@@ -1,0 +1,14 @@
+{
+  "_comment": "Model roster for the trustEd eval harness. Prices are USD per 1,000,000 tokens. Anthropic ids/prices from the claude-api skill (cached 2026-06-24). Anthropic cache-read is billed at 0.1x input and cache-write at 1.25x input (standard prompt-caching rate) — the cost helper derives those. OpenAI entries are placeholders: fill model id + verified prices from OpenAI's live pricing page, then set enabled:true to run cross-provider checks. Do NOT trust model names/prices from memory.",
+  "models": [
+    { "key": "haiku-4-5", "provider": "anthropic", "model": "claude-haiku-4-5", "price_in": 1.00, "price_out": 5.00, "enabled": true, "tier": "cheap" },
+    { "key": "sonnet-5",  "provider": "anthropic", "model": "claude-sonnet-5",  "price_in": 2.00, "price_out": 10.00, "enabled": true, "tier": "mid" },
+    { "key": "opus-5",    "provider": "anthropic", "model": "claude-opus-5",    "price_in": 5.00, "price_out": 25.00, "enabled": false, "tier": "high" },
+
+    { "key": "openai-mid",  "provider": "openai", "model": "REPLACE_WITH_VERIFIED_OPENAI_MODEL_ID", "price_in": null, "price_out": null, "enabled": false, "tier": "mid",
+      "note": "Fill in a real OpenAI text model id + input/output $ per 1M from OpenAI's pricing page, then set enabled:true. This turns on the cross-PROVIDER check (OpenAI reviewing Anthropic's answer and vice-versa)." },
+    { "key": "openai-high", "provider": "openai", "model": "REPLACE_WITH_VERIFIED_OPENAI_MODEL_ID", "price_in": null, "price_out": null, "enabled": false, "tier": "high",
+      "note": "Same — fill from OpenAI's live pricing before enabling." }
+  ],
+  "cross_check_model": "sonnet-5"
+}
