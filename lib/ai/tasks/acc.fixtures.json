@@ -1,0 +1,110 @@
+{
+  "_comment": "Adjudicated ACC diagnostic cases -> regression fixtures + institutional ACC knowledge (Ed/ChatGPT 2026-09-19). Each is the INTENDED V2 outcome given the real evidence + Bedrock policy, keyed to the real acc_decisions row. Bedrock policy encoded here: a missing SIGNATURE is an ADMINISTRATIVE deficiency, NOT substantive grounds to deny — Miranda performs the substantive review, records administrative_status=PENDING_SIGNATURE, obtains the signature from the homeowner herself, and completes automatically; no human escalation merely for a missing signature. administrative_status is a forthcoming contract field (keep administrative completeness separate from substantive ACC compliance); the executable regression runner + that contract field land AFTER the V2 dry-run results are reviewed, so the running experiment stays clean.",
+  "policy": {
+    "administrative_vs_substantive": "Administrative completeness (signature, dates, owner acknowledgment, contractor info) is tracked separately from substantive architectural compliance and must not contaminate the substantive decision.",
+    "missing_signature": "administrative deficiency -> substantive review proceeds; administrative_status=PENDING_SIGNATURE; Miranda obtains signature and auto-completes; not an escalation.",
+    "curing_condition": "A currently-noncompliant-but-curable item is APPROVE_WITH_CONDITIONS with a specific curing condition (e.g. 'relocate shed to maintain the required 5ft setback'), never an uncured approval and not an automatic denial.",
+    "subjective_standard": "Resolve via community precedent + available evidence; escalate only if genuinely unresolved after that."
+  },
+  "fixtures": [
+    {
+      "id": "solar-roof-battery",
+      "source_acc_decision_id": "cde66d02-651c-44b4-af88-be959076b4d7",
+      "address": "6019 Water Violet Ln",
+      "project": "Roof-mounted solar panel + Tesla Powerwall battery",
+      "human_outcome": "approved_with_conditions",
+      "expected": {
+        "substantive_decision": "APPROVE_WITH_CONDITIONS",
+        "administrative_status": "COMPLETE",
+        "item_dispositions": { "solar_panels": "APPROVE_WITH_CONDITIONS", "battery": "APPROVE_WITH_CONDITIONS" },
+        "governing_requirements": ["Solar Energy Devices (Texas §202.010 restrictions limited)", "Mechanical equipment screening"],
+        "objective_findings": "roof-mounted solar is a permitted device; screening/visibility governs, not prohibition",
+        "curing_conditions": ["panels installed to minimize visual impact per guidelines", "battery/equipment screened from public view"],
+        "expected_escalation": "none",
+        "note": "V1 said NEED_INFO partly because the application PDF failed to read — an EVIDENCE/ingestion issue, not judgment. With the PDF read, this should resolve to APPROVE_WITH_CONDITIONS."
+      }
+    },
+    {
+      "id": "masonry-brick-flashing",
+      "source_acc_decision_id": "8bf3775d-ca96-489e-9bd1-ed3d3cd03096",
+      "address": "5406 Jay Thrush Dr",
+      "project": "Exterior masonry repair — brick + roof-to-wall flashing",
+      "human_outcome": "approved_with_conditions",
+      "expected": {
+        "substantive_decision": "APPROVE_WITH_CONDITIONS",
+        "administrative_status": "COMPLETE",
+        "item_dispositions": { "brick_repair": "APPROVE", "roof_to_wall_flashing": "APPROVE" },
+        "governing_requirements": ["Exterior materials must complement/match existing"],
+        "objective_findings": "brick product documented (brand/line/color) and cleared; flashing is like-for-like repair",
+        "curing_conditions": ["repaired/replaced materials must match existing exterior in color, finish, and coursing"],
+        "expected_escalation": "none"
+      }
+    },
+    {
+      "id": "pool-inground",
+      "source_acc_decision_id": "2714834d-74ea-4057-a349-e12bae711d4b",
+      "address": "5315 Tuck Trail",
+      "project": "In-ground pool 21'4\" x 10'6\", Tahiti blue interior",
+      "human_outcome": "approved_with_conditions",
+      "expected": {
+        "substantive_decision": "APPROVE_WITH_CONDITIONS",
+        "administrative_status": "COMPLETE",
+        "item_dispositions": { "pool": "APPROVE_WITH_CONDITIONS", "equipment": "APPROVE_WITH_CONDITIONS", "barrier_fencing": "APPROVE_WITH_CONDITIONS" },
+        "governing_requirements": ["in-ground pools permitted; above-ground prohibited", "rear/side setback", "equipment screening", "Texas pool barrier / self-latching gate"],
+        "objective_findings": "in-ground is permitted; colors resolvable via precedent; barrier is code, curable by condition",
+        "curing_conditions": ["pool + equipment must meet required setbacks and not encroach easements", "equipment screened from public view", "code-compliant self-closing/self-latching barrier"],
+        "expected_escalation": "none"
+      }
+    },
+    {
+      "id": "pergola-louvered",
+      "source_acc_decision_id": "264eab0f-4457-4eda-be03-026df3fa63bd",
+      "address": "19814 Juniper Berry Dr",
+      "project": "Freestanding louvered pergola patio cover, gray metal",
+      "human_outcome": "approved",
+      "expected": {
+        "substantive_decision": "APPROVE_WITH_CONDITIONS",
+        "administrative_status": "COMPLETE",
+        "item_dispositions": { "pergola": "APPROVE_WITH_CONDITIONS" },
+        "governing_requirements": ["§3.21 patio covers", "§3.21.5 max height 12ft", "materials complement residence", "metal must be painted"],
+        "objective_findings": "peak height ~8.2ft <= 12ft (COMPLIES); patio covers permitted; materials-complement resolvable via precedent",
+        "curing_conditions": ["metal frame painted an approved color", "maintain positive drainage / no runoff onto adjacent property", "meet property-line setbacks"],
+        "expected_escalation": "none"
+      }
+    },
+    {
+      "id": "paint-barbados-sand",
+      "source_acc_decision_id": "4d2b994a-1f88-4f87-b742-34feb9fa31c1",
+      "address": "4831 Harbor Glen",
+      "project": "Exterior repaint, Benjamin Moore Barbados Sand 1094 (match existing)",
+      "human_outcome": "approved_with_conditions",
+      "expected": {
+        "substantive_decision": "APPROVE",
+        "administrative_status": "COMPLETE",
+        "item_dispositions": { "exterior_paint": "APPROVE" },
+        "governing_requirements": ["color change requires ACC approval; same-color repaint needs none", "consistent with existing"],
+        "objective_findings": "brand + color name + code provided; matches existing; precedent supports",
+        "curing_conditions": [],
+        "expected_escalation": "none",
+        "note": "The clean case V1 already handled correctly — Miranda, verifier, and human all aligned including the condition (Barbados Sand 1094 / match existing)."
+      }
+    },
+    {
+      "id": "oaktree-resod-UNSIGNED",
+      "source_acc_decision_id": "6e2de935-3570-4714-89b7-b9b505e8881c",
+      "address": "4806 Harbor Glen Lane",
+      "project": "Oak tree trimming + front yard lawn re-sod",
+      "human_outcome": "approved_with_conditions",
+      "adjudication": "Miranda was correct: the application was genuinely UNSIGNED and UNDATED (verified against the PDF). Per Bedrock policy this is administrative, not a denial.",
+      "expected": {
+        "substantive_decision": "APPROVE_WITH_CONDITIONS",
+        "administrative_status": "PENDING_SIGNATURE",
+        "item_dispositions": { "tree_trimming": "APPROVE_WITH_CONDITIONS", "lawn_resod": "APPROVE_WITH_CONDITIONS" },
+        "governing_requirements": ["approved turfgrass species (ENUM)", "tree trimming scope per arborist standards", "application must be signed/dated (administrative)"],
+        "objective_findings": "sod species must be an approved variety (curable by condition); trimming scope resolvable; SIGNATURE MISSING = administrative only",
+        "curing_conditions": ["sod must be an ACC-approved turfgrass variety", "trimming to standard arborist practice"],
+        "expected_escalation": "none — Miranda obtains the signature from the homeowner and auto-completes; a missing signature is NOT substantive grounds to deny or to escalate"
+      }
+    }
+  ]
+}
