@@ -1,0 +1,13 @@
+{
+  "_comment": "Routing policy per task SUBCLASS (ROUTING_POLICY.md). Data, not code branches. autonomy_state: shadow|assist|autonomous (per subclass, reversible). verify: require cross-provider verification. human_floor: a human must authorize the terminal action regardless of agreement. retrieval_required: retrieval-completeness is a gate. max_execution: caps the verdict (REVIEW = never autonomous EXECUTE for this subclass). severity: default consequence class.",
+  "policy_version": "2026-09-19.v3",
+  "subclasses": {
+    "governance.interpretation":  { "task_class": "governance",  "default_tier": "economy", "verify": false, "human_floor": false, "retrieval_required": true,  "autonomy_state": "shadow", "max_execution": "EXECUTE", "severity": "compliance" },
+    "faq.status":                 { "task_class": "informational","default_tier": "economy", "verify": false, "human_floor": false, "retrieval_required": true,  "autonomy_state": "shadow", "max_execution": "EXECUTE", "severity": "informational" },
+    "vendor.bid_analysis":        { "task_class": "vendor",      "default_tier": "economy", "verify": true,  "human_floor": false, "retrieval_required": false, "autonomy_state": "shadow", "max_execution": "REVIEW",  "severity": "financial" },
+    "finance.reconciliation":     { "task_class": "finance",     "default_tier": "economy", "verify": true,  "human_floor": true,  "retrieval_required": false, "autonomy_state": "shadow", "max_execution": "REVIEW",  "severity": "catastrophic" },
+    "acc.review.general":         { "task_class": "acc",         "default_tier": "economy", "verify": true,  "human_floor": false, "retrieval_required": true,  "autonomy_state": "shadow", "max_execution": "EXECUTE", "severity": "compliance" },
+    "board.packet":               { "task_class": "board",       "default_tier": "economy", "verify": true,  "human_floor": false, "retrieval_required": false, "autonomy_state": "shadow", "max_execution": "REVIEW",  "severity": "compliance" },
+    "enforcement.certified_209":  { "task_class": "enforcement", "default_tier": "standard","verify": true,  "human_floor": true,  "retrieval_required": true,  "autonomy_state": "shadow", "max_execution": "REVIEW",  "severity": "catastrophic" }
+  }
+}
