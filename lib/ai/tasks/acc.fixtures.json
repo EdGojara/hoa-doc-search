@@ -2,7 +2,7 @@
   "_comment": "Adjudicated ACC diagnostic cases -> regression fixtures + institutional ACC knowledge (Ed/ChatGPT 2026-09-19). Each is the INTENDED V2 outcome given the real evidence + Bedrock policy, keyed to the real acc_decisions row. Bedrock policy encoded here: a missing SIGNATURE is an ADMINISTRATIVE deficiency, NOT substantive grounds to deny — Miranda performs the substantive review, records administrative_status=PENDING_SIGNATURE, obtains the signature from the homeowner herself, and completes automatically; no human escalation merely for a missing signature. administrative_status is a forthcoming contract field (keep administrative completeness separate from substantive ACC compliance); the executable regression runner + that contract field land AFTER the V2 dry-run results are reviewed, so the running experiment stays clean.",
   "policy": {
     "administrative_vs_substantive": "Administrative completeness (signature, dates, owner acknowledgment, contractor info) is tracked separately from substantive architectural compliance and must not contaminate the substantive decision.",
-    "missing_signature": "administrative deficiency -> substantive review proceeds; administrative_status=PENDING_SIGNATURE; Miranda obtains signature and auto-completes; not an escalation.",
+    "missing_signature": "administrative deficiency -> substantive review proceeds; administrative_status=PENDING_SIGNATURE; Miranda CONTACTS THE HOMEOWNER to collect THEIR signature, records/attaches it, then auto-resumes and completes. She never signs or attests on the homeowner's behalf. Not an escalation.",
     "curing_condition": "A currently-noncompliant-but-curable item is APPROVE_WITH_CONDITIONS with a specific curing condition (e.g. 'relocate shed to maintain the required 5ft setback'), never an uncured approval and not an automatic denial.",
     "subjective_standard": "Resolve via community precedent + available evidence; escalate only if genuinely unresolved after that."
   },
@@ -103,7 +103,7 @@
         "governing_requirements": ["approved turfgrass species (ENUM)", "tree trimming scope per arborist standards", "application must be signed/dated (administrative)"],
         "objective_findings": "sod species must be an approved variety (curable by condition); trimming scope resolvable; SIGNATURE MISSING = administrative only",
         "curing_conditions": ["sod must be an ACC-approved turfgrass variety", "trimming to standard arborist practice"],
-        "expected_escalation": "none — Miranda obtains the signature from the homeowner and auto-completes; a missing signature is NOT substantive grounds to deny or to escalate"
+        "expected_escalation": "none — Miranda contacts the homeowner to collect THEIR signature, records it, and auto-completes (she never signs on their behalf); a missing signature is NOT substantive grounds to deny or to escalate"
       }
     }
   ]
