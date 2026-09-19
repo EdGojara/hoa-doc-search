@@ -1,14 +1,14 @@
 {
-  "_comment": "Model roster for the trustEd eval harness. Prices are USD per 1,000,000 tokens. Anthropic ids/prices from the claude-api skill (cached 2026-06-24). Anthropic cache-read is billed at 0.1x input and cache-write at 1.25x input (standard prompt-caching rate) — the cost helper derives those. OpenAI entries are placeholders: fill model id + verified prices from OpenAI's live pricing page, then set enabled:true to run cross-provider checks. Do NOT trust model names/prices from memory.",
+  "_comment": "Model roster for the trustEd eval harness. Prices are USD per 1,000,000 tokens. Anthropic ids/prices from the claude-api reference (cached 2026-06-24); Anthropic cache-read billed at 0.1x input, cache-write 1.25x input (the cost helper derives those). OpenAI ids were confirmed live against this account's models.list on 2026-09-19; OpenAI PRICES are the figures from the announcement Ed relayed and are UNVERIFIED — confirm each on OpenAI's live pricing page and correct here. cross_check_model is set to an OpenAI model so the verification pass is cross-PROVIDER (OpenAI auditing Anthropic's answer and vice-versa).",
   "models": [
     { "key": "haiku-4-5", "provider": "anthropic", "model": "claude-haiku-4-5", "price_in": 1.00, "price_out": 5.00, "enabled": true, "tier": "cheap" },
     { "key": "sonnet-5",  "provider": "anthropic", "model": "claude-sonnet-5",  "price_in": 2.00, "price_out": 10.00, "enabled": true, "tier": "mid" },
     { "key": "opus-5",    "provider": "anthropic", "model": "claude-opus-5",    "price_in": 5.00, "price_out": 25.00, "enabled": false, "tier": "high" },
 
-    { "key": "openai-mid",  "provider": "openai", "model": "REPLACE_WITH_VERIFIED_OPENAI_MODEL_ID", "price_in": null, "price_out": null, "enabled": false, "tier": "mid",
-      "note": "Fill in a real OpenAI text model id + input/output $ per 1M from OpenAI's pricing page, then set enabled:true. This turns on the cross-PROVIDER check (OpenAI reviewing Anthropic's answer and vice-versa)." },
-    { "key": "openai-high", "provider": "openai", "model": "REPLACE_WITH_VERIFIED_OPENAI_MODEL_ID", "price_in": null, "price_out": null, "enabled": false, "tier": "high",
-      "note": "Same — fill from OpenAI's live pricing before enabling." }
+    { "key": "gpt-luna",  "provider": "openai", "model": "gpt-5.6-luna",  "price_in": 0.20, "price_out": 1.20,  "enabled": false, "tier": "cheap", "price_unverified": true },
+    { "key": "gpt-terra", "provider": "openai", "model": "gpt-5.6-terra", "price_in": 2.00, "price_out": 12.00, "enabled": true,  "tier": "mid",   "price_unverified": true },
+    { "key": "gpt-sol",   "provider": "openai", "model": "gpt-5.6-sol",   "price_in": 4.00, "price_out": 20.00, "enabled": false, "tier": "high",  "price_unverified": true },
+    { "key": "gpt-astra", "provider": "openai", "model": "gpt-6-astra",   "price_in": 10.00, "price_out": 50.00, "enabled": false, "tier": "max",  "price_unverified": true }
   ],
-  "cross_check_model": "sonnet-5"
+  "cross_check_model": "gpt-terra"
 }

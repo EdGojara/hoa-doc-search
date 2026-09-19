@@ -87,7 +87,9 @@ async function main() {
       // modest budget (adaptive thinking can otherwise eat the whole cap). Haiku
       // has no thinking by default, so only send the flag for other Anthropic models.
       const noThink = (checker.provider === 'anthropic' && checker.key !== 'haiku-4-5') ? { type: 'disabled' } : undefined;
-      const cr = await callModel({ provider: checker.provider, model: checker.model, system: 'You are a meticulous independent reviewer. Be specific and terse.', prompt: checkPrompt, maxTokens: 1500, thinking: noThink });
+      // 2500 so a reasoning verifier (OpenAI gpt-5.x, or an Anthropic thinking
+      // model) has room for reasoning tokens AND the written findings.
+      const cr = await callModel({ provider: checker.provider, model: checker.model, system: 'You are a meticulous independent reviewer. Be specific and terse.', prompt: checkPrompt, maxTokens: 2500, thinking: noThink });
       if (cr.error) { console.log('cross-check ERROR:', cr.error); }
       else if (!cr.text) { console.log('cross-check returned no text (thinking may have consumed the budget).'); }
       else {
