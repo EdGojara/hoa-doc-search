@@ -45,14 +45,14 @@ Known information:
 Reconcile the account. Give the adjusted bank balance and the adjusted book balance, show they tie, list each adjustment with its direction, and flag any downstream correction needed.`;
 
 const RUBRIC = [
-  { id: 'true_balance', type: 'number', value: 61910, tolerance: 1, weight: 3, desc: 'Reconciled balance ties to $61,910.00' },
-  { id: 'outstanding_total', type: 'number', value: 3200, tolerance: 1, weight: 1, desc: 'Outstanding checks total $3,200' },
-  { id: 'fee', type: 'regex', pattern: '(service fee|bank fee|\\$?60(\\.00)?\\b)[\\s\\S]{0,80}(book|decrease|deduct|reduce|record)|(book|decrease|deduct|reduce|record)[\\s\\S]{0,40}\\$?60\\b', weight: 1, desc: 'Records the $60 bank fee against the books' },
-  { id: 'nsf', type: 'regex', pattern: '(nsf|returned|bounced)[\\s\\S]{0,80}(500)|\\$?500[\\s\\S]{0,60}(nsf|returned|bounced|deduct|book)', weight: 1, desc: 'Deducts the $500 NSF item from the books' },
-  { id: 'error_amount', type: 'number', value: 270, tolerance: 1, weight: 2, desc: 'Catches the Check #1039 recording error of $270 (1,520 vs 1,250)' },
-  { id: 'error_direction', type: 'regex', pattern: '(understat|increase|add|\\+\\s?\\$?270|overstat(ed)? (the )?(disbursement|payment|expense|check))', weight: 2, desc: 'Applies the #1039 correction in the RIGHT direction (book cash increased by $270)' },
-  { id: 'ar_reinstate', type: 'regex', pattern: '(receivable|\\bA/?R\\b|reinstate|re-?bill|owe|delinqu|homeowner.{0,20}(account|balance))', weight: 2, desc: 'Downstream catch: NSF means the homeowner\'s receivable must be reinstated' },
-  { id: 'no_false_balance', type: 'absent', pattern: '(already balance|no adjustments needed|ties without adjustment|reconciles as-is)', weight: 1, desc: 'Does NOT claim it balances without applying the items' },
+  { id: 'true_balance', type: 'number', value: 61910, tolerance: 1, weight: 3, sev: 'catastrophic', desc: 'Reconciled balance ties to $61,910.00' },
+  { id: 'outstanding_total', type: 'number', value: 3200, tolerance: 1, weight: 1, sev: 'financial', desc: 'Outstanding checks total $3,200' },
+  { id: 'fee', type: 'regex', pattern: '(service fee|bank fee|\\$?60(\\.00)?\\b)[\\s\\S]{0,80}(book|decrease|deduct|reduce|record)|(book|decrease|deduct|reduce|record)[\\s\\S]{0,40}\\$?60\\b', weight: 1, sev: 'operational', desc: 'Records the $60 bank fee against the books' },
+  { id: 'nsf', type: 'regex', pattern: '(nsf|returned|bounced)[\\s\\S]{0,80}(500)|\\$?500[\\s\\S]{0,60}(nsf|returned|bounced|deduct|book)', weight: 1, sev: 'financial', desc: 'Deducts the $500 NSF item from the books' },
+  { id: 'error_amount', type: 'number', value: 270, tolerance: 1, weight: 2, sev: 'financial', desc: 'Catches the Check #1039 recording error of $270 (1,520 vs 1,250)' },
+  { id: 'error_direction', type: 'regex', pattern: '(understat|increase|add|\\+\\s?\\$?270|overstat(ed)? (the )?(disbursement|payment|expense|check))', weight: 2, sev: 'catastrophic', desc: 'Applies the #1039 correction in the RIGHT direction (book cash increased by $270)' },
+  { id: 'ar_reinstate', type: 'regex', pattern: '(receivable|\\bA/?R\\b|reinstate|re-?bill|owe|delinqu|homeowner.{0,20}(account|balance))', weight: 2, sev: 'compliance', desc: 'Downstream catch: NSF means the homeowner\'s receivable must be reinstated' },
+  { id: 'no_false_balance', type: 'absent', pattern: '(already balance|no adjustments needed|ties without adjustment|reconciles as-is)', weight: 1, sev: 'catastrophic', desc: 'Does NOT claim it balances without applying the items' },
 ];
 
 module.exports = {

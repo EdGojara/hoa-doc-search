@@ -55,14 +55,17 @@ async function main() {
   }
 
   // ---- table ----
-  console.log('\n' + 'MODEL'.padEnd(14) + 'SCORE'.padEnd(8) + 'COST'.padEnd(12) + 'LATENCY'.padEnd(10) + 'MISSED');
-  console.log('-'.repeat(88));
+  // GATE answers "would I let trustEd execute this autonomously?" — EXECUTE /
+  // REVIEW / BLOCK, driven by the WORST failed check's severity, not the average.
+  console.log('\n' + 'MODEL'.padEnd(14) + 'SCORE'.padEnd(7) + 'GATE'.padEnd(9) + 'COST'.padEnd(12) + 'LATENCY'.padEnd(10) + 'MISSED (severity)');
+  console.log('-'.repeat(100));
   for (const run of runs) {
     if (run.error) { console.log(run.m.key.padEnd(14) + 'ERROR — ' + run.error.slice(0, 60)); continue; }
-    const missed = run.score.results.filter((x) => !x.ok).map((x) => x.id).join(', ') || '(none)';
+    const missed = run.score.results.filter((x) => !x.ok).map((x) => `${x.id}[${x.sev}]`).join(', ') || '(none)';
     console.log(
       run.m.key.padEnd(14) +
-      ((run.score.score * 100).toFixed(0) + '%').padEnd(8) +
+      ((run.score.score * 100).toFixed(0) + '%').padEnd(7) +
+      run.score.gate.padEnd(9) +
       fmtUSD(run.cost).padEnd(12) +
       (run.out.latency_ms + 'ms').padEnd(10) +
       missed
@@ -96,9 +99,9 @@ async function main() {
         const combinedScore = scoreOutput(primary.out.text + '\n' + cr.text, theCase.rubric);
         const crCost = costUSD(cr.usage, checker);
         console.log(cr.text.trim());
-        console.log(`\ncoverage: ${primary.m.key} alone ${(primary.score.score * 100).toFixed(0)}%  ->  ${primary.m.key} + ${checker.key} cross-check ${(combinedScore.score * 100).toFixed(0)}%`);
+        console.log(`\ncoverage: ${primary.m.key} alone ${(primary.score.score * 100).toFixed(0)}% [${primary.score.gate}]  ->  ${primary.m.key} + ${checker.key} cross-check ${(combinedScore.score * 100).toFixed(0)}% [${combinedScore.gate}]`);
         console.log(`cross-check cost: ${fmtUSD(crCost)}  (combined ${fmtUSD((primary.cost || 0) + (crCost || 0))} vs strongest single-model run ${fmtUSD(Math.max(...ok.map((r) => r.cost || 0)))})`);
-        crossReport = { primary: primary.m.key, checker: checker.key, primary_score: primary.score.score, combined_score: combinedScore.score, cross_text: cr.text, cross_cost: crCost };
+        crossReport = { primary: primary.m.key, checker: checker.key, primary_score: primary.score.score, primary_gate: primary.score.gate, combined_score: combinedScore.score, combined_gate: combinedScore.gate, cross_text: cr.text, cross_cost: crCost };
       }
     }
   }
@@ -109,8 +112,9 @@ async function main() {
     case: caseId,
     runs: runs.map((r) => r.error ? { model: r.m.key, error: r.error } : {
       model: r.m.key, provider: r.m.provider, model_id: r.m.model,
-      score: r.score.score, results: r.score.results, cost_usd: r.cost,
-      latency_ms: r.out.latency_ms, usage: r.out.usage, output: r.out.text,
+      score: r.score.score, gate: r.score.gate, worst_fail: r.score.worst_fail,
+      failed_by_severity: r.score.failed_by_severity, results: r.score.results,
+      cost_usd: r.cost, latency_ms: r.out.latency_ms, usage: r.out.usage, output: r.out.text,
     }),
     cross_check: crossReport,
   };

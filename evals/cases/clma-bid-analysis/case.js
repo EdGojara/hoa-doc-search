@@ -67,18 +67,18 @@ Produce the board-facing comparison: the annualized (year-1) cost of each bid wi
 // Ground truth:
 //   A yr-1 = 5800*12 = 69,600 ; B = 6450*12 = 77,400 ; C = 5950*12 = 71,400
 const RUBRIC = [
-  { id: 'a_annual', type: 'number', value: 69600, tolerance: 50, weight: 1, desc: 'States Bid A year-1 annual = $69,600' },
-  { id: 'b_annual', type: 'number', value: 77400, tolerance: 50, weight: 1, desc: 'States Bid B year-1 annual = $77,400' },
-  { id: 'c_annual', type: 'number', value: 71400, tolerance: 50, weight: 1, desc: 'States Bid C year-1 annual = $71,400' },
-  { id: 'a_irrigation_gap', type: 'regex', pattern: '(irrigation)[\\s\\S]{0,80}(exclud|not included|separate|responsibilit)|(exclud|not included)[\\s\\S]{0,40}(irrigation)', weight: 2, desc: 'Flags that Bid A EXCLUDES irrigation (a core CLMA duty) — the key scope gap' },
-  { id: 'a_escalator', type: 'regex', pattern: '(6\\s?%|escalat|annual increase|year 2|multi-?year)', weight: 1, desc: 'Notes Bid A\'s 6% escalator / multi-year cost effect' },
-  { id: 'c_insurance', type: 'regex', pattern: '(500,?000|\\$500k)[\\s\\S]{0,120}(below|short|insufficient|does not meet|under|fails|not meet|1,?000,?000)|insur[\\s\\S]{0,120}(insufficient|below|does not meet|fails|short)', weight: 2, desc: 'Flags Bid C insurance $500k is BELOW the required $1M' },
-  { id: 'b_compliant', type: 'regex', pattern: '(Lone Star|Bid B)[\\s\\S]{0,160}(irrigation|fully|compliant|includes|meets)', weight: 1, desc: 'Notes Bid B includes irrigation / meets requirements' },
-  { id: 'no_winner', type: 'absent', pattern: '\\b(we recommend|i recommend|the winner is|our recommendation is|recommend awarding|should be awarded to|best choice is)\\b', weight: 1, desc: 'Did NOT fabricate a single winner/recommendation (operator dictates)' },
+  { id: 'a_annual', type: 'number', value: 69600, tolerance: 50, weight: 1, sev: 'financial', desc: 'States Bid A year-1 annual = $69,600' },
+  { id: 'b_annual', type: 'number', value: 77400, tolerance: 50, weight: 1, sev: 'financial', desc: 'States Bid B year-1 annual = $77,400' },
+  { id: 'c_annual', type: 'number', value: 71400, tolerance: 50, weight: 1, sev: 'financial', desc: 'States Bid C year-1 annual = $71,400' },
+  { id: 'a_irrigation_gap', type: 'regex', pattern: '(irrigation)[\\s\\S]{0,80}(exclud|not included|separate|responsibilit)|(exclud|not included)[\\s\\S]{0,40}(irrigation)', weight: 2, sev: 'operational', desc: 'Flags that Bid A EXCLUDES irrigation (a core CLMA duty) — the key scope gap' },
+  { id: 'a_escalator', type: 'regex', pattern: '(6\\s?%|escalat|annual increase|year 2|multi-?year)', weight: 1, sev: 'informational', desc: 'Notes Bid A\'s 6% escalator / multi-year cost effect' },
+  { id: 'c_insurance', type: 'regex', pattern: '(500,?000|\\$500k)[\\s\\S]{0,120}(below|short|insufficient|does not meet|under|fails|not meet|1,?000,?000)|insur[\\s\\S]{0,120}(insufficient|below|does not meet|fails|short)', weight: 2, sev: 'compliance', desc: 'Flags Bid C insurance $500k is BELOW the required $1M' },
+  { id: 'b_compliant', type: 'regex', pattern: '(Lone Star|Bid B)[\\s\\S]{0,160}(irrigation|fully|compliant|includes|meets)', weight: 1, sev: 'informational', desc: 'Notes Bid B includes irrigation / meets requirements' },
+  { id: 'no_winner', type: 'absent', pattern: '\\b(we recommend|i recommend|the winner is|our recommendation is|recommend awarding|should be awarded to|best choice is)\\b', weight: 1, sev: 'compliance', desc: 'Did NOT fabricate a single winner/recommendation (operator dictates)' },
   // Added after a cross-check caught it: required scope names esplanades, and no
   // bid addresses them — a strong analysis flags that silence. (The harness
   // improving its own ground truth.)
-  { id: 'esplanade_gap', type: 'regex', pattern: 'esplanade', weight: 1, desc: 'Raises esplanades (required scope) — none of the bids cover them' },
+  { id: 'esplanade_gap', type: 'regex', pattern: 'esplanade', weight: 1, sev: 'operational', desc: 'Raises esplanades (required scope) — none of the bids cover them' },
 ];
 
 module.exports = {
