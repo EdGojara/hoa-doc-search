@@ -39,6 +39,7 @@ const router = express.Router();
 // checked against that scope, never trusted. Staff (JWT) see the portfolio; a
 // board member sees only the communities they sit on.
 const { requireBoardViewer, canSeeCommunity, scopeCommunityIds } = require('../lib/portal/board_access');
+const { CUSTOMER_WRITING_STANDARD, stripEmDashes } = require('../lib/ai/customer_writing_standard');
 
 // ----------------------------------------------------------------------------
 // GET /api/board-portal/communities
@@ -1202,8 +1203,10 @@ HOW TO ANSWER:
 - Use the community snapshot and document excerpts below. Cite the actual numbers plainly. If the snapshot does not contain what was asked, do NOT guess, and do NOT deflect the board to "your manager" as if you are separate from the team. Say plainly that you do not have it in the records available to you, then offer to flag it for the team to pull or note it can be answered once that data is loaded. You are part of the management team, not a search box.
 - For governing-document or Texas-law questions, ground your answer in the excerpts provided. If they do not cover it, say so and point to the documents or counsel. Never invent a statute subsection; refer to "Chapter 209 of the Texas Property Code" generally if unsure.
 - Be warm, plain, brief, and confident, the way a good senior manager briefs a board. Assume a smart volunteer who is new to this. No legalese.
-- Commas, not em-dashes. Write in English.
-- Never claim you "confirmed with the team" or invent a source. Answer only from what you were given.`;
+- Write in English.
+- Never claim you "confirmed with the team" or invent a source. Answer only from what you were given.
+
+${CUSTOMER_WRITING_STANDARD}`;
 
 // Assemble the community's AGGREGATE operating snapshot from the same canonical
 // views the board tiles read. Best-effort throughout: a missing sub-source means
@@ -1365,7 +1368,7 @@ Answer the board member as Amanda, following your rules. Cite the snapshot numbe
       system: AMANDA_SYSTEM,
       messages: [{ role: 'user', content: userContent }],
     });
-    const answer = (completion.content && completion.content[0] && completion.content[0].text) || '';
+    const answer = stripEmDashes((completion.content && completion.content[0] && completion.content[0].text) || '');
 
     // Aggregate-only surface, but log who asked what for the board's own trail.
     // No individual PII is exposed here by construction.

@@ -19,8 +19,9 @@ const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 const {
-  resolveMemberViewer, memberEntitledDocs, memberEntitledDocContext,
+  resolveMemberViewer, memberEntitledDocs, memberEntitledRetrieval,
 } = require('../lib/portal/member_scope');
+const { CUSTOMER_WRITING_STANDARD, stripEmDashes } = require('../lib/ai/customer_writing_standard');
 
 // Ask CLMA speaks only from the documents the partner is entitled to. It cannot
 // see other partner associations or CLMA's internal matters, by construction:
@@ -35,8 +36,10 @@ HOW TO ANSWER:
 - Answer only from the provided document excerpts. Quote or paraphrase what they actually say.
 - If the answer is not in the excerpts, say plainly that you do not have it in the documents available to this association, and offer to have the team follow up. Do NOT guess, and do NOT invent terms, dates, dollar amounts, or responsibilities.
 - Never mention or imply information about any other association. Never assert a legal position or a binding interpretation of an agreement; point to the document and to the team for anything consequential.
-- Be warm, plain, brief, and clear. Commas, not em-dashes. Write in English.
-- You are AI, part of the CLMA service team. If asked, say so plainly. Never claim to have "confirmed with the team" or invent a source.`;
+- Be warm, plain, brief, and clear. Write in English.
+- You are AI, part of the CLMA service team. If asked, say so plainly. Never claim to have "confirmed with the team" or invent a source.
+
+${CUSTOMER_WRITING_STANDARD}`;
 
 // GET /api/partner-portal/context?member=<communityId>
 router.get('/context', async (req, res) => {
@@ -65,11 +68,11 @@ router.post('/ask', express.json({ limit: '32kb' }), async (req, res) => {
     if (!question) return res.status(400).json({ error: 'question_required' });
     if (question.length > 2000) return res.status(400).json({ error: 'question_too_long' });
 
-    // Entitled documents ONLY, then context from ONLY those documents. The model
-    // never receives an unentitled chunk — this is the security boundary.
-    const docs = await memberEntitledDocs(viewer);
-    const entitledIds = docs.map((d) => d.id);
-    const { context, sources } = await memberEntitledDocContext(entitledIds);
+    // Relevance-ranked evidence from ONLY the entitled documents. Entitlement is
+    // pushed INTO retrieval (match_knowledge_chunks document_filter), so the model
+    // never receives a chunk from a document outside the entitlement, and evidence
+    // anywhere in the document surfaces by relevance (not a sequential cut).
+    const { context, sources } = await memberEntitledRetrieval(viewer, question);
 
     const parentName = (viewer.parents[0] && viewer.parents[0].parentName) || 'CLMA';
     const userContent = `You are answering for a representative of ${viewer.memberName}, a Partner Association served by ${parentName}.
@@ -90,12 +93,14 @@ Answer following your rules. If the excerpts do not contain the answer, say so p
       system: ASK_CLMA_SYSTEM,
       messages: [{ role: 'user', content: userContent }],
     });
-    const answer = (completion.content && completion.content[0] && completion.content[0].text) || '';
+    // Deterministic customer-facing writing backstop (shared, not Ask-CLMA-specific):
+    // strip em dashes from the OUTPUT only. Never alters facts, citations, or meaning.
+    const answer = stripEmDashes((completion.content && completion.content[0] && completion.content[0].text) || '');
 
     // Log who asked what (no cross-partner data by construction).
     console.log('[partner_portal] ask', JSON.stringify({
       member: viewer.memberName, acted_by: viewer.acting_as && viewer.acting_as.staff,
-      entitled_docs: entitledIds.length, q: question.slice(0, 200),
+      grounded: !!context, q: question.slice(0, 200),
     }));
 
     res.json({

@@ -16,13 +16,14 @@
 // ============================================================================
 require('dotenv').config();
 const {
-  activeParentsForMember, memberEntitledDocs, memberEntitledDocContext,
+  activeParentsForMember, memberEntitledDocs, entitledKnowledgeDocs,
 } = require('../lib/portal/member_scope');
 
 const CLMA = 'c4a87380-81ae-43aa-94eb-a671e2d6401f';
 const CINCO_RESIDENTIAL = 'c1c0f000-0000-4000-8000-000000000001';
 const CANYON_GATE = 'a0000000-0000-4000-8000-000000000003'; // active HOA, NOT a partner
-const AGREEMENT = '61da0561-f6ca-4b5e-9034-38783c2da172';
+const AGREEMENT = '61da0561-f6ca-4b5e-9034-38783c2da172';        // library_documents.id
+const AGREEMENT_KDOC = 'f2d710a1-ad59-4c6e-975f-c238df7b0564';   // knowledge_documents.id
 
 let fails = 0;
 const ok = (cond, msg) => { console.log(`${cond ? '  ok  ' : ' FAIL '} ${msg}`); if (!cond) fails++; };
@@ -48,15 +49,16 @@ async function viewerFor(memberId, name) {
   ok(ids.length === 1, `entitled docs contain ONLY the entitled set (got ${ids.length}: ${ids.join(',') || 'none'})`);
   ok(!ids.some((id) => id !== AGREEMENT), 'no unclassified/internal doc leaked into entitled set');
 
-  // 3) Ask CLMA context is built ONLY from entitled docs, and is substantive.
-  const { context } = await memberEntitledDocContext(ids);
-  ok(context.length > 500, `entitled context is substantive (${context.length} chars)`);
-  ok(/Cinco Residential Property Association|Monument Property|Maintenance Agreement/i.test(context),
-     'entitled context contains the real agreement text');
-  // decoy: assembling context for the UNCLASSIFIED docs would pull content, proving
-  // those chunks exist in the store — so the boundary is the resolver, not absence.
-  const decoyCtx = await memberEntitledDocContext([]); // empty entitled set
-  ok(decoyCtx.context === '', 'empty entitled set yields empty context (fail closed)');
+  // 3) The library->knowledge mapping is part of the security boundary. It must
+  //    resolve the entitled library doc to exactly its knowledge document, scoped
+  //    by source_record_id AND parent community (never an id match alone).
+  const { ids: kIds, mgmtCoId } = await entitledKnowledgeDocs(viewer);
+  ok(kIds.length === 1 && kIds[0] === AGREEMENT_KDOC,
+     `entitled maps to ONLY the agreement knowledge doc (got ${kIds.join(',') || 'none'})`);
+  ok(!!mgmtCoId, 'entitled mapping resolves a management company for scoping');
+  // fail closed: a non-partner community maps to nothing
+  const cgMap = await entitledKnowledgeDocs(await viewerFor(CANYON_GATE, 'Canyon Gate'));
+  ok(cgMap.ids.length === 0, 'a non-partner community maps to ZERO knowledge docs (fail closed)');
 
   // 4) A community with NO active partner relationship gets nothing.
   const cgParents = await activeParentsForMember(CANYON_GATE);
