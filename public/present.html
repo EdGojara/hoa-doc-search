@@ -136,6 +136,13 @@
   .player .ph { color:var(--ice); text-align:center; padding:30px; }
   .player .ph .pht { font-size:20px; font-weight:700; margin-bottom:8px; }
   .player .ph .phs { font-size:15px; opacity:.7; line-height:1.5; }
+  /* Poster still-frame. A <video poster> attribute is stretched to the element
+     box (the poster ignores object-fit), distorting a non-16:9 source. Render
+     the poster as an <img> so object-fit:cover crops it without distortion. */
+  .vposter { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; cursor:pointer; }
+  .vposter.hidden { display:none; }
+  .vplay { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:64px; height:64px; border-radius:50%; border:none; background:rgba(0,0,0,.5); color:#fff; font-size:22px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .vplay.hidden { display:none; }
 
   /* Chrome: progress dots, controls, audience switch. */
   #chrome { position:fixed; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:space-between;
@@ -280,7 +287,8 @@
           <div class="teamwrap">
             <div class="teamvid">
               <div class="player" id="teamPlayer">
-                <video id="teamvid"${first ? ` poster="${esc(first.poster)}"` : ''} playsinline preload="none"></video>
+                <video id="teamvid" playsinline preload="none"></video>
+                ${first ? `<img class="vposter" id="teamPoster" src="${esc(first.poster)}" alt="">` : ''}
                 <button class="teamstart" id="teamStart" aria-label="Play team intro">▶</button>
               </div>
               <div class="teamcap" id="teamCap">Press play to meet the team</div>
@@ -292,7 +300,7 @@
       }
     } else if (s.type === 'video') {
       const player = s.video_ready
-        ? `<video src="${esc(s.video_url)}"${s.poster ? ` poster="${esc(s.poster)}"` : ''} controls preload="none" playsinline></video>`
+        ? `<video src="${esc(s.video_url)}" controls preload="none" playsinline></video>${s.poster ? `<img class="vposter" src="${esc(s.poster)}" alt=""><button class="vplay" aria-label="Play video">▶</button>` : ''}`
         : `<div class="ph"><div class="pht">Video coming</div><div class="phs">This screen is built for the “${esc(s.label||'')}” explainer.<br>It plays here as soon as the video is rendered.</div></div>`;
       inner = `${label(s)}
         <div class="videowrap">
@@ -315,6 +323,7 @@
     stage.innerHTML = SCREENS.map(screenHTML).join('');
     buildDots();
     wireTeamVideo();
+    wireVideoPosters();
     show(Math.min(idx, SCREENS.length-1));
     fit();
   }
@@ -343,8 +352,8 @@
     _teamIdx = Math.max(0, Math.min(i, segs.length-1));
     const seg = segs[_teamIdx];
     const st = document.getElementById('teamStart'); if(st) st.classList.add('hidden');
+    const tp = document.getElementById('teamPoster'); if(tp) tp.classList.add('hidden');
     if (v.getAttribute('src') !== seg.video_url) v.src = seg.video_url;
-    if (seg.poster) v.poster = seg.poster;
     _teamCaption(seg); _teamHighlight(seg.persona);
     v.play().catch(()=>{});
   }
@@ -358,9 +367,29 @@
       v.addEventListener('ended', ()=>{
         const segs = window._teamSegs || [];
         if(_teamIdx < segs.length-1){ teamPlay(_teamIdx+1); }
-        else { const s2=document.getElementById('teamStart'); if(s2) s2.classList.remove('hidden'); _teamCaption(null); _teamHighlight(null); _teamIdx=0; }
+        else { const s2=document.getElementById('teamStart'); if(s2) s2.classList.remove('hidden'); const tp2=document.getElementById('teamPoster'); if(tp2) tp2.classList.remove('hidden'); _teamCaption(null); _teamHighlight(null); _teamIdx=0; }
       });
     }
+  }
+
+  // Generic single-video screens: the poster is an <img> overlay (so it crops
+  // with object-fit:cover instead of stretching like a <video poster>). Clicking
+  // the poster or the ▶ plays; the overlay hides on play and returns on end.
+  function wireVideoPosters(){
+    document.querySelectorAll('.player > video[controls]').forEach((v)=>{
+      if(v._pwired) return; v._pwired = true;
+      const wrap = v.parentElement;
+      const poster = wrap.querySelector('.vposter');
+      const play = wrap.querySelector('.vplay');
+      if(!poster) return;
+      const hide = ()=>{ poster.classList.add('hidden'); if(play) play.classList.add('hidden'); };
+      const show = ()=>{ poster.classList.remove('hidden'); if(play) play.classList.remove('hidden'); };
+      const start = ()=>{ v.play().catch(()=>{}); };
+      poster.addEventListener('click', start);
+      if(play) play.addEventListener('click', start);
+      v.addEventListener('play', hide);
+      v.addEventListener('ended', show);
+    });
   }
 
   // Scale the fixed 1280x720 stage to the viewport (letterboxed).

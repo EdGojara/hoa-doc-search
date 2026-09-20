@@ -111,12 +111,35 @@ function checkAudienceSource() {
   return failures;
 }
 
+// Image invariant: presentation images and video posters must preserve the
+// source aspect ratio (cover/crop, never independent width/height stretching).
+function checkImageSizing() {
+  const failures = [];
+  const P = require('path');
+  const html = fs.readFileSync(P.join(__dirname, '..', 'public', 'present.html'), 'utf8');
+  // Browser: a <video poster=> stretches the still frame (poster ignores
+  // object-fit). Posters must render as <img class="vposter"> with cover.
+  if (/<video\b[^>]*\bposter\s*=/.test(html)) failures.push('present.html uses <video poster=> — the poster stretches; render it as <img class="vposter"> object-fit:cover');
+  if (!/\.vposter[^{]*\{[^}]*object-fit:\s*cover/.test(html)) failures.push('present.html .vposter must use object-fit:cover');
+  // PowerPoint: every addImage must declare sizing cover/contain, never plain w/h.
+  const pptx = fs.readFileSync(P.join(__dirname, '..', 'lib', 'presentations', 'pptx_render.js'), 'utf8');
+  for (const l of pptx.split('\n').filter((x) => /\.addImage\(/.test(x))) {
+    if (!/sizing:\s*\{\s*type:\s*'(cover|contain)'/.test(l)) failures.push('pptx_render addImage without sizing cover/contain (would stretch): ' + l.trim().slice(0, 80));
+  }
+  return failures;
+}
+
 (async () => {
   let total = 0;
   const audFails = checkAudienceSource();
   total += audFails.length;
   console.log(`audience-src   ${audFails.length ? 'FAIL' : 'ok'}`);
   audFails.forEach((f) => console.log('   - ' + f));
+
+  const imgFails = checkImageSizing();
+  total += imgFails.length;
+  console.log(`image-sizing   ${imgFails.length ? 'FAIL' : 'ok'}`);
+  imgFails.forEach((f) => console.log('   - ' + f));
 
   for (const aud of story.AUDIENCES) {
     const fails = await checkAudience(aud);
