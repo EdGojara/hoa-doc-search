@@ -34,15 +34,31 @@ walk(path.join(ROOT, 'lib'), files);
 files.push(path.join(ROOT, 'server.js'));
 
 const bad = [];
+// scripts/ and tests/ are exempt ONLY because they are non-runtime (operator
+// tools / fixtures), never loaded by the running server. That exemption is only
+// safe while it stays true, so we also assert no runtime module imports a
+// script — otherwise a script would become production-reachable and could
+// reintroduce the literal through the back door.
+const scriptImports = [];
+const SCRIPT_REQUIRE = /require\(\s*['"][^'"]*\/scripts\/[^'"]+['"]\s*\)|require\(\s*['"]\.\.?\/scripts\/[^'"]+['"]\s*\)/;
+
 for (const f of files) {
-  if (path.resolve(f) === ALLOWED) continue;
-  if (fs.readFileSync(f, 'utf8').includes(UUID)) bad.push(path.relative(ROOT, f));
+  const src = fs.readFileSync(f, 'utf8');
+  if (path.resolve(f) !== ALLOWED && src.includes(UUID)) bad.push(path.relative(ROOT, f));
+  if (SCRIPT_REQUIRE.test(src)) scriptImports.push(path.relative(ROOT, f));
 }
 
+let failed = false;
 if (bad.length) {
+  failed = true;
   console.error('✗ management-company id: the UUID literal must live ONLY in lib/company.js. Found in:');
   bad.forEach((f) => console.error('   - ' + f));
   console.error("  Fix: const { BEDROCK_MGMT_CO_ID } = require('<rel>/lib/company');");
-  process.exit(1);
 }
-console.log('✓ management-company id: single source (lib/company.js); no duplicated literals in app runtime');
+if (scriptImports.length) {
+  failed = true;
+  console.error('✗ management-company id: runtime code must NOT import from scripts/ (scripts are exempt only because they are non-runtime). Found in:');
+  scriptImports.forEach((f) => console.error('   - ' + f));
+}
+if (failed) process.exit(1);
+console.log('✓ management-company id: single source (lib/company.js); no duplicated literals in app runtime; scripts stay non-runtime');

@@ -30,6 +30,12 @@ const assert = require('assert');
 const roster = require('../lib/team/roster');
 const { TEAM, TESSA_CARD } = require('../lib/email/persona');
 const { SPECIALISTS } = require('../lib/email/route_specialist');
+const { LANGUAGES } = require('../lib/team/persona_pack');
+
+// The languages a teammate may speak, from ONE source: English (the base) plus
+// the non-English language packs. Adding a pack (e.g. Mei/zh) makes it valid
+// here automatically — no hardcoded ['en','es'] list to go stale.
+const SUPPORTED_LANGUAGES = ['en', ...Object.keys(LANGUAGES)];
 
 let failures = 0;
 function check(name, fn) {
@@ -48,7 +54,7 @@ check('every teammate has the fields every surface reads', () => {
       assert(m[f] !== undefined && m[f] !== '', `"${m.persona}" is missing ${f}`);
     }
     assert(roster.TIERS.includes(m.tier), `"${m.persona}" has tier "${m.tier}", not one of ${roster.TIERS.join('/')}`);
-    assert(['en', 'es'].includes(m.language), `"${m.persona}" has language "${m.language}"`);
+    assert(SUPPORTED_LANGUAGES.includes(m.language), `"${m.persona}" has language "${m.language}", not one of ${SUPPORTED_LANGUAGES.join('/')}`);
   }
 });
 
