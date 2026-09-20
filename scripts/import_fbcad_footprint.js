@@ -6,7 +6,8 @@
  * fictional-operations-on-real-geography: residential lots -> properties (fictional
  * DC identity, real situs kept only in appraisal_records provenance), designated
  * reserves + open-space tracts -> community_assets. Street ROW is map context, not
- * imported. NO FBCAD owner names are ever written.
+ * imported. NO FBCAD owner names are ever written. The community boundary is the
+ * TRUE geometric dissolve of the parcels, computed in PostGIS (migration 442).
  *
  * Usage:
  *   node scripts/import_fbcad_footprint.js --community=<slug|id> --sections=40-45 --dry-run
@@ -14,10 +15,9 @@
  *
  * Safety: refuses any target that is not is_demo / the demo tenant; HARD refuses
  * the Bedrock production tenant (no override). Writes only with --execute.
- * Idempotent: matches existing by FBCAD parcel id (appraisal_records.parcel_number
- * for properties, community_assets.source_ref for assets); reruns create nothing new.
- *
- * NOT a GIS framework — only what this import needs.
+ * Idempotent: existing properties match by DEMO street_address identity, provenance
+ * by appraisal_records.parcel_number, assets by community_assets.source_ref; reruns
+ * create nothing new. NOT a GIS framework — only what this import needs.
  */
 require('dotenv').config();
 const path = require('path');
@@ -28,7 +28,8 @@ const { BEDROCK_MGMT_CO_ID, DEMO_MGMT_CO_ID } = require('../lib/company');
 
 const FB = '+proj=lcc +lat_0=27.8333333333333 +lon_0=-99 +lat_1=28.3833333333333 +lat_2=30.2833333333333 +x_0=600000 +y_0=4000000 +datum=NAD83 +units=us-ft +no_defs';
 const toWgs = proj4(FB, '+proj=longlat +datum=WGS84 +no_defs').forward;
-const FBCAD_PULL_DATE = '2025-01-01';   // FBCAD certified-roll as-of used for provenance
+const FBCAD_PULL_DATE = '2025-01-01';   // FBCAD roll as-of recorded on provenance
+const PROP_CITY = 'Richmond';           // regional context only; identity is the DC id
 const SHP = path.join(__dirname, 'fbcad-data', 'CamaSummary.shp');
 const DBF = path.join(__dirname, 'fbcad-data', 'CamaSummary.dbf');
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -81,21 +82,16 @@ function assetSpec(legal, sec) {
 }
 const parseInt2 = (re, s) => (s.match(re) || [])[1] || null;
 
-// ---- boundary union topology (POLYGON vs MULTIPOLYGON) via shared-edge components ----
-function unionComponents(polys) {
-  // polys: array of outer rings in source coords. Two polys are edge-adjacent if
-  // they share >= 2 vertices. Union-find -> connected components. 1 => single
-  // POLYGON(-with-holes); >1 => MULTIPOLYGON.
-  const key = ([x, y]) => Math.round(x * 100) + '_' + Math.round(y * 100);
-  const vmap = new Map();
-  polys.forEach((ring, i) => { const seen = new Set(); for (const v of ring) { const k = key(v); if (seen.has(k)) continue; seen.add(k); if (!vmap.has(k)) vmap.set(k, []); vmap.get(k).push(i); } });
-  const parent = polys.map((_, i) => i);
-  const find = (a) => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
-  const shared = new Map(); // pair -> count
-  for (const list of vmap.values()) { for (let a = 0; a < list.length; a++) for (let b = a + 1; b < list.length; b++) { const p = list[a] < list[b] ? list[a] + ',' + list[b] : list[b] + ',' + list[a]; shared.set(p, (shared.get(p) || 0) + 1); } }
-  for (const [p, c] of shared) { if (c >= 2) { const [a, b] = p.split(',').map(Number); parent[find(a)] = find(b); } }
-  const comps = new Set(); for (let i = 0; i < polys.length; i++) comps.add(find(i));
-  return comps.size;
+// Chunked insert (avoids oversized single requests; returns selected rows).
+async function insertChunked(table, rows, selectCols) {
+  const out = [];
+  for (let i = 0; i < rows.length; i += 200) {
+    const chunk = rows.slice(i, i + 200);
+    const { data, error } = await sb.from(table).insert(chunk).select(selectCols || 'id');
+    if (error) throw new Error(`${table} insert failed: ${error.message}`);
+    if (data) out.push(...data);
+  }
+  return out;
 }
 
 async function main() {
@@ -109,15 +105,17 @@ async function main() {
   if (comm.management_company_id === BEDROCK_MGMT_CO_ID) { console.error(`HARD REFUSAL: "${comm.name}" is on the BEDROCK production tenant. This importer never writes to production.`); process.exit(2); }
   const isDemoTarget = comm.is_demo === true || comm.management_company_id === DEMO_MGMT_CO_ID;
   if (!isDemoTarget && !OVERRIDE_PROD) { console.error(`REFUSAL: "${comm.name}" is not a demo community. Pass --i-understand-production only if this is truly intended.`); process.exit(2); }
+  if (comm.management_company_id !== DEMO_MGMT_CO_ID) { console.error(`REFUSAL: "${comm.name}" is not on the DEMO management-company tenant.`); process.exit(2); }
+  const DC = comm.id;
 
   const mode = EXECUTE ? 'LIVE (--execute)' : 'DRY RUN';
   console.log(`\nFBCAD footprint import  ·  target: ${comm.name} (${comm.slug})  ·  sections ${[...SECS].join(',')}  ·  ${mode}`);
-  console.log(`Tenant: ${comm.management_company_id === DEMO_MGMT_CO_ID ? 'DEMO' : comm.management_company_id}  ·  is_demo=${comm.is_demo}\n`);
+  console.log(`Tenant: DEMO  ·  is_demo=${comm.is_demo}\n`);
 
   // ---- stream + classify ----
   const plan = { properties: [], assets: [], context: 0, exceptions: [] };
-  const assetPolys = [];   // outer rings (source coords) of PROPERTY+ASSET for boundary
-  let scanned = 0, source = 0, ownerNamesInWrites = 0;
+  const boundaryWkts = [];   // WGS84 WKT of every PROPERTY + ASSET (excludes ROW)
+  let scanned = 0, source = 0;
   const src = await shapefile.open(SHP, DBF);
   while (true) {
     const r = await src.read(); if (r.done) break; scanned++;
@@ -129,61 +127,136 @@ async function main() {
     const cls = classify(legal);
     const pid = String(p.X_Referenc || p.Property_N || '');
     const g = r.value.geometry;
+    const wkt = polygonWKT(g);
     if (cls === 'PROPERTY') {
       plan.properties.push({ sec, pid, block: parseInt2(/BLOCK\s+(\d+)/i, legal), lot: parseInt2(/Lot\s+(\d+)/i, legal),
         situs: [p.Situs_Stre, p.Situs_St_1, p.Situs_St_2].filter(Boolean).join(' ') || null, legal,
         year_built: Number(p.Year_Built) || null, lot_sqft: Number(p.Land_Size1) || null,
-        centroid: centroidWgs(g) });
-      if (g && g.type === 'Polygon') assetPolys.push(g.coordinates[0]);
+        centroid: centroidWgs(g), wkt });
+      if (wkt) boundaryWkts.push(wkt);
     } else if (cls === 'ASSET_RESERVE' || cls === 'ASSET_TRACT') {
       const spec = assetSpec(legal, sec);
-      plan.assets.push({ sec, pid, legal, acres: +(parseInt2(/ACRES\s+([\d.]+)/i, legal) || 0), ...spec, wkt: polygonWKT(g), centroid: centroidWgs(g) });
-      if (g && g.type === 'Polygon') assetPolys.push(g.coordinates[0]);
+      plan.assets.push({ sec, pid, legal, acres: +(parseInt2(/ACRES\s+([\d.]+)/i, legal) || 0), ...spec, wkt, centroid: centroidWgs(g) });
+      if (wkt) boundaryWkts.push(wkt);
     } else if (cls === 'CONTEXT') { plan.context++; }
     else { plan.exceptions.push({ pid, legal: legal.slice(0, 80) }); }
-    // provenance retains owner mailing? NO. We never read Owner_Name into a write.
+    // Owner_Name is NEVER read into any planned write.
   }
 
-  // ---- boundary topology ----
-  const components = unionComponents(assetPolys);
-  const boundaryType = components === 1 ? 'POLYGON (single, holes allowed)' : `MULTIPOLYGON (${components} disjoint parts)`;
+  // ---- deterministic DEMO identity: DC-<sec>-<seq>, seq by parcel id within section ----
+  const bySec = {};
+  plan.properties.sort((a, b) => (a.sec - b.sec) || String(a.pid).localeCompare(String(b.pid)));
+  plan.properties.forEach((pr) => { bySec[pr.sec] = (bySec[pr.sec] || 0) + 1; pr.dcid = `DC-${pr.sec}-${String(bySec[pr.sec]).padStart(3, '0')}`; });
 
-  // ---- reconciliation ----
+  // ---- reconciliation (must hold before any write) ----
   const P = plan.properties.length, A = plan.assets.length, C = plan.context, E = plan.exceptions.length;
   const assetByType = plan.assets.reduce((m, a) => { m[a.asset_type] = (m[a.asset_type] || 0) + 1; return m; }, {});
-
   console.log('CLASSIFICATION');
   console.log(`  PROPERTY: ${P}`);
   console.log(`  ASSET:    ${A}  ${JSON.stringify(assetByType)}`);
   console.log(`  CONTEXT:  ${C} (ROW, not imported)`);
   console.log(`  EXCEPTION:${E}`);
-  console.log(`\nRECONCILIATION: source ${source} = P ${P} + A ${A} + C ${C} + E ${E}  =>  ${P + A + C + E}  ${source === P + A + C + E ? 'OK (no remainder)' : 'MISMATCH'}`);
+  const reconOk = source === P + A + C + E && E === 0;
+  console.log(`\nRECONCILIATION: source ${source} = P ${P} + A ${A} + C ${C} + E ${E}  =>  ${P + A + C + E}  ${reconOk ? 'OK (no remainder, 0 exception)' : 'MISMATCH'}`);
 
   console.log('\nFORMERLY-REVIEW TRACTS (decision 1 — neutral classification):');
-  plan.assets.filter((a) => a.asset_type === 'open_space_tract').forEach((a) => console.log(`  ${a.name}  class=${a.asset_class} type=${a.asset_type}  (${a.acres}ac)  FBCAD: "${a.legal.replace(/\s+/g, ' ').slice(0, 70)}"`));
+  plan.assets.filter((a) => a.asset_type === 'open_space_tract').forEach((a) => console.log(`  ${a.name}  class=${a.asset_class} type=${a.asset_type}  (${a.acres}ac)`));
+  console.log('\nDEMO IDENTITY per section:', JSON.stringify(bySec));
+  console.log('Sample:', plan.properties.slice(0, 3).map((pr) => `${pr.dcid} lot=${pr.lot} situs->provenance`).join('  ·  '));
 
-  console.log('\nPRIVACY (planned writes):');
-  console.log(`  FBCAD owner-name fields written: ${ownerNamesInWrites}  (owner names excluded by design)`);
-  console.log('  Sample DEMO property identities (street_address) + real situs kept ONLY in appraisal_records.raw_extraction:');
-  const bySec = {};
-  plan.properties.sort((a, b) => (a.sec - b.sec) || String(a.pid).localeCompare(String(b.pid)));
-  plan.properties.forEach((pr) => { bySec[pr.sec] = (bySec[pr.sec] || 0) + 1; pr.dcid = `DC-${pr.sec}-${String(bySec[pr.sec]).padStart(3, '0')}`; });
-  plan.properties.slice(0, 4).forEach((pr) => console.log(`    ${pr.dcid}  (lot_number=${pr.lot}; situs "${pr.situs}" -> raw_extraction only; owner=fictional)`));
-
-  console.log('\nGEOMETRY');
-  console.log(`  properties: centroid lat/lng reprojected EPSG:2278 -> EPSG:4326 (polygon retained in provenance for later activation)`);
-  console.log(`  assets: real parcel POLYGON via community_asset_set_geometry`);
-  console.log(`  community boundary (union of ${assetPolys.length} residential+asset polygons, ROW excluded) => ${boundaryType}`);
-
-  console.log('\nDEMO IDENTITY EXAMPLES per section:', JSON.stringify(bySec));
+  if (!reconOk) { console.error('\nBLOCKED: reconciliation must be exactly 424 = 376 + 17 + 31 with 0 exception before any write.'); process.exit(1); }
 
   if (!EXECUTE) {
     console.log('\n=== DRY RUN complete — no writes performed. ===');
-    if (source !== P + A + C + E) { console.error('BLOCKED: reconciliation mismatch.'); process.exit(1); }
-    if (components !== 1) console.log(`\nNOTE (decision 7): the dissolved union is a ${boundaryType}, which is INCOMPATIBLE with communities.boundary GEOGRAPHY(POLYGON,4326). Reporting the geometry result rather than approximating with a convex hull. Community-boundary write is BLOCKED pending a decision; property/asset import is otherwise READY.`);
+    console.log('Boundary: will be the TRUE PostGIS dissolve of', boundaryWkts.length, 'parcel polygons via community_boundary_dissolve_from_wkts (migration 442).');
     process.exit(0);
   }
-  console.error('\nLIVE import path not run in this task (dry-run only was requested).');
+
+  // ==========================================================================
+  // LIVE EXECUTE — Drama Creek DEMO tenant only. Idempotent.
+  // ==========================================================================
+  console.log('\n=== LIVE EXECUTE ===');
+
+  // Idempotency preload (DC is small — well under the 1000-row cap).
+  const { data: exProps, error: e1 } = await sb.from('properties').select('id, street_address').eq('community_id', DC).limit(2000);
+  if (e1) throw new Error('preload properties failed: ' + e1.message);
+  const propByAddr = new Map((exProps || []).map((r) => [r.street_address, r.id]));
+  const { data: exApp, error: e2 } = await sb.from('appraisal_records').select('parcel_number').eq('community_id', DC).eq('county_source', 'FBCAD').limit(2000);
+  if (e2) throw new Error('preload appraisal_records failed: ' + e2.message);
+  const parcelSet = new Set((exApp || []).map((r) => r.parcel_number));
+  const { data: exAssets, error: e3 } = await sb.from('community_assets').select('source_ref').eq('community_id', DC).eq('source_system', 'fbcad').limit(2000);
+  if (e3) throw new Error('preload community_assets failed: ' + e3.message);
+  const assetRefSet = new Set((exAssets || []).map((r) => r.source_ref));
+
+  // 1) PROPERTIES — insert those whose DEMO identity does not yet exist.
+  const propsToInsert = plan.properties.filter((pr) => !propByAddr.has(pr.dcid));
+  const propRows = propsToInsert.map((pr) => ({
+    community_id: DC, street_address: pr.dcid, city: PROP_CITY, state: 'TX',
+    property_type: 'sfh', lot_number: pr.lot,
+    latitude: pr.centroid ? pr.centroid.lat : null, longitude: pr.centroid ? pr.centroid.lng : null,
+  }));
+  const insertedProps = await insertChunked('properties', propRows, 'id, street_address');
+  insertedProps.forEach((r) => propByAddr.set(r.street_address, r.id));
+  console.log(`properties: ${insertedProps.length} created, ${P - insertedProps.length} already present`);
+
+  // 2) PROVENANCE — one appraisal_records row per property; no owner names.
+  const apprToInsert = [];
+  for (const pr of plan.properties) {
+    if (parcelSet.has(pr.pid)) continue;
+    const propertyId = propByAddr.get(pr.dcid);
+    if (!propertyId) throw new Error('missing property id for ' + pr.dcid);
+    apprToInsert.push({
+      management_company_id: DEMO_MGMT_CO_ID, community_id: DC, property_id: propertyId,
+      county_source: 'FBCAD', parcel_number: pr.pid, pull_date: FBCAD_PULL_DATE,
+      raw_extraction: {
+        situs: pr.situs, section: pr.sec, block: pr.block, lot: pr.lot, legal: pr.legal,
+        acres: pr.lot_sqft ? +(pr.lot_sqft / 43560).toFixed(4) : null,
+        year_built: pr.year_built, lot_sqft: pr.lot_sqft,
+        source_srid: 'EPSG:2278', geometry_wkt_4326: pr.wkt,
+      },
+    });
+  }
+  const insertedAppr = await insertChunked('appraisal_records', apprToInsert, 'id');
+  console.log(`provenance: ${insertedAppr.length} appraisal records created, ${P - insertedAppr.length} already present`);
+
+  // 3) ASSETS — canonical community_assets + PostGIS polygon geometry.
+  let assetsCreated = 0, geomSet = 0;
+  for (const a of plan.assets) {
+    if (assetRefSet.has(a.pid)) continue;
+    const { data: ins, error: aErr } = await sb.from('community_assets').insert({
+      management_company_id: DEMO_MGMT_CO_ID, community_id: DC, name: a.name, description: a.legal,
+      asset_class: a.asset_class, asset_type: a.asset_type, status: 'active', condition: 'unknown',
+      member_scope: 'not_applicable', source_system: 'fbcad', source_ref: a.pid,
+      location_description: `Long Meadow Farms Sec ${a.sec}`,
+    }).select('id').single();
+    if (aErr) throw new Error('asset insert failed (' + a.name + '): ' + aErr.message);
+    assetsCreated++;
+    if (a.wkt) {
+      const { data: gRes, error: gErr } = await sb.rpc('community_asset_set_geometry', { p_asset_id: ins.id, p_wkt: a.wkt });
+      if (gErr) throw new Error('asset geometry RPC failed (' + a.name + '): ' + gErr.message);
+      if (gRes && gRes.ok) geomSet++;
+    }
+  }
+  console.log(`assets: ${assetsCreated} created (${geomSet} geometries set), ${A - assetsCreated} already present`);
+
+  // 4) BOUNDARY — TRUE PostGIS dissolve of the 393 parcel polygons (mig 442).
+  console.log('\nBOUNDARY (true geometric dissolve of', boundaryWkts.length, 'parcels, ROW excluded):');
+  const { data: bRes, error: bErr } = await sb.rpc('community_boundary_dissolve_from_wkts', { p_community_id: DC, p_wkts: boundaryWkts });
+  if (bErr) {
+    if (bErr.code === 'PGRST202' || /function|does not exist|schema cache/i.test(bErr.message || '')) {
+      console.log('  BLOCKED: community_boundary_dissolve_from_wkts not found — migration 442 not applied yet.');
+      console.log('  No approximation written. Re-run --execute after applying 442 to compute the boundary (properties/assets are idempotent).');
+    } else {
+      throw new Error('boundary dissolve RPC failed: ' + bErr.message);
+    }
+  } else if (bRes && bRes.ok) {
+    console.log(`  ${bRes.geometry_type}  ·  ${bRes.num_parts} part(s)  ·  valid=${bRes.is_valid}  ·  written to communities.boundary`);
+  } else {
+    console.log('  NOT WRITTEN:', JSON.stringify(bRes), '(no approximation — reporting for decision)');
+  }
+
+  console.log('\n=== EXECUTE complete ===');
+  console.log('Owner names written: 0 (excluded by design).');
   process.exit(0);
 }
 main().catch((e) => { console.error('Crashed:', e.message); process.exit(1); });
