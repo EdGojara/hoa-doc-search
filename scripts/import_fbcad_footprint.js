@@ -167,8 +167,22 @@ async function main() {
   if (!reconOk) { console.error('\nBLOCKED: reconciliation must be exactly 424 = 376 + 17 + 31 with 0 exception before any write.'); process.exit(1); }
 
   if (!EXECUTE) {
+    // Read-only idempotency preview: how many would be created vs already present.
+    const { data: xp } = await sb.from('properties').select('street_address').eq('community_id', DC).limit(2000);
+    const addrSet = new Set((xp || []).map((r) => r.street_address));
+    const { data: xa } = await sb.from('appraisal_records').select('parcel_number').eq('community_id', DC).eq('county_source', 'FBCAD').limit(2000);
+    const pSet = new Set((xa || []).map((r) => r.parcel_number));
+    const { data: xs } = await sb.from('community_assets').select('source_ref').eq('community_id', DC).eq('source_system', 'fbcad').limit(2000);
+    const sSet = new Set((xs || []).map((r) => r.source_ref));
+    const wouldProps = plan.properties.filter((pr) => !addrSet.has(pr.dcid)).length;
+    const wouldAppr = plan.properties.filter((pr) => !pSet.has(pr.pid)).length;
+    const wouldAssets = plan.assets.filter((a) => !sSet.has(a.pid)).length;
+    console.log('\nIDEMPOTENCY (read-only preview):');
+    console.log(`  properties would create: ${wouldProps}  (already present: ${P - wouldProps})`);
+    console.log(`  provenance would create: ${wouldAppr}  (already present: ${P - wouldAppr})`);
+    console.log(`  assets     would create: ${wouldAssets}  (already present: ${A - wouldAssets})`);
     console.log('\n=== DRY RUN complete — no writes performed. ===');
-    console.log('Boundary: will be the TRUE PostGIS dissolve of', boundaryWkts.length, 'parcel polygons via community_boundary_dissolve_from_wkts (migration 442).');
+    console.log('Boundary: TRUE PostGIS dissolve of', boundaryWkts.length, 'parcel polygons via community_boundary_dissolve_from_wkts (migration 442).');
     process.exit(0);
   }
 
