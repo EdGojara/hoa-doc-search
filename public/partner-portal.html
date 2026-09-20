@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Partner Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap">
+<style>
+  :root{
+    --navy:#0B1D34; --navy2:#14294A; --gold:#D4AF37; --gold-dk:#B8892B;
+    --ink:#1c2635; --muted:#5a6b83; --line:#e2e8f1; --paper:#f4f6f9; --surface:#fff;
+    --good:#166b46; --good-bg:#e7f4ec;
+    --sans:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    --serif:"Fraunces",Georgia,serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{font-family:var(--sans);color:var(--ink);background:var(--paper);line-height:1.5}
+  a{color:inherit}
+  .staffbar{background:#1e3a5c;color:#dce8f7;font-size:12.5px;text-align:center;padding:7px 16px;letter-spacing:.02em}
+  header{background:var(--navy);color:#fff;padding:26px 16px 30px}
+  .wrap{max-width:860px;margin:0 auto;padding:0 16px}
+  .mark{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+  .mark .b{width:34px;height:34px;border-radius:8px;background:var(--gold);color:var(--navy);font-family:var(--serif);font-weight:600;font-size:20px;display:flex;align-items:center;justify-content:center}
+  .mark b{font-family:var(--serif);font-weight:600;font-size:17px}
+  .mark small{display:block;color:#9fb0c9;font-size:11px;letter-spacing:.07em;text-transform:uppercase}
+  .greet{font-family:var(--serif);font-weight:500;font-size:30px;line-height:1.15;margin:0 0 6px}
+  .sub{color:#b9c8dd;font-size:15px;max-width:620px}
+  main{max-width:860px;margin:-16px auto 60px;padding:0 16px}
+  section{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px 20px 22px;margin-top:16px;box-shadow:0 1px 3px rgba(11,29,52,.04)}
+  h2{font-family:var(--serif);font-weight:600;font-size:19px;color:var(--navy);margin:0 0 3px}
+  .lede{color:var(--muted);font-size:13.5px;margin:0 0 14px}
+  .empty{display:flex;gap:12px;align-items:flex-start;background:var(--paper);border:1px dashed #cfd8e6;border-radius:10px;padding:14px 15px;color:var(--muted);font-size:14px}
+  .empty .i{font-size:17px;line-height:1.2}
+  .empty b{color:var(--ink);font-weight:600;display:block;margin-bottom:2px}
+  .doc{display:flex;align-items:center;gap:13px;border:1px solid var(--line);border-radius:11px;padding:13px 15px;text-decoration:none;transition:border-color .12s, background .12s}
+  .doc:hover{border-color:var(--gold);background:#fffdf6}
+  .doc .ic{width:38px;height:38px;border-radius:9px;background:#eef4ff;color:#274b8a;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+  .doc .t{font-weight:600;color:var(--navy);font-size:14.5px}
+  .doc .c{color:var(--muted);font-size:12px;text-transform:capitalize}
+  .doc .go{margin-left:auto;color:var(--gold-dk);font-weight:700;font-size:13px}
+  .ask .box{display:flex;gap:9px;margin-top:4px}
+  .ask input{flex:1;border:1.5px solid var(--line);border-radius:10px;padding:12px 14px;font-family:inherit;font-size:15px;color:var(--ink)}
+  .ask input:focus{outline:none;border-color:var(--gold)}
+  .ask button{background:var(--navy);color:#fff;border:none;border-radius:10px;padding:0 18px;font-family:inherit;font-weight:600;font-size:14.5px;cursor:pointer}
+  .ask button:disabled{opacity:.5;cursor:default}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .chip{background:var(--paper);border:1px solid var(--line);border-radius:20px;padding:7px 13px;font-size:12.5px;color:var(--ink);cursor:pointer}
+  .chip:hover{border-color:var(--gold);background:#fffdf6}
+  .answer{margin-top:16px;border-top:1px solid var(--line);padding-top:16px;display:none}
+  .answer.show{display:block}
+  .answer .a{white-space:pre-wrap;font-size:14.5px;color:var(--ink)}
+  .answer .src{margin-top:12px;color:var(--muted);font-size:12px}
+  .answer .think{color:var(--muted);font-size:13.5px;font-style:italic}
+  .disc{color:#8a97a8;font-size:11.5px;margin-top:12px;line-height:1.5}
+  .loading{padding:40px 16px;text-align:center;color:var(--muted)}
+  .err{background:#fbe9e7;border:1px solid #f0b3ad;color:#7a1f19;border-radius:10px;padding:14px;font-size:14px}
+</style>
+</head>
+<body>
+<div class="staffbar" id="staffbar" style="display:none"></div>
+<header>
+  <div class="wrap">
+    <div class="mark"><div class="b">B</div><div><b>trustEd</b><small>Partner Portal</small></div></div>
+    <h1 class="greet" id="greet">Loading…</h1>
+    <div class="sub" id="sub"></div>
+  </div>
+</header>
+<main id="main">
+  <div class="loading" id="loading">Loading your portal…</div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const qs = new URLSearchParams(location.search);
+const MEMBER = qs.get('member') || '';
+let _supa = null;
+
+async function initAuth(){
+  try {
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if (cfg && cfg.enabled && window.supabase) _supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+  } catch(_){}
+}
+async function authHeaders(extra){
+  const h = Object.assign({'Content-Type':'application/json'}, extra||{});
+  try { if (_supa){ const s=(await _supa.auth.getSession()).data.session; if (s&&s.access_token) h.Authorization='Bearer '+s.access_token; } } catch(_){}
+  return h;
+}
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function greeting(){ const h=new Date().getHours(); return h<12?'Good morning':h<18?'Good afternoon':'Good evening'; }
+
+async function api(path, opts){
+  const r = await fetch(path, Object.assign({ headers: await authHeaders(), credentials:'same-origin' }, opts||{}));
+  return { ok:r.ok, status:r.status, body: await r.json().catch(()=>({})) };
+}
+
+function emptyCard(icon, title, line){
+  return `<div class="empty"><div class="i">${icon}</div><div><b>${esc(title)}</b>${esc(line)}</div></div>`;
+}
+
+function render(ctx){
+  const parent = (ctx.parents && ctx.parents[0] && ctx.parents[0].name) || 'CLMA';
+  document.getElementById('greet').textContent = `${greeting()}, ${ctx.member.name}`;
+  document.getElementById('sub').innerHTML = `Your association is a partner of <strong>${esc(parent)}</strong>. This is where you can see what ${esc(parent)} does for you, read the agreements that govern it, and ask questions directly.`;
+
+  if (ctx.acting_as && ctx.acting_as.staff){
+    const bar = document.getElementById('staffbar');
+    bar.style.display='block';
+    bar.textContent = `Staff view — you are viewing the portal exactly as ${ctx.member.name} sees it.`;
+  }
+
+  const docs = ctx.entitled_documents || [];
+  const docHtml = docs.length
+    ? docs.map(d=>`<a class="doc" href="#" data-doc="${esc(d.id)}"><div class="ic">📄</div><div><div class="t">${esc(d.title)}</div><div class="c">${esc((d.category||'').replace(/_/g,' '))}</div></div><div class="go">Open →</div></a>`).join('<div style="height:10px"></div>')
+    : emptyCard('📄','No documents shared yet','Agreements and notices for your association will appear here.');
+
+  document.getElementById('main').innerHTML = `
+    <section>
+      <h2>What's happening for your association</h2>
+      <p class="lede">Recent and upcoming ${esc(parent)} activity that affects you.</p>
+      ${emptyCard('🌿','Nothing to report right now',`When ${parent} logs work, projects, or updates that affect your association, they will appear here. Nothing has been recorded yet.`)}
+    </section>
+
+    <section>
+      <h2>Projects affecting you</h2>
+      <p class="lede">Work ${esc(parent)} is planning or carrying out for your association.</p>
+      ${emptyCard('🧭','No active projects recorded',`No ${parent} projects are currently recorded for your association.`)}
+    </section>
+
+    <section>
+      <h2>Documents &amp; Agreements</h2>
+      <p class="lede">The agreements and records your association is entitled to.</p>
+      ${docHtml}
+    </section>
+
+    <section>
+      <h2>From the ${esc(parent)} Board</h2>
+      <p class="lede">Updates the board publishes to the associations it serves.</p>
+      ${emptyCard('📣','No member updates have been published yet','When the board publishes an update, it will appear here and you will be notified.')}
+    </section>
+
+    <section class="ask">
+      <h2>Ask ${esc(parent)}</h2>
+      <p class="lede">Ask about your agreement, responsibilities, or what ${esc(parent)} maintains. Answers come from the documents your association is entitled to.</p>
+      <div class="box">
+        <input id="q" type="text" placeholder="e.g. What does CLMA maintain under our agreement?" autocomplete="off">
+        <button id="askbtn">Ask</button>
+      </div>
+      <div class="chips" id="chips">
+        <span class="chip">What does CLMA maintain under our agreement?</span>
+        <span class="chip">What responsibilities belong to Cinco Residential?</span>
+        <span class="chip">What does the agreement say about the Monument Property?</span>
+      </div>
+      <div class="answer" id="answer"></div>
+      <div class="disc">CLMA’s AI assistant answers from the documents your association is entitled to. It is not legal advice and no substitute for your attorney.</div>
+    </section>`;
+
+  document.querySelectorAll('[data-doc]').forEach(a=>a.addEventListener('click', async e=>{
+    e.preventDefault();
+    const id=a.getAttribute('data-doc'); a.querySelector('.go').textContent='Opening…';
+    const r=await api(`/api/partner-portal/document/${encodeURIComponent(id)}/url?member=${encodeURIComponent(MEMBER)}`);
+    a.querySelector('.go').textContent='Open →';
+    if (r.ok && r.body.url) window.open(r.body.url,'_blank'); else alert('That document could not be opened.');
+  }));
+  document.querySelectorAll('#chips .chip').forEach(c=>c.addEventListener('click',()=>{ document.getElementById('q').value=c.textContent; ask(); }));
+  document.getElementById('askbtn').addEventListener('click', ask);
+  document.getElementById('q').addEventListener('keydown', e=>{ if(e.key==='Enter') ask(); });
+}
+
+async function ask(){
+  const q = document.getElementById('q').value.trim();
+  if (!q) return;
+  const btn=document.getElementById('askbtn'); const ans=document.getElementById('answer');
+  btn.disabled=true; ans.className='answer show'; ans.innerHTML='<div class="think">Reading your documents…</div>';
+  const r = await api('/api/partner-portal/ask',{ method:'POST', body: JSON.stringify({ member: MEMBER, question: q }) });
+  btn.disabled=false;
+  if (!r.ok){ ans.innerHTML='<div class="err">Sorry, the assistant is unavailable right now. Please try again.</div>'; return; }
+  const srcs=(r.body.sources||[]).map(s=>esc(s.document)).filter(Boolean);
+  ans.innerHTML = `<div class="a">${esc(r.body.answer||'')}</div>` +
+    (srcs.length?`<div class="src">Based on: ${[...new Set(srcs)].join(', ')}</div>`:'');
+}
+
+(async function(){
+  if (!MEMBER){ document.getElementById('main').innerHTML='<section><div class="err">No association was specified.</div></section>'; document.getElementById('greet').textContent='Partner Portal'; return; }
+  await initAuth();
+  const r = await api(`/api/partner-portal/context?member=${encodeURIComponent(MEMBER)}`);
+  if (r.status===403){ document.getElementById('greet').textContent='Partner Portal'; document.getElementById('main').innerHTML='<section><div class="err">You are not authorized to view this association’s portal.</div></section>'; return; }
+  if (!r.ok){ document.getElementById('main').innerHTML='<section><div class="err">This portal could not be loaded.</div></section>'; return; }
+  render(r.body);
+})();
+</script>
+</body>
+</html>

@@ -1288,6 +1288,14 @@ app.use('/api/arc-history', arcHistoryRouter);
 const { router: boardPortalRouter } = require('./api/board_portal');
 app.use('/api/board-portal', boardPortalRouter);
 
+// Partner Association experience (org-to-org client of a parent service org, e.g.
+// a CLMA partner association). Staff-gated for now (View-As); every route resolves
+// the partner viewer + entitlement server-side via lib/portal/member_scope, and
+// returns ONLY entitled information. Not allowlisted: a partner is represented by
+// staff View-As in V1, so the outer staff gate is an intended extra layer.
+const partnerPortalRouter = require('./api/partner_portal');
+app.use('/api/partner-portal', partnerPortalRouter);
+
 // Staff-side review + editing for the board-learning modules (migration 385).
 // requireStaff-gated inside the router. The page is served below at
 // /admin/board-learning.
