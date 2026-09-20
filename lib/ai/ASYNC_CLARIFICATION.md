@@ -88,8 +88,9 @@ two actors on the same matter. The human chooses whether to `RETURNED_TO_AI`.
 **Three** tables (the events log is now first-class, not optional — an autonomy
 audit needs "how we got here", not just "what is true now"). All hang off
 `acc_decisions` by FK; `record_ownership` declared; append-only tables enforce
-immutability at the GRANT level (INSERT/SELECT only). Ownership (`owner_type`
-AI|HUMAN + `owner_ref`) is on the clarification and generalizable beyond ACC.
+immutability at the GRANT level (INSERT/SELECT only). Ownership is typed
+(`owner_type` AI|HUMAN + `owner_agent_key` + `owner_user_id` FK, with a CHECK) and
+generalizable beyond ACC.
 
 **`acc_evidence_packages`** — durable, append-only versions (`workpaper`). Never
 UPDATE a row; a new version is a new row.
@@ -139,18 +140,42 @@ UNIQUE (acc_decision_id, conflict_id, round)          -- one live ask per fact p
 UNIQUE (answer_email_ref) WHERE answer_email_ref IS NOT NULL   -- an answer resolves once
 ```
 
-The illustrative columns above are the authoritative set as written in migration
-434, plus two refinements folded in there: first-class ownership
-(`owner_type` AI|HUMAN, `owner_ref`) on `acc_clarifications`, and the
-`RETURNED_TO_AI` status for explicit hand-back.
+Migration 434 is the authoritative schema. The illustrative columns above are
+superseded there by the typed ownership (`owner_type` AI|HUMAN + `owner_agent_key`
++ `owner_user_id` FK + CHECK) on `acc_clarifications`, the `RETURNED_TO_AI` status
+for explicit hand-back, and `ON DELETE RESTRICT` on the audit chain.
 
 **`acc_clarification_events`** (now first-class, not optional) — append-only history
 (`clarification_id`, `acc_decision_id`, `from_status`, `to_status`, `event_type`,
-`actor_type` AI|HUMAN|SYSTEM, `actor_ref`, `detail` jsonb, `created_at`); INSERT/
-SELECT only. "What is true now" lives in the first two tables; "how we got here"
-lives here — reconstruct why Miranda stopped, what she asked and when, what evidence
-she had, whether she followed up, what came back, which package resumed it, and why
-(if) it escalated. Same append-only spirit as `nomination_events_audit` (mig 048).
+`actor_type` AI|HUMAN|SYSTEM, `actor_agent_key`, `actor_user_id`, `detail` jsonb,
+`created_at`); INSERT/SELECT only. "What is true now" lives in the first two tables;
+"how we got here" lives here — reconstruct why Miranda stopped, what she asked and
+when, what evidence she had, whether she followed up, what came back, which package
+resumed it, and why (if) it escalated. Same append-only spirit as
+`nomination_events_audit` (mig 048).
+
+## Final pre-apply schema review (the four checks)
+1. **Identity abstraction:** no canonical agent/actor table exists (personas are
+   code keys in `lib/team/roster.js`; `persona_voices.face` is only a voice key).
+   Human identity is `user_profiles(id)` (UUID PK). So ownership is TYPED, not one
+   polymorphic text field: `owner_type` (AI|HUMAN) + `owner_agent_key` TEXT (AI) +
+   `owner_user_id` UUID FK→user_profiles (HUMAN), with a CHECK enforcing the
+   combination — a typo can't become a valid owner, and the human side has real
+   referential integrity. No global identity framework invented. Same split on the
+   event log (`actor_agent_key` / `actor_user_id`).
+2. **Delete semantics:** the audit chain uses `ON DELETE RESTRICT` on the
+   `acc_decisions` / `acc_clarifications` parents (accidental parent deletion can't
+   silently erase the trail). Soft references (community, outbound draft, work item,
+   owner/actor user) are `ON DELETE SET NULL` so ordinary deletions aren't blocked;
+   the CHECK tolerates a nulled `owner_user_id` for a departed HUMAN owner.
+3. **Deployed-schema check:** all five FK targets exist and are reachable in the
+   live DB; all target ids are UUID (matches these FKs); the three new tables do
+   not yet exist (no collision). `trusted_set_updated_at` and `gen_random_uuid` are
+   in use by applied migration 432.
+4. **Atomicity/rollback:** wrapped in BEGIN/COMMIT — a partial failure rolls the
+   whole migration back (never a half-installed model). All CREATEs use
+   `IF NOT EXISTS`, indexes `IF NOT EXISTS`, trigger `DROP IF EXISTS`+CREATE, grants
+   idempotent → safe to re-run.
 
 ## Idempotency & concurrency (exactly-once resume)
 

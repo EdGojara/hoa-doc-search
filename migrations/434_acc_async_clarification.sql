@@ -38,7 +38,10 @@ BEGIN;
 --    the grant level (INSERT/SELECT only), like finalized_record_archive.
 CREATE TABLE IF NOT EXISTS acc_evidence_packages (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  acc_decision_id    UUID NOT NULL REFERENCES acc_decisions(id) ON DELETE CASCADE,
+  -- RESTRICT (not CASCADE): this is an autonomy audit trail. Accidental deletion
+  -- of the parent case must not silently destroy the evidence that explains what
+  -- the autonomous system did. Intentional retention/deletion is handled separately.
+  acc_decision_id    UUID NOT NULL REFERENCES acc_decisions(id) ON DELETE RESTRICT,
   version            INT  NOT NULL,                 -- 1,2,3... (bumps on clarification)
   content_hash       TEXT NOT NULL,                 -- integrity: both models saw this
   readiness          TEXT NOT NULL
@@ -57,8 +60,8 @@ CREATE INDEX IF NOT EXISTS idx_acc_evpkg_hash     ON acc_evidence_packages (cont
 -- 2) The clarification lifecycle ---------------------------------------------
 CREATE TABLE IF NOT EXISTS acc_clarifications (
   id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  acc_decision_id      UUID NOT NULL REFERENCES acc_decisions(id) ON DELETE CASCADE,
-  community_id         UUID NULL REFERENCES communities(id),
+  acc_decision_id      UUID NOT NULL REFERENCES acc_decisions(id) ON DELETE RESTRICT, -- audit trail: don't cascade-erase
+  community_id         UUID NULL REFERENCES communities(id) ON DELETE SET NULL,
   raised_from_version  INT  NOT NULL,               -- evidence-package version that raised it
   conflict_id          TEXT NOT NULL,               -- from the conflict object
   topic                TEXT NULL,
@@ -70,10 +73,21 @@ CREATE TABLE IF NOT EXISTS acc_clarifications (
   round                INT  NOT NULL DEFAULT 1,      -- re-ask counter (still-conflicting)
 
   -- FIRST-CLASS OWNERSHIP. AI owns through waiting/reminders/clarification; HUMAN
-  -- owns only at a genuine exception. owner_ref: persona (e.g. 'miranda') when AI,
-  -- user_profiles.id or label when HUMAN (kept generalizable beyond ACC).
+  -- owns only at a genuine exception. Identity is TYPED, not one polymorphic text
+  -- field: the HUMAN side gets real referential integrity (FK to user_profiles);
+  -- the AI side is a persona key from lib/team/roster.js (there is no canonical
+  -- agent table to FK to, and we are NOT inventing a global identity framework for
+  -- this). A CHECK enforces the right combination so a typo can't become a valid
+  -- owner. owner_user_id is ON DELETE SET NULL (a departed staffer must not block
+  -- auth deletion) and the CHECK tolerates that null for HUMAN; the row + event log
+  -- preserve who owned it.
   owner_type           TEXT NOT NULL DEFAULT 'AI' CHECK (owner_type IN ('AI','HUMAN')),
-  owner_ref            TEXT NULL,
+  owner_agent_key      TEXT NULL,                  -- AI persona key, e.g. 'miranda'
+  owner_user_id        UUID NULL REFERENCES user_profiles(id) ON DELETE SET NULL,
+  CONSTRAINT acc_clar_owner_ck CHECK (
+    (owner_type = 'AI'    AND owner_agent_key IS NOT NULL AND owner_user_id IS NULL)
+    OR (owner_type = 'HUMAN' AND owner_agent_key IS NULL)
+  ),
 
   -- outbound (the ask)
   outbound_draft_id    UUID NULL REFERENCES outbound_email_drafts(id) ON DELETE SET NULL,
@@ -124,14 +138,17 @@ CREATE TRIGGER trg_acc_clar_updated_at
 --    resumed it, and why (if) it escalated. Append-only (INSERT/SELECT only).
 CREATE TABLE IF NOT EXISTS acc_clarification_events (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  clarification_id UUID NOT NULL REFERENCES acc_clarifications(id) ON DELETE CASCADE,
-  acc_decision_id  UUID NOT NULL REFERENCES acc_decisions(id) ON DELETE CASCADE,
+  -- RESTRICT on both parents: the history is the whole point; it must not be
+  -- cascade-deleted by removing a clarification or a case.
+  clarification_id UUID NOT NULL REFERENCES acc_clarifications(id) ON DELETE RESTRICT,
+  acc_decision_id  UUID NOT NULL REFERENCES acc_decisions(id) ON DELETE RESTRICT,
   from_status      TEXT NULL,
   to_status        TEXT NULL,
   event_type       TEXT NOT NULL,                   -- CREATED|SENT|FOLLOW_UP|ANSWER_RECEIVED|
                                                     -- RESOLVED|ESCALATED|RETURNED_TO_AI|CANCELLED|NOTE
   actor_type       TEXT NOT NULL DEFAULT 'AI' CHECK (actor_type IN ('AI','HUMAN','SYSTEM')),
-  actor_ref        TEXT NULL,
+  actor_agent_key  TEXT NULL,                       -- AI persona key when actor_type='AI'
+  actor_user_id    UUID NULL REFERENCES user_profiles(id) ON DELETE SET NULL, -- human attribution
   detail           JSONB NULL,                      -- question, answer_ref, version, reason, etc.
   record_ownership TEXT NOT NULL DEFAULT 'workpaper',
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
