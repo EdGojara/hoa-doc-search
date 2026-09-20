@@ -39,6 +39,7 @@
     "test:insurance-renewal": "node tests/test_insurance_renewal.js",
     "test:tessa-request": "node tests/test_tessa_request.js",
     "test:presentation": "node tests/test_presentation_mode.js",
+    "test:presentation-parity": "node tests/test_presentation_parity.js",
     "test:tessa-identity": "node tests/test_tessa_identity.js",
     "test:requires": "node scripts/check_requires_tracked.js",
     "test:ai-router": "node lib/ai/selftest.js",

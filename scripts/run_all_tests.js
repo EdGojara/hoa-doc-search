@@ -141,6 +141,7 @@ const CHECKS = [
   'tests/test_balance_asof.js',
   'tests/test_amanda_review.js',
   'tests/test_staff_directives.js',
+  'tests/test_presentation_parity.js',
 ];
 
 const args = process.argv.slice(2);
