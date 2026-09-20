@@ -113,7 +113,7 @@ function checkAudienceSource() {
 
 // Image invariant: presentation images and video posters must preserve the
 // source aspect ratio (cover/crop, never independent width/height stretching).
-function checkImageSizing() {
+async function checkImageSizing() {
   const failures = [];
   const P = require('path');
   const html = fs.readFileSync(P.join(__dirname, '..', 'public', 'present.html'), 'utf8');
@@ -121,11 +121,23 @@ function checkImageSizing() {
   // object-fit). Posters must render as <img class="vposter"> with cover.
   if (/<video\b[^>]*\bposter\s*=/.test(html)) failures.push('present.html uses <video poster=> — the poster stretches; render it as <img class="vposter"> object-fit:cover');
   if (!/\.vposter[^{]*\{[^}]*object-fit:\s*cover/.test(html)) failures.push('present.html .vposter must use object-fit:cover');
-  // PowerPoint: every addImage must declare sizing cover/contain, never plain w/h.
-  const pptx = fs.readFileSync(P.join(__dirname, '..', 'lib', 'presentations', 'pptx_render.js'), 'utf8');
-  for (const l of pptx.split('\n').filter((x) => /\.addImage\(/.test(x))) {
-    if (!/sizing:\s*\{\s*type:\s*'(cover|contain)'/.test(l)) failures.push('pptx_render addImage without sizing cover/contain (would stretch): ' + l.trim().slice(0, 80));
+  // PowerPoint FUNCTIONAL check: pptxgenjs only crops when given the image's real
+  // intrinsic size (it defaults to the box -> zero crop -> stretch). Render the
+  // CLMA deck (a square 640x640 poster in a wide 16:9 box) and assert the poster
+  // picture carries a REAL crop (non-zero srcRect), proving it is not stretched.
+  const { screens } = await resolveStory('clma', { supabase });
+  const { pres } = renderPptx(screens);
+  const buf = await pres.write({ outputType: 'nodebuffer' });
+  const zip = await JSZip.loadAsync(buf);
+  let cropped = false;
+  for (const n of Object.keys(zip.files).filter((x) => /ppt\/slides\/slide\d+\.xml$/.test(x))) {
+    const xml = await zip.file(n).async('string');
+    for (const pic of xml.match(/<p:pic>[\s\S]*?<\/p:pic>/g) || []) {
+      const sr = pic.match(/<a:srcRect ([^/]*)\/>/);
+      if (sr) { const nums = (sr[1].match(/-?\d+/g) || []).map(Number); if (nums.some((v) => Math.abs(v) > 1000)) cropped = true; }
+    }
   }
+  if (!cropped) failures.push('pptx: the square poster was NOT cropped (cover is stretching — intrinsic dimensions not applied)');
   return failures;
 }
 
@@ -136,7 +148,7 @@ function checkImageSizing() {
   console.log(`audience-src   ${audFails.length ? 'FAIL' : 'ok'}`);
   audFails.forEach((f) => console.log('   - ' + f));
 
-  const imgFails = checkImageSizing();
+  const imgFails = await checkImageSizing();
   total += imgFails.length;
   console.log(`image-sizing   ${imgFails.length ? 'FAIL' : 'ok'}`);
   imgFails.forEach((f) => console.log('   - ' + f));
