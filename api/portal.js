@@ -1190,15 +1190,15 @@ router.get('/me', async (req, res) => {
       try {
         const { data: cRow } = await supabase
           .from('communities')
-          .select('id, name, slug, hoa_legal_name, portal_active, portal_module_config, portal_welcome_message')
+          .select('id, name, slug, hoa_legal_name, portal_active, portal_module_config, portal_welcome_message, is_demo, management_company_id')
           .eq('id', focusProp.community_id)
           .maybeSingle();
         if (cRow) focusComm = { ...focusComm, ...cRow };
       } catch (_) {}
 
-      // is_demo check (matches owner-path logic)
-      const RENTER_DEMO_IDS = new Set(['dc100000-0000-4000-a000-000000000000']);
-      const renterIsDemo = RENTER_DEMO_IDS.has(String(focusComm.id));
+      // is_demo derives from the community row (no hardcoded UUID; the demo tenant
+      // also counts). Matches the owner-path logic; authorization is unchanged.
+      const renterIsDemo = focusComm.is_demo === true || focusComm.management_company_id === DEMO_MGMT_CO_ID;
       focusComm.is_demo = renterIsDemo;
       if (renterIsDemo) focusComm.portal_active = true;
 
