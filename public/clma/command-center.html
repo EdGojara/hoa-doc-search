@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Command Center</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+  :root{ --navy:#0B1D34; --navy2:#14294A; --gold:#B8892B; --gold-br:#D4AF37; --ink:#1c2635; --muted:#5a6b83; --line:#dce3ec; --paper:#eef1f5; --surface:#fff;
+    --good:#166b46; --good-bg:#e7f4ec; --warn:#8a5a12; --warn-bg:#fbf0dd; --crit:#a3261f; --crit-bg:#fbe9e7; --info:#274b8a; --info-bg:#eef4ff;
+    --sans:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --serif:"Fraunces",Georgia,serif; }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--gold:#e0b352;--good:#7fd6a6;--good-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f;--crit:#f0a79f;--crit-bg:#3a1512;--info:#9fc0ff;--info-bg:#16233c; }}
+  :root[data-theme="dark"]{ --navy:#dbe7fb;--ink:#e7ecf4;--muted:#9fb0c9;--line:#26374f;--paper:#0a1626;--surface:#0f2137;--gold:#e0b352;--good:#7fd6a6;--good-bg:#123526;--warn:#e6bd77;--warn-bg:#33260f;--crit:#f0a79f;--crit-bg:#3a1512;--info:#9fc0ff;--info-bg:#16233c; }
+  *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.5}
+  .wrap{max-width:1200px;margin:0 auto;padding:22px 18px 80px}
+  .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  .mark{width:32px;height:32px;border-radius:8px;background:var(--gold-br);color:#0B1D34;font-family:var(--serif);font-weight:600;font-size:19px;display:flex;align-items:center;justify-content:center}
+  .brand b{font-family:var(--serif);font-weight:600;font-size:17px;color:var(--navy)} .brand small{display:block;color:var(--muted);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+  .tag{margin-left:auto;background:var(--good-bg);color:var(--good);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px}
+  h1{font-family:var(--serif);font-weight:600;font-size:26px;color:var(--navy);margin:8px 0 2px}
+  .sub{color:var(--muted);font-size:13.5px;margin:0 0 16px}
+  .model{background:var(--navy);color:#fff;border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;gap:14px;align-items:flex-start}
+  .model .rl{background:var(--gold-br);color:#0B1D34;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:5px 10px;border-radius:20px;white-space:nowrap}
+  .model p{margin:0;font-size:13.5px;color:#e7ecf4} .model b{color:#fff}
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 2px 10px rgba(11,29,52,.05)}
+  .kpi .n{font-family:var(--serif);font-size:23px;color:var(--navy);font-variant-numeric:tabular-nums;line-height:1.1}
+  .kpi .l{color:var(--muted);font-size:11px;letter-spacing:.04em;text-transform:uppercase;margin-top:3px}
+  .kpi.alert .n{color:var(--crit)}
+  h2{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:24px 0 10px;border-bottom:1px solid var(--line);padding-bottom:7px}
+  .pipe{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px;font-size:11px;color:var(--muted)}
+  .pipe .st{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:3px 10px}
+  .dotc{width:8px;height:8px;border-radius:50%}
+  .tblwrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 2px 10px rgba(11,29,52,.05)}
+  table{border-collapse:collapse;width:100%;min-width:1040px;font-size:12.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{background:var(--navy);color:#fff;font-size:11.5px;position:sticky;top:0;white-space:nowrap}
+  td.v{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  th.v{text-align:right}
+  .proj b{color:var(--ink)} .proj small{display:block;color:var(--muted);font-size:11px}
+  .pill{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:20px;white-space:nowrap}
+  .s-neutral{background:var(--info-bg);color:var(--info)} .s-warn{background:var(--warn-bg);color:var(--warn)} .s-info{background:var(--info-bg);color:var(--info)} .s-good{background:var(--good-bg);color:var(--good)}
+  .stall{color:var(--crit);font-weight:700} .under{color:var(--good);font-weight:600} .over{color:var(--crit);font-weight:600}
+  .owner{font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+  .na{font-size:12px} .na small{display:block;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+  tfoot td{background:var(--paper);font-weight:800;color:var(--navy);border-top:2px solid var(--line)}
+  .hint{color:var(--muted);font-size:11.5px;margin-top:16px;text-align:center}
+  @media (max-width:760px){ .kpis{grid-template-columns:repeat(2,1fr)} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="mark">B</div>
+    <div class="brand"><b>trustEd</b><small>Bedrock Association Management</small></div>
+    <div class="tag">Capability demo &middot; example projects</div>
+  </div>
+  <h1>Project Command Center</h1>
+  <p class="sub">Cinco Landscape Maintenance Association &middot; every project, its money, and its status, on one screen</p>
+
+  <div class="model">
+    <span class="rl">Human + AI</span>
+    <p>This does not replace the project manager. It gives the project manager, the Bedrock team, and the board <b>the same view of the work</b>. The person in the field verifies the physical work and makes the technical calls. trustEd holds the scope, the contract, the budget, the invoices, the history, the deadlines, the approvals, the status, and the next action.</p>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="n">7</div><div class="l">Active projects</div></div>
+    <div class="kpi"><div class="n">$72.0k</div><div class="l">Committed</div></div>
+    <div class="kpi"><div class="n">$35.1k</div><div class="l">Spent to date</div></div>
+    <div class="kpi"><div class="n">$98.9k</div><div class="l">Projected final</div></div>
+    <div class="kpi alert"><div class="n">3</div><div class="l">Awaiting action</div></div>
+  </div>
+
+  <div class="pipe">
+    <span class="st"><span class="dotc" style="background:var(--info)"></span>Requested</span>
+    <span class="st"><span class="dotc" style="background:var(--info)"></span>Bidding</span>
+    <span class="st"><span class="dotc" style="background:var(--warn)"></span>Board deciding</span>
+    <span class="st"><span class="dotc" style="background:var(--info)"></span>Approved / scheduled</span>
+    <span class="st"><span class="dotc" style="background:var(--info)"></span>In progress</span>
+    <span class="st"><span class="dotc" style="background:var(--warn)"></span>Awaiting inspection</span>
+    <span class="st"><span class="dotc" style="background:var(--good)"></span>Complete</span>
+  </div>
+
+  <div class="tblwrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Project</th><th>Area</th><th>Stage</th><th>Vendor</th><th>Next action</th>
+        <th class="v">Budget</th><th class="v">Committed</th><th class="v">Spent</th><th class="v">Projected final</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="proj"><b>Monument re-landscape</b><small>Cinco Ranch Blvd entry &middot; landscaping</small></td>
+        <td>North gateway</td>
+        <td><span class="pill s-info">In progress</span></td>
+        <td>Earthcare</td>
+        <td class="na">Mid-project inspection<small class="owner">Field</small></td>
+        <td class="v">$48,000</td><td class="v">$46,500</td><td class="v">$22,000</td><td class="v"><span class="under">$47,000</span></td>
+      </tr>
+      <tr>
+        <td class="proj"><b>Irrigation controller replacement</b><small>Zone 7 esplanade &middot; irrigation</small></td>
+        <td>South esplanade</td>
+        <td><span class="pill s-warn">Board deciding</span> <span class="stall">&middot; 34 days</span></td>
+        <td>2 bids in</td>
+        <td class="na">Board approval to award<small class="owner">Board</small></td>
+        <td class="v">$12,000</td><td class="v">&mdash;</td><td class="v">&mdash;</td><td class="v">$11,800</td>
+      </tr>
+      <tr>
+        <td class="proj"><b>Live oak replacement (storm loss)</b><small>Fry Rd median &middot; trees</small></td>
+        <td>West median</td>
+        <td><span class="pill s-info">Bid received</span></td>
+        <td>3 bids</td>
+        <td class="na">Recommend finalist to board<small class="owner">Manager</small></td>
+        <td class="v">$9,000</td><td class="v">&mdash;</td><td class="v">&mdash;</td><td class="v">$8,600</td>
+      </tr>
+      <tr>
+        <td class="proj"><b>Monument lighting repair</b><small>Cinco Ranch Blvd entry &middot; electrical</small></td>
+        <td>North gateway</td>
+        <td><span class="pill s-info">Scheduled</span></td>
+        <td>Lone Star Electric</td>
+        <td class="na">Crew scheduled Sep 24<small class="owner">Field</small></td>
+        <td class="v">$3,500</td><td class="v">$3,200</td><td class="v">&mdash;</td><td class="v">$3,200</td>
+      </tr>
+      <tr>
+        <td class="proj"><b>Fall color rotation</b><small>All entries &middot; seasonal color</small></td>
+        <td>Portfolio-wide</td>
+        <td><span class="pill s-info">In progress</span></td>
+        <td>Earthcare</td>
+        <td class="na">Second planting week of Sep 29<small class="owner">Field</small></td>
+        <td class="v">$18,000</td><td class="v">$18,000</td><td class="v">$9,000</td><td class="v"><span class="under">$18,000</span></td>
+      </tr>
+      <tr>
+        <td class="proj"><b>Detention pond fountain pump</b><small>Detention area &middot; water feature</small></td>
+        <td>East basin</td>
+        <td><span class="pill s-warn">Awaiting inspection</span></td>
+        <td>AquaWorks</td>
+        <td class="na">Field verify before final payment<small class="owner">Field</small></td>
+        <td class="v">$4,500</td><td class="v">$4,300</td><td class="v">$4,100</td><td class="v"><span class="under">$4,300</span></td>
+      </tr>
+      <tr>
+        <td class="proj"><b>Perimeter fence staining</b><small>Back esplanade &middot; maintenance</small></td>
+        <td>South esplanade</td>
+        <td><span class="pill s-neutral">Requested</span> <span class="stall">&middot; 21 days</span></td>
+        <td>Not yet bid</td>
+        <td class="na">Request bids<small class="owner">Manager</small></td>
+        <td class="v">$6,000</td><td class="v">&mdash;</td><td class="v">&mdash;</td><td class="v">$6,000</td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="5">7 active projects</td>
+        <td class="v">$101,000</td><td class="v">$72,000</td><td class="v">$35,100</td><td class="v">$98,900</td>
+      </tr>
+    </tfoot>
+  </table>
+  </div>
+
+  <h2>What the board can answer in one glance</h2>
+  <div class="pipe" style="font-size:12.5px;color:var(--ink)">
+    <span class="st"><b>What is happening?</b>&nbsp; 7 active, 2 in progress, 3 awaiting a decision or bid</span>
+    <span class="st"><b>What is stalled?</b>&nbsp; irrigation award (34 days), fence staining (21 days)</span>
+    <span class="st"><b>What is it costing?</b>&nbsp; $72.0k committed, $35.1k spent, $98.9k projected, tracking under budget</span>
+  </div>
+
+  <p class="hint">Example data for demonstration. In production, actual cost reads live from approved invoices and every figure links to its source document.</p>
+</div>
+</body>
+</html>
