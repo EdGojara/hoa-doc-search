@@ -7095,98 +7095,17 @@ app.get('/api/presentations/templates', (req, res) => {
 // placeholder, never a broken embed. (Ed 2026-08-24.)
 app.get('/api/presentations/story', async (req, res) => {
   try {
-    const story = require('./lib/presentations/story');
+    // Shared resolver — the ONE path that turns a presentation definition into a
+    // resolved deck, used by both the browser (here) and the PowerPoint export
+    // (/generate), so the two outputs can never diverge. Variables can arrive as
+    // ?vars=<json> (optional; most decks use none).
+    const { resolveStory } = require('./lib/presentations/resolve');
     const audience = String(req.query.audience || 'general');
     const language = String(req.query.language) === 'es' ? 'es' : 'en';
-    const screens = story.getStory(audience);
-
-    // Resolve every referenced topic once, then attach urls to the video screens.
-    // Includes both single-video screens (video_topic) and the team screen's
-    // sequence (video_segments[].topic).
-    // A per_audience screen (the personalized welcome) resolves ONLY to this
-    // audience's own clip, stored under topic 'welcome:<audience>'. No fallback to
-    // a bare 'welcome', so one guest's by-name welcome can never play for another
-    // audience. (Ed 2026-09-11.) A generic shared welcome, if we add one later,
-    // would just be a non-per_audience screen.
-    const topicFor = (s) => (s.per_audience ? `${s.video_topic}:${audience}` : s.video_topic);
-    const topics = [...new Set([
-      ...screens.filter((s) => s.video_topic).map(topicFor),
-      ...screens.flatMap((s) => (s.video_segments || []).map((seg) => seg.topic)),
-    ])];
-    const urls = {};
-    if (topics.length) {
-      const { data, error } = await supabase.from('claire_explainers')
-        .select('topic, language, title, video_url, duration_seconds')
-        .in('topic', topics)
-        .eq('status', 'ready')
-        .is('community_id', null)
-        .not('video_url', 'is', null);
-      if (error) throw error;
-      // Prefer the requested language; fall back to English so a screen still
-      // plays rather than going blank when only an EN cut exists.
-      for (const row of data || []) {
-        const cur = urls[row.topic];
-        if (!cur || (cur.language !== language && row.language === language)) {
-          urls[row.topic] = row;
-        }
-      }
-    }
-
-    // The "Meet the team" screen draws its members from the roster (the single
-    // source for who works here), so the deck can't drift from the team.
-    let teamMembers = null;
-    if (screens.some((s) => s.type === 'team')) {
-      try {
-        const roster = require('./lib/team/roster');
-        // Everyone real. The catch-all ('general') is never a person. Tessa is
-        // owner_only for ACCESS gating (her tools are Ed's), but Ed wants her on
-        // the team screen because she corresponds on his behalf — so she shows
-        // here while her owner_only flag stays intact everywhere else. (Ed 2026-08-24.)
-        teamMembers = roster.people()
-          .filter((m) => !m.not_a_person)
-          .map((m) => ({
-            persona: m.persona,
-            name: m.name,
-            // demo_title is a presentation-only override (e.g. Paige's outward
-            // "Client Success" role) that must NOT change her email signature.
-            role: m.demo_title || m.signature_title || m.title || '',
-            img: `/assets/presentations/team/${m.persona}.jpg`,
-          }));
-      } catch (e) { console.warn('[presentations] roster load failed:', e.message); }
-    }
-
-    let rosterMod = null;
-    try { rosterMod = require('./lib/team/roster'); } catch (_) {}
-    const resolved = screens.map((s) => {
-      if (s.type === 'team') {
-        // Resolve the team-video sequence to permanent urls + eyes-open posters.
-        const segments = (s.video_segments || []).map((seg) => {
-          const v = urls[seg.topic] || null;
-          const m = rosterMod && rosterMod.get ? rosterMod.get(seg.persona) : null;
-          return {
-            topic: seg.topic,
-            persona: seg.persona,
-            name: m ? m.name : seg.persona,
-            role: m ? (m.signature_title || m.title || '') : '',
-            video_url: v ? v.video_url : null,
-            poster: `/assets/presentations/team/${seg.persona}.jpg`,
-            ready: !!v,
-          };
-        }).filter((seg) => seg.ready);
-        return { ...s, members: teamMembers || [], video_segments: segments };
-      }
-      if (!s.video_topic) return s;
-      const v = urls[topicFor(s)] || null;
-      return {
-        ...s,
-        video_url: v ? v.video_url : null,
-        video_title: v ? v.title : null,
-        video_ready: !!v,
-        video_duration_seconds: v ? v.duration_seconds : null,
-      };
-    });
-
-    res.json({ audience, language, screens: resolved, audiences: story.AUDIENCES });
+    let variables = {};
+    if (req.query.vars) { try { variables = JSON.parse(req.query.vars); } catch (_) { variables = {}; } }
+    const result = await resolveStory(audience, { language, variables, supabase });
+    res.json(result);
   } catch (err) {
     console.error('[presentations] story failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
