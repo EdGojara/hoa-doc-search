@@ -40,8 +40,9 @@ const LIMIT = process.argv.includes('--limit') ? parseInt(process.argv[process.a
   for (const app of todo) {
     const ev = await gatherEvidence(app, { supabase, getRelevantChunks, anthropic });
     const rec = await evaluateApplication({
+      evidencePackage: ev.package, // frozen, hashed package; gate runs BEFORE reasoning
       applicationAndGuidelines: ev.bundle_text,
-      retrieval_complete: ev.manifest.some((m) => m.source === 'governing_docs' && m.ok),
+      retrieval_complete: ev.manifest.some((m) => m.source === 'governing_docs' && m.state === 'PRESENT_READABLE'),
       input_complete: ev.input_complete,
       input_evidence_manifest: ev.manifest,
       community_id: app.community_id, community_name: app.community_name,
