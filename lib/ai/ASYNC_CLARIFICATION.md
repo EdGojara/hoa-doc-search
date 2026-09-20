@@ -230,6 +230,26 @@ double-fire fails the unique and rolls back rather than forking the package.
 10. **Auditable chain:** append-only package versions + clarification events + the sealed finalized letter give a full, replayable trail: which version raised which conflict, what was asked, when, what came back, which version resumed it, and why (if) it escalated.
 11. **Safe under retries/webhooks/concurrency:** the status CAS is the single serialization point; inbound + answer uniqueness prevent double-processing; version uniqueness prevents a forked package. Nothing executes twice.
 
+## Runtime invariants (for the wiring phase — NOT enforced by the migration)
+
+These are proven by runtime tests when we wire the shadow runtime, not contorted
+into the schema:
+- **INV-OWNERSHIP (GPT):** an ACTIVE clarification (`status` in PENDING /
+  AWAITING_RESPONSE / RETURNED_TO_AI) with `owner_type='HUMAN'` MUST have a valid
+  `owner_user_id`. Active work must never become ownerless. The DB deliberately
+  *tolerates* a nulled `owner_user_id` on a HUMAN row for RETENTION (a terminal
+  RESOLVED/ESCALATED/CANCELLED record keeps its human attribution even after the
+  user is deleted) — that historical case is distinct from an active case with no
+  owner, which the runtime must never allow.
+- **INV-HANDBACK:** automation never flips `owner_type` HUMAN→AI except through the
+  explicit `RETURNED_TO_AI` transition. No inbound email or timer may reclaim
+  human-owned work.
+- **INV-EXACTLY-ONCE:** a given answer resumes a clarification once (status
+  compare-and-swap + `UNIQUE(answer_email_ref)` + `UNIQUE(acc_decision_id, version)`).
+- **INV-SHADOW:** the record-only runtime writes these tables but performs NO
+  external action (no email, no homeowner contact, no ACC status change, no
+  approve/deny), gated by `AUTO_OUTBOUND_EMAIL` + `autonomy_state='shadow'`.
+
 ## Scope boundaries (unchanged)
 No migration written, no endpoint/runtime change, no model/reasoning/verifier/
 autonomy/ASSIST change. Sending stays behind the existing `AUTO_OUTBOUND_EMAIL`
