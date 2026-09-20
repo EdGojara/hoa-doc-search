@@ -1,14 +1,23 @@
 # ACC Async Clarification / Resume — DESIGN PROPOSAL (design only)
 
-Status: **design only. No migration, no runtime change.** Ed/ChatGPT 2026-09-19.
-Answers "what happens when Miranda can't finish something immediately?" — the
-step from a trustworthy single decision to a trustworthy piece of work that spans
-hours or days. Bring-back-before-build. No model / ACC reasoning / verifier /
-autonomy / ASSIST change is part of this.
+Status: **design + proposed migration (`migrations/434_acc_async_clarification.sql`)
+— NOT applied; Ed applies migrations manually. No runtime change.** Ed/ChatGPT
+2026-09-19, refined after review. Answers "what happens when Miranda can't finish
+something immediately?" — the step from a trustworthy single decision to a
+trustworthy piece of work that spans hours or days. No model / ACC reasoning /
+verifier / autonomy / ASSIST change is part of this.
 
 Guiding principle (GPT): **a normal resolvable conflict is Miranda's work, not an
 Ed exception. Time passing must not, by itself, turn work into Ed's problem** —
 Miranda owns reasonable follow-up; only genuinely unresolvable work escalates.
+
+Ownership is FIRST-CLASS and the deepest idea here (it generalizes far beyond ACC —
+violation disputes, accounting exceptions, vendor questions, board requests,
+collections): **AI-owned work stays AI-owned through waiting, reminders, and
+ordinary clarification. Human ownership begins ONLY at a genuine exception, and
+once it transfers to a human, automation cannot silently reclaim it** — a return
+to Miranda is an EXPLICIT transition (`ESCALATED → RETURNED_TO_AI → PENDING`),
+never an inbound email quietly restarting her.
 
 ## Reuse first (what already exists — do NOT rebuild)
 
@@ -44,7 +53,23 @@ PENDING ──send──▶ AWAITING_RESPONSE ──answer resolves──▶ RES
    no response after N follow-ups  OR  re-ask budget exhausted ─▶ ESCALATED (human)
 ```
 
-Terminal: `RESOLVED`, `ESCALATED`, `CANCELLED` (case withdrawn/superseded).
+Terminal: `RESOLVED`, `CANCELLED` (case withdrawn/superseded). `ESCALATED` is
+terminal FOR MIRANDA — ownership has transferred to a human. A human may hand it
+back explicitly:
+
+```
+ESCALATED ──human decides──▶ RETURNED_TO_AI ──▶ PENDING (owner_type flips AI, new round)
+```
+
+**Ownership travels with status:** `owner_type='AI'` for PENDING / AWAITING_RESPONSE
+/ RESOLVED; it flips to `'HUMAN'` exactly at `ESCALATED`; it flips back to `'AI'`
+only through the explicit `RETURNED_TO_AI` transition. A late homeowner reply after
+`ESCALATED` is NEVER a silent resume (see below).
+
+**Late response after ESCALATED (decided):** attach the answer as new evidence on
+the case and alert/flag the human owner; do NOT auto-resume. Once Trusted has
+escalated, the human may already have acted — silently restarting Miranda would put
+two actors on the same matter. The human chooses whether to `RETURNED_TO_AI`.
 
 **Why this is smaller than the sketched states, and still complete:**
 - `WAITING_FOR_RESPONSE` = `AWAITING_RESPONSE` (SENT already implies waiting).
@@ -58,10 +83,13 @@ Terminal: `RESOLVED`, `ESCALATED`, `CANCELLED` (case withdrawn/superseded).
   answer is recorded as evidence and the conflict re-evaluated; if still open and
   budget remains, a new round; else `ESCALATED`.
 
-## Persistence schema (proposed — NOT yet written)
+## Persistence schema — written as `migrations/434_acc_async_clarification.sql` (proposed, not applied)
 
-Two new tables. Both community-scoped (via `acc_decisions`), `record_ownership`
-declared. Standard grants + `trusted_set_updated_at` + FK to `acc_decisions`.
+**Three** tables (the events log is now first-class, not optional — an autonomy
+audit needs "how we got here", not just "what is true now"). All hang off
+`acc_decisions` by FK; `record_ownership` declared; append-only tables enforce
+immutability at the GRANT level (INSERT/SELECT only). Ownership (`owner_type`
+AI|HUMAN + `owner_ref`) is on the clarification and generalizable beyond ACC.
 
 **`acc_evidence_packages`** — durable, append-only versions (`workpaper`). Never
 UPDATE a row; a new version is a new row.
@@ -111,10 +139,18 @@ UNIQUE (acc_decision_id, conflict_id, round)          -- one live ask per fact p
 UNIQUE (answer_email_ref) WHERE answer_email_ref IS NOT NULL   -- an answer resolves once
 ```
 
-(Optional but recommended for a defensible autonomy trail: append-only
-`acc_clarification_events(clarification_id, from_status, to_status, actor, detail,
-created_at)` — same shape as `nomination_events_audit` (mig 048). Cheap; makes the
-whole chain replayable.)
+The illustrative columns above are the authoritative set as written in migration
+434, plus two refinements folded in there: first-class ownership
+(`owner_type` AI|HUMAN, `owner_ref`) on `acc_clarifications`, and the
+`RETURNED_TO_AI` status for explicit hand-back.
+
+**`acc_clarification_events`** (now first-class, not optional) — append-only history
+(`clarification_id`, `acc_decision_id`, `from_status`, `to_status`, `event_type`,
+`actor_type` AI|HUMAN|SYSTEM, `actor_ref`, `detail` jsonb, `created_at`); INSERT/
+SELECT only. "What is true now" lives in the first two tables; "how we got here"
+lives here — reconstruct why Miranda stopped, what she asked and when, what evidence
+she had, whether she followed up, what came back, which package resumed it, and why
+(if) it escalated. Same append-only spirit as `nomination_events_audit` (mig 048).
 
 ## Idempotency & concurrency (exactly-once resume)
 
