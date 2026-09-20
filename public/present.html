@@ -217,13 +217,20 @@
   }
   function saveCover() { localStorage.setItem('bedrock_present_cover', JSON.stringify(COVER)); }
 
-  function preparedForBlock() {
-    if (!COVER.org && !COVER.attendees.length && !COVER.date) return '';
+  // A cover typed into the UI (COVER, in localStorage) wins; otherwise a screen
+  // can seed its own "Prepared for" via s.prepared_for so a purpose-built deck
+  // (e.g. CLMA) shows the right board by default without anyone opening setup.
+  function preparedForBlock(s) {
+    const pf = (s && s.prepared_for) || {};
+    const org = COVER.org || pf.org || '';
+    const attendees = (COVER.attendees && COVER.attendees.length) ? COVER.attendees : (pf.attendees || []);
+    const date = COVER.date || pf.date || '';
+    if (!org && !attendees.length && !date) return '';
     return `<div class="prepared">
       <div class="pf-label">Prepared for</div>
-      ${COVER.org ? `<div class="pf-org">${esc(COVER.org)}</div>` : ''}
-      ${COVER.attendees.length ? `<div class="pf-att">${COVER.attendees.map(esc).join('&nbsp;&nbsp;·&nbsp;&nbsp;')}</div>` : ''}
-      ${COVER.date ? `<div class="pf-date">${esc(COVER.date)}</div>` : ''}
+      ${org ? `<div class="pf-org">${esc(org)}</div>` : ''}
+      ${attendees.length ? `<div class="pf-att">${attendees.map(esc).join('&nbsp;&nbsp;·&nbsp;&nbsp;')}</div>` : ''}
+      ${date ? `<div class="pf-date">${esc(date)}</div>` : ''}
     </div>`;
   }
 
@@ -235,7 +242,7 @@
         <div class="kicker">${esc(s.kicker||'')}</div>
         <h1 class="cover">${esc(s.title||'')}</h1>
         <div class="tagline">${esc(s.tagline||'')}</div>
-        ${preparedForBlock()}</div>`;
+        ${preparedForBlock(s)}</div>`;
     } else if (s.type === 'closing') {
       inner = `<div style="margin:auto 0;">
         <h1 class="cover" style="font-size:88px;">${esc(s.title||'')}</h1>
