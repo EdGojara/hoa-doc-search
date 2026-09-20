@@ -143,6 +143,7 @@ const CHECKS = [
   'tests/test_staff_directives.js',
   'tests/test_presentation_parity.js',
   'tests/test_proposal_boundary.js',
+  'tests/test_community_boundary.js',
   'scripts/check_mgmt_id.js',
 ];
 

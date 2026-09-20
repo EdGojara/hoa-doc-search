@@ -431,14 +431,13 @@ async function resolveCommunityMapCenter(communityId, components, communityName)
     const { data: bData } = await supabase
       .rpc('community_boundary_geojson', { p_community_id: communityId });
     if (bData && bData.boundary) {
-      const coords = bData.boundary.coordinates?.[0] || [];
-      if (coords.length) {
-        const center = {
-          lat: coords.reduce((s, c) => s + c[1], 0) / coords.length,
-          lng: coords.reduce((s, c) => s + c[0], 0) / coords.length,
-        };
+      // Center from PostGIS (ST_PointOnSurface) via the RPC — Polygon or
+      // MultiPolygon, no GeoJSON-nesting assumptions. If absent, fall through
+      // to the amenity / component cascade below.
+      const c = bData.center;
+      if (c && Number.isFinite(c.lat) && Number.isFinite(c.lng)) {
         const boundary = { type: 'Feature', geometry: bData.boundary, properties: { name: communityName } };
-        return { center, center_source: 'boundary', boundary };
+        return { center: { lat: c.lat, lng: c.lng }, center_source: 'boundary', boundary };
       }
     }
   } catch (_) { /* boundary not critical */ }

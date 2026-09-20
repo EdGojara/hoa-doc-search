@@ -1959,15 +1959,13 @@ router.get('/map/:slug', async (req, res) => {
           geometry: bData.boundary,
           properties: { name: community.name },
         };
-        // Compute centroid from ring 0 (rough average — good enough for map centering)
-        try {
-          const coords = bData.boundary.coordinates?.[0] || [];
-          if (coords.length) {
-            const sumLng = coords.reduce((s, c) => s + c[0], 0);
-            const sumLat = coords.reduce((s, c) => s + c[1], 0);
-            center = { lat: sumLat / coords.length, lng: sumLng / coords.length };
-          }
-        } catch (_) { /* fall through */ }
+        // Map center comes from PostGIS (ST_PointOnSurface) via the RPC — works
+        // for Polygon AND MultiPolygon, no GeoJSON-nesting assumptions. Falls
+        // through to the amenity-average below if the RPC didn't supply one.
+        const c = bData.center;
+        if (c && Number.isFinite(c.lat) && Number.isFinite(c.lng)) {
+          center = { lat: c.lat, lng: c.lng };
+        }
       }
     } catch (_) { /* boundary RPC not critical */ }
 
