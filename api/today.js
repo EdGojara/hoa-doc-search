@@ -36,6 +36,12 @@ router.get('/', async (req, res) => {
     const today = new Date();
     const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
+    // The demo tenant never appears on the staff Today dashboard. The community
+    // list below already excludes it (Bedrock filter); wrap the unfiltered
+    // operational queries so demo threads/calls/imports/AR are excluded too.
+    const demoIds = await require('../lib/demo/demo_guard').demoCommunityIds();
+    const notDemo = (q) => (demoIds.length ? q.not('community_id', 'in', '(' + demoIds.join(',') + ')') : q);
+
     const [
       inboxRes,
       callsRes,
@@ -45,33 +51,33 @@ router.get('/', async (req, res) => {
     ] = await Promise.allSettled([
       // Inbox — threads needing staff attention (first response or follow-up).
       // Bounded to last 7 days so the query stays cheap even as volume grows.
-      supabase
+      notDemo(supabase
         .from('homeowner_threads')
         .select('id, community_id, property_id, subject, topic_tag, next_action_status, created_at, last_homeowner_message_at, first_response_due_at, breached_yellow_at, breached_red_at, breached_overdue_at')
         .in('next_action_status', ['awaiting_staff_first_response', 'awaiting_staff_followup'])
         .gte('created_at', sevenDaysAgo)
         .order('created_at', { ascending: false })
-        .limit(10),
+        .limit(10)),
       // Recent calls — last 10 inbound
-      supabase
+      notDemo(supabase
         .from('homeowner_calls')
         .select('call_sid, community_id, caller_phone, caller_homeowner_id, started_at, ended_at, duration_seconds, brief')
         .order('started_at', { ascending: false })
-        .limit(10),
+        .limit(10)),
       // Recent Vantaca imports — last 5 of any status
-      supabase
+      notDemo(supabase
         .from('vantaca_imports')
         .select('id, community_id, report_type, source_filename, status, as_of_date, extraction_row_count, imported_at')
         .order('imported_at', { ascending: false })
-        .limit(5),
+        .limit(5)),
       // AR freshness — committed transaction batches grouped by community.
       // We'll merge with full community list below.
-      supabase
+      notDemo(supabase
         .from('transaction_upload_batches')
         .select('community_id, as_of_date, committed_at')
         .eq('status', 'committed')
         .order('as_of_date', { ascending: false })
-        .limit(500),
+        .limit(500)),
       // Community list (cheap, all rows) so we can show "never uploaded"
       supabase
         .from('communities')

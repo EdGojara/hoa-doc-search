@@ -16,6 +16,7 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { slaDueAt, defaultRoute, resolveUrgency } = require('../lib/ops/sla');
+const { excludeDemo } = require('../lib/demo/demo_guard');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
@@ -77,7 +78,8 @@ router.get('/', async (req, res) => {
     const { status, assigned_to, community_id, source_type, overdue, limit } = req.query;
     const lim = Math.min(parseInt(limit, 10) || 300, 1000);
     let q = supabase.from('work_items').select('*, communities(name)').order('sla_due_at', { ascending: true, nullsFirst: false }).limit(lim);
-    if (community_id) q = q.eq('community_id', community_id);
+    if (community_id) q = q.eq('community_id', community_id);   // explicit community view (staff may open a demo org)
+    else q = await excludeDemo(q, 'community_id');              // default board excludes the demo tenant
     if (assigned_to) q = q.eq('assigned_to', assigned_to);
     if (source_type) q = q.eq('source_type', source_type);
     if (status === 'open') q = q.in('status', OPEN_STATUSES);
@@ -96,7 +98,9 @@ router.get('/', async (req, res) => {
 // GET /summary — board header counts
 router.get('/summary', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('work_items').select('status, assigned_to, urgency, sla_due_at').limit(5000);
+    let sq = supabase.from('work_items').select('status, assigned_to, urgency, sla_due_at, community_id').limit(5000);
+    sq = await excludeDemo(sq, 'community_id');   // portfolio counts never include the demo tenant
+    const { data, error } = await sq;
     if (error) throw error;
     const now = Date.now();
     const open = (data || []).filter((r) => OPEN_STATUSES.includes(r.status));

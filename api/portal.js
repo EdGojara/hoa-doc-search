@@ -29,7 +29,7 @@ const { sendEmail } = require('../lib/notifications/email');
 const { getLivePayload: chamberLive, submitSpeak: chamberSpeak, heartbeat: chamberHeartbeat } = require('./chamber');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
+const { BEDROCK_MGMT_CO_ID, DEMO_MGMT_CO_ID } = require('../lib/company');
 
 const COOKIE_NAME = 'TRUSTED_PORTAL';
 const COOKIE_TTL_DAYS = 30;
@@ -497,25 +497,24 @@ router.post('/demo-sign-in', express.json({ limit: '1kb' }), async (req, res) =>
       return res.status(403).json({ error: 'persona_no_scope' });
     }
 
-    const KNOWN_DEMO_COMMUNITY_IDS = new Set([
-      'dc100000-0000-4000-a000-000000000000', // Drama Creek Estates
-    ]);
-    // For each reachable community, check hardcoded allowlist first; if
-    // not present, fall back to a direct is_demo lookup. If ANY community
-    // resolves to non-demo (or unverifiable), refuse.
+    // For each reachable community, verify it is a demo organization by a DIRECT,
+    // fail-closed lookup (is_demo=true OR the dedicated demo tenant). No hardcoded
+    // UUID list, and deliberately not the cached predicate: a security gate must
+    // read live state, never a possibly-stale cache. If ANY community resolves to
+    // non-demo (or is unverifiable), refuse. This preserves the exact prior
+    // strictness while generalizing to every demo organization.
     for (const cid of reachableCommunityIds) {
-      if (KNOWN_DEMO_COMMUNITY_IDS.has(String(cid))) continue;
       try {
         const { data: row } = await supabase
           .from('communities')
-          .select('is_demo')
+          .select('is_demo, management_company_id')
           .eq('id', cid)
           .maybeSingle();
-        if (row?.is_demo === true) continue;
+        if (row && (row.is_demo === true || row.management_company_id === DEMO_MGMT_CO_ID)) continue;
       } catch (e) {
         /* fall through to refusal */
       }
-      console.warn(`[portal demo-sign-in] REFUSED — persona "${personaRaw}" reaches community ${cid} that is not on demo allowlist`);
+      console.warn(`[portal demo-sign-in] REFUSED — persona "${personaRaw}" reaches non-demo community ${cid}`);
       return res.status(403).json({ error: 'persona_not_demo_scoped' });
     }
 
@@ -1538,24 +1537,20 @@ router.get('/me', async (req, res) => {
     // below doesn't mutate the shared map used by other props above.
     community = { ...community };
 
-    // Resolve is_demo via a SEPARATE single-column query. Hardcoded
-    // allowlist as fallback so demo works even if PostgREST hasn't learned
-    // about communities.is_demo yet.
-    const KNOWN_DEMO_COMMUNITY_IDS = new Set([
-      'dc100000-0000-4000-a000-000000000000', // Drama Creek Estates
-    ]);
-    let isDemoCommunity = KNOWN_DEMO_COMMUNITY_IDS.has(String(community.id));
-    if (!isDemoCommunity) {
-      try {
-        const { data: demoLookup } = await supabase
-          .from('communities')
-          .select('is_demo')
-          .eq('id', community.id)
-          .maybeSingle();
-        if (demoLookup?.is_demo === true) isDemoCommunity = true;
-      } catch (e) {
-        console.warn(`[portal] is_demo lookup failed (likely schema cache): ${e.message}`);
-      }
+    // Resolve is_demo via a SEPARATE single-column query (no hardcoded UUID; the
+    // dedicated demo tenant also counts). Fail-safe: on a lookup error is_demo
+    // stays false, so the portal_active bypass below only ever helps a confirmed
+    // demo community. Authorization behavior is unchanged.
+    let isDemoCommunity = false;
+    try {
+      const { data: demoLookup } = await supabase
+        .from('communities')
+        .select('is_demo, management_company_id')
+        .eq('id', community.id)
+        .maybeSingle();
+      if (demoLookup && (demoLookup.is_demo === true || demoLookup.management_company_id === DEMO_MGMT_CO_ID)) isDemoCommunity = true;
+    } catch (e) {
+      console.warn(`[portal] is_demo lookup failed: ${e.message}`);
     }
     community.is_demo = isDemoCommunity;
 

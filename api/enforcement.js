@@ -4203,6 +4203,7 @@ async function _extractDocRefForCategory(communityId, categoryId, options = {}) 
     mgmt_co_id:      comm.management_company_id,
     match_count:     6,
     source_filter:   ['governing_document'],
+    community_filter: comm.id,   // scope to THIS community (was cross-community; also keeps demo/prod isolated)
   });
   if (matchErr) return { ok: false, reason: 'search failed: ' + matchErr.message };
   if (!chunks || chunks.length === 0) {
@@ -6134,7 +6135,8 @@ async function _findExpiredViolations(communityId = null, limit = 200) {
     .in('quality_status', ['verified', 'unreviewed'])  // skip disputed/flagged/superseded
     .order('cure_period_ends_at', { ascending: true })
     .limit(limit);
-  if (communityId) q = q.eq('community_id', communityId);
+  if (communityId) q = q.eq('community_id', communityId);   // explicit (manual) run may target a demo org
+  else q = await require('../lib/demo/demo_guard').excludeDemo(q, 'community_id'); // scheduled sweep never escalates demo
   const { data, error } = await q;
   if (error) throw error;
   return data || [];

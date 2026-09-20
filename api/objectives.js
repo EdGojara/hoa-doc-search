@@ -21,7 +21,8 @@ function _missing(err) { const m = `${err && err.message || ''} ${err && err.cod
 router.get('/', async (req, res) => {
   try {
     let q = supabase.from('objectives').select('*').in('status', O.OPEN_STATUSES).order('last_activity_at', { ascending: true }).limit(500);
-    if (req.query.communityId) q = q.eq('community_id', req.query.communityId);
+    if (req.query.communityId) q = q.eq('community_id', req.query.communityId);   // explicit community view
+    else q = await require('../lib/demo/demo_guard').excludeDemo(q, 'community_id'); // default excludes demo tenant
     const { data, error } = await q;
     if (error) { if (_missing(error)) return res.json({ ok: true, notReady: true, objectives: [] }); throw error; }
     const now = Date.now();

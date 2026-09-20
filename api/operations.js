@@ -84,6 +84,7 @@ router.get('/', async (req, res) => {
     const view = req.query.view || 'open';
     let query = supabase.from('vendor_projects').select(SELECT).order('stage_since', { ascending: true }).limit(1000);
     if (community_id) query = query.eq('community_id', community_id);
+    else query = await require('../lib/demo/demo_guard').excludeDemo(query, 'community_id'); // default excludes demo tenant
     if (stage) query = query.in('stage', String(stage).split(','));
     if (category) query = query.eq('category', category);
     if (q) query = query.or(`title.ilike.%${q}%,vendor_name.ilike.%${q}%,asset.ilike.%${q}%`);
@@ -121,6 +122,7 @@ router.get('/summary', async (req, res) => {
     const { community_id } = req.query;
     let query = supabase.from('vendor_projects').select('stage, stage_since, next_action, estimated_cost_cents, approved_cost_cents').limit(2000);
     if (community_id) query = query.eq('community_id', community_id);
+    else query = await require('../lib/demo/demo_guard').excludeDemo(query, 'community_id'); // portfolio counts exclude demo
     const { data, error } = await query;
     if (error) throw error;
     const byStage = {}; let attention = 0, open = 0, stalledCt = 0, pipelineCents = 0;
