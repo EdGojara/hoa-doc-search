@@ -95,15 +95,6 @@ async function checkAudience(aud) {
   return failures;
 }
 
-function checkVariables() {
-  const failures = [];
-  if (contract.interpolate('{{a}}/{{b}}', { a: 1, b: 'x' }) !== '1/x') failures.push('interpolate: basic substitution failed');
-  if (contract.interpolate('{{missing}}', {}) !== '{{missing}}') failures.push('interpolate: unknown token should stay visible');
-  const screen = contract.applyVars({ id: 't', type: 'statement', headline: 'Price {{price}} for {{community}}' }, { price: 18, community: 'Waterview' });
-  if (screen.headline !== 'Price 18 for Waterview') failures.push('applyVars: deep string interpolation failed');
-  return failures;
-}
-
 // The audience list must have ONE source (story.AUDIENCE_META); the UI and
 // routing derive from it; unknown audiences fail visibly. This is the test that
 // would have caught the CLMA routing omission (a hardcoded UI list missing 'clma').
@@ -122,11 +113,6 @@ function checkAudienceSource() {
 
 (async () => {
   let total = 0;
-  const varFails = checkVariables();
-  total += varFails.length;
-  console.log(`variables      ${varFails.length ? 'FAIL' : 'ok'}`);
-  varFails.forEach((f) => console.log('   - ' + f));
-
   const audFails = checkAudienceSource();
   total += audFails.length;
   console.log(`audience-src   ${audFails.length ? 'FAIL' : 'ok'}`);

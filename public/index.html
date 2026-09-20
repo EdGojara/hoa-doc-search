@@ -3914,15 +3914,15 @@
 </div>
 
 <!-- ===========================================================================
-     Presentations — branded .pptx decks from templates + variables + images.
-     Powered by lib/presentations/* on the server. Generated decks are stored
+     Proposals — community-specific management proposals (scope, fee, onboarding,
+     term). Powered by lib/proposals/* and /api/proposals/*. Generated files stored
      in Supabase storage and indexed in presentation_instances for re-download.
      ========================================================================= -->
-<div class="tab-content" id="tab-presentations" style="overflow-y: auto; padding: 24px;">
+<div class="tab-content" id="tab-proposals" style="overflow-y: auto; padding: 24px;">
   <div style="margin-bottom:16px;">
-    <h2 style="margin:0 0 4px 0;">🎬 Presentations</h2>
+    <h2 style="margin:0 0 4px 0;">📄 Proposals</h2>
     <p style="color:#888; font-size:14px; margin:0;">
-      Pick a template, fill in the variables, optionally add a community photo, and download a Bedrock-rendered .pptx in seconds. Past generations are saved below.
+      Generate a community-specific management proposal (scope, fee, onboarding, term). Fill in the variables, optionally add a community photo, and download a Bedrock-rendered .pptx. Past proposals are saved below. (Demos live under the Demo buttons, not here.)
     </p>
   </div>
 
@@ -3942,7 +3942,7 @@
         </div>
         <div id="presFormFields"></div>
         <div style="display:flex; gap:8px; align-items:center; margin-top:14px;">
-          <button class="action-btn" id="presGenerateBtn" onclick="presGenerate()">🎬 Generate &amp; download</button>
+          <button class="action-btn" id="presGenerateBtn" onclick="presGenerate()">📄 Generate proposal &amp; download</button>
           <span id="presGenerateStatus" style="font-size:13px; color:#666;"></span>
         </div>
       </div>
@@ -33747,7 +33747,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     calendar:           { label: 'Calendar',            icon: '🗓️', group: 'Operations', note: 'Schedule · deadlines',                action: () => switchTab('calendar') },
     vendor:             { label: 'Vendors',             icon: '🏢', group: 'Operations', note: 'Renewals · invoices',                 action: () => { if (typeof openTabGroup === 'function') openTabGroup('vendor'); else switchTab('vendor'); } },
     community_profile:  { label: 'Community Profile',   icon: '🏘️', group: 'Reference',  note: 'Per-community config · contacts',     action: () => { if (typeof openTabGroup === 'function') openTabGroup('community'); else switchTab('community'); } },
-    bedrock_office:     { label: 'Bedrock Office',      icon: '💼', group: 'Office',     note: 'Billing · Presentations · Values',     action: () => { if (typeof openTabGroup === 'function') openTabGroup('office'); else switchTab('billing'); } },
+    bedrock_office:     { label: 'Bedrock Office',      icon: '💼', group: 'Office',     note: 'Billing · Proposals · Values',     action: () => { if (typeof openTabGroup === 'function') openTabGroup('office'); else switchTab('billing'); } },
     forms_applications: { label: 'Forms & Applications', icon: '📑', group: 'Reference',  note: 'Form responses · status',             action: () => switchTab('forms') },
     performance:        { label: 'Performance',         icon: '📊', group: 'Reference',  note: 'KPIs · metrics',                       action: () => switchTab('perf') },
     quick:              { label: 'Quick',               icon: '⚡', group: 'Reference',  note: 'One-off tools',                        action: () => switchTab('quick') },
@@ -48568,7 +48568,7 @@ ${questionsPage}
         { id: 'bd',             label: '🤝 BD' },
         { id: 'billing',        label: '💼 Billing' },
         { id: 'contracts',      label: '📄 Proposals & Contracts' },
-        { id: 'presentations',  label: '🎬 Presentations' },
+        { id: 'proposals',  label: '📄 Proposals' },
         { id: '__present',         label: '🎥 The Demo',     href: '/present' },
         { id: '__present_bank',    label: '🏦 Bank Demo',    href: '/present?audience=bank' },
         { id: '__present_board',   label: '👥 Board Demo',   href: '/present?audience=board' },
@@ -48899,7 +48899,7 @@ ${questionsPage}
   })();
 
   // =========================================================================
-  // Presentations module — template picker, dynamic form, generate & download
+  // Proposals module — template picker, dynamic form, generate & download
   // =========================================================================
   let presTemplates = [];
   let presSelectedSlug = null;
@@ -48909,7 +48909,7 @@ ${questionsPage}
     if (presLoaded) return;
     presLoaded = true;
     try {
-      const r = await fetch('/api/presentations/templates');
+      const r = await fetch('/api/proposals/templates');
       const j = await r.json();
       presTemplates = j.templates || [];
       presRenderTemplates();
@@ -48995,7 +48995,7 @@ ${questionsPage}
     btn.disabled = true; btn.textContent = '⏳ Generating…';
     status.textContent = '';
     try {
-      const r = await fetch('/api/presentations/generate', { method: 'POST', body: form });
+      const r = await fetch('/api/proposals/generate', { method: 'POST', body: form });
       if (!r.ok) {
         const j = await r.json().catch(() => ({ error: 'Generation failed' }));
         throw new Error(j.error || ('HTTP ' + r.status));
@@ -49014,14 +49014,14 @@ ${questionsPage}
     } catch (e) {
       status.innerHTML = '<span style="color:#b91c1c;">' + escapeHtml(e.message) + '</span>';
     } finally {
-      btn.disabled = false; btn.textContent = '🎬 Generate & download';
+      btn.disabled = false; btn.textContent = '📄 Generate proposal & download';
     }
   }
 
   async function presLoadHistory() {
     const list = document.getElementById('presHistoryList');
     try {
-      const r = await fetch('/api/presentations/instances');
+      const r = await fetch('/api/proposals/instances');
       const j = await r.json();
       const items = j.instances || [];
       if (!items.length) {
@@ -49051,7 +49051,7 @@ ${questionsPage}
 
   async function presRedownload(id) {
     try {
-      const r = await fetch('/api/presentations/instances/' + id + '/download');
+      const r = await fetch('/api/proposals/instances/' + id + '/download');
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const blob = await r.blob();
       const disp = r.headers.get('Content-Disposition') || '';
@@ -49070,7 +49070,7 @@ ${questionsPage}
   async function presDelete(id) {
     if (!confirm('Delete this generation from history? The .pptx will be removed from storage.')) return;
     try {
-      const r = await fetch('/api/presentations/instances/' + id, { method: 'DELETE' });
+      const r = await fetch('/api/proposals/instances/' + id, { method: 'DELETE' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       presLoadHistory();
     } catch (e) {
@@ -49083,13 +49083,13 @@ ${questionsPage}
   }
 
   // Lazy-init on first tab activation. switchTab() is defined elsewhere; we
-  // patch it once on load to hook tab='presentations'.
+  // patch it once on load to hook tab='proposals'.
   (function () {
     const orig = window.switchTab;
     if (typeof orig !== 'function') return;
     window.switchTab = function (tab) {
       const result = orig.apply(this, arguments);
-      if (tab === 'presentations') presInit();
+      if (tab === 'proposals') presInit();
       return result;
     };
   })();

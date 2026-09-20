@@ -7080,12 +7080,12 @@ app.post('/community-counts', (req, res) => {
 // variables + optional uploaded images. Every generation is stored so the user
 // can re-download past decks and so the pitch history compounds into data.
 // ============================================================================
-const presentationsRegistry = require('./lib/presentations');
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
 
-app.get('/api/presentations/templates', (req, res) => {
-  res.json({ templates: presentationsRegistry.listTemplates() });
-});
+// Proposal domain — management proposals (scope, management fee, onboarding, term)
+// are a different business object from a demo presentation, with their own
+// routes + registry + generator. (Ed 2026-09-20 presentation/proposal split.)
+app.use('/api/proposals', require('./api/proposals'));
 
 // The ONE canonical audience list (slug + dropdown label). present.html builds
 // its dropdown and validates ?audience from this, so there is no second list to
@@ -7112,29 +7112,11 @@ app.get('/api/presentations/story', async (req, res) => {
     const audience = String(req.query.audience || 'general');
     if (!story.isAudience(audience)) return res.status(400).json({ error: 'unknown_audience' });
     const language = String(req.query.language) === 'es' ? 'es' : 'en';
-    let variables = {};
-    if (req.query.vars) { try { variables = JSON.parse(req.query.vars); } catch (_) { variables = {}; } }
-    const result = await resolveStory(audience, { language, variables, supabase });
+    const result = await resolveStory(audience, { language, supabase });
     res.json(result);
   } catch (err) {
     console.error('[presentations] story failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
-  }
-});
-
-app.get('/api/presentations/instances', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('presentation_instances')
-      .select('id, template_slug, title, variables, output_filename, status, created_at')
-      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-      .order('created_at', { ascending: false })
-      .limit(100);
-    if (error) throw error;
-    res.json({ instances: data || [] });
-  } catch (err) {
-    console.error('Presentation list error:', err);
-    res.status(500).json({ error: err.message });
   }
 });
 
@@ -7144,21 +7126,23 @@ app.post('/api/presentations/generate', upload.any(), async (req, res) => {
     // the browser shows. When `audience` is provided, render via the shared
     // resolver + PowerPoint renderer so selected === exported. The legacy
     // template_slug path below stays only as a fallback until parity is proven.
+    const story = require('./lib/presentations/story');
     const audience = (req.body.audience || '').trim();
+    if (audience && !story.isAudience(audience)) return res.status(400).json({ error: 'unknown_audience' });
     if (audience) {
       const { resolveStory } = require('./lib/presentations/resolve');
       const { renderPptx } = require('./lib/presentations/pptx_render');
-      let variables = {}; if (req.body.variables) { try { variables = JSON.parse(req.body.variables); } catch (_) {} }
       let cover = null; if (req.body.cover) { try { cover = JSON.parse(req.body.cover); } catch (_) {} }
-      const { screens } = await resolveStory(audience, { variables, cover, supabase });
+      const { screens } = await resolveStory(audience, { cover, supabase });
       const { pres } = renderPptx(screens, { title: 'trustEd' });
       const pptxBuffer = await pres.write({ outputType: 'nodebuffer' });
       const filename = `trustEd_${audience}_${new Date().toISOString().slice(0, 10)}.pptx`;
       // Best-effort history + archive; never block the download on a write.
       try {
         const { data: inst } = await supabase.from('presentation_instances').insert({
-          management_company_id: BEDROCK_MGMT_CO_ID, template_slug: `audience:${audience}`,
-          title: `trustEd — ${audience}`, variables, output_filename: filename, status: 'generated',
+          management_company_id: BEDROCK_MGMT_CO_ID, artifact_type: 'presentation',
+          template_slug: `audience:${audience}`,
+          title: `trustEd — ${audience}`, variables: {}, output_filename: filename, status: 'generated',
         }).select().single();
         if (inst) {
           const sp = `presentations/${inst.id}/${filename}`;
@@ -7172,163 +7156,12 @@ app.post('/api/presentations/generate', upload.any(), async (req, res) => {
       return res.send(pptxBuffer);
     }
 
-    const templateSlug = (req.body.template_slug || '').trim();
-    const template = presentationsRegistry.getTemplate(templateSlug);
-    if (!template) return res.status(400).json({ error: 'Unknown template: ' + templateSlug });
-
-    let variables = {};
-    if (req.body.variables) {
-      try { variables = JSON.parse(req.body.variables); } catch { variables = {}; }
-    } else {
-      (template.variables || []).forEach(v => {
-        if (req.body[v.key] !== undefined) variables[v.key] = req.body[v.key];
-      });
-    }
-
-    const ctx = {};
-    const files = req.files || [];
-    files.forEach(f => {
-      if (f.fieldname === 'cover_image') {
-        ctx.coverImageBuffer = f.buffer;
-        ctx.coverImageMime = f.mimetype;
-      }
-    });
-
-    const titleParts = [template.title];
-    if (variables.community) titleParts.push(variables.community);
-    const title = titleParts.join(' — ');
-
-    const pres = template.build(variables, ctx);
-    const pptxBuffer = await pres.write({ outputType: 'nodebuffer' });
-
-    const safeStem = (variables.community || template.slug).replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'presentation';
-    const filename = `${safeStem}_${template.slug}_${new Date().toISOString().slice(0,10)}.pptx`;
-
-    const { data: instance, error: insErr } = await supabase
-      .from('presentation_instances')
-      .insert({
-        management_company_id: BEDROCK_MGMT_CO_ID,
-        template_slug: template.slug,
-        title,
-        variables,
-        output_filename: filename,
-        status: 'generated',
-      })
-      .select()
-      .single();
-
-    if (insErr) {
-      console.warn('Presentation history write failed:', insErr.message);
-    } else if (instance) {
-      const storagePath = `presentations/${instance.id}/${filename}`;
-      const { error: stErr } = await supabase.storage
-        .from('documents')
-        .upload(storagePath, pptxBuffer, { contentType: PPTX_MIME, upsert: true });
-      if (stErr) {
-        console.warn('Presentation storage save failed:', stErr.message);
-      } else {
-        await supabase
-          .from('presentation_instances')
-          .update({ output_storage_path: storagePath, updated_at: new Date().toISOString() })
-          .eq('id', instance.id);
-      }
-
-      for (const f of files) {
-        try {
-          const slotKey = f.fieldname;
-          const ext = (f.originalname.split('.').pop() || 'bin').toLowerCase();
-          const assetPath = `presentations/${instance.id}/${slotKey}_${Date.now()}.${ext}`;
-          const { error: aErr } = await supabase.storage
-            .from('documents')
-            .upload(assetPath, f.buffer, { contentType: f.mimetype, upsert: true });
-          if (!aErr) {
-            await supabase
-              .from('presentation_assets')
-              .insert({
-                instance_id: instance.id,
-                slot_key: slotKey,
-                storage_path: assetPath,
-                mime_type: f.mimetype,
-                meta: { original_filename: f.originalname },
-              });
-          }
-        } catch (e) {
-          console.warn('Asset save failed:', e.message);
-        }
-      }
-    }
-
-    res.setHeader('Content-Type', PPTX_MIME);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(pptxBuffer);
+    // No legacy template path: demo exports are audience-driven. A management
+    // proposal is a different business object at POST /api/proposals/generate.
+    return res.status(400).json({ error: 'audience_required' });
   } catch (err) {
-    console.error('Presentation generate error:', err);
-    res.status(500).json({ error: 'Generation failed: ' + err.message });
-  }
-});
-
-app.get('/api/presentations/instances/:id/download', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { data: instance, error: qErr } = await supabase
-      .from('presentation_instances')
-      .select('id, output_storage_path, output_filename, template_slug, variables')
-      .eq('id', id)
-      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-      .single();
-    if (qErr || !instance) return res.status(404).json({ error: 'Not found' });
-
-    if (instance.output_storage_path) {
-      const { data: blob, error: dErr } = await supabase.storage
-        .from('documents')
-        .download(instance.output_storage_path);
-      if (!dErr && blob) {
-        const arr = await blob.arrayBuffer();
-        res.setHeader('Content-Type', PPTX_MIME);
-        res.setHeader('Content-Disposition', `attachment; filename="${instance.output_filename || 'presentation.pptx'}"`);
-        return res.send(Buffer.from(arr));
-      }
-    }
-
-    const template = presentationsRegistry.getTemplate(instance.template_slug);
-    if (!template) return res.status(500).json({ error: 'Template no longer available' });
-    const pres = template.build(instance.variables || {}, {});
-    const buf = await pres.write({ outputType: 'nodebuffer' });
-    res.setHeader('Content-Type', PPTX_MIME);
-    res.setHeader('Content-Disposition', `attachment; filename="${instance.output_filename || 'presentation.pptx'}"`);
-    res.send(buf);
-  } catch (err) {
-    console.error('Presentation download error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/presentations/instances/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { data: instance, error: qErr } = await supabase
-      .from('presentation_instances')
-      .select('id, output_storage_path')
-      .eq('id', id)
-      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-      .single();
-    if (qErr || !instance) return res.status(404).json({ error: 'Not found' });
-
-    if (instance.output_storage_path) {
-      await supabase.storage.from('documents').remove([instance.output_storage_path]);
-    }
-    const { data: assets } = await supabase
-      .from('presentation_assets')
-      .select('storage_path')
-      .eq('instance_id', id);
-    if (assets && assets.length) {
-      await supabase.storage.from('documents').remove(assets.map(a => a.storage_path));
-    }
-    await supabase.from('presentation_instances').delete().eq('id', id);
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Presentation delete error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('[presentations] generate failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
