@@ -457,7 +457,7 @@
   loadCover();
   // Honor ?audience= so a run can be opened straight into a given audience.
   const qAud = new URLSearchParams(location.search).get('audience');
-  if (qAud && ['general','bank','board','partner','referral','tech'].includes(qAud)) {
+  if (qAud && ['general','bank','board','partner','referral','tech','clma'].includes(qAud)) {
     // Set the audience but START ON THE COVER (focusFit=false) — opening a run
     // via ?audience= is the beginning of a live walk-through, not a jump to the
     // audience screen. The jump-to-fit is only for a deliberate mid-talk switch
