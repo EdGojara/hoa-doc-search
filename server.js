@@ -7130,6 +7130,39 @@ app.get('/api/presentations/instances', async (req, res) => {
 
 app.post('/api/presentations/generate', upload.any(), async (req, res) => {
   try {
+    // ---- Unified path (Ed 2026-09-20): export the SAME presentation definition
+    // the browser shows. When `audience` is provided, render via the shared
+    // resolver + PowerPoint renderer so selected === exported. The legacy
+    // template_slug path below stays only as a fallback until parity is proven.
+    const audience = (req.body.audience || '').trim();
+    if (audience) {
+      const { resolveStory } = require('./lib/presentations/resolve');
+      const { renderPptx } = require('./lib/presentations/pptx_render');
+      let variables = {}; if (req.body.variables) { try { variables = JSON.parse(req.body.variables); } catch (_) {} }
+      let cover = null; if (req.body.cover) { try { cover = JSON.parse(req.body.cover); } catch (_) {} }
+      const embedVideo = String(req.body.embed_video || '') === 'true';
+      const { screens } = await resolveStory(audience, { variables, cover, supabase });
+      const { pres, videoModes } = await renderPptx(screens, { embedVideo, title: 'trustEd' });
+      const pptxBuffer = await pres.write({ outputType: 'nodebuffer' });
+      const filename = `trustEd_${audience}_${new Date().toISOString().slice(0, 10)}.pptx`;
+      // Best-effort history + archive; never block the download on a write.
+      try {
+        const { data: inst } = await supabase.from('presentation_instances').insert({
+          management_company_id: BEDROCK_MGMT_CO_ID, template_slug: `audience:${audience}`,
+          title: `trustEd — ${audience}`, variables, output_filename: filename, status: 'generated',
+        }).select().single();
+        if (inst) {
+          const sp = `presentations/${inst.id}/${filename}`;
+          await supabase.storage.from('documents').upload(sp, pptxBuffer, { contentType: PPTX_MIME, upsert: true });
+          await supabase.from('presentation_instances').update({ output_storage_path: sp, updated_at: new Date().toISOString() }).eq('id', inst.id);
+        }
+      } catch (e) { console.warn('[presentations] audience export history failed:', e.message); }
+      console.log(`[presentations] audience export ${audience}: ${screens.length} slides, video=${JSON.stringify(videoModes)}`);
+      res.setHeader('Content-Type', PPTX_MIME);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(pptxBuffer);
+    }
+
     const templateSlug = (req.body.template_slug || '').trim();
     const template = presentationsRegistry.getTemplate(templateSlug);
     if (!template) return res.status(400).json({ error: 'Unknown template: ' + templateSlug });

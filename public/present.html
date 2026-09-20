@@ -443,19 +443,18 @@
   document.getElementById('btnPptx').addEventListener('click', async ()=>{
     const btn = document.getElementById('btnPptx'); const old = btn.textContent; btn.textContent='Building…'; btn.disabled=true;
     try {
-      // /generate streams the .pptx binary back directly. Pull it as a blob and
-      // save it. Same partner narrative, the travelling leave-behind. Carry the
-      // title-page info so the exported cover matches the one on screen (the
-      // partner template renders a PREPARED FOR block from these).
-      const fd = new FormData(); fd.append('template_slug','partner');
-      const preparedFor = [COVER.org, ...COVER.attendees].filter(Boolean).join(', ');
-      if (preparedFor) fd.append('prepared_for', preparedFor);
-      if (COVER.date) fd.append('meeting_date', COVER.date);
+      // /generate streams the .pptx binary back directly. Export the SAME
+      // presentation that is on screen: send the current audience (AUD) so the
+      // export renders from the same definition, and the current cover so the
+      // PREPARED FOR block matches exactly. No hardcoded template. (Ed 2026-09-20.)
+      const fd = new FormData();
+      fd.append('audience', AUD || 'general');
+      fd.append('cover', JSON.stringify({ org: COVER.org || '', attendees: COVER.attendees || [], date: COVER.date || '' }));
       const r = await fetch('/api/presentations/generate', { method:'POST', body: fd });
       if (!r.ok) { let m='export failed'; try { m=(await r.json()).error||m; } catch(_){} throw new Error(m); }
       const blob = await r.blob();
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href=url; a.download='bedrock-overview.pptx'; document.body.appendChild(a); a.click(); a.remove();
+      const a = document.createElement('a'); a.href=url; a.download=`trustEd-${AUD || 'general'}.pptx`; document.body.appendChild(a); a.click(); a.remove();
       setTimeout(()=>URL.revokeObjectURL(url), 4000);
     } catch (e) { alert('Export failed: '+e.message); }
     finally { btn.textContent=old; btn.disabled=false; }
