@@ -29,4 +29,11 @@ UPDATE presentation_instances
 CREATE INDEX IF NOT EXISTS idx_presentation_instances_artifact
   ON presentation_instances (management_company_id, artifact_type, created_at DESC);
 
+-- Tell PostgREST to reload its schema cache so supabase-js sees artifact_type
+-- immediately. Without this the new column is invisible to the REST layer and
+-- the proposal list/download/delete queries (which filter on artifact_type)
+-- fail until the cache reloads on its own. (The recurring "new column silently
+-- EMPTY" scar; same pattern as migrations 141-147.)
+NOTIFY pgrst, 'reload schema';
+
 COMMIT;
