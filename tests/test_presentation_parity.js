@@ -21,8 +21,9 @@ require('dotenv').config();
 const JSZip = require('jszip');
 const story = require('../lib/presentations/story');
 const contract = require('../lib/presentations/screen_contract');
+const fs = require('fs');
 const { resolveStory } = require('../lib/presentations/resolve');
-const { renderPptx } = require('../lib/presentations/pptx_render');
+const { renderPptx, localAssetPath } = require('../lib/presentations/pptx_render');
 
 let supabase = null;
 try {
@@ -58,14 +59,13 @@ async function pptxParts(buffer) {
     const relsXml = zip.file(relName) ? await zip.file(relName).async('string') : '';
     slides.push({ text: textOf(xml), targets: relTargets(relsXml) });
   }
-  const hasMedia = Object.keys(zip.files).some((n) => /^ppt\/media\/.*\.(mp4|mov|m4v)$/i.test(n));
-  return { slides, hasMedia };
+  return { slides };
 }
 
 async function checkAudience(aud) {
   const failures = [];
   const { screens } = await resolveStory(aud, { supabase });
-  const { pres } = await renderPptx(screens, { embedVideo: false });
+  const { pres } = renderPptx(screens);
   const buf = await pres.write({ outputType: 'nodebuffer' });
   const { slides } = await pptxParts(buf);
 
@@ -83,11 +83,13 @@ async function checkAudience(aud) {
         failures.push(`slide ${i + 1} (${s.type} ${s.id}): MISSING "${str.slice(0, 60)}"`);
       }
     }
-    // Media presence: a ready video must carry its clip URL in the slide rels
-    // (poster+hyperlink mode). Never silently omitted.
-    if (s.type === 'video' && s.video_ready && s.video_url) {
-      const linked = slides[i].targets.some((t) => t === s.video_url);
-      if (!linked) failures.push(`slide ${i + 1} (video ${s.id}): video link MISSING from slide relationships`);
+    // Video slides are static in PowerPoint (poster + title + copy). When the
+    // poster asset exists on disk, the export must contain it (never dropped).
+    if (s.type === 'video' && s.poster) {
+      const p = localAssetPath(s.poster);
+      const posterOnDisk = p && fs.existsSync(p);
+      const hasImage = slides[i].targets.some((t) => /\.(png|jpe?g)$/i.test(t));
+      if (posterOnDisk && !hasImage) failures.push(`slide ${i + 1} (video ${s.id}): poster on disk but MISSING from export`);
     }
   });
   return failures;

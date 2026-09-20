@@ -7140,9 +7140,8 @@ app.post('/api/presentations/generate', upload.any(), async (req, res) => {
       const { renderPptx } = require('./lib/presentations/pptx_render');
       let variables = {}; if (req.body.variables) { try { variables = JSON.parse(req.body.variables); } catch (_) {} }
       let cover = null; if (req.body.cover) { try { cover = JSON.parse(req.body.cover); } catch (_) {} }
-      const embedVideo = String(req.body.embed_video || '') === 'true';
       const { screens } = await resolveStory(audience, { variables, cover, supabase });
-      const { pres, videoModes } = await renderPptx(screens, { embedVideo, title: 'trustEd' });
+      const { pres } = renderPptx(screens, { title: 'trustEd' });
       const pptxBuffer = await pres.write({ outputType: 'nodebuffer' });
       const filename = `trustEd_${audience}_${new Date().toISOString().slice(0, 10)}.pptx`;
       // Best-effort history + archive; never block the download on a write.
@@ -7157,7 +7156,7 @@ app.post('/api/presentations/generate', upload.any(), async (req, res) => {
           await supabase.from('presentation_instances').update({ output_storage_path: sp, updated_at: new Date().toISOString() }).eq('id', inst.id);
         }
       } catch (e) { console.warn('[presentations] audience export history failed:', e.message); }
-      console.log(`[presentations] audience export ${audience}: ${screens.length} slides, video=${JSON.stringify(videoModes)}`);
+      console.log(`[presentations] audience export ${audience}: ${screens.length} slides`);
       res.setHeader('Content-Type', PPTX_MIME);
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       return res.send(pptxBuffer);
