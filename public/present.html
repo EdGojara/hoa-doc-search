@@ -218,14 +218,17 @@
   }
   function saveCover() { localStorage.setItem('bedrock_present_cover', JSON.stringify(COVER)); }
 
-  // A cover typed into the UI (COVER, in localStorage) wins; otherwise a screen
-  // can seed its own "Prepared for" via s.prepared_for so a purpose-built deck
-  // (e.g. CLMA) shows the right board by default without anyone opening setup.
+  // A purpose-built deck that ships its own board (s.prepared_for, e.g. CLMA's
+  // three directors) shows THAT — it wins over the global typed cover (COVER),
+  // so a "Prepared for" typed for another run cannot bleed in and hide the
+  // seeded board. A deck with no seeded prepared_for uses the typed cover.
   function preparedForBlock(s) {
     const pf = (s && s.prepared_for) || {};
-    const org = COVER.org || pf.org || '';
-    const attendees = (COVER.attendees && COVER.attendees.length) ? COVER.attendees : (pf.attendees || []);
-    const date = COVER.date || pf.date || '';
+    const seeded = !!(pf.org || (pf.attendees && pf.attendees.length) || pf.date);
+    const src = seeded ? pf : COVER;
+    const org = src.org || '';
+    const attendees = src.attendees || [];
+    const date = src.date || '';
     if (!org && !attendees.length && !date) return '';
     return `<div class="prepared">
       <div class="pf-label">Prepared for</div>
