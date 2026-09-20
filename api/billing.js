@@ -39,7 +39,7 @@ const BRAND = require('../lib/brand');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 // Bill DISTINCT ARC work. The ACC intake can create more than one decided record
 // for the same application ("a second decision re-bills the ARC fee"), which would

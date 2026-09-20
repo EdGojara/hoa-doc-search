@@ -77,9 +77,9 @@ const designGuidelinesUpload = multer({
 });
 
 const DESIGN_DOC_BUCKET = 'documents';
-const BEDROCK_MGMT_CO_ID_DG = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID: BEDROCK_MGMT_CO_ID_DG } = require('../lib/company');
 
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 
 const router = express.Router();

@@ -34,7 +34,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 const router = express.Router();
 
 const MODEL = 'claude-sonnet-4-6';                     // matches api/email_intake.js
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 const CLASSIFY_PROMPT = `You are a mail classification system for Bedrock Association Management (BAM), a Texas HOA management company (~7 communities, ~3,500 homes). Communities include Canyon Gate at Cinco Ranch, Waterview Estates, Lakes of Pine Forest, August Meadows, Quail Ridge, Still Creek Ranch, Eaglewood.
 

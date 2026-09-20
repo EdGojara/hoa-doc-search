@@ -41,6 +41,7 @@
     "test:presentation": "node tests/test_presentation_mode.js",
     "test:presentation-parity": "node tests/test_presentation_parity.js",
     "test:proposal-boundary": "node tests/test_proposal_boundary.js",
+    "test:mgmt-id": "node scripts/check_mgmt_id.js",
     "test:tessa-identity": "node tests/test_tessa_identity.js",
     "test:requires": "node scripts/check_requires_tracked.js",
     "test:ai-router": "node lib/ai/selftest.js",

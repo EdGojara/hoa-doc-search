@@ -59,7 +59,7 @@ const router = express.Router();
 
 // Bedrock management company id — matches the seed in 001_foundation.sql
 // and the constant used in lib/askEdTools.js.
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 // trustEd DB (writes attendance + settings here)
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);

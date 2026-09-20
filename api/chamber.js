@@ -35,7 +35,7 @@ async function attendingCount(broadcastId) {
   return count || 0;
 }
 
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 // Create or update the meeting_agenda for a broadcast from a plain list of
 // item strings. We store it in the EXISTING meeting_agendas table (not a

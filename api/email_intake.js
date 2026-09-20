@@ -82,7 +82,7 @@ function hashContent(raw) {
   return crypto.createHash('sha256').update(normalizeForDedup(raw)).digest('hex');
 }
 
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 const EXTRACTION_MODEL = 'claude-sonnet-4-6';
 const RECAP_MODEL = 'claude-sonnet-4-6';

@@ -50,7 +50,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 // Bedrock management company id — matches the seed in 001_foundation.sql and
 // the constant used in lib/askEdTools.js, api/contacts.js, etc. Used to scope
 // portfolio-wide queries (e.g., the bulk-geocode admin endpoint).
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 // Photos can be large from modern phones — 25MB ceiling matches existing
 // AI vision pipelines elsewhere in the codebase.

@@ -17,7 +17,7 @@ const { renderW9 } = require('../lib/w9/render');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 function sendPdf(res, bytes, filename) {
   res.setHeader('Content-Type', 'application/pdf');

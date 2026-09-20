@@ -20,7 +20,7 @@ const { createClient } = require('@supabase/supabase-js');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 const TYPES = ['regular', 'annual', 'special', 'budget', 'emergency', 'executive', 'organizational'];
 const { sendEmail, isConfigured: emailConfigured } = require('../lib/notifications/email');
 const emailCampaigns = require('./email_campaigns'); // exposes .resolveRecipients (paged)

@@ -25,9 +25,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 const router = express.Router();
 
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
-// Bedrock as management company #1. Duplicated across the codebase; see the
-// BLOCKED tenant-identity decision in the closure ledger (not resolved here).
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 router.get('/templates', (req, res) => {
   res.json({ templates: proposals.listTemplates() });

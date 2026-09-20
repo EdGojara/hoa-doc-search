@@ -32,7 +32,7 @@ const { safeErrorMessage } = require('./_safe_error');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 const STORAGE_BUCKET = 'documents';
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 // Master plan PDFs are larger than per-lot PDFs (full plan set with all
 // elevations, often 40-150 pages, can be 12+ MB). Generous limits.

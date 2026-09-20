@@ -29,7 +29,7 @@ const { sendEmail } = require('../lib/notifications/email');
 const { getLivePayload: chamberLive, submitSpeak: chamberSpeak, heartbeat: chamberHeartbeat } = require('./chamber');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 const COOKIE_NAME = 'TRUSTED_PORTAL';
 const COOKIE_TTL_DAYS = 30;
@@ -463,7 +463,7 @@ router.post('/demo-sign-in', express.json({ limit: '1kb' }), async (req, res) =>
       .from('portal_users')
       .select('id, email, role, status, full_name')
       .eq('email', email)
-      .eq('management_company_id', '00000000-0000-0000-0000-000000000001')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
 
     if (!user) return res.status(404).json({ error: 'unknown_persona' });

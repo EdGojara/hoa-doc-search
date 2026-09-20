@@ -39,7 +39,7 @@ const { sendEmail } = require('../lib/notifications/email');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 // SERVICE_TYPE was 'arc_builder_new_construction' until 2026-06-16. Migration
 // 218 added a CHECK constraint on application_reference_counters.service_type

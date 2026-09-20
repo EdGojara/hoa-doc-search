@@ -18,7 +18,7 @@ const { requireAdmin } = require('./_require_admin');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const MGMT = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID: MGMT } = require('../lib/company');
 function safe(err) { try { return require('./_safe_error').safeErrorMessage(err); } catch (_) { return 'Something went wrong'; } }
 function _isMissingTable(err) {
   const m = `${err && err.message || ''} ${err && err.code || ''}`;

@@ -52,7 +52,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 // and the constant used elsewhere. Scoped here so violation-letter endpoints
 // can stamp library_documents with the right management_company_id without
 // trusting client input.
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 // Supabase storage bucket for generated violation letters. Created lazily —
 // we attempt creation on first letter generation if missing.

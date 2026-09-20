@@ -20,7 +20,7 @@ const { requireStaff } = require('./_require_admin');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 router.use(async (req, res, next) => {
   const user = await requireStaff(req, res);

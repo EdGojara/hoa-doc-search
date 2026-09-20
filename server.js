@@ -1782,7 +1782,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // Bedrock's management_company_id — matches the seed UUID in the SQL migration.
 // Track 2 discipline: every record uses this for now; later, we look it up
 // from authenticated user instead of hardcoding.
-const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const { BEDROCK_MGMT_CO_ID } = require('./lib/company');
 
 const GLOBAL_RULES = `
 TEXAS LEGAL COMPLIANCE — MANDATORY FOR ALL COMMUNICATIONS:
