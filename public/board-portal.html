@@ -1643,6 +1643,15 @@
     const ms = (motions && motions.motions) || [];
     const name = (communityIndex[currentCommunityId] && communityIndex[currentCommunityId].name) || (s.community && s.community.name) || 'Your community';
 
+    // Invariant: absence of operational data must never read as positive health.
+    // If there is no operational substrate to assess (no properties, projects,
+    // motions, or budget), show nothing rather than an unfounded "in good shape".
+    // General, not community-specific.
+    const projCount = (projects && Array.isArray(projects.projects)) ? projects.projects.length
+      : ((pj.active || 0) + (pj.planned || 0) + (pj.total || 0));
+    const hasOperational = (s.counts && s.counts.total_properties > 0) || projCount > 0 || ms.length > 0 || !!s.budget_headline;
+    if (!hasOperational) return '';
+
     const atLegal = ar.owners_at_legal || 0;
     const severe = (drv.certified_209 || 0) + (drv.fine_assessed || 0);
     const projIssues = (pj.needs_attention || 0) + (pj.over_budget || 0);
@@ -1883,6 +1892,11 @@
     };
     const slug = s.community?.slug || '';
 
+    // Board tile visibility (data-driven, namespaced under portal_module_config.board_tiles).
+    // No config => every tile shows, so residential communities render exactly as before.
+    const bt = (s && s.board_tiles) || null;
+    const tileOn = (key) => !(bt && bt[key] === 'hidden');
+
     // ── Financial health row ────────────────────────────────────────
     const ar = s.ar_aging;
     const arTile = !ar ? '' : `
@@ -2101,26 +2115,7 @@
         <div class="tile-cta">${discUnread > 0 ? 'Catch up →' : 'Open discussion →'}</div>
       </a>`;
 
-    return `
-      ${comfortBanner(s, projects, motions)}
-      ${amandaHero()}
-      <div class="tile-section-label">Financial health</div>
-      <div class="board-tile-grid">
-        ${budgetTile}
-        ${arTile}
-        ${rhTile}
-        ${meetingsTile}
-      </div>
-
-      <div class="tile-section-label">Governance</div>
-      <div class="board-tile-grid">
-        ${motionsTile}
-        ${discussionTile}
-        ${projectsTile}
-      </div>
-
-      <div class="tile-section-label">Learn</div>
-      <div class="board-tile-grid">
+    const learningTile = `
         <a class="board-tile" href="javascript:showLearning()">
           <div class="tile-icon">🎓</div>
           <div class="tile-title">Board Learning</div>
@@ -2130,16 +2125,24 @@
             <div class="metric-label">grounded in your community</div>
           </div></div>
           <div class="tile-cta">Start learning →</div>
-        </a>
-      </div>
+        </a>`;
 
-      <div class="tile-section-label">Community health</div>
-      <div class="board-tile-grid">
-        ${mapTile}
-        ${drvTile}
-        ${arcTile}
-        ${propsTile}
-      </div>
+    // A section renders only if it has at least one visible tile, so a fully-gated
+    // (or fully-empty) section never leaves a dangling label. Default config = all
+    // tiles on, so a residential community renders exactly as before.
+    const sect = (label, tiles) => {
+      const vis = tiles.filter(Boolean);
+      return vis.length ? `<div class="tile-section-label">${label}</div><div class="board-tile-grid">${vis.join('\n')}</div>` : '';
+    };
+    const gate = (key, tile) => (tileOn(key) ? tile : '');
+
+    return `
+      ${comfortBanner(s, projects, motions)}
+      ${amandaHero()}
+      ${sect('Financial health', [gate('budget', budgetTile), gate('ar', arTile), gate('reserve', rhTile), gate('meetings', meetingsTile)])}
+      ${sect('Governance', [gate('motions', motionsTile), gate('discussion', discussionTile), gate('projects', projectsTile)])}
+      ${sect('Learn', [gate('learning', learningTile)])}
+      ${sect('Community health', [gate('map', mapTile), gate('drv', drvTile), gate('arc', arcTile), gate('properties', propsTile)])}
     `;
   }
 

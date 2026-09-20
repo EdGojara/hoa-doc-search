@@ -78,7 +78,7 @@ router.get('/community/:id/summary', async (req, res) => {
 
     const { data: community, error: cErr } = await supabase
       .from('communities')
-      .select('id, name, legal_name, slug')
+      .select('id, name, legal_name, slug, portal_module_config')
       .eq('id', communityId)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
@@ -308,6 +308,10 @@ router.get('/community/:id/summary', async (req, res) => {
 
     res.json({
       community,
+      // Board tile visibility config (namespaced under portal_module_config.board_tiles
+      // so it never collides with the homeowner portal's tile keys). Null/absent =>
+      // every tile shows, i.e. existing residential behavior is unchanged.
+      board_tiles: (community.portal_module_config && community.portal_module_config.board_tiles) || null,
       counts: {
         total_properties: total,
         properties_with_open_violations: propertiesWithOpenViolations,
