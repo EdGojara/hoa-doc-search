@@ -44,6 +44,7 @@
     "test:partner-scope": "node tests/test_partner_scope.js",
     "test:partner-retrieval": "node tests/test_partner_retrieval.js",
     "test:board-tiles": "node tests/test_board_tiles.js",
+    "test:community-assets": "node tests/test_community_assets.js",
     "test:demo-isolation": "node tests/test_demo_isolation.js",
     "test:mgmt-id": "node scripts/check_mgmt_id.js",
     "test:tessa-identity": "node tests/test_tessa_identity.js",
