@@ -104,12 +104,33 @@ function checkVariables() {
   return failures;
 }
 
+// The audience list must have ONE source (story.AUDIENCE_META); the UI and
+// routing derive from it; unknown audiences fail visibly. This is the test that
+// would have caught the CLMA routing omission (a hardcoded UI list missing 'clma').
+function checkAudienceSource() {
+  const failures = [];
+  if (JSON.stringify(story.AUDIENCES) !== JSON.stringify(story.AUDIENCE_META.map((a) => a.slug))) failures.push('AUDIENCES must derive from AUDIENCE_META');
+  let threw = false; try { story.getStory('definitely-not-an-audience'); } catch (_) { threw = true; }
+  if (!threw) failures.push('getStory must THROW on an unknown audience (no silent general fallback)');
+  for (const slug of story.AUDIENCES) { if (!story.getStory(slug).length) failures.push('empty deck for audience ' + slug); }
+  const html = fs.readFileSync(require('path').join(__dirname, '..', 'public', 'present.html'), 'utf8');
+  if (/<option\s+value="(general|board|clma|partner|bank|referral|tech)"/.test(html)) failures.push('present.html hardcodes audience <option>s — must derive from /api/presentations/audiences');
+  if (/\]\s*\.includes\(\s*qAud\s*\)/.test(html)) failures.push('present.html hardcodes an audience allowlist array for ?audience routing');
+  if (!/\/api\/presentations\/audiences/.test(html)) failures.push('present.html must fetch the canonical audience list');
+  return failures;
+}
+
 (async () => {
   let total = 0;
   const varFails = checkVariables();
   total += varFails.length;
   console.log(`variables      ${varFails.length ? 'FAIL' : 'ok'}`);
   varFails.forEach((f) => console.log('   - ' + f));
+
+  const audFails = checkAudienceSource();
+  total += audFails.length;
+  console.log(`audience-src   ${audFails.length ? 'FAIL' : 'ok'}`);
+  audFails.forEach((f) => console.log('   - ' + f));
 
   for (const aud of story.AUDIENCES) {
     const fails = await checkAudience(aud);

@@ -163,15 +163,9 @@
 <div id="chrome">
   <div id="dots"></div>
   <div class="ctl">
-    <select class="aud" id="aud" title="Audience framing">
-      <option value="general">General</option>
-      <option value="bank">Banking partner</option>
-      <option value="board">Board</option>
-      <option value="partner">Operator</option>
-      <option value="referral">Referral / content</option>
-      <option value="tech">Tech partner</option>
-      <option value="clma">Cinco LMA (landscape)</option>
-    </select>
+    <!-- Options are populated at load from /api/presentations/audiences (the one
+         canonical list in story.js). No hardcoded audience list here. -->
+    <select class="aud" id="aud" title="Audience framing"></select>
     <button class="btn" id="btnCover">Cover</button>
     <button class="btn" id="btnPptx">Export PowerPoint</button>
     <button class="btn" id="btnFull">Fullscreen</button>
@@ -461,18 +455,30 @@
   });
   window.addEventListener('resize', fit);
   loadCover();
-  // Honor ?audience= so a run can be opened straight into a given audience.
-  const qAud = new URLSearchParams(location.search).get('audience');
-  if (qAud && ['general','bank','board','partner','referral','tech','clma'].includes(qAud)) {
-    // Set the audience but START ON THE COVER (focusFit=false) — opening a run
-    // via ?audience= is the beginning of a live walk-through, not a jump to the
-    // audience screen. The jump-to-fit is only for a deliberate mid-talk switch
-    // via the dropdown. (Ed 2026-08-26: bank run opened on slide 11, not cover.)
-    AUD = qAud; document.getElementById('aud').value = qAud;
-    load(AUD, false);
-  } else {
-    load('general');
-  }
+
+  // Populate the audience dropdown AND the ?audience routing from the ONE
+  // canonical list (story.js via /api/presentations/audiences). There is no
+  // hardcoded audience list in this page — adding an audience in story.js makes
+  // it appear here and become a valid ?audience automatically. (This is the
+  // architectural fix for the CLMA routing bug. Ed 2026-09-20.)
+  (async function bootstrapAudiences(){
+    const sel = document.getElementById('aud');
+    let list = [];
+    try {
+      const r = await fetch('/api/presentations/audiences');
+      const j = await r.json();
+      list = Array.isArray(j.audiences) ? j.audiences : [];
+    } catch (e) { console.warn('audiences fetch failed, using general only:', e.message); }
+    if (!list.length) list = [{ slug: 'general', label: 'General' }];
+    sel.innerHTML = list.map((a) => `<option value="${a.slug}">${a.label}</option>`).join('');
+    const valid = new Set(list.map((a) => a.slug));
+
+    // Honor ?audience= only when it is a KNOWN audience; open on the cover
+    // (focusFit=false) since a ?audience run is the start of a walk-through.
+    const qAud = new URLSearchParams(location.search).get('audience');
+    if (qAud && valid.has(qAud)) { AUD = qAud; sel.value = qAud; load(AUD, false); }
+    else { AUD = 'general'; sel.value = 'general'; load('general'); }
+  })();
 </script>
 </body>
 </html>

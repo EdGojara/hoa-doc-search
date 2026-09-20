@@ -7087,6 +7087,14 @@ app.get('/api/presentations/templates', (req, res) => {
   res.json({ templates: presentationsRegistry.listTemplates() });
 });
 
+// The ONE canonical audience list (slug + dropdown label). present.html builds
+// its dropdown and validates ?audience from this, so there is no second list to
+// drift. (Closes the class of bug that dropped 'clma' from a hardcoded UI list.)
+app.get('/api/presentations/audiences', (req, res) => {
+  const story = require('./lib/presentations/story');
+  res.json({ audiences: story.AUDIENCE_META });
+});
+
 // The in-platform demo — the pitch that runs INSIDE trustEd (public/present.html),
 // sourced from the SAME narrative as the .pptx export (lib/presentations/story.js)
 // so the two cannot drift. Returns the ordered screens for an audience with each
@@ -7100,7 +7108,9 @@ app.get('/api/presentations/story', async (req, res) => {
     // (/generate), so the two outputs can never diverge. Variables can arrive as
     // ?vars=<json> (optional; most decks use none).
     const { resolveStory } = require('./lib/presentations/resolve');
+    const story = require('./lib/presentations/story');
     const audience = String(req.query.audience || 'general');
+    if (!story.isAudience(audience)) return res.status(400).json({ error: 'unknown_audience' });
     const language = String(req.query.language) === 'es' ? 'es' : 'en';
     let variables = {};
     if (req.query.vars) { try { variables = JSON.parse(req.query.vars); } catch (_) { variables = {}; } }
