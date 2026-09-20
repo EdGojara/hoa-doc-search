@@ -51,6 +51,7 @@ const CHECKS = [
   'lib/ai/shadow/acc_shadow.selftest.js',
   'lib/ai/shadow/acc_stability.selftest.js',
   'lib/ai/shadow/evidence_package.test.js',
+  'lib/ai/shadow/evidence_conflict.test.js',
   'evals/evaluator-check.js',
   'tests/test_vantaca_extraction.js',
   'tests/test_retrieval_regression.js',

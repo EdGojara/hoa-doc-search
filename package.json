@@ -47,6 +47,7 @@
     "test:ai-shadow": "node lib/ai/shadow/acc_shadow.selftest.js",
     "test:ai-stability": "node lib/ai/shadow/acc_stability.selftest.js",
     "test:ai-evidence": "node lib/ai/shadow/evidence_package.test.js",
+    "test:ai-conflict": "node lib/ai/shadow/evidence_conflict.test.js",
     "test:evaluator": "node evals/evaluator-check.js",
     "test:micr": "node scripts/check_micr_pitch.js",
     "test:tessa-reply": "node tests/test_tessa_reply_recipients.js",

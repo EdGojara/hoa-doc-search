@@ -1,8 +1,20 @@
-# ACC Evidence-Readiness Layer — PROPOSAL (pending Ed/ChatGPT approval)
+# ACC Evidence-Readiness Layer
 
-Status: **design only, not implemented.** Ed/ChatGPT 2026-09-19.
-Bring-back-before-build per direction. No ACC reasoning prompt, model, verifier
-policy, autonomy state, or ASSIST change is part of this.
+Status (Ed/ChatGPT 2026-09-19):
+- **Phase 1 — IMPLEMENTED** (commit dc03f92): frozen/hashed EvidencePackage, four
+  artifact states, bounded deterministic retry, readiness gate before reasoning
+  (EXTRACTION_FAILED → ERROR, not BLOCK). Solar regression + live proof (retry
+  recovered the real transient PDF failure).
+- **Phase 2 — IMPLEMENTED** (shadow, offline-proven): narrow factual conflict
+  detection; EVIDENCE_CONFLICT gate as a routine autonomous clarification
+  (NEED_INFO / REQUEST_CLARIFICATION, not a DECISION_REQUIRED Ed exception);
+  homeowner clarification + package versioning + auto-resume; community-scoped
+  objective-condition registry (config) + deterministic enforcement. Masonry
+  regression covers both answer branches. Live persistence of the clarification
+  workflow (a table) is still deferred — see "Needs a migration".
+
+No ACC reasoning prompt, model, verifier policy, autonomy state, or ASSIST change
+is part of this work.
 
 ## Why (what the diagnostics proved)
 

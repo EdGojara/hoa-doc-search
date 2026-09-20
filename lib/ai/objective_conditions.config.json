@@ -1,0 +1,20 @@
+{
+  "_comment": "Community-scoped objective ACC conditions (Ed/ChatGPT 2026-09-19; Phase 2 of lib/ai/EVIDENCE_READINESS.md). Boundary: the MODEL determines a rule APPLIES (produces the item / scope); CODE deterministically guarantees the required curing condition is attached, so Miranda never has to 'remember' an objective consequence. Config first — NOT a database subsystem. Each rule is community-scoped and rule-identifiable (requirement_id). `applies_when.item_type_matches` is a case-insensitive regex tested against the structured item's `type`. `_default` rules apply to every community.",
+  "_schema": {
+    "requirement_id": "stable id for analytics/audit",
+    "applies_when": { "item_type_matches": "regex string tested (case-insensitive) against item.type" },
+    "required_condition": "the exact curing condition text to guarantee on the item",
+    "source": "governing-doc citation the condition is grounded in",
+    "disposition_if_added": "APPROVE_WITH_CONDITIONS"
+  },
+  "Waterview Estates": [
+    {
+      "requirement_id": "WVE-STONE-VENEER-MATCH",
+      "applies_when": { "item_type_matches": "stone\\s*veneer" },
+      "required_condition": "Existing stone veneer must be matched in material, color, finish, and coursing; no substitution of stone material or color is permitted without prior written ACC approval. If temporarily removed during work, it must be reinstated to match the existing exactly.",
+      "source": "Waterview Estates Design Guidelines §3.9.1 (exterior materials in natural state; color harmony with existing) + prior masonry approvals",
+      "disposition_if_added": "APPROVE_WITH_CONDITIONS"
+    }
+  ],
+  "_default": []
+}
