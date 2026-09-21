@@ -108,7 +108,7 @@ const STATUS_COLOR = { problem:'#c0392b', in_progress:'#e0873a', upcoming:'#2b6c
 const money = (c) => c == null ? '—' : '$' + (c/100).toLocaleString(undefined,{maximumFractionDigits:0});
 const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
 
-const map = L.map('map', { zoomControl:true }).setView([30.0500,-95.5520], 16);
+const map = L.map('map', { zoomControl:true }).setView([30.0501,-95.5602], 16);
 const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:20,attribution:'Esri'});
 const esriLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{maxZoom:20});
 const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
@@ -118,15 +118,24 @@ document.getElementById('baseSeg').addEventListener('click', e => { const b=e.ta
   document.querySelectorAll('#baseSeg button').forEach(x=>x.classList.toggle('on', x.dataset.b===b));
   map.removeLayer(hybrid); map.removeLayer(street); (b==='street'?street:hybrid).addTo(map); });
 
-let ASSETS = [], LAYERS = {}, activeFilter='all', activeTime='current', selectedId=null;
+let ASSETS = [], LAYERS = {}, BOUNDARY_LAYER=null, activeFilter='all', activeTime='current', selectedId=null;
 if (STAFF) document.getElementById('editCard').style.display='';
 
+// Child/system assets (irrigation, beds, uplighting under a median) are drawn
+// subordinate so at the opening scale you read ~a handful of clear physical
+// areas — the medians, entrance monuments, detention — not 16 competing shapes.
+// Click a median and its systems are right there. Nothing is hidden or deleted.
+const isChild = (a) => !!a.parent_asset_id;
 function styleFor(a) {
   const c = STATUS_COLOR[a.map_status] || STATUS_COLOR.ok;
-  return { color:c, weight:a.geometry && a.geometry.type==='LineString'?5:2, fillColor:c, fillOpacity:0.35, opacity:0.95 };
+  const line = a.geometry && a.geometry.type==='LineString';
+  if (isChild(a)) return { color:c, weight:line?2.5:1, fillColor:c, fillOpacity:0.18, opacity:0.7, dashArray:'3,3' };
+  return { color:c, weight:line?5:2, fillColor:c, fillOpacity:0.35, opacity:0.95 };
 }
 function pointMarker(a, latlng) {
-  return L.circleMarker(latlng, { radius:8, color:'#fff', weight:2, fillColor:(STATUS_COLOR[a.map_status]||STATUS_COLOR.ok), fillOpacity:1 });
+  const c = STATUS_COLOR[a.map_status] || STATUS_COLOR.ok;
+  if (isChild(a)) return L.circleMarker(latlng, { radius:4, color:'#fff', weight:1, fillColor:c, fillOpacity:0.85 });
+  return L.circleMarker(latlng, { radius:8, color:'#fff', weight:2, fillColor:c, fillOpacity:1 });
 }
 function inTime(a) {
   if (activeTime==='current') return true;
@@ -182,6 +191,15 @@ async function loadAssets() {
   else { const b=document.getElementById('mapBanner'); if(b) b.remove(); }
   Object.values(LAYERS).forEach(l=>map.removeLayer(l)); LAYERS={};
   const bounds=[];
+  // District perimeter (from the canonical boundary RPC) — a quiet frame so the
+  // assets read as "the area they manage," drawn under the assets.
+  if (BOUNDARY_LAYER) { map.removeLayer(BOUNDARY_LAYER); BOUNDARY_LAYER=null; }
+  if (j.boundary) {
+    BOUNDARY_LAYER = L.geoJSON({type:'Feature', geometry:j.boundary, properties:{}}, {
+      interactive:false, style:{ color:'#D4AF37', weight:2, fillColor:'#D4AF37', fillOpacity:0.05, dashArray:'6,5' }
+    }).addTo(map);
+    try { const bb=BOUNDARY_LAYER.getBounds(); if(bb.isValid()) bounds.push(bb); } catch(_) {}
+  }
   ASSETS.forEach(a => { if(!a.geometry) return;
     const lyr = L.geoJSON({type:'Feature', geometry:a.geometry, properties:{}}, {
       style: ()=>styleFor(a), pointToLayer:(f,ll)=>pointMarker(a,ll),

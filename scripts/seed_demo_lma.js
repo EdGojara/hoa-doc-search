@@ -20,41 +20,52 @@ const LMA = 'e0100000-0000-4000-a000-000000000000';                 // Sterling 
 const uid = (n) => `e011${String(n).padStart(4, '0')}-0000-4000-a000-000000000000`;
 
 // key, name, class, type, condition, geometry WKT (WGS84 lng lat), parentKey, location_description
+//
+// Placement (Ed 2026-09-21 presentation pass): the district sits on a real
+// developed parkway corridor (centerline lat ~30.0501, ~650m W->E) with a
+// neighborhood on both sides and a real greenspace to the south for the
+// detention basin — so on satellite the assets sit on recognizable ground,
+// not empty farmland. Medians are drawn as pointed esplanade polygons (not
+// bare rectangles) so they read as landscaped medians from above. Median 7
+// (the hero) is near the EAST entrance monument so it is easy to point at;
+// its child systems are co-located on it. Geography only; the operational
+// story (projects/vendors/invoices/board decision) is unchanged and lives in
+// seed_demo_lma_ops.js keyed to these same stable asset keys.
 const A = [
   ['median-3', 'Median 3', 'landscape', 'median', 'good',
-    'POLYGON((-95.55475 30.05005,-95.55425 30.05005,-95.55425 30.04995,-95.55475 30.04995,-95.55475 30.05005))', null, 'Sterling Ridge Pkwy at Willow'],
+    'POLYGON((-95.56308 30.05010,-95.56301 30.050132,-95.56259 30.050132,-95.56252 30.05010,-95.56259 30.050068,-95.56301 30.050068,-95.56308 30.05010))', null, 'Sterling Ridge Pkwy at Willow'],
   ['median-5', 'Median 5', 'landscape', 'median', 'good',
-    'POLYGON((-95.55225 30.05005,-95.55175 30.05005,-95.55175 30.04995,-95.55225 30.04995,-95.55225 30.05005))', null, 'Sterling Ridge Pkwy mid'],
+    'POLYGON((-95.56068 30.05010,-95.56061 30.050132,-95.56019 30.050132,-95.56012 30.05010,-95.56019 30.050068,-95.56061 30.050068,-95.56068 30.05010))', null, 'Sterling Ridge Pkwy mid'],
   ['median-7', 'Median 7', 'landscape', 'median', 'poor',
-    'POLYGON((-95.54975 30.05005,-95.54925 30.05005,-95.54925 30.04995,-95.54975 30.04995,-95.54975 30.05005))', null, 'Sterling Ridge Pkwy at Oak (recurring irrigation issues)'],
+    'POLYGON((-95.55828 30.05010,-95.55821 30.050132,-95.55779 30.050132,-95.55772 30.05010,-95.55779 30.050068,-95.55821 30.050068,-95.55828 30.05010))', null, 'Sterling Ridge Pkwy at Oak (recurring irrigation issues)'],
   ['mon-west', 'West Entrance Monument', 'structure', 'monument', 'excellent',
-    'POINT(-95.55605 30.05000)', null, 'West entrance, Sterling Ridge Pkwy'],
+    'POINT(-95.56340 30.05010)', null, 'West entrance, Sterling Ridge Pkwy'],
   ['mon-east', 'East Entrance Monument', 'structure', 'monument', 'good',
-    'POINT(-95.54795 30.05000)', null, 'East entrance, Sterling Ridge Pkwy'],
+    'POINT(-95.55700 30.05010)', null, 'East entrance, Sterling Ridge Pkwy'],
   ['bed-west', 'West Entrance Landscape Bed', 'landscape', 'landscape_bed', 'good',
-    'POLYGON((-95.55600 30.05025,-95.55580 30.05025,-95.55580 30.05015,-95.55600 30.05015,-95.55600 30.05025))', null, 'West entrance color bed'],
+    'POLYGON((-95.563343 30.050158,-95.563217 30.050158,-95.563217 30.050112,-95.563343 30.050112,-95.563343 30.050158))', null, 'West entrance color bed'],
   ['bed-east', 'East Entrance Landscape Bed', 'landscape', 'landscape_bed', 'fair',
-    'POLYGON((-95.54820 30.05025,-95.54800 30.05025,-95.54800 30.05015,-95.54820 30.05015,-95.54820 30.05025))', null, 'East entrance color bed'],
+    'POLYGON((-95.557183 30.050158,-95.557057 30.050158,-95.557057 30.050112,-95.557183 30.050112,-95.557183 30.050158))', null, 'East entrance color bed'],
   ['m7-irrig', 'Median 7 Irrigation', 'utility', 'irrigation_zone', 'poor',
-    'POLYGON((-95.54970 30.05003,-95.54930 30.05003,-95.54930 30.04997,-95.54970 30.04997,-95.54970 30.05003))', 'median-7', 'Irrigation zone under Median 7'],
+    'POLYGON((-95.55821 30.050108,-95.55779 30.050108,-95.55779 30.050062,-95.55821 30.050062,-95.55821 30.050108))', 'median-7', 'Irrigation zone under Median 7'],
   ['m7-beds', 'Median 7 Landscape Beds', 'landscape', 'landscape_bed', 'fair',
-    'POLYGON((-95.54950 30.05004,-95.54925 30.05004,-95.54925 30.04996,-95.54950 30.04996,-95.54950 30.05004))', 'median-7', 'Planting beds on Median 7'],
+    'POLYGON((-95.558028 30.050133,-95.557872 30.050133,-95.557872 30.050097,-95.558028 30.050097,-95.558028 30.050133))', 'median-7', 'Planting beds on Median 7'],
   ['m7-trees', 'Median 7 Trees', 'landscape', 'tree_area', 'good',
-    'POINT(-95.54960 30.05000)', 'median-7', 'Live oaks on Median 7'],
+    'POINT(-95.55810 30.05010)', 'median-7', 'Live oaks on Median 7'],
   ['m7-light', 'Median 7 Lighting', 'utility', 'lighting_run', 'good',
-    'LINESTRING(-95.54975 30.05000,-95.54925 30.05000)', 'median-7', 'Uplighting along Median 7'],
+    'LINESTRING(-95.55825 30.05010,-95.55775 30.05010)', 'median-7', 'Uplighting along Median 7'],
   ['m5-irrig', 'Median 5 Irrigation', 'utility', 'irrigation_zone', 'good',
-    'POLYGON((-95.55220 30.05003,-95.55180 30.05003,-95.55180 30.04997,-95.55220 30.04997,-95.55220 30.05003))', 'median-5', 'Irrigation zone under Median 5'],
+    'POLYGON((-95.56061 30.050108,-95.56019 30.050108,-95.56019 30.050062,-95.56061 30.050062,-95.56061 30.050108))', 'median-5', 'Irrigation zone under Median 5'],
   ['m3-trees', 'Median 3 Trees', 'landscape', 'tree_area', 'good',
-    'POINT(-95.55450 30.05000)', 'median-3', 'Crape myrtles on Median 3'],
+    'POINT(-95.56290 30.05010)', 'median-3', 'Crape myrtles on Median 3'],
   ['pkwy-light', 'Sterling Ridge Parkway Lighting Run', 'utility', 'lighting_run', 'good',
-    'LINESTRING(-95.55600 30.05010,-95.55200 30.05010,-95.54800 30.05010)', null, 'Parkway street lighting circuit'],
+    'LINESTRING(-95.56340 30.05017,-95.56040 30.05017,-95.55700 30.05017)', null, 'Parkway street lighting circuit'],
   ['pkwy-trees', 'Parkway Tree Corridor', 'landscape', 'tree_corridor', 'fair',
-    'LINESTRING(-95.55600 30.04990,-95.55200 30.04990,-95.54800 30.04990)', null, 'Parkway tree line, south side'],
+    'LINESTRING(-95.56340 30.05003,-95.56040 30.05003,-95.55700 30.05003)', null, 'Parkway tree line, south side'],
   ['detention', 'Sterling Ridge Detention Basin', 'water', 'detention_basin', 'fair',
-    'POLYGON((-95.55560 30.04960,-95.55500 30.04960,-95.55500 30.04930,-95.55560 30.04930,-95.55560 30.04960))', null, 'Regional detention basin, SW corner'],
+    'POLYGON((-95.55976 30.04936,-95.55924 30.04936,-95.55924 30.04904,-95.55976 30.04904,-95.55976 30.04936))', null, 'Regional detention basin, south greenspace'],
 ];
-const BOUNDARY = 'POLYGON((-95.55650 30.05060,-95.54750 30.05060,-95.54750 30.04900,-95.55650 30.04900,-95.55650 30.05060))';
+const BOUNDARY = 'POLYGON((-95.56360 30.05025,-95.55680 30.05025,-95.55680 30.04895,-95.56360 30.04895,-95.56360 30.05025))';
 const keyIndex = Object.fromEntries(A.map(([k], i) => [k, i + 1]));
 
 async function main() {

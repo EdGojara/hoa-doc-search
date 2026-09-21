@@ -874,7 +874,16 @@ router.get('/assets', async (req, res) => {
         } : null,
       };
     });
-    res.json({ community_id: communityId, count: enriched.length, assets: enriched });
+    // District perimeter, from the same canonical RPC the amenity map uses
+    // (community_boundary_geojson). Lets the operating map frame the district
+    // so assets read as "inside the area they manage," not floating points.
+    let boundary = null;
+    try {
+      const { data: bData } = await supabase.rpc('community_boundary_geojson', { p_community_id: communityId });
+      if (bData && bData.boundary) boundary = bData.boundary;
+    } catch (_) { /* boundary is a framing nicety, never fatal */ }
+
+    res.json({ community_id: communityId, count: enriched.length, assets: enriched, boundary });
   } catch (err) {
     console.error('[community-map] assets list failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
