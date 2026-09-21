@@ -789,4 +789,203 @@ router.post('/acknowledge', express.json({ limit: '4kb' }), async (req, res) => 
   }
 });
 
+// ============================================================================
+// LMA VISUAL OPERATING MAP — community_assets endpoints (same router/auth as the
+// residential house map; the physical object is a managed common-area asset).
+// Geometry via the canonical community_assets_geojson RPC (mig 446); operational
+// state joined from vendor_projects.asset_id (443) + ap_invoice_lines.project_id
+// (444). Report-issue reuses the board_map_reports flow (445).
+// ============================================================================
+const OPEN_STAGES = new Set(['requested', 'bid_requested', 'bid_received', 'board_deciding', 'approved', 'contract_signed', 'work_started', 'on_hold']);
+const UPCOMING_STAGES = new Set(['requested', 'bid_requested', 'bid_received', 'board_deciding', 'on_hold']);
+const ACTIVE_STAGES = new Set(['approved', 'contract_signed', 'work_started']);
+
+// All projects for a community + their project-attributed actual (invoiced) spend.
+async function assetOperationalState(communityId) {
+  const { data: projects, error: pErr } = await supabase.from('vendor_projects')
+    .select('id, asset_id, title, stage, percent_complete, approved_cost_cents, estimated_cost_cents, vendor_name, vendor_id, target_date, started_at, completed_at, priority, funding_source')
+    .eq('community_id', communityId).limit(2000);
+  if (pErr) throw pErr;
+  const ids = (projects || []).map((p) => p.id);
+  const spendByProject = {};
+  if (ids.length) {
+    const { data: lines, error: lErr } = await supabase.from('ap_invoice_lines')
+      .select('project_id, amount_cents').in('project_id', ids).limit(5000);
+    if (lErr) throw lErr;
+    (lines || []).forEach((l) => { spendByProject[l.project_id] = (spendByProject[l.project_id] || 0) + (l.amount_cents || 0); });
+  }
+  const byAsset = {};
+  for (const p of (projects || [])) {
+    if (!p.asset_id) continue;
+    (byAsset[p.asset_id] = byAsset[p.asset_id] || []).push({
+      ...p,
+      actual_cents: spendByProject[p.id] || 0,
+      remaining_cents: (p.approved_cost_cents || 0) - (spendByProject[p.id] || 0),
+    });
+  }
+  return { projects: projects || [], spendByProject, byAsset };
+}
+
+function pickPrimaryProject(list) {
+  if (!list || !list.length) return null;
+  const open = list.filter((p) => OPEN_STAGES.has(p.stage));
+  if (open.length) return open.sort((a, b) => (ACTIVE_STAGES.has(b.stage) ? 1 : 0) - (ACTIVE_STAGES.has(a.stage) ? 1 : 0))[0];
+  // else most recently completed
+  return list.slice().sort((a, b) => String(b.completed_at || '').localeCompare(String(a.completed_at || '')))[0];
+}
+function mapStatus(asset, primary) {
+  const recentlyDone = primary && primary.completed_at && (Date.now() - new Date(primary.completed_at).getTime()) < 150 * 86400000;
+  if (['poor', 'failing'].includes(asset.condition) || (primary && primary.stage === 'on_hold')) return 'problem';
+  if (primary && ACTIVE_STAGES.has(primary.stage)) return 'in_progress';
+  if (primary && UPCOMING_STAGES.has(primary.stage)) return 'upcoming';
+  if (recentlyDone) return 'completed';
+  return 'ok';
+}
+
+// GET /assets?community_id=  → assets as GeoJSON + operational state for the map.
+router.get('/assets', async (req, res) => {
+  try {
+    const communityId = (req.query.community_id || '').toString();
+    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
+    const mv = await resolveMapViewer(req, res); if (!mv) return;
+    if (!canSeeCommunity(mv.viewer, communityId)) return res.status(403).json({ error: 'community_outside_scope' });
+
+    const { data: assets, error } = await supabase.rpc('community_assets_geojson', { p_community_id: communityId });
+    if (error) throw error;
+    const state = await assetOperationalState(communityId);
+    const childCount = {};
+    (assets || []).forEach((a) => { if (a.parent_asset_id) childCount[a.parent_asset_id] = (childCount[a.parent_asset_id] || 0) + 1; });
+
+    const enriched = (assets || []).map((a) => {
+      const projs = state.byAsset[a.id] || [];
+      const primary = pickPrimaryProject(projs);
+      return {
+        ...a,
+        child_count: childCount[a.id] || 0,
+        map_status: mapStatus(a, primary),
+        active_project: primary ? {
+          id: primary.id, title: primary.title, stage: primary.stage, percent_complete: primary.percent_complete,
+          approved_cents: primary.approved_cost_cents, actual_cents: primary.actual_cents, remaining_cents: primary.remaining_cents,
+          vendor_name: primary.vendor_name, target_date: primary.target_date, started_at: primary.started_at, completed_at: primary.completed_at,
+        } : null,
+      };
+    });
+    res.json({ community_id: communityId, count: enriched.length, assets: enriched });
+  } catch (err) {
+    console.error('[community-map] assets list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /asset/:assetId/detail  → the full operational story for one asset.
+router.get('/asset/:assetId/detail', async (req, res) => {
+  try {
+    const assetId = req.params.assetId;
+    const { data: asset, error: aErr } = await supabase.from('community_assets')
+      .select('id, community_id, name, asset_class, asset_type, status, condition, parent_asset_id, location_description')
+      .eq('id', assetId).maybeSingle();
+    if (aErr) throw aErr;
+    if (!asset) return res.status(404).json({ error: 'asset_not_found' });
+    const mv = await resolveMapViewer(req, res); if (!mv) return;
+    if (!canSeeCommunity(mv.viewer, asset.community_id)) return res.status(403).json({ error: 'community_outside_scope' });
+
+    const state = await assetOperationalState(asset.community_id);
+    const { data: children } = await supabase.from('community_assets')
+      .select('id, name, asset_type, condition').eq('parent_asset_id', assetId).order('name');
+    const parent = asset.parent_asset_id
+      ? (await supabase.from('community_assets').select('id, name, asset_type').eq('id', asset.parent_asset_id).maybeSingle()).data : null;
+
+    const ownProjects = state.byAsset[assetId] || [];
+    // location rollup: this asset + its direct children, each transaction counted once.
+    const locationAssetIds = [assetId, ...((children || []).map((c) => c.id))];
+    let locationSpend = 0, assetSpend = 0;
+    for (const aid of locationAssetIds) (state.byAsset[aid] || []).forEach((p) => { locationSpend += p.actual_cents; });
+    ownProjects.forEach((p) => { assetSpend += p.actual_cents; });
+
+    const projIds = ownProjects.map((p) => p.id);
+    const { data: motions } = projIds.length
+      ? await supabase.from('board_motions').select('id, title, status, motion_type, related_project_id, created_at').in('related_project_id', projIds)
+      : { data: [] };
+    const { data: events } = projIds.length
+      ? await supabase.from('vendor_project_events').select('project_id, event_type, from_stage, to_stage, note, created_at').in('project_id', projIds).order('created_at', { ascending: false }).limit(30)
+      : { data: [] };
+    const { data: reports } = await supabase.from('board_map_reports')
+      .select('id, description, photo_path, status, reported_by_name, created_at').eq('community_asset_id', assetId).order('created_at', { ascending: false }).limit(20);
+
+    res.json({
+      asset, parent, children: children || [],
+      projects: ownProjects.map((p) => ({
+        id: p.id, title: p.title, stage: p.stage, percent_complete: p.percent_complete,
+        approved_cents: p.approved_cost_cents, estimated_cents: p.estimated_cost_cents, actual_cents: p.actual_cents, remaining_cents: p.remaining_cents,
+        vendor_name: p.vendor_name, target_date: p.target_date, started_at: p.started_at, completed_at: p.completed_at, funding_source: p.funding_source,
+      })),
+      rollup: { asset_spend_cents: assetSpend, location_spend_cents: locationSpend, includes_children: (children || []).length },
+      board_motions: motions || [], project_events: events || [], reports: reports || [],
+    });
+  } catch (err) {
+    console.error('[community-map] asset detail failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /asset/:assetId/geometry  { wkt }  → staff geometry editor (canonical RPC).
+router.post('/asset/:assetId/geometry', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const assetId = req.params.assetId;
+    const wkt = (req.body && req.body.wkt ? String(req.body.wkt) : '').trim();
+    if (!wkt) return res.status(400).json({ error: 'wkt_required' });
+    const { data: asset } = await supabase.from('community_assets').select('id, community_id').eq('id', assetId).maybeSingle();
+    if (!asset) return res.status(404).json({ error: 'asset_not_found' });
+    const mv = await resolveMapViewer(req, res); if (!mv) return;
+    if (mv.isBoard) return res.status(403).json({ error: 'staff_only' });   // geometry editing is staff-only
+    if (!canSeeCommunity(mv.viewer, asset.community_id)) return res.status(403).json({ error: 'community_outside_scope' });
+    const { data, error } = await supabase.rpc('community_asset_set_geometry', { p_asset_id: assetId, p_wkt: wkt });
+    if (error) throw error;
+    res.json({ ok: !!(data && data.ok), result: data });
+  } catch (err) {
+    console.error('[community-map] asset geometry save failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /asset/:assetId/report  (multipart: description, optional photo, related_project_id)
+// Reuses the exact board_map_reports flow — the selected asset provides context.
+router.post('/asset/:assetId/report', reportUpload.single('photo'), async (req, res) => {
+  try {
+    const assetId = req.params.assetId;
+    const { data: asset } = await supabase.from('community_assets').select('id, community_id, name').eq('id', assetId).maybeSingle();
+    if (!asset) return res.status(404).json({ error: 'asset_not_found' });
+    const mv = await resolveMapViewer(req, res); if (!mv) return;
+    const { viewer, isBoard, actor } = mv;
+    if (!canSeeCommunity(viewer, asset.community_id)) return res.status(403).json({ error: 'community_outside_scope' });
+
+    const description = (req.body && req.body.description ? String(req.body.description) : '').slice(0, 2000).trim();
+    const relatedProjectId = (req.body && req.body.related_project_id) ? String(req.body.related_project_id) : null;
+    if (!description && !req.file) return res.status(400).json({ error: 'empty_report' });
+
+    let photoPath = null;
+    if (req.file && req.file.buffer && req.file.buffer.length) {
+      const ext = (req.file.mimetype && req.file.mimetype.split('/')[1]) || 'jpg';
+      const stamp = crypto.randomBytes(6).toString('hex');
+      photoPath = `board-map-reports/${asset.community_id}/asset-${assetId}/${stamp}.${ext}`;
+      const { error: upErr } = await supabase.storage.from('documents')
+        .upload(photoPath, req.file.buffer, { contentType: req.file.mimetype || 'image/jpeg', upsert: false });
+      if (upErr) { console.warn('[community-map] asset report photo upload failed:', upErr.message); photoPath = null; }
+    }
+    const reporterName = isBoard ? viewer.name : (actor ? actorDisplayName(actor) : 'Bedrock staff');
+    const reporterEmail = (viewer && viewer.email) || (actor && actor.email) || null;
+
+    const { data: row, error: insErr } = await supabase.from('board_map_reports').insert({
+      community_id: asset.community_id, community_asset_id: assetId, related_project_id: relatedProjectId,
+      reported_by_name: reporterName, reported_by_email: reporterEmail, reporter_role: isBoard ? 'board_member' : 'staff',
+      description: description || null, photo_path: photoPath, photo_bucket: photoPath ? 'documents' : null, status: 'new',
+    }).select('id').maybeSingle();
+    if (insErr) throw insErr;
+    res.json({ ok: true, report_id: row && row.id, has_photo: !!photoPath });
+  } catch (err) {
+    console.error('[community-map] asset report failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = { router };

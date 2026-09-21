@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Visual Operating Map — Sterling Ridge</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="/brand.css" />
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --line:#d0d7de;
+    --st-problem:#c0392b; --st-progress:#e0873a; --st-upcoming:#2b6cb0; --st-completed:#2e7d5b; --st-ok:#7a8798; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; font-family:-apple-system,Segoe UI,Roboto,sans-serif; color:var(--navy); }
+  #app { display:flex; height:100vh; }
+  #map { flex:1; }
+  #side { width:0; overflow:hidden; transition:width .18s; border-left:1px solid var(--line); background:#fff; }
+  #side.open { width:380px; }
+  #sideInner { width:380px; padding:16px; height:100%; overflow-y:auto; }
+  .topbar { position:absolute; z-index:600; top:10px; left:10px; right:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; pointer-events:none; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:6px 8px; box-shadow:0 1px 4px rgba(0,0,0,.08); pointer-events:auto; }
+  .title { font-weight:700; font-size:14px; }
+  .sub { font-size:11px; color:#5b6672; }
+  .seg button, .time button, .base button { border:1px solid var(--line); background:#fff; color:var(--navy); font-size:12px; padding:4px 9px; border-radius:6px; cursor:pointer; font-weight:600; }
+  .seg button.on, .time button.on, .base button.on { background:var(--navy); color:#fff; border-color:var(--navy); }
+  .legend { display:flex; gap:10px; font-size:11px; align-items:center; }
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:3px; vertical-align:middle; }
+  h2 { font-size:16px; margin:2px 0 2px; }
+  h3 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#5b6672; margin:16px 0 6px; border-bottom:1px solid var(--line); padding-bottom:3px; }
+  .pill { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:20px; color:#fff; }
+  .kv { display:flex; justify-content:space-between; font-size:13px; padding:3px 0; }
+  .kv b { font-weight:600; }
+  .muted { color:#5b6672; font-size:12px; }
+  .proj { border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:8px; }
+  .bar { height:7px; background:#eef1f4; border-radius:5px; overflow:hidden; margin-top:5px; }
+  .bar > i { display:block; height:100%; background:var(--gold); }
+  .btn { background:var(--navy); color:#fff; border:none; border-radius:7px; padding:8px 12px; font-weight:700; font-size:13px; cursor:pointer; }
+  .btn.ghost { background:#fff; color:var(--navy); border:1px solid var(--line); }
+  .child { font-size:13px; padding:5px 0; border-bottom:1px dashed var(--line); cursor:pointer; }
+  .child:hover { color:var(--gold); }
+  textarea { width:100%; border:1px solid var(--line); border-radius:7px; padding:8px; font-family:inherit; font-size:13px; }
+  .close { float:right; cursor:pointer; font-size:18px; color:#5b6672; }
+  .hint { background:#fffbeb; border:1px solid #fde68a; color:#92400e; font-size:12px; padding:6px 9px; border-radius:6px; margin-top:6px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="map">
+    <div class="topbar">
+      <div class="card"><div class="title">Sterling Ridge Landscape District</div><div class="sub" id="sub">Visual Operating Map</div></div>
+      <div class="card seg" id="statusSeg">
+        <button data-f="all" class="on">All</button><button data-f="projects">Projects</button>
+        <button data-f="problems">Problems</button><button data-f="upcoming">Upcoming</button><button data-f="completed">Completed</button>
+      </div>
+      <div class="card time" id="timeSeg">
+        <button data-t="current" class="on">Current</button><button data-t="30">30d</button>
+        <button data-t="90">90d</button><button data-t="year">This Year</button>
+      </div>
+      <div class="card legend">
+        <span><i class="dot" style="background:var(--st-problem)"></i>Problem</span>
+        <span><i class="dot" style="background:var(--st-progress)"></i>In progress</span>
+        <span><i class="dot" style="background:var(--st-upcoming)"></i>Upcoming</span>
+        <span><i class="dot" style="background:var(--st-completed)"></i>Completed</span>
+        <span><i class="dot" style="background:var(--st-ok)"></i>OK</span>
+      </div>
+      <div class="card base" id="baseSeg">
+        <button data-b="hybrid" class="on">🛰️</button><button data-b="street">🗺️</button>
+      </div>
+      <div class="card" id="editCard" style="display:none">
+        <button class="btn ghost" id="editToggle">✏️ Edit geometry</button>
+        <div id="editTools" style="display:none; margin-top:6px;">
+          <button class="btn ghost" data-g="point">Point</button>
+          <button class="btn ghost" data-g="line">Line</button>
+          <button class="btn ghost" data-g="polygon">Polygon</button>
+          <button class="btn" id="editSave" style="display:none">Save</button>
+          <button class="btn ghost" id="editCancel">Cancel</button>
+          <div class="hint" id="editHint">Select an asset, choose a shape, click on the map to place/draw.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="side"><div id="sideInner"></div></div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const COMMUNITY_ID = params.get('community_id') || 'e0100000-0000-4000-a000-000000000000'; // Sterling Ridge LMA
+const STAFF = params.get('staff') === '1';
+const STATUS_COLOR = { problem:'#c0392b', in_progress:'#e0873a', upcoming:'#2b6cb0', completed:'#2e7d5b', ok:'#7a8798' };
+const money = (c) => c == null ? '—' : '$' + (c/100).toLocaleString(undefined,{maximumFractionDigits:0});
+const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+
+const map = L.map('map', { zoomControl:true }).setView([30.0500,-95.5520], 16);
+const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:20,attribution:'Esri'});
+const esriLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{maxZoom:20});
+const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
+const hybrid = L.layerGroup([esriSat, esriLabels]);
+hybrid.addTo(map);
+document.getElementById('baseSeg').addEventListener('click', e => { const b=e.target.dataset.b; if(!b) return;
+  document.querySelectorAll('#baseSeg button').forEach(x=>x.classList.toggle('on', x.dataset.b===b));
+  map.removeLayer(hybrid); map.removeLayer(street); (b==='street'?street:hybrid).addTo(map); });
+
+let ASSETS = [], LAYERS = {}, activeFilter='all', activeTime='current', selectedId=null;
+if (STAFF) document.getElementById('editCard').style.display='';
+
+function styleFor(a) {
+  const c = STATUS_COLOR[a.map_status] || STATUS_COLOR.ok;
+  return { color:c, weight:a.geometry && a.geometry.type==='LineString'?5:2, fillColor:c, fillOpacity:0.35, opacity:0.95 };
+}
+function pointMarker(a, latlng) {
+  return L.circleMarker(latlng, { radius:8, color:'#fff', weight:2, fillColor:(STATUS_COLOR[a.map_status]||STATUS_COLOR.ok), fillOpacity:1 });
+}
+function inTime(a) {
+  if (activeTime==='current') return true;
+  const p=a.active_project; if(!p) return activeTime==='year' ? false : false;
+  const now=Date.now(); const d = (s)=> s? new Date(s).getTime():null;
+  if (activeTime==='year') { const y=new Date().getFullYear();
+    return [p.target_date,p.completed_at,p.started_at].some(x=>x && new Date(x).getFullYear()===y); }
+  const days = activeTime==='30'?30:90; const horizon=now+days*86400000;
+  const t=d(p.target_date), s=d(p.started_at);
+  return (t && t>=now && t<=horizon) || (s && s<=now && (!p.completed_at));
+}
+function inFilter(a) {
+  if (activeFilter==='all') return true;
+  if (activeFilter==='projects') return !!a.active_project;
+  if (activeFilter==='problems') return a.map_status==='problem';
+  if (activeFilter==='upcoming') return a.map_status==='upcoming';
+  if (activeFilter==='completed') return a.map_status==='completed';
+  return true;
+}
+function applyFilters() {
+  ASSETS.forEach(a => { const lyr=LAYERS[a.id]; if(!lyr) return;
+    const show = inFilter(a) && inTime(a);
+    if (show && !map.hasLayer(lyr)) lyr.addTo(map);
+    else if (!show && map.hasLayer(lyr)) map.removeLayer(lyr); });
+}
+document.getElementById('statusSeg').addEventListener('click', e=>{ const f=e.target.dataset.f; if(!f) return;
+  activeFilter=f; document.querySelectorAll('#statusSeg button').forEach(x=>x.classList.toggle('on',x.dataset.f===f)); applyFilters(); });
+document.getElementById('timeSeg').addEventListener('click', e=>{ const t=e.target.dataset.t; if(!t) return;
+  activeTime=t; document.querySelectorAll('#timeSeg button').forEach(x=>x.classList.toggle('on',x.dataset.t===t)); applyFilters(); });
+
+async function loadAssets() {
+  const r = await fetch('/api/community-map/assets?community_id='+encodeURIComponent(COMMUNITY_ID), {credentials:'include'});
+  if (!r.ok) { document.getElementById('sub').textContent='Failed to load ('+r.status+')'; return; }
+  const j = await r.json(); ASSETS = j.assets||[];
+  Object.values(LAYERS).forEach(l=>map.removeLayer(l)); LAYERS={};
+  const bounds=[];
+  ASSETS.forEach(a => { if(!a.geometry) return;
+    const lyr = L.geoJSON({type:'Feature', geometry:a.geometry, properties:{}}, {
+      style: ()=>styleFor(a), pointToLayer:(f,ll)=>pointMarker(a,ll),
+      onEachFeature:(f,l)=>{ l.on('click', ()=>openDetail(a.id)); l.bindTooltip(a.name,{sticky:true}); }
+    });
+    LAYERS[a.id]=lyr; lyr.addTo(map);
+    try { const b=lyr.getBounds(); if(b.isValid()) bounds.push(b); } catch(_) {}
+  });
+  document.getElementById('sub').textContent = ASSETS.length+' managed assets';
+  if (bounds.length) { let bb=bounds[0]; bounds.forEach(b=>bb=bb.extend(b)); map.fitBounds(bb,{padding:[60,60]}); }
+  applyFilters();
+}
+
+async function openDetail(id) {
+  selectedId=id;
+  const r = await fetch('/api/community-map/asset/'+id+'/detail',{credentials:'include'});
+  if (!r.ok) return;
+  const d = await r.json(); const a=d.asset;
+  const st = (ASSETS.find(x=>x.id===id)||{}).map_status || 'ok';
+  const proj = d.projects||[];
+  let html = `<span class="close" onclick="closeSide()">✕</span>`;
+  html += `<div class="pill" style="background:${STATUS_COLOR[st]}">${esc(st.replace('_',' '))}</div>`;
+  html += `<h2>${esc(a.name)}</h2><div class="muted">${esc(a.asset_type)} · condition: ${esc(a.condition||'unknown')}</div>`;
+  if (a.location_description) html+=`<div class="muted">${esc(a.location_description)}</div>`;
+  if (d.parent) html+=`<div class="muted">Part of <a href="#" onclick="openDetail('${d.parent.id}');return false">${esc(d.parent.name)}</a></div>`;
+
+  if (d.children && d.children.length) { html+=`<h3>Systems / child assets</h3>`;
+    d.children.forEach(c=> html+=`<div class="child" onclick="openDetail('${c.id}')">${esc(c.name)} <span class="muted">· ${esc(c.asset_type)} · ${esc(c.condition||'')}</span></div>`); }
+
+  if (proj.length) { html+=`<h3>Projects &amp; work</h3>`;
+    proj.forEach(p=>{ html+=`<div class="proj"><b>${esc(p.title)}</b><div class="muted">${esc(p.stage.replace(/_/g,' '))} · ${esc(p.vendor_name||'—')}</div>`;
+      html+=`<div class="kv"><b>Approved</b><span>${money(p.approved_cents)}</span></div>`;
+      html+=`<div class="kv"><b>Actual (invoiced)</b><span>${money(p.actual_cents)}</span></div>`;
+      html+=`<div class="kv"><b>Remaining</b><span>${money(p.remaining_cents)}</span></div>`;
+      if (p.started_at) html+=`<div class="kv"><b>Started</b><span>${esc(p.started_at)}</span></div>`;
+      if (p.target_date) html+=`<div class="kv"><b>Target</b><span>${esc(p.target_date)}</span></div>`;
+      if (p.completed_at) html+=`<div class="kv"><b>Completed</b><span>${esc(p.completed_at)}</span></div>`;
+      if (p.percent_complete!=null) html+=`<div class="bar"><i style="width:${p.percent_complete}%"></i></div><div class="muted">${p.percent_complete}% complete</div>`;
+      html+=`</div>`; });
+  }
+  if (d.rollup && (d.rollup.asset_spend_cents || d.rollup.location_spend_cents)) { html+=`<h3>Location spend</h3>`;
+    html+=`<div class="kv"><b>This asset</b><span>${money(d.rollup.asset_spend_cents)}</span></div>`;
+    if (d.rollup.includes_children) html+=`<div class="kv"><b>This location (+${d.rollup.includes_children} child systems)</b><span>${money(d.rollup.location_spend_cents)}</span></div>`; }
+  if (d.board_motions && d.board_motions.length) { html+=`<h3>Board decisions</h3>`;
+    d.board_motions.forEach(m=> html+=`<div class="kv"><b>${esc(m.title)}</b><span>${esc(m.status)}</span></div>`); }
+  if (d.project_events && d.project_events.length) { html+=`<h3>History</h3>`;
+    d.project_events.slice(0,8).forEach(e=> html+=`<div class="muted">${esc((e.created_at||'').slice(0,10))} — ${esc(e.note||e.event_type)}</div>`); }
+  if (d.reports && d.reports.length) { html+=`<h3>Field reports</h3>`;
+    d.reports.forEach(rp=> html+=`<div class="muted">${esc((rp.created_at||'').slice(0,10))} — ${esc(rp.description||'(photo)')} <i>[${esc(rp.status)}]</i></div>`); }
+
+  html+=`<h3>Report an issue here</h3>
+    <textarea id="rptText" rows="3" placeholder="e.g. Still standing water near the east end."></textarea>
+    <div style="margin-top:6px;display:flex;gap:8px;align-items:center;">
+      <input type="file" id="rptPhoto" accept="image/*" />
+      <button class="btn" onclick="submitReport('${id}')">Send to Bedrock</button>
+    </div><div id="rptMsg" class="muted"></div>`;
+  document.getElementById('sideInner').innerHTML=html;
+  document.getElementById('side').classList.add('open');
+}
+function closeSide(){ document.getElementById('side').classList.remove('open'); selectedId=null; }
+async function submitReport(id){
+  const text=document.getElementById('rptText').value.trim();
+  const file=document.getElementById('rptPhoto').files[0];
+  if(!text && !file){ document.getElementById('rptMsg').textContent='Add a note or photo.'; return; }
+  const fd=new FormData(); fd.append('description',text); if(file) fd.append('photo',file);
+  const r=await fetch('/api/community-map/asset/'+id+'/report',{method:'POST',body:fd,credentials:'include'});
+  document.getElementById('rptMsg').textContent = r.ok ? 'Reported. Bedrock will triage.' : 'Failed ('+r.status+').';
+  if(r.ok){ document.getElementById('rptText').value=''; }
+}
+
+// ---- staff geometry editor: click to place point / draw line / draw polygon ----
+let editMode=null, editPts=[], editLayer=null;
+if (STAFF) {
+  document.getElementById('editToggle').onclick=()=>{ const t=document.getElementById('editTools'); t.style.display = t.style.display==='none'?'':'none'; };
+  document.getElementById('editCancel').onclick=cancelEdit;
+  document.querySelectorAll('#editTools button[data-g]').forEach(b=> b.onclick=()=>startEdit(b.dataset.g));
+  document.getElementById('editSave').onclick=saveEdit;
+  map.on('click', e=>{ if(!editMode) return; editPts.push([e.latlng.lng, e.latlng.lat]); redrawEdit(); });
+}
+function startEdit(kind){ if(!selectedId){ document.getElementById('editHint').textContent='Select an asset first (click it).'; return; }
+  editMode=kind; editPts=[]; document.getElementById('editSave').style.display=''; document.getElementById('editHint').textContent='Click on the map to '+(kind==='point'?'place the point.':'add vertices; Save when done.'); redrawEdit(); }
+function redrawEdit(){ if(editLayer) map.removeLayer(editLayer); if(!editPts.length) return;
+  const ll=editPts.map(p=>[p[1],p[0]]);
+  editLayer = editMode==='point' ? L.circleMarker(ll[ll.length-1],{radius:8,color:'#D4AF37',fillColor:'#D4AF37',fillOpacity:1})
+    : editMode==='line' ? L.polyline(ll,{color:'#D4AF37',weight:4})
+    : L.polygon(ll,{color:'#D4AF37',weight:2,fillOpacity:.25});
+  editLayer.addTo(map); }
+function cancelEdit(){ editMode=null; editPts=[]; if(editLayer){map.removeLayer(editLayer);editLayer=null;} document.getElementById('editSave').style.display='none'; document.getElementById('editHint').textContent='Select an asset, choose a shape, click on the map.'; }
+async function saveEdit(){ if(!selectedId||!editPts.length) return;
+  let wkt;
+  if(editMode==='point'){ const p=editPts[editPts.length-1]; wkt=`POINT(${p[0]} ${p[1]})`; }
+  else if(editMode==='line'){ wkt=`LINESTRING(${editPts.map(p=>p[0]+' '+p[1]).join(',')})`; }
+  else { const r=editPts.slice(); if(r.length&&(r[0][0]!==r[r.length-1][0]||r[0][1]!==r[r.length-1][1])) r.push(r[0]); wkt=`POLYGON((${r.map(p=>p[0]+' '+p[1]).join(',')}))`; }
+  const res=await fetch('/api/community-map/asset/'+selectedId+'/geometry',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({wkt})});
+  document.getElementById('editHint').textContent = res.ok ? 'Saved. Reloading…' : 'Save failed ('+res.status+').';
+  if(res.ok){ cancelEdit(); await loadAssets(); }   // reload from DB → prove round-trip render
+}
+loadAssets();
+</script>
+</body>
+</html>
