@@ -91,6 +91,14 @@ async function checkAudience(aud) {
       const hasImage = slides[i].targets.some((t) => /\.(png|jpe?g)$/i.test(t));
       if (posterOnDisk && !hasImage) failures.push(`slide ${i + 1} (video ${s.id}): poster on disk but MISSING from export`);
     }
+    // An optional restrained secondary logo, when its file exists, must ship in
+    // the export (never silently dropped) — the same guarantee as video posters.
+    if (s.logo) {
+      const p = localAssetPath(s.logo);
+      const logoOnDisk = p && fs.existsSync(p);
+      const hasImage = slides[i].targets.some((t) => /\.(png|jpe?g|svg)$/i.test(t));
+      if (logoOnDisk && !hasImage) failures.push(`slide ${i + 1} (${s.type} ${s.id}): logo on disk but MISSING from export`);
+    }
   });
   return failures;
 }
@@ -112,6 +120,9 @@ function checkAudienceSource() {
   // PPTX side is covered by contentSignature's per-string parity check below).
   if (!/s\.chain\b/.test(html)) failures.push('present.html must render the video `chain` (references s.chain)');
   if (!/class="chain"/.test(html) || !/\.chain\s+\.step\b/.test(html)) failures.push('present.html must render + style video `chain` steps (.chain .step)');
+  // The optional secondary `logo` must be drawn by the BROWSER renderer too.
+  if (!/s\.logo\b/.test(html)) failures.push('present.html must render the optional `logo` (references s.logo)');
+  if (!/class="slidelogo"/.test(html) || !/\.slidelogo\b/.test(html)) failures.push('present.html must render + style the optional `logo` (.slidelogo)');
   return failures;
 }
 

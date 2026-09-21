@@ -151,6 +151,10 @@
   .chain .step .n { flex:0 0 auto; width:22px; height:22px; border-radius:50%; background:#D4AF37; color:#0B1D34; font-size:12px; font-weight:800; display:flex; align-items:center; justify-content:center; }
   .chain .chev { text-align:center; font-size:12px; line-height:1; opacity:.5; margin:3px 0; }
 
+  /* Optional restrained secondary logo (contract: cover/statement/closing `logo`).
+     Small, bottom-right, aspect preserved — never stretched or recolored. */
+  .slidelogo { position:absolute; right:80px; bottom:60px; height:76px; width:auto; object-fit:contain; }
+
   /* Chrome: progress dots, controls, audience switch. */
   #chrome { position:fixed; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:space-between;
             padding:14px 24px; z-index:10; pointer-events:none; }
@@ -253,13 +257,13 @@
         <div class="kicker">${esc(s.kicker||'')}</div>
         <h1 class="cover">${esc(s.title||'')}</h1>
         <div class="tagline">${esc(s.tagline||'')}</div>
-        ${preparedForBlock(s)}</div>`;
+        ${preparedForBlock(s)}</div>${logo(s)}`;
     } else if (s.type === 'closing') {
       inner = `<div style="margin:auto 0;">
         <h1 class="cover" style="font-size:88px;">${esc(s.title||'')}</h1>
-        <div class="kicker" style="margin-top:24px;">${esc(s.kicker||'')}</div></div>`;
+        <div class="kicker" style="margin-top:24px;">${esc(s.kicker||'')}</div></div>${logo(s)}`;
     } else if (s.type === 'statement') {
-      inner = `${label(s)}<h2>${esc(s.headline||'')}</h2><div class="body">${esc(s.body||'')}</div>${shot(s)}${cols(s)}${cta(s)}${foot(s)}`;
+      inner = `${label(s)}<h2>${esc(s.headline||'')}</h2><div class="body">${esc(s.body||'')}</div>${shot(s)}${cols(s)}${cta(s)}${foot(s)}${logo(s)}`;
     } else if (s.type === 'points') {
       inner = `${label(s)}<h2>${esc(s.headline||'')}</h2>${s.body?`<div class="body">${esc(s.body)}</div>`:''}
         <div class="points">${(s.points||[]).map(p=>`<div class="point">
@@ -328,6 +332,10 @@
   // Renders in the copy column below the body — the same vertical connected-step
   // metaphor the PowerPoint export draws. A screen without `chain` renders ''.
   const chain = (s) => (s.chain && s.chain.length) ? `<div class="chain">${s.chain.map((step,i)=>`${i?'<div class="chev">▼</div>':''}<div class="step"><span class="n">${i+1}</span><span>${esc(step)}</span></div>`).join('')}</div>` : '';
+  // Optional restrained secondary logo (contract: cover/statement/closing `logo`).
+  // Small, bottom-right, aspect-preserved (object-fit:contain) — never stretched
+  // or recolored. Absent `logo` renders ''.
+  const logo = (s) => s.logo ? `<img class="slidelogo" src="${esc(s.logo)}" alt="">` : '';
   const cols = (s) => (s.columns && s.columns.length) ? `<div class="cols">${s.columns.map(c=>`<div class="col">
       <div class="ch">${esc(c.header)}</div><ul>${(c.items||[]).map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}</div>` : '';
   // Optional showcase image (e.g. a live product screenshot dropped into a slide).
