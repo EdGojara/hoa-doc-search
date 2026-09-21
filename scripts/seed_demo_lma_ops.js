@@ -114,7 +114,7 @@ async function main() {
     if (error) throw new Error('event ' + k + ': ' + error.message);
   }
   // board motion approving the Median 7 controller project
-  const { error: mErr } = await sb.from('board_motions').upsert({ id: MOTION, community_id: LMA, motion_type: 'project', related_project_id: P(1), title: 'Approve Median 7 irrigation controller replacement ($12,500)', description: 'Recurring irrigation failures at Median 7. Motion to approve AquaFlow proposal for full controller replacement, funded from operating.', threshold: 'simple_majority', status: 'passed' }, { onConflict: 'id' });
+  const { error: mErr } = await sb.from('board_motions').upsert({ id: MOTION, management_company_id: DEMO_MGMT_CO_ID, community_id: LMA, motion_type: 'project', related_project_id: P(1), title: 'Approve Median 7 irrigation controller replacement ($12,500)', description: 'Recurring irrigation failures at Median 7. Motion to approve AquaFlow proposal for full controller replacement, funded from operating.', threshold: 'simple_majority', status: 'passed' }, { onConflict: 'id' });
   if (mErr) throw new Error('motion: ' + mErr.message);
   // invoices + lines (project-attributed)
   for (const [invId, number, vNo, status, paid, lines] of INVOICES) {
