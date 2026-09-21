@@ -88,7 +88,11 @@ function projectPinForBoard(p) {
 }
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
+const { BEDROCK_MGMT_CO_ID, DEMO_MGMT_CO_ID } = require('../lib/company');
+// Communities this map serves: real Bedrock communities + the fictional DEMO
+// tenant (Drama Creek, etc.). Per-viewer access is still enforced by
+// canSeeCommunity; this is only the "tenant we operate" belt-and-suspenders.
+const SERVED_MGMT_CO_IDS = [BEDROCK_MGMT_CO_ID, DEMO_MGMT_CO_ID];
 
 const router = express.Router();
 
@@ -237,7 +241,7 @@ router.get('/:communityId/layers', async (req, res) => {
       .from('communities')
       .select('id, name, slug')
       .eq('id', communityId)
-      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .in('management_company_id', SERVED_MGMT_CO_IDS)
       .maybeSingle();
     if (cErr) throw cErr;
     if (!community) return res.status(404).json({ error: 'community_not_found' });
@@ -755,7 +759,7 @@ router.post('/acknowledge', express.json({ limit: '4kb' }), async (req, res) => 
         .from('communities')
         .select('id')
         .eq('id', communityId)
-        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .in('management_company_id', SERVED_MGMT_CO_IDS)
         .maybeSingle();
       if (!c) return res.status(404).json({ error: 'community_not_found' });
     }

@@ -81,10 +81,29 @@
   <div id="side"><div id="sideInner"></div></div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const COMMUNITY_ID = params.get('community_id') || 'e0100000-0000-4000-a000-000000000000'; // Sterling Ridge LMA
 const STAFF = params.get('staff') === '1';
+const VIEW_AS = params.get('view_as') || '';   // staff view-as-board (same mechanism as community-map)
+// Attach the staff Supabase Bearer to API calls, exactly like community-map.html /
+// board-portal.html, so the viewer is resolved deterministically (staff -> all;
+// staff+view_as -> that board member's scope). No new auth, no demo bypass.
+let _supa = null;
+async function initAuth() {
+  try {
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if (cfg && cfg.enabled && window.supabase) _supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+  } catch (_) {}
+}
+async function cmFetch(path, opts) {
+  opts = opts || {}; const h = Object.assign({}, opts.headers || {});
+  try { if (_supa) { const s = (await _supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; } } catch (_) {}
+  const sep = path.indexOf('?') >= 0 ? '&' : '?';
+  const url = VIEW_AS ? path + sep + 'view_as=' + encodeURIComponent(VIEW_AS) : path;
+  return fetch(url, Object.assign({ credentials: 'include' }, opts, { headers: h }));
+}
 const STATUS_COLOR = { problem:'#c0392b', in_progress:'#e0873a', upcoming:'#2b6cb0', completed:'#2e7d5b', ok:'#7a8798' };
 const money = (c) => c == null ? '—' : '$' + (c/100).toLocaleString(undefined,{maximumFractionDigits:0});
 const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
@@ -147,7 +166,7 @@ function banner(msg) {
 }
 async function loadAssets() {
   let r;
-  try { r = await fetch('/api/community-map/assets?community_id='+encodeURIComponent(COMMUNITY_ID), {credentials:'include'}); }
+  try { r = await cmFetch('/api/community-map/assets?community_id='+encodeURIComponent(COMMUNITY_ID)); }
   catch(e){ banner('<b>Map data could not be reached.</b><br>'+e.message); return; }
   if (!r.ok) {
     const hint = r.status===401 ? 'Your demo session is not authorized for this community. Re-enter from the Demo launcher.'
@@ -178,7 +197,7 @@ async function loadAssets() {
 
 async function openDetail(id) {
   selectedId=id;
-  const r = await fetch('/api/community-map/asset/'+id+'/detail',{credentials:'include'});
+  const r = await cmFetch('/api/community-map/asset/'+id+'/detail');
   if (!r.ok) return;
   const d = await r.json(); const a=d.asset;
   const st = (ASSETS.find(x=>x.id===id)||{}).map_status || 'ok';
@@ -228,7 +247,7 @@ async function submitReport(id){
   const file=document.getElementById('rptPhoto').files[0];
   if(!text && !file){ document.getElementById('rptMsg').textContent='Add a note or photo.'; return; }
   const fd=new FormData(); fd.append('description',text); if(file) fd.append('photo',file);
-  const r=await fetch('/api/community-map/asset/'+id+'/report',{method:'POST',body:fd,credentials:'include'});
+  const r=await cmFetch('/api/community-map/asset/'+id+'/report',{method:'POST',body:fd});
   document.getElementById('rptMsg').textContent = r.ok ? 'Reported. Bedrock will triage.' : 'Failed ('+r.status+').';
   if(r.ok){ document.getElementById('rptText').value=''; }
 }
@@ -256,11 +275,11 @@ async function saveEdit(){ if(!selectedId||!editPts.length) return;
   if(editMode==='point'){ const p=editPts[editPts.length-1]; wkt=`POINT(${p[0]} ${p[1]})`; }
   else if(editMode==='line'){ wkt=`LINESTRING(${editPts.map(p=>p[0]+' '+p[1]).join(',')})`; }
   else { const r=editPts.slice(); if(r.length&&(r[0][0]!==r[r.length-1][0]||r[0][1]!==r[r.length-1][1])) r.push(r[0]); wkt=`POLYGON((${r.map(p=>p[0]+' '+p[1]).join(',')}))`; }
-  const res=await fetch('/api/community-map/asset/'+selectedId+'/geometry',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({wkt})});
+  const res=await cmFetch('/api/community-map/asset/'+selectedId+'/geometry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({wkt})});
   document.getElementById('editHint').textContent = res.ok ? 'Saved. Reloading…' : 'Save failed ('+res.status+').';
   if(res.ok){ cancelEdit(); await loadAssets(); }   // reload from DB → prove round-trip render
 }
-loadAssets();
+initAuth().then(loadAssets);
 </script>
 <script defer src="/demo-mode.js"></script>
 </body>
