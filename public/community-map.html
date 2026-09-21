@@ -150,19 +150,49 @@ function setMode(mode){
   document.querySelectorAll('#layerbtns button').forEach(b=>b.classList.toggle('on', b.dataset.mode===mode));
 }
 
+// ---- visual hierarchy: community first, exceptions obvious -------------------
+// Per lens, most homes are "quiet" (small, semi-transparent, satellite shows
+// through) and the exceptions that need attention pop with a halo + crisp ring.
+// Nothing here invents data — it reads the same drv_status / ar_bucket /
+// occupancy the backend already returns.
+function isException(p){
+  if(_layer==='drv') return ['open','certified_209','in_fine'].includes(p.drv_status);
+  if(_layer==='ar')  return !(p.ar_bucket==='current' || p.ar_bucket==='unknown' || p.ar_bucket==null);
+  if(_layer==='occupancy') return p.occupancy==='renter';
+  return false;
+}
+// Real severity → bigger/louder. No invented severity; derived from the status.
+const AR_SEVERITY = { bucket_0_30:.30, bucket_31_60:.50, bucket_61_90:.65, bucket_91_120:.80, over_120:.90, past_due:.90, at_legal:1, in_collections:1 };
+function severity(p){
+  if(_layer==='ar') return AR_SEVERITY[p.ar_bucket] || .40;
+  if(_layer==='drv') return p.drv_status==='in_fine'?1 : p.drv_status==='certified_209'?.70 : .40;
+  return .5;
+}
 // ---- render markers --------------------------------------------------------
 function drawMarkers(){
   _markers.forEach(m=>_map.removeLayer(m)); _markers=[];
-  const pts=[];
+  const pts=[]; const exceptions=[]; let excCount=0;
   for(const p of _props){
     if(p.latitude==null||p.longitude==null) continue;
-    const m=L.circleMarker([p.latitude,p.longitude], {
-      radius:7, weight:1.5, color:'#ffffff', fillColor:colorFor(p), fillOpacity:.95,
-    });
-    m.on('click', ()=>openProperty(p));
-    m.addTo(_map); _markers.push(m); pts.push([p.latitude,p.longitude]);
+    pts.push([p.latitude,p.longitude]);
+    if(isException(p)){ exceptions.push(p); excCount++; continue; } // drawn last, on top
+    // quiet normal home — known status a touch more present than unknown/no-data
+    const c=colorFor(p); const known = c!=='#cbd5e1';
+    const m=L.circleMarker([p.latitude,p.longitude], known
+      ? { radius:4, weight:0.5, color:'rgba(255,255,255,.6)', fillColor:c, fillOpacity:.55 }
+      : { radius:3, weight:0,   color:'#ffffff',              fillColor:c, fillOpacity:.35 });
+    m.on('click', ()=>openProperty(p)); m.addTo(_map); _markers.push(m);
+  }
+  // exceptions on top: soft halo + saturated ringed dot, sized by severity
+  for(const p of exceptions){
+    const c=colorFor(p); const r=8+Math.round(severity(p)*4);
+    const halo=L.circleMarker([p.latitude,p.longitude], { radius:r+7, weight:0, color:c, fillColor:c, fillOpacity:.22 });
+    halo.addTo(_map); _markers.push(halo);
+    const m=L.circleMarker([p.latitude,p.longitude], { radius:r, weight:2.5, color:'#ffffff', fillColor:c, fillOpacity:1 });
+    m.on('click', ()=>openProperty(p)); m.addTo(_map); _markers.push(m); m.bringToFront();
   }
   if(pts.length && !_map._fitted){ _map.fitBounds(pts, {padding:[40,40], maxZoom:17}); _map._fitted=true; }
+  const cnt=$('count'); if(cnt) cnt.textContent = excCount ? (excCount+' need attention · '+pts.length+' homes') : (pts.length+' homes');
   renderLegend();
 }
 function setLayer(layer){ _layer=layer;
