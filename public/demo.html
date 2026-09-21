@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Demo Mode — Bedrock</title>
+<link rel="stylesheet" href="/brand.css" />
+<style>
+  :root { --navy:#0B1D34; --gold:#D4AF37; --line:#dce1e7; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,sans-serif; color:var(--navy); background:#f5f7fa; }
+  .wrap { max-width:920px; margin:0 auto; padding:40px 20px 80px; }
+  h1 { font-size:26px; margin:0 0 4px; }
+  .sub { color:#5b6672; font-size:14px; margin-bottom:6px; }
+  .who { color:#5b6672; font-size:12px; margin-bottom:26px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  @media (max-width:720px){ .grid { grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:22px; box-shadow:0 1px 4px rgba(0,0,0,.05); }
+  .badge { display:inline-block; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--gold); }
+  .cname { font-size:19px; font-weight:700; margin:4px 0 2px; }
+  .ctype { color:#5b6672; font-size:13px; margin-bottom:16px; }
+  .roles { display:flex; flex-direction:column; gap:9px; }
+  .role { display:flex; align-items:center; justify-content:space-between; border:1px solid var(--line); border-radius:10px; padding:12px 14px; cursor:pointer; transition:.12s; background:#fff; text-align:left; font:inherit; }
+  .role:hover { border-color:var(--gold); background:#fffdf5; }
+  .role b { font-size:14px; }
+  .role span { color:#5b6672; font-size:12px; }
+  .role .go { color:var(--gold); font-weight:800; font-size:16px; }
+  .foot { margin-top:26px; color:#5b6672; font-size:12px; }
+  .err { color:#c0392b; font-size:12px; margin-top:10px; min-height:16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Demo Mode</h1>
+  <div class="sub">Enter a fictional demo association in a real role. Uses the production portals and view-as — an authenticated staff presentation, not a bypass.</div>
+  <div class="who" id="who">Signed in as staff…</div>
+  <div class="grid">
+    <div class="card">
+      <span class="badge">Residential Association</span>
+      <div class="cname">Drama Creek Estates</div>
+      <div class="ctype">Homeowner community · residential portal &amp; board map</div>
+      <div class="roles">
+        <button class="role" data-org="Drama Creek" data-role="Staff"     data-nav="/community-map.html?community=dc100000-0000-4000-a000-000000000000"><span><b>Enter as Staff</b><br><span>Full community map &amp; oversight</span></span><span class="go">→</span></button>
+        <button class="role" data-org="Drama Creek" data-role="Board"     data-mimic="dc140001-0000-4000-a000-000000000000" data-nav="/community-map.html?community=dc100000-0000-4000-a000-000000000000"><span><b>Enter as Board</b><br><span>President Sunny Meadows' view</span></span><span class="go">→</span></button>
+        <button class="role" data-org="Drama Creek" data-role="Homeowner" data-mimic="dc140006-0000-4000-a000-000000000000" data-nav="/portal"><span><b>Enter as Homeowner</b><br><span>Bob Steady's homeowner portal</span></span><span class="go">→</span></button>
+      </div>
+    </div>
+    <div class="card">
+      <span class="badge">Landscape / Commercial Association</span>
+      <div class="cname">Sterling Ridge Landscape District</div>
+      <div class="ctype">Managed common areas · Visual Operating Map</div>
+      <div class="roles">
+        <button class="role" data-org="Sterling Ridge" data-role="Staff"   data-nav="/lma-map.html?staff=1"><span><b>Enter as Staff</b><br><span>Operating map + geometry editor</span></span><span class="go">→</span></button>
+        <button class="role" data-org="Sterling Ridge" data-role="Board"   data-mimic="e0140001-0000-4000-a000-000000000000" data-nav="/lma-map.html"><span><b>Enter as Board</b><br><span>President Marcus Sterling's map view</span></span><span class="go">→</span></button>
+        <button class="role" data-org="Sterling Ridge" data-role="Partner" data-nav="/partner-portal.html?member=e0200000-0000-4000-a000-000000000000"><span><b>Enter as Partner Association</b><br><span>Sterling Ridge Villas HOA view</span></span><span class="go">→</span></button>
+      </div>
+    </div>
+  </div>
+  <div class="err" id="err"></div>
+  <div class="foot">Every demo role shows exactly what that role sees. Demo activity stays isolated to the demo tenant; external effects are suppressed. A DEMO indicator and Exit control appear on every demo screen.</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+let _supa = null, staffEmail = 'staff@bedrocktx.com';
+(async () => {
+  try {
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if (cfg && cfg.enabled && window.supabase) {
+      _supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      const s = (await _supa.auth.getSession()).data.session;
+      if (s && s.user && s.user.email) { staffEmail = s.user.email; }
+    }
+  } catch (_) {}
+  document.getElementById('who').textContent = 'Signed in as ' + staffEmail;
+})();
+async function bearer() { try { if (_supa) { const s = (await _supa.auth.getSession()).data.session; if (s && s.access_token) return 'Bearer ' + s.access_token; } } catch (_) {} return null; }
+
+document.querySelectorAll('.role').forEach((b) => b.addEventListener('click', async () => {
+  const org = b.dataset.org, role = b.dataset.role, mimicId = b.dataset.mimic, nav = b.dataset.nav;
+  const err = document.getElementById('err'); err.textContent = '';
+  try {
+    // Always clear any prior mimic so role switching is clean.
+    try { await fetch('/api/portal/mimic/stop', { method: 'POST', credentials: 'include' }); } catch (_) {}
+    if (mimicId) {
+      const h = { 'Content-Type': 'application/json' }; const bt = await bearer(); if (bt) h.Authorization = bt;
+      const r = await fetch('/api/portal/mimic/start', { method: 'POST', headers: h, credentials: 'include', body: JSON.stringify({ portal_user_id: mimicId, staff_email: staffEmail }) });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error('Could not enter as ' + role + ' (' + (j.error || r.status) + ')'); }
+    }
+    try { sessionStorage.setItem('demoMode', JSON.stringify({ org, role })); } catch (_) {}
+    location.href = nav;
+  } catch (e) { err.textContent = e.message; }
+}));
+</script>
+</body>
+</html>
