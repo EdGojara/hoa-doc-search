@@ -138,10 +138,29 @@ document.getElementById('statusSeg').addEventListener('click', e=>{ const f=e.ta
 document.getElementById('timeSeg').addEventListener('click', e=>{ const t=e.target.dataset.t; if(!t) return;
   activeTime=t; document.querySelectorAll('#timeSeg button').forEach(x=>x.classList.toggle('on',x.dataset.t===t)); applyFilters(); });
 
+function banner(msg) {
+  let el=document.getElementById('mapBanner');
+  if(!el){ el=document.createElement('div'); el.id='mapBanner';
+    el.setAttribute('style','position:absolute;z-index:700;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border:1px solid #c0392b;color:#0B1D34;border-radius:10px;padding:16px 22px;max-width:420px;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.2);font-size:14px;');
+    document.getElementById('map').appendChild(el); }
+  el.innerHTML=msg;
+}
 async function loadAssets() {
-  const r = await fetch('/api/community-map/assets?community_id='+encodeURIComponent(COMMUNITY_ID), {credentials:'include'});
-  if (!r.ok) { document.getElementById('sub').textContent='Failed to load ('+r.status+')'; return; }
+  let r;
+  try { r = await fetch('/api/community-map/assets?community_id='+encodeURIComponent(COMMUNITY_ID), {credentials:'include'}); }
+  catch(e){ banner('<b>Map data could not be reached.</b><br>'+e.message); return; }
+  if (!r.ok) {
+    const hint = r.status===401 ? 'Your demo session is not authorized for this community. Re-enter from the Demo launcher.'
+      : r.status===404 ? 'The asset service is not deployed yet. Deploy the latest build, then reload.'
+      : 'HTTP '+r.status+'. Reload, or redeploy the latest build.';
+    document.getElementById('sub').textContent='Failed to load ('+r.status+')';
+    banner('<b>Sterling Ridge map data unavailable ('+r.status+').</b><br>'+hint);
+    console.error('[lma-map] /assets failed', r.status);
+    return;
+  }
   const j = await r.json(); ASSETS = j.assets||[];
+  if (!ASSETS.length) { banner('<b>No managed assets found for this community.</b><br>The Sterling Ridge dataset may not be seeded on this environment.'); }
+  else { const b=document.getElementById('mapBanner'); if(b) b.remove(); }
   Object.values(LAYERS).forEach(l=>map.removeLayer(l)); LAYERS={};
   const bounds=[];
   ASSETS.forEach(a => { if(!a.geometry) return;
