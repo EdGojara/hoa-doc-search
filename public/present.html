@@ -144,6 +144,13 @@
   .vplay { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:64px; height:64px; border-radius:50%; border:none; background:rgba(0,0,0,.5); color:#fff; font-size:22px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; }
   .vplay.hidden { display:none; }
 
+  /* Optional video-slide step sequence (contract: video.chain). Neutral tones
+     so it reads on both light and dark video slides; mirrors the PPTX cards. */
+  .chain { margin-top:18px; display:flex; flex-direction:column; align-items:stretch; max-width:560px; }
+  .chain .step { display:flex; align-items:center; gap:12px; border:1.5px solid rgba(127,127,127,.35); border-radius:12px; padding:9px 16px; font-size:18px; font-weight:700; background:rgba(127,127,127,.07); }
+  .chain .step .n { flex:0 0 auto; width:22px; height:22px; border-radius:50%; background:#D4AF37; color:#0B1D34; font-size:12px; font-weight:800; display:flex; align-items:center; justify-content:center; }
+  .chain .chev { text-align:center; font-size:12px; line-height:1; opacity:.5; margin:3px 0; }
+
   /* Chrome: progress dots, controls, audience switch. */
   #chrome { position:fixed; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:space-between;
             padding:14px 24px; z-index:10; pointer-events:none; }
@@ -307,7 +314,7 @@
         : `<div class="ph"><div class="pht">Video coming</div><div class="phs">This screen is built for the “${esc(s.label||'')}” explainer.<br>It plays here as soon as the video is rendered.</div></div>`;
       inner = `${label(s)}
         <div class="videowrap">
-          <div class="videocopy"><h2 style="font-size:44px;">${esc(s.headline||'')}</h2><div class="body">${esc(s.body||'')}</div></div>
+          <div class="videocopy"><h2 style="font-size:44px;">${esc(s.headline||'')}</h2><div class="body">${esc(s.body||'')}</div>${chain(s)}</div>
           <div class="player">${player}</div>
         </div>`;
     }
@@ -317,6 +324,10 @@
   const foot = (s) => s.footnote ? `<div class="footnote">${esc(s.footnote)}</div>` : '';
   // A "launch the live tool" button — talk to the slide, then click to demo it.
   const cta = (s) => s.cta && s.cta.href ? `<div class="ctawrap"><a class="ctabtn" href="${esc(s.cta.href)}" target="_blank" rel="noopener">${esc(s.cta.label||'Open')} &nbsp;&rarr;</a>${s.cta.note?`<span class="ctanote">${esc(s.cta.note)}</span>`:''}</div>` : '';
+  // Optional labelled step sequence on a video slide (contract: video.chain).
+  // Renders in the copy column below the body — the same vertical connected-step
+  // metaphor the PowerPoint export draws. A screen without `chain` renders ''.
+  const chain = (s) => (s.chain && s.chain.length) ? `<div class="chain">${s.chain.map((step,i)=>`${i?'<div class="chev">▼</div>':''}<div class="step"><span class="n">${i+1}</span><span>${esc(step)}</span></div>`).join('')}</div>` : '';
   const cols = (s) => (s.columns && s.columns.length) ? `<div class="cols">${s.columns.map(c=>`<div class="col">
       <div class="ch">${esc(c.header)}</div><ul>${(c.items||[]).map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}</div>` : '';
   // Optional showcase image (e.g. a live product screenshot dropped into a slide).

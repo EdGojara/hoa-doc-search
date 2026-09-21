@@ -108,6 +108,10 @@ function checkAudienceSource() {
   if (/<option\s+value="(general|board|clma|partner|bank|referral|tech)"/.test(html)) failures.push('present.html hardcodes audience <option>s — must derive from /api/presentations/audiences');
   if (/\]\s*\.includes\(\s*qAud\s*\)/.test(html)) failures.push('present.html hardcodes an audience allowlist array for ?audience routing');
   if (!/\/api\/presentations\/audiences/.test(html)) failures.push('present.html must fetch the canonical audience list');
+  // The optional video `chain` must be drawn by the BROWSER renderer too (the
+  // PPTX side is covered by contentSignature's per-string parity check below).
+  if (!/s\.chain\b/.test(html)) failures.push('present.html must render the video `chain` (references s.chain)');
+  if (!/class="chain"/.test(html) || !/\.chain\s+\.step\b/.test(html)) failures.push('present.html must render + style video `chain` steps (.chain .step)');
   return failures;
 }
 
