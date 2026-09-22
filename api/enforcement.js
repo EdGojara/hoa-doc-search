@@ -3688,7 +3688,10 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
       let upErr = null, bundlePath = null;
       if (rr && rr.ok) {
         const stamp = postmarkIso.replace(/-/g, '');
-        bundlePath = `${members[0].property_id}/bundle-${rr.stage}-postmark-${stamp}.pdf`;
+        // bundle id in the name: a second print run for the same house + stage on
+        // the same day must not overwrite the file an earlier, already-mailed
+        // envelope points to (19831 Big Canyon, Ed 2026-09-22).
+        bundlePath = `${members[0].property_id}/bundle-${rr.stage}-postmark-${stamp}-${bid.slice(0, 8)}.pdf`;
         ({ error: upErr } = await supabase.storage.from('violation-letters')
           .upload(bundlePath, rr.pdfBuffer, { contentType: 'application/pdf', upsert: true }));
         if (upErr) lastReason = 'upload failed: ' + upErr.message;
