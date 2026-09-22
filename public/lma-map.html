@@ -40,6 +40,8 @@
   textarea { width:100%; border:1px solid var(--line); border-radius:7px; padding:8px; font-family:inherit; font-size:13px; }
   .close { float:right; cursor:pointer; font-size:18px; color:#5b6672; }
   .hint { background:#fffbeb; border:1px solid #fde68a; color:#92400e; font-size:12px; padding:6px 9px; border-radius:6px; margin-top:6px; }
+  .assetlabel { background:rgba(11,29,52,.92); color:#eaf1fb; border:none; border-radius:8px; padding:6px 9px; font-size:11.5px; line-height:1.35; box-shadow:0 2px 8px rgba(0,0,0,.3); white-space:nowrap; }
+  .assetlabel b { color:#fff; } .assetlabel::before { display:none; }
 </style>
 </head>
 <body>
@@ -103,12 +105,13 @@ const STATUS_COLOR = { problem:'#c0392b', in_progress:'#e0873a', upcoming:'#2b6c
 const money = (c) => c == null ? '—' : '$' + (c/100).toLocaleString(undefined,{maximumFractionDigits:0});
 const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
 
-const map = L.map('map', { zoomControl:true }).setView([30.0501,-95.5602], 16);
+const map = L.map('map', { zoomControl:true }).setView([30.0506,-95.5600], 16);
 const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:20,attribution:'Esri'});
 const esriLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{maxZoom:20});
 const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
 const hybrid = L.layerGroup([esriSat, esriLabels]);
 hybrid.addTo(map);
+const LABELS = L.layerGroup().addTo(map); // compact callouts anchored to asset centroids
 document.getElementById('baseSeg').addEventListener('click', e => { const b=e.target.dataset.b; if(!b) return;
   document.querySelectorAll('#baseSeg button').forEach(x=>x.classList.toggle('on', x.dataset.b===b));
   map.removeLayer(hybrid); map.removeLayer(street); (b==='street'?street:hybrid).addTo(map); });
@@ -180,6 +183,22 @@ function tooltipFor(a){ return esc(a.name)+' — '+esc(LENSES[activeLens].metric
 function renderLegend(){ const rows=LENSES[activeLens].legend();
   document.getElementById('legend').innerHTML = rows.map(r=>`<span><i class="dot" style="background:${r[0]}"></i>${esc(r[1])}</span>`).join(''); }
 
+// Compact project callouts anchored to the asset's interior point (centroid from
+// ST_PointOnSurface). Shown for the SELECTED asset and, under the Projects lens,
+// for assets with active work — never a wall of cards over the map.
+function labelHTML(a){ const p=a.active_project;
+  if (p) return `<b>${esc(a.name)}</b><br>${esc(p.title)}<br>${p.percent_complete!=null?p.percent_complete+'% · ':''}${money(p.actual_cents)} / ${money(p.approved_cents)}`;
+  return `<b>${esc(a.name)}</b>`; }
+function renderLabels(){ if(!LABELS) return; LABELS.clearLayers();
+  const ACT=['approved','contract_signed','work_started'];
+  ASSETS.forEach(a=>{ if(!a.centroid) return;
+    const activeProj = a.active_project && ACT.includes(a.active_project.stage);
+    const show = (a.id===selectedId) || (activeLens==='projects' && activeProj);
+    if(!show) return;
+    L.tooltip({permanent:true, direction:'top', className:'assetlabel', offset:[0,-2]})
+      .setLatLng([a.centroid.lat, a.centroid.lng]).setContent(labelHTML(a)).addTo(LABELS);
+  }); }
+
 // Rebuild every asset layer under the current lens (client-side, instant — no
 // fetch). Called on first load and on every lens/window/mode change.
 function drawAssets(){
@@ -191,7 +210,7 @@ function drawAssets(){
     });
     LAYERS[a.id]=lyr; lyr.addTo(map);
   });
-  renderLegend();
+  renderLegend(); renderLabels();
 }
 document.getElementById('lensSeg').addEventListener('click', e=>{ const L=e.target.dataset.lens; if(!L) return;
   activeLens=L; document.querySelectorAll('#lensSeg button').forEach(x=>x.classList.toggle('on',x.dataset.lens===L));
@@ -242,7 +261,7 @@ async function loadAssets() {
 }
 
 async function openDetail(id) {
-  selectedId=id;
+  selectedId=id; renderLabels();
   const r = await cmFetch('/api/community-map/asset/'+id+'/detail');
   if (!r.ok) return;
   const d = await r.json(); const a=d.asset;
@@ -312,7 +331,7 @@ async function openDetail(id) {
   document.getElementById('sideInner').innerHTML=html;
   document.getElementById('side').classList.add('open');
 }
-function closeSide(){ document.getElementById('side').classList.remove('open'); selectedId=null; }
+function closeSide(){ document.getElementById('side').classList.remove('open'); selectedId=null; renderLabels(); }
 async function submitReport(id){
   const text=document.getElementById('rptText').value.trim();
   const file=document.getElementById('rptPhoto').files[0];

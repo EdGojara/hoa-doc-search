@@ -19,53 +19,56 @@ const EXECUTE = process.argv.includes('--execute');
 const LMA = 'e0100000-0000-4000-a000-000000000000';                 // Sterling Ridge LMA community
 const uid = (n) => `e011${String(n).padStart(4, '0')}-0000-4000-a000-000000000000`;
 
+// ---------------------------------------------------------------------------
+// Real (organic) operational geometry. trustEd stores each asset's actual
+// physical footprint as GEOGRAPHY(GEOMETRY,4326) of ANY subtype (POINT / MULTI-
+// POINT / LINESTRING / MULTILINESTRING / POLYGON), written through the canonical
+// community_asset_set_geometry RPC. These are OPERATIONAL map geometries (they
+// follow the road axis and the real greenspace), not survey plats — so shapes
+// are believable footprints, not bounding rectangles. Parametric generators
+// below keep them reusable and non-rectangular. Aligned to the developed
+// Northpointe corridor (axis lat ~30.0505; detention in the real greenspace).
+// Asset keys/ids/types/conditions/hierarchy are unchanged, so the accounting
+// chain in seed_demo_lma_ops.js is untouched.
+const { medianWKT, blobWKT, lineWKT, multiLineWKT, multiPointWKT, pointWKT } = require('../lib/community/asset_geometry');
+const CL = 30.05050; // boulevard axis
+
 // key, name, class, type, condition, geometry WKT (WGS84 lng lat), parentKey, location_description
-//
-// Placement (Ed 2026-09-21 presentation pass): the district sits on a real
-// developed parkway corridor (centerline lat ~30.0501, ~650m W->E) with a
-// neighborhood on both sides and a real greenspace to the south for the
-// detention basin — so on satellite the assets sit on recognizable ground,
-// not empty farmland. Medians are drawn as pointed esplanade polygons (not
-// bare rectangles) so they read as landscaped medians from above. Median 7
-// (the hero) is near the EAST entrance monument so it is easy to point at;
-// its child systems are co-located on it. Geography only; the operational
-// story (projects/vendors/invoices/board decision) is unchanged and lives in
-// seed_demo_lma_ops.js keyed to these same stable asset keys.
 const A = [
   ['median-3', 'Median 3', 'landscape', 'median', 'good',
-    'POLYGON((-95.56308 30.05010,-95.56301 30.050132,-95.56259 30.050132,-95.56252 30.05010,-95.56259 30.050068,-95.56301 30.050068,-95.56308 30.05010))', null, 'Sterling Ridge Pkwy at Willow'],
+    medianWKT(-95.56280, CL, 0.00030, 0.00004, 0.00008), null, 'Sterling Ridge Pkwy at Willow'],
   ['median-5', 'Median 5', 'landscape', 'median', 'good',
-    'POLYGON((-95.56068 30.05010,-95.56061 30.050132,-95.56019 30.050132,-95.56012 30.05010,-95.56019 30.050068,-95.56061 30.050068,-95.56068 30.05010))', null, 'Sterling Ridge Pkwy mid'],
+    medianWKT(-95.56030, CL, 0.00030, 0.00004, 0.00008), null, 'Sterling Ridge Pkwy mid'],
   ['median-7', 'Median 7', 'landscape', 'median', 'poor',
-    'POLYGON((-95.55828 30.05010,-95.55821 30.050132,-95.55779 30.050132,-95.55772 30.05010,-95.55779 30.050068,-95.55821 30.050068,-95.55828 30.05010))', null, 'Sterling Ridge Pkwy at Oak (recurring irrigation issues)'],
+    medianWKT(-95.55790, CL, 0.00030, 0.00004, 0.00008), null, 'Sterling Ridge Pkwy at Oak (recurring irrigation issues)'],
   ['mon-west', 'West Entrance Monument', 'structure', 'monument', 'excellent',
-    'POINT(-95.56340 30.05010)', null, 'West entrance, Sterling Ridge Pkwy'],
+    blobWKT(-95.56370, 30.05052, 0.00011, 0.00007, 9, 11), null, 'West entrance, Sterling Ridge Pkwy'],
   ['mon-east', 'East Entrance Monument', 'structure', 'monument', 'good',
-    'POINT(-95.55700 30.05010)', null, 'East entrance, Sterling Ridge Pkwy'],
+    blobWKT(-95.55700, 30.05052, 0.00011, 0.00007, 9, 23), null, 'East entrance, Sterling Ridge Pkwy'],
   ['bed-west', 'West Entrance Landscape Bed', 'landscape', 'landscape_bed', 'good',
-    'POLYGON((-95.563343 30.050158,-95.563217 30.050158,-95.563217 30.050112,-95.563343 30.050112,-95.563343 30.050158))', null, 'West entrance color bed'],
+    blobWKT(-95.56345, 30.05060, 0.00006, 0.000035, 7, 31), null, 'West entrance color bed'],
   ['bed-east', 'East Entrance Landscape Bed', 'landscape', 'landscape_bed', 'fair',
-    'POLYGON((-95.557183 30.050158,-95.557057 30.050158,-95.557057 30.050112,-95.557183 30.050112,-95.557183 30.050158))', null, 'East entrance color bed'],
+    blobWKT(-95.55725, 30.05060, 0.00006, 0.000035, 7, 37), null, 'East entrance color bed'],
   ['m7-irrig', 'Median 7 Irrigation', 'utility', 'irrigation_zone', 'poor',
-    'POLYGON((-95.55821 30.050108,-95.55779 30.050108,-95.55779 30.050062,-95.55821 30.050062,-95.55821 30.050108))', 'median-7', 'Irrigation zone under Median 7'],
+    medianWKT(-95.55790, CL, 0.00026, 0.000028, 0.00007), 'median-7', 'Irrigation coverage under Median 7'],
   ['m7-beds', 'Median 7 Landscape Beds', 'landscape', 'landscape_bed', 'fair',
-    'POLYGON((-95.558028 30.050133,-95.557872 30.050133,-95.557872 30.050097,-95.558028 30.050097,-95.558028 30.050133))', 'median-7', 'Planting beds on Median 7'],
+    blobWKT(-95.55780, 30.05053, 0.00006, 0.000022, 7, 41), 'median-7', 'Planting beds on Median 7'],
   ['m7-trees', 'Median 7 Trees', 'landscape', 'tree_area', 'good',
-    'POINT(-95.55810 30.05010)', 'median-7', 'Live oaks on Median 7'],
+    multiPointWKT([[-95.55812,30.05050],[-95.55798,30.050515],[-95.55784,30.05050],[-95.55772,30.050515]]), 'median-7', 'Live oaks on Median 7'],
   ['m7-light', 'Median 7 Lighting', 'utility', 'lighting_run', 'good',
-    'LINESTRING(-95.55825 30.05010,-95.55775 30.05010)', 'median-7', 'Uplighting along Median 7'],
+    lineWKT([[-95.55818,30.050505],[-95.55790,30.05051],[-95.55763,30.050505]]), 'median-7', 'Uplighting along Median 7'],
   ['m5-irrig', 'Median 5 Irrigation', 'utility', 'irrigation_zone', 'good',
-    'POLYGON((-95.56061 30.050108,-95.56019 30.050108,-95.56019 30.050062,-95.56061 30.050062,-95.56061 30.050108))', 'median-5', 'Irrigation zone under Median 5'],
+    medianWKT(-95.56030, CL, 0.00026, 0.000028, 0.00007), 'median-5', 'Irrigation coverage under Median 5'],
   ['m3-trees', 'Median 3 Trees', 'landscape', 'tree_area', 'good',
-    'POINT(-95.56290 30.05010)', 'median-3', 'Crape myrtles on Median 3'],
+    multiPointWKT([[-95.56302,30.05050],[-95.56282,30.050515],[-95.56262,30.05050]]), 'median-3', 'Crape myrtles on Median 3'],
   ['pkwy-light', 'Sterling Ridge Parkway Lighting Run', 'utility', 'lighting_run', 'good',
-    'LINESTRING(-95.56340 30.05017,-95.56040 30.05017,-95.55700 30.05017)', null, 'Parkway street lighting circuit'],
+    lineWKT([[-95.56390,30.050575],[-95.56200,30.05059],[-95.56030,30.050585],[-95.55860,30.05059],[-95.55690,30.050575]]), null, 'Parkway street lighting circuit'],
   ['pkwy-trees', 'Parkway Tree Corridor', 'landscape', 'tree_corridor', 'fair',
-    'LINESTRING(-95.56340 30.05003,-95.56040 30.05003,-95.55700 30.05003)', null, 'Parkway tree line, south side'],
+    multiLineWKT([[[-95.56390,30.05061],[-95.56030,30.050615],[-95.55690,30.05061]],[[-95.56390,30.05044],[-95.56030,30.050435],[-95.55690,30.05044]]]), null, 'Parkway tree lines, both sides'],
   ['detention', 'Sterling Ridge Detention Basin', 'water', 'detention_basin', 'fair',
-    'POLYGON((-95.55976 30.04936,-95.55924 30.04936,-95.55924 30.04904,-95.55976 30.04904,-95.55976 30.04936))', null, 'Regional detention basin, south greenspace'],
+    blobWKT(-95.55990, 30.05078, 0.00028, 0.00016, 12, 53), null, 'Regional detention basin, north greenspace'],
 ];
-const BOUNDARY = 'POLYGON((-95.56360 30.05025,-95.55680 30.05025,-95.55680 30.04895,-95.56360 30.04895,-95.56360 30.05025))';
+const BOUNDARY = 'POLYGON((-95.56430 30.05100,-95.55650 30.05100,-95.55650 30.05030,-95.56430 30.05030,-95.56430 30.05100))';
 const keyIndex = Object.fromEntries(A.map(([k], i) => [k, i + 1]));
 
 async function main() {

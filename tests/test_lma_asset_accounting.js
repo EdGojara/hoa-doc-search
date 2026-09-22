@@ -111,5 +111,19 @@ ok(/\$8,200/.test(intel.narratives.budget), '8b. budget narrative cites the $8,2
 ok(/three years/.test(intel.narratives.spending) && !/undefined|NaN/.test(JSON.stringify(intel.narratives)), '8c. spending narrative grounded, no undefined/NaN');
 ok(intel.context && intel.context.budget && intel.context.spend, '8d. intelligence returns a structured context (for later model use)');
 
-console.log(fails ? `\n✗ lma-asset-accounting: ${fails} failure(s)` : '\n✓ lma-asset-accounting: metrics, rollup, budget, age, reconciliation all hold');
+// 9) geometry generators produce valid WKT of each subtype (serialization).
+const G = require('../lib/community/asset_geometry');
+const med = G.medianWKT(-95.5579, 30.0505, 0.0003, 0.00004, 0.00008);
+ok(med.startsWith('POLYGON(('), '9a. medianWKT -> POLYGON');
+{ const inner = med.slice(9, -2).split(','); ok(inner.length === 11, '9b. median polygon has 11 vertices (10 + closing)'); ok(inner[0] === inner[inner.length - 1], '9c. median polygon ring is closed'); }
+const blob = G.blobWKT(-95.5599, 30.0508, 0.00028, 0.00016, 12, 53);
+ok(blob.startsWith('POLYGON(('), '9d. blobWKT -> POLYGON');
+{ const inner = blob.slice(9, -2).split(','); ok(inner[0] === inner[inner.length - 1], '9e. blob ring is closed'); }
+ok(G.lineWKT([[-95.56, 30.05], [-95.55, 30.05]]).startsWith('LINESTRING('), '9f. lineWKT -> LINESTRING');
+ok(G.multiLineWKT([[[-95.56, 30.05], [-95.55, 30.05]], [[-95.56, 30.049], [-95.55, 30.049]]]).startsWith('MULTILINESTRING('), '9g. multiLineWKT -> MULTILINESTRING');
+{ const mp = G.multiPointWKT([[-95.56, 30.05], [-95.559, 30.0501], [-95.558, 30.05]]); ok(mp.startsWith('MULTIPOINT('), '9h. multiPointWKT -> MULTIPOINT'); ok((mp.match(/-95\./g) || []).length === 3, '9i. multipoint carries 3 points'); }
+ok(G.pointWKT(-95.558, 30.05) === 'POINT(-95.558 30.05)', '9j. pointWKT -> POINT');
+{ const nums = (med + blob).match(/-?\d+\.?\d*/g).map(Number); ok(nums.every((n) => Number.isFinite(n)), '9k. all generated coordinates are finite numbers'); }
+
+console.log(fails ? `\n✗ lma-asset-accounting: ${fails} failure(s)` : '\n✓ lma-asset-accounting: metrics, rollup, budget, age, reconciliation, geometry all hold');
 process.exit(fails ? 1 : 0);
