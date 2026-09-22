@@ -116,7 +116,7 @@ const STATUS_COLOR = { problem:'#c0392b', in_progress:'#e0873a', upcoming:'#2b6c
 const money = (c) => c == null ? '—' : '$' + (c/100).toLocaleString(undefined,{maximumFractionDigits:0});
 const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
 
-const map = L.map('map', { zoomControl:true }).setView([30.0506,-95.5600], 16);
+const map = L.map('map', { zoomControl:true }).setView([30.0585,-95.5535], 16);
 const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:20,attribution:'Esri'});
 const esriLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{maxZoom:20});
 const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
@@ -185,12 +185,21 @@ const LENSES = {
   },
 };
 function lensColor(a){ const L=LENSES[activeLens]; const col=(typeof L.color==='function')?L.color():L.color; return col[L.bucket(a)]||'#9aa7b8'; }
-function styleFor(a){ const c=lensColor(a); const line=a.geometry&&a.geometry.type==='LineString';
-  if (isChild(a)) return { color:c, weight:line?2.5:1, fillColor:c, fillOpacity:0.2, opacity:0.75, dashArray:'3,3' };
-  return { color:c, weight:line?5:2, fillColor:c, fillOpacity:0.4, opacity:0.95 }; }
-function pointMarker(a, latlng){ const c=lensColor(a); let r=isChild(a)?4:8;
-  if (activeLens==='spending' && spendMode==='amount'){ r=({none:5,low:7,med:10,high:14})[spendBucket(a)]; if(isChild(a)) r=Math.max(3,r-4); }
-  return L.circleMarker(latlng, { radius:r, color:'#fff', weight:isChild(a)?1:2, fillColor:c, fillOpacity:isChild(a)?0.85:1 }); }
+// Default map shows PRIMARY (top-level) assets. A selected asset also reveals its
+// child systems. Unrelated assets de-emphasise so the selected place stands out.
+function visibleAssets(){ return ASSETS.filter(a => !a.parent_asset_id || a.id===selectedId || (selectedId && a.parent_asset_id===selectedId)); }
+function selState(a){ if(a.id===selectedId) return 'sel'; if(selectedId && a.parent_asset_id===selectedId) return 'child'; if(selectedId) return 'dim'; return 'normal'; }
+function isLine(a){ return a.geometry && (a.geometry.type==='LineString' || a.geometry.type==='MultiLineString'); }
+function styleFor(a){ const c=lensColor(a); const line=isLine(a); const s=selState(a);
+  if (s==='sel')  return { color:c, weight:line?7:3.5, fillColor:c, fillOpacity:0.45, opacity:1 };
+  if (s==='child')return { color:c, weight:line?3:1.5, fillColor:c, fillOpacity:0.32, opacity:0.95, dashArray:'3,3' };
+  if (s==='dim')  return { color:c, weight:line?3:1.5, fillColor:c, fillOpacity:0.12, opacity:0.45 };
+  return { color:c, weight:line?4:2, fillColor:c, fillOpacity:0.38, opacity:0.95 };
+}
+function pointMarker(a, latlng){ const c=lensColor(a); const s=selState(a); let r=isChild(a)?5:8;
+  if (activeLens==='spending' && spendMode==='amount' && s!=='dim'){ r=({none:5,low:7,med:10,high:14})[spendBucket(a)]; if(isChild(a)) r=Math.max(4,r-3); }
+  if (s==='sel') r+=3;
+  return L.circleMarker(latlng, { radius:r, color:'#fff', weight:s==='sel'?3:2, fillColor:c, fillOpacity:s==='dim'?0.4:1, opacity:s==='dim'?0.5:1 }); }
 function tooltipFor(a){ return esc(a.name)+' — '+esc(LENSES[activeLens].metric(a)); }
 function renderLegend(){ const rows=LENSES[activeLens].legend();
   document.getElementById('legend').innerHTML = rows.map(r=>`<span><i class="dot" style="background:${r[0]}"></i>${esc(r[1])}</span>`).join(''); }
@@ -215,7 +224,7 @@ function renderLabels(){ if(!LABELS) return; LABELS.clearLayers();
 // fetch). Called on first load and on every lens/window/mode change.
 function drawAssets(){
   Object.values(LAYERS).forEach(l=>map.removeLayer(l)); LAYERS={};
-  ASSETS.forEach(a => { if(!a.geometry) return;
+  visibleAssets().forEach(a => { if(!a.geometry) return;
     const lyr = L.geoJSON({type:'Feature', geometry:a.geometry, properties:{}}, {
       style:()=>styleFor(a), pointToLayer:(f,ll)=>pointMarker(a,ll),
       onEachFeature:(f,l)=>{ l.on('click', ()=>openDetail(a.id)); l.bindTooltip(tooltipFor(a),{sticky:true}); }
@@ -224,6 +233,11 @@ function drawAssets(){
   });
   renderLegend(); renderLabels();
 }
+// Center/zoom on the selected asset (and its child systems), so THIS physical
+// place fills the view when its record opens.
+function fitSelected(){ if(!selectedId) return; const ids=[selectedId, ...ASSETS.filter(a=>a.parent_asset_id===selectedId).map(a=>a.id)];
+  let bb=null; ids.forEach(id=>{ const l=LAYERS[id]; if(!l) return; try{ const b=l.getBounds(); if(b.isValid()) bb = bb? bb.extend(b) : L.latLngBounds(b.getSouthWest(), b.getNorthEast()); }catch(_){} });
+  if (bb && bb.isValid()) map.fitBounds(bb, { padding:[90,90], maxZoom:18 }); }
 document.getElementById('lensSeg').addEventListener('click', e=>{ const L=e.target.dataset.lens; if(!L) return;
   activeLens=L; document.querySelectorAll('#lensSeg button').forEach(x=>x.classList.toggle('on',x.dataset.lens===L));
   document.getElementById('spendCtl').style.display = (L==='spending')?'':'none';
@@ -260,12 +274,9 @@ async function loadAssets() {
   // District perimeter (from the canonical boundary RPC) — a quiet frame so the
   // assets read as "the area they manage," drawn under the assets.
   if (BOUNDARY_LAYER) { map.removeLayer(BOUNDARY_LAYER); BOUNDARY_LAYER=null; }
-  if (j.boundary) {
-    BOUNDARY_LAYER = L.geoJSON({type:'Feature', geometry:j.boundary, properties:{}}, {
-      interactive:false, style:{ color:'#D4AF37', weight:2, fillColor:'#D4AF37', fillOpacity:0.05, dashArray:'6,5' }
-    }).addTo(map);
-    try { const bb=BOUNDARY_LAYER.getBounds(); if(bb.isValid()) bounds.push(bb); } catch(_) {}
-  }
+  // District boundary removed from the default view (Ed 2026-09-21): the traced
+  // physical assets, on real satellite features, define the operating area — no
+  // dashed rectangle floating over the imagery.
   drawAssets(); // builds LAYERS under the current lens (client-side)
   Object.values(LAYERS).forEach(l=>{ try { const b=l.getBounds(); if(b.isValid()) bounds.push(b); } catch(_) {} });
   document.getElementById('sub').textContent = ASSETS.length+' managed assets';
@@ -273,7 +284,7 @@ async function loadAssets() {
 }
 
 async function openDetail(id) {
-  selectedId=id; renderLabels();
+  selectedId=id; drawAssets(); fitSelected();
   const r = await cmFetch('/api/community-map/asset/'+id+'/detail');
   if (!r.ok) return;
   const d = await r.json(); _lastDetail = d; const a=d.asset;
@@ -362,7 +373,7 @@ async function openDetail(id) {
   document.getElementById('sideInner').innerHTML=html;
   document.getElementById('side').classList.add('open');
 }
-function closeSide(){ document.getElementById('side').classList.remove('open'); selectedId=null; renderLabels(); }
+function closeSide(){ document.getElementById('side').classList.remove('open'); selectedId=null; drawAssets(); }
 async function submitReport(id){
   const text=document.getElementById('rptText').value.trim();
   const file=document.getElementById('rptPhoto').files[0];
