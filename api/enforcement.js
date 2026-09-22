@@ -2378,8 +2378,15 @@ async function _assembleBundlePdf({ group, letterDate }) {
       .eq('id', communityIdForGroup).maybeSingle(),
   ]);
 
+  // A failed lookup must fail the bundle, never render a letter missing items
+  // (supabase-js RETURNS errors; unchecked, they read as "no rows"). Ed 2026-09-22.
+  for (const [nm, r] of [['violations', vRes], ['observations', oRes], ['property', pRes], ['community', cRes]]) {
+    if (r.error) return { ok: false, reason: `${nm} lookup failed: ${r.error.message}` };
+  }
   const vById = new Map((vRes.data || []).map((v) => [v.id, v]));
   const oById = new Map((oRes.data || []).map((o) => [o.id, o]));
+  const _missing = group.filter((g) => !vById.has(g.violation_id));
+  if (_missing.length) return { ok: false, reason: `${_missing.length} violation(s) in this envelope could not be loaded` };
   const _memberStages = group.map((g) => vById.get(g.violation_id)).filter(Boolean).map((v) => v.current_stage);
   if (_memberStages.length) {
     const _rank = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
@@ -2405,27 +2412,28 @@ async function _assembleBundlePdf({ group, letterDate }) {
     const v = vById.get(d.violation_id);
     if (v && !evByViolation.has(v.id)) evByViolation.set(v.id, await latestEvidence(supabase, v.id, oById.get(d.observation_id)));
   }
+  const { downloadEvidencePhoto } = require('../lib/enforcement/evidence_photo');
   let widePhotoBuffer = null;
-  for (const d of orderedGroup) {
-    const v = vById.get(d.violation_id);
-    const ev = v && evByViolation.get(v.id);
-    if (ev && ev.paired_wide_photo_id) {
-      try {
-        const { data: wide } = await supabase.from('inspection_photos').select('storage_path').eq('id', ev.paired_wide_photo_id).maybeSingle();
+  try {
+    for (const d of orderedGroup) {
+      const v = vById.get(d.violation_id);
+      const ev = v && evByViolation.get(v.id);
+      if (ev && ev.paired_wide_photo_id) {
+        const { data: wide, error: wErr } = await supabase.from('inspection_photos').select('storage_path').eq('id', ev.paired_wide_photo_id).maybeSingle();
+        if (wErr) throw new Error('wide photo lookup failed: ' + wErr.message);
         if (wide && wide.storage_path) {
-          const { data: blob } = await supabase.storage.from('documents').download(wide.storage_path);
-          if (blob) widePhotoBuffer = Buffer.from(await blob.arrayBuffer());
+          widePhotoBuffer = await downloadEvidencePhoto(supabase, wide.storage_path, { label: 'the property (wide shot)' });
           break;
         }
-      } catch (_) {}
+      }
     }
-  }
+  } catch (e) { return { ok: false, reason: e.message }; }
 
   const violationsCtx = [];
   for (const d of orderedGroup) {
     const v = vById.get(d.violation_id);
     const o = oById.get(d.observation_id);
-    if (!v) continue;
+    if (!v) return { ok: false, reason: `violation ${d.violation_id} could not be loaded` };
     let govDoc = null;
     try {
       const { data: prioRow } = await supabase.from('community_enforcement_priorities')
@@ -2456,7 +2464,8 @@ async function _assembleBundlePdf({ group, letterDate }) {
     const ev = evByViolation.get(v.id) || {};
     let closeUpBuf = null;
     if (ev.storage_path) {
-      try { const { data: blob } = await supabase.storage.from('documents').download(ev.storage_path); if (blob) closeUpBuf = Buffer.from(await blob.arrayBuffer()); } catch (_) {}
+      try { closeUpBuf = await downloadEvidencePhoto(supabase, ev.storage_path, { label: (v.enforcement_categories && v.enforcement_categories.label) || 'a violation' }); }
+      catch (e) { return { ok: false, reason: e.message }; }
     }
     const bundleFinding = (o && o.ai_description && o.ai_description.trim().length >= 10)
       ? o.ai_description
@@ -2488,6 +2497,84 @@ async function _assembleBundlePdf({ group, letterDate }) {
     options: { sender_name: community.letter_sender_name, sender_title: community.letter_sender_title },
   });
   return { ok: true, pdfBuffer, stage, community, pRow, orderedGroup, propertyId };
+}
+
+// ---------------------------------------------------------------------------
+// _groupLettersIntoEnvelopes — the ONE rule for which letters share an envelope:
+// same property + same letter stage, except (a) self-help 10-day letters, which
+// are always standalone (different renderer), and (b) letter_209 in communities
+// that opted to mail certified letters separately (migration 133). Used by the
+// draft auto-bundler AND the Mail Queue print step, so the envelope a homeowner
+// receives is grouped by exactly the rule that built the draft the operator
+// reviewed. (Ed 2026-09-22: print trusted a stored bundle_id instead and mailed
+// 5310 Prairie Dog Fork's three courtesy items as three separate letters.)
+// Returns Map key -> letters[]. Letters with no property or self-help are omitted
+// (callers render those one-per-envelope).
+// ---------------------------------------------------------------------------
+async function _groupLettersIntoEnvelopes(letters, selfHelpVioIds = null) {
+  if (!selfHelpVioIds) {
+    selfHelpVioIds = new Set();
+    const vioIds = [...new Set(letters.map((d) => d.violation_id).filter(Boolean))];
+    for (let i = 0; i < vioIds.length; i += 200) {
+      const { data: vios, error: vErr } = await supabase.from('violations').select('id, enforcement_categories(slug)').in('id', vioIds.slice(i, i + 200));
+      if (vErr) throw new Error('self-help lookup failed: ' + vErr.message);
+      for (const v of (vios || [])) { if (v.enforcement_categories && _SELF_HELP_SLUGS.has(v.enforcement_categories.slug)) selfHelpVioIds.add(v.id); }
+    }
+  }
+  // Per-community §209 bundling-opt-out config (migration 133). When TRUE,
+  // letter_209 letters (covers both certified_209 and fine_assessed) are
+  // treated as singletons regardless of how many are at the same property.
+  // Other types (courtesy_1, courtesy_2) still combine as before.
+  //
+  // Why: Texas §209 procedural defensibility — each violation needs its own
+  // §209.0064 cure-rights statement and §209.007 hearing-rights paragraph.
+  // A bundled letter CAN include all required citations per violation, but
+  // a defending attorney can argue the bundle "obscures" per-violation cure
+  // rights and create a procedural defense at the §209 hearing. Operators
+  // choose per community.
+  const communityIdsInScope = [...new Set(letters.map((d) => d.community_id).filter(Boolean))];
+  const separateCertifiedCommunities = new Set();
+  if (communityIdsInScope.length > 0) {
+    try {
+      const { data: commRows, error: commErr } = await supabase
+        .from('communities')
+        .select('id, bundle_certified_letters_separately')
+        .in('id', communityIdsInScope);
+      if (commErr) throw commErr;
+      for (const c of (commRows || [])) {
+        if (c.bundle_certified_letters_separately) separateCertifiedCommunities.add(c.id);
+      }
+    } catch (e) {
+      // If the column doesn't exist yet (migration 133 not applied), fall
+      // back to existing behavior — combine everything. Loud-warn so the
+      // operator can spot it in logs.
+      console.warn('[envelopes] community config lookup failed (migration 133 not applied?):', e.message);
+    }
+  }
+
+  // Group by (property_id, type). For letter_209 letters in opt-out
+  // communities, we use a unique-per-draft key so each one ends up in its
+  // own group of 1 → falls through the singletons branch below and gets
+  // its own bundle_id without merging.
+  const groups = new Map();
+  for (const d of letters) {
+    if (!d.property_id) continue;
+    // Self-help 10-day letters are standalone (rendered by lib/lawn_force_mow_
+    // renderer). Never let the bundle assembler touch them — not by merging,
+    // and not by force re-rendering a singleton — or they reprint as a generic
+    // §209 notice. They flow through the mail queue's per-interaction path,
+    // which renders self-help correctly.
+    if (d.violation_id && selfHelpVioIds.has(d.violation_id)) continue;
+    const isSeparateCertified = d.type === 'letter_209'
+      && separateCertifiedCommunities.has(d.community_id);
+    const key = isSeparateCertified
+      ? `${d.property_id}|${d.type}|${d.id}`  // unique → singleton path
+      : `${d.property_id}|${d.type}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(d);
+  }
+
+  return groups;
 }
 
 // Auto-bundle / regenerate draft letters. Groups draft letters by property+type
@@ -2567,7 +2654,9 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
         const want = d.violation_id ? STAGE_TO_LETTER[stageById[d.violation_id]] : null;
         if (want && want !== d.type) {
           try {
-            await supabase.from('interactions').update({ type: want, bundle_id: null }).eq('id', d.id);
+            // status guard: an operator may approve this letter while the rebuild runs —
+            // never rewrite an approved/sent letter (Ed 2026-09-22).
+            await supabase.from('interactions').update({ type: want, bundle_id: null }).eq('id', d.id).eq('status', 'draft');
             console.warn(`[auto-bundle] corrected letter type ${d.type} → ${want} for violation ${d.violation_id} (stage advanced without regenerating the letter)`);
             d.type = want; d.bundle_id = null; // reflect in memory so grouping + force-render use the corrected stage
           } catch (e) { console.warn('[auto-bundle] stage/type self-heal failed for', d.id, e.message); }
@@ -2575,57 +2664,7 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
       }
     }
 
-    // Per-community §209 bundling-opt-out config (migration 133). When TRUE,
-    // letter_209 drafts (covers both certified_209 and fine_assessed) are
-    // treated as singletons regardless of how many are at the same property.
-    // Other types (courtesy_1, courtesy_2) still combine as before.
-    //
-    // Why: Texas §209 procedural defensibility — each violation needs its own
-    // §209.0064 cure-rights statement and §209.007 hearing-rights paragraph.
-    // A bundled letter CAN include all required citations per violation, but
-    // a defending attorney can argue the bundle "obscures" per-violation cure
-    // rights and create a procedural defense at the §209 hearing. Operators
-    // choose per community.
-    const communityIdsInScope = [...new Set(drafts.map((d) => d.community_id).filter(Boolean))];
-    const separateCertifiedCommunities = new Set();
-    if (communityIdsInScope.length > 0) {
-      try {
-        const { data: commRows } = await supabase
-          .from('communities')
-          .select('id, bundle_certified_letters_separately')
-          .in('id', communityIdsInScope);
-        for (const c of (commRows || [])) {
-          if (c.bundle_certified_letters_separately) separateCertifiedCommunities.add(c.id);
-        }
-      } catch (e) {
-        // If the column doesn't exist yet (migration 133 not applied), fall
-        // back to existing behavior — combine everything. Loud-warn so the
-        // operator can spot it in logs.
-        console.warn('[drafts/auto-bundle] community config lookup failed (migration 133 not applied?):', e.message);
-      }
-    }
-
-    // Group by (property_id, type). For letter_209 drafts in opt-out
-    // communities, we use a unique-per-draft key so each one ends up in its
-    // own group of 1 → falls through the singletons branch below and gets
-    // its own bundle_id without merging.
-    const groups = new Map();
-    for (const d of drafts) {
-      if (!d.property_id) continue;
-      // Self-help 10-day letters are standalone (rendered by lib/lawn_force_mow_
-      // renderer). Never let the bundle assembler touch them — not by merging,
-      // and not by force re-rendering a singleton — or they reprint as a generic
-      // §209 notice. They flow through the mail queue's per-interaction path,
-      // which renders self-help correctly.
-      if (d.violation_id && selfHelpVioIds.has(d.violation_id)) continue;
-      const isSeparateCertified = d.type === 'letter_209'
-        && separateCertifiedCommunities.has(d.community_id);
-      const key = isSeparateCertified
-        ? `${d.property_id}|${d.type}|${d.id}`  // unique → singleton path
-        : `${d.property_id}|${d.type}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(d);
-    }
+    const groups = await _groupLettersIntoEnvelopes(drafts, selfHelpVioIds);
 
     const { renderViolationLetterBundlePdf } = require('../lib/enforcement/violation_letter');
     const cryptoMod = require('crypto');
@@ -2646,7 +2685,7 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
             const bundleId = cryptoMod.randomUUID();
             await supabase.from('interactions')
               .update({ bundle_id: bundleId })
-              .eq('id', group[0].id);
+              .eq('id', group[0].id).eq('status', 'draft');
             singletons += 1;
             continue;
           }
@@ -2698,7 +2737,7 @@ async function runAutoBundle({ communityId = null, force = false, propertyId = n
               content: letterPath,
               letter_fee_cents: isFirst ? feeCents : 0,
             })
-            .eq('id', d.id);
+            .eq('id', d.id).eq('status', 'draft');
         }
 
         bundlesCreated += 1;
@@ -3251,6 +3290,7 @@ router.get('/mail-queue/letters', async (req, res) => {
         community_name:   (l.communities && l.communities.name) || null,
         property_address: p ? `${p.street_address}${p.unit ? ' #' + p.unit : ''}` : null,
         owner_name:       p ? p.owner_name : null,
+        property_id:      l.property_id,
         violation_id:     l.violation_id,
         bundle_id:        l.bundle_id,
         letter_url,
@@ -3615,25 +3655,53 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
     // pre-render each multi-member bundle ONCE, with the postmark date, via the
     // SAME helper that produced the draft — so the mailed letter matches the
     // reviewed draft. Singletons are untouched (rendered per-interaction below).
-    const _bundleGroups = new Map();
-    for (const L of letters) {
-      if (!L.bundle_id) continue;
-      if (!_bundleGroups.has(L.bundle_id)) _bundleGroups.set(L.bundle_id, []);
-      _bundleGroups.get(L.bundle_id).push(L);
-    }
+    // Envelopes are grouped by the SAME rule as the draft auto-bundler
+    // (_groupLettersIntoEnvelopes: property + stage), NOT by the stored bundle_id,
+    // which can be stale when a letter was approved while a later violation at the
+    // same house was still being bundled. And a bundle that fails to render is
+    // HELD — never printed as separate one-violation letters. (Ed 2026-09-22:
+    // 5310 Prairie Dog Fork's three courtesy items silently fell back to three
+    // separate letters, two of them without their photo.)
     const _bundleRender = new Map(); // bundle_id -> { pdfBuffer, letterPath }
-    for (const [bid, members] of _bundleGroups) {
-      if (members.length < 2) continue; // singleton bundle → normal per-interaction path
-      try {
-        const rr = await _assembleBundlePdf({ group: members, letterDate: postmarkDate });
-        if (!rr.ok) continue; // fall back to per-interaction rendering (never blocks the batch)
+    const _heldIds = new Set();
+    const cryptoMod = require('crypto');
+    const _envelopes = await _groupLettersIntoEnvelopes(letters);
+    for (const [, members] of _envelopes) {
+      if (members.length < 2) continue; // one letter → normal per-interaction path
+      // One shared bundle_id per physical envelope, persisted so fee / notice /
+      // printout de-dup (all keyed on bundle_id below) and the record agree.
+      const ids = new Set(members.map((m) => m.bundle_id).filter(Boolean));
+      const bid = ids.size === 1 && members.every((m) => m.bundle_id) ? [...ids][0] : cryptoMod.randomUUID();
+      if (members.some((m) => m.bundle_id !== bid)) {
+        const { error: bErr } = await supabase.from('interactions').update({ bundle_id: bid }).in('id', members.map((m) => m.id));
+        if (bErr) {
+          for (const m of members) { _heldIds.add(m.id); skipped.push({ id: m.id, reason: 'could not group this address into one envelope (' + bErr.message + ') — nothing printed for it; print again' }); }
+          continue;
+        }
+        for (const m of members) m.bundle_id = bid;
+      }
+      let rr = null, lastReason = null;
+      for (let attempt = 0; attempt < 2 && !(rr && rr.ok); attempt++) {
+        try { rr = await _assembleBundlePdf({ group: members, letterDate: postmarkDate }); if (!rr.ok) lastReason = rr.reason; }
+        catch (e) { rr = null; lastReason = e.message; }
+      }
+      let upErr = null, bundlePath = null;
+      if (rr && rr.ok) {
         const stamp = postmarkIso.replace(/-/g, '');
-        const bundlePath = `${members[0].property_id}/bundle-${rr.stage}-postmark-${stamp}.pdf`;
-        const { error: upErr } = await supabase.storage.from('violation-letters')
-          .upload(bundlePath, rr.pdfBuffer, { contentType: 'application/pdf', upsert: true });
-        if (upErr) { console.warn('[lock-and-batch] bundle upload failed', bid, upErr.message); continue; }
-        _bundleRender.set(bid, { pdfBuffer: rr.pdfBuffer, letterPath: bundlePath });
-      } catch (e) { console.warn('[lock-and-batch] bundle pre-render failed', bid, e.message); /* per-interaction fallback */ }
+        bundlePath = `${members[0].property_id}/bundle-${rr.stage}-postmark-${stamp}.pdf`;
+        ({ error: upErr } = await supabase.storage.from('violation-letters')
+          .upload(bundlePath, rr.pdfBuffer, { contentType: 'application/pdf', upsert: true }));
+        if (upErr) lastReason = 'upload failed: ' + upErr.message;
+      }
+      if (!rr || !rr.ok || upErr) {
+        console.warn('[lock-and-batch] bundle HELD (not printed)', bid, lastReason);
+        for (const m of members) {
+          _heldIds.add(m.id);
+          skipped.push({ id: m.id, reason: `combined letter for this address could not be built (${lastReason}) — held, nothing printed for it; print again` });
+        }
+        continue;
+      }
+      _bundleRender.set(bid, { pdfBuffer: rr.pdfBuffer, letterPath: bundlePath });
     }
     // Each once-per-envelope action (add to printout, admin fee, supplemental
     // email/SMS) fires on the FIRST bundle member that actually succeeds — never
@@ -3642,6 +3710,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
     const _bundleAppended = new Set(), _bundleFeeCharged = new Set(), _bundleNotified = new Set();
 
     for (const L of letters) {
+      if (_heldIds.has(L.id)) continue; // already reported in skipped
       try {
         // Fetch violation + joined data needed for regeneration
         const { data: vio } = await supabase
@@ -3749,11 +3818,12 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         let closeUpBuffer = null;
         let wideBuffer = null;
         if (vio.opened_from_observation_id) {
-          const { data: obs } = await supabase
+          const { data: obs, error: obsErr } = await supabase
             .from('property_observations')
             .select('ai_description, reviewer_notes, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
             .eq('id', vio.opened_from_observation_id)
             .maybeSingle();
+          if (obsErr) throw new Error('observation lookup failed: ' + obsErr.message);
           if (obs) {
             // Manual entries (staff-typed, description-only) never get an
             // AI-generated ai_description — the finding lives in reviewer_notes,
@@ -3770,27 +3840,19 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             const { latestEvidence } = require('../lib/enforcement/latest_evidence');
             const ev = await latestEvidence(supabase, vio.id, obs);
             observation = { ai_description: finding, severity: obs.severity, captured_at: ev.captured_at || obs.created_at };
-            // Close-up photo
-            if (ev.storage_path) {
-              try {
-                const { data: blob } = await supabase.storage.from('documents').download(ev.storage_path);
-                if (blob) closeUpBuffer = Buffer.from(await blob.arrayBuffer());
-              } catch (_) {}
-            }
-            // Paired wide photo
-            const widePhotoId = ev.paired_wide_photo_id;
-            if (widePhotoId) {
-              try {
-                const { data: wide } = await supabase
-                  .from('inspection_photos')
-                  .select('storage_path')
-                  .eq('id', widePhotoId)
-                  .maybeSingle();
-                if (wide && wide.storage_path) {
-                  const { data: wideBlob } = await supabase.storage.from('documents').download(wide.storage_path);
-                  if (wideBlob) wideBuffer = Buffer.from(await wideBlob.arrayBuffer());
-                }
-              } catch (_) {}
+            // Photos. A bundled letter already rendered its photos in the
+            // pre-pass, so skip the download. For a single letter, a photo on
+            // record that can't be loaded THROWS -> the letter is held with the
+            // reason, never printed without its evidence (Ed 2026-09-22).
+            if (!(L.bundle_id && _bundleRender.has(L.bundle_id))) {
+              const { downloadEvidencePhoto } = require('../lib/enforcement/evidence_photo');
+              if (ev.storage_path) closeUpBuffer = await downloadEvidencePhoto(supabase, ev.storage_path, { label: (catRow && catRow.label) || 'this violation' });
+              const widePhotoId = ev.paired_wide_photo_id;
+              if (widePhotoId) {
+                const { data: wide, error: wErr } = await supabase.from('inspection_photos').select('storage_path').eq('id', widePhotoId).maybeSingle();
+                if (wErr) throw new Error('wide photo lookup failed: ' + wErr.message);
+                if (wide && wide.storage_path) wideBuffer = await downloadEvidencePhoto(supabase, wide.storage_path, { label: 'the property (wide shot)' });
+              }
             }
           }
         }
@@ -4124,6 +4186,11 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="bedrock-mail-batch-${methodLabel}-locked-${filenameStamp}.pdf"`);
     res.setHeader('X-Bedrock-Included', included.length);
     res.setHeader('X-Bedrock-Skipped', skipped.length);
+    // Held letters + WHY, so the operator sees them instead of a bare count
+    // (they stay in the queue, unprinted). Header-size bounded.
+    let _skipDetail = encodeURIComponent(JSON.stringify(skipped.slice(0, 40)));
+    if (_skipDetail.length > 6000) _skipDetail = encodeURIComponent(JSON.stringify(skipped.slice(0, 40).map((x) => ({ id: x.id, reason: String(x.reason || '').slice(0, 80) }))));
+    res.setHeader('X-Bedrock-Skipped-Detail', _skipDetail.slice(0, 7000));
     res.setHeader('X-Bedrock-Postmark', postmarkIso);
     res.end(Buffer.from(mergedBytes));
   } catch (err) {
@@ -11926,4 +11993,4 @@ router.get('/notices-not-sent', async (req, res) => {
   }
 });
 
-module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations, _draftLetterForBumpedViolation, renderNotCuredBoardLetter, _assembleBundlePdf };
+module.exports = { router, processCureLapses, processPostcardReminders, _restageOpenViolation, _restageCategoryOpenSiblings, runAutoBundle, detectCategoryAliases, _reconcileAliasedOpenViolations, _draftLetterForBumpedViolation, renderNotCuredBoardLetter, _assembleBundlePdf, _groupLettersIntoEnvelopes };

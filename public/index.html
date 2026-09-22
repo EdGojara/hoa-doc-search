@@ -27788,7 +27788,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
     const CHUNK = 100; // letters per request — 99 printed fine in one batch historically; only truly huge batches split
     const envMap = new Map();
-    for (const l of pending) { const k = l.bundle_id || ('one-' + l.id); if (!envMap.has(k)) envMap.set(k, []); envMap.get(k).push(l.id); }
+    // Keep every letter for the same house + stage in the SAME request; the
+    // server combines them into one envelope (same rule as the draft bundler).
+    // Keying on bundle_id split a house whose letters carried stale bundle ids.
+    for (const l of pending) { const k = l.property_id ? (l.property_id + '|' + l.type) : ('one-' + l.id); if (!envMap.has(k)) envMap.set(k, []); envMap.get(k).push(l.id); }
     const chunks = []; let cur = [];
     for (const ids of envMap.values()) { if (cur.length && cur.length + ids.length > CHUNK) { chunks.push(cur); cur = []; } cur.push(...ids); }
     if (cur.length) chunks.push(cur);
@@ -27805,6 +27808,18 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const origLabel = btn ? btn.innerHTML : '';
     if (btn) btn.disabled = true;
     let done = 0;
+    const held = []; // letters the server held back (not printed) + why
+    const heldText = () => {
+      if (!held.length) return '';
+      const addrById = new Map(pending.map((l) => [l.id, l.property_address || '']));
+      const lines = held.slice(0, 15).map((x) => `- ${addrById.get(x.id) || 'letter ' + String(x.id || '').slice(0, 8)}: ${x.reason}`);
+      return `
+
+WARNING: ${held.length} letter${held.length === 1 ? ' was' : 's were'} HELD and NOT printed (still in the queue):
+${lines.join('
+')}${held.length > 15 ? `
+...and ${held.length - 15} more` : ''}`;
+    };
     try {
       for (let i = 0; i < chunks.length; i++) {
         if (btn) btn.innerHTML = multi ? `⏳ Printing batch ${i + 1} of ${chunks.length}…` : '⏳ Printing…';
@@ -27813,10 +27828,15 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ delivery_method: deliveryMethod, community_id: cid || undefined, interaction_ids: chunks[i] }),
         });
-        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`); }
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          (j.skipped || []).forEach((x) => held.push(x));
+          throw new Error(j.error || `HTTP ${r.status}`);
+        }
         const blob = await r.blob();
         const postmark = r.headers.get('X-Bedrock-Postmark') || new Date().toISOString().slice(0, 10);
         const included = r.headers.get('X-Bedrock-Included');
+        try { JSON.parse(decodeURIComponent(r.headers.get('X-Bedrock-Skipped-Detail') || '%5B%5D')).forEach((x) => held.push(x)); } catch (_) {}
         done += Number(included) || chunks[i].length;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -27826,9 +27846,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         setTimeout(() => URL.revokeObjectURL(url), 60000);
         await new Promise((res) => setTimeout(res, 900)); // let the browser flush each download before the next
       }
-      alert(`✓ ${done} letter${done === 1 ? '' : 's'} printed as ${chunks.length} PDF${chunks.length === 1 ? '' : 's'}, dates locked. Mail today.`);
+      alert(`✓ ${done} letter${done === 1 ? '' : 's'} printed as ${chunks.length} PDF${chunks.length === 1 ? '' : 's'}, dates locked. Mail today.${heldText()}`);
     } catch (e) {
-      alert(`Printed ${done} of ${pending.length} before an error:\n${e.message}\n\nThe ones already downloaded are marked printed — reload and print the rest.`);
+      alert(`Printed ${done} of ${pending.length} before an error:\n${e.message}\n\nThe ones already downloaded are marked printed — reload and print the rest.${heldText()}`);
     } finally {
       if (btn) { btn.disabled = false; btn.innerHTML = origLabel; }
       await inspMailQueueLoad();
