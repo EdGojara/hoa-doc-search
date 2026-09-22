@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLMA Board Report — September 2026</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="/brand.css"/>
+<style>
+  :root{ --paper:#f5f2ea; --card:#ffffff; --navy:#0B1D34; --navy2:#142A4A; --gold:#C8A24A;
+    --line:#e4e0d6; --ink:#1c2735; --ink2:#5c6675; --ink3:#8a93a1;
+    --red:#c0392b; --amber:#e0873a; --green:#2e7d5b; --blue:#2b6cb0; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--paper); color:var(--ink);
+    font-family:'Public Sans',-apple-system,Segoe UI,Roboto,sans-serif; -webkit-font-smoothing:antialiased; }
+  a{ color:inherit; }
+  .wrap{ max-width:1040px; margin:0 auto; padding:0 20px 64px; }
+  /* Header */
+  .masthead{ background:var(--navy); color:#fff; padding:34px 0 30px; border-bottom:3px solid var(--gold); }
+  .masthead .in{ max-width:1040px; margin:0 auto; padding:0 20px; }
+  .masthead .kick{ font-size:12px; letter-spacing:.22em; text-transform:uppercase; color:var(--gold); font-weight:800; }
+  .masthead h1{ font-family:'Fraunces',Georgia,serif; font-weight:600; font-size:34px; margin:8px 0 4px; letter-spacing:-.01em; }
+  .masthead .sub{ font-size:15px; color:#c7d2e2; }
+  .masthead .prov{ font-size:11.5px; color:#8496b0; margin-top:12px; letter-spacing:.02em; }
+  .masthead .prov b{ color:#c7d2e2; font-weight:700; }
+  /* Exec summary */
+  .kpis{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:-26px 0 6px; position:relative; z-index:2; }
+  .kpi{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 16px 14px;
+    box-shadow:0 6px 20px rgba(11,29,52,.08); }
+  .kpi .n{ font-family:'Fraunces',Georgia,serif; font-size:30px; font-weight:600; line-height:1; color:var(--navy); }
+  .kpi .n.attn{ color:var(--red); } .kpi .n.warn{ color:var(--amber); }
+  .kpi .l{ font-size:12px; color:var(--ink2); margin-top:8px; line-height:1.3; font-weight:600; }
+  /* Sections */
+  section{ margin-top:34px; }
+  .sh{ display:flex; align-items:baseline; gap:12px; margin:0 0 14px; }
+  .sh .no{ font-size:12px; font-weight:800; color:var(--gold); letter-spacing:.14em; }
+  .sh h2{ font-family:'Fraunces',Georgia,serif; font-weight:600; font-size:22px; margin:0; color:var(--navy); }
+  .sh .hint{ margin-left:auto; font-size:12px; color:var(--ink3); }
+  /* Section 1 layout */
+  .s1{ display:grid; grid-template-columns:1.15fr 1fr; gap:18px; align-items:stretch; }
+  #miniMap{ height:340px; border-radius:14px; overflow:hidden; border:1px solid var(--line); background:#0b1d34; box-shadow:0 6px 20px rgba(11,29,52,.08); }
+  .maplegend{ display:flex; gap:14px; font-size:12px; color:var(--ink2); margin-top:8px; align-items:center; }
+  .maplegend i{ width:11px; height:11px; border-radius:50%; display:inline-block; border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.15); vertical-align:-1px; margin-right:4px; }
+  .attnlist{ display:flex; flex-direction:column; gap:10px; }
+  .attnrow{ background:var(--card); border:1px solid var(--line); border-left:4px solid var(--ink3); border-radius:11px; padding:12px 14px; cursor:pointer; transition:box-shadow .12s; }
+  .attnrow:hover{ box-shadow:0 4px 14px rgba(11,29,52,.10); }
+  .attnrow.red{ border-left-color:var(--red); } .attnrow.amber{ border-left-color:var(--amber); }
+  .attnrow .an{ font-weight:800; font-size:15px; color:var(--navy); }
+  .attnrow .ac{ font-size:12.5px; color:var(--ink2); margin-top:2px; }
+  .attnrow .aa{ font-size:12.5px; color:var(--ink); margin-top:5px; font-weight:600; }
+  .attnrow .aa .stg{ color:var(--amber); font-weight:800; }
+  .attnrow .aa .stg.dec{ color:var(--red); }
+  .allgood{ background:var(--card); border:1px dashed var(--line); border-radius:11px; padding:14px; font-size:13px; color:var(--green); font-weight:700; text-align:center; }
+  /* Cards grid */
+  .cards{ display:grid; grid-template-columns:repeat(2,1fr); gap:16px; }
+  .pcard{ background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 4px 16px rgba(11,29,52,.07); display:flex; flex-direction:column; }
+  .pcard .ph{ padding:15px 16px 12px; }
+  .pcard .asset{ font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink3); font-weight:800; }
+  .pcard .title{ font-size:17px; font-weight:800; color:var(--navy); margin:2px 0 0; cursor:pointer; }
+  .pcard .title:hover{ color:var(--gold); }
+  .prog{ height:7px; background:#eceae2; border-radius:5px; overflow:hidden; margin:12px 0 4px; }
+  .prog > i{ display:block; height:100%; background:linear-gradient(90deg,var(--gold),#e2c072); }
+  .pmeta{ display:flex; justify-content:space-between; font-size:12px; color:var(--ink2); margin-top:2px; }
+  .money{ display:grid; grid-template-columns:repeat(3,1fr); gap:2px; margin-top:12px; text-align:center; }
+  .money div{ padding:8px 4px; background:#faf8f2; border-radius:8px; }
+  .money .mv{ font-weight:800; font-size:15px; color:var(--navy); }
+  .money .ml{ font-size:10.5px; color:var(--ink3); text-transform:uppercase; letter-spacing:.04em; margin-top:2px; }
+  .money .rem .mv{ color:var(--green); }
+  .vend{ font-size:12px; color:var(--ink2); margin-top:11px; }
+  .vend b{ color:var(--ink); }
+  .filmstrip{ display:flex; gap:6px; margin-top:auto; padding:12px 16px 14px; }
+  .filmstrip img{ width:100%; height:74px; object-fit:cover; border-radius:8px; cursor:pointer; border:1px solid var(--line); flex:1; }
+  .filmstrip .fx{ position:relative; flex:1; }
+  .filmstrip .fx .tag{ position:absolute; left:5px; bottom:5px; font-size:9px; font-weight:800; letter-spacing:.05em; background:rgba(11,29,52,.82); color:#fff; padding:2px 6px; border-radius:5px; text-transform:uppercase; }
+  .nolabel{ font-size:12px; color:var(--ink3); padding:0 16px 14px; }
+  /* Financial table */
+  .ftable{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 4px 16px rgba(11,29,52,.07); }
+  .ftable th{ text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink3); font-weight:800; padding:13px 16px; border-bottom:1px solid var(--line); }
+  .ftable th.r,.ftable td.r{ text-align:right; }
+  .ftable td{ padding:13px 16px; border-bottom:1px solid var(--line); font-size:14px; }
+  .ftable tr:last-child td{ border-bottom:0; }
+  .ftable tbody tr{ cursor:pointer; }
+  .ftable tbody tr:hover{ background:#faf8f2; }
+  .ftable .pa{ font-weight:800; color:var(--navy); }
+  .ftable .pt{ color:var(--ink2); font-size:12.5px; }
+  .ftable td.r{ font-variant-numeric:tabular-nums; font-weight:700; color:var(--ink); }
+  .pill{ display:inline-block; font-size:11px; font-weight:800; padding:3px 10px; border-radius:20px; letter-spacing:.02em; }
+  .pill.active{ background:#fbeede; color:#a35a12; } .pill.awaiting_approval{ background:#f7dcd8; color:#9a2b20; }
+  .pill.completed{ background:#dcefe4; color:#1f6a45; } .pill.planned{ background:#e5e9f0; color:#495468; }
+  .ftfoot{ display:flex; justify-content:flex-end; gap:26px; padding:12px 4px 0; font-size:13px; color:var(--ink2); }
+  .ftfoot b{ color:var(--navy); font-variant-numeric:tabular-nums; }
+  /* Decisions */
+  .dec{ display:grid; grid-template-columns:repeat(2,1fr); gap:16px; }
+  .dcard{ background:var(--card); border:1px solid var(--line); border-top:4px solid var(--red); border-radius:14px; padding:16px; box-shadow:0 4px 16px rgba(11,29,52,.07); cursor:pointer; }
+  .dcard:hover{ box-shadow:0 6px 20px rgba(11,29,52,.12); }
+  .dcard .dt{ font-size:16px; font-weight:800; color:var(--navy); }
+  .dcard .dv{ font-size:12.5px; color:var(--ink2); margin-top:3px; }
+  .dcard .dmeta{ display:flex; align-items:center; gap:10px; margin-top:12px; }
+  .dcard .damt{ font-weight:800; color:var(--navy); font-size:15px; }
+  .dcard .dflag{ margin-left:auto; font-size:11px; font-weight:800; color:var(--red); text-transform:uppercase; letter-spacing:.05em; }
+  /* Completed */
+  .done{ display:flex; flex-direction:column; gap:16px; }
+  .donecard{ background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 4px 16px rgba(11,29,52,.07); display:grid; grid-template-columns:1fr 1.1fr; }
+  .donecard .di{ padding:16px 18px; align-self:center; }
+  .donecard .di .asset{ font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink3); font-weight:800; }
+  .donecard .di .title{ font-size:18px; font-weight:800; color:var(--navy); margin:2px 0 6px; cursor:pointer; }
+  .donecard .di .title:hover{ color:var(--gold); }
+  .donecard .di .cost{ font-size:13px; color:var(--ink2); margin-top:8px; }
+  .donecard .di .cost b{ color:var(--green); }
+  .beforeafter{ display:grid; grid-template-columns:1fr 1fr; gap:2px; }
+  .beforeafter .fx{ position:relative; }
+  .beforeafter img{ width:100%; height:150px; object-fit:cover; display:block; cursor:pointer; }
+  .beforeafter .tag{ position:absolute; left:7px; top:7px; font-size:10px; font-weight:800; letter-spacing:.05em; background:rgba(11,29,52,.82); color:#fff; padding:2px 8px; border-radius:5px; text-transform:uppercase; }
+  .donecard.nophoto{ grid-template-columns:1fr; }
+  /* Lightbox */
+  .lb{ position:fixed; inset:0; background:rgba(9,16,28,.88); display:none; align-items:center; justify-content:center; z-index:1000; padding:24px; }
+  .lb.open{ display:flex; }
+  .lbin{ max-width:760px; width:100%; }
+  .lbin img{ width:100%; max-height:64vh; object-fit:contain; border-radius:10px; background:#0b1d34; }
+  .lbcap{ color:#e8ecf3; font-size:14px; margin-top:12px; }
+  .lbcap .ct{ color:var(--gold); font-weight:800; text-transform:uppercase; font-size:11px; letter-spacing:.06em; margin-right:8px; }
+  .lbseq{ display:flex; gap:8px; margin-top:12px; }
+  .lbseq img{ width:84px; height:56px; object-fit:cover; border-radius:6px; cursor:pointer; opacity:.55; border:2px solid transparent; }
+  .lbseq img.on{ opacity:1; border-color:var(--gold); }
+  .lbx{ position:absolute; top:18px; right:22px; color:#fff; font-size:30px; cursor:pointer; line-height:1; }
+  .loading{ text-align:center; padding:60px 20px; color:var(--ink2); }
+  .err{ background:#fbe9e7; border:1px solid #f3c9c4; color:#8a2b20; padding:14px 16px; border-radius:12px; font-size:13.5px; margin-top:20px; }
+  @media (max-width:760px){
+    .kpis{ grid-template-columns:repeat(2,1fr); }
+    .s1,.cards,.dec{ grid-template-columns:1fr; }
+    .donecard,.donecard.nophoto{ grid-template-columns:1fr; }
+    .masthead h1{ font-size:27px; }
+  }
+</style>
+</head>
+<body>
+  <div class="masthead"><div class="in">
+    <div class="kick">CLMA Board Report</div>
+    <h1>September 2026</h1>
+    <div class="sub">Landscape &amp; Asset Management</div>
+    <div class="prov" id="prov">Generated from the Sterling Ridge operating system</div>
+  </div></div>
+
+  <div class="wrap">
+    <div class="kpis" id="kpis"></div>
+    <div id="body"><div class="loading">Loading board report…</div></div>
+  </div>
+
+  <div class="lb" id="lb"><span class="lbx" onclick="closeLB()">✕</span>
+    <div class="lbin"><img id="lbimg" alt=""><div class="lbcap" id="lbcap"></div><div class="lbseq" id="lbseq"></div></div>
+  </div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const COMMUNITY_ID = params.get('community_id') || 'e0100000-0000-4000-a000-000000000000'; // Sterling Ridge LMA
+const VIEW_AS = params.get('view_as') || '';
+const MAP_URL = 'lma-map.html?community_id=' + encodeURIComponent(COMMUNITY_ID) + (VIEW_AS ? '&view_as=' + encodeURIComponent(VIEW_AS) : '');
+const money = (c) => c == null ? '—' : '$' + Math.round(c/100).toLocaleString();
+const esc = (s) => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// Same stage -> board-facing status map the accounting layer uses (kept in sync).
+const STAGE_STATUS = { requested:'planned', bid_requested:'planned', bid_received:'planned', on_hold:'planned',
+  board_deciding:'awaiting_approval', approved:'active', contract_signed:'active', work_started:'active',
+  work_complete:'completed', closed:'completed' };
+const STATUS_LABEL = { active:'In progress', awaiting_approval:'Board decision', completed:'Complete', planned:'Planned' };
+const projStatus = (p) => STAGE_STATUS[p.stage] || 'planned';
+const CB = { excellent:'good', good:'good', fair:'fair', poor:'poor', failing:'poor' };
+const COND_COLOR = { good:'#2e7d5b', fair:'#e0873a', poor:'#c0392b', unknown:'#9aa7b8' };
+
+// --- auth: identical bearer/view_as/credentials path as the operating map ------
+let _supa = null;
+async function initAuth(){ try { const cfg = await (await fetch('/api/auth/config')).json();
+  if (cfg && cfg.enabled && window.supabase) _supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key); } catch(_){} }
+async function cmFetch(path){ const h={};
+  try { if (_supa){ const s=(await _supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization='Bearer '+s.access_token; } } catch(_){}
+  const sep = path.indexOf('?')>=0?'&':'?';
+  const url = VIEW_AS ? path+sep+'view_as='+encodeURIComponent(VIEW_AS) : path;
+  return fetch(url, { credentials:'include', headers:h }); }
+
+let ASSETS = [], DETAIL = {}, PROJECTS = [], PHOTOS_BY_PROJECT = {};
+
+function assetLink(id){ return MAP_URL + '&lens=condition&asset=' + encodeURIComponent(id); }
+function openAsset(id){ window.open(assetLink(id), '_blank', 'noopener'); }
+
+async function load(){
+  await initAuth();
+  let r; try { r = await cmFetch('/api/community-map/assets?community_id='+encodeURIComponent(COMMUNITY_ID)); }
+  catch(e){ return fail('Could not reach the operating system. '+e.message); }
+  if (!r.ok){ return fail('Board report data unavailable (HTTP '+r.status+'). Deploy the latest build and reload, or re-enter from the demo launcher.'); }
+  const j = await r.json(); ASSETS = j.assets || [];
+  if (!ASSETS.length) return fail('No managed assets found for this community.');
+
+  // Pull the full operational detail for every asset that has project activity —
+  // the same /detail endpoint the operating map opens. That gives us projects
+  // (approved/actual/remaining/vendor), field photos, and board motions.
+  const need = ASSETS.filter(a => !a.parent_asset_id && a.metrics && a.metrics.project_status && a.metrics.project_status !== 'none');
+  const details = await Promise.all(need.map(a => cmFetch('/api/community-map/asset/'+a.id+'/detail').then(x=>x.ok?x.json():null).catch(()=>null)));
+  need.forEach((a,i)=>{ if (details[i]) DETAIL[a.id] = details[i]; });
+
+  // Flatten projects (dedup by id), attributing each to the primary asset it was
+  // fetched under, and index field photos by their linked project.
+  const seen = new Set();
+  Object.values(DETAIL).forEach(d => {
+    (d.reports||[]).forEach(rp => { if (rp.related_project_id && rp.photo_url){ (PHOTOS_BY_PROJECT[rp.related_project_id] = PHOTOS_BY_PROJECT[rp.related_project_id]||[]).push(rp); } });
+    (d.projects||[]).forEach(p => { if (seen.has(p.id)) return; seen.add(p.id);
+      PROJECTS.push(Object.assign({}, p, { __assetId:d.asset.id, __assetName:d.asset.name, __status:projStatus(p) })); });
+  });
+  Object.values(PHOTOS_BY_PROJECT).forEach(list => list.sort((a,b)=> (new Date(a.created_at)-new Date(b.created_at)) ));
+
+  render();
+}
+function fail(msg){ document.getElementById('body').innerHTML = '<div class="err">'+esc(msg)+'</div>'; }
+
+function render(){
+  renderKPIs();
+  const primaries = ASSETS.filter(a=>!a.parent_asset_id);
+  let html = '';
+  html += section1(primaries);
+  html += section2();
+  html += section3();
+  html += section4();
+  html += section5();
+  document.getElementById('body').innerHTML = html;
+  drawMiniMap(primaries);
+  document.getElementById('prov').innerHTML = 'Generated from the <b>Sterling Ridge</b> operating system · ' + new Date().toLocaleDateString(undefined,{month:'long', day:'numeric', year:'numeric'});
+}
+
+// ---- executive summary (all figures derived from existing metrics) ------------
+function renderKPIs(){
+  const primaries = ASSETS.filter(a=>!a.parent_asset_id);
+  const attention = primaries.filter(a => { const b = CB[(a.metrics&&a.metrics.condition)||a.condition]; return b==='poor'||b==='fair'; }).length;
+  const active = PROJECTS.filter(p=>p.__status==='active').length;
+  const decisions = PROJECTS.filter(p=>p.__status==='awaiting_approval').length;
+  const ytd = primaries.reduce((s,a)=> s + ((a.metrics && a.metrics.spend && a.metrics.spend.location && a.metrics.spend.location.ytd) || 0), 0);
+  const K = [
+    ['attn', attention, 'Assets requiring attention'],
+    ['', active, 'Active projects'],
+    ['', money(ytd), 'Year-to-date spending'],
+    ['warn', decisions, 'Board decisions pending'],
+  ];
+  document.getElementById('kpis').innerHTML = K.map(k=>`<div class="kpi"><div class="n ${k[0]}">${k[1]}</div><div class="l">${k[2]}</div></div>`).join('');
+}
+
+// ---- Section 1: asset & condition --------------------------------------------
+function attnFor(a){ const b = CB[(a.metrics&&a.metrics.condition)||a.condition]; return b==='poor'?'red':b==='fair'?'amber':null; }
+function primaryProjectOf(a){ // the open/most-relevant project for this asset (from detail)
+  const d = DETAIL[a.id]; if(!d) return null; const list = d.projects||[];
+  const open = list.filter(p=>['active','awaiting_approval','planned'].includes(projStatus(p)));
+  return open[0] || list[0] || null; }
+function section1(primaries){
+  const rows = primaries.filter(a=>attnFor(a)).sort((a,b)=> (attnFor(a)==='red'?0:1)-(attnFor(b)==='red'?0:1)).map(a=>{
+    const lvl = attnFor(a); const cond = (a.metrics&&a.metrics.condition)||a.condition||'unknown';
+    const p = primaryProjectOf(a); let action='';
+    if (p){ const st = projStatus(p);
+      const phrase = st==='active' ? '<span class="stg">'+esc(p.title)+' underway</span>'
+        : st==='awaiting_approval' ? esc(p.title)+' — <span class="stg dec">awaiting board decision</span>'
+        : st==='completed' ? esc(p.title)+' complete' : esc(p.title)+' planned';
+      action = '<div class="aa">'+phrase+'</div>'; }
+    return `<div class="attnrow ${lvl}" onclick="openAsset('${a.id}')">
+      <div class="an">${esc(a.name)}</div>
+      <div class="ac">${esc(cond.charAt(0).toUpperCase()+cond.slice(1))} condition</div>${action}</div>`;
+  }).join('');
+  return `<section><div class="sh"><span class="no">01</span><h2>Asset &amp; Condition</h2><span class="hint">Click any item to open it in the operating map</span></div>
+    <div class="s1">
+      <div><div id="miniMap"></div>
+        <div class="maplegend"><span><i style="background:#c0392b"></i>Attention needed</span><span><i style="background:#e0873a"></i>Watch</span><span><i style="background:#2e7d5b"></i>Good</span></div>
+      </div>
+      <div class="attnlist">${rows || '<div class="allgood">All assets in good condition.</div>'}</div>
+    </div></section>`;
+}
+
+// ---- Section 2: active projects ----------------------------------------------
+function projCard(p){
+  const photos = (PHOTOS_BY_PROJECT[p.id]||[]);
+  const pct = p.percent_complete!=null ? p.percent_complete : null;
+  let strip='';
+  if (photos.length){ const shots = photos.slice(-3);
+    strip = '<div class="filmstrip">'+shots.map(rp=>`<div class="fx"><img src="${esc(rp.photo_url)}" onclick="openLB('${p.id}','${rp.id}')" alt="${esc(rp.caption||'')}">${rp.photo_type?`<span class="tag">${esc(rp.photo_type.replace('_',' '))}</span>`:''}</div>`).join('')+'</div>'; }
+  else strip = '<div class="nolabel">No field photos yet.</div>';
+  return `<div class="pcard">
+    <div class="ph">
+      <div class="asset">${esc(p.__assetName)}</div>
+      <div class="title" onclick="openAsset('${p.__assetId}')">${esc(p.title)}</div>
+      ${pct!=null?`<div class="prog"><i style="width:${pct}%"></i></div><div class="pmeta"><span>${pct}% complete</span><span>${STATUS_LABEL[p.__status]||''}</span></div>`:''}
+      <div class="money">
+        <div><div class="mv">${money(p.approved_cents)}</div><div class="ml">Approved</div></div>
+        <div><div class="mv">${money(p.actual_cents)}</div><div class="ml">Actual</div></div>
+        <div class="rem"><div class="mv">${money(p.remaining_cents)}</div><div class="ml">Remaining</div></div>
+      </div>
+      ${p.vendor_name?`<div class="vend">Vendor · <b>${esc(p.vendor_name)}</b></div>`:''}
+    </div>${strip}</div>`;
+}
+function section2(){
+  const active = PROJECTS.filter(p=>p.__status==='active').sort((a,b)=> (PHOTOS_BY_PROJECT[b.id]?1:0)-(PHOTOS_BY_PROJECT[a.id]?1:0));
+  if (!active.length) return '';
+  return `<section><div class="sh"><span class="no">02</span><h2>Projects &amp; Work</h2><span class="hint">${active.length} active</span></div>
+    <div class="cards">${active.map(projCard).join('')}</div></section>`;
+}
+
+// ---- Section 3: financial summary --------------------------------------------
+function section3(){
+  const rows = PROJECTS.slice().sort((a,b)=> ({active:0,awaiting_approval:1,planned:2,completed:3}[a.__status]-{active:0,awaiting_approval:1,planned:2,completed:3}[b.__status]));
+  if (!rows.length) return '';
+  let ta=0,tc=0,tr=0;
+  const body = rows.map(p=>{ ta+=p.approved_cents||0; tc+=p.actual_cents||0; tr+=p.remaining_cents||0;
+    return `<tr onclick="openAsset('${p.__assetId}')">
+      <td><span class="pa">${esc(p.__assetName)}</span><div class="pt">${esc(p.title)}</div></td>
+      <td class="r">${money(p.approved_cents)}</td><td class="r">${money(p.actual_cents)}</td><td class="r">${money(p.remaining_cents)}</td>
+      <td><span class="pill ${p.__status}">${STATUS_LABEL[p.__status]||p.__status}</span></td></tr>`; }).join('');
+  return `<section><div class="sh"><span class="no">03</span><h2>Financial Summary</h2><span class="hint">Approved vs. actual, from the ledger</span></div>
+    <table class="ftable"><thead><tr><th>Asset / Project</th><th class="r">Approved</th><th class="r">Actual</th><th class="r">Remaining</th><th>Status</th></tr></thead>
+    <tbody>${body}</tbody></table>
+    <div class="ftfoot"><span>Approved <b>${money(ta)}</b></span><span>Actual <b>${money(tc)}</b></span><span>Remaining <b>${money(tr)}</b></span></div></section>`;
+}
+
+// ---- Section 4: board decisions ----------------------------------------------
+function section4(){
+  const dec = PROJECTS.filter(p=>p.__status==='awaiting_approval');
+  if (!dec.length) return '<section><div class="sh"><span class="no">04</span><h2>Board Decisions</h2></div><div class="allgood">No decisions pending this period.</div></section>';
+  return `<section><div class="sh"><span class="no">04</span><h2>Board Decisions · Action Required</h2><span class="hint">${dec.length} pending</span></div>
+    <div class="dec">${dec.map(p=>`<div class="dcard" onclick="openAsset('${p.__assetId}')">
+      <div class="dt">${esc(p.__assetName)} — ${esc(p.title)}</div>
+      ${p.vendor_name?`<div class="dv">Proposed vendor · ${esc(p.vendor_name)}</div>`:''}
+      <div class="dmeta">${(p.approved_cents||p.estimated_cents)?`<span class="damt">${money(p.approved_cents||p.estimated_cents)}</span>`:''}<span class="dflag">Board decision pending</span></div>
+    </div>`).join('')}</div></section>`;
+}
+
+// ---- Section 5: recently completed -------------------------------------------
+function doneCard(p){
+  const photos = (PHOTOS_BY_PROJECT[p.id]||[]);
+  const before = photos.find(x=>x.photo_type==='before'); const after = photos.find(x=>x.photo_type==='after') || photos[photos.length-1];
+  const hasBA = before && after && before.id!==after.id;
+  const info = `<div class="di"><div class="asset">${esc(p.__assetName)}</div><div class="title" onclick="openAsset('${p.__assetId}')">${esc(p.title)}</div>
+    ${p.vendor_name?`<div class="dv" style="font-size:12.5px;color:var(--ink2)">Vendor · ${esc(p.vendor_name)}</div>`:''}
+    <div class="cost">Delivered for <b>${money(p.actual_cents)}</b>${p.approved_cents?` of ${money(p.approved_cents)} approved`:''}</div></div>`;
+  if (hasBA) return `<div class="donecard">${info}<div class="beforeafter">
+      <div class="fx"><span class="tag">Before</span><img src="${esc(before.photo_url)}" onclick="openLB('${p.id}','${before.id}')" alt=""></div>
+      <div class="fx"><span class="tag">After</span><img src="${esc(after.photo_url)}" onclick="openLB('${p.id}','${after.id}')" alt=""></div></div></div>`;
+  return `<div class="donecard nophoto">${info}</div>`;
+}
+function section5(){
+  const done = PROJECTS.filter(p=>p.__status==='completed').sort((a,b)=> String(b.completed_at||'').localeCompare(String(a.completed_at||'')));
+  if (!done.length) return '';
+  return `<section><div class="sh"><span class="no">05</span><h2>Recently Completed</h2><span class="hint">Here is what the money accomplished</span></div>
+    <div class="done">${done.map(doneCard).join('')}</div></section>`;
+}
+
+// ---- compact map: same geometry + condition attention markers ----------------
+function drawMiniMap(primaries){
+  const el = document.getElementById('miniMap'); if(!el) return;
+  const map = L.map(el, { zoomControl:false, attributionControl:false, scrollWheelZoom:false, dragging:true });
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:20}).addTo(map);
+  const bounds=[];
+  primaries.forEach(a=>{ if(!a.geometry) return;
+    const b = CB[(a.metrics&&a.metrics.condition)||a.condition]||'unknown'; const c = COND_COLOR[b]||COND_COLOR.unknown;
+    const line = /Line/.test(a.geometry.type);
+    const lyr = L.geoJSON({type:'Feature',geometry:a.geometry},{
+      style:()=>({ color:c, weight:line?4:2.5, opacity:.95, fillColor:c, fillOpacity:.26 }),
+      pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:7,color:'#fff',weight:2,fillColor:c,fillOpacity:1}) });
+    lyr.on('click',()=>openAsset(a.id)); lyr.addTo(map);
+    try{ const bb=lyr.getBounds(); if(bb.isValid()) bounds.push(bb); }catch(_){}
+  });
+  // condition attention dots (red poor / amber fair) at driver-child centroid
+  const kidsOf = id => ASSETS.filter(x=>x.parent_asset_id===id);
+  primaries.forEach(a=>{ const lvl=attnFor(a); if(!lvl) return;
+    const pb = CB[(a.metrics&&a.metrics.condition)||a.condition];
+    const kid = kidsOf(a.id).find(k=>CB[(k.metrics&&k.metrics.condition)||k.condition]===pb);
+    const cen = (kid&&kid.centroid)||a.centroid; if(!cen) return;
+    L.marker([cen.lat,cen.lng],{ icon:L.divIcon({className:'',html:`<div style="width:15px;height:15px;border-radius:50%;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.55);background:${lvl==='red'?'#c0392b':'#e0873a'}"></div>`,iconSize:[15,15],iconAnchor:[7.5,7.5]}), zIndexOffset:1000 })
+      .on('click',()=>openAsset(a.id)).addTo(map);
+  });
+  if (bounds.length){ let bb=bounds[0]; bounds.forEach(b=>bb=bb.extend(b)); map.fitBounds(bb,{padding:[26,26]}); }
+}
+
+// ---- photo lightbox (reuses the signed photo URLs already fetched) -----------
+let _lbList=[], _lbIdx=0;
+function openLB(projectId, reportId){
+  _lbList = (PHOTOS_BY_PROJECT[projectId]||[]).slice(); _lbIdx = Math.max(0,_lbList.findIndex(r=>r.id===reportId));
+  if(!_lbList.length) return; renderLB(); document.getElementById('lb').classList.add('open');
+}
+function renderLB(){ const rp=_lbList[_lbIdx]; if(!rp) return;
+  document.getElementById('lbimg').src = rp.photo_url;
+  document.getElementById('lbcap').innerHTML = (rp.photo_type?`<span class="ct">${esc(rp.photo_type.replace('_',' '))}</span>`:'') + esc(rp.caption||'') + (rp.created_at?` · ${new Date(rp.created_at).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`:'');
+  document.getElementById('lbseq').innerHTML = _lbList.map((r,i)=>`<img src="${esc(r.photo_url)}" class="${i===_lbIdx?'on':''}" onclick="_lbIdx=${i};renderLB()" alt="">`).join('');
+}
+function closeLB(){ document.getElementById('lb').classList.remove('open'); }
+document.getElementById('lb').addEventListener('click', e=>{ if(e.target.id==='lb') closeLB(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeLB(); });
+
+load();
+</script>
+</body>
+</html>
