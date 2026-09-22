@@ -830,6 +830,34 @@ async function assetOperationalState(communityId) {
   return { projects: projects || [], spendByProject, byAsset };
 }
 
+// Dated financial rows for the project/asset accounting layer (lib/community/
+// asset_accounting.js): projects + invoice lines carrying their invoice DATE, so
+// spend can be windowed (YTD / prior year / 3yr) and aged. Same source of truth
+// as above (ap_invoice_lines.project_id -> vendor_projects.asset_id); we only add
+// the date via the line's invoice. Bounded to the community's own projects.
+const assetAccounting = require('../lib/community/asset_accounting');
+async function fetchFinancialRows(communityId) {
+  const { data: projects, error: pErr } = await supabase.from('vendor_projects')
+    .select('id, asset_id, title, stage, approved_cost_cents, percent_complete, completed_at, vendor_name')
+    .eq('community_id', communityId).limit(2000);
+  if (pErr) throw pErr;
+  const ids = (projects || []).map((p) => p.id);
+  let lines = [], invoices = [];
+  if (ids.length) {
+    const { data: L, error: lErr } = await supabase.from('ap_invoice_lines')
+      .select('project_id, amount_cents, invoice_id, gl_account_id').in('project_id', ids).limit(5000);
+    if (lErr) throw lErr;
+    lines = L || [];
+    const invIds = [...new Set(lines.map((l) => l.invoice_id).filter(Boolean))];
+    if (invIds.length) {
+      const { data: I, error: iErr } = await supabase.from('ap_invoices').select('id, invoice_date').in('id', invIds).limit(5000);
+      if (iErr) throw iErr;
+      invoices = I || [];
+    }
+  }
+  return { projects: projects || [], lines, invoices };
+}
+
 function pickPrimaryProject(list) {
   if (!list || !list.length) return null;
   const open = list.filter((p) => OPEN_STAGES.has(p.stage));
@@ -860,6 +888,15 @@ router.get('/assets', async (req, res) => {
     const childCount = {};
     (assets || []).forEach((a) => { if (a.parent_asset_id) childCount[a.parent_asset_id] = (childCount[a.parent_asset_id] || 0) + 1; });
 
+    // Project/asset accounting metrics for the map lenses (spend by window, last-
+    // spend age, approved-vs-actual budget, project status). Computed ONCE for the
+    // whole district so lens + time-window switching is client-side and instant.
+    let metricsByAsset = {};
+    try {
+      const fin = await fetchFinancialRows(communityId);
+      metricsByAsset = assetAccounting.computeAssetMetrics({ assets: assets || [], projects: fin.projects, lines: fin.lines, invoices: fin.invoices, asOf: new Date() }).byAsset;
+    } catch (e) { console.warn('[community-map] asset metrics skipped:', e.message); }
+
     const enriched = (assets || []).map((a) => {
       const projs = state.byAsset[a.id] || [];
       const primary = pickPrimaryProject(projs);
@@ -867,6 +904,7 @@ router.get('/assets', async (req, res) => {
         ...a,
         child_count: childCount[a.id] || 0,
         map_status: mapStatus(a, primary),
+        metrics: metricsByAsset[a.id] || null,
         active_project: primary ? {
           id: primary.id, title: primary.title, stage: primary.stage, percent_complete: primary.percent_complete,
           approved_cents: primary.approved_cost_cents, actual_cents: primary.actual_cents, remaining_cents: primary.remaining_cents,
@@ -911,11 +949,16 @@ router.get('/asset/:assetId/detail', async (req, res) => {
     const ownProjects = state.byAsset[assetId] || [];
     // location rollup: this asset + its direct children, each transaction counted once.
     const locationAssetIds = [assetId, ...((children || []).map((c) => c.id))];
+    // Projects across this asset AND its child systems, so clicking the PARENT
+    // (e.g. Median 7) tells the whole story, not just the parent's own projects.
+    // Own first, then child-system projects. Each project appears once.
+    const childProjects = [];
     let locationSpend = 0, assetSpend = 0;
-    for (const aid of locationAssetIds) (state.byAsset[aid] || []).forEach((p) => { locationSpend += p.actual_cents; });
+    for (const aid of locationAssetIds) (state.byAsset[aid] || []).forEach((p) => { locationSpend += p.actual_cents; if (aid !== assetId) childProjects.push(p); });
     ownProjects.forEach((p) => { assetSpend += p.actual_cents; });
+    const panelProjects = [...ownProjects, ...childProjects];
 
-    const projIds = ownProjects.map((p) => p.id);
+    const projIds = panelProjects.map((p) => p.id);
     const { data: motions } = projIds.length
       ? await supabase.from('board_motions').select('id, title, status, motion_type, related_project_id, created_at').in('related_project_id', projIds)
       : { data: [] };
@@ -925,14 +968,52 @@ router.get('/asset/:assetId/detail', async (req, res) => {
     const { data: reports } = await supabase.from('board_map_reports')
       .select('id, description, photo_path, status, reported_by_name, created_at').eq('community_asset_id', assetId).order('created_at', { ascending: false }).limit(20);
 
+    // Project/asset accounting: windowed spend, budget, last-spend, a GL-labelled
+    // spend breakdown for the drill-down, and the deterministic lens-aware Asset
+    // Intelligence narrative (no live model). Every figure derives from the same
+    // invoice-line -> project -> asset chain, so the panel reconciles.
+    let financials = null, intelligence = null, spend_breakdown = null;
+    try {
+      const { data: allAssets } = await supabase.from('community_assets')
+        .select('id, parent_asset_id, name, asset_type, condition').eq('community_id', asset.community_id).limit(2000);
+      const fin = await fetchFinancialRows(asset.community_id);
+      const asOf = new Date();
+      financials = assetAccounting.computeAssetMetrics({ assets: allAssets || [], projects: fin.projects, lines: fin.lines, invoices: fin.invoices, asOf }).byAsset[assetId] || null;
+
+      const descIds = new Set([assetId, ...((children || []).map((c) => c.id))]);
+      const projById = new Map(fin.projects.map((p) => [p.id, p]));
+      const bySystem = {}, byProject = {}, byGL = {};
+      for (const ln of fin.lines) {
+        const p = projById.get(ln.project_id); if (!p || !descIds.has(p.asset_id)) continue;
+        const amt = Number(ln.amount_cents) || 0;
+        bySystem[p.asset_id] = (bySystem[p.asset_id] || 0) + amt;
+        byProject[p.id] = (byProject[p.id] || 0) + amt;
+        if (ln.gl_account_id) byGL[ln.gl_account_id] = (byGL[ln.gl_account_id] || 0) + amt;
+      }
+      let glLabels = {};
+      const glIds = Object.keys(byGL);
+      if (glIds.length) {
+        const { data: coa } = await supabase.from('chart_of_accounts').select('id, account_number, account_name').in('id', glIds);
+        (coa || []).forEach((c) => { glLabels[c.id] = { number: c.account_number, name: c.account_name }; });
+      }
+      spend_breakdown = { by_system: bySystem, by_project: byProject, by_gl: byGL, gl_labels: glLabels };
+
+      intelligence = assetAccounting.assetIntelligence({
+        asset,
+        projects: panelProjects.map((p) => ({ id: p.id, title: p.title, stage: p.stage, approved_cents: p.approved_cost_cents, actual_cents: p.actual_cents, remaining_cents: p.remaining_cents, percent_complete: p.percent_complete, vendor_name: p.vendor_name, completed_at: p.completed_at })),
+        board_motions: motions || [], project_events: events || [],
+      }, financials, asOf);
+    } catch (e) { console.warn('[community-map] asset intelligence skipped:', e.message); }
+
     res.json({
       asset, parent, children: children || [],
-      projects: ownProjects.map((p) => ({
+      projects: panelProjects.map((p) => ({
         id: p.id, title: p.title, stage: p.stage, percent_complete: p.percent_complete,
         approved_cents: p.approved_cost_cents, estimated_cents: p.estimated_cost_cents, actual_cents: p.actual_cents, remaining_cents: p.remaining_cents,
         vendor_name: p.vendor_name, target_date: p.target_date, started_at: p.started_at, completed_at: p.completed_at, funding_source: p.funding_source,
       })),
       rollup: { asset_spend_cents: assetSpend, location_spend_cents: locationSpend, includes_children: (children || []).length },
+      financials, spend_breakdown, intelligence,
       board_motions: motions || [], project_events: events || [], reports: reports || [],
     });
   } catch (err) {

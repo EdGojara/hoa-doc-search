@@ -47,16 +47,23 @@ const PROJECTS = [
   [P(4), 'Median 3 Landscape Renovation', 'landscaping', 1, 1, 'work_started', 920000, 920000, 40, -20, null, 25, 'operating', 'normal'],
   [P(5), 'East Entrance Seasonal Color Program', 'landscaping', 7, 1, 'board_deciding', 0, 450000, 0, null, null, 40, 'operating', 'low'],
   [P(6), 'Detention Basin Erosion Repair', 'concrete', 16, 5, 'board_deciding', 0, 1800000, 0, null, null, null, 'reserve', 'high'],
-  [P(7), 'Parkway Lighting LED Conversion', 'electrical', 14, 3, 'closed', 2200000, 2200000, 100, -160, -140, null, 'reserve', 'normal'],
+  [P(7), 'Parkway Lighting LED Conversion', 'electrical', 14, 3, 'closed', 2200000, 2200000, 100, -920, -900, null, 'reserve', 'normal'],
   [P(8), 'Median 5 Irrigation Efficiency Audit', 'irrigation', 12, 2, 'approved', 180000, 180000, 0, null, null, 60, 'operating', 'normal'],
 ];
-// [invId, number, vendorNo, status, paid_cents, [ [desc, amount_cents, accountNo, projectId|null], ... ] ]
+// [invId, number, vendorNo, status, paid_cents, invoiceDateOffset(days), [ [desc, amount_cents, accountNo, projectId|null], ... ] ]
+// Dates are deliberately spread so the map's spend windows (YTD / prior year /
+// 3yr) and spend-age lens are meaningful, while every dollar still reconciles to
+// its project -> asset. Coherent stories: Median 7 = recurring irrigation (recent
+// + prior-year); West Monument = completed UNDER budget; Median 3 = active project
+// approaching its approved amount; Parkway Lighting = high 3-year spend but nothing
+// recent (~2.5 years ago).
 const INVOICES = [
-  [INV(1), 'AQ-4471', 2, 'approved', 0, [['Median 7 irrigation controller + install (progress billing)', 820000, 2, P(1)]]],
-  [INV(2), 'AQ-3980', 2, 'paid', 340000, [['Median 7 mainline break repair', 340000, 2, P(2)]]],
-  [INV(3), 'SW-1123', 4, 'paid', 680000, [['West entrance monument refurbishment', 680000, 4, P(3)]]],
-  [INV(4), 'GS-8890', 1, 'approved', 0, [['Median 3 renovation - progress', 368000, 1, P(4)], ['West entrance bed routine maintenance', 132000, 1, null]]],
-  [INV(5), 'LM-2205', 3, 'paid', 2200000, [['Parkway lighting LED conversion (full)', 2200000, 3, P(7)]]],
+  [INV(1), 'AQ-4471', 2, 'approved', 0,       -45,  [['Median 7 irrigation controller + install (progress billing)', 820000, 2, P(1)]]],
+  [INV(2), 'AQ-3980', 2, 'paid',     340000,  -400, [['Median 7 mainline break repair (prior year)', 340000, 2, P(2)]]],
+  [INV(3), 'SW-1123', 4, 'paid',     620000,  -90,  [['West entrance monument refurbishment (final, came in under budget)', 620000, 4, P(3)]]],
+  [INV(4), 'GS-8890', 1, 'approved', 0,       -30,  [['Median 3 renovation - progress', 368000, 1, P(4)], ['West entrance bed routine maintenance', 132000, 1, null]]],
+  [INV(6), 'GS-9100', 1, 'approved', 0,       -12,  [['Median 3 renovation - progress 2', 460000, 1, P(4)]]],
+  [INV(5), 'LM-2205', 3, 'paid',     2200000, -900, [['Parkway lighting LED conversion (full)', 2200000, 3, P(7)]]],
 ];
 
 async function guard() {
@@ -117,9 +124,9 @@ async function main() {
   const { error: mErr } = await sb.from('board_motions').upsert({ id: MOTION, management_company_id: DEMO_MGMT_CO_ID, community_id: LMA, motion_type: 'project', related_project_id: P(1), title: 'Approve Median 7 irrigation controller replacement ($12,500)', description: 'Recurring irrigation failures at Median 7. Motion to approve AquaFlow proposal for full controller replacement, funded from operating.', threshold: 'simple_majority', status: 'passed' }, { onConflict: 'id' });
   if (mErr) throw new Error('motion: ' + mErr.message);
   // invoices + lines (project-attributed)
-  for (const [invId, number, vNo, status, paid, lines] of INVOICES) {
+  for (const [invId, number, vNo, status, paid, dateOff, lines] of INVOICES) {
     const total = lines.reduce((s, l) => s + l[1], 0);
-    const { error: iErr } = await sb.from('ap_invoices').upsert({ id: invId, community_id: LMA, vendor_id: V(vNo), vendor_invoice_number: number, invoice_date: day(-60), subtotal_cents: total, total_cents: total, amount_paid_cents: paid, status }, { onConflict: 'id' });
+    const { error: iErr } = await sb.from('ap_invoices').upsert({ id: invId, community_id: LMA, vendor_id: V(vNo), vendor_invoice_number: number, invoice_date: day(dateOff), subtotal_cents: total, total_cents: total, amount_paid_cents: paid, status }, { onConflict: 'id' });
     if (iErr) throw new Error('invoice ' + number + ': ' + iErr.message);
     // replace lines idempotently
     await sb.from('ap_invoice_lines').delete().eq('invoice_id', invId);

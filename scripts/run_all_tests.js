@@ -146,6 +146,7 @@ const CHECKS = [
   'tests/test_community_boundary.js',
   'tests/test_dependency_count.js',
   'tests/test_lma_board_access.js',
+  'tests/test_lma_asset_accounting.js',
   'scripts/check_mgmt_id.js',
 ];
 

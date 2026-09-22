@@ -47,21 +47,16 @@
   <div id="map">
     <div class="topbar">
       <div class="card"><div class="title">Sterling Ridge Landscape District</div><div class="sub" id="sub">Visual Operating Map</div></div>
-      <div class="card seg" id="statusSeg">
-        <button data-f="all" class="on">All</button><button data-f="projects">Projects</button>
-        <button data-f="problems">Problems</button><button data-f="upcoming">Upcoming</button><button data-f="completed">Completed</button>
+      <div class="card seg" id="lensSeg">
+        <button data-lens="condition" class="on">Condition</button><button data-lens="spending">Spending</button>
+        <button data-lens="budget">Budget</button><button data-lens="projects">Projects</button>
       </div>
-      <div class="card time" id="timeSeg">
-        <button data-t="current" class="on">Current</button><button data-t="30">30d</button>
-        <button data-t="90">90d</button><button data-t="year">This Year</button>
+      <div class="card time" id="spendCtl" style="display:none">
+        <button data-w="ytd">YTD</button><button data-w="prior_year">Prior year</button><button data-w="three_year" class="on">3 years</button>
+        <span style="opacity:.4;padding:0 2px">·</span>
+        <button data-m="amount" class="on">Amount</button><button data-m="last_spend">Last spend</button>
       </div>
-      <div class="card legend">
-        <span><i class="dot" style="background:var(--st-problem)"></i>Problem</span>
-        <span><i class="dot" style="background:var(--st-progress)"></i>In progress</span>
-        <span><i class="dot" style="background:var(--st-upcoming)"></i>Upcoming</span>
-        <span><i class="dot" style="background:var(--st-completed)"></i>Completed</span>
-        <span><i class="dot" style="background:var(--st-ok)"></i>OK</span>
-      </div>
+      <div class="card legend" id="legend"></div>
       <div class="card base" id="baseSeg">
         <button data-b="hybrid" class="on">🛰️</button><button data-b="street">🗺️</button>
       </div>
@@ -118,7 +113,10 @@ document.getElementById('baseSeg').addEventListener('click', e => { const b=e.ta
   document.querySelectorAll('#baseSeg button').forEach(x=>x.classList.toggle('on', x.dataset.b===b));
   map.removeLayer(hybrid); map.removeLayer(street); (b==='street'?street:hybrid).addTo(map); });
 
-let ASSETS = [], LAYERS = {}, BOUNDARY_LAYER=null, activeFilter='all', activeTime='current', selectedId=null;
+let ASSETS = [], LAYERS = {}, BOUNDARY_LAYER=null, activeLens='condition', spendWindow='three_year', spendMode='amount', selectedId=null;
+const WINDOW_LABEL = { ytd:'YTD', prior_year:'Prior year', three_year:'3-year' };
+function ageLabel(b){ return ({lt_1y:'under 1 year','1_2y':'1–2 years','2_4y':'2–4 years','4y_plus':'4+ years',none:'no recorded spend'})[b]||b; }
+function budgetLabel(s){ return ({under:'Under approved',on_track:'On track',watch:'Watch — approaching approved',over:'Over approved',none:'No approved amount'})[s]||s; }
 if (STAFF) document.getElementById('editCard').style.display='';
 
 // Child/system assets (irrigation, beds, uplighting under a median) are drawn
@@ -126,45 +124,83 @@ if (STAFF) document.getElementById('editCard').style.display='';
 // areas — the medians, entrance monuments, detention — not 16 competing shapes.
 // Click a median and its systems are right there. Nothing is hidden or deleted.
 const isChild = (a) => !!a.parent_asset_id;
-function styleFor(a) {
-  const c = STATUS_COLOR[a.map_status] || STATUS_COLOR.ok;
-  const line = a.geometry && a.geometry.type==='LineString';
-  if (isChild(a)) return { color:c, weight:line?2.5:1, fillColor:c, fillOpacity:0.18, opacity:0.7, dashArray:'3,3' };
-  return { color:c, weight:line?5:2, fillColor:c, fillOpacity:0.35, opacity:0.95 };
+// ---- LENS ARCHITECTURE ------------------------------------------------------
+// The SAME physical asset model + operational/financial metrics + the selected
+// lens -> a visualization. Adding a lens is adding a registry entry; the map,
+// legend, tooltips and restyle loop are generic. Metrics come from the server
+// (asset.metrics) computed once, so switching lens/window is instant + offline.
+function spendVal(a){ return (a.metrics && a.metrics.spend && a.metrics.spend.location && a.metrics.spend.location[spendWindow]) || 0; }
+function spendThresh(){ const v=ASSETS.map(spendVal).filter(x=>x>0); const max=v.length?Math.max.apply(null,v):0; return { t1:max/3, t2:2*max/3, max }; }
+function spendBucket(a){ const v=spendVal(a); if(!v) return 'none'; const {t1,t2}=spendThresh(); return v<=t1?'low':v<=t2?'med':'high'; }
+const COND_BUCKET = { excellent:'good', good:'good', fair:'fair', poor:'poor', failing:'poor' };
+const LENSES = {
+  condition: {
+    label:'Condition',
+    bucket:a=> COND_BUCKET[(a.metrics&&a.metrics.condition)||a.condition]||'unknown',
+    color:{ good:'#2e7d5b', fair:'#e0873a', poor:'#c0392b', unknown:'#9aa7b8' },
+    legend:()=>[['#2e7d5b','Good'],['#e0873a','Fair / attention'],['#c0392b','Poor'],['#9aa7b8','Not rated']],
+    metric:a=> 'condition: '+((a.metrics&&a.metrics.condition)||a.condition||'—'),
+  },
+  spending: {
+    label:'Spending',
+    bucket:a=> spendMode==='last_spend' ? ((a.metrics&&a.metrics.age_bucket)||'none') : spendBucket(a),
+    color:()=> spendMode==='last_spend'
+      ? { lt_1y:'#2e7d5b', '1_2y':'#86a94e', '2_4y':'#e0873a', '4y_plus':'#c0392b', none:'#9aa7b8' }
+      : { none:'#cdd7e1', low:'#93b4d6', med:'#3f79ad', high:'#123a66' },
+    legend:()=> spendMode==='last_spend'
+      ? [['#2e7d5b','< 1 year'],['#86a94e','1–2 years'],['#e0873a','2–4 years'],['#c0392b','4+ years'],['#9aa7b8','No recorded spend']]
+      : [['#123a66','Highest spend'],['#3f79ad','Higher'],['#93b4d6','Some'],['#cdd7e1','Little / none']],
+    metric:a=> spendMode==='last_spend'
+      ? ('last spend: '+((a.metrics&&a.metrics.last_spend&&a.metrics.last_spend.location_date)||'none'))
+      : (WINDOW_LABEL[spendWindow]+' spend: '+money(spendVal(a))),
+  },
+  budget: {
+    label:'Budget',
+    bucket:a=> (a.metrics&&a.metrics.budget&&a.metrics.budget.status)||'none',
+    color:{ under:'#2e7d5b', on_track:'#2b6cb0', watch:'#e0873a', over:'#c0392b', none:'#9aa7b8' },
+    legend:()=>[['#2e7d5b','Under approved'],['#2b6cb0','On track'],['#e0873a','Watch'],['#c0392b','Over approved'],['#9aa7b8','No approved amount']],
+    metric:a=>{ const b=a.metrics&&a.metrics.budget; return (b&&b.approved_cents)?('approved '+money(b.approved_cents)+' / actual '+money(b.actual_cents)):'no approved amount'; },
+  },
+  projects: {
+    label:'Projects',
+    bucket:a=> (a.metrics&&a.metrics.project_status)||'none',
+    color:{ planned:'#6b7b92', awaiting_approval:'#2b6cb0', active:'#e0873a', completed:'#2e7d5b', none:'#9aa7b8' },
+    legend:()=>[['#e0873a','Active'],['#2b6cb0','Awaiting approval'],['#6b7b92','Planned'],['#2e7d5b','Completed'],['#9aa7b8','No projects']],
+    metric:a=> 'projects: '+(((a.metrics&&a.metrics.project_status)||'none').replace(/_/g,' ')),
+  },
+};
+function lensColor(a){ const L=LENSES[activeLens]; const col=(typeof L.color==='function')?L.color():L.color; return col[L.bucket(a)]||'#9aa7b8'; }
+function styleFor(a){ const c=lensColor(a); const line=a.geometry&&a.geometry.type==='LineString';
+  if (isChild(a)) return { color:c, weight:line?2.5:1, fillColor:c, fillOpacity:0.2, opacity:0.75, dashArray:'3,3' };
+  return { color:c, weight:line?5:2, fillColor:c, fillOpacity:0.4, opacity:0.95 }; }
+function pointMarker(a, latlng){ const c=lensColor(a); let r=isChild(a)?4:8;
+  if (activeLens==='spending' && spendMode==='amount'){ r=({none:5,low:7,med:10,high:14})[spendBucket(a)]; if(isChild(a)) r=Math.max(3,r-4); }
+  return L.circleMarker(latlng, { radius:r, color:'#fff', weight:isChild(a)?1:2, fillColor:c, fillOpacity:isChild(a)?0.85:1 }); }
+function tooltipFor(a){ return esc(a.name)+' — '+esc(LENSES[activeLens].metric(a)); }
+function renderLegend(){ const rows=LENSES[activeLens].legend();
+  document.getElementById('legend').innerHTML = rows.map(r=>`<span><i class="dot" style="background:${r[0]}"></i>${esc(r[1])}</span>`).join(''); }
+
+// Rebuild every asset layer under the current lens (client-side, instant — no
+// fetch). Called on first load and on every lens/window/mode change.
+function drawAssets(){
+  Object.values(LAYERS).forEach(l=>map.removeLayer(l)); LAYERS={};
+  ASSETS.forEach(a => { if(!a.geometry) return;
+    const lyr = L.geoJSON({type:'Feature', geometry:a.geometry, properties:{}}, {
+      style:()=>styleFor(a), pointToLayer:(f,ll)=>pointMarker(a,ll),
+      onEachFeature:(f,l)=>{ l.on('click', ()=>openDetail(a.id)); l.bindTooltip(tooltipFor(a),{sticky:true}); }
+    });
+    LAYERS[a.id]=lyr; lyr.addTo(map);
+  });
+  renderLegend();
 }
-function pointMarker(a, latlng) {
-  const c = STATUS_COLOR[a.map_status] || STATUS_COLOR.ok;
-  if (isChild(a)) return L.circleMarker(latlng, { radius:4, color:'#fff', weight:1, fillColor:c, fillOpacity:0.85 });
-  return L.circleMarker(latlng, { radius:8, color:'#fff', weight:2, fillColor:c, fillOpacity:1 });
-}
-function inTime(a) {
-  if (activeTime==='current') return true;
-  const p=a.active_project; if(!p) return activeTime==='year' ? false : false;
-  const now=Date.now(); const d = (s)=> s? new Date(s).getTime():null;
-  if (activeTime==='year') { const y=new Date().getFullYear();
-    return [p.target_date,p.completed_at,p.started_at].some(x=>x && new Date(x).getFullYear()===y); }
-  const days = activeTime==='30'?30:90; const horizon=now+days*86400000;
-  const t=d(p.target_date), s=d(p.started_at);
-  return (t && t>=now && t<=horizon) || (s && s<=now && (!p.completed_at));
-}
-function inFilter(a) {
-  if (activeFilter==='all') return true;
-  if (activeFilter==='projects') return !!a.active_project;
-  if (activeFilter==='problems') return a.map_status==='problem';
-  if (activeFilter==='upcoming') return a.map_status==='upcoming';
-  if (activeFilter==='completed') return a.map_status==='completed';
-  return true;
-}
-function applyFilters() {
-  ASSETS.forEach(a => { const lyr=LAYERS[a.id]; if(!lyr) return;
-    const show = inFilter(a) && inTime(a);
-    if (show && !map.hasLayer(lyr)) lyr.addTo(map);
-    else if (!show && map.hasLayer(lyr)) map.removeLayer(lyr); });
-}
-document.getElementById('statusSeg').addEventListener('click', e=>{ const f=e.target.dataset.f; if(!f) return;
-  activeFilter=f; document.querySelectorAll('#statusSeg button').forEach(x=>x.classList.toggle('on',x.dataset.f===f)); applyFilters(); });
-document.getElementById('timeSeg').addEventListener('click', e=>{ const t=e.target.dataset.t; if(!t) return;
-  activeTime=t; document.querySelectorAll('#timeSeg button').forEach(x=>x.classList.toggle('on',x.dataset.t===t)); applyFilters(); });
+document.getElementById('lensSeg').addEventListener('click', e=>{ const L=e.target.dataset.lens; if(!L) return;
+  activeLens=L; document.querySelectorAll('#lensSeg button').forEach(x=>x.classList.toggle('on',x.dataset.lens===L));
+  document.getElementById('spendCtl').style.display = (L==='spending')?'':'none';
+  drawAssets(); if(selectedId) openDetail(selectedId); });
+document.getElementById('spendCtl').addEventListener('click', e=>{ const w=e.target.dataset.w, m=e.target.dataset.m;
+  if(w){ spendWindow=w; document.querySelectorAll('#spendCtl [data-w]').forEach(x=>x.classList.toggle('on',x.dataset.w===w)); }
+  if(m){ spendMode=m; document.querySelectorAll('#spendCtl [data-m]').forEach(x=>x.classList.toggle('on',x.dataset.m===m)); }
+  if(w||m){ drawAssets(); if(selectedId) openDetail(selectedId); } });
 
 function banner(msg) {
   let el=document.getElementById('mapBanner');
@@ -189,7 +225,6 @@ async function loadAssets() {
   const j = await r.json(); ASSETS = j.assets||[];
   if (!ASSETS.length) { banner('<b>No managed assets found for this community.</b><br>The Sterling Ridge dataset may not be seeded on this environment.'); }
   else { const b=document.getElementById('mapBanner'); if(b) b.remove(); }
-  Object.values(LAYERS).forEach(l=>map.removeLayer(l)); LAYERS={};
   const bounds=[];
   // District perimeter (from the canonical boundary RPC) — a quiet frame so the
   // assets read as "the area they manage," drawn under the assets.
@@ -200,17 +235,10 @@ async function loadAssets() {
     }).addTo(map);
     try { const bb=BOUNDARY_LAYER.getBounds(); if(bb.isValid()) bounds.push(bb); } catch(_) {}
   }
-  ASSETS.forEach(a => { if(!a.geometry) return;
-    const lyr = L.geoJSON({type:'Feature', geometry:a.geometry, properties:{}}, {
-      style: ()=>styleFor(a), pointToLayer:(f,ll)=>pointMarker(a,ll),
-      onEachFeature:(f,l)=>{ l.on('click', ()=>openDetail(a.id)); l.bindTooltip(a.name,{sticky:true}); }
-    });
-    LAYERS[a.id]=lyr; lyr.addTo(map);
-    try { const b=lyr.getBounds(); if(b.isValid()) bounds.push(b); } catch(_) {}
-  });
+  drawAssets(); // builds LAYERS under the current lens (client-side)
+  Object.values(LAYERS).forEach(l=>{ try { const b=l.getBounds(); if(b.isValid()) bounds.push(b); } catch(_) {} });
   document.getElementById('sub').textContent = ASSETS.length+' managed assets';
   if (bounds.length) { let bb=bounds[0]; bounds.forEach(b=>bb=bb.extend(b)); map.fitBounds(bb,{padding:[60,60]}); }
-  applyFilters();
 }
 
 async function openDetail(id) {
@@ -226,6 +254,30 @@ async function openDetail(id) {
   if (a.location_description) html+=`<div class="muted">${esc(a.location_description)}</div>`;
   if (d.parent) html+=`<div class="muted">Part of <a href="#" onclick="openDetail('${d.parent.id}');return false">${esc(d.parent.name)}</a></div>`;
 
+  // Asset Intelligence — deterministic, grounded, lens-aware. Explains what the
+  // board should understand about this asset under the currently selected lens.
+  const intel = (d.intelligence && d.intelligence.narratives && d.intelligence.narratives[activeLens]) || '';
+  if (intel) html += `<div style="background:#0B1D34;color:#eaf1fb;border-radius:10px;padding:11px 13px;margin:10px 0 4px;font-size:13px;line-height:1.55">`
+    + `<div style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:#D4AF37;margin-bottom:4px">Asset intelligence · ${esc(LENSES[activeLens].label)}</div>${esc(intel)}</div>`;
+
+  // Financials: windowed spend, last-invested age, budget approved-vs-actual.
+  const f = d.financials;
+  if (f && f.spend) { const sp=f.spend.location||{};
+    html += `<h3>Spending</h3>`;
+    html += `<div class="kv"><b>Year to date</b><span>${money(sp.ytd)}</span></div>`;
+    html += `<div class="kv"><b>Prior year</b><span>${money(sp.prior_year)}</span></div>`;
+    html += `<div class="kv"><b>Last 3 years</b><span>${money(sp.three_year)}</span></div>`;
+    const ls = f.last_spend && f.last_spend.location_date;
+    html += `<div class="kv"><b>Last invested</b><span>${ls?esc(ls)+' · '+esc(ageLabel(f.age_bucket)):'no recorded spend'}</span></div>`;
+    if (f.budget && f.budget.approved_cents) {
+      html += `<h3>Budget · approved vs actual</h3>`;
+      html += `<div class="kv"><b>Approved by board</b><span>${money(f.budget.approved_cents)}</span></div>`;
+      html += `<div class="kv"><b>Actual invoiced</b><span>${money(f.budget.actual_cents)}</span></div>`;
+      html += `<div class="kv"><b>Remaining approved</b><span>${money(f.budget.remaining_cents)}</span></div>`;
+      html += `<div class="kv"><b>Status</b><span>${esc(budgetLabel(f.budget.status))}</span></div>`;
+    }
+  }
+
   if (d.children && d.children.length) { html+=`<h3>Systems / child assets</h3>`;
     d.children.forEach(c=> html+=`<div class="child" onclick="openDetail('${c.id}')">${esc(c.name)} <span class="muted">· ${esc(c.asset_type)} · ${esc(c.condition||'')}</span></div>`); }
 
@@ -240,9 +292,9 @@ async function openDetail(id) {
       if (p.percent_complete!=null) html+=`<div class="bar"><i style="width:${p.percent_complete}%"></i></div><div class="muted">${p.percent_complete}% complete</div>`;
       html+=`</div>`; });
   }
-  if (d.rollup && (d.rollup.asset_spend_cents || d.rollup.location_spend_cents)) { html+=`<h3>Location spend</h3>`;
-    html+=`<div class="kv"><b>This asset</b><span>${money(d.rollup.asset_spend_cents)}</span></div>`;
-    if (d.rollup.includes_children) html+=`<div class="kv"><b>This location (+${d.rollup.includes_children} child systems)</b><span>${money(d.rollup.location_spend_cents)}</span></div>`; }
+  if (d.spend_breakdown && d.spend_breakdown.by_gl && Object.keys(d.spend_breakdown.by_gl).length) { html+=`<h3>Where it hit the GL</h3>`;
+    Object.entries(d.spend_breakdown.by_gl).sort((x,y)=>y[1]-x[1]).forEach(([gid,amt])=>{ const lab=(d.spend_breakdown.gl_labels||{})[gid]||{};
+      html+=`<div class="kv"><b>${esc(((lab.number||'')+' '+(lab.name||'GL account')).trim())}</b><span>${money(amt)}</span></div>`; }); }
   if (d.board_motions && d.board_motions.length) { html+=`<h3>Board decisions</h3>`;
     d.board_motions.forEach(m=> html+=`<div class="kv"><b>${esc(m.title)}</b><span>${esc(m.status)}</span></div>`); }
   if (d.project_events && d.project_events.length) { html+=`<h3>History</h3>`;
@@ -250,11 +302,12 @@ async function openDetail(id) {
   if (d.reports && d.reports.length) { html+=`<h3>Field reports</h3>`;
     d.reports.forEach(rp=> html+=`<div class="muted">${esc((rp.created_at||'').slice(0,10))} — ${esc(rp.description||'(photo)')} <i>[${esc(rp.status)}]</i></div>`); }
 
-  html+=`<h3>Report an issue here</h3>
-    <textarea id="rptText" rows="3" placeholder="e.g. Still standing water near the east end."></textarea>
+  html+=`<h3>Message management</h3>
+    <div class="muted" style="margin-bottom:6px">This message is tied to ${esc(a.name)} — no need to describe which one.</div>
+    <textarea id="rptText" rows="3" placeholder="e.g. The landscaping on the west side looked thin this morning. Can someone inspect it?"></textarea>
     <div style="margin-top:6px;display:flex;gap:8px;align-items:center;">
       <input type="file" id="rptPhoto" accept="image/*" />
-      <button class="btn" onclick="submitReport('${id}')">Send to Bedrock</button>
+      <button class="btn" onclick="submitReport('${id}')">Send to management</button>
     </div><div id="rptMsg" class="muted"></div>`;
   document.getElementById('sideInner').innerHTML=html;
   document.getElementById('side').classList.add('open');
@@ -266,7 +319,7 @@ async function submitReport(id){
   if(!text && !file){ document.getElementById('rptMsg').textContent='Add a note or photo.'; return; }
   const fd=new FormData(); fd.append('description',text); if(file) fd.append('photo',file);
   const r=await cmFetch('/api/community-map/asset/'+id+'/report',{method:'POST',body:fd});
-  document.getElementById('rptMsg').textContent = r.ok ? 'Reported. Bedrock will triage.' : 'Failed ('+r.status+').';
+  document.getElementById('rptMsg').textContent = r.ok ? 'Sent to management. It is now part of this asset’s record.' : 'Failed ('+r.status+').';
   if(r.ok){ document.getElementById('rptText').value=''; }
 }
 
