@@ -1335,6 +1335,9 @@ const { router: booksRouter } = require('./api/books');
 app.use('/api/books', booksRouter);
 const { router: chamberRouter } = require('./api/chamber');
 app.use('/api/chamber', chamberRouter);
+// Phase 0 meeting-recording feasibility spike (throwaway; 404 unless
+// MEETING_SPIKE_ENABLED=true). Page: /meeting-recorder-spike.html
+app.use('/api/meeting-spike', require('./api/meeting_spike'));
 
 // Homeowner AR — sub-ledger (charges, payments, §209.0063 application engine).
 // Phase 2A. Migration 172 + lib/accounting/ar_engine.js power it.

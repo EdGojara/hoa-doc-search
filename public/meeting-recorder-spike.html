@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Meeting Recorder Spike</title>
+<!--
+  PHASE 0 RECORDING-FEASIBILITY SPIKE (throwaway, Ed 2026-09-22).
+  Standalone on purpose: shares no script with index.html, touches no meeting,
+  minutes, Chamber or database table. Proves whether phones can record long
+  in-person meetings as independently playable ~30s segments with overlap,
+  durable IndexedDB queueing, wake lock and explicit gap markers.
+  Uploads go to /api/meeting-spike (404 unless MEETING_SPIKE_ENABLED=true);
+  with the endpoint off the page still records + queues locally.
+-->
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --ok: #15803d; --warn: #b45309; --bad: #b91c1c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--cream, #faf8f3); color: var(--ink, #1f2937); font-family: var(--font-sans, system-ui, sans-serif); font-size: 15px; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px 16px 80px; }
+  h1 { font-size: 18px; margin: 4px 0 2px; color: var(--navy, #0b1d34); }
+  .sub { color: var(--ink-soft, #555); font-size: 12px; margin-bottom: 12px; }
+  .card { background: #fff; border: 1px solid var(--rule, #e5e7eb); border-radius: 10px; padding: 12px; margin: 10px 0; }
+  .status { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .dot { font-weight: 700; font-size: 20px; }
+  .rec { color: var(--bad); } .idle { color: var(--ink-faint, #888); } .intr { color: var(--warn); }
+  .clock { font-family: var(--font-mono, ui-monospace, monospace); font-size: 34px; color: var(--navy, #0b1d34); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }
+  .stat { background: var(--light-gray, #f3f4f6); border-radius: 8px; padding: 8px; }
+  .stat b { display: block; font-size: 20px; color: var(--navy, #0b1d34); }
+  .stat span { font-size: 11px; color: var(--ink-soft, #555); text-transform: uppercase; letter-spacing: .04em; }
+  button { font: inherit; border-radius: 8px; border: 1px solid var(--rule-strong, #cbd5e1); background: #fff; padding: 10px 14px; cursor: pointer; }
+  button.primary { background: var(--navy, #0b1d34); color: #fff; border-color: var(--navy, #0b1d34); font-weight: 600; }
+  button.danger { background: var(--bad); color: #fff; border-color: var(--bad); }
+  button:disabled { opacity: .45; cursor: default; }
+  .big { width: 100%; padding: 18px; font-size: 18px; margin-top: 8px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+  label { font-size: 13px; color: var(--ink-soft, #555); }
+  input, select { font: inherit; padding: 6px; border: 1px solid var(--rule-strong, #cbd5e1); border-radius: 6px; }
+  input[type=number] { width: 80px; }
+  .warns { max-height: 220px; overflow: auto; font-size: 12px; }
+  .warns div { padding: 4px 0; border-bottom: 1px dashed var(--rule, #e5e7eb); }
+  .w-warn { color: var(--warn); } .w-bad { color: var(--bad); } .w-info { color: var(--ink-soft, #555); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 4px; border-bottom: 1px solid var(--rule, #e5e7eb); vertical-align: top; }
+  .tbl { overflow-x: auto; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .muted { color: var(--ink-faint, #888); }
+  .banner { padding: 10px; border-radius: 8px; margin: 8px 0; font-size: 14px; }
+  .banner.warn { background: #fef3c7; color: #78350f; } .banner.bad { background: #fee2e2; color: #7f1d1d; } .banner.info { background: #e0f2fe; color: #0c4a6e; }
+  code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; word-break: break-all; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Meeting Recorder: Phase 0 Spike</h1>
+  <div class="sub">Test page only. Not connected to Meetings, Minutes or Chamber. Keep this screen open while recording.</div>
+
+  <div id="recoverBox"></div>
+  <div id="bannerBox"></div>
+
+  <div class="card">
+    <div class="status">
+      <span id="stDot" class="dot idle">○ IDLE</span>
+      <span id="stClock" class="clock">00:00:00</span>
+    </div>
+    <div class="grid">
+      <div class="stat"><b id="nSeg">0</b><span>segments</span></div>
+      <div class="stat"><b id="nQueued">0</b><span>queued locally</span></div>
+      <div class="stat"><b id="nAcked">0</b><span>server ack'd</span></div>
+      <div class="stat"><b id="nWarn">0</b><span>gaps / warnings</span></div>
+      <div class="stat"><b id="nDecode">–</b><span>playable alone</span></div>
+      <div class="stat"><b id="nNet">–</b><span>network</span></div>
+    </div>
+    <button id="btnStart" class="primary big">● START RECORDING</button>
+    <div class="row">
+      <button id="btnStop" class="danger" disabled>■ Stop</button>
+      <button id="btnResume" disabled>↻ Resume after interruption</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <label>Segment <input id="cfgSeg" type="number" min="5" max="300" value="30"> s</label>
+      <label>Overlap <input id="cfgOverlap" type="number" min="0" max="3000" value="500"> ms</label>
+      <label>Rotation <select id="cfgMode"><option value="overlap">overlap (start next, then stop)</option><option value="sequential">sequential (stop, then start)</option></select></label>
+    </div>
+    <div class="row">
+      <label>Source <select id="cfgSource"><option value="mic">Microphone</option><option value="tone">Timing tone (measures gaps precisely)</option></select></label>
+      <label><input id="cfgDelete" type="checkbox"> delete local audio after server ack</label>
+    </div>
+    <div class="muted" style="font-size:12px" id="deviceLine"></div>
+  </div>
+
+  <div class="card">
+    <b>Gaps, interruptions, events</b>
+    <div class="warns" id="warnList"><div class="w-info">No events yet.</div></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <b style="flex:1">Segments</b>
+      <button id="btnAnalyze">Measure boundaries</button>
+      <button id="btnServer">Check server copy</button>
+      <button id="btnReport">Send + copy report</button>
+    </div>
+    <div class="tbl"><table>
+      <thead><tr><th>#</th><th>start</th><th>wall s</th><th>decoded s</th><th>mime</th><th>KB</th><th>sha256</th><th>alone?</th><th>upload</th><th></th></tr></thead>
+      <tbody id="segBody"></tbody>
+    </table></div>
+    <div id="boundaryBox" style="font-size:12px;margin-top:8px"></div>
+    <div id="serverBox" style="font-size:12px;margin-top:8px"></div>
+  </div>
+
+  <div class="card">
+    <div class="row"><b style="flex:1">Stored sessions on this phone</b><button id="btnClear">Delete finished sessions</button></div>
+    <div id="sessionsBox" style="font-size:12px"></div>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------------------------------------------------------------- utils
+  const $ = (id) => document.getElementById(id);
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  const hms = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`; };
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const segKey = (sid, seq) => `${sid}:${pad(seq, 6)}`;
+  function newId() { const a = new Uint8Array(12); crypto.getRandomValues(a); return Array.from(a, (b) => b.toString(36).padStart(2, '0')).join('').slice(0, 20); }
+  async function sha256Hex(buf) { const d = await crypto.subtle.digest('SHA-256', buf); return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, '0')).join(''); }
+
+  // Same candidate order as index.html quickPickAudioMime() + ask-ed-chat pickAudioMime().
+  const MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/mp4;codecs=mp4a.40.2', 'audio/ogg;codecs=opus'];
+  function supportedMimes() { if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return []; return MIME_CANDIDATES.filter((m) => { try { return MediaRecorder.isTypeSupported(m); } catch (_) { return false; } }); }
+  function pickMime() { return supportedMimes()[0] || ''; }
+
+  // ------------------------------------------------------------ IndexedDB
+  // Same durable pattern as the inspection-photo queue (index.html
+  // bedrock_inspect_queue): persist an ArrayBuffer + MIME, never a Blob,
+  // because iOS WebKit intermittently fails to store Blobs in IndexedDB.
+  const DB_NAME = 'bedrock_meeting_spike';
+  let _db = null;
+  function openDb() {
+    if (_db) return Promise.resolve(_db);
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 2);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('sessions')) db.createObjectStore('sessions', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('segments')) { const s = db.createObjectStore('segments', { keyPath: 'key' }); s.createIndex('session', 'session_id'); }
+        if (!db.objectStoreNames.contains('events')) { const s = db.createObjectStore('events', { keyPath: 'id', autoIncrement: true }); s.createIndex('session', 'session_id'); }
+        // In-flight segment audio, re-saved every PARTIAL_MS so a reload/crash
+        // loses at most that much instead of a whole segment.
+        if (!db.objectStoreNames.contains('partials')) { const s = db.createObjectStore('partials', { keyPath: 'key' }); s.createIndex('session', 'session_id'); }
+      };
+      req.onsuccess = () => { _db = req.result; resolve(_db); };
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function idb(store, mode, fn) {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(store, mode);
+      let out;
+      Promise.resolve(fn(tx.objectStore(store))).then((r) => { out = r; });
+      tx.oncomplete = () => resolve(out);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('tx aborted'));
+    });
+  }
+  const reqP = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const putRow = (store, row) => idb(store, 'readwrite', (s) => reqP(s.put(row)));
+  const getRow = (store, key) => idb(store, 'readonly', (s) => reqP(s.get(key)));
+  const allRows = (store) => idb(store, 'readonly', (s) => reqP(s.getAll()));
+  const bySession = (store, sid) => idb(store, 'readonly', (s) => reqP(s.index('session').getAll(sid)));
+  const delRow = (store, key) => idb(store, 'readwrite', (s) => reqP(s.delete(key)));
+
+  // ---------------------------------------------------------------- state
+  const S = {
+    session: null,      // sessions row
+    stream: null, track: null, toneCtx: null,
+    active: null,       // current segment recorder { rec, seq, chunks, startedAt, perfStart }
+    stopping: false, recording: false, interrupted: false,
+    rotateTimer: null, tickTimer: null, lastTick: 0, rotating: false,
+    wakeLock: null, serverDisabled: false, lastSegEndWall: null,
+    segs: [],           // metadata rows for current session (no bytes)
+  };
+
+  async function logEvent(kind, detail = {}, level = 'info') {
+    const ev = { session_id: S.session ? S.session.id : null, kind, level, at: new Date().toISOString(), wall_ms: Date.now(), elapsed_ms: S.session ? Date.now() - S.session.started_wall : null, ...detail };
+    try { await putRow('events', ev); } catch (e) { console.warn('[spike] event store failed', e); }
+    renderEvents();
+  }
+
+  // ------------------------------------------------------------- sources
+  async function getSourceStream() {
+    const source = $('cfgSource').value;
+    if (source === 'tone') {
+      // Timing tone: a 200→1200 Hz ramp repeating every 1.000 s. The pitch at
+      // any instant encodes the time within the second, so the audio at each
+      // segment's end/start tells us the exact gap or overlap between them.
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator(); const g = ctx.createGain(); g.gain.value = 0.25;
+      const dest = ctx.createMediaStreamDestination();
+      osc.connect(g); g.connect(dest);
+      const t0 = ctx.currentTime + 0.05;
+      let scheduled = 0;
+      const scheduleAhead = () => {   // rolling schedule: keep ~2 min of ramps queued
+        const until = ctx.currentTime - t0 + 120;
+        for (; scheduled < until; scheduled++) { osc.frequency.setValueAtTime(200, t0 + scheduled); osc.frequency.linearRampToValueAtTime(1200, t0 + scheduled + 0.999); }
+      };
+      scheduleAhead();
+      S.toneTimer = setInterval(scheduleAhead, 30000);
+      osc.start(t0);
+      try { await ctx.resume(); } catch (_) {}
+      S.toneCtx = ctx;
+      return dest.stream;
+    }
+    return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 } });
+  }
+
+  function wireTrack(track) {
+    track.onended = () => { logEvent('track_ended', { note: 'microphone track ended (OS/browser took the mic or page was suspended)' }, 'bad'); markInterrupted('microphone stopped'); };
+    track.onmute = () => logEvent('track_muted', { note: 'OS muted the mic (interruption: call, Siri, other app, lock)' }, 'warn');
+    track.onunmute = () => logEvent('track_unmuted', {}, 'info');
+  }
+
+  // ------------------------------------------------------------ wake lock
+  async function acquireWakeLock() {
+    if (!('wakeLock' in navigator)) { return false; }
+    try {
+      S.wakeLock = await navigator.wakeLock.request('screen');
+      S.wakeLock.addEventListener('release', () => { logEvent('wakelock_released', {}, S.recording ? 'warn' : 'info'); S.wakeLock = null; });
+      logEvent('wakelock_acquired');
+      return true;
+    } catch (e) { logEvent('wakelock_failed', { error: e.message }, 'warn'); return false; }
+  }
+
+  // ------------------------------------------------------- segment engine
+  const PARTIAL_MS = 5000;
+  async function savePartial(seg) {
+    if (!S.session || !seg.startedAt) return;
+    try {
+      const buf = await new Blob(seg.chunks, { type: (seg.rec && seg.rec.mimeType) || S.session.mime }).arrayBuffer();
+      await putRow('partials', { key: segKey(S.session.id, seg.seq), session_id: S.session.id, seq: seg.seq, started_wall: seg.startedAt, updated_wall: Date.now(), mime: (seg.rec && seg.rec.mimeType) || S.session.mime, buf });
+    } catch (e) { console.warn('[spike] partial save failed', e); }
+  }
+  function startSegment() {
+    const mime = S.session.mime;
+    let rec;
+    try { rec = mime ? new MediaRecorder(S.stream, { mimeType: mime, audioBitsPerSecond: 32000 }) : new MediaRecorder(S.stream); }
+    catch (e) { logEvent('recorder_create_failed', { error: e.message }, 'bad'); markInterrupted('could not start recorder'); return null; }
+    const seg = { rec, seq: S.session.next_seq++, chunks: [], startedAt: null, perfStart: null };
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) { seg.chunks.push(e.data); if (rec.state === 'recording') savePartial(seg); } };
+    rec.onstart = () => { seg.startedAt = Date.now(); seg.perfStart = performance.now(); };
+    rec.onerror = (e) => logEvent('recorder_error', { seq: seg.seq, error: (e.error && e.error.message) || 'unknown' }, 'bad');
+    rec.onstop = () => finalizeSegment(seg).catch((err) => logEvent('segment_finalize_failed', { seq: seg.seq, error: err.message }, 'bad'));
+    try { rec.start(PARTIAL_MS); } catch (e) { logEvent('recorder_start_failed', { seq: seg.seq, error: e.message }, 'bad'); markInterrupted('recorder failed to start'); return null; }
+    putRow('sessions', S.session).catch(() => {});
+    return seg;
+  }
+
+  function scheduleRotation() {
+    clearTimeout(S.rotateTimer);
+    const segMs = Math.max(5, Number($('cfgSeg').value) || 30) * 1000;
+    S.rotateTimer = setTimeout(rotate, segMs);
+  }
+
+  function rotate() {
+    if (!S.recording || S.interrupted) return;
+    const prev = S.active;
+    const mode = $('cfgMode').value;
+    const overlap = Math.max(0, Number($('cfgOverlap').value) || 0);
+    if (mode === 'sequential') {
+      S.rotating = true;
+      prev.rec.addEventListener('stop', () => { S.rotating = false; if (S.recording && !S.interrupted) { S.active = startSegment(); scheduleRotation(); } }, { once: true });
+      try { prev.rec.stop(); } catch (_) {}
+      return;
+    }
+    const next = startSegment();
+    if (!next) return;
+    S.active = next;
+    setTimeout(() => { try { if (prev.rec.state !== 'inactive') prev.rec.stop(); } catch (_) {} }, overlap);
+    scheduleRotation();
+  }
+
+  async function finalizeSegment(seg) {
+    const endedAt = Date.now();
+    const wallMs = seg.perfStart != null ? Math.round(performance.now() - seg.perfStart) : (seg.startedAt ? endedAt - seg.startedAt : null);
+    const type = (seg.rec && seg.rec.mimeType) || S.session.mime || 'audio/webm';
+    const blob = new Blob(seg.chunks, { type });
+    if (!blob.size) { logEvent('empty_segment', { seq: seg.seq }, 'bad'); return; }
+    const buf = await blob.arrayBuffer();
+    const sha = await sha256Hex(buf);
+    const row = {
+      key: segKey(S.session.id, seg.seq), session_id: S.session.id, seq: seg.seq,
+      started_at: seg.startedAt ? new Date(seg.startedAt).toISOString() : null, started_wall: seg.startedAt, ended_wall: endedAt,
+      wall_ms: wallMs, mime: type, bytes: buf.byteLength, sha256: sha,
+      buf, status: 'pending', attempts: 0, next_attempt_at: 0, last_error: null, acked_at: null,
+      decode: null, element: null, source: S.session.source,
+    };
+    await putRow('segments', row);
+    delRow('partials', row.key).catch(() => {});
+    // Boundary check against the previous segment (wall clock).
+    const prev = S.segs.filter((x) => x.seq < seg.seq).sort((a, b) => b.seq - a.seq)[0];
+    if (prev && prev.ended_wall && seg.startedAt) {
+      const gapMs = seg.startedAt - prev.ended_wall;
+      if (gapMs > 250) logEvent('rotation_gap', { between: [prev.seq, seg.seq], gap_ms: gapMs, note: 'no recorder was running for this long (wall clock)' }, 'warn');
+    }
+    S.segs.push(stripBuf(row));
+    render();
+    pumpUploads();
+    checkPlayable(row).catch(() => {});
+  }
+  const stripBuf = (r) => { const { buf, ...rest } = r; return rest; };
+
+  // Is this segment playable ON ITS OWN on this device? Two independent checks:
+  // WebAudio decode (sample-accurate duration) and an <audio> element load.
+  async function checkPlayable(row) {
+    let decode;
+    try {
+      const ctx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 44100, 44100);
+      const ab = await new Promise((res, rej) => { const p = ctx.decodeAudioData(row.buf.slice(0), res, rej); if (p && p.then) p.then(res, rej); });
+      decode = { ok: true, seconds: +ab.duration.toFixed(3), sample_rate: ab.sampleRate, channels: ab.numberOfChannels };
+    } catch (e) { decode = { ok: false, error: (e && e.message) || String(e) }; }
+    const element = await new Promise((resolve) => {
+      const url = URL.createObjectURL(new Blob([row.buf], { type: row.mime }));
+      const a = new Audio(); let done = false;
+      const fin = (r) => { if (done) return; done = true; URL.revokeObjectURL(url); resolve(r); };
+      a.preload = 'metadata';
+      a.onloadedmetadata = () => fin({ ok: true, duration: isFinite(a.duration) ? +a.duration.toFixed(3) : 'Infinity (no duration header)' });
+      a.onerror = () => fin({ ok: false, error: (a.error && a.error.code) || 'error' });
+      setTimeout(() => fin({ ok: false, error: 'timeout' }), 6000);
+      a.src = url;
+    });
+    const cur = await getRow('segments', row.key);
+    if (cur) { cur.decode = decode; cur.element = element; await putRow('segments', cur); }
+    const meta = S.segs.find((x) => x.key === row.key); if (meta) { meta.decode = decode; meta.element = element; }
+    if (!decode.ok) logEvent('segment_not_decodable', { seq: row.seq, error: decode.error }, 'bad');
+    else if (row.wall_ms && decode.seconds * 1000 < row.wall_ms - 1500) logEvent('audio_shorter_than_wall', { seq: row.seq, decoded_s: decode.seconds, wall_s: +(row.wall_ms / 1000).toFixed(2), note: 'capture was suspended part of this segment' }, 'warn');
+    render();
+  }
+
+  // --------------------------------------------------------------- upload
+  let pumping = false;
+  async function pumpUploads() {
+    if (pumping) return; pumping = true;
+    try {
+      const rows = (await allRows('segments')).filter((r) => r.status === 'pending' && (r.next_attempt_at || 0) <= Date.now()).sort((a, b) => a.started_wall - b.started_wall);
+      for (const r of rows) {
+        if (!navigator.onLine) break;
+        let res, body = {};
+        try {
+          res = await fetch('/api/meeting-spike/segment', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': r.mime, 'x-spike-session': r.session_id, 'x-spike-seq': String(r.seq), 'x-spike-sha256': r.sha256,
+              'x-spike-meta': JSON.stringify({ seq: r.seq, started_at: r.started_at, wall_ms: r.wall_ms, mime: r.mime, bytes: r.bytes, ua: navigator.userAgent }) },
+            body: r.buf,
+          });
+          body = await res.json().catch(() => ({}));
+        } catch (e) { res = null; body = { error: e.message }; }
+        const cur = await getRow('segments', r.key); if (!cur) continue;
+        if (res && res.ok) {
+          S.serverDisabled = false;
+          cur.status = 'acked'; cur.acked_at = new Date().toISOString(); cur.duplicate = !!body.duplicate;
+          if ($('cfgDelete').checked) cur.buf = null;
+        } else if (res && res.status === 404) {
+          S.serverDisabled = true; await putRow('segments', cur); break; // endpoint off: keep everything queued locally
+        } else if (res && (res.status === 409 || res.status === 422)) {
+          cur.status = 'rejected'; cur.last_error = body.error || `HTTP ${res.status}`;
+          logEvent('upload_rejected', { seq: cur.seq, error: cur.last_error }, 'bad');
+        } else {
+          cur.attempts = (cur.attempts || 0) + 1;
+          cur.last_error = body.error || (res ? `HTTP ${res.status}` : 'network');
+          cur.next_attempt_at = Date.now() + Math.min(60000, 1000 * Math.pow(2, cur.attempts)) * (0.8 + Math.random() * 0.4);
+        }
+        await putRow('segments', cur);
+        const meta = S.segs.find((x) => x.key === cur.key); if (meta) Object.assign(meta, stripBuf(cur));
+        render();
+      }
+    } catch (e) { console.warn('[spike] pump failed', e); }
+    finally { pumping = false; }
+  }
+  setInterval(pumpUploads, 3000);
+  window.addEventListener('online', () => { logEvent('online'); pumpUploads(); render(); });
+  window.addEventListener('offline', () => { logEvent('offline', {}, 'warn'); render(); });
+
+  // ---------------------------------------------------- watchdog + events
+  function startTicker() {
+    clearInterval(S.tickTimer);
+    S.lastTick = Date.now();
+    S.tickTimer = setInterval(() => {
+      const now = Date.now();
+      if (now - S.lastTick > 3000 && S.recording) logEvent('timer_stall', { stall_ms: now - S.lastTick, note: 'page was frozen/suspended by the browser or OS' }, 'warn');
+      S.lastTick = now;
+      if (S.recording && !S.interrupted) {
+        const trackDead = S.track && S.track.readyState !== 'live';
+        const recDead = S.active && S.active.rec.state === 'inactive';
+        if (trackDead) markInterrupted('microphone no longer live');
+        else if (recDead && !S.rotating) { logEvent('recorder_stopped_unexpectedly', { seq: S.active.seq }, 'bad'); S.active = startSegment(); scheduleRotation(); }
+      }
+      renderClock();
+    }, 1000);
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    logEvent(document.visibilityState === 'hidden' ? 'page_hidden' : 'page_visible', { recorder_state: S.active ? S.active.rec.state : null, track_state: S.track ? S.track.readyState : null }, document.visibilityState === 'hidden' ? 'warn' : 'info');
+    if (document.visibilityState === 'visible' && S.recording && !S.wakeLock) acquireWakeLock();
+  });
+  window.addEventListener('pagehide', (e) => logEvent('pagehide', { persisted: e.persisted }, 'warn'));
+  window.addEventListener('pageshow', (e) => { if (e.persisted) logEvent('pageshow_from_bfcache', {}, 'warn'); });
+  document.addEventListener('freeze', () => logEvent('page_frozen', {}, 'warn'));
+  document.addEventListener('resume', () => logEvent('page_resumed', {}, 'info'));
+  window.addEventListener('beforeunload', (e) => { if (S.recording) { e.preventDefault(); e.returnValue = ''; } });
+
+  function markInterrupted(reason) {
+    if (S.interrupted) return;
+    S.interrupted = true;
+    clearTimeout(S.rotateTimer);
+    try { if (S.active && S.active.rec.state !== 'inactive') S.active.rec.stop(); } catch (_) {}
+    logEvent('recording_interrupted', { reason }, 'bad');
+    if (S.session) { S.session.status = 'interrupted'; putRow('sessions', S.session).catch(() => {}); }
+    render();
+  }
+
+  // ---------------------------------------------------------- start/stop
+  async function startRecording(existing) {
+    if (!window.MediaRecorder) { banner('bad', 'This browser has no MediaRecorder. Recording is not possible here.'); return; }
+    try { S.stream = await getSourceStream(); }
+    catch (e) { banner('bad', `Microphone unavailable: ${esc(e.message)}. Check the browser's microphone permission for this site.`); return; }
+    S.track = S.stream.getAudioTracks()[0]; if (S.track) wireTrack(S.track);
+    if (existing) {
+      S.session = existing; S.session.status = 'recording';
+      const gapFrom = S.session.last_seg_end_wall || S.session.started_wall;
+      logEvent('resumed', { gap_ms: Date.now() - gapFrom, note: 'no audio captured during this gap' }, 'warn');
+    } else {
+      S.session = { id: newId(), started_wall: Date.now(), started_at: new Date().toISOString(), status: 'recording', next_seq: 0, mime: pickMime(), source: $('cfgSource').value,
+        settings: { seg_s: Number($('cfgSeg').value), overlap_ms: Number($('cfgOverlap').value), mode: $('cfgMode').value }, ua: navigator.userAgent };
+      S.segs = [];
+      logEvent('session_started', { mime: S.session.mime, supported: supportedMimes() });
+    }
+    await putRow('sessions', S.session);
+    S.recording = true; S.interrupted = false;
+    S.active = startSegment(); scheduleRotation();
+    startTicker();
+    acquireWakeLock();
+    clearBanner(); render();
+  }
+
+  async function stopRecording() {
+    S.recording = false;
+    clearTimeout(S.rotateTimer);
+    const cur = S.active; S.active = null;
+    if (cur && cur.rec.state !== 'inactive') {
+      await new Promise((res) => { cur.rec.addEventListener('stop', () => setTimeout(res, 300), { once: true }); try { cur.rec.stop(); } catch (_) { res(); } });
+    }
+    try { S.stream && S.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    try { clearInterval(S.toneTimer); S.toneCtx && S.toneCtx.close(); } catch (_) {}
+    if (S.wakeLock) { try { await S.wakeLock.release(); } catch (_) {} S.wakeLock = null; }
+    if (S.session) { S.session.status = 'stopped'; S.session.stopped_at = new Date().toISOString(); S.session.final_seq_count = S.session.next_seq; await putRow('sessions', S.session); }
+    logEvent('session_stopped', { segments: S.session ? S.session.next_seq : 0 });
+    render(); renderSessions(); pumpUploads();
+  }
+
+  // keep last segment end on the session so a reload can compute the gap
+  setInterval(() => { if (S.session && S.recording && !S.interrupted) { S.session.last_seg_end_wall = Date.now(); putRow('sessions', S.session).catch(() => {}); } }, 5000);
+
+  // ------------------------------------------------------ refresh recovery
+  async function recover() {
+    const sessions = await allRows('sessions');
+    const open = sessions.filter((s) => s.status === 'recording' || s.status === 'interrupted');
+    const box = $('recoverBox'); box.innerHTML = '';
+    for (const s of open) {
+      for (const pr of await bySession('partials', s.id)) {
+        const key = pr.key;
+        if (await getRow('segments', key)) { await delRow('partials', key); continue; }
+        const sha = await sha256Hex(pr.buf);
+        const row = { key, session_id: s.id, seq: pr.seq, started_at: new Date(pr.started_wall).toISOString(), started_wall: pr.started_wall, ended_wall: pr.updated_wall,
+          wall_ms: pr.updated_wall - pr.started_wall, mime: pr.mime, bytes: pr.buf.byteLength, sha256: sha, buf: pr.buf, status: 'pending', attempts: 0, next_attempt_at: 0,
+          last_error: null, acked_at: null, decode: null, element: null, source: s.source, partial: true };
+        await putRow('segments', row); await delRow('partials', key);
+        await putRow('events', { session_id: s.id, kind: 'partial_segment_recovered', level: 'warn', at: new Date().toISOString(), wall_ms: Date.now(), seq: pr.seq, recovered_s: +((pr.updated_wall - pr.started_wall) / 1000).toFixed(1) });
+        checkPlayable(row).catch(() => {});
+      }
+      const segs = await bySession('segments', s.id);
+      const haveSeq = new Set(segs.map((x) => x.seq));
+      for (let q = 0; q < (s.next_seq || 0); q++) if (!haveSeq.has(q)) {
+        await putRow('events', { session_id: s.id, kind: 'segment_lost_on_reload', level: 'bad', at: new Date().toISOString(), wall_ms: Date.now(), seq: q, note: 'reload happened before any audio of this segment was saved (< 5 s in)' });
+      }
+      const pending = segs.filter((x) => x.status === 'pending').length;
+      const acked = segs.filter((x) => x.status === 'acked').length;
+      await putRow('events', { session_id: s.id, kind: 'page_reloaded_during_recording', level: 'bad', at: new Date().toISOString(), wall_ms: Date.now(),
+        gap_from: s.last_seg_end_wall ? new Date(s.last_seg_end_wall).toISOString() : null, recovered_segments: segs.length, pending, acked });
+      s.status = 'interrupted'; await putRow('sessions', s);
+      const div = document.createElement('div');
+      div.className = 'banner warn';
+      div.innerHTML = `Recovered an unfinished recording (started ${esc(new Date(s.started_wall).toLocaleTimeString())}): <b>${segs.length}</b> segments on this phone, <b>${pending}</b> still to upload, <b>${acked}</b> uploaded. Last audio about ${esc(s.last_seg_end_wall ? new Date(s.last_seg_end_wall).toLocaleTimeString() : 'unknown')}.
+        <div class="row"><button data-act="resume">↻ Resume this recording</button><button data-act="finish">Finish it (keep uploading)</button></div>`;
+      div.querySelector('[data-act=resume]').onclick = async () => { S.segs = segs.map(stripBuf); div.remove(); await startRecording(s); };
+      div.querySelector('[data-act=finish]').onclick = async () => { s.status = 'stopped'; s.final_seq_count = s.next_seq; await putRow('sessions', s); S.session = s; S.segs = segs.map(stripBuf); div.remove(); render(); renderSessions(); };
+      box.appendChild(div);
+      if (!S.session) { S.session = s; S.segs = segs.map(stripBuf); }
+    }
+    pumpUploads(); render(); renderSessions();
+  }
+
+  // ------------------------------------------------- boundary measurement
+  // Estimate the tone's instantaneous frequency over a window via
+  // interpolated zero crossings; with the 200→1200 Hz/1s ramp that frequency
+  // gives the position within the second.
+  function freqAt(data, sr, from, len) {
+    let crossings = [], i0 = Math.max(1, from), i1 = Math.min(data.length - 1, from + len);
+    for (let i = i0; i < i1; i++) if (data[i - 1] <= 0 && data[i] > 0) crossings.push(i - 1 + (-data[i - 1]) / (data[i] - data[i - 1]));
+    if (crossings.length < 3) return null;
+    return (crossings.length - 1) * sr / (crossings[crossings.length - 1] - crossings[0]);
+  }
+  function rms(data, from, len) { let s = 0, n = 0; for (let i = Math.max(0, from); i < Math.min(data.length, from + len); i++) { s += data[i] * data[i]; n++; } return n ? Math.sqrt(s / n) : 0; }
+  async function decodeRow(r) {
+    const ctx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 48000, 48000);
+    return new Promise((res, rej) => { const p = ctx.decodeAudioData(r.buf.slice(0), res, rej); if (p && p.then) p.then(res, rej); });
+  }
+  async function analyzeBoundaries() {
+    const box = $('boundaryBox');
+    if (!S.session) { box.textContent = 'No session.'; return; }
+    box.textContent = 'Measuring…';
+    const rows = (await bySession('segments', S.session.id)).filter((r) => r.buf).sort((a, b) => a.seq - b.seq);
+    const out = [];
+    for (let i = 0; i + 1 < rows.length; i++) {
+      const a = rows[i], b = rows[i + 1];
+      const wall = (b.started_wall - a.started_wall) - a.wall_ms; // + gap, − overlap (wall clock)
+      let line = { between: [a.seq, b.seq], wall_gap_ms: Math.round(wall) };
+      try {
+        const da = await decodeRow(a), db = await decodeRow(b);
+        const ca = da.getChannelData(0), cb = db.getChannelData(0), sr = da.sampleRate;
+        // skip encoder priming/silence at the start of b and padding at end of a
+        let bStart = 0; while (bStart < cb.length && Math.abs(cb[bStart]) < 0.01) bStart++;
+        let aEnd = ca.length - 1; while (aEnd > 0 && Math.abs(ca[aEnd]) < 0.01) aEnd--;
+        line.lead_silence_ms = Math.round(bStart / sr * 1000);
+        line.tail_silence_ms = Math.round((ca.length - 1 - aEnd) / sr * 1000);
+        if (S.session.source === 'tone' && a.source === 'tone') {
+          const win = Math.round(sr * 0.03);
+          const fa = freqAt(ca, sr, aEnd - win, win), fb = freqAt(cb, sr, bStart, win);
+          if (fa && fb) {
+            const ta = (fa - 200) / 1000, tb = (fb - 200) / 1000;        // seconds within the 1 s cycle
+            let d = tb - ta;                                            // audio-domain delta mod 1 s
+            const w = wall / 1000;
+            while (d - w > 0.5) d -= 1; while (w - d > 0.5) d += 1;       // resolve the 1 s ambiguity with wall clock
+            line.audio_gap_ms = Math.round(d * 1000);                   // + = missing audio, − = duplicated audio
+          }
+        }
+        line.edge_rms = [+rms(ca, aEnd - 480, 480).toFixed(3), +rms(cb, bStart, 480).toFixed(3)];
+      } catch (e) { line.error = e.message; }
+      out.push(line);
+    }
+    S.lastBoundaries = out;
+    box.innerHTML = out.length ? out.map((l) => {
+      const g = l.audio_gap_ms != null ? l.audio_gap_ms : null;
+      const verdict = g == null ? '' : g > 40 ? `<span class="bad">GAP ${g} ms (audio missing)</span>` : g < -40 ? `<span class="ok">overlap ${-g} ms (audio duplicated, nothing lost)</span>` : `<span class="ok">seamless (${g} ms)</span>`;
+      return `<div>#${l.between[0]}→#${l.between[1]}: wall ${l.wall_gap_ms} ms · b lead-silence ${l.lead_silence_ms ?? '?'} ms · a tail-silence ${l.tail_silence_ms ?? '?'} ms ${verdict} ${l.error ? '<span class="bad">' + esc(l.error) + '</span>' : ''}
+        <button data-a="${l.between[0]}" data-b="${l.between[1]}">▶ hear boundary</button></div>`;
+    }).join('') : 'Need at least two segments with local audio.';
+    box.querySelectorAll('button[data-a]').forEach((btn) => { btn.onclick = () => playBoundary(Number(btn.dataset.a), Number(btn.dataset.b)); });
+  }
+  async function playBoundary(sa, sb) {
+    const ra = await getRow('segments', segKey(S.session.id, sa)), rb = await getRow('segments', segKey(S.session.id, sb));
+    if (!ra || !rb || !ra.buf || !rb.buf) return;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const da = await new Promise((res, rej) => ctx.decodeAudioData(ra.buf.slice(0), res, rej));
+    const db = await new Promise((res, rej) => ctx.decodeAudioData(rb.buf.slice(0), res, rej));
+    const t = ctx.currentTime + 0.1, tail = Math.min(3, da.duration);
+    const s1 = ctx.createBufferSource(); s1.buffer = da; s1.connect(ctx.destination); s1.start(t, da.duration - tail, tail);
+    const s2 = ctx.createBufferSource(); s2.buffer = db; s2.connect(ctx.destination); s2.start(t + tail, 0, Math.min(3, db.duration));
+  }
+
+  // --------------------------------------------------------- server check
+  async function checkServer() {
+    const box = $('serverBox');
+    if (!S.session) { box.textContent = 'No session.'; return; }
+    try {
+      const r = await fetch(`/api/meeting-spike/session/${encodeURIComponent(S.session.id)}`, { credentials: 'same-origin' });
+      if (r.status === 404) { box.innerHTML = '<span class="muted">Server endpoint is off (MEETING_SPIKE_ENABLED not set). Everything stays queued on this phone.</span>'; return; }
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const local = await bySession('segments', S.session.id);
+      const localSeqs = local.map((x) => x.seq);
+      box.innerHTML = `Server holds <b>${j.count}</b> segments (max #${j.max_seq}). Missing on server: <b>${j.missing.length ? j.missing.join(', ') : 'none'}</b>. On this phone: ${localSeqs.length}.
+        ${j.segments.slice(0, 3).map((s) => `<div>#${s.seq} <audio controls preload="none" src="${esc(s.url)}"></audio></div>`).join('')}`;
+    } catch (e) { box.innerHTML = `<span class="bad">Server check failed: ${esc(e.message)}</span>`; }
+  }
+
+  // --------------------------------------------------------------- report
+  async function buildReport() {
+    const sid = S.session && S.session.id;
+    const segs = sid ? (await bySession('segments', sid)).map(stripBuf).sort((a, b) => a.seq - b.seq) : [];
+    const events = sid ? await bySession('events', sid) : [];
+    return {
+      session_id: sid, generated_at: new Date().toISOString(),
+      device: { ua: navigator.userAgent, platform: navigator.platform, secure: window.isSecureContext, mediarecorder: !!window.MediaRecorder, supported_mimes: supportedMimes(), chosen_mime: S.session && S.session.mime, wakelock: 'wakeLock' in navigator, standalone: window.matchMedia && window.matchMedia('(display-mode: standalone)').matches },
+      session: S.session ? { ...S.session } : null,
+      counts: { segments: segs.length, pending: segs.filter((x) => x.status === 'pending').length, acked: segs.filter((x) => x.status === 'acked').length, rejected: segs.filter((x) => x.status === 'rejected').length,
+        decodable: segs.filter((x) => x.decode && x.decode.ok).length, not_decodable: segs.filter((x) => x.decode && !x.decode.ok).length },
+      segments: segs, boundaries: S.lastBoundaries || null, events,
+    };
+  }
+  async function sendReport() {
+    const rep = await buildReport();
+    const text = JSON.stringify(rep, null, 2);
+    let sent = 'not sent', copied = 'not copied';
+    try { const r = await fetch('/api/meeting-spike/report', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: text }); sent = r.ok ? 'sent to server' : (r.status === 404 ? 'server endpoint off' : `server HTTP ${r.status}`); } catch (e) { sent = 'offline'; }
+    try { await navigator.clipboard.writeText(text); copied = 'copied to clipboard'; } catch (_) {}
+    try { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = `recorder-spike-${rep.session_id || 'none'}.json`; a.click(); } catch (_) {}
+    banner('info', `Report: ${sent}, ${copied}, download started.`);
+  }
+
+  // --------------------------------------------------------------- render
+  function banner(kind, html) { $('bannerBox').innerHTML = `<div class="banner ${kind}">${html}</div>`; }
+  function clearBanner() { $('bannerBox').innerHTML = ''; }
+  function renderClock() { $('stClock').textContent = S.session ? hms((S.recording ? Date.now() : (S.session.last_seg_end_wall || Date.now())) - S.session.started_wall) : '00:00:00'; }
+  async function renderEvents() {
+    if (!S.session) return;
+    const evs = (await bySession('events', S.session.id)).sort((a, b) => b.wall_ms - a.wall_ms);
+    const warns = evs.filter((e) => e.level !== 'info');
+    $('nWarn').textContent = warns.length;
+    $('warnList').innerHTML = evs.length ? evs.slice(0, 80).map((e) => {
+      const { id, session_id, kind, level, at, wall_ms, elapsed_ms, ...rest } = e;
+      return `<div class="w-${level === 'bad' ? 'bad' : level === 'warn' ? 'warn' : 'info'}">${esc(new Date(wall_ms).toLocaleTimeString())} ${elapsed_ms != null ? '(+' + hms(elapsed_ms) + ') ' : ''}<b>${esc(kind)}</b> ${esc(Object.keys(rest).length ? JSON.stringify(rest) : '')}</div>`;
+    }).join('') : '<div class="w-info">No events yet.</div>';
+  }
+  function render() {
+    const st = $('stDot');
+    if (S.recording && !S.interrupted) { st.className = 'dot rec'; st.textContent = '● RECORDING'; }
+    else if (S.interrupted) { st.className = 'dot intr'; st.textContent = '⚠ INTERRUPTED'; }
+    else { st.className = 'dot idle'; st.textContent = S.session ? '■ STOPPED' : '○ IDLE'; }
+    $('btnStart').disabled = S.recording;
+    $('btnStop').disabled = !S.recording;
+    $('btnResume').disabled = !(S.recording && S.interrupted);
+    const segs = S.segs;
+    $('nSeg').textContent = segs.length;
+    $('nQueued').textContent = segs.filter((x) => x.status === 'pending').length;
+    $('nAcked').textContent = segs.filter((x) => x.status === 'acked').length;
+    const checked = segs.filter((x) => x.decode);
+    $('nDecode').textContent = checked.length ? `${checked.filter((x) => x.decode.ok).length}/${checked.length}` : '–';
+    $('nNet').textContent = !navigator.onLine ? 'offline' : S.serverDisabled ? 'local only' : 'online';
+    if (S.interrupted && S.recording) banner('bad', 'Recording was interrupted by the phone or browser. Audio already captured is safe on this phone. Tap <b>Resume after interruption</b>.');
+    else if (S.serverDisabled) banner('info', 'Upload endpoint is off, so segments are being kept on this phone only. That is expected for a local test.');
+    $('segBody').innerHTML = segs.slice().sort((a, b) => b.seq - a.seq).slice(0, 200).map((r) => {
+      const dec = r.decode ? (r.decode.ok ? `<span class="ok">${r.decode.seconds}</span>` : `<span class="bad">✗</span>`) : '<span class="muted">…</span>';
+      const alone = r.decode ? ((r.decode.ok ? '<span class="ok">decode ✓</span>' : '<span class="bad">decode ✗</span>') + '<br>' + (r.element ? (r.element.ok ? `<span class="ok">&lt;audio&gt; ✓ ${esc(r.element.duration)}</span>` : `<span class="bad">&lt;audio&gt; ✗ ${esc(r.element.error)}</span>`) : '')) : '';
+      const up = r.status === 'acked' ? `<span class="ok">ack${r.duplicate ? ' (dup)' : ''}</span>` : r.status === 'rejected' ? `<span class="bad">${esc(r.last_error)}</span>` : `<span class="muted">queued${r.attempts ? ' ×' + r.attempts : ''}</span>`;
+      return `<tr><td>${r.seq}</td><td>${esc(r.started_at ? new Date(r.started_at).toLocaleTimeString() : '')}</td><td>${r.wall_ms != null ? (r.wall_ms / 1000).toFixed(2) : ''}</td><td>${dec}</td><td>${esc(r.mime)}</td><td>${(r.bytes / 1024).toFixed(0)}</td><td><code>${esc(r.sha256.slice(0, 10))}</code></td><td>${alone}</td><td>${up}</td><td><button data-play="${esc(r.key)}">▶</button></td></tr>`;
+    }).join('');
+    $('segBody').querySelectorAll('button[data-play]').forEach((b) => { b.onclick = () => playSeg(b.dataset.play); });
+    renderClock();
+  }
+  async function playSeg(key) {
+    const r = await getRow('segments', key);
+    if (!r || !r.buf) { banner('info', 'Local audio for that segment was deleted after upload.'); return; }
+    const a = new Audio(URL.createObjectURL(new Blob([r.buf], { type: r.mime }))); a.play().catch((e) => banner('bad', 'Play failed: ' + esc(e.message)));
+  }
+  async function renderSessions() {
+    const sessions = (await allRows('sessions')).sort((a, b) => b.started_wall - a.started_wall);
+    const rows = [];
+    for (const s of sessions) {
+      const segs = await bySession('segments', s.id);
+      const kb = segs.reduce((t, x) => t + (x.buf ? x.buf.byteLength : 0), 0) / 1024;
+      rows.push(`<div>${esc(new Date(s.started_wall).toLocaleString())} · ${esc(s.status)} · ${segs.length} segs · ${segs.filter((x) => x.status === 'pending').length} queued · ${kb.toFixed(0)} KB local · <code>${esc(s.id)}</code> · ${esc(s.mime)}</div>`);
+    }
+    $('sessionsBox').innerHTML = rows.join('') || '<span class="muted">None.</span>';
+  }
+
+  // ---------------------------------------------------------------- wire
+  $('btnStart').onclick = () => startRecording(null);
+  $('btnStop').onclick = () => { if (confirm('Stop this recording?')) stopRecording(); };
+  $('btnResume').onclick = async () => {
+    try { S.stream && S.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    S.recording = false; S.interrupted = false;
+    await startRecording(S.session);
+  };
+  $('btnAnalyze').onclick = analyzeBoundaries;
+  $('btnServer').onclick = checkServer;
+  $('btnReport').onclick = sendReport;
+  $('btnClear').onclick = async () => {
+    if (!confirm('Delete finished sessions from this phone? Segments not yet uploaded are kept.')) return;
+    const sessions = await allRows('sessions');
+    for (const s of sessions) {
+      if (s.status !== 'stopped' || (S.session && S.session.id === s.id && S.recording)) continue;
+      const segs = await bySession('segments', s.id);
+      if (segs.some((x) => x.status === 'pending')) continue;
+      for (const x of segs) await delRow('segments', x.key);
+      const evs = await bySession('events', s.id); for (const e of evs) await delRow('events', e.id);
+      await delRow('sessions', s.id);
+    }
+    if (S.session && !S.recording) { const still = await getRow('sessions', S.session.id); if (!still) { S.session = null; S.segs = []; } }
+    render(); renderSessions(); renderEvents();
+  };
+
+  const sm = supportedMimes();
+  $('deviceLine').textContent = `MediaRecorder: ${window.MediaRecorder ? 'yes' : 'NO'} · will use: ${pickMime() || '(browser default)'} · supported: ${sm.join(', ') || 'none'} · Wake Lock: ${'wakeLock' in navigator ? 'yes' : 'no'} · secure: ${window.isSecureContext ? 'yes' : 'NO'}`;
+  if (!window.isSecureContext) banner('bad', 'This page must be opened over https (or localhost) for the microphone and SHA-256 to work.');
+  recover().catch((e) => banner('bad', 'Could not open local storage: ' + esc(e.message)));
+})();
+</script>
+</body>
+</html>
