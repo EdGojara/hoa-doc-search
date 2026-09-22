@@ -1,0 +1,242 @@
+{
+  "_demo": true,
+  "_note": "Fictional demonstration data for the CLMA board demo. Vendors, proposals and figures are invented and clearly watermarked. No real vendor-confidential information.",
+  "meta": {
+    "community_id": "e0100000-0000-4000-a000-000000000000",
+    "community": "Cinco Landscape Maintenance Association",
+    "operating_community": "Sterling Ridge Landscape District",
+    "service_category": "landscape_maintenance",
+    "title": "2027 Landscape Maintenance Services",
+    "kind": "Request for Proposals",
+    "prepared_by": "Amanda Albright, Senior Community Manager",
+    "issued": "2026-09-15",
+    "due": "2026-10-20",
+    "term": "Two-year initial term (Jan 1 2027 – Dec 31 2028), with two optional one-year renewals by mutual agreement.",
+    "status": "evaluating"
+  },
+  "rfp": {
+    "summary": "CLMA seeks proposals from qualified firms for full-service landscape maintenance of the Association's common-area esplanades, medians, right-of-way setbacks, entrances and detention areas. The selected firm will maintain roughly 6 landscaped medians, two monument entrances, a parkway tree corridor and a detention basin to a consistent, board-visible standard.",
+    "scope_sections": [
+      { "name": "Esplanades & medians", "detail": "Weekly mowing, edging and litter removal on all median esplanades in season; bi-weekly off-season. Bed maintenance, mulch refresh twice yearly, and weed control." },
+      { "name": "Setbacks & right-of-way", "detail": "Maintenance of Association-owned setback strips and right-of-way turf to the same standard as the esplanades." },
+      { "name": "Entrance & monument landscaping", "detail": "Detail maintenance of both entrance monument beds: pruning, fertilization, mulch, and plant replacement within the seasonal-color program." },
+      { "name": "Seasonal color", "detail": "Rotational annual color at both entrances and designated median nodes. State the number of rotations per year and the plant size/coverage per rotation." },
+      { "name": "Tree maintenance", "detail": "Structural and clearance pruning of parkway and median trees, deadwood removal, and health monitoring. State the maximum tree height included in base pricing." },
+      { "name": "Irrigation inspection & maintenance", "detail": "Monthly wet-checks of all zones and controllers, seasonal scheduling, and repair of breaks and controller faults. State what repair scope is included in base pricing versus billed separately." },
+      { "name": "Detention basin", "detail": "Mowing and vegetation management of the detention basin to district and drainage standards." }
+    ],
+    "performance": [
+      "Consistent, board-visible standard across all areas; no visibly neglected zones.",
+      "Response standard: state the guaranteed response time for routine service requests and for irrigation-main emergencies.",
+      "Freeze-event protection of irrigation assets is expected; state inclusion or exclusion.",
+      "A named account manager and a single point of contact for the Board."
+    ],
+    "reporting": [
+      "Monthly service report with completed-work summary and dated field photos.",
+      "Advance notice of seasonal-color rotations and any recommended enhancements.",
+      "Irrigation inspection log with any faults found and action taken."
+    ],
+    "pricing_structure": [
+      "A fixed monthly base for recurring maintenance, stated as a monthly and an annual figure.",
+      "Seasonal color: included in base OR quoted as a separate annual allowance — state which.",
+      "Irrigation repairs and tree work: state clearly what is included in base and the unit rates for anything billed separately.",
+      "Any board-directed enhancement allowance, if offered."
+    ],
+    "submission": [
+      "Company profile, crew capacity and three comparable HOA/district references.",
+      "Certificate of insurance (GL, auto, workers' comp) meeting Association minimums.",
+      "Itemized pricing on the pricing schedule, signed by an authorized officer.",
+      "Statement of any exclusions or assumptions."
+    ],
+    "evaluation": [
+      { "criterion": "Price (normalized, apples-to-apples)", "weight": 35 },
+      { "criterion": "Scope completeness & clarity", "weight": 25 },
+      { "criterion": "Service & response standards", "weight": 20 },
+      { "criterion": "Experience & references", "weight": 20 }
+    ]
+  },
+  "proposals": [
+    {
+      "id": "A",
+      "company": "GreenScape Partners",
+      "vendor_key": "greenscape",
+      "tagline": "Incumbent-style base bid — lowest headline price, several services excluded",
+      "base_monthly_cents": 620000,
+      "base_annual_cents": 7440000,
+      "base_annual_stated_cents": 7240000,
+      "term_months": 24,
+      "escalation": "3.0% fixed per year",
+      "escalation_kind": "fixed_pct",
+      "response": "48-hour routine response; irrigation emergencies next available crew",
+      "seasonal_color": "Excluded from base — quoted as a separate $8,000/yr allowance (4 rotations, pass-through)",
+      "irrigation": "Monthly inspection included; all repairs billed time & materials at $85/hr plus parts",
+      "tree_work": "Included up to 12 ft; anything above 12 ft billed separately",
+      "included": ["Weekly/bi-weekly mowing & edging", "Bed maintenance & weed control", "Mulch refresh (2x/yr)", "Monthly irrigation inspection", "Tree work up to 12 ft"],
+      "excluded": ["Seasonal color (separate allowance)", "Irrigation repairs (time & materials)", "Tree work above 12 ft", "Freeze-event protection (not addressed)"],
+      "allowances": [{ "label": "Seasonal color allowance", "amount_cents": 800000 }],
+      "pricing_breakdown": [
+        { "label": "Base maintenance (12 × $6,200)", "amount_cents": 7440000 },
+        { "label": "Seasonal color allowance (separate)", "amount_cents": 800000 },
+        { "label": "Irrigation repairs", "amount_cents": null, "note": "Time & materials — not in base" },
+        { "label": "Tree work above 12 ft", "amount_cents": null, "note": "Billed separately" }
+      ],
+      "stated_summary_cents": 7240000,
+      "references": ["Willow Bend HOA", "Two comparable esplanade districts"],
+      "notes": "Proposal summary line reads \"Annual Base: $72,400.\""
+    },
+    {
+      "id": "B",
+      "company": "Verdant Grounds Management",
+      "vendor_key": "verdant",
+      "tagline": "Higher base price, fully inclusive — risk transferred to the vendor",
+      "base_monthly_cents": 845000,
+      "base_annual_cents": 10140000,
+      "base_annual_stated_cents": 10140000,
+      "term_months": 24,
+      "escalation": "2.5% fixed per year",
+      "escalation_kind": "fixed_pct",
+      "response": "24-hour routine response; 4-hour irrigation-main emergency response",
+      "seasonal_color": "Included in base — 4 rotations/yr at both entrances and median nodes",
+      "irrigation": "Inspection AND routine repairs up to $1,500 per incident included in base",
+      "tree_work": "Included up to 20 ft",
+      "included": ["Weekly/bi-weekly mowing & edging", "Bed maintenance & weed control", "Mulch refresh (2x/yr)", "Seasonal color (4 rotations)", "Irrigation inspection + routine repairs ≤ $1,500/incident", "Tree work up to 20 ft", "Monument bed detail care", "Freeze-event protection of irrigation assets"],
+      "excluded": ["Capital replacements above $1,500/incident (billed with board approval)"],
+      "allowances": [{ "label": "Board-directed enhancement allowance", "amount_cents": 500000 }],
+      "pricing_breakdown": [
+        { "label": "All-inclusive base maintenance (12 × $8,450)", "amount_cents": 10140000 },
+        { "label": "Seasonal color (4 rotations)", "amount_cents": 0, "note": "Included in base" },
+        { "label": "Irrigation routine repairs ≤ $1,500/incident", "amount_cents": 0, "note": "Included in base" },
+        { "label": "Enhancement allowance", "amount_cents": 500000, "note": "Board-directed" }
+      ],
+      "stated_summary_cents": 10140000,
+      "references": ["Three master-planned community districts"],
+      "notes": "All-inclusive base; arithmetic internally consistent."
+    },
+    {
+      "id": "C",
+      "company": "Lone Star Landservices",
+      "vendor_key": "lonestar",
+      "tagline": "Middle base price — different allowances, CPI escalation, ambiguous terms",
+      "base_monthly_cents": 715000,
+      "base_annual_cents": 8580000,
+      "base_annual_stated_cents": 8580000,
+      "term_months": 24,
+      "escalation": "CPI-indexed annually, no stated cap",
+      "escalation_kind": "cpi_only",
+      "response": "\"Next business day\" for routine service (weekends/holidays undefined)",
+      "seasonal_color": "2 rotations/yr included; additional rotations billed",
+      "irrigation": "Inspection included; repairs included up to $750/incident, above that time & materials",
+      "tree_work": "Not in base — covered by a separate $6,000/yr tree allowance",
+      "included": ["Weekly/bi-weekly mowing & edging", "Bed maintenance & weed control", "Monthly irrigation inspection", "Irrigation repairs ≤ $750/incident", "Seasonal color (2 rotations)"],
+      "excluded": ["Seasonal color rotations beyond 2", "Tree work (separate allowance)", "Freeze-event protection (explicitly excluded)"],
+      "allowances": [{ "label": "Tree maintenance allowance", "amount_cents": 600000 }],
+      "pricing_breakdown": [
+        { "label": "Base maintenance (12 × $7,150)", "amount_cents": 8580000 },
+        { "label": "Seasonal color (2 rotations)", "amount_cents": 0, "note": "Included; 2 more billed" },
+        { "label": "Tree maintenance allowance", "amount_cents": 600000 },
+        { "label": "Irrigation repairs above $750/incident", "amount_cents": null, "note": "Time & materials" }
+      ],
+      "stated_summary_cents": 8580000,
+      "references": ["Two commercial-corridor accounts", "One HOA reference"],
+      "notes": "Escalation tied to an unnamed CPI index with no cap; response window undefined for weekends; backflow-certification responsibility not stated."
+    }
+  ],
+  "scope_matrix": {
+    "items": [
+      "Mowing, edging & bed maintenance",
+      "Seasonal color (4 rotations standard)",
+      "Irrigation inspection",
+      "Irrigation routine repairs",
+      "Tree work to a common standard (≤ 20 ft)",
+      "Freeze-event protection",
+      "Named enhancement allowance",
+      "Emergency response ≤ 24 hr"
+    ],
+    "by_vendor": {
+      "A": ["included", "excluded", "included", "excluded", "partial", "excluded", "excluded", "excluded"],
+      "B": ["included", "included", "included", "included", "included", "included", "included", "included"],
+      "C": ["included", "partial", "included", "partial", "partial", "excluded", "included", "excluded"]
+    }
+  },
+  "normalized": {
+    "intro": "To compare apples-to-apples, each base bid is normalized to a common scope basket: base maintenance + 4 seasonal-color rotations + a routine irrigation-repair budget + tree maintenance to a common ≤20 ft standard. Assumptions are stated so the board can adjust them.",
+    "basket_assumptions": [
+      "Seasonal color: 4 rotations/yr at $2,000/rotation ($8,000/yr) — Proposal A's own quote.",
+      "Routine irrigation repairs: $3,000/yr planning budget (from Sterling Ridge irrigation history).",
+      "Tree maintenance to a common ≤20 ft standard: $6,000/yr."
+    ],
+    "rows": [
+      { "vendor": "A", "company": "GreenScape Partners", "base_cents": 7440000, "adds": [
+          { "label": "Seasonal color (excluded from base)", "amount_cents": 800000 },
+          { "label": "Irrigation repairs (T&M, excluded)", "amount_cents": 300000 },
+          { "label": "Tree work > 12 ft (excluded)", "amount_cents": 600000 } ],
+        "normalized_cents": 9140000 },
+      { "vendor": "C", "company": "Lone Star Landservices", "base_cents": 8580000, "adds": [
+          { "label": "2 additional color rotations", "amount_cents": 400000 },
+          { "label": "Tree allowance (separate from base)", "amount_cents": 600000 },
+          { "label": "Irrigation repair overage risk", "amount_cents": 100000 } ],
+        "normalized_cents": 9680000 },
+      { "vendor": "B", "company": "Verdant Grounds Management", "base_cents": 10140000, "adds": [],
+        "normalized_cents": 10140000 }
+    ],
+    "headline_gap_note": "On headline base, A appears $27,000/yr below B. Normalized to the same scope basket, A is ~$10,000/yr below B — and B's price already includes irrigation and tall-tree risk plus a 4-hour emergency standard.",
+    "escalation_note": "Over the two-year term, A (3% fixed) and B (2.5% fixed) are predictable; C's uncapped CPI escalation is open-ended — at 4% CPI, C's year-two base rises to about $89,200 and a third-year renewal to about $92,800."
+  },
+  "amanda": {
+    "headline": "Three responsive proposals. They are not directly comparable as written — the base prices cover different scope, one contains an arithmetic error, and two carry terms that should be clarified before award.",
+    "facts": [
+      { "vendor": "A", "company": "GreenScape Partners", "points": [
+        "Base $6,200/mo. Excludes seasonal color (separate $8,000/yr allowance), irrigation repairs (T&M $85/hr), and tree work above 12 ft.",
+        "48-hour routine response. 3% fixed escalation.",
+        "Summary line states \"Annual Base: $72,400.\"" ] },
+      { "vendor": "B", "company": "Verdant Grounds Management", "points": [
+        "Base $8,450/mo, all-inclusive: 4 color rotations, irrigation repairs ≤$1,500/incident, tree work ≤20 ft, freeze protection.",
+        "24-hour routine / 4-hour emergency response. 2.5% fixed escalation.",
+        "$5,000/yr board-directed enhancement allowance." ] },
+      { "vendor": "C", "company": "Lone Star Landservices", "points": [
+        "Base $7,150/mo. Includes 2 color rotations and irrigation repairs ≤$750/incident; tree work via a separate $6,000/yr allowance.",
+        "\"Next business day\" response. CPI-indexed escalation, no cap.",
+        "Freeze-event protection explicitly excluded." ] }
+    ],
+    "analysis": [
+      { "severity": "high", "title": "The apparent low bidder excludes scope the others include",
+        "detail": "GreenScape's $74,400 base is the lowest, but seasonal color, irrigation repairs and tall-tree work sit outside it. Normalized to the same scope basket, GreenScape is about $91,400 and the gap to Verdant narrows from ~$27,000 to ~$10,000." },
+      { "severity": "high", "title": "Arithmetic inconsistency in Proposal A",
+        "detail": "GreenScape's summary states an annual base of $72,400, but 12 × $6,200 = $74,400 — a $2,000 understatement. The summary figure is unreliable; the corrected base is $74,400." },
+      { "severity": "high", "title": "The bids are not apples-to-apples",
+        "detail": "Each base covers different scope (A excludes color/irrigation-repair/tall-tree; B includes them; C is partial). Ranking on headline base misstates true cost — the normalized table is the correct basis." },
+      { "severity": "medium", "title": "Escalation terms differ materially",
+        "detail": "A is 3% fixed, B is 2.5% fixed, C is CPI-indexed with no cap. Uncapped CPI is open-ended: at 4% CPI, C's third-year base is about $92,800, above its nominal middle ranking." },
+      { "severity": "medium", "title": "Allowances are structured differently",
+        "detail": "Verdant bundles a $5,000/yr enhancement allowance into base; Lone Star carries a $6,000/yr tree allowance; GreenScape carries none — every extra is billed ad hoc." },
+      { "severity": "medium", "title": "Response standards are not equivalent",
+        "detail": "Verdant guarantees 24-hour routine and 4-hour irrigation-emergency response; GreenScape is 48-hour; Lone Star is \"next business day,\" which is undefined for weekends and holidays." },
+      { "severity": "high", "title": "Material exclusion in Proposal C",
+        "detail": "Lone Star explicitly excludes freeze-event protection of irrigation assets — a real Texas cost and liability the Association would absorb — and does not state who is responsible for backflow certification." }
+    ],
+    "clarifications": [
+      { "vendor": "A", "question": "Confirm the corrected annual base ($74,400) and provide a firm not-to-exceed for the excluded irrigation repairs and tall-tree work." },
+      { "vendor": "A & B", "question": "Confirm the number of seasonal-color rotations and the plant size/coverage per rotation (A quotes a separate allowance; B includes it)." },
+      { "vendor": "C", "question": "Define \"next business day\" response for weekends and holidays, and name the CPI index and whether escalation is capped." },
+      { "vendor": "C", "question": "Clarify responsibility for freeze-event protection and backflow certification." },
+      { "vendor": "B", "question": "Confirm whether the unused $5,000 enhancement allowance rolls over year to year." }
+    ],
+    "recommendation": "This analysis is prepared to inform the Board's decision. It lays out what each proposal says, the material differences, and the questions to resolve. It does not select a vendor — that decision is the Board's."
+  },
+  "operations": {
+    "connected": [
+      "Vendors, projects, assets and invoices already exist for the operating community (Sterling Ridge). GreenScape Partners currently performs the Median 3 renovation and East Entrance seasonal color; AquaFlow Irrigation performs the Median 7 controller work.",
+      "If the Board awards to an existing vendor, its work already flows vendor → project → physical asset → invoice → history, visible in the Operating Map and the Board Report."
+    ],
+    "conceptual": [
+      "The RFP document and the three proposals are demonstration artifacts (seeded as real bid_requests / vendor_proposals records, but not solicited from real firms).",
+      "The award motion and executed contract are shown conceptually — no binding board vote or contract is created by this demo."
+    ],
+    "chain": ["Physical need", "RFP", "Proposals", "AI analysis", "Board decision", "Vendor", "Contract", "Project / work", "Physical assets", "Invoices", "History"],
+    "awarded_concept_vendor": "GreenScape Partners",
+    "links": [
+      { "label": "Open the Operating Map (physical assets & work)", "href": "lma-map.html" },
+      { "label": "Open the September Board Report (projects, spend, history)", "href": "board-report.html" }
+    ]
+  }
+}

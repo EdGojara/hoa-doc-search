@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLMA RFP — 2027 Landscape Maintenance</title>
+<link rel="stylesheet" href="/brand.css"/>
+<style>
+  :root{ --paper:#f5f2ea; --card:#ffffff; --navy:#0B1D34; --navy2:#142A4A; --gold:#C8A24A;
+    --line:#e4e0d6; --ink:#1c2735; --ink2:#5c6675; --ink3:#8a93a1;
+    --red:#c0392b; --amber:#e0873a; --green:#2e7d5b; --blue:#2b6cb0; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--paper); color:var(--ink); font-family:'Public Sans',-apple-system,Segoe UI,Roboto,sans-serif; -webkit-font-smoothing:antialiased; }
+  .wrap{ max-width:1060px; margin:0 auto; padding:0 20px 72px; }
+  .masthead{ background:var(--navy); color:#fff; padding:34px 0 30px; border-bottom:3px solid var(--gold); }
+  .masthead .in{ max-width:1060px; margin:0 auto; padding:0 20px; }
+  .masthead .kick{ font-size:12px; letter-spacing:.22em; text-transform:uppercase; color:var(--gold); font-weight:800; }
+  .masthead h1{ font-family:'Fraunces',Georgia,serif; font-weight:600; font-size:32px; margin:8px 0 4px; letter-spacing:-.01em; }
+  .masthead .sub{ font-size:15px; color:#c7d2e2; }
+  .masthead .meta{ font-size:12.5px; color:#8496b0; margin-top:12px; display:flex; flex-wrap:wrap; gap:6px 18px; }
+  .masthead .meta b{ color:#c7d2e2; font-weight:700; }
+  .demo{ display:inline-block; background:var(--gold); color:var(--navy); font-size:10.5px; font-weight:900; letter-spacing:.12em; padding:3px 9px; border-radius:5px; margin-top:14px; }
+  /* workflow chain */
+  .chain{ display:flex; flex-wrap:wrap; gap:6px; margin:22px 0 4px; }
+  .chain .step{ font-size:11.5px; font-weight:700; color:var(--ink2); background:var(--card); border:1px solid var(--line); padding:6px 11px; border-radius:20px; position:relative; }
+  .chain .step.on{ border-color:var(--gold); color:var(--navy); box-shadow:0 2px 8px rgba(11,29,52,.07); }
+  .chain .step .arw{ color:var(--ink3); margin:0 2px; }
+  section{ margin-top:34px; }
+  .sh{ display:flex; align-items:baseline; gap:12px; margin:0 0 14px; }
+  .sh .no{ font-size:12px; font-weight:800; color:var(--gold); letter-spacing:.14em; }
+  .sh h2{ font-family:'Fraunces',Georgia,serif; font-weight:600; font-size:22px; margin:0; color:var(--navy); }
+  .sh .hint{ margin-left:auto; font-size:12px; color:var(--ink3); }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:14px; box-shadow:0 4px 16px rgba(11,29,52,.07); }
+  /* RFP */
+  .rfpgrid{ display:grid; grid-template-columns:1.4fr 1fr; gap:18px; }
+  .rfpbox{ padding:18px 20px; }
+  .rfpbox p.lead{ font-size:14px; color:var(--ink2); margin:0 0 14px; line-height:1.5; }
+  .scopeitem{ padding:10px 0; border-top:1px solid var(--line); }
+  .scopeitem:first-of-type{ border-top:0; }
+  .scopeitem .sn{ font-weight:800; color:var(--navy); font-size:14px; }
+  .scopeitem .sd{ font-size:12.5px; color:var(--ink2); margin-top:2px; line-height:1.45; }
+  .minih{ font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:var(--gold); margin:0 0 8px; }
+  .rfpside .blk{ padding:16px 18px; border-top:1px solid var(--line); }
+  .rfpside .blk:first-child{ border-top:0; }
+  .rfpside ul{ margin:0; padding-left:18px; font-size:12.5px; color:var(--ink2); line-height:1.6; }
+  .evalrow{ display:flex; justify-content:space-between; font-size:13px; padding:5px 0; }
+  .evalrow b{ color:var(--navy); }
+  .btn{ display:inline-block; background:var(--navy); color:#fff; font-size:12.5px; font-weight:700; padding:9px 15px; border-radius:9px; border:0; cursor:pointer; text-decoration:none; }
+  .btn.ghost{ background:transparent; color:var(--navy); border:1.5px solid var(--navy); }
+  .btn.sm{ padding:6px 12px; font-size:12px; }
+  /* proposals */
+  .props{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  .prop{ padding:16px; display:flex; flex-direction:column; }
+  .prop .co{ font-size:17px; font-weight:800; color:var(--navy); }
+  .prop .tag{ font-size:11.5px; color:var(--ink3); margin:3px 0 12px; line-height:1.35; min-height:32px; }
+  .prop .big{ font-family:'Fraunces',Georgia,serif; font-size:26px; font-weight:600; color:var(--navy); }
+  .prop .big small{ font-size:12px; color:var(--ink3); font-weight:400; font-family:'Public Sans',sans-serif; }
+  .kv{ font-size:12.5px; color:var(--ink2); display:flex; justify-content:space-between; padding:4px 0; border-top:1px dashed var(--line); }
+  .kv:first-of-type{ border-top:0; margin-top:10px; }
+  .kv b{ color:var(--ink); font-weight:700; text-align:right; }
+  .prop .act{ margin-top:14px; }
+  /* comparison */
+  .matrix{ width:100%; border-collapse:collapse; overflow:hidden; }
+  .matrix th,.matrix td{ padding:11px 12px; border-bottom:1px solid var(--line); font-size:13px; text-align:center; }
+  .matrix th:first-child,.matrix td:first-child{ text-align:left; }
+  .matrix thead th{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink3); font-weight:800; }
+  .matrix thead th .co{ color:var(--navy); font-size:13px; display:block; text-transform:none; letter-spacing:0; }
+  .matrix tbody tr:last-child td{ border-bottom:0; }
+  .mk{ font-weight:900; font-size:15px; }
+  .mk.inc{ color:var(--green); } .mk.exc{ color:var(--red); } .mk.par{ color:var(--amber); }
+  .normtable{ width:100%; border-collapse:collapse; margin-top:16px; }
+  .normtable th,.normtable td{ padding:12px 14px; border-bottom:1px solid var(--line); font-size:13.5px; }
+  .normtable th{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink3); font-weight:800; text-align:left; }
+  .normtable td.r,.normtable th.r{ text-align:right; font-variant-numeric:tabular-nums; }
+  .normtable .co{ font-weight:800; color:var(--navy); }
+  .normtable .adds{ font-size:11.5px; color:var(--ink3); margin-top:3px; }
+  .normtable .norm{ font-weight:800; color:var(--navy); }
+  .normtable tbody tr:hover{ background:#faf8f2; cursor:pointer; }
+  .note{ background:#faf8f2; border-left:3px solid var(--gold); padding:11px 14px; font-size:12.5px; color:var(--ink2); border-radius:0 8px 8px 0; margin-top:12px; line-height:1.5; }
+  .assump{ font-size:12px; color:var(--ink3); margin-top:10px; padding-left:16px; }
+  .assump li{ margin:3px 0; }
+  /* amanda */
+  .amanda{ padding:0; overflow:hidden; }
+  .amhead{ background:var(--navy); color:#fff; padding:16px 20px; display:flex; align-items:center; gap:12px; }
+  .amhead .av{ width:40px; height:40px; border-radius:50%; background:linear-gradient(135deg,#C8A24A,#9c7a2f); display:flex; align-items:center; justify-content:center; font-weight:800; color:var(--navy); font-size:16px; flex:0 0 auto; }
+  .amhead .nm{ font-weight:800; font-size:15px; } .amhead .rl{ font-size:12px; color:#8496b0; }
+  .ambody{ padding:6px 20px 20px; }
+  .amblock{ margin-top:18px; }
+  .amblock > .bh{ font-size:12px; font-weight:900; letter-spacing:.1em; text-transform:uppercase; color:var(--gold); margin:0 0 10px; }
+  .factrow{ padding:10px 0; border-top:1px solid var(--line); }
+  .factrow:first-child{ border-top:0; }
+  .factrow .fc{ font-weight:800; color:var(--navy); font-size:13.5px; }
+  .factrow ul{ margin:5px 0 0; padding-left:18px; font-size:12.5px; color:var(--ink2); line-height:1.55; }
+  .find{ padding:12px 0 12px 14px; border-top:1px solid var(--line); border-left:3px solid var(--ink3); margin-top:2px; }
+  .find:first-child{ border-top:0; }
+  .find.high{ border-left-color:var(--red); } .find.medium{ border-left-color:var(--amber); }
+  .find .ft{ font-weight:800; color:var(--navy); font-size:14px; }
+  .find .ft .sev{ font-size:10px; font-weight:900; letter-spacing:.06em; text-transform:uppercase; padding:2px 7px; border-radius:20px; margin-left:8px; vertical-align:1px; }
+  .find .ft .sev.high{ background:#f7dcd8; color:#9a2b20; } .find .ft .sev.medium{ background:#fbeede; color:#a35a12; }
+  .find .fd{ font-size:12.5px; color:var(--ink2); margin-top:4px; line-height:1.5; }
+  .clar{ display:flex; gap:10px; padding:9px 0; border-top:1px solid var(--line); font-size:13px; }
+  .clar:first-child{ border-top:0; }
+  .clar .who{ flex:0 0 88px; font-weight:800; color:var(--navy); font-size:12px; }
+  .clar .q{ color:var(--ink2); line-height:1.45; }
+  .recbox{ background:#eef3ee; border:1px solid #d6e3d6; border-radius:10px; padding:13px 16px; font-size:13px; color:#22503a; margin-top:18px; font-weight:600; line-height:1.5; }
+  /* operations */
+  .ops{ padding:18px 20px; }
+  .opscol{ display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:8px; }
+  .opscol h4{ font-size:12px; text-transform:uppercase; letter-spacing:.06em; margin:0 0 8px; }
+  .opscol .connected h4{ color:var(--green); } .opscol .conceptual h4{ color:var(--ink3); }
+  .opscol ul{ margin:0; padding-left:18px; font-size:12.5px; color:var(--ink2); line-height:1.55; }
+  .opslinks{ margin-top:16px; display:flex; gap:10px; flex-wrap:wrap; }
+  /* modal */
+  .modal{ position:fixed; inset:0; background:rgba(9,16,28,.85); display:none; align-items:flex-start; justify-content:center; z-index:1000; padding:32px 16px; overflow:auto; }
+  .modal.open{ display:flex; }
+  .doc{ background:#fff; max-width:720px; width:100%; border-radius:12px; padding:0; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.4); }
+  .docwm{ background:var(--navy); color:#fff; padding:20px 26px; position:relative; }
+  .docwm .demo2{ position:absolute; top:16px; right:20px; }
+  .docwm .dt{ font-family:'Fraunces',Georgia,serif; font-size:22px; font-weight:600; }
+  .docwm .ds{ font-size:13px; color:#8496b0; margin-top:3px; }
+  .docbody{ padding:22px 26px 28px; }
+  .docbody h5{ font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--gold); margin:18px 0 8px; }
+  .docbody h5:first-child{ margin-top:0; }
+  .docbody p, .docbody li{ font-size:13px; color:var(--ink); line-height:1.55; }
+  .docbody table{ width:100%; border-collapse:collapse; margin-top:6px; }
+  .docbody td{ padding:7px 8px; border-bottom:1px solid var(--line); font-size:12.5px; }
+  .docbody td.r{ text-align:right; font-variant-numeric:tabular-nums; font-weight:700; }
+  .docbody .sig{ margin-top:22px; padding-top:14px; border-top:1px solid var(--line); font-size:12.5px; color:var(--ink3); }
+  .mx{ position:absolute; top:16px; right:20px; color:#fff; font-size:26px; cursor:pointer; line-height:1; }
+  .modal.doc-narrow .doc{ max-width:640px; }
+  .loading{ text-align:center; padding:60px; color:var(--ink2); }
+  .err{ background:#fbe9e7; border:1px solid #f3c9c4; color:#8a2b20; padding:14px 16px; border-radius:12px; font-size:13.5px; margin-top:20px; }
+  @media (max-width:820px){ .rfpgrid,.props,.opscol{ grid-template-columns:1fr; } .prop .tag{ min-height:0; } }
+</style>
+</head>
+<body>
+  <div class="masthead"><div class="in">
+    <div class="kick" id="mh-kick">CLMA · Request for Proposals</div>
+    <h1 id="mh-title">2027 Landscape Maintenance Services</h1>
+    <div class="sub" id="mh-sub">Bid comparison &amp; board analysis</div>
+    <div class="meta" id="mh-meta"></div>
+    <span class="demo">DEMONSTRATION · FICTIONAL VENDORS &amp; FIGURES</span>
+  </div></div>
+  <div class="wrap">
+    <div class="chain" id="chain"></div>
+    <div id="body"><div class="loading">Loading RFP &amp; analysis…</div></div>
+  </div>
+
+  <div class="modal" id="modal"><span class="mx" onclick="closeModal()">✕</span><div id="modalContent"></div></div>
+
+<script>
+const money = (c) => c==null ? '—' : '$' + Math.round(c/100).toLocaleString();
+const esc = (s) => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const MARK = { included:['inc','✓'], excluded:['exc','✕'], partial:['par','~'] };
+let D = null;
+
+async function load(){
+  try { const r = await fetch('/clma-rfp.demo.json'); D = await r.json(); }
+  catch(e){ document.getElementById('body').innerHTML='<div class="err">Could not load the RFP demo data.</div>'; return; }
+  document.getElementById('mh-kick').textContent = D.meta.community + ' · ' + D.meta.kind;
+  document.getElementById('mh-title').textContent = D.meta.title;
+  document.getElementById('mh-meta').innerHTML =
+    `<span>Prepared by <b>${esc(D.meta.prepared_by)}</b></span><span>Issued <b>${esc(D.meta.issued)}</b></span><span>Proposals due <b>${esc(D.meta.due)}</b></span><span>Term · <b>${esc(D.meta.term.split('(')[0].trim())}</b></span>`;
+  renderChain();
+  document.getElementById('body').innerHTML = rfpSection()+proposalsSection()+comparisonSection()+amandaSection()+opsSection();
+}
+
+function renderChain(){
+  document.getElementById('chain').innerHTML = D.operations.chain.map((s,i)=>
+    `<span class="step ${i<6?'on':''}">${esc(s)}</span>${i<D.operations.chain.length-1?'<span class="step arw" style="border:0;background:none;box-shadow:none">→</span>':''}`).join('');
+}
+
+// ---- Section 1: the RFP -------------------------------------------------------
+function rfpSection(){
+  const r = D.rfp;
+  const scope = r.scope_sections.map(s=>`<div class="scopeitem"><div class="sn">${esc(s.name)}</div><div class="sd">${esc(s.detail)}</div></div>`).join('');
+  const evalr = r.evaluation.map(e=>`<div class="evalrow"><span>${esc(e.criterion)}</span><b>${e.weight}%</b></div>`).join('');
+  return `<section><div class="sh"><span class="no">01</span><h2>The RFP</h2><span class="hint"><button class="btn ghost sm" onclick="openRFP()">Open full RFP</button></span></div>
+    <div class="rfpgrid">
+      <div class="card rfpbox"><p class="lead">${esc(r.summary)}</p><div class="minih">Scope of services</div>${scope}</div>
+      <div class="card rfpside">
+        <div class="blk"><div class="minih">Performance expectations</div><ul>${r.performance.map(p=>`<li>${esc(p)}</li>`).join('')}</ul></div>
+        <div class="blk"><div class="minih">Pricing structure</div><ul>${r.pricing_structure.map(p=>`<li>${esc(p)}</li>`).join('')}</ul></div>
+        <div class="blk"><div class="minih">Evaluation criteria</div>${evalr}</div>
+      </div>
+    </div></section>`;
+}
+
+// ---- Section 2: proposals -----------------------------------------------------
+function proposalsSection(){
+  // scope coverage keyed off the authoritative matrix (index 1 = seasonal color,
+  // 3 = irrigation routine repairs) so the card never disagrees with the analysis.
+  const COV = { included:'In base', excluded:'Separate', partial:'Partial' };
+  const cards = D.proposals.map(p=>{
+    const mv = D.scope_matrix.by_vendor[p.id] || [];
+    return `<div class="card prop">
+    <div class="co">${esc(p.company)}</div><div class="tag">${esc(p.tagline)}</div>
+    <div class="big">${money(p.base_monthly_cents)}<small> /mo · ${money(p.base_annual_cents)}/yr</small></div>
+    <div class="kv"><span>Escalation</span><b>${esc(p.escalation)}</b></div>
+    <div class="kv"><span>Response</span><b>${esc(p.response.split(';')[0])}</b></div>
+    <div class="kv"><span>Seasonal color</span><b>${COV[mv[1]]||'—'}</b></div>
+    <div class="kv"><span>Irrigation repairs</span><b>${COV[mv[3]]||'—'}</b></div>
+    <div class="act"><button class="btn sm" onclick="openProposal('${p.id}')">Open original proposal</button></div>
+  </div>`; }).join('');
+  return `<section><div class="sh"><span class="no">02</span><h2>Proposals Received</h2><span class="hint">${D.proposals.length} responsive · intentionally different structures</span></div>
+    <div class="props">${cards}</div></section>`;
+}
+
+// ---- Section 3: normalized comparison ----------------------------------------
+function comparisonSection(){
+  const m = D.scope_matrix; const ids = D.proposals.map(p=>p.id);
+  const head = `<tr><th>Scope item</th>${D.proposals.map(p=>`<th><span class="co">${esc(p.company.split(' ')[0])}</span>Proposal ${p.id}</th>`).join('')}</tr>`;
+  const rows = m.items.map((it,i)=>`<tr><td>${esc(it)}</td>${ids.map(id=>{ const v=m.by_vendor[id][i]; const k=MARK[v]; return `<td><span class="mk ${k[0]}" title="${v}">${k[1]}</span></td>`; }).join('')}</tr>`).join('');
+  const n = D.normalized;
+  const nrows = n.rows.map(row=>{
+    const adds = row.adds.length ? row.adds.map(a=>`+ ${esc(a.label)} ${money(a.amount_cents)}`).join(' · ') : 'No adjustments — scope already included';
+    return `<tr onclick="openProposal('${row.vendor}')"><td><span class="co">${esc(row.company)}</span><div class="adds">${adds}</div></td>
+      <td class="r">${money(row.base_cents)}</td><td class="r norm">${money(row.normalized_cents)}</td></tr>`; }).join('');
+  return `<section id="comparison"><div class="sh"><span class="no">03</span><h2>Normalized Comparison</h2><span class="hint">Same scope basket · apples-to-apples</span></div>
+    <div class="card" style="padding:16px 18px"><div class="minih">Scope coverage — what each base price includes</div>
+      <table class="matrix"><thead>${head}</thead><tbody>${rows}</tbody></table>
+      <div style="font-size:11.5px;color:var(--ink3);margin-top:8px"><span class="mk inc">✓</span> included &nbsp; <span class="mk par">~</span> partial &nbsp; <span class="mk exc">✕</span> excluded</div>
+    </div>
+    <div class="card" style="padding:16px 18px;margin-top:16px"><div class="minih">Normalized annual cost</div>
+      <p style="font-size:12.5px;color:var(--ink2);margin:0 0 4px;line-height:1.5">${esc(n.intro)}</p>
+      <table class="normtable"><thead><tr><th>Vendor &amp; adjustments to a common basket</th><th class="r">Headline base</th><th class="r">Normalized</th></tr></thead><tbody>${nrows}</tbody></table>
+      <div class="note">${esc(n.headline_gap_note)}</div>
+      <div class="note">${esc(n.escalation_note)}</div>
+      <div class="minih" style="margin-top:14px">Basket assumptions</div>
+      <ul class="assump">${n.basket_assumptions.map(a=>`<li>${esc(a)}</li>`).join('')}</ul>
+    </div></section>`;
+}
+
+// ---- Section 4: Amanda -------------------------------------------------------
+function amandaSection(){
+  const a = D.amanda;
+  const facts = a.facts.map(f=>`<div class="factrow"><div class="fc">Proposal ${f.vendor} — ${esc(f.company)}</div><ul>${f.points.map(p=>`<li>${esc(p)}</li>`).join('')}</ul></div>`).join('');
+  const analysis = a.analysis.map(f=>`<div class="find ${esc(f.severity)}"><div class="ft">${esc(f.title)}<span class="sev ${esc(f.severity)}">${esc(f.severity)}</span></div><div class="fd">${esc(f.detail)}</div></div>`).join('');
+  const clar = a.clarifications.map(c=>`<div class="clar"><div class="who">${esc(c.vendor)}</div><div class="q">${esc(c.question)}</div></div>`).join('');
+  return `<section id="amanda"><div class="sh"><span class="no">04</span><h2>Amanda's Analysis</h2><span class="hint">What the proposals actually say — and what to resolve</span></div>
+    <div class="card amanda">
+      <div class="amhead"><div class="av">AA</div><div><div class="nm">Amanda Albright</div><div class="rl">Senior Community Manager · proposal analysis</div></div></div>
+      <div class="ambody">
+        <p style="font-size:13.5px;color:var(--ink);line-height:1.55;margin:14px 0 0">${esc(a.headline)}</p>
+        <div class="amblock"><div class="bh">Facts · what each proposal says</div>${facts}</div>
+        <div class="amblock"><div class="bh">Analysis · material differences &amp; implications</div>${analysis}</div>
+        <div class="amblock" id="clarifications"><div class="bh">Clarifications · resolve before award</div>${clar}</div>
+        <div class="recbox">${esc(a.recommendation)}</div>
+      </div>
+    </div></section>`;
+}
+
+// ---- Section 5: connection to operations -------------------------------------
+function opsSection(){
+  const o = D.operations;
+  return `<section><div class="sh"><span class="no">05</span><h2>Connection to Operations</h2><span class="hint">RFP → award → vendor → project → asset → invoice → history</span></div>
+    <div class="card ops">
+      <div class="opscol">
+        <div class="connected"><h4>● Connected to live operating data</h4><ul>${o.connected.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>
+        <div class="conceptual"><h4>○ Shown conceptually</h4><ul>${o.conceptual.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>
+      </div>
+      <div class="opslinks">${o.links.map(l=>`<a class="btn ghost sm" href="${esc(l.href)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join('')}</div>
+    </div></section>`;
+}
+
+// ---- modals ------------------------------------------------------------------
+function openModal(html, narrow){ const m=document.getElementById('modal'); m.classList.toggle('doc-narrow', !!narrow);
+  document.getElementById('modalContent').innerHTML = html; m.classList.add('open'); m.scrollTop=0; }
+function closeModal(){ document.getElementById('modal').classList.remove('open'); }
+document.getElementById('modal').addEventListener('click', e=>{ if(e.target.id==='modal') closeModal(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+
+function openRFP(){ const r=D.rfp;
+  const html = `<div class="doc"><div class="docwm"><span class="mx" onclick="closeModal()">✕</span><span class="demo2 demo" style="position:absolute;top:16px;right:52px">DEMO</span>
+      <div class="dt">${esc(D.meta.title)}</div><div class="ds">${esc(D.meta.community)} · ${esc(D.meta.kind)} · issued ${esc(D.meta.issued)}</div></div>
+    <div class="docbody">
+      <h5>Overview</h5><p>${esc(r.summary)}</p>
+      <h5>Scope of services</h5><ul>${r.scope_sections.map(s=>`<li><b>${esc(s.name)}.</b> ${esc(s.detail)}</li>`).join('')}</ul>
+      <h5>Performance expectations</h5><ul>${r.performance.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>
+      <h5>Reporting requirements</h5><ul>${r.reporting.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>
+      <h5>Pricing structure</h5><ul>${r.pricing_structure.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>
+      <h5>Submission requirements</h5><ul>${r.submission.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>
+      <h5>Contract term</h5><p>${esc(D.meta.term)}</p>
+      <h5>Evaluation criteria</h5><table>${r.evaluation.map(e=>`<tr><td>${esc(e.criterion)}</td><td class="r">${e.weight}%</td></tr>`).join('')}</table>
+      <div class="sig">Prepared by ${esc(D.meta.prepared_by)} on behalf of the ${esc(D.meta.community)} Board.</div>
+    </div></div>`;
+  openModal(html);
+}
+
+function openProposal(id){ const p = D.proposals.find(x=>x.id===id); if(!p) return;
+  const rows = p.pricing_breakdown.map(b=>`<tr><td>${esc(b.label)}${b.note?` <span style="color:var(--ink3)">— ${esc(b.note)}</span>`:''}</td><td class="r">${b.amount_cents==null?'—':money(b.amount_cents)}</td></tr>`).join('');
+  const html = `<div class="doc"><div class="docwm"><span class="mx" onclick="closeModal()">✕</span><span class="demo" style="position:absolute;top:16px;right:52px">DEMO</span>
+      <div class="dt">${esc(p.company)}</div><div class="ds">Proposal ${p.id} · ${esc(D.meta.title)} · ${esc(D.meta.community)}</div></div>
+    <div class="docbody">
+      <h5>Base pricing</h5><p><b>${money(p.base_monthly_cents)} per month</b> · ${money(p.base_annual_cents)} per year. Term ${p.term_months} months. Escalation ${esc(p.escalation)}.</p>
+      <h5>Pricing schedule</h5><table>${rows}</table>
+      <h5>Included in base</h5><ul>${p.included.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>
+      <h5>Excluded / billed separately</h5><ul>${p.excluded.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>
+      <h5>Seasonal color</h5><p>${esc(p.seasonal_color)}</p>
+      <h5>Irrigation</h5><p>${esc(p.irrigation)}</p>
+      <h5>Tree work</h5><p>${esc(p.tree_work)}</p>
+      <h5>Response standard</h5><p>${esc(p.response)}</p>
+      ${p.allowances.length?`<h5>Allowances</h5><ul>${p.allowances.map(a=>`<li>${esc(a.label)} — ${money(a.amount_cents)}/yr</li>`).join('')}</ul>`:''}
+      <h5>References</h5><p>${p.references.map(esc).join(' · ')}</p>
+      ${p.notes?`<div class="sig">Note as submitted: ${esc(p.notes)}</div>`:''}
+    </div></div>`;
+  openModal(html);
+}
+
+load();
+</script>
+</body>
+</html>
