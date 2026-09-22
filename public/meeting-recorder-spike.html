@@ -75,6 +75,7 @@
     </div>
     <button id="btnStart" class="primary big">● START RECORDING</button>
     <div class="row">
+      <button id="btnPause" disabled>⏸ Pause</button>
       <button id="btnStop" class="danger" disabled>■ Stop</button>
       <button id="btnResume" disabled>↻ Resume after interruption</button>
     </div>
@@ -91,6 +92,11 @@
       <label><input id="cfgDelete" type="checkbox"> delete local audio after server ack</label>
     </div>
     <div class="muted" style="font-size:12px" id="deviceLine"></div>
+  </div>
+
+  <div class="card">
+    <div class="row"><b style="flex:1">Test summary (screenshot this)</b><button id="btnSummary">Refresh summary</button></div>
+    <div id="summaryBox" style="font-size:13px"><span class="muted">Record, stop, then tap Refresh summary.</span></div>
   </div>
 
   <div class="card">
@@ -184,7 +190,7 @@
     stream: null, track: null, toneCtx: null,
     active: null,       // current segment recorder { rec, seq, chunks, startedAt, perfStart }
     stopping: false, recording: false, interrupted: false,
-    rotateTimer: null, tickTimer: null, lastTick: 0, rotating: false,
+    rotateTimer: null, tickTimer: null, lastTick: 0, rotating: false, paused: false, pausedAt: null,
     wakeLock: null, serverDisabled: false, lastSegEndWall: null,
     segs: [],           // metadata rows for current session (no bytes)
   };
@@ -270,7 +276,7 @@
   }
 
   function rotate() {
-    if (!S.recording || S.interrupted) return;
+    if (!S.recording || S.interrupted || S.paused) return;
     const prev = S.active;
     const mode = $('cfgMode').value;
     const overlap = Math.max(0, Number($('cfgOverlap').value) || 0);
@@ -308,7 +314,9 @@
     const prev = S.segs.filter((x) => x.seq < seg.seq).sort((a, b) => b.seq - a.seq)[0];
     if (prev && prev.ended_wall && seg.startedAt) {
       const gapMs = seg.startedAt - prev.ended_wall;
-      if (gapMs > 250) logEvent('rotation_gap', { between: [prev.seq, seg.seq], gap_ms: gapMs, note: 'no recorder was running for this long (wall clock)' }, 'warn');
+      const pausedBetween = (S.session.pauses || []).some((p) => p.from >= prev.ended_wall - 2000 && p.to <= seg.startedAt + 2000);
+      if (gapMs > 250 && pausedBetween) logEvent('pause_gap', { between: [prev.seq, seg.seq], gap_ms: gapMs, note: 'deliberate user pause, not an interruption' }, 'info');
+      else if (gapMs > 250) logEvent('rotation_gap', { between: [prev.seq, seg.seq], gap_ms: gapMs, note: 'no recorder was running for this long (wall clock)' }, 'warn');
     }
     S.segs.push(stripBuf(row));
     render();
@@ -396,7 +404,7 @@
       const now = Date.now();
       if (now - S.lastTick > 3000 && S.recording) logEvent('timer_stall', { stall_ms: now - S.lastTick, note: 'page was frozen/suspended by the browser or OS' }, 'warn');
       S.lastTick = now;
-      if (S.recording && !S.interrupted) {
+      if (S.recording && !S.interrupted && !S.paused) {
         const trackDead = S.track && S.track.readyState !== 'live';
         const recDead = S.active && S.active.rec.state === 'inactive';
         if (trackDead) markInterrupted('microphone no longer live');
@@ -450,7 +458,30 @@
     clearBanner(); render();
   }
 
+  async function pauseRecording() {
+    if (!S.recording || S.paused || S.interrupted) return;
+    S.paused = true; S.pausedAt = Date.now();
+    clearTimeout(S.rotateTimer);
+    const cur = S.active; S.active = null;
+    if (cur && cur.rec.state !== 'inactive') { try { cur.rec.stop(); } catch (_) {} }
+    S.session.status = 'paused'; S.session.last_seg_end_wall = Date.now(); await putRow('sessions', S.session);
+    logEvent('user_paused', { note: 'deliberate pause (not an interruption)' }, 'info');
+    render();
+  }
+  async function resumeFromPause() {
+    if (!S.paused) return;
+    const pausedMs = Date.now() - S.pausedAt;
+    S.session.pauses = (S.session.pauses || []).concat([{ from: S.pausedAt, to: Date.now(), ms: pausedMs }]);
+    S.paused = false; S.pausedAt = null; S.session.status = 'recording';
+    await putRow('sessions', S.session);
+    if (!S.track || S.track.readyState !== 'live') { logEvent('mic_lost_during_pause', {}, 'warn'); markInterrupted('microphone ended while paused'); return; }
+    logEvent('user_resumed', { paused_ms: pausedMs }, 'info');
+    S.active = startSegment(); scheduleRotation();
+    render();
+  }
+
   async function stopRecording() {
+    if (S.paused) { S.session.pauses = (S.session.pauses || []).concat([{ from: S.pausedAt, to: Date.now(), ms: Date.now() - S.pausedAt }]); S.paused = false; }
     S.recording = false;
     clearTimeout(S.rotateTimer);
     const cur = S.active; S.active = null;
@@ -460,18 +491,19 @@
     try { S.stream && S.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     try { clearInterval(S.toneTimer); S.toneCtx && S.toneCtx.close(); } catch (_) {}
     if (S.wakeLock) { try { await S.wakeLock.release(); } catch (_) {} S.wakeLock = null; }
-    if (S.session) { S.session.status = 'stopped'; S.session.stopped_at = new Date().toISOString(); S.session.final_seq_count = S.session.next_seq; await putRow('sessions', S.session); }
+    if (S.session) { S.session.last_seg_end_wall = Date.now(); S.session.status = 'stopped'; S.session.stopped_at = new Date().toISOString(); S.session.final_seq_count = S.session.next_seq; await putRow('sessions', S.session); }
     logEvent('session_stopped', { segments: S.session ? S.session.next_seq : 0 });
     render(); renderSessions(); pumpUploads();
+    setTimeout(() => renderSummary().catch(() => {}), 4000);
   }
 
   // keep last segment end on the session so a reload can compute the gap
-  setInterval(() => { if (S.session && S.recording && !S.interrupted) { S.session.last_seg_end_wall = Date.now(); putRow('sessions', S.session).catch(() => {}); } }, 5000);
+  setInterval(() => { if (S.session && S.recording && !S.interrupted && !S.paused) { S.session.last_seg_end_wall = Date.now(); putRow('sessions', S.session).catch(() => {}); } }, 5000);
 
   // ------------------------------------------------------ refresh recovery
   async function recover() {
     const sessions = await allRows('sessions');
-    const open = sessions.filter((s) => s.status === 'recording' || s.status === 'interrupted');
+    const open = sessions.filter((s) => s.status === 'recording' || s.status === 'interrupted' || s.status === 'paused');
     const box = $('recoverBox'); box.innerHTML = '';
     for (const s of open) {
       for (const pr of await bySession('partials', s.id)) {
@@ -558,7 +590,8 @@
     S.lastBoundaries = out;
     box.innerHTML = out.length ? out.map((l) => {
       const g = l.audio_gap_ms != null ? l.audio_gap_ms : null;
-      const verdict = g == null ? '' : g > 40 ? `<span class="bad">GAP ${g} ms (audio missing)</span>` : g < -40 ? `<span class="ok">overlap ${-g} ms (audio duplicated, nothing lost)</span>` : `<span class="ok">seamless (${g} ms)</span>`;
+      const isPause = (S.session.pauses || []).some((p) => l.wall_gap_ms > 250 && Math.abs(p.ms - l.wall_gap_ms) < 1500);
+      const verdict = isPause ? `<span class="muted">user pause ${(l.wall_gap_ms / 1000).toFixed(1)} s (deliberate)</span>` : g == null ? '' : g > 40 ? `<span class="bad">GAP ${g} ms (audio missing)</span>` : g < -40 ? `<span class="ok">overlap ${-g} ms (audio duplicated, nothing lost)</span>` : `<span class="ok">seamless (${g} ms)</span>`;
       return `<div>#${l.between[0]}→#${l.between[1]}: wall ${l.wall_gap_ms} ms · b lead-silence ${l.lead_silence_ms ?? '?'} ms · a tail-silence ${l.tail_silence_ms ?? '?'} ms ${verdict} ${l.error ? '<span class="bad">' + esc(l.error) + '</span>' : ''}
         <button data-a="${l.between[0]}" data-b="${l.between[1]}">▶ hear boundary</button></div>`;
     }).join('') : 'Need at least two segments with local audio.';
@@ -615,6 +648,42 @@
     banner('info', `Report: ${sent}, ${copied}, download started.`);
   }
 
+  // -------------------------------------------------------------- summary
+  async function renderSummary() {
+    const box = $('summaryBox');
+    if (!S.session) { box.innerHTML = '<span class="muted">No session.</span>'; return; }
+    const segs = (await bySession('segments', S.session.id)).map(stripBuf).sort((a, b) => a.seq - b.seq);
+    const evs = (await bySession('events', S.session.id)).sort((a, b) => a.wall_ms - b.wall_ms);
+    const full = segs.filter((x) => !x.partial && x.wall_ms > 20000);
+    const kb30 = full.map((x) => (x.bytes / 1024) * (30000 / x.wall_ms));
+    const avg = (a) => a.length ? a.reduce((t, v) => t + v, 0) / a.length : null;
+    const checked = segs.filter((x) => x.decode);
+    const playable = checked.filter((x) => x.decode.ok && x.element && x.element.ok).length;
+    const bounds = [];
+    for (let i = 0; i + 1 < segs.length; i++) { const a = segs[i], b = segs[i + 1]; if (b.seq === a.seq + 1 && a.wall_ms) bounds.push(b.started_wall - (a.started_wall + a.wall_ms)); }
+    const pauses_ = S.session.pauses || [];
+    const inPause = (i) => { const a = segs[i], b = segs[i + 1]; return pauses_.some((p) => p.from >= a.started_wall + a.wall_ms - 2000 && p.to <= b.started_wall + 2000); };
+    const bIdx = []; for (let i = 0; i + 1 < segs.length; i++) if (segs[i + 1].seq === segs[i].seq + 1 && segs[i].wall_ms) bIdx.push(i);
+    const overl = bounds.filter((g) => g <= 0);
+    const gaps = bounds.filter((g, k) => g > 250 && !inPause(bIdx[k]));
+    const pauseBounds = bounds.filter((g, k) => g > 250 && inPause(bIdx[k]));
+    const pick = (kinds) => evs.filter((e) => kinds.includes(e.kind));
+    const line = (e) => `${new Date(e.wall_ms).toLocaleTimeString()} <b>${esc(e.kind)}</b>${e.gap_ms != null ? ' gap ' + (e.gap_ms / 1000).toFixed(1) + 's' : ''}${e.stall_ms != null ? ' frozen ' + (e.stall_ms / 1000).toFixed(1) + 's' : ''}${e.paused_ms != null ? ' paused ' + (e.paused_ms / 1000).toFixed(1) + 's' : ''}${e.decoded_s != null ? ' audio ' + e.decoded_s + 's of ' + e.wall_s + 's' : ''}${e.recovered_s != null ? ' recovered ' + e.recovered_s + 's' : ''}${e.seq != null ? ' #' + e.seq : ''}`;
+    const interrupts = pick(['page_hidden', 'page_visible', 'timer_stall', 'track_muted', 'track_unmuted', 'track_ended', 'recording_interrupted', 'resumed', 'audio_shorter_than_wall', 'rotation_gap', 'recorder_stopped_unexpectedly', 'recorder_create_failed', 'recorder_error', 'wakelock_released', 'pagehide', 'page_frozen']).filter((e) => !(e.kind === 'wakelock_released' && e.level === 'info'));
+    const reloads = pick(['page_reloaded_during_recording', 'partial_segment_recovered', 'segment_lost_on_reload']);
+    const pauses = pick(['user_paused', 'user_resumed', 'pause_gap']);
+    box.innerHTML = `
+      <div><b>Device:</b> ${esc(navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 120))}</div>
+      <div><b>A. MIME:</b> ${esc([...new Set(segs.map((x) => x.mime))].join(', ') || S.session.mime)}</div>
+      <div><b>B. 30-second segment size:</b> ${kb30.length ? `avg ${avg(kb30).toFixed(0)} KB (min ${Math.min(...kb30).toFixed(0)}, max ${Math.max(...kb30).toFixed(0)}) over ${kb30.length} full segments` : 'need a segment over 20 s'}</div>
+      <div><b>C. Playable on its own:</b> ${playable}/${checked.length} (decode + &lt;audio&gt;)${checked.length - playable ? ' <span class="bad">' + (checked.length - playable) + ' FAILED</span>' : ''}</div>
+      <div><b>D. Boundaries:</b> ${bounds.length} · overlapping ${overl.length} (avg ${overl.length ? (-avg(overl)).toFixed(0) : '–'} ms) · unexplained gaps &gt;250 ms: ${gaps.length ? '<span class="bad">' + gaps.map((g) => (g / 1000).toFixed(1) + 's').join(', ') + '</span>' : 'none'}${pauseBounds.length ? ' · user pauses: ' + pauseBounds.map((g) => (g / 1000).toFixed(1) + 's').join(', ') : ''}</div>
+      <div><b>Segments:</b> ${segs.length} (${segs.filter((x) => x.partial).length} recovered partial) · wall time ${hms((S.session.last_seg_end_wall || Date.now()) - S.session.started_wall)} · audio ${hms(segs.reduce((t, x) => t + ((x.decode && x.decode.ok ? x.decode.seconds * 1000 : 0)), 0))}</div>
+      <div style="margin-top:6px"><b>E/F. Lock / background / interruptions:</b><br>${interrupts.map(line).join('<br>') || 'none'}</div>
+      <div style="margin-top:6px"><b>G. Reload recovery:</b><br>${reloads.map(line).join('<br>') || 'none'}</div>
+      <div style="margin-top:6px"><b>Pauses:</b><br>${pauses.map(line).join('<br>') || 'none'}</div>`;
+  }
+
   // --------------------------------------------------------------- render
   function banner(kind, html) { $('bannerBox').innerHTML = `<div class="banner ${kind}">${html}</div>`; }
   function clearBanner() { $('bannerBox').innerHTML = ''; }
@@ -631,11 +700,14 @@
   }
   function render() {
     const st = $('stDot');
-    if (S.recording && !S.interrupted) { st.className = 'dot rec'; st.textContent = '● RECORDING'; }
+    if (S.recording && S.paused) { st.className = 'dot intr'; st.textContent = '⏸ PAUSED'; }
+    else if (S.recording && !S.interrupted) { st.className = 'dot rec'; st.textContent = '● RECORDING'; }
     else if (S.interrupted) { st.className = 'dot intr'; st.textContent = '⚠ INTERRUPTED'; }
     else { st.className = 'dot idle'; st.textContent = S.session ? '■ STOPPED' : '○ IDLE'; }
     $('btnStart').disabled = S.recording;
     $('btnStop').disabled = !S.recording;
+    $('btnPause').disabled = !S.recording || S.interrupted;
+    $('btnPause').textContent = S.paused ? '▶ Resume (paused)' : '⏸ Pause';
     $('btnResume').disabled = !(S.recording && S.interrupted);
     const segs = S.segs;
     $('nSeg').textContent = segs.length;
@@ -673,6 +745,7 @@
 
   // ---------------------------------------------------------------- wire
   $('btnStart').onclick = () => startRecording(null);
+  $('btnPause').onclick = () => (S.paused ? resumeFromPause() : pauseRecording());
   $('btnStop').onclick = () => { if (confirm('Stop this recording?')) stopRecording(); };
   $('btnResume').onclick = async () => {
     try { S.stream && S.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
@@ -680,6 +753,7 @@
     await startRecording(S.session);
   };
   $('btnAnalyze').onclick = analyzeBoundaries;
+  $('btnSummary').onclick = renderSummary;
   $('btnServer').onclick = checkServer;
   $('btnReport').onclick = sendReport;
   $('btnClear').onclick = async () => {
