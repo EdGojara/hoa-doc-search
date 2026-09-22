@@ -247,10 +247,13 @@ function visibleAssets(){ return ASSETS.filter(a => !a.parent_asset_id || a.id==
 function selState(a){ if(a.id===selectedId) return 'sel'; if(selectedId && a.parent_asset_id===selectedId) return 'child'; if(selectedId) return 'dim'; return 'normal'; }
 function isLine(a){ return a.geometry && (a.geometry.type==='LineString' || a.geometry.type==='MultiLineString'); }
 function styleFor(a){ const c=lensColor(a); const line=isLine(a); const s=selState(a);
-  if (s==='sel')  return { color:c, weight:line?7:3.5, fillColor:c, fillOpacity:0.45, opacity:1 };
-  if (s==='child')return { color:c, weight:line?3:1.5, fillColor:c, fillOpacity:0.32, opacity:0.95, dashArray:'3,3' };
-  if (s==='dim')  return { color:c, weight:line?3:1.5, fillColor:c, fillOpacity:0.12, opacity:0.45 };
-  return { color:c, weight:line?4:2, fillColor:c, fillOpacity:0.38, opacity:0.95 };
+  // Outline stays crisp so the managed physical area is obvious; fill is kept
+  // subtle/translucent so the satellite imagery reads through beneath it. The
+  // attention dot (separate ATTN layer) sits ON TOP — both are visible at once.
+  if (s==='sel')  return { color:c, weight:line?7:4,   fillColor:c, fillOpacity:0.42, opacity:1 };
+  if (s==='child')return { color:c, weight:line?3:1.5, fillColor:c, fillOpacity:0.26, opacity:0.95, dashArray:'3,3' };
+  if (s==='dim')  return { color:c, weight:line?3:1.5, fillColor:c, fillOpacity:0.10, opacity:0.45 };
+  return { color:c, weight:line?4:2.5, fillColor:c, fillOpacity:0.28, opacity:0.95 };
 }
 function pointMarker(a, latlng){ const c=lensColor(a); const s=selState(a); let r=isChild(a)?5:8;
   if (activeLens==='spending' && spendMode==='amount' && s!=='dim'){ r=({none:5,low:7,med:10,high:14})[spendBucket(a)]; if(isChild(a)) r=Math.max(4,r-3); }
