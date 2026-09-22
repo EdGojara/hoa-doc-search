@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Meeting Recorder · Trusted</title>
+<!--
+  MEETING RECORDER, Phase 1 (Ed 2026-09-22). Long-form, session-based board
+  meeting recording. Standalone page (never inline in index.html). Uses the
+  reliability engine in /js/segment-recorder.js. Phase 1 keeps recordings on
+  THIS DEVICE ONLY: no upload, no transcription, no Paige yet; those tabs are
+  labeled placeholders. Reads /api/communities and /api/agendas (read-only).
+-->
+<link rel="stylesheet" href="/brand.css">
+<style>
+  :root { --ok: #15803d; --warn: #b45309; --bad: #b91c1c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--cream, #faf8f3); color: var(--ink, #1f2937); font-family: var(--font-sans, system-ui, sans-serif); font-size: 15px; }
+  header { background: var(--navy, #0b1d34); color: #fff; padding: 14px 20px; display: flex; align-items: center; gap: 14px; }
+  header a { color: var(--gold-bright, #e6c65a); text-decoration: none; font-size: 13px; }
+  header h1 { margin: 0; font-family: var(--font-serif, Georgia, serif); font-size: 21px; font-weight: 600; letter-spacing: .01em; }
+  header .tag { font-size: 12px; opacity: .75; }
+  main { max-width: 980px; margin: 0 auto; padding: 18px 16px 80px; }
+  .card { background: #fff; border: 1px solid var(--rule, #e5e7eb); border-radius: 12px; padding: 18px; margin: 14px 0; }
+  .card h2 { margin: 0 0 12px; font-size: 16px; color: var(--navy, #0b1d34); text-transform: uppercase; letter-spacing: .06em; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  label { display: block; font-size: 12px; color: var(--ink-soft, #555); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .04em; }
+  select, input { width: 100%; font: inherit; padding: 9px 10px; border: 1px solid var(--rule-strong, #cbd5e1); border-radius: 8px; background: #fff; }
+  button { font: inherit; border-radius: 9px; border: 1px solid var(--rule-strong, #cbd5e1); background: #fff; padding: 10px 16px; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  .primary { background: var(--navy, #0b1d34); color: #fff; border-color: var(--navy, #0b1d34); font-weight: 600; }
+  .start { width: 100%; padding: 20px; font-size: 19px; margin-top: 16px; }
+  .danger { background: var(--bad); color: #fff; border-color: var(--bad); }
+  .muted { color: var(--ink-faint, #888); font-size: 13px; }
+  .console { display: none; }
+  .live { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .dot { font-weight: 700; font-size: 20px; letter-spacing: .04em; }
+  .rec { color: var(--bad); } .paused { color: var(--warn); } .intr { color: var(--warn); }
+  .clock { font-family: var(--font-mono, ui-monospace, monospace); font-size: 48px; color: var(--navy, #0b1d34); line-height: 1; }
+  .ctx { font-size: 14px; color: var(--ink-soft, #555); }
+  .markers { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 16px; }
+  .markers button { padding: 14px; font-weight: 600; }
+  .exec-on { background: #fef3c7; border-color: #d97706; color: #78350f; }
+  .ctl { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  .ctl button { flex: 1; min-width: 140px; padding: 14px; }
+  .banner { padding: 12px 14px; border-radius: 10px; margin: 12px 0; font-size: 14px; }
+  .banner.warn { background: #fef3c7; color: #78350f; } .banner.bad { background: #fee2e2; color: #7f1d1d; } .banner.info { background: #e0f2fe; color: #0c4a6e; } .banner.ok { background: #dcfce7; color: #14532d; }
+  .execbar { display: none; background: #d97706; color: #fff; text-align: center; padding: 8px; font-weight: 700; letter-spacing: .08em; border-radius: 8px; margin-top: 12px; }
+  .health { margin-top: 12px; font-size: 14px; }
+  .timeline { font-size: 13px; max-height: 220px; overflow: auto; margin-top: 10px; }
+  .timeline div { padding: 5px 0; border-bottom: 1px dashed var(--rule, #e5e7eb); }
+  .sess { padding: 12px 0; border-bottom: 1px solid var(--rule, #e5e7eb); cursor: pointer; }
+  .sess:hover { background: var(--light-gray, #f7f7f7); }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0; }
+  .tabs button { padding: 7px 12px; font-size: 13px; }
+  .tabs button.on { background: var(--navy, #0b1d34); color: #fff; }
+  .placeholder { border: 1px dashed var(--rule-strong, #cbd5e1); border-radius: 10px; padding: 18px; color: var(--ink-soft, #555); background: var(--light-gray, #f7f7f7); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <a href="/" title="Back to Trusted">← Trusted</a>
+  <div>
+    <h1>🎙️ Meeting Recorder</h1>
+    <div class="tag">Long-form board meeting recording · best on a laptop with a conference microphone</div>
+  </div>
+</header>
+<main>
+  <div id="recoverBox"></div>
+  <div id="bannerBox"></div>
+
+  <!-- 1. Setup -->
+  <section class="card" id="setup">
+    <h2>New meeting recording</h2>
+    <div class="grid2">
+      <div>
+        <label for="community">Community</label>
+        <select id="community"><option value="">Loading communities…</option></select>
+      </div>
+      <div>
+        <label for="meeting">Meeting</label>
+        <select id="meeting" disabled><option value="">Choose a community first</option></select>
+      </div>
+    </div>
+    <div class="grid2" id="newMeetingFields" style="margin-top:14px; display:none">
+      <div><label for="mTitle">Meeting title</label><input id="mTitle" placeholder="Regular Board Meeting"></div>
+      <div><label for="mDate">Date</label><input id="mDate" type="date"></div>
+      <div>
+        <label for="mType">Meeting type</label>
+        <select id="mType">
+          <option value="regular">Regular board meeting</option>
+          <option value="annual">Annual members meeting</option>
+          <option value="special">Special meeting</option>
+          <option value="executive">Executive session</option>
+          <option value="organizational">Organizational meeting</option>
+        </select>
+      </div>
+      <div><label for="mLocation">Location (optional)</label><input id="mLocation" placeholder="Clubhouse"></div>
+    </div>
+    <button id="btnStart" class="primary start" disabled>● Start recording</button>
+    <div class="muted" id="deviceLine" style="margin-top:10px"></div>
+  </section>
+
+  <!-- 2. Live console -->
+  <section class="card console" id="console">
+    <div class="live">
+      <span id="stDot" class="dot rec">● RECORDING</span>
+      <span id="clock" class="clock">00:00:00</span>
+    </div>
+    <div class="ctx" id="ctxLine"></div>
+    <div class="execbar" id="execBar">EXECUTIVE SESSION IN PROGRESS</div>
+    <div class="markers">
+      <button data-mark="minutes">📝 Mark for minutes</button>
+      <button data-mark="action_item">✅ Action item</button>
+      <button data-mark="important">⭐ Important</button>
+      <button id="btnExec">🔒 Executive session</button>
+    </div>
+    <div class="ctl">
+      <button id="btnPause">⏸ Pause</button>
+      <button id="btnResumeIntr" style="display:none" class="primary">↻ Resume recording</button>
+      <button id="btnStop" class="danger">■ Stop meeting</button>
+    </div>
+    <div class="health" id="health"></div>
+    <div class="timeline" id="timeline"></div>
+  </section>
+
+  <!-- 3. Recordings on this device -->
+  <section class="card" id="history">
+    <h2>Recordings on this device</h2>
+    <div id="sessions" class="muted">None yet.</div>
+    <div id="detail"></div>
+  </section>
+</main>
+
+<script src="/js/trusted-audio.js"></script>
+<script src="/js/segment-recorder.js"></script>
+<script>
+(function () {
+  'use strict';
+  const TA = window.TrustedAudio;
+  const $ = (id) => document.getElementById(id);
+  const esc = TA.esc;
+  const MARK_LABEL = { minutes: '📝 Marked for minutes', action_item: '✅ Action item', important: '⭐ Important', exec_start: '🔒 Executive session started', exec_end: '🔓 Executive session ended' };
+  const EVENT_LABEL = { recording_started: 'Recording started', paused: 'Paused', resumed: 'Resumed', recording_stopped: 'Recording stopped', page_hidden: 'Screen/app hidden', page_visible: 'Back on screen',
+    page_was_frozen: 'Device suspended the page', mic_muted_by_device: 'Device muted the microphone', mic_unmuted: 'Microphone back', recording_interrupted: 'Recording interrupted',
+    resumed_after_interruption: 'Resumed after interruption', page_reloaded_during_recording: 'Page reloaded during recording', partial_segment_recovered: 'Recovered audio after reload',
+    segment_lost_on_reload: 'Audio lost on reload', wakelock_released: 'Screen-awake lock lost', segment_not_playable: 'A segment failed its playback check', recorder_restarted: 'Recorder restarted' };
+
+  let communities = [];
+  let current = null; // session being shown in the console
+  let execOpen = false;
+
+  const rec = window.createSegmentRecorder({
+    segMs: 30000, overlapMs: 500,
+    // Phase 1: no uploadUrl -> recordings stay on this device (explicit, by design).
+    onChange: () => render(),
+    onEvent: () => renderTimeline(),
+  });
+
+  // ---------------------------------------------------------- setup
+  $('mDate').value = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  $('deviceLine').textContent = `${window.MediaRecorder ? 'Recording supported' : 'This browser cannot record audio'} · format ${TA.pickMime() || 'browser default'} · keep-screen-awake ${'wakeLock' in navigator ? 'supported' : 'not supported (keep the screen on manually)'} · recordings are saved on this device (server upload comes in a later phase)`;
+
+  TA.loadCommunities().then((list) => {
+    communities = list;
+    let last = null; try { last = localStorage.getItem('mr_last_community'); } catch (_) {}
+    $('community').innerHTML = '<option value="">Select a community…</option>' + list.map((c) => `<option value="${esc(c.id)}"${c.id === last ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+    if (last && list.some((c) => c.id === last)) loadMeetings();
+  }).catch((e) => { $('community').innerHTML = '<option value="">Could not load communities</option>'; banner('bad', 'Could not load communities: ' + esc(e.message)); });
+
+  async function loadMeetings() {
+    const cid = $('community').value;
+    try { localStorage.setItem('mr_last_community', cid); } catch (_) {}
+    const sel = $('meeting');
+    if (!cid) { sel.disabled = true; sel.innerHTML = '<option value="">Choose a community first</option>'; validate(); return; }
+    sel.disabled = false;
+    sel.innerHTML = '<option value="__new">➕ New meeting…</option>';
+    try {
+      const r = await fetch(`/api/agendas?community_id=${encodeURIComponent(cid)}`, { credentials: 'same-origin' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const today = new Date().toISOString().slice(0, 10);
+      const agendas = (j.agendas || []).filter((a) => a.meeting_date).sort((a, b) => Math.abs(new Date(a.meeting_date) - new Date(today)) - Math.abs(new Date(b.meeting_date) - new Date(today))).slice(0, 25);
+      if (agendas.length) {
+        sel.innerHTML += '<optgroup label="Meetings with an agenda">' + agendas.map((a) => `<option value="${esc(a.id)}">${esc(fmtDate(a.meeting_date))} · ${esc(a.title || typeLabel(a.meeting_type))}</option>`).join('') + '</optgroup>';
+        const todays = agendas.find((a) => a.meeting_date === today);
+        if (todays) sel.value = todays.id;
+      }
+    } catch (e) { banner('warn', 'Existing meetings could not be loaded; you can still record as a new meeting. (' + esc(e.message) + ')'); }
+    sel.dataset.agendas = '';
+    onMeetingChange();
+  }
+  function onMeetingChange() { $('newMeetingFields').style.display = $('meeting').value === '__new' ? '' : 'none'; validate(); }
+  function validate() { $('btnStart').disabled = !$('community').value || !$('meeting').value || rec.state.recording; }
+  $('community').onchange = loadMeetings;
+  $('meeting').onchange = onMeetingChange;
+
+  function typeLabel(t) { return ({ regular: 'Regular Board Meeting', annual: 'Annual Members Meeting', special: 'Special Meeting', executive: 'Executive Session', organizational: 'Organizational Meeting', budget: 'Budget Meeting', emergency: 'Emergency Meeting' })[t] || 'Board Meeting'; }
+  function fmtDate(d) { try { return new Date(d + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); } catch (_) { return d; } }
+
+  $('btnStart').onclick = async () => {
+    const cid = $('community').value;
+    const comm = communities.find((c) => c.id === cid) || {};
+    const mv = $('meeting').value;
+    const opt = $('meeting').selectedOptions[0];
+    const meeting = mv === '__new'
+      ? { source: 'new', title: $('mTitle').value.trim() || typeLabel($('mType').value), date: $('mDate').value, type: $('mType').value, location: $('mLocation').value.trim() || null }
+      : { source: 'agenda', agenda_id: mv, title: opt ? opt.textContent : 'Board meeting' };
+    try {
+      current = await rec.start({ community_id: cid, community_name: comm.name || '', meeting });
+      execOpen = false;
+      clearBanner(); render(); renderTimeline();
+    } catch (e) { banner('bad', 'Could not start recording: ' + esc(e.message) + '. Check the browser\'s microphone permission for this site.'); }
+  };
+
+  // --------------------------------------------------------- console
+  document.querySelectorAll('[data-mark]').forEach((b) => { b.onclick = async () => { await rec.mark(b.dataset.mark); flash(b); }; });
+  $('btnExec').onclick = async () => {
+    execOpen = !execOpen;
+    await rec.mark(execOpen ? 'exec_start' : 'exec_end');
+    render();
+  };
+  $('btnPause').onclick = () => (rec.state.paused ? rec.resume() : rec.pause());
+  $('btnResumeIntr').onclick = async () => { try { await rec.resumeAfterInterruption(); clearBanner(); } catch (e) { banner('bad', 'Could not resume: ' + esc(e.message)); } };
+  $('btnStop').onclick = async () => {
+    if (!confirm('Stop recording this meeting?')) return;
+    if (execOpen) { await rec.mark('exec_end'); execOpen = false; }
+    await rec.stop();
+    const st = rec.state.session;
+    banner('ok', `Meeting recording saved on this device${st ? ' · ' + esc(st.meeting && st.meeting.title) : ''}. Transcript, summary and draft minutes arrive in a later phase.`);
+    render(); renderSessions(); if (st) openDetail(st.id);
+  };
+  function flash(b) { b.style.background = '#dcfce7'; setTimeout(() => { b.style.background = ''; }, 500); }
+
+  function activeMs(s) {
+    if (!s) return 0;
+    const end = rec.state.recording ? Date.now() : (s.stopped_wall || s.last_audio_wall || Date.now());
+    let paused = (s.pauses || []).reduce((t, p) => t + p.ms, 0);
+    if (rec.state.paused && rec.state.pausedAt) paused += Date.now() - rec.state.pausedAt;
+    return end - s.started_wall - paused;
+  }
+
+  async function render() {
+    const st = rec.state;
+    const live = st.recording;
+    $('setup').style.display = live ? 'none' : '';
+    $('console').style.display = live ? 'block' : 'none';
+    validate();
+    if (!live) return;
+    const s = st.session;
+    const dot = $('stDot');
+    if (st.interrupted) { dot.className = 'dot intr'; dot.textContent = '⚠ INTERRUPTED'; }
+    else if (st.paused) { dot.className = 'dot paused'; dot.textContent = '⏸ PAUSED'; }
+    else { dot.className = 'dot rec'; dot.textContent = '● RECORDING'; }
+    $('clock').textContent = TA.hms(activeMs(s));
+    $('ctxLine').textContent = `${s.community_name || ''} · ${s.meeting ? s.meeting.title : ''}`;
+    execOpen = !!s.exec_open;
+    $('execBar').style.display = execOpen ? 'block' : 'none';
+    $('btnExec').textContent = execOpen ? '🔓 End executive session' : '🔒 Executive session';
+    $('btnExec').className = execOpen ? 'exec-on' : '';
+    $('btnPause').textContent = st.paused ? '▶ Resume' : '⏸ Pause';
+    $('btnPause').style.display = st.interrupted ? 'none' : '';
+    $('btnResumeIntr').style.display = st.interrupted ? '' : 'none';
+    document.querySelectorAll('[data-mark], #btnExec').forEach((b) => { b.disabled = st.interrupted; });
+    if (st.interrupted) banner('bad', 'Recording was interrupted by the device or browser. Everything captured so far is safe on this device. Tap <b>Resume recording</b> to continue this meeting.');
+    const snap = await rec.snapshot();
+    if (snap) {
+      const segs = snap.segments;
+      const bad = segs.filter((x) => x.decode && !x.decode.ok).length;
+      $('health').innerHTML = `✓ ${segs.length} audio segment${segs.length === 1 ? '' : 's'} saved on this device${bad ? ` · <span class="bad">${bad} failed playback check</span>` : ''} · screen-awake: ${st.wakeSupported ? (st.wakeLock ? 'on' : '<span class="bad">off, keep the screen on</span>') : 'not supported, keep the screen on'}`;
+    }
+  }
+  setInterval(() => { if (rec.state.recording) $('clock').textContent = TA.hms(activeMs(rec.state.session)); }, 1000);
+
+  async function renderTimeline() {
+    const snap = await rec.snapshot();
+    if (!snap || !rec.state.recording) return;
+    $('timeline').innerHTML = timelineHtml(snap).slice(0, 60).join('');
+  }
+  function timelineHtml(snap) {
+    const s = snap.session;
+    return snap.events.slice().reverse().filter((e) => e.kind === 'marker' || EVENT_LABEL[e.kind]).map((e) => {
+      const t = TA.hms((e.wall_ms || 0) - s.started_wall);
+      const label = e.kind === 'marker' ? MARK_LABEL[e.marker] || e.marker : EVENT_LABEL[e.kind];
+      const extra = e.gap_ms ? ` (gap ${Math.round(e.gap_ms / 1000)} s)` : e.paused_ms ? ` (${Math.round(e.paused_ms / 1000)} s)` : e.frozen_ms ? ` (${Math.round(e.frozen_ms / 1000)} s)` : e.recovered_s ? ` (${e.recovered_s} s)` : '';
+      const cls = e.level === 'bad' ? 'bad' : e.level === 'warn' ? 'muted' : '';
+      return `<div class="${cls}"><b>${t}</b> ${esc(label)}${esc(extra)}</div>`;
+    });
+  }
+
+  // --------------------------------------------------------- history
+  async function renderSessions() {
+    const list = (await rec.listSessions()).filter((s) => s.status === 'stopped');
+    if (!list.length) { $('sessions').innerHTML = '<span class="muted">None yet.</span>'; return; }
+    $('sessions').innerHTML = list.slice(0, 30).map((s) => {
+      const dur = TA.hms(((s.stopped_wall || s.last_audio_wall || s.started_wall) - s.started_wall) - (s.pauses || []).reduce((t, p) => t + p.ms, 0));
+      return `<div class="sess" data-id="${esc(s.id)}"><b>${esc(s.meeting ? s.meeting.title : 'Meeting')}</b> · ${esc(s.community_name || '')}<br><span class="muted">${esc(new Date(s.started_wall).toLocaleString())} · ${dur} recorded · on this device</span></div>`;
+    }).join('');
+    document.querySelectorAll('.sess').forEach((d) => { d.onclick = () => openDetail(d.dataset.id); });
+  }
+
+  async function openDetail(id) {
+    const s = (await rec.listSessions()).find((x) => x.id === id);
+    if (!s) return;
+    const { segments: segs, events } = await rec.sessionData(id);
+    const markers = events.filter((e) => e.kind === 'marker');
+    const bad = segs.filter((x) => x.decode && !x.decode.ok).length;
+    const gaps = events.filter((e) => e.level === 'bad');
+    const tabs = ['Overview', 'Transcript', 'Summary', 'Draft minutes', 'Motions & votes', 'Action items'];
+    $('detail').innerHTML = `
+      <div class="card" style="margin-top:16px">
+        <h2>${esc(s.meeting ? s.meeting.title : 'Meeting')}</h2>
+        <div class="muted">${esc(s.community_name || '')} · ${esc(new Date(s.started_wall).toLocaleString())}</div>
+        <div class="tabs">${tabs.map((t, i) => `<button data-tab="${i}" class="${i === 0 ? 'on' : ''}">${t}</button>`).join('')}</div>
+        <div id="tabBody"></div>
+      </div>`;
+    const body = (i) => {
+      if (i === 0) {
+        return `<div>${segs.length} segments · ${(segs.reduce((t, x) => t + x.bytes, 0) / 1048576).toFixed(1)} MB · ${bad ? `<span class="bad">${bad} failed playback check</span>` : '<span class="ok">all segments passed the playback check</span>'} · ${gaps.length ? `<span class="bad">${gaps.length} interruption/loss event(s)</span>` : 'no interruptions logged'}</div>
+          <div style="margin-top:10px"><b>Markers</b> (${markers.length})</div>
+          <div class="timeline">${markers.length ? markers.map((e) => `<div><b>${TA.hms(e.wall_ms - s.started_wall)}</b> ${esc(MARK_LABEL[e.marker] || e.marker)}</div>`).join('') : '<span class="muted">No markers.</span>'}</div>
+          <div style="margin-top:10px"><b>Listen</b> <select id="segPick">${segs.map((x) => `<option value="${x.seq}">${TA.hms(x.started_wall - s.started_wall)} (${Math.round((x.wall_ms || 0) / 1000)} s)${x.partial ? ' recovered' : ''}</option>`).join('')}</select> <button id="segPlay">▶ Play</button></div>
+          <div class="banner info" style="margin-top:12px">Saved on this device only. Server upload, transcription and Paige's minutes are later phases.</div>`;
+      }
+      const what = ['', 'The full transcript with speaker labels', 'A meeting summary and executive summary', 'Draft board minutes for review', 'Detected motions, movers, seconds and vote results (flagged when uncertain)', 'Action items with owners and due dates'][i];
+      return `<div class="placeholder"><b>Coming in a later phase.</b><br>${what} will appear here once transcription and Paige's meeting processing are built. Nothing is generated yet.</div>`;
+    };
+    const show = (i) => {
+      $('tabBody').innerHTML = body(i);
+      document.querySelectorAll('#detail .tabs button').forEach((b) => b.classList.toggle('on', Number(b.dataset.tab) === i));
+      if (i === 0 && $('segPlay')) $('segPlay').onclick = async () => {
+        const row = segs.find((x) => x.seq === Number($('segPick').value));
+        if (!row || !row.buf) return;
+        new Audio(URL.createObjectURL(new Blob([row.buf], { type: row.mime }))).play().catch((e) => banner('bad', 'Playback failed: ' + esc(e.message)));
+      };
+    };
+    document.querySelectorAll('#detail .tabs button').forEach((b) => { b.onclick = () => show(Number(b.dataset.tab)); });
+    show(0);
+  }
+
+  // --------------------------------------------------------- banners
+  function banner(kind, html) { $('bannerBox').innerHTML = `<div class="banner ${kind}">${html}</div>`; }
+  function clearBanner() { $('bannerBox').innerHTML = ''; }
+
+  // --------------------------------------------------------- recovery
+  rec.recoverUnfinished().then((found) => {
+    const box = $('recoverBox');
+    for (const f of found) {
+      const s = f.session;
+      const div = document.createElement('div');
+      div.className = 'banner warn';
+      div.innerHTML = `An unfinished recording was found: <b>${esc(s.meeting ? s.meeting.title : 'Meeting')}</b> (${esc(s.community_name || '')}, started ${esc(new Date(s.started_wall).toLocaleTimeString())}), ${f.segments} segments saved.
+        <div class="ctl"><button class="primary" data-a="resume">↻ Resume this meeting</button><button data-a="finish">Finish it</button></div>`;
+      div.querySelector('[data-a=resume]').onclick = async () => { rec.adopt(s); div.remove(); try { await rec.resumeAfterInterruption(); } catch (e) { banner('bad', 'Could not resume: ' + esc(e.message)); } };
+      div.querySelector('[data-a=finish]').onclick = async () => { await rec.finishRecovered(s); div.remove(); renderSessions(); };
+      box.appendChild(div);
+    }
+    renderSessions();
+  }).catch((e) => banner('bad', 'Local storage unavailable: ' + esc(e.message)));
+
+  if (!window.isSecureContext) banner('bad', 'Open this page over https to record.');
+})();
+</script>
+</body>
+</html>

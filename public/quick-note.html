@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0B1D34">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Quick Note">
+<title>Quick Note · Trusted</title>
+<!--
+  QUICK NOTE, Phase 1 (Ed 2026-09-22). Fast, phone-first voice capture:
+  reminder, site-visit note, vendor update, "remember this for the board".
+  Deliberately NOT the Meeting Recorder: one recorder, no rotation, few
+  controls. Audio is re-saved to this device every 2 s, so a reload never loses
+  a note. Phase 1 keeps notes on THIS DEVICE ONLY; transcript, summary and task
+  suggestions are labeled placeholders.
+-->
+<link rel="stylesheet" href="/brand.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--navy-deep, #07142a); color: #fff; font-family: var(--font-sans, system-ui, sans-serif); font-size: 16px; min-height: 100vh; }
+  .top { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 0; }
+  .top a { color: var(--gold-bright, #e6c65a); text-decoration: none; font-size: 14px; }
+  .top b { font-size: 17px; }
+  main { max-width: 520px; margin: 0 auto; padding: 10px 16px 60px; }
+  select, input { width: 100%; font: inherit; padding: 11px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.07); color: #fff; }
+  select option { color: #000; }
+  .fields { display: grid; gap: 10px; margin-top: 12px; }
+  .recwrap { display: flex; flex-direction: column; align-items: center; margin: 26px 0 18px; }
+  .recbtn { width: 170px; height: 170px; border-radius: 50%; border: 6px solid rgba(255,255,255,.18); background: var(--gold, #d4af37); color: var(--navy-deep, #07142a); font-size: 20px; font-weight: 700; cursor: pointer; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+  .recbtn.on { background: #dc2626; color: #fff; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(220,38,38,.55); } 70% { box-shadow: 0 0 0 22px rgba(220,38,38,0); } 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0); } }
+  .timer { font-family: var(--font-mono, ui-monospace, monospace); font-size: 30px; margin-top: 14px; }
+  .hint { font-size: 13px; opacity: .7; margin-top: 6px; text-align: center; }
+  .note { background: #fff; color: var(--ink, #1f2937); border-radius: 14px; padding: 14px; margin: 12px 0; }
+  .note h3 { margin: 0 0 4px; font-size: 16px; color: var(--navy, #0b1d34); }
+  .note .meta { font-size: 12px; color: var(--ink-faint, #888); }
+  .note audio { width: 100%; margin-top: 10px; }
+  .ph { font-size: 13px; color: var(--ink-soft, #555); background: var(--light-gray, #f3f4f6); border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .row button { flex: 1; font: inherit; font-size: 14px; padding: 9px; border-radius: 9px; border: 1px solid var(--rule-strong, #cbd5e1); background: #fff; cursor: pointer; }
+  .banner { padding: 10px 12px; border-radius: 10px; margin: 10px 0; font-size: 14px; }
+  .banner.bad { background: #fee2e2; color: #7f1d1d; } .banner.warn { background: #fef3c7; color: #78350f; } .banner.ok { background: #dcfce7; color: #14532d; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; opacity: .7; margin: 26px 0 4px; }
+</style>
+</head>
+<body>
+<div class="top"><a href="/">← Trusted</a><b>🎤 Quick Note</b><span style="width:60px"></span></div>
+<main>
+  <div id="bannerBox"></div>
+  <div class="fields">
+    <select id="community"><option value="">No community (general note)</option></select>
+    <input id="title" placeholder="Title (optional, auto-titled if blank)" maxlength="120">
+  </div>
+  <div class="recwrap">
+    <button id="recBtn" class="recbtn">● Record</button>
+    <div class="timer" id="timer">0:00</div>
+    <div class="hint" id="hint">Tap to record · up to 10 minutes · saved on this phone</div>
+  </div>
+  <h2>Recent notes</h2>
+  <div id="notes"><div class="hint">No notes yet.</div></div>
+</main>
+
+<script src="/js/trusted-audio.js"></script>
+<script>
+(function () {
+  'use strict';
+  const TA = window.TrustedAudio;
+  const $ = (id) => document.getElementById(id);
+  const esc = TA.esc;
+  const MAX_MS = 10 * 60 * 1000;
+  const db = TA.openDb('trusted_quick_notes', 1, (d) => {
+    if (!d.objectStoreNames.contains('notes')) d.createObjectStore('notes', { keyPath: 'id' });
+  });
+  let communities = [];
+  let rec = null, stream = null, chunks = [], note = null, startedAt = 0, timerId = null, saving = Promise.resolve();
+
+  function banner(kind, html) { $('bannerBox').innerHTML = html ? `<div class="banner ${kind}">${html}</div>` : ''; }
+  function autoTitle(n) {
+    const c = communities.find((x) => x.id === n.community_id);
+    return `Note · ${new Date(n.created_wall).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}${c ? ' · ' + c.name : ''}`;
+  }
+
+  TA.loadCommunities().then((list) => {
+    communities = list;
+    let last = ''; try { last = localStorage.getItem('qn_last_community') || ''; } catch (_) {}
+    $('community').innerHTML = '<option value="">No community (general note)</option>' + list.map((c) => `<option value="${esc(c.id)}"${c.id === last ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+    renderNotes();
+  }).catch(() => { /* notes still work without a community list */ });
+  $('community').onchange = () => { try { localStorage.setItem('qn_last_community', $('community').value); } catch (_) {} };
+
+  // Persist the in-progress audio every chunk so a reload/crash keeps the note.
+  function persist() {
+    if (!note) return saving;
+    const n = note;
+    saving = saving.then(async () => {
+      n.buf = await new Blob(chunks, { type: n.mime }).arrayBuffer();
+      n.bytes = n.buf.byteLength; n.duration_ms = Date.now() - startedAt;
+      await db.put('notes', n);
+    }).catch(() => {});
+    return saving;
+  }
+
+  async function start() {
+    if (!window.MediaRecorder) { banner('bad', 'This browser cannot record audio.'); return; }
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+    catch (e) { banner('bad', 'Microphone unavailable: ' + esc(e.message) + '. Allow the microphone for this site.'); return; }
+    const mime = TA.pickMime();
+    try { rec = mime ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 32000 }) : new MediaRecorder(stream); }
+    catch (e) { banner('bad', 'Could not start recording: ' + esc(e.message)); return; }
+    chunks = []; startedAt = Date.now();
+    note = { id: TA.newId(), created_wall: startedAt, status: 'recording', mime: rec.mimeType || mime || 'audio/webm', community_id: $('community').value || null, title: $('title').value.trim() || null };
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) { chunks.push(e.data); persist(); } };
+    rec.onstop = finish;
+    rec.start(2000);
+    stream.getAudioTracks()[0].onended = () => { if (rec && rec.state !== 'inactive') { banner('warn', 'The phone stopped the microphone. Your note was saved up to that point.'); rec.stop(); } };
+    $('recBtn').classList.add('on'); $('recBtn').textContent = '■ Stop';
+    $('hint').textContent = 'Recording… tap to stop';
+    banner('', '');
+    timerId = setInterval(() => {
+      const ms = Date.now() - startedAt;
+      $('timer').textContent = TA.ms2mmss(ms);
+      if (ms >= MAX_MS && rec.state !== 'inactive') { banner('warn', 'Quick notes stop at 10 minutes. For longer recordings use the Meeting Recorder.'); rec.stop(); }
+    }, 250);
+  }
+
+  async function finish() {
+    clearInterval(timerId);
+    try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    $('recBtn').classList.remove('on'); $('recBtn').textContent = '● Record';
+    $('hint').textContent = 'Tap to record · up to 10 minutes · saved on this phone';
+    await persist();
+    note.status = 'saved';
+    note.title = $('title').value.trim() || note.title || autoTitle(note);
+    note.sha256 = note.buf ? await TA.sha256Hex(note.buf) : null;
+    note.playable = note.buf ? await TA.checkPlayable(note.buf, note.mime) : { ok: false, error: 'no audio' };
+    await db.put('notes', note);
+    $('title').value = ''; $('timer').textContent = '0:00';
+    banner(note.playable.ok ? 'ok' : 'bad', note.playable.ok ? `Saved “${esc(note.title)}” on this phone.` : 'The note was saved but did not pass the playback check on this phone.');
+    note = null; rec = null;
+    renderNotes();
+  }
+
+  $('recBtn').onclick = () => { if (rec && rec.state !== 'inactive') rec.stop(); else start(); };
+
+  async function renderNotes() {
+    const notes = (await db.all('notes')).filter((n) => n.status !== 'recording').sort((a, b) => b.created_wall - a.created_wall);
+    if (!notes.length) { $('notes').innerHTML = '<div class="hint">No notes yet.</div>'; return; }
+    $('notes').innerHTML = notes.slice(0, 50).map((n) => {
+      const c = communities.find((x) => x.id === n.community_id);
+      return `<div class="note" data-id="${esc(n.id)}">
+        <h3>${esc(n.title || autoTitle(n))}</h3>
+        <div class="meta">${esc(new Date(n.created_wall).toLocaleString())} · ${TA.ms2mmss(n.duration_ms || 0)}${c ? ' · ' + esc(c.name) : ''}${n.recovered ? ' · recovered after reload' : ''} · on this phone</div>
+        <audio controls preload="none" data-audio="${esc(n.id)}"></audio>
+        <div class="ph">📝 Transcript and quick summary: coming soon</div>
+        <div class="ph">✅ Suggested task / follow-up: coming soon</div>
+        <div class="row"><button data-del="${esc(n.id)}">Delete</button></div>
+      </div>`;
+    }).join('');
+    document.querySelectorAll('audio[data-audio]').forEach((a) => {
+      a.addEventListener('play', async () => {
+        if (a.src) return;
+        const n = await db.get('notes', a.dataset.audio);
+        if (n && n.buf) { a.src = URL.createObjectURL(new Blob([n.buf], { type: n.mime })); a.play().catch(() => {}); }
+      }, { once: true });
+    });
+    document.querySelectorAll('[data-del]').forEach((b) => { b.onclick = async () => { if (confirm('Delete this note from this phone?')) { await db.del('notes', b.dataset.del); renderNotes(); } }; });
+  }
+
+  // A note that was mid-recording when the page reloaded is kept, not lost.
+  (async () => {
+    try {
+      for (const n of (await db.all('notes')).filter((x) => x.status === 'recording')) {
+        n.status = 'saved'; n.recovered = true; n.title = n.title || autoTitle(n);
+        if (n.buf) { n.sha256 = await TA.sha256Hex(n.buf); n.playable = await TA.checkPlayable(n.buf, n.mime); }
+        await db.put('notes', n);
+        banner('warn', `A note was still recording when the page closed. Saved what was captured (${TA.ms2mmss(n.duration_ms || 0)}).`);
+      }
+    } catch (e) { banner('bad', 'Local storage unavailable: ' + esc(e.message)); }
+    renderNotes();
+  })();
+  if (!window.isSecureContext) banner('bad', 'Open this page over https to record.');
+})();
+</script>
+</body>
+</html>

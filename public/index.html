@@ -655,6 +655,7 @@
   <div class="tab" onclick="switchTab('docs')">🗂️ Documents</div>
   <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
   <div class="tab" onclick="location.href='/mail-scan.html'" title="Physical mail scan — drop a scanned PDF; classify, route, and log per the Operations Standard">📮 Mail Scan</div>
+  <div class="tab" onclick="location.href='/quick-note.html'" title="Quick Note — fast voice capture on your phone (reminder, site visit, vendor update). Board meetings use Meetings → Meeting Recorder.">🎤 Quick Note</div>
   <div class="tab" onclick="switchTab('blast')">📨 Email Blast</div>
 </div>
 <div class="tab-subbar" id="tabSubbar"
@@ -48682,6 +48683,8 @@ ${questionsPage}
         { id: 'minutes',        label: '📝 Minutes',                 section: 'Monthly Board' },
         { id: 'recaps',         label: '📰 Recaps',                  section: 'Monthly Board' },
         { id: '__chamber',      label: '🎥 Chamber — Live Meeting',  section: 'Monthly Board', href: '/admin/chamber' },
+        // Long-form board meeting recording (standalone page; Quick Note is a separate top-level tab).
+        { id: '__meeting_recorder', label: '🎙️ Meeting Recorder',     section: 'Monthly Board', href: '/meeting-recorder.html' },
       ],
     },
   };
