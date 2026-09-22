@@ -966,7 +966,26 @@ router.get('/asset/:assetId/detail', async (req, res) => {
       ? await supabase.from('vendor_project_events').select('project_id, event_type, from_stage, to_stage, note, created_at').in('project_id', projIds).order('created_at', { ascending: false }).limit(30)
       : { data: [] };
     const { data: reports } = await supabase.from('board_map_reports')
-      .select('id, description, photo_path, status, reported_by_name, created_at').eq('community_asset_id', assetId).order('created_at', { ascending: false }).limit(20);
+      .select('id, description, photo_path, photo_bucket, status, reported_by_name, created_at, related_project_id')
+      .eq('community_asset_id', assetId).order('created_at', { ascending: false }).limit(20);
+    // Visual evidence history: sign each photo (private 'documents' bucket), parse
+    // an optional photo TYPE from the caption convention ("PROGRESS · ..."), and
+    // resolve the linked project title. Reuses the enforcement photo-signing
+    // pattern — no new storage system. photo_type is the only field not yet a
+    // first-class column (see the deferred migration in the report).
+    const PHOTO_TYPES = ['field_update', 'before', 'progress', 'after', 'inspection', 'issue'];
+    const projTitle = {}; (panelProjects || []).forEach((p) => { projTitle[p.id] = p.title; });
+    const photoReports = [];
+    for (const rp of (reports || [])) {
+      let type = null, caption = rp.description || '';
+      const mm = /^([A-Za-z_ ]+?)\s*·\s*([\s\S]*)$/.exec(rp.description || '');
+      if (mm) { const t = mm[1].trim().toLowerCase().replace(/ /g, '_'); if (PHOTO_TYPES.includes(t)) { type = t; caption = mm[2].trim(); } }
+      let photo_url = null;
+      if (rp.photo_path) {
+        try { const { data: sd } = await supabase.storage.from(rp.photo_bucket || 'documents').createSignedUrl(rp.photo_path, 3600); photo_url = sd ? sd.signedUrl : null; } catch (_) { /* signing best-effort */ }
+      }
+      photoReports.push({ id: rp.id, photo_type: type, caption, photo_url, has_photo: !!rp.photo_path, status: rp.status, reported_by_name: rp.reported_by_name, created_at: rp.created_at, related_project_id: rp.related_project_id, project_title: rp.related_project_id ? (projTitle[rp.related_project_id] || null) : null });
+    }
 
     // Project/asset accounting: windowed spend, budget, last-spend, a GL-labelled
     // spend breakdown for the drill-down, and the deterministic lens-aware Asset
@@ -1014,7 +1033,7 @@ router.get('/asset/:assetId/detail', async (req, res) => {
       })),
       rollup: { asset_spend_cents: assetSpend, location_spend_cents: locationSpend, includes_children: (children || []).length },
       financials, spend_breakdown, intelligence,
-      board_motions: motions || [], project_events: events || [], reports: reports || [],
+      board_motions: motions || [], project_events: events || [], reports: photoReports,
     });
   } catch (err) {
     console.error('[community-map] asset detail failed:', err.message);

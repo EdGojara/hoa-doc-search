@@ -42,6 +42,17 @@
   .hint { background:#fffbeb; border:1px solid #fde68a; color:#92400e; font-size:12px; padding:6px 9px; border-radius:6px; margin-top:6px; }
   .assetlabel { background:rgba(11,29,52,.92); color:#eaf1fb; border:none; border-radius:8px; padding:6px 9px; font-size:11.5px; line-height:1.35; box-shadow:0 2px 8px rgba(0,0,0,.3); white-space:nowrap; }
   .assetlabel b { color:#fff; } .assetlabel::before { display:none; }
+  .photocard { margin:4px 0 8px; }
+  .photocard .photo { width:100%; max-height:180px; object-fit:cover; border-radius:10px; display:block; cursor:pointer; background:#0b1d34; }
+  .pmeta { font-size:12px; color:#5a6b83; margin-top:5px; line-height:1.4; }
+  .ptype { display:inline-block; background:#0B1D34; color:#fff; font-size:9.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; padding:2px 6px; border-radius:20px; margin-right:6px; }
+  #gallery { display:none; position:fixed; inset:0; z-index:2000; background:rgba(6,14,26,.82); align-items:center; justify-content:center; }
+  #gallery .gwrap { background:#fff; color:#1c2635; width:min(920px,94vw); max-height:88vh; overflow:auto; border-radius:14px; padding:14px 16px; }
+  #gallery .ghead { display:flex; align-items:center; font-size:15px; margin-bottom:10px; }
+  #gallery .gclose { margin-left:auto; cursor:pointer; font-size:18px; color:#5a6b83; }
+  #gallery .ggrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; }
+  #gallery .gitem img { width:100%; height:150px; object-fit:cover; border-radius:8px; background:#0b1d34; }
+  #gallery .gcap { font-size:11.5px; color:#5a6b83; margin-top:5px; line-height:1.4; }
 </style>
 </head>
 <body>
@@ -112,6 +123,7 @@ const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
 const hybrid = L.layerGroup([esriSat, esriLabels]);
 hybrid.addTo(map);
 const LABELS = L.layerGroup().addTo(map); // compact callouts anchored to asset centroids
+let _lastDetail = null; // cached asset detail for the photo gallery
 document.getElementById('baseSeg').addEventListener('click', e => { const b=e.target.dataset.b; if(!b) return;
   document.querySelectorAll('#baseSeg button').forEach(x=>x.classList.toggle('on', x.dataset.b===b));
   map.removeLayer(hybrid); map.removeLayer(street); (b==='street'?street:hybrid).addTo(map); });
@@ -264,7 +276,7 @@ async function openDetail(id) {
   selectedId=id; renderLabels();
   const r = await cmFetch('/api/community-map/asset/'+id+'/detail');
   if (!r.ok) return;
-  const d = await r.json(); const a=d.asset;
+  const d = await r.json(); _lastDetail = d; const a=d.asset;
   const st = (ASSETS.find(x=>x.id===id)||{}).map_status || 'ok';
   const proj = d.projects||[];
   let html = `<span class="close" onclick="closeSide()">✕</span>`;
@@ -318,8 +330,27 @@ async function openDetail(id) {
     d.board_motions.forEach(m=> html+=`<div class="kv"><b>${esc(m.title)}</b><span>${esc(m.status)}</span></div>`); }
   if (d.project_events && d.project_events.length) { html+=`<h3>History</h3>`;
     d.project_events.slice(0,8).forEach(e=> html+=`<div class="muted">${esc((e.created_at||'').slice(0,10))} — ${esc(e.note||e.event_type)}</div>`); }
-  if (d.reports && d.reports.length) { html+=`<h3>Field reports</h3>`;
-    d.reports.forEach(rp=> html+=`<div class="muted">${esc((rp.created_at||'').slice(0,10))} — ${esc(rp.description||'(photo)')} <i>[${esc(rp.status)}]</i></div>`); }
+  // Field photos — visual evidence history for this physical asset (newest first).
+  const photos = (d.reports||[]).filter(r=>r.has_photo && r.photo_url);
+  if (photos.length) { const latest=photos[0];
+    html += `<h3>Field photos</h3>`;
+    html += `<div class="photocard"><img class="photo" src="${esc(latest.photo_url)}" onclick="openGallery()" alt="Latest field photo">`;
+    html += `<div class="pmeta">${latest.photo_type?`<span class="ptype">${esc(latest.photo_type.replace(/_/g,' '))}</span>`:''}${esc((latest.created_at||'').slice(0,10))} · ${esc(latest.reported_by_name||'')}${latest.caption?`<br>${esc(latest.caption)}`:''}${latest.project_title?`<br><i>${esc(latest.project_title)}</i>`:''}</div></div>`;
+    if (photos.length>1) html += `<button class="btn ghost" onclick="openGallery()">View ${photos.length} photos</button>`;
+  }
+  // Add a photo — reuses the existing asset report/upload endpoint. Camera on
+  // mobile (capture=environment), file upload on desktop.
+  const activeProj = (d.projects||[]).find(p=>['approved','contract_signed','work_started'].includes(p.stage));
+  html += `<h3>Add a photo</h3>
+    <div class="muted" style="margin-bottom:6px">Tied to ${esc(a.name)}${activeProj?` · ${esc(activeProj.title)}`:''}.</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <select id="phType"><option value="field_update">Field update</option><option value="before">Before</option><option value="progress">Progress</option><option value="after">After</option><option value="inspection">Inspection</option><option value="issue">Issue</option></select>
+      <input type="text" id="phCap" placeholder="Optional note" style="flex:1;min-width:120px">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+      <input type="file" id="phFile" accept="image/*" capture="environment">
+      <button class="btn" onclick="addPhoto('${id}','${activeProj?activeProj.id:''}')">📷 Add Photo</button>
+    </div><div id="phMsg" class="muted"></div>`;
 
   html+=`<h3>Message management</h3>
     <div class="muted" style="margin-bottom:6px">This message is tied to ${esc(a.name)} — no need to describe which one.</div>
@@ -341,6 +372,31 @@ async function submitReport(id){
   document.getElementById('rptMsg').textContent = r.ok ? 'Sent to management. It is now part of this asset’s record.' : 'Failed ('+r.status+').';
   if(r.ok){ document.getElementById('rptText').value=''; }
 }
+// Add a field photo — reuses the existing asset report/upload endpoint (multer ->
+// 'documents' bucket -> board_map_reports). Photo type rides the caption tag
+// convention ("PROGRESS · note"); project association uses related_project_id.
+async function addPhoto(id, projectId){
+  const msg=document.getElementById('phMsg');
+  const file=document.getElementById('phFile').files[0];
+  if(!file){ msg.textContent='Choose or take a photo first.'; return; }
+  const type=document.getElementById('phType').value;
+  const cap=(document.getElementById('phCap').value||'').trim();
+  const label=({field_update:'FIELD_UPDATE',before:'BEFORE',progress:'PROGRESS',after:'AFTER',inspection:'INSPECTION',issue:'ISSUE'})[type]||'FIELD_UPDATE';
+  const fd=new FormData(); fd.append('photo',file); fd.append('description', label+' · '+(cap||label.toLowerCase().replace(/_/g,' '))); if(projectId) fd.append('related_project_id', projectId);
+  msg.textContent='Uploading…';
+  const r=await cmFetch('/api/community-map/asset/'+id+'/report',{method:'POST',body:fd});
+  msg.textContent = r.ok ? 'Photo added to this asset.' : 'Failed ('+r.status+').';
+  if(r.ok) openDetail(id);
+}
+function openGallery(){ const d=_lastDetail; if(!d) return; const a=d.asset||{};
+  const photos=(d.reports||[]).filter(r=>r.has_photo && r.photo_url);
+  let g=document.getElementById('gallery'); if(!g){ g=document.createElement('div'); g.id='gallery'; document.body.appendChild(g); }
+  g.innerHTML=`<div class="gwrap"><div class="ghead"><b>${esc(a.name||'Asset')}</b> · field photo history<span class="gclose" onclick="closeGallery()">✕</span></div><div class="ggrid">`
+    + photos.map(p=>`<div class="gitem"><img src="${esc(p.photo_url)}" alt=""><div class="gcap">${p.photo_type?`<span class="ptype">${esc(p.photo_type.replace(/_/g,' '))}</span>`:''}${esc((p.created_at||'').slice(0,10))}${p.project_title?` · ${esc(p.project_title)}`:''}${p.caption?`<br>${esc(p.caption)}`:''}<br><span class="muted">${esc(p.reported_by_name||'')}</span></div></div>`).join('')
+    + `</div></div>`;
+  g.style.display='flex';
+}
+function closeGallery(){ const g=document.getElementById('gallery'); if(g) g.style.display='none'; }
 
 // ---- staff geometry editor: click to place point / draw line / draw polygon ----
 let editMode=null, editPts=[], editLayer=null;
