@@ -24,6 +24,14 @@
   .seg button.on, .time button.on, .base button.on { background:var(--navy); color:#fff; border-color:var(--navy); }
   .legend { display:flex; gap:10px; font-size:11px; align-items:center; }
   .dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:3px; vertical-align:middle; }
+  /* Attention markers — same exception-dot concept as the residential map: a
+     strong red/amber fill with a white halo so it reads on satellite imagery.
+     Static (no animation). Only issues get one; normal assets stay dot-free. */
+  .attn-dot { width:16px; height:16px; border-radius:50%; border:2.5px solid #fff;
+    box-shadow:0 1px 4px rgba(0,0,0,.55); cursor:pointer; box-sizing:border-box; }
+  .attn-dot.red   { background:#c0392b; }
+  .attn-dot.amber { background:#e0873a; }
+  .attn-dot.dim   { opacity:.4; box-shadow:none; }
   h2 { font-size:16px; margin:2px 0 2px; }
   h3 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#5b6672; margin:16px 0 6px; border-bottom:1px solid var(--line); padding-bottom:3px; }
   .pill { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:20px; color:#fff; }
@@ -123,6 +131,7 @@ const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
 const hybrid = L.layerGroup([esriSat, esriLabels]);
 hybrid.addTo(map);
 const LABELS = L.layerGroup().addTo(map); // compact callouts anchored to asset centroids
+const ATTN = L.layerGroup().addTo(map);   // red/amber attention dots (drawn above everything)
 let _lastDetail = null; // cached asset detail for the photo gallery
 document.getElementById('baseSeg').addEventListener('click', e => { const b=e.target.dataset.b; if(!b) return;
   document.querySelectorAll('#baseSeg button').forEach(x=>x.classList.toggle('on', x.dataset.b===b));
@@ -185,6 +194,53 @@ const LENSES = {
   },
 };
 function lensColor(a){ const L=LENSES[activeLens]; const col=(typeof L.color==='function')?L.color():L.color; return col[L.bucket(a)]||'#9aa7b8'; }
+// ---- ATTENTION MARKERS ------------------------------------------------------
+// Colored "there is an issue here" dots on top of the existing outlines — the
+// same exception-marker idea the residential (Drama Creek) map uses. Only lenses
+// where an asset can NEED attention get dots (Condition / Projects / Budget);
+// Spending + Spend-age keep their existing graduated visualization. A dot is
+// PURELY a navigator: clicking it opens the existing asset record (select parent
+// -> reveal child systems -> fit -> open detail panel). No new detail system.
+const _cond = a => COND_BUCKET[(a.metrics&&a.metrics.condition)||a.condition]||'unknown';
+const _proj = a => (a.metrics&&a.metrics.project_status)||'none';
+const _bud  = a => (a.metrics&&a.metrics.budget&&a.metrics.budget.status)||'none';
+// Attention level for a PRIMARY asset under the active lens: 'red' | 'amber' | null.
+function attnLevel(a){
+  if (activeLens==='condition'){ const b=_cond(a); return b==='poor'?'red':b==='fair'?'amber':null; }
+  if (activeLens==='budget'){ const s=_bud(a);  return s==='over'?'red':s==='watch'?'amber':null; }
+  if (activeLens==='projects'){ const s=_proj(a); return s==='awaiting_approval'?'red':s==='active'?'amber':null; }
+  return null; // spending / spend-age retain their existing visualization
+}
+function attnReason(a){
+  if (activeLens==='condition') return (_cond(a)==='poor'?'poor':'fair')+' condition';
+  if (activeLens==='budget')    return _bud(a)==='over'?'over approved':'approaching approved';
+  if (activeLens==='projects')  return _proj(a)==='awaiting_approval'?'project awaiting approval':'active project';
+  return '';
+}
+// The dot sits over the CHILD SYSTEM that drives the issue when one exists
+// (e.g. Median 7 -> Median 7 Irrigation centroid), else the parent centroid.
+function driverChild(a){
+  const kids = ASSETS.filter(x=>x.parent_asset_id===a.id); if(!kids.length) return null;
+  if (activeLens==='condition'){ const pb=_cond(a); return kids.find(k=>_cond(k)===pb)||null; }
+  if (activeLens==='projects'){ const ps=_proj(a);  return kids.find(k=>_proj(k)===ps)||null; }
+  if (activeLens==='budget'){ const bs=_bud(a);   return kids.find(k=>_bud(k)===bs)||null; }
+  return null;
+}
+function attnLatLng(a){ const c=driverChild(a); const cen=(c&&c.centroid)||a.centroid; return cen?[cen.lat,cen.lng]:null; }
+// Rebuild the attention layer for the current lens. Primaries only — a child's
+// issue surfaces as its parent's dot at the child's location.
+function drawAttention(){
+  if(!ATTN) return; ATTN.clearLayers();
+  ASSETS.filter(a=>!a.parent_asset_id).forEach(a=>{
+    const lvl=attnLevel(a); if(!lvl) return;
+    const ll=attnLatLng(a); if(!ll) return;
+    const dim = selectedId && a.id!==selectedId && a.parent_asset_id!==selectedId;
+    const m=L.marker(ll,{ icon:L.divIcon({ className:'', html:`<div class="attn-dot ${lvl}${dim?' dim':''}"></div>`, iconSize:[16,16], iconAnchor:[8,8] }), interactive:true, keyboard:false, zIndexOffset:1000 });
+    m.on('click', e=>{ L.DomEvent.stop(e); openDetail(a.id); });
+    m.bindTooltip(esc(a.name)+' — '+esc(attnReason(a)), { direction:'top', offset:[0,-6] });
+    ATTN.addLayer(m);
+  });
+}
 // Default map shows PRIMARY (top-level) assets. A selected asset also reveals its
 // child systems. Unrelated assets de-emphasise so the selected place stands out.
 function visibleAssets(){ return ASSETS.filter(a => !a.parent_asset_id || a.id===selectedId || (selectedId && a.parent_asset_id===selectedId)); }
@@ -231,7 +287,7 @@ function drawAssets(){
     });
     LAYERS[a.id]=lyr; lyr.addTo(map);
   });
-  renderLegend(); renderLabels();
+  renderLegend(); renderLabels(); drawAttention();
 }
 // Center/zoom on the selected asset (and its child systems), so THIS physical
 // place fills the view when its record opens.
