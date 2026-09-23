@@ -211,6 +211,7 @@
           <div><span class="muted">Vote</span><br>${esc(counts)}</div><div><span class="muted">Result</span><br><b class="mi-res ${esc(m.result)}">${esc(RESULT_LABEL[m.result] || m.result)}</b></div></div>
           ${support(m)}${reasons(m)}</div>`;
       }).join('') : '<div class="placeholder">No motions were found in the open session.</div>'}
+      ${(A.checked.possible_missed_motions || []).map((x) => `<div class="mi-card"><div class="mi-card-h"><b>Possible motion not listed</b> ${badge(x.status)}</div><div class="mi-quote">${esc(x.speaker_label)}: “${esc(x.text)}” · ${timeLink(x.time_ref.audio_ms, x.time_ref.label)}</div>${reasons(x)}</div>`).join('')}
       ${A.checked.decisions.filter((d) => !d.withheld).length ? `<h3 class="mi-h">Other decisions</h3>${A.checked.decisions.filter((d) => !d.withheld).map((d) => `<div class="mi-card">${esc(d.text)} ${badge(d.status)}${support(d)}${reasons(d)}</div>`).join('')}` : ''}`;
       wireTimes(el); wireReanalyze(el);
     }

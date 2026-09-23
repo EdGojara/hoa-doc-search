@@ -105,6 +105,13 @@ t('recording gap: items within 20 s are NEEDS_REVIEW near_recording_gap', () => 
   assert.ok(codes(motion(c, /landscap|lone star/i)).includes('near_recording_gap'));
   assert.ok(c.summary.review_reasons.some((r) => r.code === 'recording_gaps'));
 });
+t('a motion Paige did not list ("So moved.") is flagged possible_motion_not_listed; none when all are listed', () => {
+  assert.strictEqual(base.possible_missed_motions.length, 0);
+  const r = clone(RAW); r.motions = r.motions.filter((m) => !/adjourn/i.test(m.motion_text));
+  const c = check(r);
+  assert.ok(c.possible_missed_motions.some((x) => /So moved/.test(x.text) && x.status === 'NEEDS_REVIEW'), JSON.stringify(c.possible_missed_motions));
+  assert.ok(/\[NEEDS REVIEW: possible motion at .* "So moved\."\]/.test(buildDraftMinutes(c, ctx).body_markdown));
+});
 t('unknown line reference is caught', () => {
   const r = clone(RAW); r.follow_ups[0].refs = ['u999'];
   assert.ok(codes(check(r).follow_ups[0]).includes('unknown_reference'));
