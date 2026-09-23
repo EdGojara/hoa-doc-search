@@ -14,6 +14,9 @@
 //   POST /sessions/:sid/process      queue a verified session
 //   POST /jobs/:id/retry             retry from the failed stage (or ?from=stage)
 //   GET  /sessions/:sid/audio        the joined audio (302 to a signed URL)
+//   GET  /sessions/:sid/transcript   current transcript: segments, speakers, roster, gaps
+//   PUT  /sessions/:sid/speakers/:n  map Speaker n -> board member / Manager / Vendor / Homeowner / Other
+//   DELETE /sessions/:sid/speakers/:n  clear that mapping
 // ============================================================================
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
@@ -21,12 +24,15 @@ const { requireStaff } = require('./_require_admin');
 const { safeErrorMessage } = require('./_safe_error');
 const { createPipeline } = require('../lib/meetings/pipeline');
 const { assembleStage, BUCKET } = require('../lib/meetings/stage_assemble');
+const { transcribeStage } = require('../lib/meetings/stage_transcribe');
+const { boardRoster, speakerMappings, speakerLabel } = require('../lib/meetings/roster');
+const { fetchAll } = require('../lib/db/fetch_all');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const handlers = { assemble: assembleStage };
+const handlers = { assemble: assembleStage, transcribe: transcribeStage };
 const pipeline = createPipeline({ supabase, handlers });
 
 const enabled = () => process.env.MEETING_PROCESSING_ENABLED === 'true';
@@ -105,6 +111,80 @@ router.get('/sessions/:sid/audio', async (req, res) => {
     if (error || !data) return res.status(502).json({ error: 'signed_url_failed' });
     res.redirect(302, data.signedUrl);
   } catch (e) { fail(res, 'audio', e); }
+});
+
+// ------------------------------------------------------------ transcript
+const ROLES = new Set(['board_member', 'manager', 'vendor', 'homeowner', 'other']);
+async function currentTranscript(sid) {
+  const { data, error } = await supabase.from('meeting_transcripts').select('*').eq('session_id', sid).eq('is_current', true).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+statusExtras.push(async (s) => {
+  const t = await currentTranscript(s.id);
+  return { transcript: t ? { id: t.id, model: t.model, speaker_count: t.speaker_count, segment_count: t.segment_count, word_count: t.word_count, avg_confidence: t.avg_confidence, created_at: t.created_at } : null };
+});
+
+router.get('/sessions/:sid/transcript', async (req, res) => {
+  try {
+    const u = await staffOnly(req, res); if (!u) return;
+    if (!UUID.test(req.params.sid)) return res.status(400).json({ error: 'invalid_session' });
+    const t = await currentTranscript(req.params.sid);
+    if (!t) return res.status(404).json({ error: 'transcript_not_ready' });
+    const [segments, mappings, roster, assembly] = await Promise.all([
+      fetchAll(supabase, 'meeting_transcript_segments', { select: 'idx, speaker, start_ms, end_ms, meeting_start_ms, meeting_end_ms, text, confidence, word_count, scope, after_gap', filters: { transcript_id: t.id }, orderBy: 'idx' }),
+      speakerMappings(supabase, t.id), boardRoster(supabase, t.community_id),
+      one('meeting_audio_assemblies', 'gaps, exec_ranges, duration_ms', 'session_id', req.params.sid),
+    ]);
+    const speakers = [...new Set(segments.map((x) => x.speaker))].filter((x) => x != null).sort((a, b) => a - b).map((n) => {
+      const mine = segments.filter((x) => x.speaker === n);
+      const openOnes = mine.filter((x) => x.scope === 'open');
+      return { speaker: n, default_label: `Speaker ${n + 1}`, label: speakerLabel(n, mappings, roster), mapping: mappings.find((m) => m.speaker === n) || null,
+        segments: mine.length, words: mine.reduce((a, x) => a + x.word_count, 0), first_ms: mine[0] ? mine[0].start_ms : null,
+        sample: (openOnes[0] || { text: '' }).text.slice(0, 160) };
+    });
+    res.json({ transcript: { id: t.id, model: t.model, created_at: t.created_at, speaker_count: t.speaker_count, word_count: t.word_count, avg_confidence: t.avg_confidence },
+      segments: segments.map((x) => ({ ...x, label: speakerLabel(x.speaker, mappings, roster) })), speakers, roster,
+      gaps: assembly ? assembly.gaps : [], exec_ranges: assembly ? assembly.exec_ranges : [] });
+  } catch (e) { fail(res, 'transcript', e); }
+});
+
+router.put('/sessions/:sid/speakers/:n', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const u = await staffOnly(req, res); if (!u) return;
+    if (!UUID.test(req.params.sid)) return res.status(400).json({ error: 'invalid_session' });
+    const n = Number(req.params.n);
+    if (!Number.isInteger(n) || n < 0 || n > 99) return res.status(400).json({ error: 'invalid_speaker' });
+    const t = await currentTranscript(req.params.sid);
+    if (!t) return res.status(404).json({ error: 'transcript_not_ready' });
+    const b = req.body || {};
+    if (!ROLES.has(b.role)) return res.status(400).json({ error: 'invalid_role', allowed: [...ROLES] });
+    let boardMemberId = null, displayName = b.display_name ? String(b.display_name).trim().slice(0, 120) : null;
+    if (b.role === 'board_member') {
+      const roster = await boardRoster(supabase, t.community_id);
+      const m = roster.find((r) => r.id === b.board_member_id);
+      if (!m) return res.status(400).json({ error: 'not_on_roster', detail: 'Pick a current board member of this community.' });
+      boardMemberId = m.id; displayName = m.name;
+    }
+    const { data: seg } = await supabase.from('meeting_transcript_segments').select('idx').eq('transcript_id', t.id).eq('speaker', n).limit(1);
+    if (!seg || !seg.length) return res.status(404).json({ error: 'speaker_not_in_transcript' });
+    const { data, error } = await supabase.from('meeting_speaker_mappings').upsert({ transcript_id: t.id, session_id: t.session_id, community_id: t.community_id, speaker: n,
+      role: b.role, board_member_id: boardMemberId, display_name: displayName, updated_by_user_id: u.user.id }, { onConflict: 'transcript_id,speaker' }).select('*').single();
+    if (error) throw error;
+    res.json({ mapping: data });
+  } catch (e) { fail(res, 'speaker map', e); }
+});
+
+router.delete('/sessions/:sid/speakers/:n', async (req, res) => {
+  try {
+    const u = await staffOnly(req, res); if (!u) return;
+    if (!UUID.test(req.params.sid)) return res.status(400).json({ error: 'invalid_session' });
+    const t = await currentTranscript(req.params.sid);
+    if (!t) return res.status(404).json({ error: 'transcript_not_ready' });
+    const { error } = await supabase.from('meeting_speaker_mappings').delete().eq('transcript_id', t.id).eq('speaker', Number(req.params.n));
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { fail(res, 'speaker unmap', e); }
 });
 
 /** Start the background worker (server.js). No-op unless processing is enabled. */
