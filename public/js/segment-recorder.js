@@ -15,8 +15,8 @@
 //   - Interruptions (mic muted/ended, page hidden/frozen, timer stalls,
 //     recorder death) become explicit events; a user Pause is recorded
 //     separately from an interruption.
-//   - Optional uploader (opts.uploadUrl): a 404 means "server side not enabled"
-//     and everything simply stays on this device.
+//   - Optional server persistence (opts.server, meeting-uploader.js): while
+//     /api/meetings is off (404) everything simply stays on this device.
 // ============================================================================
 (function () {
   'use strict';
@@ -65,7 +65,7 @@
       let rec;
       try { rec = S.session.mime ? new MediaRecorder(S.stream, { mimeType: S.session.mime, audioBitsPerSecond: 32000 }) : new MediaRecorder(S.stream); }
       catch (e) { log('recorder_create_failed', { error: e.message }, 'bad'); interrupt('could not start recorder'); return null; }
-      const seg = { rec, seq: S.session.next_seq++, chunks: [], startedAt: null, perfStart: null };
+      const seg = { rec, seq: S.session.next_seq++, chunks: [], startedAt: null, perfStart: null, execAtStart: !!S.session.exec_open };
       rec.ondataavailable = (e) => { if (e.data && e.data.size) { seg.chunks.push(e.data); if (rec.state === 'recording') savePartial(seg); } };
       rec.onstart = () => { seg.startedAt = Date.now(); seg.perfStart = performance.now(); };
       rec.onerror = (e) => log('recorder_error', { seq: seg.seq, error: (e.error && e.error.message) || 'unknown' }, 'bad');
@@ -80,8 +80,8 @@
       const prev = S.active;
       const next = startSegment();
       if (!next) return;
-      S.active = next;
-      setTimeout(() => { try { if (prev && prev.rec.state !== 'inactive') prev.rec.stop(); } catch (_) {} }, overlapMs);
+      S.active = next; S.prevSeg = prev;   // still recording during the overlap
+      setTimeout(() => { try { if (prev && prev.rec.state !== 'inactive') prev.rec.stop(); } catch (_) {} if (S.prevSeg === prev) S.prevSeg = null; }, overlapMs);
       scheduleRotation();
     }
     async function finalize(seg) {
@@ -90,7 +90,8 @@
       const buf = await blob.arrayBuffer();
       const row = { key: segKey(S.session.id, seg.seq), session_id: S.session.id, seq: seg.seq, started_wall: seg.startedAt, ended_wall: Date.now(),
         wall_ms: seg.perfStart != null ? Math.round(performance.now() - seg.perfStart) : null, mime: blob.type, bytes: buf.byteLength,
-        sha256: await TA.sha256Hex(buf), buf, status: 'pending', attempts: 0, next_attempt_at: 0, decode: null };
+        sha256: await TA.sha256Hex(buf), buf, status: 'pending', attempts: 0, next_attempt_at: 0, decode: null,
+        scope: seg.execAtStart || seg.execTouched || S.session.exec_open ? 'executive' : 'open' };
       await db.put('segments', row);
       db.del('partials', row.key).catch(() => {});
       TA.checkPlayable(buf).then(async (decode) => {
@@ -103,30 +104,126 @@
     }
 
     // ------------------------------------------------------------ upload
+    // Server persistence (Step 1). opts.server = createMeetingServer(...) from
+    // meeting-uploader.js; without it (or while MEETING_UPLOADS_ENABLED is off)
+    // everything stays on this device exactly as before. Order per session:
+    // register -> markers (so the server can classify gaps) -> segments ->
+    // stop -> re-verify until the server confirms every piece arrived.
+    // Local audio is never deleted here.
+    const server = opts.server || null;
+    S.uploadMode = server ? 'checking' : 'local';
+    const backoff = (n) => Math.min(60000, 1000 * 2 ** Math.min(n, 6)) * (0.8 + Math.random() * 0.4);
     let pumping = false;
-    async function pump() {
-      if (!opts.uploadUrl || pumping) return; pumping = true;
-      try {
-        const rows = (await db.all('segments')).filter((r) => r.status === 'pending' && (r.next_attempt_at || 0) <= Date.now()).sort((a, b) => a.started_wall - b.started_wall);
-        for (const r of rows) {
-          if (!navigator.onLine) break;
-          let res = null, body = {};
-          try {
-            res = await fetch(opts.uploadUrl, { method: 'POST', credentials: 'same-origin', body: r.buf,
-              headers: { 'Content-Type': r.mime, 'x-spike-session': r.session_id, 'x-spike-seq': String(r.seq), 'x-spike-sha256': r.sha256 } });
-            body = await res.json().catch(() => ({}));
-          } catch (e) { body = { error: e.message }; }
-          const cur = await db.get('segments', r.key); if (!cur) continue;
-          if (res && res.ok) { S.uploadMode = 'uploading'; cur.status = 'uploaded'; cur.uploaded_at = Date.now(); }
-          else if (res && res.status === 404) { S.uploadMode = 'local'; break; }
-          else if (res && (res.status === 409 || res.status === 422)) { cur.status = 'rejected'; cur.error = body.error; log('upload_rejected', { seq: cur.seq, error: body.error }, 'bad'); }
-          else { cur.attempts++; cur.next_attempt_at = Date.now() + Math.min(60000, 1000 * 2 ** cur.attempts) * (0.8 + Math.random() * 0.4); }
-          await db.put('segments', cur);
-          onChange();
-        }
-      } finally { pumping = false; }
+    async function ensureRegistered(sess) {
+      if (sess.server && sess.server.session_id && sess.server.upload_token) return 'ok';
+      if (sess.server_next_attempt_at && sess.server_next_attempt_at > Date.now()) return 'wait';
+      const r = await server.register(sess);
+      if (r.kind === 'ok') {
+        sess.server = { session_id: r.body.session.id, meeting_id: r.body.meeting_id, upload_token: r.body.upload_token, upload_token_expires_at: r.body.upload_token_expires_at, registered_at: Date.now() };
+        sess.server_attempts = 0; sess.server_next_attempt_at = 0; sess.server_error = null;
+        await db.put('sessions', sess);
+        if (S.session && S.session.id === sess.id) S.session.server = sess.server;
+        return 'ok';
+      }
+      if (r.kind === 'disabled') return 'disabled';
+      if (r.kind === 'signin') return 'signin';
+      sess.server_attempts = (sess.server_attempts || 0) + 1; sess.server_next_attempt_at = Date.now() + backoff(sess.server_attempts);
+      sess.server_error = (r.body && r.body.error) || r.kind;
+      await db.put('sessions', sess);
+      return r.kind === 'rejected' ? 'rejected' : 'wait';
     }
-    if (opts.uploadUrl) { setInterval(pump, 4000); window.addEventListener('online', pump); } else { S.uploadMode = 'local'; }
+    async function renew(sess) {
+      const r = await server.renewKey(sess);
+      if (r.kind !== 'ok') return r.kind;
+      sess.server.upload_token = r.body.upload_token; sess.server.upload_token_expires_at = r.body.upload_token_expires_at;
+      await db.put('sessions', sess); if (S.session && S.session.id === sess.id) S.session.server = sess.server;
+      return 'ok';
+    }
+    async function syncSession(sess) {
+      const reg = await ensureRegistered(sess);
+      if (reg !== 'ok') return reg;
+      // 1) markers
+      const evs = (await db.byIndex('events', 'session', sess.id)).filter((e) => !e.sent);
+      const payload = server.markerPayload(sess, evs);
+      if (payload.length) {
+        const r = await server.sendMarkers(sess, payload.map((x) => x.m));
+        if (r.kind === 'auth') { if ((await renew(sess)) !== 'ok') return 'signin'; return 'wait'; }
+        if (r.kind === 'disabled') return 'disabled';
+        if (r.kind === 'ok' || r.kind === 'rejected') for (const x of payload) { const e = evs.find((q) => q.id === x.id); if (e) { e.sent = true; await db.put('events', e); } }
+      }
+      // mark events that never map to a server marker as handled
+      for (const e of evs) if (!e.sent && !payload.some((x) => x.id === e.id)) { e.sent = true; await db.put('events', e); }
+      // 2) segments
+      const segs = (await db.byIndex('segments', 'session', sess.id)).sort((a, b) => a.seq - b.seq);
+      for (const r of segs) {
+        if (r.status !== 'pending' || (r.next_attempt_at || 0) > Date.now()) continue;
+        if (!navigator.onLine) return 'offline';
+        const res = await server.putSegment(sess, r);
+        const cur = await db.get('segments', r.key); if (!cur) continue;
+        if (res.kind === 'ok') { cur.status = 'uploaded'; cur.uploaded_at = Date.now(); cur.duplicate = !!(res.body && res.body.duplicate); cur.attempts = 0; }
+        else if (res.kind === 'auth') { if ((await renew(sess)) !== 'ok') return 'signin'; continue; }
+        else if (res.kind === 'disabled') return 'disabled';
+        else if (res.kind === 'rejected') { cur.status = 'rejected'; cur.error = (res.body && res.body.error) || String(res.status); log('upload_rejected', { seq: cur.seq, error: cur.error }, 'bad'); }
+        else { cur.attempts = (cur.attempts || 0) + 1; cur.next_attempt_at = Date.now() + backoff(cur.attempts); cur.error = (res.body && res.body.error) || 'network'; }
+        await db.put('segments', cur);
+        onChange();
+      }
+      // 3) stop + verification (only for sessions that ended on this device)
+      if (sess.status === 'stopped') {
+        const all = await db.byIndex('segments', 'session', sess.id);
+        const waiting = all.filter((x) => x.status === 'pending').length;
+        if (!sess.server_stop_sent) {
+          const r = await server.stop(sess);
+          if (r.kind === 'auth') { if ((await renew(sess)) !== 'ok') return 'signin'; return 'wait'; }
+          if (r.kind !== 'ok') return 'wait';
+          sess.server_stop_sent = true; sess.server_verification = r.body.verification; await db.put('sessions', sess);
+        } else if (!waiting && (!sess.server_verification || sess.server_verification.status !== 'verified')
+                   && (!sess.server_verify_at || Date.now() - sess.server_verify_at > 5000)) {
+          const r = await server.verification(sess);
+          sess.server_verify_at = Date.now();
+          if (r.kind === 'ok') sess.server_verification = r.body.verification;
+          await db.put('sessions', sess);
+        }
+        if (sess.server_verification && sess.server_verification.status === 'verified' && !waiting) { sess.server_done = true; await db.put('sessions', sess); }
+        if (S.session && S.session.id === sess.id) { S.session.server_verification = sess.server_verification; S.session.server_done = sess.server_done; S.session.server_stop_sent = sess.server_stop_sent; }
+      }
+      return 'ok';
+    }
+    async function pump() {
+      if (!server || pumping) return; pumping = true;
+      try {
+        const on = await server.enabled();
+        if (on === false) { S.uploadMode = 'local'; return; }
+        if (on === 'signin') { S.uploadMode = 'signin'; return; }
+        if (on === null || !navigator.onLine) { S.uploadMode = 'offline'; return; }
+        let mode = 'ok';
+        for (const sess of (await db.all('sessions')).sort((a, b) => a.started_wall - b.started_wall)) {
+          if (sess.server_done) continue;
+          const r = await syncSession(sess);
+          if (r === 'disabled') { mode = 'local'; break; }
+          if (r === 'signin') mode = 'signin';
+          else if (r === 'offline') { mode = 'offline'; break; }
+          else if ((r === 'wait' || r === 'rejected') && mode === 'ok') mode = 'retrying';
+        }
+        S.uploadMode = mode;
+      } catch (e) { S.uploadMode = 'retrying'; } finally { pumping = false; onChange(); }
+    }
+    if (server) {
+      setInterval(pump, 4000);
+      window.addEventListener('online', pump);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pump(); });
+      setTimeout(pump, 500);
+    }
+    // Heartbeat every 15 s while recording so the server knows how many pieces
+    // to expect even if this device dies before Stop.
+    let lastBeat = 0;
+    async function heartbeat() {
+      if (!server || !S.recording || !S.session || !S.session.server || !S.session.server.upload_token) return;
+      if (Date.now() - lastBeat < 15000) return;
+      lastBeat = Date.now();
+      const r = await server.heartbeat(S.session, Math.max(-1, (S.session.next_seq || 0) - 1), S.interrupted ? 'interrupted' : S.paused ? 'paused' : 'recording');
+      if (r.kind === 'auth') renew(S.session).catch(() => {});
+    }
 
     // --------------------------------------------------- interruptions
     function interrupt(reason) {
@@ -138,6 +235,7 @@
       onChange();
     }
     function tick() {
+      heartbeat().catch(() => {});
       const now = Date.now();
       if (S.recording && now - S.lastTick > 3000) log('page_was_frozen', { frozen_ms: now - S.lastTick }, 'warn');
       S.lastTick = now;
@@ -182,7 +280,7 @@
         S.session = resumeSession; S.session.status = 'recording';
         log('resumed_after_interruption', { gap_ms: Date.now() - (S.session.last_audio_wall || S.session.started_wall) }, 'warn');
       } else {
-        S.session = { id: TA.newId(), started_wall: Date.now(), status: 'recording', next_seq: 0, mime: TA.pickMime(), ua: navigator.userAgent, pauses: [], ...sessionFields };
+        S.session = { id: TA.newId(), started_wall: Date.now(), status: 'recording', next_seq: 0, mime: TA.pickMime(), ua: navigator.userAgent, pauses: [], seg_ms: segMs, overlap_ms: overlapMs, recording_purpose: 'drafting_aid', ...sessionFields };
         log('recording_started', { mime: S.session.mime, mic: mic.name });
       }
       S.session.mic = { deviceId: mic.deviceId, name: mic.name };
@@ -231,7 +329,7 @@
     async function mark(kind, note) {
       if (!S.session) return;
       await log('marker', { marker: kind, note: note || null }, 'info');
-      if (kind === 'exec_start') { S.session.exec_open = true; await saveSession(); }
+      if (kind === 'exec_start') { S.session.exec_open = true; if (S.active) S.active.execTouched = true; if (S.prevSeg) S.prevSeg.execTouched = true; await saveSession(); }
       if (kind === 'exec_end') { S.session.exec_open = false; await saveSession(); }
       onChange();
     }
@@ -252,7 +350,12 @@
         const segs = await db.byIndex('segments', 'session', s.id);
         const have = new Set(segs.map((x) => x.seq));
         for (let q = 0; q < (s.next_seq || 0); q++) if (!have.has(q)) await db.put('events', { session_id: s.id, kind: 'segment_lost_on_reload', level: 'bad', wall_ms: Date.now(), seq: q });
-        await db.put('events', { session_id: s.id, kind: 'page_reloaded_during_recording', level: 'bad', wall_ms: Date.now(), gap_from: s.last_audio_wall || null });
+        // The lost audio starts where the SAVED audio ends (last segment or 5 s
+        // partial save), not at the last heartbeat; mark the interruption there
+        // so the server classifies the whole hole as an interruption.
+        const savedEnd = segs.reduce((mx, x) => Math.max(mx, (x.started_wall || 0) + (x.wall_ms || 0)), 0);
+        const gapFrom = savedEnd ? Math.min(savedEnd, s.last_audio_wall || savedEnd) : (s.last_audio_wall || null);
+        await db.put('events', { session_id: s.id, kind: 'page_reloaded_during_recording', level: 'bad', wall_ms: Date.now(), gap_from: gapFrom });
         s.status = 'interrupted'; await db.put('sessions', s);
         out.push({ session: s, segments: segs.length, pending: segs.filter((x) => x.status === 'pending').length });
       }
@@ -269,6 +372,13 @@
       return { session: S.session, segments: segs, events };
     }
     async function listSessions() { return (await db.all('sessions')).sort((a, b) => b.started_wall - a.started_wall); }
+    async function uploadStats(id) {
+      const segs = await db.byIndex('segments', 'session', id);
+      const sess = await db.get('sessions', id);
+      return { total: segs.length, uploaded: segs.filter((x) => x.status === 'uploaded').length, pending: segs.filter((x) => x.status === 'pending').length,
+        rejected: segs.filter((x) => x.status === 'rejected').length, verification: sess && sess.server_verification || null, done: !!(sess && sess.server_done),
+        registered: !!(sess && sess.server && sess.server.session_id), mode: S.uploadMode };
+    }
     async function sessionData(id) {
       const segs = (await db.byIndex('segments', 'session', id)).sort((a, b) => a.seq - b.seq);
       const events = (await db.byIndex('events', 'session', id)).sort((a, b) => a.wall_ms - b.wall_ms);
@@ -277,7 +387,7 @@
     async function segmentAudio(sessionId, seq) { const r = await db.get('segments', segKey(sessionId, seq)); return r && r.buf ? new Blob([r.buf], { type: r.mime }) : null; }
 
     return {
-      start, pause, resume, stop, mark, resumeAfterInterruption, recoverUnfinished, adopt, finishRecovered, snapshot, listSessions, sessionData, segmentAudio,
+      start, pause, resume, stop, mark, resumeAfterInterruption, recoverUnfinished, adopt, finishRecovered, snapshot, listSessions, sessionData, segmentAudio, uploadStats, syncNow: () => pump(),
       get state() { return { recording: S.recording, paused: S.paused, pausedAt: S.pausedAt, interrupted: S.interrupted, session: S.session, uploadMode: S.uploadMode, wakeLock: wake.active, wakeSupported: wake.supported,
         micMuted: S.micMuted, noSound: S.noSound, micName: S.session && S.session.mic ? S.session.mic.name : null }; },
       level() { return S.watch && S.recording && !S.paused ? S.watch.level() : { peak: 0, rms: 0 }; },

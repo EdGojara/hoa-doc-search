@@ -112,6 +112,7 @@
     </div>
     <div class="meter" id="setupMeterWrap" style="display:none"><div id="setupMeter"></div></div>
     <div class="micname" id="micLine">🎙️ Microphone: <b id="micName">System default</b></div>
+    <label class="chk"><input type="checkbox" id="isTest"> This is a test recording (purpose: test instead of drafting aid)</label>
     <button id="btnStart" class="primary start" disabled>● Start recording</button>
     <div class="muted" id="deviceLine" style="margin-top:10px"></div>
   </section>
@@ -150,7 +151,9 @@
   </section>
 </main>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/js/trusted-audio.js"></script>
+<script src="/js/meeting-uploader.js"></script>
 <script src="/js/segment-recorder.js"></script>
 <script>
 (function () {
@@ -169,9 +172,29 @@
   let current = null; // session being shown in the console
   let execOpen = false;
 
+  // Staff login (Supabase JWT) for /api/meetings, same pattern as other
+  // standalone staff pages. Without a login or while the server side is off,
+  // recordings simply stay on this device.
+  let supa = null;
+  const supaReady = (async () => {
+    try {
+      const cfg = await (await fetch('/api/auth/config', { credentials: 'same-origin' })).json();
+      if (cfg && cfg.enabled && window.supabase) supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+    } catch (_) {}
+  })();
+  async function authFetch(url, init) {
+    await supaReady;
+    const o = Object.assign({ credentials: 'same-origin' }, init || {});
+    const h = Object.assign({}, o.headers || {});
+    try { if (supa) { const s = (await supa.auth.getSession()).data.session; if (s && s.access_token) h.Authorization = 'Bearer ' + s.access_token; } } catch (_) {}
+    o.headers = h;
+    return fetch(url, o);
+  }
   const rec = window.createSegmentRecorder({
+    server: window.createMeetingServer({ authFetch }),
     segMs: 30000, overlapMs: 500,
-    // Phase 1: no uploadUrl -> recordings stay on this device (explicit, by design).
+    // Step 1: pieces upload to /api/meetings when MEETING_UPLOADS_ENABLED is on;
+    // otherwise (404) they stay on this device, exactly as before.
     onChange: () => render(),
     onEvent: () => renderTimeline(),
   });
@@ -248,6 +271,7 @@
       const today = new Date().toISOString().slice(0, 10);
       const agendas = (j.agendas || []).filter((a) => a.meeting_date).sort((a, b) => Math.abs(new Date(a.meeting_date) - new Date(today)) - Math.abs(new Date(b.meeting_date) - new Date(today))).slice(0, 25);
       if (agendas.length) {
+        agendaById = new Map(agendas.map((a) => [a.id, a]));
         sel.innerHTML += '<optgroup label="Meetings with an agenda">' + agendas.map((a) => `<option value="${esc(a.id)}">${esc(fmtDate(a.meeting_date))} · ${esc(a.title || typeLabel(a.meeting_type))}</option>`).join('') + '</optgroup>';
         const todays = agendas.find((a) => a.meeting_date === today);
         if (todays) sel.value = todays.id;
@@ -256,6 +280,7 @@
     sel.dataset.agendas = '';
     onMeetingChange();
   }
+  let agendaById = new Map();
   function onMeetingChange() { $('newMeetingFields').style.display = $('meeting').value === '__new' ? '' : 'none'; validate(); }
   function validate() { $('btnStart').disabled = !$('community').value || !$('meeting').value || rec.state.recording; }
   $('community').onchange = loadMeetings;
@@ -271,13 +296,14 @@
     const opt = $('meeting').selectedOptions[0];
     const meeting = mv === '__new'
       ? { source: 'new', title: $('mTitle').value.trim() || typeLabel($('mType').value), date: $('mDate').value, type: $('mType').value, location: $('mLocation').value.trim() || null }
-      : { source: 'agenda', agenda_id: mv, title: opt ? opt.textContent : 'Board meeting' };
+      : (() => { const a = agendaById.get(mv) || {}; return { source: 'agenda', agenda_id: mv, title: a.title || (opt ? opt.textContent : 'Board meeting'), date: a.meeting_date, type: a.meeting_type || 'regular' }; })();
+    if (!meeting.date) meeting.date = $('mDate').value;
     $('btnStart').disabled = true; $('btnStart').textContent = 'Checking microphone…';
     const mic = await checkedMic(false);
     $('btnStart').textContent = '● Start recording';
     if (!mic) { validate(); return; }   // blocked: muted / dead mic, reason already shown
     try {
-      current = await rec.start({ community_id: cid, community_name: comm.name || '', meeting }, null, { mic });
+      current = await rec.start({ community_id: cid, community_name: comm.name || '', meeting, recording_purpose: $('isTest').checked ? 'test' : 'drafting_aid' }, null, { mic });
       execOpen = false;
       clearBanner(); render(); renderTimeline();
     } catch (e) { mic.stream.getTracks().forEach((t) => t.stop()); banner('bad', 'Could not start recording: ' + esc(e.message) + '. Check the browser\'s microphone permission for this site.'); validate(); }
@@ -353,7 +379,8 @@
     if (snap) {
       const segs = snap.segments;
       const bad = segs.filter((x) => x.decode && !x.decode.ok).length;
-      $('health').innerHTML = `✓ ${segs.length} audio segment${segs.length === 1 ? '' : 's'} saved on this device${bad ? ` · <span class="bad">${bad} failed playback check</span>` : ''} · screen-awake: ${st.wakeSupported ? (st.wakeLock ? 'on' : '<span class="bad">off, keep the screen on</span>') : 'not supported, keep the screen on'}`;
+      const up = await rec.uploadStats(s.id);
+      $('health').innerHTML = `✓ ${segs.length} audio segment${segs.length === 1 ? '' : 's'} saved on this device${bad ? ` · <span class="bad">${bad} failed playback check</span>` : ''} · ${uploadLine(up)} · screen-awake: ${st.wakeSupported ? (st.wakeLock ? 'on' : '<span class="bad">off, keep the screen on</span>') : 'not supported, keep the screen on'}`;
     }
   }
   setInterval(() => { if (rec.state.recording) $('clock').textContent = TA.hms(activeMs(rec.state.session)); }, 1000);
@@ -376,17 +403,35 @@
   }
 
   // --------------------------------------------------------- history
+  // Where the audio is: device only, uploading, waiting, or confirmed on Trusted.
+  function uploadLine(up) {
+    if (up.mode === 'local' || up.mode === 'checking') return 'server upload not enabled (kept on this device)';
+    if (up.mode === 'signin') return '<span class="bad">sign in to Trusted to finish uploading</span> (audio is safe on this device)';
+    if (up.done) return `<span class="ok">✓ all ${up.total} pieces confirmed on Trusted</span>`;
+    const parts = [`${up.uploaded} of ${up.total} pieces on Trusted`];
+    if (up.pending) parts.push(`${up.pending} waiting${up.mode === 'offline' ? ' (offline; saved on this device)' : ''}`);
+    if (up.rejected) parts.push(`<span class="bad">${up.rejected} refused by the server</span>`);
+    return parts.join(' · ');
+  }
+  function verificationHtml(v) {
+    if (!v) return '';
+    if (v.status === 'verified') return `<div class="banner ok">✓ Trusted confirms all ${v.received_count} pieces arrived intact${v.gaps.length ? ` · known gaps: ${v.gaps.map((g) => `${TA.hms(g.from_ms)} (${Math.round(g.ms / 1000)} s ${g.reason.replace('_', ' ')})`).join(', ')}` : ''}.</div>`;
+    if (v.status === 'incomplete') return `<div class="banner bad"><b>Trusted is missing part of this recording.</b> ${v.missing_seqs.length ? `Missing pieces: ${v.missing_ranges.map((r) => `${TA.hms(r.from_ms)}–${TA.hms(r.to_ms)}`).join(', ')}.` : ''} ${v.gaps.filter((g) => g.reason === 'unexplained').map((g) => `Unexplained gap at ${TA.hms(g.from_ms)} (${Math.round(g.ms / 1000)} s).`).join(' ')} Keep this page open so it can finish uploading.</div>`;
+    return '';
+  }
   async function renderSessions() {
     const list = (await rec.listSessions()).filter((s) => s.status === 'stopped');
     if (!list.length) { $('sessions').innerHTML = '<span class="muted">None yet.</span>'; return; }
     $('sessions').innerHTML = list.slice(0, 30).map((s) => {
       const dur = TA.hms(((s.stopped_wall || s.last_audio_wall || s.started_wall) - s.started_wall) - (s.pauses || []).reduce((t, p) => t + p.ms, 0));
-      return `<div class="sess" data-id="${esc(s.id)}"><b>${esc(s.meeting ? s.meeting.title : 'Meeting')}</b> · ${esc(s.community_name || '')}<br><span class="muted">${esc(new Date(s.started_wall).toLocaleString())} · ${dur} recorded · on this device</span></div>`;
+      const where = s.server_done ? '✓ on Trusted' : s.server_verification && s.server_verification.status === 'incomplete' ? 'incomplete on Trusted' : s.server && s.server.session_id ? 'uploading' : 'on this device';
+      return `<div class="sess" data-id="${esc(s.id)}"><b>${esc(s.meeting ? s.meeting.title : 'Meeting')}</b> · ${esc(s.community_name || '')}${s.recording_purpose === 'test' ? ' · <i>test</i>' : ''}<br><span class="muted">${esc(new Date(s.started_wall).toLocaleString())} · ${dur} recorded · ${where}</span></div>`;
     }).join('');
     document.querySelectorAll('.sess').forEach((d) => { d.onclick = () => openDetail(d.dataset.id); });
   }
 
   async function openDetail(id) {
+    openId = id;
     const s = (await rec.listSessions()).find((x) => x.id === id);
     if (!s) return;
     const { segments: segs, events } = await rec.sessionData(id);
@@ -411,7 +456,7 @@
           <div style="margin-top:10px"><b>Markers</b> (${markers.length})</div>
           <div class="timeline">${markers.length ? markers.map((e) => `<div><b>${TA.hms(e.wall_ms - s.started_wall)}</b> ${esc(MARK_LABEL[e.marker] || e.marker)}</div>`).join('') : '<span class="muted">No markers.</span>'}</div>
           <div style="margin-top:10px"><b>Listen</b> <select id="segPick">${segs.map((x) => `<option value="${x.seq}">${TA.hms(x.started_wall - s.started_wall)} (${Math.round((x.wall_ms || 0) / 1000)} s)${x.partial ? ' recovered' : ''}</option>`).join('')}</select> <button id="segPlay">▶ Play</button></div>
-          <div class="banner info" style="margin-top:12px">Saved on this device only. Server upload, transcription and Paige's minutes are later phases.</div>`;
+          ${verificationHtml(s.server_verification) || `<div class="banner info" style="margin-top:12px">${s.server && s.server.session_id ? 'Uploading to Trusted…' : 'Saved on this device.'} Transcription and Paige's minutes are later phases.</div>`}`;
       }
       const what = ['', 'The full transcript with speaker labels', 'A meeting summary and executive summary', 'Draft board minutes for review', 'Detected motions, movers, seconds and vote results (flagged when uncertain)', 'Action items with owners and due dates'][i];
       return `<div class="placeholder"><b>Coming in a later phase.</b><br>${what} will appear here once transcription and Paige's meeting processing are built. Nothing is generated yet.</div>`;
@@ -432,6 +477,20 @@
   // --------------------------------------------------------- banners
   function banner(kind, html) { $('bannerBox').innerHTML = `<div class="banner ${kind}">${html}</div>`; }
   function clearBanner() { $('bannerBox').innerHTML = ''; }
+
+  // Keep the recordings list (and an open Overview) current as pieces upload
+  // and the server confirms them.
+  let lastListState = '', openId = null;
+  setInterval(async () => {
+    if (rec.state.recording) return;
+    const list = await rec.listSessions();
+    const state = JSON.stringify(list.map((s) => [s.id, s.status, !!s.server_done, s.server_verification && s.server_verification.status, s.server && s.server.session_id]));
+    if (state === lastListState) return;
+    lastListState = state;
+    renderSessions();
+    const onOverview = document.querySelector('#detail .tabs button.on[data-tab="0"]');
+    if (openId && onOverview) openDetail(openId);
+  }, 3000);
 
   // --------------------------------------------------------- recovery
   rec.recoverUnfinished().then((found) => {

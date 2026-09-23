@@ -1743,6 +1743,8 @@ app.use('/api/records', recordLifecycleRouter);
 
 const { router: minutesRouter } = require('./api/minutes');
 app.use('/api/minutes', minutesRouter);
+// Meeting Recorder Step 1: server-side recording persistence (404 unless MEETING_UPLOADS_ENABLED=true).
+app.use('/api/meetings', require('./api/meetings'));
 
 const { router: agendasRouter } = require('./api/agendas');
 app.use('/api/agendas', agendasRouter);
