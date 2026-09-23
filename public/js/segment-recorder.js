@@ -41,8 +41,11 @@
       interrupted: false, rotateTimer: null, tickTimer: null, lastTick: 0, uploadMode: 'unknown',
       meter: null, watch: null, micMuted: false, noSound: false };
     const deadMicMs = (opts.deadMicSeconds || TA.SILENCE.MEETING_DEAD_MIC_SECONDS) * 1000;
-    // Meeting-recording mic settings: raw room sound (no echo cancel / noise suppression).
-    const AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 };
+    // Meeting-recording mic settings. Noise suppression defaults ON (Ed
+    // 2026-09-23: a built-in mic's hiss sat ~5 dB under speech with it off);
+    // the page can turn it off per recording. Echo cancellation stays off: in a
+    // room there is no far-end speaker to cancel and it can thin out voices.
+    const AUDIO = { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
     const wake = TA.wakeLocker((kind, err) => log(kind, err ? { error: err } : {}, kind === 'wakelock_released' ? 'warn' : 'info'));
 
     async function log(kind, detail = {}, level = 'info') {
@@ -166,7 +169,7 @@
       let mic = micOpts && micOpts.mic;
       if (!mic) {
         const want = (resumeSession && resumeSession.mic && resumeSession.mic.deviceId) || (micOpts && micOpts.deviceId) || '';
-        mic = await TA.openMic(want, AUDIO);
+        mic = await TA.openMic(want, (resumeSession && resumeSession.audio) || (micOpts && micOpts.audio) || AUDIO);
         if (mic.fellBack) log('mic_fallback_to_default', { wanted: resumeSession && resumeSession.mic && resumeSession.mic.name, using: mic.name }, 'warn');
       }
       S.stream = mic.stream;
@@ -183,9 +186,10 @@
         log('resumed_after_interruption', { gap_ms: Date.now() - (S.session.last_audio_wall || S.session.started_wall) }, 'warn');
       } else {
         S.session = { id: TA.newId(), started_wall: Date.now(), status: 'recording', next_seq: 0, mime: TA.pickMime(), ua: navigator.userAgent, pauses: [], ...sessionFields };
-        log('recording_started', { mime: S.session.mime, mic: mic.name });
+        log('recording_started', { mime: S.session.mime, mic: mic.name, noise_reduction: !!(mic.audio && mic.audio.noiseSuppression) });
       }
-      S.session.mic = { deviceId: mic.deviceId, name: mic.name };
+      S.session.mic = { deviceId: mic.deviceId, name: mic.name, noiseReduction: !!(mic.audio && mic.audio.noiseSuppression) };
+      S.session.audio = mic.audio || AUDIO;   // resume reopens the mic with the same settings
       await saveSession();
       S.recording = true; S.interrupted = false; S.paused = false;
       S.active = startSegment(); scheduleRotation();

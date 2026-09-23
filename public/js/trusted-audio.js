@@ -90,9 +90,12 @@
   // (Ed's PC, 2026-09-23): a device-muted webcam mic delivers exact digital
   // zeros (peak 0); a live laptop mic in a QUIET room idles at peak ~0.02 /
   // RMS ~0.005; normal speech runs RMS 0.03-0.3.
-  //  - PREFLIGHT_PEAK 0.001 (-60 dBFS): a live mic's noise floor never falls
-  //    below this, so a ~1 s window under it means muted/dead hardware, not a
-  //    quiet room. No false alarm for a quiet but working mic.
+  //  - PREFLIGHT_PEAK 0.0001 (-80 dBFS): muted/dead hardware delivers exact
+  //    digital zeros (the muted webcam mic measured peak 0). A live mic's
+  //    residual noise stays above -80 dBFS even with noise reduction on in a
+  //    silent room, so this catches dead/muted input without blocking a good,
+  //    quiet mic. (Was 0.001 / -60 dBFS; lowered once noise reduction became the
+  //    Meeting Recorder default, since it pushes a quiet room's floor down.)
   //  - A recording is "audible" when at least ACTIVE_MIN_FRACTION of its 50 ms
   //    windows reach RMS 0.01 (-40 dBFS): above quiet-room noise (~0.005),
   //    well below speech. 1% of a 36 s note = ~0.4 s of sound.
@@ -100,7 +103,7 @@
   //    PREFLIGHT_PEAK (sampled every 50 ms, not spot-checked) this long means
   //    the mic went dead/muted mid-recording. Quick Note uses 5 s; meetings use
   //    15 s because boards pause and some USB mics noise-gate to true silence.
-  const SILENCE = { PREFLIGHT_PEAK: 0.001, PREFLIGHT_MS: 1200, WINDOW_S: 0.05, ACTIVE_WINDOW_RMS: 0.01, ACTIVE_MIN_FRACTION: 0.01, DEAD_MIC_SECONDS: 5, MEETING_DEAD_MIC_SECONDS: 15 };
+  const SILENCE = { PREFLIGHT_PEAK: 0.0001, PREFLIGHT_MS: 1200, WINDOW_S: 0.05, ACTIVE_WINDOW_RMS: 0.01, ACTIVE_MIN_FRACTION: 0.01, DEAD_MIC_SECONDS: 5, MEETING_DEAD_MIC_SECONDS: 15 };
 
   // Energy of decoded audio: peak, RMS and the fraction of 50 ms windows with
   // audible sound (loudest channel).
@@ -166,7 +169,7 @@
     }
     const track = stream.getAudioTracks()[0];
     const settings = (track && track.getSettings && track.getSettings()) || {};
-    return { stream, track, label: track ? track.label : '', name: friendlyMicName(track && track.label), deviceId: settings.deviceId || deviceId || 'default', fellBack };
+    return { stream, track, label: track ? track.label : '', name: friendlyMicName(track && track.label), deviceId: settings.deviceId || deviceId || 'default', fellBack, audio: { ...audio } };
   }
 
   // Live input level from a MediaStream. Records nothing, plays nothing.
@@ -203,6 +206,40 @@
     else out.ok = true;
     return out;
   }
+  // ------------------------------------------------ noise / SNR assessment
+  // Two-phase check on an already-open mic: background noise while the room is
+  // quiet, then speech level while someone talks normally. Speech-to-noise
+  // ratio (SNR), not loudness, is what makes a recording clear and what drives
+  // transcription accuracy. Thresholds from Ed's PC (2026-09-23): the built-in
+  // Realtek mic with no noise reduction had a -25 dBFS hiss floor and speech
+  // ~-22 dBFS (SNR ~3-5 dB: "sounds quiet"); the same mic with noise reduction
+  // floored at -45 dBFS. Speech-recognition vendors treat >=20 dB as clean.
+  const SNR = { GOOD_DB: 20, FAIR_DB: 10, HIGH_NOISE_DBFS: -45, QUIET_MS: 2500, SPEAK_MS: 3500 };
+  const toDb = (v) => 20 * Math.log10(Math.max(v, 1e-6));
+  async function assessMic(mic, hooks = {}) {
+    const meter = levelMeter(mic.stream);
+    const sample = async (ms, phase) => {
+      const out = []; const end = Date.now() + ms;
+      while (Date.now() < end) {
+        const r = meter.read(); out.push(r.rms);
+        hooks.onLevel && hooks.onLevel(r.rms);
+        hooks.onPhase && hooks.onPhase(phase, Math.ceil((end - Date.now()) / 1000));
+        await new Promise((res) => setTimeout(res, 40));
+      }
+      return out.sort((a, b) => a - b);
+    };
+    const pct = (arr, p) => arr[Math.min(arr.length - 1, Math.max(0, Math.floor(p * arr.length)))] || 0;
+    let quiet, speak;
+    try { quiet = await sample(hooks.quietMs || SNR.QUIET_MS, 'quiet'); speak = await sample(hooks.speakMs || SNR.SPEAK_MS, 'speak'); }
+    finally { meter.close(); }
+    const noiseDb = +toDb(pct(quiet, 0.5)).toFixed(1);     // typical background level
+    const speechDb = +toDb(pct(speak, 0.9)).toFixed(1);    // level while talking (ignores gaps between words)
+    const snrDb = +(speechDb - noiseDb).toFixed(1);
+    const heardSpeech = snrDb >= 3;
+    const rating = !heardSpeech ? 'poor' : snrDb >= SNR.GOOD_DB ? 'good' : snrDb >= SNR.FAIR_DB ? 'fair' : 'poor';
+    return { noiseDb, speechDb, snrDb, rating, heardSpeech, highNoise: noiseDb > SNR.HIGH_NOISE_DBFS, noiseReduction: !!(mic.audio && mic.audio.noiseSuppression) };
+  }
+
   function micProblemMessage(name) { return `${name || 'The selected microphone'} is muted or no sound is being detected. Choose another microphone or unmute it.`; }
   const MIC_RETRY_HINT = 'If this microphone is working, say a few words and try again.';
 
@@ -226,5 +263,5 @@
   }
 
   window.TrustedAudio = { MIME_CANDIDATES, supportedMimes, pickMime, sha256Hex, newId, hms, ms2mmss, esc, openDb, wakeLocker, checkPlayable, loadCommunities,
-    SILENCE, audioStats, friendlyMicName, listMics, savedMic, rememberMic, openMic, levelMeter, preflightMic, micProblemMessage, MIC_RETRY_HINT, NO_SOUND_MESSAGE, deadMicWatch };
+    SILENCE, SNR, assessMic, audioStats, friendlyMicName, listMics, savedMic, rememberMic, openMic, levelMeter, preflightMic, micProblemMessage, MIC_RETRY_HINT, NO_SOUND_MESSAGE, deadMicWatch };
 })();
