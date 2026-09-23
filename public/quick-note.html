@@ -145,27 +145,40 @@
 
   $('recBtn').onclick = () => { if (rec && rec.state !== 'inactive') rec.stop(); else start(); };
 
+  // Object URLs for the players currently on screen; revoked on every redraw.
+  let noteUrls = [];
+  // Length saved with the note: the decoded audio length when the playback
+  // check ran, else the recorded wall time. MediaRecorder files often carry no
+  // duration header, so the browser player cannot be relied on to show it.
+  function noteLength(n) {
+    const ms = n.playable && n.playable.ok && n.playable.seconds ? n.playable.seconds * 1000 : (n.duration_ms || 0);
+    return TA.ms2mmss(ms);
+  }
+
   async function renderNotes() {
+    noteUrls.forEach((u) => URL.revokeObjectURL(u));
+    noteUrls = [];
     const notes = (await db.all('notes')).filter((n) => n.status !== 'recording').sort((a, b) => b.created_wall - a.created_wall);
     if (!notes.length) { $('notes').innerHTML = '<div class="hint">No notes yet.</div>'; return; }
     $('notes').innerHTML = notes.slice(0, 50).map((n) => {
       const c = communities.find((x) => x.id === n.community_id);
+      // Attach the saved audio up front: a player with no source can never be
+      // started, so waiting for its 'play' event left every note unplayable.
+      let player = '<div class="ph">No audio was saved for this note.</div>';
+      if (n.buf) {
+        const url = URL.createObjectURL(new Blob([n.buf], { type: n.mime }));
+        noteUrls.push(url);
+        player = `<audio controls preload="metadata" data-audio="${esc(n.id)}" src="${esc(url)}"></audio>`;
+      }
       return `<div class="note" data-id="${esc(n.id)}">
         <h3>${esc(n.title || autoTitle(n))}</h3>
-        <div class="meta">${esc(new Date(n.created_wall).toLocaleString())} · ${TA.ms2mmss(n.duration_ms || 0)}${c ? ' · ' + esc(c.name) : ''}${n.recovered ? ' · recovered after reload' : ''} · on this phone</div>
-        <audio controls preload="none" data-audio="${esc(n.id)}"></audio>
+        <div class="meta">${esc(new Date(n.created_wall).toLocaleString())} · ${noteLength(n)}${c ? ' · ' + esc(c.name) : ''}${n.recovered ? ' · recovered after reload' : ''} · on this phone</div>
+        ${player}
         <div class="ph">📝 Transcript and quick summary: coming soon</div>
         <div class="ph">✅ Suggested task / follow-up: coming soon</div>
         <div class="row"><button data-del="${esc(n.id)}">Delete</button></div>
       </div>`;
     }).join('');
-    document.querySelectorAll('audio[data-audio]').forEach((a) => {
-      a.addEventListener('play', async () => {
-        if (a.src) return;
-        const n = await db.get('notes', a.dataset.audio);
-        if (n && n.buf) { a.src = URL.createObjectURL(new Blob([n.buf], { type: n.mime })); a.play().catch(() => {}); }
-      }, { once: true });
-    });
     document.querySelectorAll('[data-del]').forEach((b) => { b.onclick = async () => { if (confirm('Delete this note from this phone?')) { await db.del('notes', b.dataset.del); renderNotes(); } }; });
   }
 
