@@ -38,7 +38,11 @@
     const strip = (r) => { const { buf, ...rest } = r; return rest; };
 
     const S = { session: null, stream: null, track: null, active: null, recording: false, paused: false, pausedAt: null,
-      interrupted: false, rotateTimer: null, tickTimer: null, lastTick: 0, uploadMode: 'unknown' };
+      interrupted: false, rotateTimer: null, tickTimer: null, lastTick: 0, uploadMode: 'unknown',
+      meter: null, watch: null, micMuted: false, noSound: false };
+    const deadMicMs = (opts.deadMicSeconds || TA.SILENCE.MEETING_DEAD_MIC_SECONDS) * 1000;
+    // Meeting-recording mic settings: raw room sound (no echo cancel / noise suppression).
+    const AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 };
     const wake = TA.wakeLocker((kind, err) => log(kind, err ? { error: err } : {}, kind === 'wakelock_released' ? 'warn' : 'info'));
 
     async function log(kind, detail = {}, level = 'info') {
@@ -89,7 +93,7 @@
         sha256: await TA.sha256Hex(buf), buf, status: 'pending', attempts: 0, next_attempt_at: 0, decode: null };
       await db.put('segments', row);
       db.del('partials', row.key).catch(() => {});
-      TA.checkPlayable(buf, row.mime).then(async (decode) => {
+      TA.checkPlayable(buf).then(async (decode) => {
         const cur = await db.get('segments', row.key); if (cur) { cur.decode = decode; await db.put('segments', cur); }
         if (!decode.ok) log('segment_not_playable', { seq: row.seq, error: decode.error }, 'bad');
         else if (row.wall_ms && decode.seconds * 1000 < row.wall_ms - 1500) log('audio_shorter_than_expected', { seq: row.seq, audio_s: decode.seconds, wall_s: +(row.wall_ms / 1000).toFixed(1) }, 'warn');
@@ -137,6 +141,11 @@
       const now = Date.now();
       if (S.recording && now - S.lastTick > 3000) log('page_was_frozen', { frozen_ms: now - S.lastTick }, 'warn');
       S.lastTick = now;
+      if (S.recording && !S.interrupted && !S.paused && S.watch) {
+        const silentMs = S.watch.silentMs();
+        if (!S.noSound && silentMs >= deadMicMs) { S.noSound = true; log('no_sound_detected', { silent_ms: silentMs, mic: S.session && S.session.mic && S.session.mic.name }, 'bad'); }
+        else if (S.noSound && silentMs === 0) { S.noSound = false; log('sound_detected_again', {}, 'warn'); }
+      }
       if (S.recording && !S.interrupted && !S.paused) {
         if (S.track && S.track.readyState !== 'live') interrupt('microphone stopped');
         else if (S.active && S.active.rec.state === 'inactive') { log('recorder_restarted', {}, 'warn'); S.active = startSegment(); scheduleRotation(); }
@@ -150,22 +159,33 @@
     window.addEventListener('beforeunload', (e) => { if (S.recording) { e.preventDefault(); e.returnValue = ''; } });
 
     // ----------------------------------------------------------- control
-    async function start(sessionFields, resumeSession) {
+    // micOpts.mic: a mic already opened + preflight-checked by the page
+    // (TrustedAudio.openMic). Without it (resume), reopen the session's mic.
+    async function start(sessionFields, resumeSession, micOpts) {
       if (!window.MediaRecorder) throw new Error('This browser cannot record audio (no MediaRecorder).');
-      S.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 } });
-      S.track = S.stream.getAudioTracks()[0];
+      let mic = micOpts && micOpts.mic;
+      if (!mic) {
+        const want = (resumeSession && resumeSession.mic && resumeSession.mic.deviceId) || (micOpts && micOpts.deviceId) || '';
+        mic = await TA.openMic(want, AUDIO);
+        if (mic.fellBack) log('mic_fallback_to_default', { wanted: resumeSession && resumeSession.mic && resumeSession.mic.name, using: mic.name }, 'warn');
+      }
+      S.stream = mic.stream;
+      S.track = mic.track;
+      S.micMuted = !!(S.track && S.track.muted); S.noSound = false;
       if (S.track) {
         S.track.onended = () => interrupt('microphone ended');
-        S.track.onmute = () => log('mic_muted_by_device', {}, 'warn');
-        S.track.onunmute = () => log('mic_unmuted', {}, 'info');
+        S.track.onmute = () => { S.micMuted = true; log('mic_muted_by_device', { mic: mic.name }, 'bad'); onChange(); };
+        S.track.onunmute = () => { S.micMuted = false; log('mic_unmuted', {}, 'info'); onChange(); };
       }
+      try { if (S.watch) S.watch.stop(); if (S.meter) S.meter.close(); S.meter = TA.levelMeter(S.stream); S.watch = TA.deadMicWatch(S.meter); } catch (_) { S.meter = null; S.watch = null; }
       if (resumeSession) {
         S.session = resumeSession; S.session.status = 'recording';
         log('resumed_after_interruption', { gap_ms: Date.now() - (S.session.last_audio_wall || S.session.started_wall) }, 'warn');
       } else {
         S.session = { id: TA.newId(), started_wall: Date.now(), status: 'recording', next_seq: 0, mime: TA.pickMime(), ua: navigator.userAgent, pauses: [], ...sessionFields };
-        log('recording_started', { mime: S.session.mime });
+        log('recording_started', { mime: S.session.mime, mic: mic.name });
       }
+      S.session.mic = { deviceId: mic.deviceId, name: mic.name };
       await saveSession();
       S.recording = true; S.interrupted = false; S.paused = false;
       S.active = startSegment(); scheduleRotation();
@@ -193,6 +213,7 @@
     }
     async function resumeAfterInterruption() {
       try { S.stream && S.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+      try { if (S.watch) S.watch.stop(); if (S.meter) S.meter.close(); } catch (_) {} S.meter = null; S.watch = null;
       S.recording = false; S.interrupted = false;
       return start(null, S.session);
     }
@@ -202,6 +223,7 @@
       const cur = S.active; S.active = null;
       if (cur && cur.rec.state !== 'inactive') await new Promise((res) => { cur.rec.addEventListener('stop', () => setTimeout(res, 300), { once: true }); try { cur.rec.stop(); } catch (_) { res(); } });
       try { S.stream && S.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+      try { if (S.watch) S.watch.stop(); if (S.meter) S.meter.close(); } catch (_) {} S.meter = null; S.watch = null;
       await wake.off();
       if (S.session) { S.session.status = 'stopped'; S.session.stopped_wall = Date.now(); S.session.last_audio_wall = Date.now(); await saveSession(); }
       log('recording_stopped', {}); onChange(); pump();
@@ -223,7 +245,7 @@
           if (await db.get('segments', pr.key)) { await db.del('partials', pr.key); continue; }
           const row = { key: pr.key, session_id: s.id, seq: pr.seq, started_wall: pr.started_wall, ended_wall: pr.updated_wall, wall_ms: pr.updated_wall - pr.started_wall,
             mime: pr.mime, bytes: pr.buf.byteLength, sha256: await TA.sha256Hex(pr.buf), buf: pr.buf, status: 'pending', attempts: 0, next_attempt_at: 0, decode: null, partial: true };
-          row.decode = await TA.checkPlayable(pr.buf, pr.mime);
+          row.decode = await TA.checkPlayable(pr.buf);
           await db.put('segments', row); await db.del('partials', pr.key);
           await db.put('events', { session_id: s.id, kind: 'partial_segment_recovered', level: 'warn', wall_ms: Date.now(), seq: pr.seq, recovered_s: +((row.wall_ms) / 1000).toFixed(1) });
         }
@@ -256,7 +278,10 @@
 
     return {
       start, pause, resume, stop, mark, resumeAfterInterruption, recoverUnfinished, adopt, finishRecovered, snapshot, listSessions, sessionData, segmentAudio,
-      get state() { return { recording: S.recording, paused: S.paused, pausedAt: S.pausedAt, interrupted: S.interrupted, session: S.session, uploadMode: S.uploadMode, wakeLock: wake.active, wakeSupported: wake.supported }; },
+      get state() { return { recording: S.recording, paused: S.paused, pausedAt: S.pausedAt, interrupted: S.interrupted, session: S.session, uploadMode: S.uploadMode, wakeLock: wake.active, wakeSupported: wake.supported,
+        micMuted: S.micMuted, noSound: S.noSound, micName: S.session && S.session.mic ? S.session.mic.name : null }; },
+      level() { return S.watch && S.recording && !S.paused ? S.watch.level() : { peak: 0, rms: 0 }; },
+      audio: AUDIO,
     };
   }
 

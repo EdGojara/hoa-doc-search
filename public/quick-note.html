@@ -44,6 +44,10 @@
   .banner { padding: 10px 12px; border-radius: 10px; margin: 10px 0; font-size: 14px; }
   .banner.bad { background: #fee2e2; color: #7f1d1d; } .banner.warn { background: #fef3c7; color: #78350f; } .banner.ok { background: #dcfce7; color: #14532d; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; opacity: .7; margin: 26px 0 4px; }
+  .micname { font-size: 13px; opacity: .85; }
+  .meter { width: 220px; height: 10px; background: rgba(255,255,255,.15); border-radius: 5px; overflow: hidden; margin-top: 12px; visibility: hidden; }
+  .meter > div { height: 100%; width: 0%; background: #22c55e; transition: width .08s linear; }
+  .silent { display: inline-block; margin-top: 8px; font-size: 13px; font-weight: 600; color: #b91c1c; }
 </style>
 </head>
 <body>
@@ -53,10 +57,13 @@
   <div class="fields">
     <select id="community"><option value="">No community (general note)</option></select>
     <input id="title" placeholder="Title (optional, auto-titled if blank)" maxlength="120">
+    <select id="mic" aria-label="Microphone"><option value="">System default microphone</option></select>
+    <div class="micname">🎙️ Microphone: <b id="micName">System default</b></div>
   </div>
   <div class="recwrap">
     <button id="recBtn" class="recbtn">● Record</button>
     <div class="timer" id="timer">0:00</div>
+    <div class="meter" id="meterWrap"><div id="meter"></div></div>
     <div class="hint" id="hint">Tap to record · up to 10 minutes · saved on this phone</div>
   </div>
   <h2>Recent notes</h2>
@@ -91,6 +98,22 @@
   }).catch(() => { /* notes still work without a community list */ });
   $('community').onchange = () => { try { localStorage.setItem('qn_last_community', $('community').value); } catch (_) {} };
 
+  // ---------------------------------------------------------- microphone
+  const MIC_KEY = 'qn_mic_device';
+  const QN_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  async function refreshMics() {
+    const mics = await TA.listMics().catch(() => []);
+    const sel = $('mic'), cur = sel.value || TA.savedMic(MIC_KEY);
+    sel.innerHTML = mics.length ? mics.map((m) => `<option value="${esc(m.deviceId)}">${esc(m.name)}</option>`).join('') : '<option value="">System default microphone</option>';
+    if (cur && mics.some((m) => m.deviceId === cur)) sel.value = cur;
+    const o = sel.selectedOptions[0]; $('micName').textContent = o ? o.textContent : 'System default';
+  }
+  $('mic').onchange = () => { TA.rememberMic(MIC_KEY, $('mic').value); const o = $('mic').selectedOptions[0]; $('micName').textContent = o ? o.textContent : 'System default'; banner('', ''); };
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener('devicechange', refreshMics);
+  refreshMics();
+  function meterPct(rms) { const db = 20 * Math.log10(Math.max(rms, 1e-6)); return Math.max(0, Math.min(100, ((db + 60) / 60) * 100)); }
+  let meter = null, watch = null, micInfo = null, muteWarned = false;
+
   // Persist the in-progress audio every chunk so a reload/crash keeps the note.
   function persist() {
     if (!note) return saving;
@@ -105,23 +128,45 @@
 
   async function start() {
     if (!window.MediaRecorder) { banner('bad', 'This browser cannot record audio.'); return; }
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
-    catch (e) { banner('bad', 'Microphone unavailable: ' + esc(e.message) + '. Allow the microphone for this site.'); return; }
+    $('recBtn').disabled = true; $('hint').textContent = 'Checking microphone…';
+    let mic;
+    try { mic = await TA.openMic($('mic').value, QN_AUDIO); }
+    catch (e) { $('recBtn').disabled = false; $('hint').textContent = 'Tap to record · up to 10 minutes · saved on this phone'; banner('bad', 'Microphone unavailable: ' + esc(e.message) + '. Allow the microphone for this site.'); return; }
+    await refreshMics();
+    const pre = await TA.preflightMic(mic);
+    $('recBtn').disabled = false; $('hint').textContent = 'Tap to record · up to 10 minutes · saved on this phone';
+    if (!pre.ok) {
+      mic.stream.getTracks().forEach((t) => t.stop());
+      banner('bad', `<b>${esc(TA.micProblemMessage(pre.name))}</b>${pre.muted ? '' : '<br>' + esc(TA.MIC_RETRY_HINT)}`);
+      return;   // blocked: nothing is recorded from a muted / dead microphone
+    }
+    TA.rememberMic(MIC_KEY, mic.deviceId !== 'default' ? mic.deviceId : $('mic').value);
+    if (mic.fellBack) banner('warn', `Your saved microphone was not found; using ${esc(mic.name)}.`);
+    micInfo = mic; stream = mic.stream; muteWarned = false;
     const mime = TA.pickMime();
     try { rec = mime ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 32000 }) : new MediaRecorder(stream); }
     catch (e) { banner('bad', 'Could not start recording: ' + esc(e.message)); return; }
     chunks = []; startedAt = Date.now();
-    note = { id: TA.newId(), created_wall: startedAt, status: 'recording', mime: rec.mimeType || mime || 'audio/webm', community_id: $('community').value || null, title: $('title').value.trim() || null };
+    note = { id: TA.newId(), created_wall: startedAt, status: 'recording', mime: rec.mimeType || mime || 'audio/webm', community_id: $('community').value || null, title: $('title').value.trim() || null, mic: { deviceId: mic.deviceId, name: mic.name } };
     rec.ondataavailable = (e) => { if (e.data && e.data.size) { chunks.push(e.data); persist(); } };
     rec.onstop = finish;
     rec.start(2000);
-    stream.getAudioTracks()[0].onended = () => { if (rec && rec.state !== 'inactive') { banner('warn', 'The phone stopped the microphone. Your note was saved up to that point.'); rec.stop(); } };
+    const track = stream.getAudioTracks()[0];
+    track.onended = () => { if (rec && rec.state !== 'inactive') { banner('warn', 'The phone stopped the microphone. Your note was saved up to that point.'); rec.stop(); } };
+    track.onmute = () => { muteWarned = true; banner('bad', `<b>${esc(mic.name)} was muted by the device.</b> Sound is not being captured. Unmute it or stop and choose another microphone.`); };
+    track.onunmute = () => { banner('warn', `${esc(mic.name)} is unmuted again.`); };
+    try { meter = TA.levelMeter(stream); watch = TA.deadMicWatch(meter); } catch (_) { meter = null; watch = null; }
+    $('meterWrap').style.visibility = 'visible';
     $('recBtn').classList.add('on'); $('recBtn').textContent = '■ Stop';
     $('hint').textContent = 'Recording… tap to stop';
     banner('', '');
     timerId = setInterval(() => {
       const ms = Date.now() - startedAt;
       $('timer').textContent = TA.ms2mmss(ms);
+      if (watch) {
+        $('meter').style.width = meterPct(watch.level().rms) + '%';
+        if (!muteWarned && watch.silentMs() >= TA.SILENCE.DEAD_MIC_SECONDS * 1000) { muteWarned = true; banner('bad', `<b>No sound is reaching Trusted from ${esc(mic.name)}.</b> Check that it is unmuted.`); }
+      }
       if (ms >= MAX_MS && rec.state !== 'inactive') { banner('warn', 'Quick notes stop at 10 minutes. For longer recordings use the Meeting Recorder.'); rec.stop(); }
     }, 250);
   }
@@ -129,16 +174,20 @@
   async function finish() {
     clearInterval(timerId);
     try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    try { if (watch) watch.stop(); if (meter) meter.close(); } catch (_) {} meter = null; watch = null;
+    $('meterWrap').style.visibility = 'hidden'; $('meter').style.width = '0%';
     $('recBtn').classList.remove('on'); $('recBtn').textContent = '● Record';
     $('hint').textContent = 'Tap to record · up to 10 minutes · saved on this phone';
     await persist();
     note.status = 'saved';
     note.title = $('title').value.trim() || note.title || autoTitle(note);
     note.sha256 = note.buf ? await TA.sha256Hex(note.buf) : null;
-    note.playable = note.buf ? await TA.checkPlayable(note.buf, note.mime) : { ok: false, error: 'no audio' };
+    note.playable = note.buf ? await TA.checkPlayable(note.buf) : { ok: false, error: 'no audio' };
     await db.put('notes', note);
     $('title').value = ''; $('timer').textContent = '0:00';
-    banner(note.playable.ok ? 'ok' : 'bad', note.playable.ok ? `Saved “${esc(note.title)}” on this phone.` : 'The note was saved but did not pass the playback check on this phone.');
+    if (!note.playable.ok) banner('bad', 'The note was saved but did not pass the playback check on this phone.');
+    else if (!note.playable.audible) banner('bad', `<b>${esc(TA.NO_SOUND_MESSAGE)}</b> The note was kept so you can check it. Microphone: ${esc(note.mic ? note.mic.name : 'unknown')}.`);
+    else banner('ok', `Saved “${esc(note.title)}” on this phone.`);
     note = null; rec = null;
     renderNotes();
   }
@@ -174,6 +223,7 @@
         <h3>${esc(n.title || autoTitle(n))}</h3>
         <div class="meta">${esc(new Date(n.created_wall).toLocaleString())} · ${noteLength(n)}${c ? ' · ' + esc(c.name) : ''}${n.recovered ? ' · recovered after reload' : ''} · on this phone</div>
         ${player}
+        ${n.playable && n.playable.ok && n.playable.audible === false ? `<div class="silent">⚠ ${esc(TA.NO_SOUND_MESSAGE)}${n.mic ? ' (' + esc(n.mic.name) + ')' : ''}</div>` : ''}
         <div class="ph">📝 Transcript and quick summary: coming soon</div>
         <div class="ph">✅ Suggested task / follow-up: coming soon</div>
         <div class="row"><button data-del="${esc(n.id)}">Delete</button></div>
@@ -187,7 +237,7 @@
     try {
       for (const n of (await db.all('notes')).filter((x) => x.status === 'recording')) {
         n.status = 'saved'; n.recovered = true; n.title = n.title || autoTitle(n);
-        if (n.buf) { n.sha256 = await TA.sha256Hex(n.buf); n.playable = await TA.checkPlayable(n.buf, n.mime); }
+        if (n.buf) { n.sha256 = await TA.sha256Hex(n.buf); n.playable = await TA.checkPlayable(n.buf); }
         await db.put('notes', n);
         banner('warn', `A note was still recording when the page closed. Saved what was captured (${TA.ms2mmss(n.duration_ms || 0)}).`);
       }

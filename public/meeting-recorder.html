@@ -57,6 +57,10 @@
   .tabs button.on { background: var(--navy, #0b1d34); color: #fff; }
   .placeholder { border: 1px dashed var(--rule-strong, #cbd5e1); border-radius: 10px; padding: 18px; color: var(--ink-soft, #555); background: var(--light-gray, #f7f7f7); }
   .ok { color: var(--ok); } .bad { color: var(--bad); }
+  .microw { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; margin-top: 14px; }
+  .meter { height: 12px; background: var(--light-gray, #eef0f3); border-radius: 6px; overflow: hidden; margin-top: 8px; }
+  .meter > div { height: 100%; width: 0%; background: var(--ok); transition: width .08s linear; }
+  .micname { font-size: 14px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -99,6 +103,15 @@
       </div>
       <div><label for="mLocation">Location (optional)</label><input id="mLocation" placeholder="Clubhouse"></div>
     </div>
+    <div class="microw">
+      <div>
+        <label for="mic">Microphone</label>
+        <select id="mic"><option value="">System default microphone</option></select>
+      </div>
+      <button id="btnMicTest">Test microphone</button>
+    </div>
+    <div class="meter" id="setupMeterWrap" style="display:none"><div id="setupMeter"></div></div>
+    <div class="micname" id="micLine">🎙️ Microphone: <b id="micName">System default</b></div>
     <button id="btnStart" class="primary start" disabled>● Start recording</button>
     <div class="muted" id="deviceLine" style="margin-top:10px"></div>
   </section>
@@ -110,6 +123,9 @@
       <span id="clock" class="clock">00:00:00</span>
     </div>
     <div class="ctx" id="ctxLine"></div>
+    <div class="micname">🎙️ <b id="liveMicName"></b> <span class="muted">· input level</span></div>
+    <div class="meter"><div id="liveMeter"></div></div>
+    <div id="micWarn"></div>
     <div class="execbar" id="execBar">EXECUTIVE SESSION IN PROGRESS</div>
     <div class="markers">
       <button data-mark="minutes">📝 Mark for minutes</button>
@@ -146,7 +162,8 @@
   const EVENT_LABEL = { recording_started: 'Recording started', paused: 'Paused', resumed: 'Resumed', recording_stopped: 'Recording stopped', page_hidden: 'Screen/app hidden', page_visible: 'Back on screen',
     page_was_frozen: 'Device suspended the page', mic_muted_by_device: 'Device muted the microphone', mic_unmuted: 'Microphone back', recording_interrupted: 'Recording interrupted',
     resumed_after_interruption: 'Resumed after interruption', page_reloaded_during_recording: 'Page reloaded during recording', partial_segment_recovered: 'Recovered audio after reload',
-    segment_lost_on_reload: 'Audio lost on reload', wakelock_released: 'Screen-awake lock lost', segment_not_playable: 'A segment failed its playback check', recorder_restarted: 'Recorder restarted' };
+    segment_lost_on_reload: 'Audio lost on reload', wakelock_released: 'Screen-awake lock lost', segment_not_playable: 'A segment failed its playback check', recorder_restarted: 'Recorder restarted',
+    no_sound_detected: 'No sound from the microphone', sound_detected_again: 'Sound detected again', mic_fallback_to_default: 'Saved microphone missing; used system default' };
 
   let communities = [];
   let current = null; // session being shown in the console
@@ -169,6 +186,53 @@
     $('community').innerHTML = '<option value="">Select a community…</option>' + list.map((c) => `<option value="${esc(c.id)}"${c.id === last ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
     if (last && list.some((c) => c.id === last)) loadMeetings();
   }).catch((e) => { $('community').innerHTML = '<option value="">Could not load communities</option>'; banner('bad', 'Could not load communities: ' + esc(e.message)); });
+
+  // ---------------------------------------------------------- microphone
+  const MIC_KEY = 'mr_mic_device';
+  async function refreshMics() {
+    const mics = await TA.listMics().catch(() => []);
+    const saved = TA.savedMic(MIC_KEY);
+    const sel = $('mic');
+    const cur = sel.value || saved;
+    sel.innerHTML = mics.length ? mics.map((m) => `<option value="${esc(m.deviceId)}">${esc(m.name)}</option>`).join('') : '<option value="">System default microphone</option>';
+    if (cur && mics.some((m) => m.deviceId === cur)) sel.value = cur;
+    showMicName();
+  }
+  function showMicName() { const o = $('mic').selectedOptions[0]; $('micName').textContent = o ? o.textContent : 'System default'; }
+  $('mic').onchange = () => { TA.rememberMic(MIC_KEY, $('mic').value); showMicName(); micMsg(''); };
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener('devicechange', refreshMics);
+  refreshMics();
+
+  function micMsg(html, kind) { $('micWarn').innerHTML = ''; if (html) banner(kind || 'bad', html); }
+  // Open the selected mic and check it for ~1 s. Returns the open mic, or null
+  // (after showing why) if it is muted / not live / producing no signal.
+  async function checkedMic(showMeter) {
+    let mic;
+    try { mic = await TA.openMic($('mic').value, rec.audio); }
+    catch (e) { banner('bad', 'Could not open the microphone: ' + esc(e.message) + '. Check the browser\'s microphone permission for this site.'); return null; }
+    await refreshMics();
+    if (mic.fellBack) banner('warn', `The saved microphone was not found, so the system default (${esc(mic.name)}) is being used.`);
+    let meterTimer = null, meter = null;
+    if (showMeter) { $('setupMeterWrap').style.display = ''; meter = TA.levelMeter(mic.stream); meterTimer = setInterval(() => { $('setupMeter').style.width = meterPct(meter.read().rms) + '%'; }, 80); }
+    const pre = await TA.preflightMic(mic);
+    if (meter) { clearInterval(meterTimer); meter.close(); }
+    lastPreflight = pre;
+    if (!pre.ok) {
+      mic.stream.getTracks().forEach((t) => t.stop());
+      banner('bad', `<b>${esc(TA.micProblemMessage(pre.name))}</b><br>${pre.muted ? '' : esc(TA.MIC_RETRY_HINT) + '<br>'}<span class="muted">Check: ${pre.muted ? 'the device reports it is muted' : pre.reason === 'not_live' ? 'the microphone is not live' : 'no sound reached Trusted in ' + (TA.SILENCE.PREFLIGHT_MS / 1000) + ' s (peak ' + pre.peak + ')'}.</span>`);
+      return null;
+    }
+    TA.rememberMic(MIC_KEY, mic.deviceId !== 'default' ? mic.deviceId : $('mic').value);
+    return mic;
+  }
+  let lastPreflight = null;
+  function meterPct(rms) { const db = 20 * Math.log10(Math.max(rms, 1e-6)); return Math.max(0, Math.min(100, ((db + 60) / 60) * 100)); }
+  $('btnMicTest').onclick = async () => {
+    $('btnMicTest').disabled = true;
+    const mic = await checkedMic(true);
+    if (mic) { banner('ok', `🎙️ ${esc(mic.name)} is working (peak level ${lastPreflight.peak}).`); mic.stream.getTracks().forEach((t) => t.stop()); }
+    $('btnMicTest').disabled = false;
+  };
 
   async function loadMeetings() {
     const cid = $('community').value;
@@ -208,11 +272,15 @@
     const meeting = mv === '__new'
       ? { source: 'new', title: $('mTitle').value.trim() || typeLabel($('mType').value), date: $('mDate').value, type: $('mType').value, location: $('mLocation').value.trim() || null }
       : { source: 'agenda', agenda_id: mv, title: opt ? opt.textContent : 'Board meeting' };
+    $('btnStart').disabled = true; $('btnStart').textContent = 'Checking microphone…';
+    const mic = await checkedMic(false);
+    $('btnStart').textContent = '● Start recording';
+    if (!mic) { validate(); return; }   // blocked: muted / dead mic, reason already shown
     try {
-      current = await rec.start({ community_id: cid, community_name: comm.name || '', meeting });
+      current = await rec.start({ community_id: cid, community_name: comm.name || '', meeting }, null, { mic });
       execOpen = false;
       clearBanner(); render(); renderTimeline();
-    } catch (e) { banner('bad', 'Could not start recording: ' + esc(e.message) + '. Check the browser\'s microphone permission for this site.'); }
+    } catch (e) { mic.stream.getTracks().forEach((t) => t.stop()); banner('bad', 'Could not start recording: ' + esc(e.message) + '. Check the browser\'s microphone permission for this site.'); validate(); }
   };
 
   // --------------------------------------------------------- console
@@ -229,9 +297,22 @@
     if (execOpen) { await rec.mark('exec_end'); execOpen = false; }
     await rec.stop();
     const st = rec.state.session;
-    banner('ok', `Meeting recording saved on this device${st ? ' · ' + esc(st.meeting && st.meeting.title) : ''}. Transcript, summary and draft minutes arrive in a later phase.`);
-    render(); renderSessions(); if (st) openDetail(st.id);
+    render();
+    banner('info', 'Recording stopped. Checking the audio…');
+    const v = st ? await soundVerdict(st.id) : null;
+    if (v && !v.anyAudible) banner('bad', `<b>${esc(TA.NO_SOUND_MESSAGE)}</b><br>The recording was kept on this device for troubleshooting. Microphone: ${esc(st.mic ? st.mic.name : 'unknown')}.`);
+    else banner(v && v.silentSegs.length ? 'warn' : 'ok', `Meeting recording saved on this device${st ? ' · ' + esc(st.meeting && st.meeting.title) : ''}.${v && v.silentSegs.length ? ` ${v.silentSegs.length} of ${v.total} segments had no audible sound (see Overview).` : ''} Transcript, summary and draft minutes arrive in a later phase.`);
+    renderSessions(); if (st) openDetail(st.id);
   };
+  // Waits (up to ~8 s) for every segment's audio check, then reports whether
+  // the recording contains audible sound and which segments were silent.
+  async function soundVerdict(id) {
+    let segs = [];
+    for (let i = 0; i < 40; i++) { segs = (await rec.sessionData(id)).segments; if (segs.length && segs.every((x) => x.decode)) break; await new Promise((r) => setTimeout(r, 200)); }
+    const checked = segs.filter((x) => x.decode && x.decode.ok && typeof x.decode.audible === 'boolean');
+    const silentSegs = checked.filter((x) => !x.decode.audible);
+    return { total: segs.length, anyAudible: checked.some((x) => x.decode.audible), silentSegs };
+  }
   function flash(b) { b.style.background = '#dcfce7'; setTimeout(() => { b.style.background = ''; }, 500); }
 
   function activeMs(s) {
@@ -256,6 +337,9 @@
     else { dot.className = 'dot rec'; dot.textContent = '● RECORDING'; }
     $('clock').textContent = TA.hms(activeMs(s));
     $('ctxLine').textContent = `${s.community_name || ''} · ${s.meeting ? s.meeting.title : ''}`;
+    $('liveMicName').textContent = st.micName || 'Microphone';
+    $('micWarn').innerHTML = st.micMuted ? `<div class="banner bad"><b>${esc(st.micName || 'The microphone')} was muted by the device.</b> Unmute it now; audio is not being captured.</div>`
+      : st.noSound ? `<div class="banner bad"><b>No sound is reaching Trusted from ${esc(st.micName || 'the microphone')}.</b> Check that it is unmuted and connected.</div>` : '';
     execOpen = !!s.exec_open;
     $('execBar').style.display = execOpen ? 'block' : 'none';
     $('btnExec').textContent = execOpen ? '🔓 End executive session' : '🔒 Executive session';
@@ -273,6 +357,7 @@
     }
   }
   setInterval(() => { if (rec.state.recording) $('clock').textContent = TA.hms(activeMs(rec.state.session)); }, 1000);
+  setInterval(() => { if (rec.state.recording) $('liveMeter').style.width = meterPct(rec.level().rms) + '%'; }, 100);
 
   async function renderTimeline() {
     const snap = await rec.snapshot();
@@ -318,7 +403,11 @@
       </div>`;
     const body = (i) => {
       if (i === 0) {
-        return `<div>${segs.length} segments · ${(segs.reduce((t, x) => t + x.bytes, 0) / 1048576).toFixed(1)} MB · ${bad ? `<span class="bad">${bad} failed playback check</span>` : '<span class="ok">all segments passed the playback check</span>'} · ${gaps.length ? `<span class="bad">${gaps.length} interruption/loss event(s)</span>` : 'no interruptions logged'}</div>
+        const silent = segs.filter((x) => x.decode && x.decode.ok && x.decode.audible === false);
+        const anyAudible = segs.some((x) => x.decode && x.decode.audible);
+        const soundLine = !anyAudible && segs.length ? `<div class="banner bad"><b>${esc(TA.NO_SOUND_MESSAGE)}</b> Microphone: ${esc(s.mic ? s.mic.name : 'unknown')}.</div>`
+          : silent.length ? `<div class="banner warn">${silent.length} segment(s) had no audible sound: ${silent.map((x) => TA.hms(x.started_wall - s.started_wall)).join(', ')}</div>` : '';
+        return `${soundLine}<div>${segs.length} segments · ${(segs.reduce((t, x) => t + x.bytes, 0) / 1048576).toFixed(1)} MB · ${bad ? `<span class="bad">${bad} failed playback check</span>` : '<span class="ok">all segments passed the playback check</span>'} · ${gaps.length ? `<span class="bad">${gaps.length} interruption/loss event(s)</span>` : 'no interruptions logged'} · microphone ${esc(s.mic ? s.mic.name : 'unknown')}</div>
           <div style="margin-top:10px"><b>Markers</b> (${markers.length})</div>
           <div class="timeline">${markers.length ? markers.map((e) => `<div><b>${TA.hms(e.wall_ms - s.started_wall)}</b> ${esc(MARK_LABEL[e.marker] || e.marker)}</div>`).join('') : '<span class="muted">No markers.</span>'}</div>
           <div style="margin-top:10px"><b>Listen</b> <select id="segPick">${segs.map((x) => `<option value="${x.seq}">${TA.hms(x.started_wall - s.started_wall)} (${Math.round((x.wall_ms || 0) / 1000)} s)${x.partial ? ' recovered' : ''}</option>`).join('')}</select> <button id="segPlay">▶ Play</button></div>
