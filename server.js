@@ -1745,6 +1745,8 @@ const { router: minutesRouter } = require('./api/minutes');
 app.use('/api/minutes', minutesRouter);
 // Meeting Recorder Step 1: server-side recording persistence (404 unless MEETING_UPLOADS_ENABLED=true).
 app.use('/api/meetings', require('./api/meetings'));
+// Meeting Intelligence Step 2: join -> transcribe -> Paige -> draft minutes (off unless MEETING_PROCESSING_ENABLED=true).
+app.use('/api/meeting-intel', require('./api/meeting_intel'));
 
 const { router: agendasRouter } = require('./api/agendas');
 app.use('/api/agendas', agendasRouter);
@@ -11235,5 +11237,10 @@ httpServer.listen(3000, () => {
     startScheduler();
   } catch (e) {
     console.error('[scheduler] failed to start:', e.message);
+  }
+  try {
+    require('./api/meeting_intel').startMeetingWorker();
+  } catch (e) {
+    console.error('[meeting-intel] worker failed to start:', e.message);
   }
 });
