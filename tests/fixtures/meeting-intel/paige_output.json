@@ -1,0 +1,364 @@
+{
+ "short_summary": "The Drama Creek Estates board held its regular October meeting, approving an $18,400 landscaping contract for the front entrance, rejecting a proposal to extend pool hours, hearing a homeowner streetlight complaint, and briefly entering executive session to discuss a delinquent account before adjourning.",
+ "executive_summary": "The board convened with all five directors present, establishing quorum. The treasurer reported roughly $42,000 in operating funds and $85,000 in reserves, noting landscaping was running about $3,000 over budget. The board heard a proposal from Lone Star Landscaping to replace dead shrubs and upgrade irrigation at the front entrance for $18,400, which was approved unanimously. A motion to extend pool hours on Fridays and Saturdays through the end of October failed 2-3 amid concerns about noise complaints from nearby homeowners. During homeowner comments, a resident raised a concern about a prolonged streetlight outage, which the community manager agreed to address. Several follow-up items were noted, including sending the signed landscaping contract, a newsletter reminder about pool rules, and revisiting the landscaping budget at next month's budget workshop. The board then went into executive session to discuss a delinquent account; no substantive content from that session is recorded here. The meeting was adjourned at 7:51 PM.",
+ "directors_present": [
+  {
+   "name": "Sunny Meadows",
+   "refs": [
+    "u0"
+   ]
+  },
+  {
+   "name": "Byron T. Bylaw",
+   "refs": [
+    "u2"
+   ]
+  },
+  {
+   "name": "Cassandra Complaine",
+   "refs": [
+    "u3"
+   ]
+  },
+  {
+   "name": "Tally Hawthorne",
+   "refs": [
+    "u4"
+   ]
+  },
+  {
+   "name": "Felix Goodneighbor",
+   "refs": [
+    "u5"
+   ]
+  }
+ ],
+ "others_present": [
+  {
+   "name": "Jordan Ellis",
+   "role": "manager",
+   "affiliation": "Bedrock",
+   "refs": [
+    "u6"
+   ]
+  },
+  {
+   "name": "Rick",
+   "role": "vendor",
+   "affiliation": "Lone Star Landscaping",
+   "refs": [
+    "u9",
+    "u10"
+   ]
+  },
+  {
+   "name": "Patricia Lopez",
+   "role": "homeowner",
+   "affiliation": "",
+   "refs": [
+    "u32"
+   ]
+  }
+ ],
+ "quorum_stated": true,
+ "call_to_order": [
+  {
+   "time_stated": "7:02 PM",
+   "by": "Sunny Meadows",
+   "refs": [
+    "u0"
+   ],
+   "quote": "It's seven oh two PM, and I'm calling this regular meeting of the Drama Creek Estates board of directors to order."
+  }
+ ],
+ "adjournment": [
+  {
+   "time_stated": "7:51 PM",
+   "refs": [
+    "u46"
+   ],
+   "quote": "The meeting is adjourned at seven fifty-one PM."
+  }
+ ],
+ "motions": [
+  {
+   "motion_text": "Approve the Lone Star Landscaping proposal for the front entrance, for eighteen thousand four hundred dollars, paid from the operating account.",
+   "mover": "Tally Hawthorne",
+   "seconder": "Felix Goodneighbor",
+   "vote_method": "voice",
+   "yes": 5,
+   "no": 0,
+   "abstain": 0,
+   "yes_names": [
+    "Byron T. Bylaw",
+    "Cassandra Complaine",
+    "Tally Hawthorne",
+    "Felix Goodneighbor",
+    "Sunny Meadows"
+   ],
+   "no_names": [],
+   "abstain_names": [],
+   "result": "passed",
+   "refs": [
+    "u13",
+    "u14",
+    "u15",
+    "u16",
+    "u17",
+    "u18",
+    "u19",
+    "u20"
+   ],
+   "quote": "I move that we approve the Lone Star Landscaping proposal for the front entrance, for eighteen thousand four hundred dollars, paid from the operating account."
+  },
+  {
+   "motion_text": "Extend pool hours to ten PM on Fridays and Saturdays through the end of October.",
+   "mover": "Byron T. Bylaw",
+   "seconder": "Cassandra Complaine",
+   "vote_method": "voice",
+   "yes": 2,
+   "no": 3,
+   "abstain": 0,
+   "yes_names": [
+    "Byron T. Bylaw",
+    "Cassandra Complaine"
+   ],
+   "no_names": [
+    "Tally Hawthorne",
+    "Felix Goodneighbor",
+    "Sunny Meadows"
+   ],
+   "abstain_names": [],
+   "result": "failed",
+   "refs": [
+    "u21",
+    "u22",
+    "u25",
+    "u26",
+    "u27",
+    "u28",
+    "u29",
+    "u30"
+   ],
+   "quote": "I move that we extend pool hours to ten PM on Fridays and Saturdays through the end of October."
+  },
+  {
+   "motion_text": "Adjourn the meeting.",
+   "mover": "Felix Goodneighbor",
+   "seconder": "Byron T. Bylaw",
+   "vote_method": "voice",
+   "yes": -1,
+   "no": -1,
+   "abstain": -1,
+   "yes_names": [],
+   "no_names": [],
+   "abstain_names": [],
+   "result": "passed",
+   "refs": [
+    "u43",
+    "u44",
+    "u45",
+    "u46"
+   ],
+   "quote": "So moved."
+  }
+ ],
+ "decisions": [
+  {
+   "text": "The board directed the community manager to send Lone Star the signed contract.",
+   "refs": [
+    "u34"
+   ],
+   "quote": "Jordan, please send Lone Star the signed contract."
+  },
+  {
+   "text": "The board agreed to revisit the landscaping budget at next month's budget workshop.",
+   "refs": [
+    "u37",
+    "u38"
+   ],
+   "quote": "We should revisit the landscaping budget at the budget workshop next month."
+  }
+ ],
+ "action_items": [
+  {
+   "task": "Report the outage of the streetlight at Willow Bend and Creekside to CenterPoint and follow up with the homeowner.",
+   "responsible": "Jordan Ellis",
+   "due": "by Friday",
+   "refs": [
+    "u33"
+   ],
+   "quote": "I'll report it to CenterPoint tomorrow and follow up with you by Friday."
+  },
+  {
+   "task": "Have the signed landscaping contract sent to Lone Star Landscaping.",
+   "responsible": "Jordan Ellis",
+   "due": "by October second",
+   "refs": [
+    "u35"
+   ],
+   "quote": "I'll have the contract signed and sent to them by October second."
+  },
+  {
+   "task": "Draft a reminder about the pool rules for the next newsletter.",
+   "responsible": "Cassandra Complaine",
+   "due": "",
+   "refs": [
+    "u36"
+   ],
+   "quote": "I'll draft a reminder about the pool rules for the next newsletter."
+  }
+ ],
+ "follow_ups": [
+  {
+   "text": "Revisit the landscaping budget, which is running over budget for the year, at the upcoming budget workshop.",
+   "refs": [
+    "u8",
+    "u37"
+   ],
+   "quote": "We should revisit the landscaping budget at the budget workshop next month."
+  }
+ ],
+ "next_agenda_items": [
+  {
+   "text": "Budget workshop discussion of the landscaping budget.",
+   "refs": [
+    "u37"
+   ]
+  }
+ ],
+ "discussion_topics": [
+  {
+   "topic": "Treasurer's report",
+   "minutes_note": "The treasurer reported approximately $42,000 in the operating account and $85,000 in the reserve account, and noted that landscaping spending is running approximately $3,000 over budget for the year.",
+   "refs": [
+    "u8"
+   ]
+  },
+  {
+   "topic": "Lone Star Landscaping front entrance proposal",
+   "minutes_note": "A representative of Lone Star Landscaping presented a proposal to replace dead shrubs and upgrade the irrigation controller at the front entrance for $18,400, with work proposed to begin the week of November 9. The board discussed the warranty status of the existing and proposed irrigation controllers before voting.",
+   "refs": [
+    "u9",
+    "u10",
+    "u11",
+    "u12"
+   ]
+  },
+  {
+   "topic": "Pool hours extension",
+   "minutes_note": "The board discussed a proposal to extend pool hours to 10 PM on Fridays and Saturdays through the end of October, including concerns about noise complaints from nearby homeowners on Ripple Lane.",
+   "refs": [
+    "u21",
+    "u23"
+   ]
+  },
+  {
+   "topic": "Homeowner comment on streetlight outage",
+   "minutes_note": "A homeowner on Willow Bend reported that the streetlight at Willow Bend and Creekside had been out for three weeks.",
+   "refs": [
+    "u32"
+   ]
+  },
+  {
+   "topic": "Executive session",
+   "minutes_note": "The board went into executive session to discuss a delinquent account. No other matters were addressed in executive session.",
+   "refs": [
+    "u38"
+   ]
+  }
+ ],
+ "speaker_suggestions": [
+  {
+   "speaker": 1,
+   "name": "Sunny Meadows",
+   "role": "board_member",
+   "refs": [
+    "u0"
+   ],
+   "quote": "I'm Sunny Meadows, the board president."
+  },
+  {
+   "speaker": 2,
+   "name": "Byron T. Bylaw",
+   "role": "board_member",
+   "refs": [
+    "u2"
+   ],
+   "quote": "Byron Bylaw, vice president and chair of the architectural committee."
+  },
+  {
+   "speaker": 3,
+   "name": "Cassandra Complaine",
+   "role": "board_member",
+   "refs": [
+    "u3"
+   ],
+   "quote": "Cassandra Complaine, secretary."
+  },
+  {
+   "speaker": 4,
+   "name": "Tally Hawthorne",
+   "role": "board_member",
+   "refs": [
+    "u4"
+   ],
+   "quote": "Tally Hawthorne, treasurer."
+  },
+  {
+   "speaker": 5,
+   "name": "Felix Goodneighbor",
+   "role": "board_member",
+   "refs": [
+    "u5"
+   ],
+   "quote": "Felix Goodneighbor, member at large."
+  },
+  {
+   "speaker": 6,
+   "name": "Jordan Ellis",
+   "role": "manager",
+   "refs": [
+    "u6"
+   ],
+   "quote": "Jordan Ellis, community manager with Bedrock."
+  },
+  {
+   "speaker": 7,
+   "name": "Rick",
+   "role": "vendor",
+   "refs": [
+    "u9",
+    "u10"
+   ],
+   "quote": "Rick from Lone Star Landscaping is here to walk through the proposal for the front entrance."
+  },
+  {
+   "speaker": 8,
+   "name": "Patricia Lopez",
+   "role": "homeowner",
+   "refs": [
+    "u32"
+   ],
+   "quote": "Hi, I'm Patricia Lopez on Willow Bend."
+  }
+ ],
+ "uncertainties": [
+  {
+   "note": "The executive session content is withheld and its exact start/end times relative to the stated recording gap (3:07 to 3:27) are approximate; only the delinquent-account topic was named by the board, per house rules on executive session minutes.",
+   "refs": [
+    "u38",
+    "u43"
+   ]
+  },
+  {
+   "note": "Vote counts for the adjournment motion were not individually stated; result is inferred from the motion and second being made with no objection noted.",
+   "refs": [
+    "u43",
+    "u44",
+    "u45",
+    "u46"
+   ]
+  }
+ ]
+}

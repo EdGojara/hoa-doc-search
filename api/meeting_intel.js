@@ -13,10 +13,16 @@
 //   GET  /sessions/:sid              processing status + results summary
 //   POST /sessions/:sid/process      queue a verified session
 //   POST /jobs/:id/retry             retry from the failed stage (or ?from=stage)
-//   GET  /sessions/:sid/audio        the joined audio (302 to a signed URL)
+//   GET  /sessions/:sid/audio        the joined audio (302 to a signed URL; ?json=1 returns it)
 //   GET  /sessions/:sid/transcript   current transcript: segments, speakers, roster, gaps
 //   PUT  /sessions/:sid/speakers/:n  map Speaker n -> board member / Manager / Vendor / Homeowner / Other
 //   DELETE /sessions/:sid/speakers/:n  clear that mapping
+//   GET  /sessions/:sid/analysis     Paige's review, re-checked against the CURRENT
+//                                    speaker mappings, + a draft-minutes preview
+//   POST /sessions/:sid/reanalyze    re-run Paige (e.g. after mapping speakers)
+//   POST /sessions/:sid/draft-minutes  save a DRAFT into the minutes module
+//                                    (never finalized, emailed, or turned into
+//                                    motions/projects/tasks from here)
 // ============================================================================
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
@@ -27,12 +33,15 @@ const { assembleStage, BUCKET } = require('../lib/meetings/stage_assemble');
 const { transcribeStage } = require('../lib/meetings/stage_transcribe');
 const { boardRoster, speakerMappings, speakerLabel } = require('../lib/meetings/roster');
 const { fetchAll } = require('../lib/db/fetch_all');
+const { analyzeStage, loadContext, recheck, mappingsChanged } = require('../lib/meetings/stage_analyze');
+const { buildDraftMinutes } = require('../lib/meetings/minutes_from_analysis');
+const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const handlers = { assemble: assembleStage, transcribe: transcribeStage };
+const handlers = { assemble: assembleStage, transcribe: transcribeStage, analyze: analyzeStage };
 const pipeline = createPipeline({ supabase, handlers });
 
 const enabled = () => process.env.MEETING_PROCESSING_ENABLED === 'true';
@@ -109,6 +118,7 @@ router.get('/sessions/:sid/audio', async (req, res) => {
     if (!a) return res.status(404).json({ error: 'audio_not_ready' });
     const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(a.storage_path, 3600);
     if (error || !data) return res.status(502).json({ error: 'signed_url_failed' });
+    if (req.query.json) return res.json({ url: data.signedUrl, expires_in: 3600 });   // the page's player needs the URL (an <audio> tag cannot send the login header)
     res.redirect(302, data.signedUrl);
   } catch (e) { fail(res, 'audio', e); }
 });
@@ -187,11 +197,96 @@ router.delete('/sessions/:sid/speakers/:n', async (req, res) => {
   } catch (e) { fail(res, 'speaker unmap', e); }
 });
 
+// ------------------------------------------------------------ Paige's review + draft minutes
+async function currentAnalysis(sid) {
+  const { data, error } = await supabase.from('meeting_analyses').select('*').eq('session_id', sid).eq('is_current', true).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+const MINUTES_TYPES = new Set(['regular', 'annual', 'special', 'executive', 'organizational']);
+statusExtras.push(async (s) => {
+  const a = await currentAnalysis(s.id);
+  return { analysis: a ? { id: a.id, model: a.model, needs_review_count: a.needs_review_count, withheld_count: a.withheld_count, draft_minutes_id: a.draft_minutes_id, created_at: a.created_at } : null };
+});
+
+// The stored analysis re-checked against the CURRENT speaker mappings, plus the draft-minutes preview.
+async function reviewPayload(sid) {
+  const a = await currentAnalysis(sid);
+  if (!a) return null;
+  const ctx = await loadContext(supabase, sid);
+  const checked = recheck(a, ctx);
+  const preview = buildDraftMinutes(checked, { communityName: ctx.community.name, meeting: ctx.meeting, sessionStartedAt: ctx.sessionStartedAt, roster: ctx.roster });
+  let draft = null;
+  if (a.draft_minutes_id) {
+    const { data } = await supabase.from('meeting_minutes').select('id, status, title, created_at').eq('id', a.draft_minutes_id).maybeSingle();
+    draft = data || null;
+  }
+  return { a, ctx, checked, preview, draft };
+}
+
+router.get('/sessions/:sid/analysis', async (req, res) => {
+  try {
+    const u = await staffOnly(req, res); if (!u) return;
+    if (!UUID.test(req.params.sid)) return res.status(400).json({ error: 'invalid_session' });
+    const p = await reviewPayload(req.params.sid);
+    if (!p) return res.status(404).json({ error: 'analysis_not_ready' });
+    res.json({
+      analysis: { id: p.a.id, model: p.a.model, prompt_version: p.a.prompt_version, created_at: p.a.created_at, transcript_id: p.a.transcript_id },
+      checked: p.checked, counts: p.checked.counts, mappings_changed: mappingsChanged(p.a, p.ctx),
+      minutes_preview: p.preview.body_markdown, draft_minutes: p.draft, community_name: p.ctx.community.name || null,
+    });
+  } catch (e) { fail(res, 'analysis', e); }
+});
+
+router.post('/sessions/:sid/reanalyze', async (req, res) => {
+  try {
+    const u = await staffOnly(req, res); if (!u) return;
+    if (!UUID.test(req.params.sid)) return res.status(400).json({ error: 'invalid_session' });
+    const job = await one('meeting_processing_jobs', 'id, status', 'session_id', req.params.sid);
+    if (!job) return res.status(404).json({ error: 'not_processed' });
+    if (!(await currentTranscript(req.params.sid))) return res.status(409).json({ error: 'transcript_not_ready' });
+    const r = await pipeline.retry(job.id, { fromStage: 'analyze' });
+    res.status(r.status).json(r.body);
+  } catch (e) { fail(res, 'reanalyze', e); }
+});
+
+router.post('/sessions/:sid/draft-minutes', async (req, res) => {
+  try {
+    const u = await staffOnly(req, res); if (!u) return;
+    if (!UUID.test(req.params.sid)) return res.status(400).json({ error: 'invalid_session' });
+    const p = await reviewPayload(req.params.sid);
+    if (!p) return res.status(409).json({ error: 'analysis_not_ready' });
+    if (p.draft) return res.status(200).json({ minutes: p.draft, existing: true });
+    const m = p.ctx.meeting;
+    const ref = `meeting_analysis:${p.a.id}`;
+    const row = {
+      management_company_id: p.ctx.community.management_company_id || BEDROCK_MGMT_CO_ID,
+      community_id: m.community_id, meeting_date: m.meeting_date, meeting_type: MINUTES_TYPES.has(m.meeting_type) ? m.meeting_type : 'special',
+      title: `${m.title} Minutes`, status: 'draft', body_markdown: p.preview.body_markdown, attendees: p.preview.attendees, location: m.location || null,
+      called_to_order_at: p.preview.called_to_order_at, adjourned_at: p.preview.adjourned_at, ai_drafted: true, ai_model: p.a.model,
+      created_by: 'meeting_recorder', intake_source_ref: ref,
+    };
+    let { data: minutes, error } = await supabase.from('meeting_minutes').insert(row).select('id, status, title, created_at').single();
+    if (error && error.code === '23505') ({ data: minutes, error } = await supabase.from('meeting_minutes').select('id, status, title, created_at').eq('intake_source_ref', ref).single());
+    if (error) throw error;
+    const { error: aErr } = await supabase.from('meeting_analyses').update({ draft_minutes_id: minutes.id, draft_minutes_created_at: new Date().toISOString(), draft_minutes_created_by: u.user.id }).eq('id', p.a.id);
+    if (aErr) throw aErr;
+    // Link the meeting to its minutes only if it has none yet (never re-point an existing link).
+    const { error: lErr } = await supabase.from('meetings').update({ meeting_minutes_id: minutes.id }).eq('id', m.id).is('meeting_minutes_id', null);
+    if (lErr) throw lErr;
+    res.status(201).json({ minutes, existing: false, needs_review: p.preview.review_count });
+  } catch (e) { fail(res, 'draft minutes', e); }
+});
+
 /** Start the background worker (server.js). No-op unless processing is enabled. */
 function startMeetingWorker() {
   if (!enabled()) return false;
   pipeline.start();
   console.log(`[meeting-intel] worker started (${pipeline.owner}); stages: ${pipeline.stages.join(' -> ')}`);
+  // One log line that proves the deploy has what the stages need.
+  require('../lib/meetings/assemble').ffmpegVersion()
+    .then((v) => console.log(`[meeting-intel] ${v || 'ffmpeg NOT available: joining audio will fail'}; Deepgram key ${process.env.DEEPGRAM_API_KEY ? 'set' : 'MISSING'}; STT model ${require('../lib/meetings/transcribe').modelName()}; analysis model ${require('../lib/meetings/paige_meeting').MODEL()}`))
+    .catch((e) => console.error('[meeting-intel] ffmpeg check failed: ' + e.message));
   return true;
 }
 

@@ -6,11 +6,13 @@
 <meta name="robots" content="noindex">
 <title>Meeting Recorder · Trusted</title>
 <!--
-  MEETING RECORDER, Phase 1 (Ed 2026-09-22). Long-form, session-based board
-  meeting recording. Standalone page (never inline in index.html). Uses the
-  reliability engine in /js/segment-recorder.js. Phase 1 keeps recordings on
-  THIS DEVICE ONLY: no upload, no transcription, no Paige yet; those tabs are
-  labeled placeholders. Reads /api/communities and /api/agendas (read-only).
+  MEETING RECORDER (Ed 2026-09-22). Long-form, session-based board meeting
+  recording. Standalone page (never inline in index.html). Uses the
+  reliability engine in /js/segment-recorder.js; pieces upload to
+  /api/meetings when enabled. Once Trusted VERIFIES a recording, the review
+  tabs (/js/meeting-intel-ui.js -> /api/meeting-intel) show processing status,
+  the speaker-labeled transcript, Paige's summary, motions & votes, action
+  items and draft minutes (Ed 2026-09-23).
 -->
 <link rel="stylesheet" href="/brand.css">
 <style>
@@ -71,6 +73,39 @@
   .micreport { margin-top: 10px; border: 1px solid var(--rule, #e5e7eb); border-radius: 10px; padding: 12px; font-size: 14px; }
   .rating { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 700; font-size: 13px; }
   .r-good { background: #dcfce7; color: #14532d; } .r-fair { background: #fef3c7; color: #78350f; } .r-poor { background: #fee2e2; color: #7f1d1d; }
+  /* review tabs (meeting-intel-ui.js). brand.css --ink is the light text color
+     for DARK surfaces, so the detail card sets dark text explicitly. */
+  #detail { color: #1f2937; } #detail .muted { color: #64748b; }
+  .mi-panel { margin-top: 14px; border: 1px solid var(--rule, #e5e7eb); border-radius: 10px; padding: 12px 14px; }
+  .mi-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0; font-size: 14px; }
+  .mi-step { padding: 4px 10px; border-radius: 999px; background: var(--light-gray, #f1f5f9); color: var(--ink-faint, #64748b); }
+  .mi-step.done { background: #dcfce7; color: #14532d; } .mi-step.running, .mi-step.queued, .mi-step.retrying { background: #e0f2fe; color: #0c4a6e; font-weight: 600; }
+  .mi-step.failed { background: #fee2e2; color: #7f1d1d; font-weight: 700; } .mi-arrow { color: var(--ink-faint, #94a3b8); }
+  .mi-h { font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--navy, #0b1d34); margin: 18px 0 6px; }
+  .mi-spks { display: grid; gap: 10px; }
+  .mi-spk { border: 1px solid var(--rule, #e5e7eb); border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px; }
+  .mi-spk-ctl { display: flex; gap: 8px; flex-wrap: wrap; } .mi-spk-ctl select { max-width: 320px; } .mi-spk-ctl input { max-width: 220px; }
+  .mi-sample { font-style: italic; margin-top: 2px; }
+  .mi-sugg { background: #eef2ff; border-radius: 8px; padding: 6px 10px; font-size: 13px; } .mi-sugg button { padding: 3px 10px; font-size: 12px; margin-left: 6px; }
+  .mi-lines { font-size: 14px; line-height: 1.5; max-height: 560px; overflow: auto; border: 1px solid var(--rule, #e5e7eb); border-radius: 10px; padding: 8px 12px; }
+  .mi-line { padding: 4px 0; border-bottom: 1px dashed var(--rule, #eef0f3); } .mi-line.lowconf { background: #fffbeb; }
+  .mi-who { color: var(--navy, #0b1d34); margin: 0 4px; }
+  .mi-t { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; color: var(--ink-faint, #64748b); text-decoration: none; }
+  .mi-t:hover { text-decoration: underline; }
+  .mi-gap { text-align: center; color: var(--warn); font-size: 13px; padding: 6px 0; }
+  .mi-exec { background: #fef3c7; border-radius: 8px; padding: 6px 10px; margin: 6px 0; } .mi-exec summary { cursor: pointer; font-weight: 600; color: #78350f; font-size: 13px; }
+  .mi-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; vertical-align: middle; }
+  .mi-badge.ok { background: #dcfce7; color: #14532d; } .mi-badge.rv { background: #fef3c7; color: #92400e; }
+  .mi-card { border: 1px solid var(--rule, #e5e7eb); border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
+  .mi-card-h { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .mi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 8px; font-size: 14px; }
+  .mi-res.passed { color: var(--ok); } .mi-res.failed { color: var(--bad); }
+  .mi-quote { font-size: 13px; color: var(--ink-soft, #555); margin-top: 6px; font-style: italic; }
+  .mi-reasons { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: #92400e; }
+  .mi-minutes { border: 1px solid var(--rule, #e5e7eb); border-radius: 10px; padding: 6px 16px; font-family: Georgia, serif; font-size: 15px; background: #fff; }
+  .mi-minutes h4 { font-family: var(--font-sans, system-ui, sans-serif); color: var(--navy, #0b1d34); margin: 14px 0 4px; }
+  .mi-flag { background: #fef3c7; color: #92400e; font-family: var(--font-sans, system-ui, sans-serif); font-size: 13px; } .mi-ph { color: #b45309; }
+  .mi-counts { margin: 4px 0 8px; }
 </style>
 </head>
 <body>
@@ -168,6 +203,7 @@
 <script src="/js/trusted-audio.js"></script>
 <script src="/js/meeting-uploader.js"></script>
 <script src="/js/segment-recorder.js"></script>
+<script src="/js/meeting-intel-ui.js"></script>
 <script>
 (function () {
   'use strict';
@@ -421,7 +457,7 @@
     banner('info', 'Recording stopped. Checking the audio…');
     const v = st ? await soundVerdict(st.id) : null;
     if (v && !v.anyAudible) banner('bad', `<b>${esc(TA.NO_SOUND_MESSAGE)}</b><br>The recording was kept on this device for troubleshooting. Microphone: ${esc(st.mic ? st.mic.name : 'unknown')}.`);
-    else banner(v && v.silentSegs.length ? 'warn' : 'ok', `Meeting recording saved on this device${st ? ' · ' + esc(st.meeting && st.meeting.title) : ''}.${v && v.silentSegs.length ? ` ${v.silentSegs.length} of ${v.total} segments had no audible sound (see Overview).` : ''} Transcript, summary and draft minutes arrive in a later phase.`);
+    else banner(v && v.silentSegs.length ? 'warn' : 'ok', `Meeting recording saved on this device${st ? ' · ' + esc(st.meeting && st.meeting.title) : ''}.${v && v.silentSegs.length ? ` ${v.silentSegs.length} of ${v.total} segments had no audible sound (see Overview).` : ''} Once Trusted has verified it, open it under Recordings to create the transcript, summary and draft minutes.`);
     renderSessions(); if (st) openDetail(st.id);
   };
   // Waits (up to ~8 s) for every segment's audio check, then reports whether
@@ -530,7 +566,7 @@
   const player = { audio: null, url: null, seq: null };
   function stopPlayback() {
     if (player.audio) { player.audio.onplay = player.audio.onpause = player.audio.onended = player.audio.onerror = null; try { player.audio.pause(); } catch (_) {} player.audio.removeAttribute('src'); }
-    if (player.url) URL.revokeObjectURL(player.url);
+    if (player.url && player.url.startsWith('blob:')) URL.revokeObjectURL(player.url);
     player.audio = null; player.url = null; player.seq = null;
     syncPlayButtons();
   }
@@ -562,6 +598,20 @@
     player.audio.play().catch((e) => { banner('bad', 'Playback failed: ' + esc(e.message)); stopPlayback(); });
     syncPlayButtons();
   }
+  // The joined recording on Trusted (Transcript/review tabs): same single
+  // player; clicking another time seeks the one that is already playing.
+  function playJoined(url, fromMs) {
+    if (!(player.audio && player.seq === 'joined')) {
+      stopPlayback();
+      player.audio = new Audio(url); player.url = url; player.seq = 'joined';
+      player.audio.onended = stopPlayback;
+      player.audio.onerror = () => { banner('bad', 'The joined recording could not be played.'); stopPlayback(); };
+    }
+    const a = player.audio;
+    const go = () => { try { a.currentTime = Math.max(0, fromMs / 1000); } catch (_) {} a.play().catch((e) => { banner('bad', 'Playback failed: ' + esc(e.message)); stopPlayback(); }); };
+    if (a.readyState >= 1) go(); else a.addEventListener('loadedmetadata', go, { once: true });
+  }
+  const intel = window.createMeetingIntelUI({ authFetch, esc, playJoined, stopPlayback, onBanner: (k, t) => banner(k, esc(t)) });
 
   async function openDetail(id) {
     stopPlayback();
@@ -573,6 +623,8 @@
     const bad = segs.filter((x) => x.decode && !x.decode.ok).length;
     const gaps = events.filter((e) => e.level === 'bad');
     const tabs = ['Overview', 'Transcript', 'Summary', 'Draft minutes', 'Motions & votes', 'Action items'];
+    const verifiedSid = s.server && s.server.session_id && s.server_verification && s.server_verification.status === 'verified' ? s.server.session_id : null;
+    intel.attach(verifiedSid);
     $('detail').innerHTML = `
       <div class="card" style="margin-top:16px">
         <h2>${esc(s.meeting ? s.meeting.title : 'Meeting')}</h2>
@@ -590,10 +642,12 @@
           <div style="margin-top:10px"><b>Markers</b> (${markers.length})</div>
           <div class="timeline">${markers.length ? markers.map((e) => `<div><b>${TA.hms(e.wall_ms - s.started_wall)}</b> ${esc(MARK_LABEL[e.marker] || e.marker)}</div>`).join('') : '<span class="muted">No markers.</span>'}</div>
           <div style="margin-top:10px"><b>Listen</b> <select id="segPick">${segs.map((x) => `<option value="${x.seq}">${TA.hms(x.started_wall - s.started_wall)} (${Math.round((x.wall_ms || 0) / 1000)} s)${x.partial ? ' recovered' : ''}</option>`).join('')}</select> <button id="segPlay">▶ Play</button> <button id="segStop" style="display:none">■ Stop</button></div>
-          ${verificationHtml(s.server_verification) || `<div class="banner info" style="margin-top:12px">${s.server && s.server.session_id ? 'Uploading to Trusted…' : 'Saved on this device.'} Transcription and Paige's minutes are later phases.</div>`}`;
+          ${verificationHtml(s.server_verification) || `<div class="banner info" style="margin-top:12px">${s.server && s.server.session_id ? 'Uploading to Trusted…' : 'Saved on this device.'} The transcript, summary and draft minutes become available once Trusted has verified the whole recording.</div>`}
+          ${verifiedSid ? '<div id="intelStatus"></div>' : ''}`;
       }
-      const what = ['', 'The full transcript with speaker labels', 'A meeting summary and executive summary', 'Draft board minutes for review', 'Detected motions, movers, seconds and vote results (flagged when uncertain)', 'Action items with owners and due dates'][i];
-      return `<div class="placeholder"><b>Coming in a later phase.</b><br>${what} will appear here once transcription and Paige's meeting processing are built. Nothing is generated yet.</div>`;
+      if (verifiedSid) return '<div class="muted">Loading…</div>';
+      const what = ['', 'The transcript with speaker labels', 'The meeting summary', 'Draft minutes', 'Motions and votes', 'Action items'][i];
+      return `<div class="placeholder">${what} will be available once this recording is uploaded to Trusted and verified complete. ${s.server && s.server.session_id ? 'It is still uploading.' : 'This recording is only on this device.'}</div>`;
     };
     const show = (i) => {
       stopPlayback();
@@ -603,6 +657,11 @@
         $('segPlay').onclick = () => togglePlayback(segs);
         $('segStop').onclick = stopPlayback;
         $('segPick').onchange = stopPlayback;          // choosing another piece stops the current one
+      }
+      if (verifiedSid) {
+        const el = i === 0 ? $('intelStatus') : $('tabBody');
+        [intel.renderStatus, intel.renderTranscript, intel.renderSummary, intel.renderMinutes, intel.renderMotions, intel.renderActions][i](el)
+          .catch((e) => { if (el && document.body.contains(el)) el.innerHTML = `<div class="banner bad">Could not load: ${esc(e.message)}</div>`; });
       }
     };
     document.querySelectorAll('#detail .tabs button').forEach((b) => { b.onclick = () => show(Number(b.dataset.tab)); });

@@ -1,0 +1,436 @@
+{
+ "note": "Synthetic Drama Creek board meeting (TTS voices), ground-truth transcript. Speakers are diarization numbers in order of first appearance: 0 Sunny Meadows, 1 Byron T. Bylaw, 2 Cassandra Complaine, 3 Tally Hawthorne, 4 Felix Goodneighbor, 5 Jordan Ellis (manager), 6 Rick Alvarez (vendor), 7 Patricia Lopez (homeowner).",
+ "exec_ranges": [
+  {
+   "audio_from_ms": 186835,
+   "audio_to_ms": 206750,
+   "meeting_from_ms": 186835,
+   "meeting_to_ms": 206750
+  }
+ ],
+ "segments": [
+  {
+   "idx": 0,
+   "speaker": 0,
+   "start_ms": 1500,
+   "end_ms": 12916,
+   "meeting_start_ms": 1500,
+   "text": "Good evening, everyone. It's seven oh two PM, and I'm calling this regular meeting of the Drama Creek Estates board of directors to order. I'm Sunny Meadows, the board president.",
+   "scope": "open"
+  },
+  {
+   "idx": 1,
+   "speaker": 0,
+   "start_ms": 13580,
+   "end_ms": 16098,
+   "meeting_start_ms": 13580,
+   "text": "Let's go around the table with introductions.",
+   "scope": "open"
+  },
+  {
+   "idx": 2,
+   "speaker": 1,
+   "start_ms": 16688,
+   "end_ms": 20665,
+   "meeting_start_ms": 16688,
+   "text": "Byron Bylaw, vice president and chair of the architectural committee.",
+   "scope": "open"
+  },
+  {
+   "idx": 3,
+   "speaker": 2,
+   "start_ms": 21475,
+   "end_ms": 24215,
+   "meeting_start_ms": 21475,
+   "text": "Cassandra Complaine, secretary.",
+   "scope": "open"
+  },
+  {
+   "idx": 4,
+   "speaker": 3,
+   "start_ms": 24865,
+   "end_ms": 26740,
+   "meeting_start_ms": 24865,
+   "text": "Tally Hawthorne, treasurer.",
+   "scope": "open"
+  },
+  {
+   "idx": 5,
+   "speaker": 4,
+   "start_ms": 27459,
+   "end_ms": 30317,
+   "meeting_start_ms": 27459,
+   "text": "Felix Goodneighbor, member at large.",
+   "scope": "open"
+  },
+  {
+   "idx": 6,
+   "speaker": 5,
+   "start_ms": 30878,
+   "end_ms": 34224,
+   "meeting_start_ms": 30878,
+   "text": "Jordan Ellis, community manager with Bedrock.",
+   "scope": "open"
+  },
+  {
+   "idx": 7,
+   "speaker": 0,
+   "start_ms": 34975,
+   "end_ms": 40487,
+   "meeting_start_ms": 34975,
+   "text": "All five directors are present, so we have a quorum. Tally, would you give the treasurer's report?",
+   "scope": "open"
+  },
+  {
+   "idx": 8,
+   "speaker": 3,
+   "start_ms": 41090,
+   "end_ms": 52256,
+   "meeting_start_ms": 41090,
+   "text": "Sure. The operating account has about forty-two thousand dollars, and the reserve account has about eighty-five thousand. Landscaping is running roughly three thousand dollars over budget for the year.",
+   "scope": "open"
+  },
+  {
+   "idx": 9,
+   "speaker": 5,
+   "start_ms": 53199,
+   "end_ms": 58831,
+   "meeting_start_ms": 53199,
+   "text": "Rick from Lone Star Landscaping is here to walk through the proposal for the front entrance.",
+   "scope": "open"
+  },
+  {
+   "idx": 10,
+   "speaker": 6,
+   "start_ms": 59829,
+   "end_ms": 73576,
+   "meeting_start_ms": 59829,
+   "text": "Thanks for having me. We're proposing to replace the dead shrubs at the front entrance and upgrade the irrigation controller. The total is eighteen thousand four hundred dollars, and we could start the week of November ninth.",
+   "scope": "open"
+  },
+  {
+   "idx": 11,
+   "speaker": 1,
+   "start_ms": 74510,
+   "end_ms": 77543,
+   "meeting_start_ms": 74510,
+   "text": "Is the current irrigation controller still under warranty?",
+   "scope": "open"
+  },
+  {
+   "idx": 12,
+   "speaker": 6,
+   "start_ms": 78318,
+   "end_ms": 85218,
+   "meeting_start_ms": 78318,
+   "text": "No, the old one is out of warranty. The new controller comes with a five year warranty.",
+   "scope": "open"
+  },
+  {
+   "idx": 13,
+   "speaker": 3,
+   "start_ms": 86057,
+   "end_ms": 94536,
+   "meeting_start_ms": 86057,
+   "text": "I move that we approve the Lone Star Landscaping proposal for the front entrance, for eighteen thousand four hundred dollars, paid from the operating account.",
+   "scope": "open"
+  },
+  {
+   "idx": 14,
+   "speaker": 4,
+   "start_ms": 95474,
+   "end_ms": 96383,
+   "meeting_start_ms": 95474,
+   "text": "I'll second that.",
+   "scope": "open"
+  },
+  {
+   "idx": 15,
+   "speaker": 0,
+   "start_ms": 97202,
+   "end_ms": 101423,
+   "meeting_start_ms": 97202,
+   "text": "Any further discussion? Hearing none. All in favor, say aye.",
+   "scope": "open"
+  },
+  {
+   "idx": 16,
+   "speaker": 1,
+   "start_ms": 102014,
+   "end_ms": 102468,
+   "meeting_start_ms": 102014,
+   "text": "Aye.",
+   "scope": "open"
+  },
+  {
+   "idx": 17,
+   "speaker": 2,
+   "start_ms": 102847,
+   "end_ms": 103347,
+   "meeting_start_ms": 102847,
+   "text": "Aye.",
+   "scope": "open"
+  },
+  {
+   "idx": 18,
+   "speaker": 3,
+   "start_ms": 103887,
+   "end_ms": 104357,
+   "meeting_start_ms": 103887,
+   "text": "Aye.",
+   "scope": "open"
+  },
+  {
+   "idx": 19,
+   "speaker": 4,
+   "start_ms": 104892,
+   "end_ms": 105341,
+   "meeting_start_ms": 104892,
+   "text": "Aye.",
+   "scope": "open"
+  },
+  {
+   "idx": 20,
+   "speaker": 0,
+   "start_ms": 105868,
+   "end_ms": 110773,
+   "meeting_start_ms": 105868,
+   "text": "Aye. Any opposed? Hearing none, the motion passes five to zero.",
+   "scope": "open"
+  },
+  {
+   "idx": 21,
+   "speaker": 1,
+   "start_ms": 111570,
+   "end_ms": 120815,
+   "meeting_start_ms": 111570,
+   "text": "Next item is the pool. I move that we extend pool hours to ten PM on Fridays and Saturdays through the end of October.",
+   "scope": "open"
+  },
+  {
+   "idx": 22,
+   "speaker": 2,
+   "start_ms": 121446,
+   "end_ms": 122086,
+   "meeting_start_ms": 121446,
+   "text": "Second.",
+   "scope": "open"
+  },
+  {
+   "idx": 23,
+   "speaker": 4,
+   "start_ms": 122546,
+   "end_ms": 127073,
+   "meeting_start_ms": 122546,
+   "text": "I'm worried about noise complaints from the homes that back up to the pool on Ripple Lane.",
+   "scope": "open"
+  },
+  {
+   "idx": 24,
+   "speaker": 0,
+   "start_ms": 127740,
+   "end_ms": 130570,
+   "meeting_start_ms": 127740,
+   "text": "Understood. Let's vote. All in favor?",
+   "scope": "open"
+  },
+  {
+   "idx": 25,
+   "speaker": 1,
+   "start_ms": 131545,
+   "end_ms": 131999,
+   "meeting_start_ms": 131545,
+   "text": "Aye.",
+   "scope": "open"
+  },
+  {
+   "idx": 26,
+   "speaker": 2,
+   "start_ms": 132513,
+   "end_ms": 133014,
+   "meeting_start_ms": 132513,
+   "text": "Aye.",
+   "scope": "open"
+  },
+  {
+   "idx": 27,
+   "speaker": 0,
+   "start_ms": 133395,
+   "end_ms": 134003,
+   "meeting_start_ms": 133395,
+   "text": "Opposed?",
+   "scope": "open"
+  },
+  {
+   "idx": 28,
+   "speaker": 3,
+   "start_ms": 134926,
+   "end_ms": 135651,
+   "meeting_start_ms": 134926,
+   "text": "No.",
+   "scope": "open"
+  },
+  {
+   "idx": 29,
+   "speaker": 4,
+   "start_ms": 136095,
+   "end_ms": 136648,
+   "meeting_start_ms": 136095,
+   "text": "No.",
+   "scope": "open"
+  },
+  {
+   "idx": 30,
+   "speaker": 0,
+   "start_ms": 137010,
+   "end_ms": 141368,
+   "meeting_start_ms": 137010,
+   "text": "No. The motion fails, two in favor and three opposed.",
+   "scope": "open"
+  },
+  {
+   "idx": 31,
+   "speaker": 0,
+   "start_ms": 141928,
+   "end_ms": 144616,
+   "meeting_start_ms": 141928,
+   "text": "We'll open the floor for homeowner comments.",
+   "scope": "open"
+  },
+  {
+   "idx": 32,
+   "speaker": 7,
+   "start_ms": 145408,
+   "end_ms": 153001,
+   "meeting_start_ms": 145408,
+   "text": "Hi, I'm Patricia Lopez on Willow Bend. The streetlight at Willow Bend and Creekside has been out for three weeks.",
+   "scope": "open"
+  },
+  {
+   "idx": 33,
+   "speaker": 5,
+   "start_ms": 153924,
+   "end_ms": 159194,
+   "meeting_start_ms": 153924,
+   "text": "Thank you, Ms. Lopez. I'll report it to CenterPoint tomorrow and follow up with you by Friday.",
+   "scope": "open"
+  },
+  {
+   "idx": 34,
+   "speaker": 0,
+   "start_ms": 160124,
+   "end_ms": 163616,
+   "meeting_start_ms": 160124,
+   "text": "Jordan, please send Lone Star the signed contract.",
+   "scope": "open"
+  },
+  {
+   "idx": 35,
+   "speaker": 5,
+   "start_ms": 164473,
+   "end_ms": 168605,
+   "meeting_start_ms": 164473,
+   "text": "I'll have the contract signed and sent to them by October second.",
+   "scope": "open"
+  },
+  {
+   "idx": 36,
+   "speaker": 2,
+   "start_ms": 169327,
+   "end_ms": 172759,
+   "meeting_start_ms": 169327,
+   "text": "I'll draft a reminder about the pool rules for the next newsletter.",
+   "scope": "open"
+  },
+  {
+   "idx": 37,
+   "speaker": 3,
+   "start_ms": 173573,
+   "end_ms": 178237,
+   "meeting_start_ms": 173573,
+   "text": "We should revisit the landscaping budget at the budget workshop next month.",
+   "scope": "open"
+  },
+  {
+   "idx": 38,
+   "speaker": 0,
+   "start_ms": 179101,
+   "end_ms": 186435,
+   "meeting_start_ms": 179101,
+   "text": "Agreed. The board will now go into executive session to discuss a delinquent account. Thank you, Rick, and thank you, Ms. Lopez.",
+   "scope": "open"
+  },
+  {
+   "idx": 39,
+   "speaker": 3,
+   "start_ms": 187935,
+   "end_ms": 195569,
+   "meeting_start_ms": 187935,
+   "text": "The owner at fourteen Heron Court owes about six thousand two hundred dollars and has not responded to the demand letter.",
+   "scope": "executive"
+  },
+  {
+   "idx": 40,
+   "speaker": 1,
+   "start_ms": 196439,
+   "end_ms": 201499,
+   "meeting_start_ms": 196439,
+   "text": "I move that we refer the Heron Court account to the association's attorney for collection.",
+   "scope": "executive"
+  },
+  {
+   "idx": 41,
+   "speaker": 2,
+   "start_ms": 202373,
+   "end_ms": 203013,
+   "meeting_start_ms": 202373,
+   "text": "Second.",
+   "scope": "executive"
+  },
+  {
+   "idx": 42,
+   "speaker": 0,
+   "start_ms": 203561,
+   "end_ms": 205750,
+   "meeting_start_ms": 203561,
+   "text": "All in favor? The motion carries.",
+   "scope": "executive"
+  },
+  {
+   "idx": 43,
+   "speaker": 0,
+   "start_ms": 207250,
+   "end_ms": 211230,
+   "meeting_start_ms": 207250,
+   "text": "We are back in open session. Is there a motion to adjourn?",
+   "scope": "open"
+  },
+  {
+   "idx": 44,
+   "speaker": 4,
+   "start_ms": 211982,
+   "end_ms": 213169,
+   "meeting_start_ms": 211982,
+   "text": "So moved.",
+   "scope": "open"
+  },
+  {
+   "idx": 45,
+   "speaker": 1,
+   "start_ms": 213763,
+   "end_ms": 214350,
+   "meeting_start_ms": 213763,
+   "text": "Second.",
+   "scope": "open"
+  },
+  {
+   "idx": 46,
+   "speaker": 0,
+   "start_ms": 214738,
+   "end_ms": 217744,
+   "meeting_start_ms": 214738,
+   "text": "The meeting is adjourned at seven fifty-one PM.",
+   "scope": "open"
+  }
+ ]
+}
