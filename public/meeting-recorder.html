@@ -61,6 +61,11 @@
   .meter { height: 12px; background: var(--light-gray, #eef0f3); border-radius: 6px; overflow: hidden; margin-top: 8px; }
   .meter > div { height: 100%; width: 0%; background: var(--ok); transition: width .08s linear; }
   .micname { font-size: 14px; margin-top: 8px; }
+  .authstatus { margin-top: 12px; padding: 10px 12px; border-radius: 10px; font-size: 14px; border: 1px solid var(--rule, #e5e7eb); }
+  .authstatus.server { background: #dcfce7; border-color: #86efac; color: #14532d; }
+  .authstatus.local { background: #fef3c7; border-color: #fcd34d; color: #78350f; }
+  .authstatus .pill { font-weight: 700; }
+  .authstatus a { color: inherit; font-weight: 600; }
   .chk { display: flex; gap: 8px; align-items: center; text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--ink, #1f2937); margin-top: 10px; }
   .chk input { width: auto; }
   .micreport { margin-top: 10px; border: 1px solid var(--rule, #e5e7eb); border-radius: 10px; padding: 12px; font-size: 14px; }
@@ -93,6 +98,7 @@
         <select id="meeting" disabled><option value="">Choose a community first</option></select>
       </div>
     </div>
+    <div class="authstatus" id="authStatus" role="status" aria-live="polite">Checking sign-in and server upload…</div>
     <div class="grid2" id="newMeetingFields" style="margin-top:14px; display:none">
       <div><label for="mTitle">Meeting title</label><input id="mTitle" placeholder="Regular Board Meeting"></div>
       <div><label for="mDate">Date</label><input id="mDate" type="date"></div>
@@ -208,23 +214,62 @@
 
   // ---------------------------------------------------------- setup
   $('mDate').value = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-  $('deviceLine').textContent = `${window.MediaRecorder ? 'Recording supported' : 'This browser cannot record audio'} · format ${TA.pickMime() || 'browser default'} · keep-screen-awake ${'wakeLock' in navigator ? 'supported' : 'not supported (keep the screen on manually)'} · recordings are saved on this device (server upload comes in a later phase)`;
+  $('deviceLine').textContent = `${window.MediaRecorder ? 'Recording supported' : 'This browser cannot record audio'} · format ${TA.pickMime() || 'browser default'} · keep-screen-awake ${'wakeLock' in navigator ? 'supported' : 'not supported (keep the screen on manually)'} · every recording is saved on this device first`;
 
-  // Prefer the Meetings API list (Bedrock + demo communities such as Drama Creek,
-  // marked "demo"); fall back to the standard list when it is unavailable.
+  // Community list + upload/auth status. The Meetings API list (Bedrock + demo
+  // communities such as Drama Creek) needs a Trusted staff login. When it is
+  // refused we still allow device-only recording from the standard Bedrock list,
+  // but say so plainly instead of silently pretending all is normal
+  // (Ed 2026-09-23: Drama Creek "missing" was an unnoticed sign-in fallback).
+  const SIGN_IN_MESSAGE = 'Sign in to Trusted with Microsoft to upload recordings and access the full meeting community list.';
+  let listMode = null;   // 'server' | 'signin' | 'disabled' | 'unavailable'
   async function loadRecorderCommunities() {
-    try {
-      const r = await authFetch('/api/meetings/communities');
-      if (r.ok) { const j = await r.json(); return (j.communities || []).map((c) => ({ ...c, name: c.is_demo ? `${c.name} (demo)` : c.name })).sort((a, b) => String(a.name).localeCompare(String(b.name))); }
-    } catch (_) {}
-    return TA.loadCommunities();
+    let r = null, body = {};
+    try { r = await authFetch('/api/meetings/communities'); body = await r.clone().json().catch(() => ({})); } catch (_) { r = null; }
+    if (r && r.ok) {
+      const list = (body.communities || []).map((c) => ({ ...c, name: c.is_demo ? `${c.name} (demo)` : c.name })).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      return { mode: 'server', list };
+    }
+    const mode = r && (r.status === 401 || r.status === 403) ? 'signin'
+      : r && r.status === 404 && body.error === 'meeting_uploads_disabled' ? 'disabled' : 'unavailable';
+    return { mode, list: await TA.loadCommunities() };   // device-only fallback (standard Bedrock list)
   }
-  loadRecorderCommunities().then((list) => {
-    communities = list;
-    let last = null; try { last = localStorage.getItem('mr_last_community'); } catch (_) {}
-    $('community').innerHTML = '<option value="">Select a community…</option>' + list.map((c) => `<option value="${esc(c.id)}"${c.id === last ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
-    if (last && list.some((c) => c.id === last)) loadMeetings();
-  }).catch((e) => { $('community').innerHTML = '<option value="">Could not load communities</option>'; banner('bad', 'Could not load communities: ' + esc(e.message)); });
+  function renderAuthStatus(mode) {
+    const el = $('authStatus');
+    if (mode === 'server') {
+      el.className = 'authstatus server';
+      el.innerHTML = '<span class="pill">✓ Signed in · server upload available</span><br>Recordings upload to Trusted while you record and stay saved on this device until Trusted confirms them.';
+      return;
+    }
+    el.className = 'authstatus local';
+    if (mode === 'signin') {
+      el.innerHTML = `<span class="pill">Device-only · sign-in required</span><br>${esc(SIGN_IN_MESSAGE)} <a href="/login.html" target="_blank" rel="noopener">Sign in (opens a new tab)</a>, then come back to this tab<br>Until then you can still record: recordings stay on this device, and the list shows Bedrock communities only.`;
+    } else if (mode === 'disabled') {
+      el.innerHTML = '<span class="pill">Device-only · server upload switched off</span><br>Server upload is turned off for Trusted right now. Recordings stay on this device, and the list shows Bedrock communities only.';
+    } else {
+      el.innerHTML = '<span class="pill">Device-only · server unreachable</span><br>Trusted could not be reached to check sign-in. Recordings stay on this device, and the list shows Bedrock communities only. This re-checks when you come back to this tab.';
+    }
+  }
+  async function refreshCommunities() {
+    let res;
+    try { res = await loadRecorderCommunities(); }
+    catch (e) { $('community').innerHTML = '<option value="">Could not load communities</option>'; banner('bad', 'Could not load communities: ' + esc(e.message)); return; }
+    listMode = res.mode;
+    communities = res.list;
+    renderAuthStatus(res.mode);
+    const sel = $('community');
+    let want = sel.value; if (!want) { try { want = localStorage.getItem('mr_last_community'); } catch (_) {} }
+    const opts = res.list.map((c) => `<option value="${esc(c.id)}"${c.id === want ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+    sel.innerHTML = '<option value="">Select a community…</option>'
+      + (res.mode === 'server' ? opts : `<optgroup label="Bedrock communities · device-only mode">${opts}</optgroup>`);
+    if (want && res.list.some((c) => c.id === want)) loadMeetings(); else validate();
+  }
+  refreshCommunities();
+  // Signing in (or the server coming back) in another tab: re-check when this tab
+  // is shown again, but never while a recording is running.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && listMode && listMode !== 'server' && !rec.state.recording) refreshCommunities();
+  });
 
   // ---------------------------------------------------------- microphone
   const MIC_KEY = 'mr_mic_device';
