@@ -210,7 +210,16 @@
   $('mDate').value = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   $('deviceLine').textContent = `${window.MediaRecorder ? 'Recording supported' : 'This browser cannot record audio'} · format ${TA.pickMime() || 'browser default'} · keep-screen-awake ${'wakeLock' in navigator ? 'supported' : 'not supported (keep the screen on manually)'} · recordings are saved on this device (server upload comes in a later phase)`;
 
-  TA.loadCommunities().then((list) => {
+  // Prefer the Meetings API list (Bedrock + demo communities such as Drama Creek,
+  // marked "demo"); fall back to the standard list when it is unavailable.
+  async function loadRecorderCommunities() {
+    try {
+      const r = await authFetch('/api/meetings/communities');
+      if (r.ok) { const j = await r.json(); return (j.communities || []).map((c) => ({ ...c, name: c.is_demo ? `${c.name} (demo)` : c.name })).sort((a, b) => String(a.name).localeCompare(String(b.name))); }
+    } catch (_) {}
+    return TA.loadCommunities();
+  }
+  loadRecorderCommunities().then((list) => {
     communities = list;
     let last = null; try { last = localStorage.getItem('mr_last_community'); } catch (_) {}
     $('community').innerHTML = '<option value="">Select a community…</option>' + list.map((c) => `<option value="${esc(c.id)}"${c.id === last ? ' selected' : ''}>${esc(c.name)}</option>`).join('');

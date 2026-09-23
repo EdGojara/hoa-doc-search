@@ -27,7 +27,10 @@ const { safeErrorMessage } = require('./_safe_error');
 const { fetchAll } = require('../lib/db/fetch_all');
 const { verifySession } = require('../lib/meetings/verify');
 const { issueUploadToken, checkUploadToken } = require('../lib/meetings/upload_token');
-const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
+const { BEDROCK_MGMT_CO_ID, DEMO_MGMT_CO_ID } = require('../lib/company');
+// Meetings may be recorded for Bedrock communities and for the demo company's
+// communities (Drama Creek), so controlled tests never touch a real HOA's records.
+const MEETING_MGMT_COS = [BEDROCK_MGMT_CO_ID, DEMO_MGMT_CO_ID].filter(Boolean);
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -68,7 +71,7 @@ const intOrNull = (v) => (v === undefined || v === null || v === '' ? null : Num
 
 async function communityExists(id) {
   if (!UUID.test(String(id || ''))) return false;
-  const { data, error } = await supabase.from('communities').select('id').eq('id', id).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+  const { data, error } = await supabase.from('communities').select('id').eq('id', id).in('management_company_id', MEETING_MGMT_COS).maybeSingle();
   if (error) throw error;
   return !!data;
 }
@@ -131,6 +134,18 @@ async function findOrCreateMeeting(b, userId) {
 router.get('/config', async (req, res) => {
   const u = await staffOnly(req, res); if (!u) return;
   res.json({ enabled: true, max_segment_bytes: MAX_SEGMENT_BYTES, bucket: BUCKET });
+});
+
+// Communities a meeting can be recorded for (Bedrock + demo), for the recorder's picker.
+router.get('/communities', async (req, res) => {
+  try {
+    const u = await staffOnly(req, res); if (!u) return;
+    const { data, error } = await supabase.from('communities').select('id, name, slug, active, management_company_id')
+      .in('management_company_id', MEETING_MGMT_COS).order('name').limit(500);
+    if (error) throw error;
+    res.json({ communities: (data || []).filter((c) => c.active !== false)
+      .map((c) => ({ id: c.id, name: c.name, slug: c.slug, is_demo: c.management_company_id === DEMO_MGMT_CO_ID })) });
+  } catch (e) { fail(res, 'communities', e); }
 });
 
 // ---- meetings
