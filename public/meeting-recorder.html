@@ -61,6 +61,11 @@
   .meter { height: 12px; background: var(--light-gray, #eef0f3); border-radius: 6px; overflow: hidden; margin-top: 8px; }
   .meter > div { height: 100%; width: 0%; background: var(--ok); transition: width .08s linear; }
   .micname { font-size: 14px; margin-top: 8px; }
+  .chk { display: flex; gap: 8px; align-items: center; text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--ink, #1f2937); margin-top: 10px; }
+  .chk input { width: auto; }
+  .micreport { margin-top: 10px; border: 1px solid var(--rule, #e5e7eb); border-radius: 10px; padding: 12px; font-size: 14px; }
+  .rating { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 700; font-size: 13px; }
+  .r-good { background: #dcfce7; color: #14532d; } .r-fair { background: #fef3c7; color: #78350f; } .r-poor { background: #fee2e2; color: #7f1d1d; }
 </style>
 </head>
 <body>
@@ -110,7 +115,9 @@
       </div>
       <button id="btnMicTest">Test microphone</button>
     </div>
+    <label class="chk"><input type="checkbox" id="nr" checked> Noise reduction (recommended): removes steady background hiss and fan noise</label>
     <div class="meter" id="setupMeterWrap" style="display:none"><div id="setupMeter"></div></div>
+    <div id="micTestBox"></div>
     <div class="micname" id="micLine">🎙️ Microphone: <b id="micName">System default</b></div>
     <label class="chk"><input type="checkbox" id="isTest"> This is a test recording (purpose: test instead of drafting aid)</label>
     <button id="btnStart" class="primary start" disabled>● Start recording</button>
@@ -226,12 +233,17 @@
   if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener('devicechange', refreshMics);
   refreshMics();
 
+  const NR_KEY = 'mr_noise_reduction';
+  try { const v = localStorage.getItem(NR_KEY); if (v === '0') $('nr').checked = false; } catch (_) {}
+  $('nr').onchange = () => { try { localStorage.setItem(NR_KEY, $('nr').checked ? '1' : '0'); } catch (_) {} $('micTestBox').innerHTML = ''; };
+  function audioConstraints() { return { ...rec.audio, noiseSuppression: $('nr').checked }; }
+
   function micMsg(html, kind) { $('micWarn').innerHTML = ''; if (html) banner(kind || 'bad', html); }
   // Open the selected mic and check it for ~1 s. Returns the open mic, or null
   // (after showing why) if it is muted / not live / producing no signal.
   async function checkedMic(showMeter) {
     let mic;
-    try { mic = await TA.openMic($('mic').value, rec.audio); }
+    try { mic = await TA.openMic($('mic').value, audioConstraints()); }
     catch (e) { banner('bad', 'Could not open the microphone: ' + esc(e.message) + '. Check the browser\'s microphone permission for this site.'); return null; }
     await refreshMics();
     if (mic.fellBack) banner('warn', `The saved microphone was not found, so the system default (${esc(mic.name)}) is being used.`);
@@ -250,12 +262,40 @@
   }
   let lastPreflight = null;
   function meterPct(rms) { const db = 20 * Math.log10(Math.max(rms, 1e-6)); return Math.max(0, Math.min(100, ((db + 60) / 60) * 100)); }
+  // Test microphone: working check, then background noise vs speech (SNR).
   $('btnMicTest').onclick = async () => {
-    $('btnMicTest').disabled = true;
+    $('btnMicTest').disabled = true; $('btnStart').disabled = true; $('micTestBox').innerHTML = '';
     const mic = await checkedMic(true);
-    if (mic) { banner('ok', `🎙️ ${esc(mic.name)} is working (peak level ${lastPreflight.peak}).`); mic.stream.getTracks().forEach((t) => t.stop()); }
-    $('btnMicTest').disabled = false;
+    if (mic) {
+      clearBanner();
+      $('setupMeterWrap').style.display = '';
+      const box = $('micTestBox');
+      let r;
+      try {
+        r = await TA.assessMic(mic, {
+          onLevel: (rms) => { $('setupMeter').style.width = meterPct(rms) + '%'; },
+          onPhase: (phase, s) => { box.innerHTML = `<div class="micreport"><b>${phase === 'quiet' ? '🤫 Stay quiet' : '🗣️ Now speak normally, as you would in the meeting'}</b> · ${s} s</div>`; },
+        });
+      } finally { mic.stream.getTracks().forEach((t) => t.stop()); $('setupMeterWrap').style.display = 'none'; }
+      lastAssessment = r;
+      const label = { good: 'Good', fair: 'Fair', poor: 'Poor' }[r.rating];
+      const advice = [];
+      if (!r.heardSpeech) advice.push('No speech was heard above the background. Run the test again and speak normally during the second step.');
+      else if (r.rating === 'good') advice.push('Clear: speech is well above the background noise.');
+      else if (r.rating === 'fair') advice.push('Usable, but quieter or more distant speakers may be hard to understand and transcribe.');
+      else advice.push('Speech is barely above the background noise; the recording will sound quiet and muddy.');
+      if (r.rating !== 'good') {
+        if (!r.noiseReduction && r.highNoise) advice.push('Turn on <b>Noise reduction</b> above and test again.');
+        if (r.highNoise) advice.push('Background noise is high. On Windows, lower "Microphone Boost" for this microphone (Settings → System → Sound → Input → device properties), or move away from fans and vents.');
+        advice.push('Best results: a conference microphone placed in the middle of the table, or move this microphone closer to the speakers.');
+      }
+      box.innerHTML = `<div class="micreport"><span class="rating r-${r.rating}">${label}</span> <b>${esc(mic.name)}</b> · noise reduction ${r.noiseReduction ? 'on' : 'off'}
+        <div class="muted" style="margin-top:6px">Background noise ${r.noiseDb} dBFS · speech ${r.speechDb} dBFS · speech-to-noise ${r.snrDb} dB (good ≥ ${TA.SNR.GOOD_DB} dB)</div>
+        <ul style="margin:8px 0 0 18px; padding:0">${advice.map((a) => `<li>${a}</li>`).join('')}</ul></div>`;
+    }
+    $('btnMicTest').disabled = false; validate();
   };
+  let lastAssessment = null;
 
   async function loadMeetings() {
     const cid = $('community').value;
@@ -363,7 +403,7 @@
     else { dot.className = 'dot rec'; dot.textContent = '● RECORDING'; }
     $('clock').textContent = TA.hms(activeMs(s));
     $('ctxLine').textContent = `${s.community_name || ''} · ${s.meeting ? s.meeting.title : ''}`;
-    $('liveMicName').textContent = st.micName || 'Microphone';
+    $('liveMicName').textContent = (st.micName || 'Microphone') + (s.mic && typeof s.mic.noiseReduction === 'boolean' ? ` · noise reduction ${s.mic.noiseReduction ? 'on' : 'off'}` : '');
     $('micWarn').innerHTML = st.micMuted ? `<div class="banner bad"><b>${esc(st.micName || 'The microphone')} was muted by the device.</b> Unmute it now; audio is not being captured.</div>`
       : st.noSound ? `<div class="banner bad"><b>No sound is reaching Trusted from ${esc(st.micName || 'the microphone')}.</b> Check that it is unmuted and connected.</div>` : '';
     execOpen = !!s.exec_open;
