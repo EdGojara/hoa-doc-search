@@ -524,7 +524,47 @@
     document.querySelectorAll('.sess').forEach((d) => { d.onclick = () => openDetail(d.dataset.id); });
   }
 
+  // ONE player for the whole page (Ed 2026-09-23: every Play click created a new
+  // Audio + object URL with no reference kept, so clicks stacked overlapping
+  // copies that could not be paused and URLs were never revoked).
+  const player = { audio: null, url: null, seq: null };
+  function stopPlayback() {
+    if (player.audio) { player.audio.onplay = player.audio.onpause = player.audio.onended = player.audio.onerror = null; try { player.audio.pause(); } catch (_) {} player.audio.removeAttribute('src'); }
+    if (player.url) URL.revokeObjectURL(player.url);
+    player.audio = null; player.url = null; player.seq = null;
+    syncPlayButtons();
+  }
+  function syncPlayButtons() {
+    const play = $('segPlay'), stop = $('segStop');
+    if (!play) return;
+    const pick = $('segPick') ? Number($('segPick').value) : null;
+    const mine = player.audio && player.seq === pick;
+    play.textContent = !mine ? '▶ Play' : player.audio.paused ? '▶ Resume' : '⏸ Pause';
+    if (stop) stop.style.display = player.audio ? '' : 'none';
+  }
+  function togglePlayback(segs) {
+    const seq = Number($('segPick').value);
+    if (player.audio && player.seq === seq) {           // same piece: pause / resume, never a second copy
+      if (player.audio.paused) player.audio.play().catch((e) => { banner('bad', 'Playback failed: ' + esc(e.message)); stopPlayback(); });
+      else player.audio.pause();
+      syncPlayButtons();
+      return;
+    }
+    stopPlayback();                                     // a different piece (or nothing) was playing
+    const row = segs.find((x) => x.seq === seq);
+    if (!row || !row.buf) return;
+    player.url = URL.createObjectURL(new Blob([row.buf], { type: row.mime }));
+    player.audio = new Audio(player.url);
+    player.seq = seq;
+    player.audio.onplay = player.audio.onpause = syncPlayButtons;
+    player.audio.onended = stopPlayback;                // finished: reset the control and release the URL
+    player.audio.onerror = () => { banner('bad', 'Playback failed for this piece.'); stopPlayback(); };
+    player.audio.play().catch((e) => { banner('bad', 'Playback failed: ' + esc(e.message)); stopPlayback(); });
+    syncPlayButtons();
+  }
+
   async function openDetail(id) {
+    stopPlayback();
     openId = id;
     const s = (await rec.listSessions()).find((x) => x.id === id);
     if (!s) return;
@@ -549,20 +589,21 @@
         return `${soundLine}<div>${segs.length} segments · ${(segs.reduce((t, x) => t + x.bytes, 0) / 1048576).toFixed(1)} MB · ${bad ? `<span class="bad">${bad} failed playback check</span>` : '<span class="ok">all segments passed the playback check</span>'} · ${gaps.length ? `<span class="bad">${gaps.length} interruption/loss event(s)</span>` : 'no interruptions logged'} · microphone ${esc(s.mic ? s.mic.name : 'unknown')}</div>
           <div style="margin-top:10px"><b>Markers</b> (${markers.length})</div>
           <div class="timeline">${markers.length ? markers.map((e) => `<div><b>${TA.hms(e.wall_ms - s.started_wall)}</b> ${esc(MARK_LABEL[e.marker] || e.marker)}</div>`).join('') : '<span class="muted">No markers.</span>'}</div>
-          <div style="margin-top:10px"><b>Listen</b> <select id="segPick">${segs.map((x) => `<option value="${x.seq}">${TA.hms(x.started_wall - s.started_wall)} (${Math.round((x.wall_ms || 0) / 1000)} s)${x.partial ? ' recovered' : ''}</option>`).join('')}</select> <button id="segPlay">▶ Play</button></div>
+          <div style="margin-top:10px"><b>Listen</b> <select id="segPick">${segs.map((x) => `<option value="${x.seq}">${TA.hms(x.started_wall - s.started_wall)} (${Math.round((x.wall_ms || 0) / 1000)} s)${x.partial ? ' recovered' : ''}</option>`).join('')}</select> <button id="segPlay">▶ Play</button> <button id="segStop" style="display:none">■ Stop</button></div>
           ${verificationHtml(s.server_verification) || `<div class="banner info" style="margin-top:12px">${s.server && s.server.session_id ? 'Uploading to Trusted…' : 'Saved on this device.'} Transcription and Paige's minutes are later phases.</div>`}`;
       }
       const what = ['', 'The full transcript with speaker labels', 'A meeting summary and executive summary', 'Draft board minutes for review', 'Detected motions, movers, seconds and vote results (flagged when uncertain)', 'Action items with owners and due dates'][i];
       return `<div class="placeholder"><b>Coming in a later phase.</b><br>${what} will appear here once transcription and Paige's meeting processing are built. Nothing is generated yet.</div>`;
     };
     const show = (i) => {
+      stopPlayback();
       $('tabBody').innerHTML = body(i);
       document.querySelectorAll('#detail .tabs button').forEach((b) => b.classList.toggle('on', Number(b.dataset.tab) === i));
-      if (i === 0 && $('segPlay')) $('segPlay').onclick = async () => {
-        const row = segs.find((x) => x.seq === Number($('segPick').value));
-        if (!row || !row.buf) return;
-        new Audio(URL.createObjectURL(new Blob([row.buf], { type: row.mime }))).play().catch((e) => banner('bad', 'Playback failed: ' + esc(e.message)));
-      };
+      if (i === 0 && $('segPlay')) {
+        $('segPlay').onclick = () => togglePlayback(segs);
+        $('segStop').onclick = stopPlayback;
+        $('segPick').onchange = stopPlayback;          // choosing another piece stops the current one
+      }
     };
     document.querySelectorAll('#detail .tabs button').forEach((b) => { b.onclick = () => show(Number(b.dataset.tab)); });
     show(0);
@@ -583,7 +624,7 @@
     lastListState = state;
     renderSessions();
     const onOverview = document.querySelector('#detail .tabs button.on[data-tab="0"]');
-    if (openId && onOverview) openDetail(openId);
+    if (openId && onOverview && !player.audio) openDetail(openId);   // never cut off audio being listened to
   }, 3000);
 
   // --------------------------------------------------------- recovery
