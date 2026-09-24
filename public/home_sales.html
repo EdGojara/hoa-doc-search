@@ -79,6 +79,54 @@
   const dollarsToCents = (v) => { if (v===''||v==null) return null; const n = Number(String(v).replace(/[$,]/g,'')); return Number.isFinite(n)? Math.round(n*100): null; };
   let CID = null, COMMS = [];
 
+  // ── DRV detail (read-only) ───────────────────────────────────────────────
+  // The "N open" DRV badge opens the property's violations for resale/closing
+  // review. Reads the same endpoint as the Violations register; no edits here.
+  // The full record (and every action) lives in the Homeowner 360.
+  function drvBadge(propertyId, addr, label) {
+    if (!propertyId) return '<span class="badge err">' + esc(label) + '</span>';
+    return '<a class="badge err" style="cursor:pointer; text-decoration:none;" title="Show the open violations (read-only)" data-drv-prop="' + esc(propertyId) + '" data-drv-addr="' + esc(addr || '') + '">' + esc(label) + ' ›</a>';
+  }
+  const STAGE_LABEL = { courtesy_1: 'Courtesy notice 1', courtesy_2: 'Courtesy notice 2', certified_209: 'Certified §209', fine_assessed: 'Fine assessed', cured: 'Cured', closed: 'Closed', voided: 'Voided' };
+  const LETTER_LABEL = { letter_courtesy_1: 'Courtesy notice 1', letter_courtesy_2: 'Courtesy notice 2', letter_209: 'Certified §209 notice' };
+  function closeDrv() { const m = $('drvModal'); if (m) m.remove(); }
+  async function openDrv(propertyId, addr) {
+    closeDrv();
+    const m = document.createElement('div');
+    m.id = 'drvModal';
+    m.setAttribute('role', 'dialog');
+    m.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,.45); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px; z-index:50; overflow:auto;';
+    m.innerHTML = '<div class="card" style="max-width:860px; width:100%; margin:0;"><div class="row" style="justify-content:space-between;"><h2 class="sec">DRV violations · ' + esc(addr) + '</h2><button class="btn ghost" id="drvClose">Close</button></div><div id="drvBody" class="muted" style="padding:14px 0;">Loading…</div></div>';
+    m.addEventListener('click', (e) => { if (e.target === m) closeDrv(); });
+    document.body.appendChild(m);
+    $('drvClose').addEventListener('click', closeDrv);
+    try {
+      const r = await fetch('/api/enforcement/properties/' + encodeURIComponent(propertyId) + '/violations');
+      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      const all = j.violations || [];
+      const open = all.filter((v) => v.open), closed = all.filter((v) => !v.open);
+      const row = (v) => '<tr>'
+        + '<td><b>' + esc(v.category) + '</b>' + (v.notes ? '<div class="muted" style="font-size:12px; margin-top:3px;">' + esc(v.notes) + '</div>' : '') + '</td>'
+        + '<td>' + fmtDate(String(v.opened_at || '').slice(0, 10)) + '</td>'
+        + '<td>' + esc(STAGE_LABEL[v.stage] || v.stage || '—') + (v.resolved_at ? '<div class="muted" style="font-size:12px;">' + fmtDate(String(v.resolved_at).slice(0, 10)) + (v.resolved_via ? ' · ' + esc(v.resolved_via) : '') + '</div>' : '') + '</td>'
+        + '<td>' + (v.letter_type ? esc(LETTER_LABEL[v.letter_type] || v.letter_type) + '<div class="muted" style="font-size:12px;">' + esc(v.letter_status || '') + ' · ' + fmtDate(String(v.letter_date || '').slice(0, 10)) + '</div>' : '<span class="muted">No notice on file</span>') + '</td>'
+        + '<td>' + (v.next_action ? esc(v.next_action) : '<span class="muted">—</span>') + '</td></tr>';
+      const table = (rows) => '<div style="overflow-x:auto;"><table style="min-width:640px;"><thead><tr><th>Category</th><th>Opened</th><th>Status</th><th>Most recent notice</th><th>Next action</th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table></div>';
+      $('drvBody').className = '';
+      $('drvBody').innerHTML = (open.length ? table(open) : '<div class="muted">No open violations on the violation record.</div>')
+        + (closed.length ? '<details style="margin-top:14px;"><summary class="muted" style="cursor:pointer;">Closed / cured history (' + closed.length + ')</summary>' + table(closed) + '</details>' : '')
+        + '<div class="row" style="justify-content:space-between; margin-top:16px;"><span class="muted" style="font-size:12px;">Read-only. Changes are made on the violation record, not in Home Sales.</span>'
+        + '<a class="link" href="/admin/homeowner?property=' + encodeURIComponent(propertyId) + '" target="_blank" rel="noopener">Open the full record in Homeowner 360 →</a></div>';
+    } catch (e) {
+      $('drvBody').innerHTML = '<div class="result-warn">Could not load the violations: ' + esc(e.message) + '</div>';
+    }
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('[data-drv-prop]');
+    if (b) { e.preventDefault(); e.stopPropagation(); openDrv(b.getAttribute('data-drv-prop'), b.getAttribute('data-drv-addr')); }
+  }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrv(); });
+
   const STAGE_BADGE = {
     requested: '<span class="badge req">Requested</span>',
     disclosed: '<span class="badge disc">Disclosed</span>',
@@ -119,7 +167,7 @@
         const bal = s.status==='closed'
           ? balBadge(s.seller_final_balance_cents, 'cleared $0', '')
           : balBadge(s.balance_cents, '$0', '');
-        const drv = s.drv_clean==null ? '—' : (s.drv_clean ? '<span class="badge ok">clean</span>' : `<span class="badge err">${s.open_violations_count||0} open</span>`);
+        const drv = s.drv_clean==null ? '—' : (s.drv_clean ? '<span class="badge ok">clean</span>' : drvBadge(s.property_id, addr, `${s.open_violations_count||0} open`));
         // The welcome packet, for closed sales only. A closed sale with no
         // packet is a new owner nobody has spoken to, so it shows as an action
         // rather than a blank cell.
@@ -216,7 +264,7 @@
       <div class="kv"><span class="k">Property</span><span class="v">${esc(snap.property.street_address)}${snap.property.unit?(' '+esc(snap.property.unit)):''}</span></div>
       <div class="kv"><span class="k">Owner of record</span><span class="v">${esc(o.owner_name||'—')}</span></div>
       <div class="kv"><span class="k">Account balance${snap.balance_as_of?(' (as of '+fmtDate(snap.balance_as_of)+')'):''}</span><span class="v">${balBadge(snap.balance_status==='KNOWN'?snap.balance_cents:null, '$0.00 — cleared', ' owed')}</span></div>
-      <div class="kv"><span class="k">Deed-restriction (DRV) status</span><span class="v">${snap.drv_clean?'<span class="badge ok">Clean — no open violations</span>':'<span class="badge err">'+snap.open_violations_count+' open ('+esc(snap.worst_open_stage||'')+')</span>'}</span></div>
+      <div class="kv"><span class="k">Deed-restriction (DRV) status</span><span class="v">${snap.drv_clean?'<span class="badge ok">Clean — no open violations</span>':drvBadge(snap.property.id, snap.property.street_address, snap.open_violations_count+' open ('+(snap.worst_open_stage||'')+')')}</span></div>
       <div class="kv" style="border-bottom:none;"><span class="k">Inspection</span><span class="v muted">Schedule a resale inspection to confirm condition</span></div>
     </div>`;
   }
@@ -294,7 +342,7 @@
     const o = snap.owner || {};
     el.innerHTML = `<div class="kv"><span class="k">Seller of record</span><span class="v">${esc(o.owner_name||'—')}</span></div>
       <div class="kv"><span class="k">Seller balance at closing</span><span class="v">${balBadge(snap.balance_status==='KNOWN'?snap.balance_cents:null, '$0.00 — cleared', ' still owed')}</span></div>
-      <div class="kv"><span class="k">DRV</span><span class="v">${snap.drv_clean?'<span class="badge ok">clean</span>':'<span class="badge err">'+snap.open_violations_count+' open</span>'}</span></div>`;
+      <div class="kv"><span class="k">DRV</span><span class="v">${snap.drv_clean?'<span class="badge ok">clean</span>':drvBadge(snap.property.id, snap.property.street_address, snap.open_violations_count+' open')}</span></div>`;
   }
 
   async function recordClosing() {

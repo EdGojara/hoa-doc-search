@@ -5024,20 +5024,50 @@ router.get('/property-violations', async (req, res) => {
 // without leaving for the 360. (Ed 2026-08-25: "expand and see the violations
 // here as well as 360".)
 // ---------------------------------------------------------------------------
+// Read-only context for the violation rows (Home Sales review panel, register).
+// A short note: what the inspector/AI saw, else staff review/resolution notes.
+function _violationNote(v, obs) {
+  const txt = (obs && (obs.reviewer_notes || obs.ai_description)) || v.review_notes || v.resolved_notes || '';
+  const t = String(txt).replace(/\s+/g, ' ').trim();
+  return t ? (t.length > 240 ? t.slice(0, 237) + '...' : t) : null;
+}
+// Next step on the §209 ladder, described, never taken. Certified §209 / fine /
+// self-help cases are human-only (Ed's rule), so no automatic step is implied.
+const _LETTER_LABEL = { letter_courtesy_1: 'Courtesy notice 1', letter_courtesy_2: 'Courtesy notice 2', letter_209: 'Certified §209 notice' };
+function _nextActionText(v, letter, isProtected) {
+  if (letter && ['draft', 'approved'].includes(letter.status)) {
+    return `${_LETTER_LABEL[letter.type] || 'Notice'} ${letter.status === 'draft' ? 'drafted' : 'approved'}, not yet mailed`;
+  }
+  if (isProtected) return 'Staff review only (certified §209 / fine / self-help stage)';
+  const cure = v.cure_period_ends_at ? String(v.cure_period_ends_at).slice(0, 10) : null;
+  const next = { courtesy_1: 'Courtesy notice 2', courtesy_2: 'Certified §209 notice' }[v.current_stage];
+  if (!next) return null;
+  return cure ? `${next} if still in violation after the cure period ends ${cure}` : `${next} if still in violation at re-inspection`;
+}
+
 router.get('/properties/:propertyId/violations', async (req, res) => {
   try {
     const propertyId = req.params.propertyId;
     const { data: vios, error } = await supabase.from('violations')
-      .select('id, current_stage, opened_at, cure_period_ends_at, resolved_at, resolved_via, source, quality_status, enforcement_categories(label, slug)')
+      .select('id, current_stage, opened_at, cure_period_ends_at, resolved_at, resolved_via, resolved_notes, review_notes, opened_from_observation_id, source, quality_status, enforcement_categories(label, slug)')
       .eq('property_id', propertyId)
       .neq('quality_status', 'superseded')
       .order('opened_at', { ascending: false }).limit(300);
     if (error) throw error;
     const ids = (vios || []).map((v) => v.id);
+    // Short description: the observation the case was opened from (what was seen).
+    const obsIds = [...new Set((vios || []).map((v) => v.opened_from_observation_id).filter(Boolean))];
+    const obsById = new Map();
+    for (let i = 0; i < obsIds.length; i += 200) {
+      const { data: os, error: oe } = await supabase.from('property_observations')
+        .select('id, ai_description, reviewer_notes').in('id', obsIds.slice(i, i + 200));
+      if (oe) throw oe;
+      for (const o of (os || [])) obsById.set(o.id, o);
+    }
     const letterByVio = new Map();
     for (let i = 0; i < ids.length; i += 200) {
       const { data: ls } = await supabase.from('interactions')
-        .select('violation_id, status, created_at')
+        .select('violation_id, type, status, created_at')
         .in('violation_id', ids.slice(i, i + 200))
         .in('type', ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'])
         .order('created_at', { ascending: false });
@@ -5057,6 +5087,9 @@ router.get('/properties/:propertyId/violations', async (req, res) => {
         opened_at: v.opened_at, cure_period_ends_at: v.cure_period_ends_at,
         resolved_at: v.resolved_at, resolved_via: v.resolved_via, source: v.source,
         letter_status: l ? l.status : null, letter_date: l ? l.created_at : null,
+        letter_type: l ? l.type : null,
+        notes: _violationNote(v, obsById.get(v.opened_from_observation_id)),
+        next_action: open ? _nextActionText(v, l, isProtected) : null,
       };
     });
     res.json({ ok: true, violations: out });
