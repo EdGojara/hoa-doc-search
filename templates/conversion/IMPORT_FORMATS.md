@@ -270,8 +270,8 @@ Rule results:
 - **PASS**: both sides are equal, and no file the rule reads has any exception.
 - **FAIL**: the sides differ; the variance is shown.
 - **BLOCKED**: values were computed, but a file the rule reads has row exceptions, so the result cannot be trusted.
-- **PENDING_INPUT**: a referenced file or control total has not been supplied.
-- **UNKNOWN_NAME**: the rule names something that is neither a control code nor a valid measure. This is also recorded as an exception.
+- **PENDING_INPUT**: a file the rule reads has not been supplied.
+- **UNKNOWN_NAME**: the rule names something that is neither a supplied control code nor a valid measure (a control missing from control_totals.csv lands here: the loader cannot tell not-yet-supplied from misspelled). This is also recorded as an exception.
 
 Example `control_rules.csv`:
 ```
