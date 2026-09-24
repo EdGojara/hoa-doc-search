@@ -14,7 +14,9 @@
   header.page h1 em { color:var(--gold); font-style:italic; }
   .wrap { max-width:1080px; margin:0 auto; padding:22px 26px 60px; }
   select, input[type=text], input[type=date], input[type=email] { padding:8px 12px; border-radius:8px; border:1px solid var(--rule); background:#fff; color:var(--ink); font-size:14px; }
-  header.page select { border:1px solid rgba(255,255,255,0.3); min-width:210px; }
+  .assoc-bar { display:flex; align-items:center; gap:10px; margin:0 0 16px; padding:10px 14px; background:#fff; border:1px solid var(--rule); border-left:4px solid var(--gold); border-radius:10px; }
+  .assoc-bar label { font-size:12px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.04em; }
+  .assoc-bar select { min-width:260px; font-weight:600; color:var(--navy); }
   .card { background:#fff; border:1px solid var(--rule); border-radius:12px; padding:18px 20px; box-shadow:0 1px 2px rgba(0,0,0,0.03); margin-bottom:16px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th { text-align:left; padding:8px 10px; color:var(--ink-faint); font-size:11px; letter-spacing:0.05em; text-transform:uppercase; border-bottom:2px solid var(--rule); }
@@ -53,7 +55,6 @@
     <h1>Bedrock <em>Home Sales</em></h1>
     <div style="font-size:12px; opacity:.8; margin-top:3px;">Resale disclosures &amp; ownership transfers · <em>community simplified</em></div>
   </div>
-  <select id="commSel"></select>
 </header>
 <div class="wrap">
   <div class="row" style="margin-bottom:16px;">
@@ -62,6 +63,8 @@
     <button class="btn" id="btnProrate">🧮 Prorate assessment</button>
     <button class="btn" id="btnWelcome">📬 Welcome packet</button>
   </div>
+  <!-- The association every action on this page works in: in the workflow area, not tucked in the header. -->
+  <div class="assoc-bar"><label for="commSel">Association:</label><select id="commSel"></select></div>
   <div id="panel"></div>
   <div id="list"><div class="muted" style="padding:30px; text-align:center;">Loading…</div></div>
 </div>
@@ -149,6 +152,7 @@
   }
 
   function clearPanel(){ $('panel').innerHTML = ''; }
+  function currentCommunityName(){ const c = COMMS.find((x) => x.id === CID); return c ? c.name : 'this association'; }
 
   // ── The lifecycle list ────────────────────────────────────────────────────
   async function loadList() {
@@ -314,7 +318,7 @@
           <span class="badge ${ex.confidence==='high'?'ok':(ex.confidence==='low'?'err':'req')}">${esc(ex.confidence||'?')} confidence</span></div>
         ${ex.notes?('<div class="muted" style="margin:6px 0; font-size:12.5px;">Note: '+esc(ex.notes)+'</div>'):''}
         <div class="field" style="margin-top:10px;"><label>Property (confirm the match)</label>
-          ${matches.length?('<select id="sc-prop">'+matchOpts+'</select>'):'<div class="muted">No address match — search below.</div>'}
+          ${matches.length?('<select id="sc-prop">'+matchOpts+'</select>'):'<div class="result-warn" style="padding:10px 12px;">No property match found in <b>' + esc(currentCommunityName()) + '</b>. Check that the correct association is selected, or search below.</div>'}
           <input type="text" id="sc-search" placeholder="Search by address/owner if the match is wrong…" autocomplete="off" style="margin-top:6px;">
           <div id="sc-results"></div><div id="sc-prop-chosen" class="muted" style="font-size:12px; margin-top:4px;"></div>
         </div>
