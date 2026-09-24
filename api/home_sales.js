@@ -22,6 +22,7 @@ const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const { safeErrorMessage } = require('./_safe_error');
 const { getLegalFlag } = require('../lib/enforcement/legal_flag');
+const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -31,20 +32,35 @@ const router = express.Router();
 // Stages that mean a violation is still OPEN (everything else = resolved).
 const OPEN_VIOLATION_STAGES = ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed'];
 
+// The seller's balance for a resale disclosure / closing, from the shared
+// resolver (the same homeowner ledger the portal, Claire and payments read).
+// No balance on file is UNKNOWN, never $0: a disclosure that says "cleared"
+// when we simply have no data is the most dangerous wrong answer title can get.
+function balanceFromAR(ar) {
+  const known = !!ar && ar.balance_cents != null && Number.isFinite(Number(ar.balance_cents));
+  const cents = known ? Number(ar.balance_cents) : null;
+  return {
+    balance_status: known ? 'KNOWN' : 'UNKNOWN',
+    balance_cents: cents,
+    balance_as_of: known ? (ar.as_of || null) : null,
+    balance_source: ar ? ar.source : 'none',
+    balance_is_zero: known && cents === 0,
+  };
+}
+
 // ----------------------------------------------------------------------------
 // Helper — the disclosure snapshot for a property: current owner, balance, DRV.
 // This is the Part-1 answer (what title is asking for) and is also captured at
 // closing to prove the seller's account cleared.
 // ----------------------------------------------------------------------------
 async function propertySnapshot(community_id, property_id) {
-  const [propRes, ownerRes, balRes, violRes, legal] = await Promise.all([
+  const [propRes, ownerRes, ar, violRes, legal] = await Promise.all([
     supabase.from('properties')
       .select('id, community_id, street_address, unit, city, state, zip')
       .eq('id', property_id).maybeSingle(),
     supabase.from('v_current_property_owners')
       .select('*').eq('property_id', property_id).maybeSingle(),
-    supabase.from('v_owner_ar_balance')
-      .select('*').eq('property_id', property_id).maybeSingle(),
+    resolveCurrentAR(supabase, { propertyId: property_id }),
     supabase.from('violations')
       .select('id, current_stage, opened_at')
       .eq('property_id', property_id)
@@ -62,8 +78,9 @@ async function propertySnapshot(community_id, property_id) {
   // Defense in depth: never leak another community's property.
   if (community_id && prop.community_id !== community_id) return null;
 
+  if (ownerRes.error) throw ownerRes.error;
+  if (violRes.error) throw violRes.error;
   const owner = ownerRes.data || null;
-  const bal = balRes.data || null;
   const openViolations = violRes.data || [];
 
   // Worst open stage = latest in the enforcement ladder.
@@ -77,9 +94,7 @@ async function propertySnapshot(community_id, property_id) {
   return {
     property: prop,
     owner,                                         // owner_contact_id, owner_name, primary_email, mailing_address, owned_since, vesting
-    balance_cents: bal ? Number(bal.total_balance_cents || 0) : 0,
-    balance_as_of: bal ? (bal.snapshot_date || bal.as_of_date || null) : null,
-    balance_is_zero: bal ? Number(bal.total_balance_cents || 0) === 0 : true,
+    ...balanceFromAR(ar),                          // balance_status KNOWN|UNKNOWN; UNKNOWN never reads as $0
     drv_clean: openViolations.length === 0,
     open_violations_count: openViolations.length,
     worst_open_stage: worst,
@@ -384,8 +399,8 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
     const snap = await propertySnapshot(b.community_id, b.property_id);
     if (!snap) return res.status(404).json({ error: 'property_not_found' });
 
-    const sellerFinalCents = snap.balance_cents;          // captured at the moment of recording
-    const sellerCleared = sellerFinalCents === 0;
+    const sellerFinalCents = snap.balance_cents;          // captured at the moment of recording; null = UNKNOWN
+    const sellerCleared = snap.balance_is_zero;           // only a KNOWN $0 counts as cleared
 
     // 1) Create the ownership-change proposal (source: title_company).
     const propRow = {
@@ -456,7 +471,8 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
       new_owner_contact_id: newContactId,
       seller_final_balance_cents: sellerFinalCents,
       seller_cleared: sellerCleared,
-      warning: sellerCleared ? null : 'seller_balance_not_zero',
+      seller_balance_status: snap.balance_status,
+      warning: sellerCleared ? null : (snap.balance_status === 'UNKNOWN' ? 'seller_balance_unknown' : 'seller_balance_not_zero'),
     });
   } catch (err) {
     console.error('[home-sales] record-closing failed:', err.message);
@@ -465,3 +481,4 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
 });
 
 module.exports = router;
+module.exports._test = { balanceFromAR, propertySnapshot };

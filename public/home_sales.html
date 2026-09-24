@@ -69,6 +69,11 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const fmt = (cents) => '$' + (Number(cents||0)/100).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+  // Seller balance badge. null = no balance on file = UNKNOWN; it must never
+  // render as $0 or "cleared" (fmt(null) would print $0.00).
+  const balBadge = (cents, clearedText, owedSuffix) => cents == null
+    ? '<span class="badge err">UNKNOWN: no balance on file, verify before disclosing</span>'
+    : (Number(cents) === 0 ? `<span class="badge ok">${clearedText}</span>` : `<span class="badge err">${fmt(cents)}${owedSuffix}</span>`);
   const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const fmtDate = (d) => { if (!d) return '—'; const t = new Date(d + (String(d).length===10?'T00:00:00':'')); return isNaN(t)? d : t.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}); };
   const dollarsToCents = (v) => { if (v===''||v==null) return null; const n = Number(String(v).replace(/[$,]/g,'')); return Number.isFinite(n)? Math.round(n*100): null; };
@@ -112,10 +117,8 @@
       const rows = sales.map((s)=>{
         const addr = s.properties ? (s.properties.street_address + (s.properties.unit?(' '+s.properties.unit):'')) : '—';
         const bal = s.status==='closed'
-          ? (s.seller_final_balance_cents===0
-              ? '<span class="badge ok">cleared $0</span>'
-              : `<span class="badge err">${fmt(s.seller_final_balance_cents)}</span>`)
-          : (s.balance_cents===0 ? '<span class="badge ok">$0</span>' : (s.balance_cents!=null?fmt(s.balance_cents):'—'));
+          ? balBadge(s.seller_final_balance_cents, 'cleared $0', '')
+          : balBadge(s.balance_cents, '$0', '');
         const drv = s.drv_clean==null ? '—' : (s.drv_clean ? '<span class="badge ok">clean</span>' : `<span class="badge err">${s.open_violations_count||0} open</span>`);
         // The welcome packet, for closed sales only. A closed sale with no
         // packet is a new owner nobody has spoken to, so it shows as an action
@@ -212,7 +215,7 @@
     return `<div class="card" style="background:#fbfaf6;">
       <div class="kv"><span class="k">Property</span><span class="v">${esc(snap.property.street_address)}${snap.property.unit?(' '+esc(snap.property.unit)):''}</span></div>
       <div class="kv"><span class="k">Owner of record</span><span class="v">${esc(o.owner_name||'—')}</span></div>
-      <div class="kv"><span class="k">Account balance${snap.balance_as_of?(' (as of '+fmtDate(snap.balance_as_of)+')'):''}</span><span class="v">${snap.balance_is_zero?'<span class="badge ok">$0.00 — cleared</span>':'<span class="badge err">'+fmt(snap.balance_cents)+' owed</span>'}</span></div>
+      <div class="kv"><span class="k">Account balance${snap.balance_as_of?(' (as of '+fmtDate(snap.balance_as_of)+')'):''}</span><span class="v">${balBadge(snap.balance_status==='KNOWN'?snap.balance_cents:null, '$0.00 — cleared', ' owed')}</span></div>
       <div class="kv"><span class="k">Deed-restriction (DRV) status</span><span class="v">${snap.drv_clean?'<span class="badge ok">Clean — no open violations</span>':'<span class="badge err">'+snap.open_violations_count+' open ('+esc(snap.worst_open_stage||'')+')</span>'}</span></div>
       <div class="kv" style="border-bottom:none;"><span class="k">Inspection</span><span class="v muted">Schedule a resale inspection to confirm condition</span></div>
     </div>`;
@@ -289,7 +292,7 @@
     if (!snap) { el.innerHTML = ''; return; }
     const o = snap.owner || {};
     el.innerHTML = `<div class="kv"><span class="k">Seller of record</span><span class="v">${esc(o.owner_name||'—')}</span></div>
-      <div class="kv"><span class="k">Seller balance at closing</span><span class="v">${snap.balance_is_zero?'<span class="badge ok">$0.00 — cleared</span>':'<span class="badge err">'+fmt(snap.balance_cents)+' still owed</span>'}</span></div>
+      <div class="kv"><span class="k">Seller balance at closing</span><span class="v">${balBadge(snap.balance_status==='KNOWN'?snap.balance_cents:null, '$0.00 — cleared', ' still owed')}</span></div>
       <div class="kv"><span class="k">DRV</span><span class="v">${snap.drv_clean?'<span class="badge ok">clean</span>':'<span class="badge err">'+snap.open_violations_count+' open</span>'}</span></div>`;
   }
 
@@ -316,7 +319,7 @@
       const cleared = j.seller_cleared;
       $('sc-out').innerHTML = `<div class="${cleared?'result-ok':'result-warn'}">
         <b>Ownership updated.</b> ${esc(buyer)} is now the owner of record as of ${fmtDate(closing)}; the prior owner moved into history.
-        <div style="margin-top:8px;">Seller's final balance: ${cleared?'<span class="badge ok">$0.00 — cleared at closing</span>':'<span class="badge err">'+fmt(j.seller_final_balance_cents)+' — NOT zero, review before deposit</span>'}</div>
+        <div style="margin-top:8px;">Seller's final balance: ${balBadge(j.seller_balance_status==='UNKNOWN'?null:j.seller_final_balance_cents, '$0.00 — cleared at closing', ' — NOT zero, review before deposit')}</div>
         <div style="margin-top:14px; padding-top:12px; border-top:1px solid #e7e3d8;">
           <b>Next: welcome the new owner.</b>
           <div class="muted" style="font-size:12.5px; margin:3px 0 8px;">This is the only moment we know a new person owns this lot. Everything in the packet is specific to this community.</div>
@@ -349,7 +352,7 @@
     }).join('');
     const saleRows = sales.filter((s)=>s.status==='closed').map((s)=>
       `<div class="kv"><span class="k">${fmtDate(s.closing_date)} — ${esc(s.seller_name||'')} → ${esc(s.buyer_name||'')}</span>
-       <span class="v">${s.seller_final_balance_cents===0?'<span class="badge ok">cleared</span>':'<span class="badge err">'+fmt(s.seller_final_balance_cents)+'</span>'}${s.transfer_fee_cents!=null?(' · fee '+fmt(s.transfer_fee_cents)):''}</span></div>`).join('');
+       <span class="v">${balBadge(s.seller_final_balance_cents, 'cleared', '')}${s.transfer_fee_cents!=null?(' · fee '+fmt(s.transfer_fee_cents)):''}</span></div>`).join('');
     $('panel').innerHTML = `<div class="card">
       <div class="row" style="justify-content:space-between;"><h2 class="sec">Ownership history</h2><a class="link" onclick="clearPanel()">close</a></div>
       <ul class="timeline">${tl || '<li class="muted">No ownership records.</li>'}</ul>
@@ -534,7 +537,7 @@
       </div>
       <div class="card" style="margin-bottom:14px;">
         <h2 class="sec">Prorate a transfer</h2>
-        <div class="muted" style="font-size:12.5px; margin:2px 0 10px;">Daily proration (days remaining ÷ days in the year) from the transfer date to Dec 31. A resale posts no charge — ownership and balance transfer only.</div>
+        <div class="muted" style="font-size:12.5px; margin:2px 0 10px;">Daily proration (days remaining ÷ days in the year) from the transfer date to Dec 31. A resale posts no charge. The seller's balance stays with the seller; nothing moves to the buyer.</div>
         <div class="field"><label>Property</label><input type="text" id="pr-search" placeholder="Street address or owner…" autocomplete="off"></div>
         <div id="pr-results"></div>
         <div id="pr-prop-chosen" class="muted" style="font-size:12.5px; margin:6px 0;"></div>
