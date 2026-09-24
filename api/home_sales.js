@@ -188,7 +188,11 @@ router.get('/property/:property_id/history', async (req, res) => {
       supabase.from('property_ownerships')
         .select('id, contact_id, start_date, end_date, vesting, is_primary, source, notes, contacts(full_name, primary_email, vantaca_account_id)')
         .eq('property_id', property_id)
-        .order('start_date', { ascending: false }),
+        // Same-day sequential closings share a start date: the open (current) owner
+        // first, then the one-day intermediate owner, then by creation (approval) order.
+        .order('start_date', { ascending: false })
+        .order('end_date', { ascending: false, nullsFirst: true })
+        .order('created_at', { ascending: false }),
       supabase.from('home_sales')
         .select('*')
         .eq('property_id', property_id)
@@ -405,6 +409,14 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
     const snap = await propertySnapshot(b.community_id, b.property_id);
     if (!snap) return res.status(404).json({ error: 'property_not_found' });
     if (!snap.owner || !snap.owner.owner_contact_id) return res.status(409).json({ error: 'seller_required: this lot has no current owner on file' });
+    // The seller named on the closing document must be the owner of record now.
+    // This is what keeps sequential closings in order (A -> B, then B -> C): if
+    // B -> C is entered first, the owner on file is still A and it is refused,
+    // instead of silently recording A -> C.
+    if (!b.seller_name || !String(b.seller_name).trim()) return res.status(400).json({ error: 'seller_name_required: enter the seller shown on the closing document' });
+    if (!sellerMatchesOwner(b.seller_name, snap.owner.owner_name)) {
+      return res.status(409).json({ error: `seller_not_current_owner: the document's seller "${String(b.seller_name).trim()}" is not the owner on file ("${snap.owner.owner_name}"). If this lot sold more than once, enter the earlier closing first.` });
+    }
 
     // 1) The sale row, with everything staff entered, still open (requested/disclosed).
     const saleFields = {
@@ -494,6 +506,19 @@ router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res
   }
 });
 
+// Loose name match between the closing document's seller and the owner of
+// record: any significant word in common ("Jeanne Baker" ~ "Jim & Jeanne Baker").
+// Entity boilerplate is ignored so "Harkor Homes LLC" never matches "Fiat Homes LLC".
+const NAME_NOISE = new Set(['llc', 'inc', 'co', 'corp', 'company', 'ltd', 'lp', 'llp', 'homes', 'home', 'trust', 'trustee', 'trustees',
+  'revocable', 'living', 'family', 'estate', 'the', 'and', 'of', 'et', 'al', 'ux', 'mr', 'mrs', 'ms', 'jr', 'sr']);
+function nameWords(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w.length >= 2 && !NAME_NOISE.has(w));
+}
+function sellerMatchesOwner(docSeller, ownerName) {
+  const owner = new Set(nameWords(ownerName));
+  return nameWords(docSeller).some((w) => owner.has(w));
+}
+
 // A refused or failed transfer leaves no half-state: the pending proposal is
 // withdrawn with the reason (kept for audit) and a sale row created by this
 // request is removed. Ownership was never touched (the DB transfer is atomic).
@@ -518,4 +543,4 @@ async function undoRecordClosing(proposalId, createdSaleId, reason) {
 }
 
 module.exports = router;
-module.exports._test = { balanceFromAR, propertySnapshot };
+module.exports._test = { balanceFromAR, propertySnapshot, sellerMatchesOwner };

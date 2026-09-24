@@ -88,5 +88,30 @@ t('migration 459 leaves exactly one approve signature and guards the direct writ
   assert.ok(/seller_end := settle - 1;/.test(sql));
 });
 
+t('record-closing requires the document seller and it must be the owner on file (keeps same-day closings in order)', () => {
+  const src = read('api/home_sales.js').replace(/\r\n/g, '\n');
+  assert.ok(/seller_name_required/.test(src) && /seller_not_current_owner/.test(src));
+  const m = src.match(/const NAME_NOISE = [\s\S]*?\nfunction sellerMatchesOwner[\s\S]*?\n}\n/);
+  assert.ok(m, 'matcher not found');
+  // eslint-disable-next-line no-new-func
+  const sellerMatchesOwner = new Function(m[0] + '; return sellerMatchesOwner;')();
+  assert.strictEqual(sellerMatchesOwner('Jeanne Baker', 'Jim & Jeanne Baker'), true);
+  assert.strictEqual(sellerMatchesOwner('HARKOR HOMES, LLC', 'Harkor Homes LLC'), true);
+  assert.strictEqual(sellerMatchesOwner('Harkor Homes LLC', 'Jim & Jeanne Baker'), false, 'out-of-order closing must be refused');
+  assert.strictEqual(sellerMatchesOwner('Fiat Homes LLC', 'Harkor Homes LLC'), false, 'shared "Homes LLC" is not a match');
+  assert.strictEqual(sellerMatchesOwner('', 'Jim & Jeanne Baker'), false);
+  const html = read('public/home_sales.html');
+  assert.ok(/id="sc-seller"/.test(html) && /seller_name: seller/.test(html));
+});
+
+t('migration 460 only relaxes same-day for transfer-created, named-seller tenures', () => {
+  const sql = read('migrations/460_same_day_sequential_resale.sql');
+  assert.ok(/settle < seller_t\.start_date/.test(sql));
+  assert.ok(/seller_t\.origin <> 'transfer'/.test(sql));
+  assert.ok(/pr\.current_contact_id IS NULL THEN\s+RAISE EXCEPTION 'same-day resale/.test(sql));
+  assert.ok(/seller_end := CASE WHEN same_day THEN settle ELSE settle - 1 END;/.test(sql));
+  assert.ok(!/ALTER TABLE|UPDATE ownership_tenures SET chain|chain_seq/.test(sql.split('CREATE OR REPLACE FUNCTION')[0]), 'no schema/backfill changes');
+});
+
 console.log(failed ? `\n${failed} failure(s)` : '\nall passed');
 process.exitCode = failed ? 1 : 0;

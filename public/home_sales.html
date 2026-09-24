@@ -270,6 +270,7 @@
           <div id="sc-results"></div><div id="sc-prop-chosen" class="muted" style="font-size:12px; margin-top:4px;"></div>
         </div>
         <div class="grid2">
+          <div class="field"><label>Seller (as shown on the closing document)</label><input type="text" id="sc-seller" value="${esc(ex.seller_name||'')}"></div>
           <div class="field"><label>Buyer (new owner)</label><input type="text" id="sc-buyer" value="${esc(ex.buyer_name||'')}"></div>
           <div class="field"><label>Closing date</label><input type="date" id="sc-closing" value="${esc(ex.closing_date||'')}"></div>
           <div class="field"><label>Buyer email</label><input type="email" id="sc-bemail" value="${esc(ex.buyer_email||'')}"></div>
@@ -299,14 +300,16 @@
   async function recordClosing() {
     const property_id = window._scanProp;
     if (!property_id) { alert('Confirm the property first.'); return; }
+    const seller = $('sc-seller').value.trim();
     const buyer = $('sc-buyer').value.trim();
     const closing = $('sc-closing').value;
+    if (!seller) { alert('Seller (from the closing document) is required.'); return; }
     if (!buyer) { alert('Buyer name is required.'); return; }
     if (!closing) { alert('Closing date is required.'); return; }
     $('sc-record').disabled = true;
     const body = {
       community_id: CID, property_id,
-      buyer_name: buyer, closing_date: closing,
+      seller_name: seller, buyer_name: buyer, closing_date: closing,
       buyer_email: $('sc-bemail').value || null,
       buyer_mailing_address: $('sc-bmail').value || null,
       transfer_fee_cents: dollarsToCents($('sc-tfee').value),
