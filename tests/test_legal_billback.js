@@ -28,12 +28,12 @@ function stub({ captured }) {
         else if (table === 'chart_of_accounts') {
           const acct = { '1300': 'ar-acct', '20100': 'ap-acct', '2000': 'ap-acct' }[st.eqs.account_number];
           out = { data: acct ? { id: acct } : null, error: null };
-        } else if (table === 'homeowner_transactions') {
-          // identity lookup (maybeSingle) vs balance sum (list)
-          out = st.maybe ? { data: { trusted_account_number: 'WV-100', vantaca_account_id: 'V1', contact_id: 'c1' }, error: null }
-                         : { data: [{ amount_cents: 500000 }], error: null };
-        } else if (table === 'communities') { out = { data: { management_company_id: 'mgmt' }, error: null }; }
-        else if (table === 'properties') { out = { data: { trusted_account_number: 'WV-100' }, error: null }; }
+        } else if (table === 'v_homeowner_current_balance') {
+          // prior balance of the property's current account (committed ledger)
+          out = { data: [{ balance_cents: 500000 }], error: null };
+        } else if (table === 'v_current_property_owners') { out = { data: { owner_contact_id: 'c1' }, error: null }; }
+        else if (table === 'communities') { out = { data: { management_company_id: 'mgmt' }, error: null }; }
+        else if (table === 'properties') { out = { data: { id: 'p-martinez', community_id: 'wv', vantaca_account_id: 'V1', trusted_account_number: 'WV-100' }, error: null }; }
         else if (table === 'transaction_upload_batches') { out = { data: { id: 'batch-1' }, error: null }; }
         return Promise.resolve(out).then(res, rej);
       },

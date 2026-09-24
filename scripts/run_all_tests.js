@@ -74,6 +74,7 @@ const CHECKS = [
   'tests/test_property_resolution.js',
   'tests/test_updated_at_triggers.js',
   'tests/test_je_status.js',
+  'tests/test_homeowner_ledger_path.js',
   'tests/test_reply_recipient.js',
   'tests/test_reply_learning.js',
   'tests/test_acc_application_matching.js',
