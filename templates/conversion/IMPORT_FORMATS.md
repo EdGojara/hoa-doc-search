@@ -56,7 +56,7 @@ vantaca_account_id,vantaca_homeowner_id,owner_name,property_address,tenure_statu
 | `source_report` | yes | text | Source report name and run date this row came from. |
 | `source_row` | no | text | Row / line identifier in the source report, for audit trace. |
 
-Row rule: amount > 0 (supplied as a positive magnitude).
+Row rule: amount != 0 (signed as supplied).
 
 Header line:
 ```
