@@ -1,2 +1,2 @@
-vendor_name,vantaca_vendor_id,invoice_number,invoice_date,due_date,gl_account,fund,original_amount,amount_open,description,source_report,source_row
-NRG Business,,SYN-INV-1,2026-07-20,,5105,OPR,60.00,60.00,synthetic,SYNTHETIC AP aging,1
+trusted_vendor_id,vendor_name,vantaca_vendor_id,invoice_number,invoice_date,due_date,gl_account,fund,original_amount,amount_open,description,source_report,source_row
+adec1c4e-3ab3-411f-a61a-7639985518ec,NRG Business,,SYN-INV-1,2026-07-20,,5105,OPR,60.00,60.00,synthetic,SYNTHETIC AP aging,1

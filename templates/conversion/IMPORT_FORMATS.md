@@ -67,10 +67,11 @@ vantaca_account_id,vantaca_homeowner_id,owner_name,property_address,tenure_statu
 
 | column | required | type | allowed values / notes |
 |---|---|---|---|
+| `trusted_property_id` | yes | text | Approved Trusted property id (UUID) this former-owner balance relates to. Identity key for this file. |
 | `vantaca_account_id` | yes | text | Vantaca account number exactly as in the source report. |
 | `vantaca_homeowner_id` | no | text | Vantaca Homeowner ID, if the source report carries it. |
 | `owner_name` | yes | text | Owner name exactly as on the Vantaca account. |
-| `property_address` | no | text | Physical lot address as supplied. ar_former_owners rows need it to map (see mapping rules). |
+| `property_address` | no | text | Validation/context only: if supplied it must equal the street address of trusted_property_id. |
 | `tenure_status` | yes | enum | `current`, `former`. Supplied by the preparer: current or former. |
 | `charge_category` | yes | enum | `assessment`, `late_fee`, `interest`, `attorney_fee_assessment_related`, `records_request_fee`, `attorney_fee_other`, `fine`, `transfer_fee`, `resale_certificate_fee`, `nsf_fee`, `certified_letter`, `other`. Supplied by the preparer. |
 | `effective_date` | yes | date | Date supplied by the preparer for this item. |
@@ -85,14 +86,15 @@ Row rule: tenure_status = former; amount non-zero (sign as supplied).
 
 Header line:
 ```
-vantaca_account_id,vantaca_homeowner_id,owner_name,property_address,tenure_status,charge_category,effective_date,due_date,amount,aging_bucket,description,source_report,source_row
+trusted_property_id,vantaca_account_id,vantaca_homeowner_id,owner_name,property_address,tenure_status,charge_category,effective_date,due_date,amount,aging_bucket,description,source_report,source_row
 ```
 
 ## `ap_open.csv`: Open AP
 
 | column | required | type | allowed values / notes |
 |---|---|---|---|
-| `vendor_name` | yes | text | Vendor name; must equal a Trusted vendor name exactly. |
+| `trusted_vendor_id` | yes | text | Approved Trusted vendor id (UUID). Identity key for the vendor. |
+| `vendor_name` | yes | text | Vendor name as in the source report. Source/display only; not used to identify the vendor. |
 | `vantaca_vendor_id` | no | text | Vantaca vendor id if supplied. |
 | `invoice_number` | yes | text | Invoice number as supplied. |
 | `invoice_date` | yes | date | Invoice date. |
@@ -109,7 +111,7 @@ Row rule: amount_open > 0 and amount_open <= original_amount.
 
 Header line:
 ```
-vendor_name,vantaca_vendor_id,invoice_number,invoice_date,due_date,gl_account,fund,original_amount,amount_open,description,source_report,source_row
+trusted_vendor_id,vendor_name,vantaca_vendor_id,invoice_number,invoice_date,due_date,gl_account,fund,original_amount,amount_open,description,source_report,source_row
 ```
 
 ## `gl_trial_balance.csv`: GL trial balance (ending balances)
@@ -235,15 +237,15 @@ Keys are compared after trimming, ignoring case and collapsing repeated spaces. 
 | file | key | Trusted record |
 |---|---|---|
 | ar_debits, ar_credits | `vantaca_account_id` | the one property whose `vantaca_account_id` equals it. If `property_address` is supplied, it must equal that property's street address. |
-| ar_former_owners | `property_address` | the one property whose street address equals it. The loader does not decide which ownership a former balance belongs to. |
-| ap_open | `vendor_name`, `gl_account`, `fund` (if supplied) | the one vendor with that exact name, the chart-of-accounts number, the fund code |
+| ar_former_owners | `trusted_property_id` | the property with that id in this community. `property_address`, if supplied, is validation only: it must equal the street address of that property. The loader does not decide which ownership a former balance belongs to. |
+| ap_open | `trusted_vendor_id`, `gl_account`, `fund` (if supplied) | the vendor with that id (`vendor_name` is display only), the chart-of-accounts number, the fund code |
 | gl_trial_balance, july_gl_activity | `account_number`, `fund` | the chart-of-accounts number, the fund code |
 | bank_balances, outstanding_items | `gl_account_number` (+ `bank_account_last4`) | the one active bank account with that GL account number (its last 4 must equal the supplied value) |
 
 Each file also has a natural key that must be unique within the file (`DUPLICATE_ROW_KEY` otherwise). A repeated row is reported, never merged:
 
 - AR files: account + category + effective_date + source_row
-- ap_open: vendor + invoice number
+- ap_open: trusted_vendor_id + invoice number
 - gl_trial_balance: account + fund
 - bank_balances: GL account
 - outstanding_items: every column
@@ -298,9 +300,8 @@ AR_DEBITS_TO_CONTROL,SUM_ar_debits_amount,AR_DEBIT_TOTAL,debit file equals the a
 | `DUPLICATE_ROW_KEY` | two rows share the file's natural key |
 | `ACCOUNT_NOT_ON_ANY_PROPERTY / ACCOUNT_ON_MULTIPLE_PROPERTIES` | the vantaca_account_id matches zero properties, or more than one |
 | `ADDRESS_NOT_EXACT` | the supplied address differs from the matched property's address |
-| `FORMER_NO_ADDRESS` | a former-owner row has no property_address |
-| `ADDRESS_NOT_ON_ANY_PROPERTY / ADDRESS_ON_MULTIPLE_PROPERTIES` | the former-owner address matches zero properties, or more than one |
-| `VENDOR_NOT_FOUND / VENDOR_NAME_AMBIGUOUS` | the vendor name matches zero Trusted vendors, or more than one |
+| `PROPERTY_ID_NOT_FOUND` | the trusted_property_id is not a property of this community |
+| `VENDOR_ID_NOT_FOUND` | the trusted_vendor_id is not a Trusted vendor |
 | `GL_ACCOUNT_NOT_FOUND` | the account number is not in the Trusted chart of accounts |
 | `FUND_NOT_FOUND` | the fund code is not a Trusted fund |
 | `BANK_ACCOUNT_NOT_FOUND / BANK_ACCOUNT_AMBIGUOUS` | the GL account number matches zero active bank accounts, or more than one |

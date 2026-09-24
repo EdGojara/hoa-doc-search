@@ -46,15 +46,15 @@ L.push('');
 L.push('| file | key | Trusted record |');
 L.push('|---|---|---|');
 L.push('| ar_debits, ar_credits | `vantaca_account_id` | the one property whose `vantaca_account_id` equals it. If `property_address` is supplied, it must equal that property\'s street address. |');
-L.push('| ar_former_owners | `property_address` | the one property whose street address equals it. The loader does not decide which ownership a former balance belongs to. |');
-L.push('| ap_open | `vendor_name`, `gl_account`, `fund` (if supplied) | the one vendor with that exact name, the chart-of-accounts number, the fund code |');
+L.push('| ar_former_owners | `trusted_property_id` | the property with that id in this community. `property_address`, if supplied, is validation only: it must equal the street address of that property. The loader does not decide which ownership a former balance belongs to. |');
+L.push('| ap_open | `trusted_vendor_id`, `gl_account`, `fund` (if supplied) | the vendor with that id (`vendor_name` is display only), the chart-of-accounts number, the fund code |');
 L.push('| gl_trial_balance, july_gl_activity | `account_number`, `fund` | the chart-of-accounts number, the fund code |');
 L.push('| bank_balances, outstanding_items | `gl_account_number` (+ `bank_account_last4`) | the one active bank account with that GL account number (its last 4 must equal the supplied value) |');
 L.push('');
 L.push('Each file also has a natural key that must be unique within the file (`DUPLICATE_ROW_KEY` otherwise). A repeated row is reported, never merged:');
 L.push('');
 L.push('- AR files: account + category + effective_date + source_row');
-L.push('- ap_open: vendor + invoice number');
+L.push('- ap_open: trusted_vendor_id + invoice number');
 L.push('- gl_trial_balance: account + fund');
 L.push('- bank_balances: GL account');
 L.push('- outstanding_items: every column');
@@ -104,9 +104,8 @@ for (const [c, m] of [
   ['ROW_RULE', 'the row breaks the file\'s row rule'], ['DUPLICATE_ROW_KEY', 'two rows share the file\'s natural key'],
   ['ACCOUNT_NOT_ON_ANY_PROPERTY / ACCOUNT_ON_MULTIPLE_PROPERTIES', 'the vantaca_account_id matches zero properties, or more than one'],
   ['ADDRESS_NOT_EXACT', 'the supplied address differs from the matched property\'s address'],
-  ['FORMER_NO_ADDRESS', 'a former-owner row has no property_address'],
-  ['ADDRESS_NOT_ON_ANY_PROPERTY / ADDRESS_ON_MULTIPLE_PROPERTIES', 'the former-owner address matches zero properties, or more than one'],
-  ['VENDOR_NOT_FOUND / VENDOR_NAME_AMBIGUOUS', 'the vendor name matches zero Trusted vendors, or more than one'],
+  ['PROPERTY_ID_NOT_FOUND', 'the trusted_property_id is not a property of this community'],
+  ['VENDOR_ID_NOT_FOUND', 'the trusted_vendor_id is not a Trusted vendor'],
   ['GL_ACCOUNT_NOT_FOUND', 'the account number is not in the Trusted chart of accounts'], ['FUND_NOT_FOUND', 'the fund code is not a Trusted fund'],
   ['BANK_ACCOUNT_NOT_FOUND / BANK_ACCOUNT_AMBIGUOUS', 'the GL account number matches zero active bank accounts, or more than one'],
   ['BANK_LAST4_NOT_EXACT', 'the supplied last 4 differs from the bank account\'s last 4'], ['RULE_UNKNOWN_NAME', 'a control rule names an unknown control or measure'],

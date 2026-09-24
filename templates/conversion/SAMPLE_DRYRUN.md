@@ -1,6 +1,6 @@
 # CONV-LPF-20260731 dry run
 
-Mode: DRY_RUN_READ_ONLY. Generated 2026-09-24T05:34:24.563Z. Baseline 2026-07-31.
+Mode: DRY_RUN_READ_ONLY. Generated 2026-09-24T05:38:17.476Z. Baseline 2026-07-31.
 READY: NO (all files present, zero exceptions, every supplied rule PASS)
 
 ## Staged rows
@@ -9,8 +9,8 @@ READY: NO (all files present, zero exceptions, every supplied rule PASS)
 |---|---:|---:|---:|---:|---|
 | ar_debits | 2 | 1 | 0 | 2 | 09f43d2e5fd1 |
 | ar_credits | 1 | 0 | 0 | 1 | 4d28e49e4164 |
-| ar_former_owners | 1 | 0 | 0 | 1 | f99c201b6c07 |
-| ap_open | 1 | 1 | 1 | 0 | 1b2a0fccee28 |
+| ar_former_owners | 1 | 0 | 0 | 1 | 041c4a0aab8e |
+| ap_open | 1 | 1 | 1 | 0 | e115e2a4d3ec |
 | gl_trial_balance | 3 | 3 | 3 | 0 | f5c6f042cdcc |
 | bank_balances | 1 | 1 | 0 | 1 | d9f4b0686b0d |
 | outstanding_items | 1 | 1 | 1 | 0 | f03c4360f001 |

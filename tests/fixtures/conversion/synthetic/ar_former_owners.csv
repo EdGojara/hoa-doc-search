@@ -1,2 +1,2 @@
-vantaca_account_id,vantaca_homeowner_id,owner_name,property_address,tenure_status,charge_category,effective_date,due_date,amount,aging_bucket,description,source_report,source_row
-9900004,,Synthetic Former Owner,1 Synthetic Way,former,assessment,07/01/2026,,25.00,,bad date on purpose,SYNTHETIC AR report,4
+trusted_property_id,vantaca_account_id,vantaca_homeowner_id,owner_name,property_address,tenure_status,charge_category,effective_date,due_date,amount,aging_bucket,description,source_report,source_row
+00000000-0000-4000-8000-000000000999,9900004,,Synthetic Former Owner,1 Synthetic Way,former,assessment,07/01/2026,,25.00,,bad date on purpose,SYNTHETIC AR report,4
