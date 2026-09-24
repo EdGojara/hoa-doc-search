@@ -24,6 +24,7 @@ const { extract: extractBankStatement } = require('../lib/banking/extractors/ban
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
+const { COUNTED_JE_STATUSES, countsInGl } = require('../lib/accounting/je_status');
 const stmtUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const router = express.Router();
 
@@ -77,13 +78,13 @@ router.get('/cash-position', async (req, res) => {
         const { fetchAllQuery } = require('../lib/db/fetch_all');
         const lines = await fetchAllQuery(() => supabase
           .from('journal_entry_lines')
-          .select('debit_cents, credit_cents, journal_entries!inner ( community_id, posting_date, status )')
+          .select('debit_cents, credit_cents, journal_entries!inner ( community_id, posting_date, status, void_reversal_je_id )')
           .eq('account_id', acct.id)
           .eq('journal_entries.community_id', cid)
-          .neq('journal_entries.status', 'voided')
+          .in('journal_entries.status', COUNTED_JE_STATUSES)
           .lte('journal_entries.posting_date', today), { orderBy: 'id' });
         let d = 0, c = 0;
-        for (const l of lines) { d += Number(l.debit_cents) || 0; c += Number(l.credit_cents) || 0; }
+        for (const l of lines) { if (!countsInGl(l.journal_entries)) continue; d += Number(l.debit_cents) || 0; c += Number(l.credit_cents) || 0; }
         cash_balance_cents = acct.normal_balance === 'credit' ? (c - d) : (d - c);
       }
     }
