@@ -1,0 +1,54 @@
+{
+  "batch": "CONV-LPF-20260731",
+  "status": "PREPARED_NOT_POSTED",
+  "approved_by": "Ed (2026-09-24 instruction)",
+  "conversion_adjustments": [
+    {
+      "id": "ADJ-001",
+      "class": "CONVERSION_ADJUSTMENT",
+      "what": "Stiley: reclass the $150.00 debit carried in Prepaid Owners Assessments into Accounts Receivable (a receivable, not a negative prepaid).",
+      "source": "PrepaidHomeowners.pdf 7/31 (ar_credits.csv line 23, Vantaca account 2012720, 4802 Bonny Loch Lane)",
+      "lines": [
+        { "account": "1300", "fund": "OPR", "debit": "150.00", "credit": "0.00" },
+        { "account": "2400", "fund": "OPR", "debit": "0.00", "credit": "150.00" }
+      ],
+      "balanced_by_fund": { "OPR": "0.00" },
+      "subledger_effect": "Opening AR item for account 2012720 (current tenure, 4802 Bonny Loch Lane) of +$150.00 category other, instead of a -$150.00 credit.",
+      "control_effect": "Target 1300 = Vantaca 1300 + 150.00 = AR opening detail 66,096.30 + 150.00 = 66,246.30. Target 2400 credit = 7,612.88 + 150.00 = 7,762.88 = positive current credits 7,427.81 + former-owner credits 335.07."
+    }
+  ],
+  "legacy_unresolved": [
+    {
+      "id": "LEG-001",
+      "class": "LEGACY_UNRESOLVED",
+      "what": "Five former-owner prepaid credits with no provable lot (Vantaca prints only Filler Way).",
+      "items": [
+        { "vantaca_account_id": "2013944", "amount": "-313.77" },
+        { "vantaca_account_id": "2013935", "amount": "-10.86" },
+        { "vantaca_account_id": "2013927", "amount": "-5.43" },
+        { "vantaca_account_id": "2013941", "amount": "-5.00" },
+        { "vantaca_account_id": "2013938", "amount": "-0.01" }
+      ],
+      "total": "-335.07",
+      "proofs": {
+        "amount_proven": "each equals its ar_former_owners.csv row and its Vantaca TransactionHistoryAssoc (4)/(16) Initial Balance",
+        "in_control": "included in PREPAID_CONTROL_COMPOSITION (PASS) and the 2400 target",
+        "isolated": "loaded to the homeowner ledger with property_id NULL and no contact: never shown on a current owner, statement, portal or roster (tests/test_homeowner_ledger_path.js)"
+      },
+      "loader_exceptions_covered": "5 x FIELD_MISSING trusted_property_id (ar_former_owners lines 2-6)"
+    },
+    {
+      "id": "LEG-002",
+      "class": "LEGACY_UNRESOLVED",
+      "what": "Inframark $66.75 open AP (Vantaca AP aging 7/31, invoice date 2026-04-19, no invoice number in source). Preserved as legacy open AP; NOT mapped to Barker Cypress M.U.D.",
+      "amount": "66.75",
+      "proofs": {
+        "amount_proven": "ap_open.csv line 5 = Vantaca APAging (3) 7/31",
+        "in_control": "included in AP_CONTROL_TO_BS (PASS; 2,699.93)",
+        "isolated": "legacy conversion vendor, inactive, never auto-matched by AP intake"
+      },
+      "loader_exceptions_covered": "FIELD_MISSING trusted_vendor_id + FIELD_MISSING invoice_number (ap_open line 5)",
+      "pending": "legacy vendor row + contract handling of the blank invoice number (see report)"
+    }
+  ]
+}
