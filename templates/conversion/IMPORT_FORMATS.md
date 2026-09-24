@@ -96,7 +96,7 @@ trusted_property_id,vantaca_account_id,vantaca_homeowner_id,owner_name,property_
 | `trusted_vendor_id` | yes | text | Approved Trusted vendor id (UUID). Identity key for the vendor. |
 | `vendor_name` | yes | text | Vendor name as in the source report. Source/display only; not used to identify the vendor. |
 | `vantaca_vendor_id` | no | text | Vantaca vendor id if supplied. |
-| `invoice_number` | yes | text | Invoice number as supplied. |
+| `invoice_number` | no | text | Invoice number as supplied. May be blank ONLY when the source report shows none; then source_row is required and identifies the row. Never manufactured. |
 | `invoice_date` | yes | date | Invoice date. |
 | `due_date` | no | date | Due date if supplied. |
 | `gl_account` | yes | text | Account number; must equal a Trusted chart-of-accounts number exactly. |
@@ -107,7 +107,7 @@ trusted_property_id,vantaca_account_id,vantaca_homeowner_id,owner_name,property_
 | `source_report` | yes | text | Source report name and run date. |
 | `source_row` | no | text | Row / line identifier in the source report. |
 
-Row rule: amount_open > 0 and amount_open <= original_amount.
+Row rule: amount_open > 0 and amount_open <= original_amount; when invoice_number is blank, source_row is required.
 
 Header line:
 ```
@@ -245,7 +245,7 @@ Keys are compared after trimming, ignoring case and collapsing repeated spaces. 
 Each file also has a natural key that must be unique within the file (`DUPLICATE_ROW_KEY` otherwise). A repeated row is reported, never merged:
 
 - AR files: account + category + effective_date + source_row
-- ap_open: trusted_vendor_id + invoice number
+- ap_open: trusted_vendor_id + invoice number (or, when the source has no invoice number, trusted_vendor_id + source_row)
 - gl_trial_balance: account + fund
 - bank_balances: GL account
 - outstanding_items: every column
@@ -313,5 +313,7 @@ AR_DEBITS_TO_CONTROL,SUM_ar_debits_amount,AR_DEBIT_TOTAL,debit file equals the a
 ```
 node scripts/conversion/lopf_0731_dryrun.js --inputs=backups/lopf-0731-inputs
 ```
+
+Every staged row carries a conversion source key: `<batch>:<source file sha256>:<source_row, or the file line when source_row is blank>`. It is the stable audit identity of the row, unique within the batch.
 
 The run is read-only. It writes `backups/lopf-0731-dryrun/dryrun.md`, a summary with staged row counts per file, rule PASS/FAIL and exceptions by code, and `dryrun.json`, which adds every exception with file, line, field and detail. `--stage` additionally records the run in the staging tables once migration 452 is applied. The run never posts to the GL or to any live table. The batch is **READY** only when every file is supplied, there are zero exceptions and every supplied rule is PASS.

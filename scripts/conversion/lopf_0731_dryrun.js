@@ -117,6 +117,7 @@ async function stageRun(report, inputs, mapping, ctl, stats, allExceptions) {
       const { _errors, ...data } = r;
       return {
         batch_id: batch.id, source_file_id: sf.id, input_kind: kind, line_no: r._line, row_data: data,
+        conversion_source_key: `${BATCH}:${f.sha256}:${r.source_row || 'line' + r._line}`,
         vantaca_account_id: r.vantaca_account_id || null, account_number: r.account_number || r.gl_account || r.gl_account_number || null,
         amount_cents: r.amount ?? r.amount_open ?? null,
         mapped_property_id: m.property_id || null, mapped_account_id: m.account_id || null, mapped_fund_id: m.fund_id || null,

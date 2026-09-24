@@ -50,6 +50,25 @@ t('ar_debits rule unchanged: negative amount still rejected', () => {
   assert.strictEqual(r.exceptions[0].detail, 'amount must be > 0');
 });
 
+function parseAp(row) {
+  const cols = FILES.ap_open.columns.map((c) => c.name);
+  const base = { trusted_vendor_id: 'v-1', vendor_name: 'INFRAMARK', invoice_date: '2026-04-19', gl_account: '2000', original_amount: '66.75', amount_open: '66.75', source_report: 'APAging 7/31' };
+  const p = path.join(dir, 'ap_open.csv');
+  fs.writeFileSync(p, [cols.join(','), cols.map((c) => ({ ...base, ...row })[c] ?? '').join(',')].join('\n') + '\n');
+  return parseInputFile('ap_open', p);
+}
+
+t('ap_open: blank invoice_number is valid when source_row identifies the row (never manufactured)', () => {
+  const r = parseAp({ invoice_number: '', source_row: 'APAging(3)!p1r7' });
+  assert.strictEqual(r.exceptions.length, 0, JSON.stringify(r.exceptions));
+  assert.strictEqual(r.rows[0].invoice_number, null);
+});
+
+t('ap_open: blank invoice_number without source_row is a ROW_RULE exception', () => {
+  const r = parseAp({ invoice_number: '', source_row: '' });
+  assert.deepStrictEqual(r.exceptions.map((e) => e.code), ['ROW_RULE']);
+});
+
 t('contract text for ar_credits says amount != 0', () => assert.strictEqual(FILES.ar_credits.rule, 'amount != 0 (signed as supplied)'));
 
 fs.rmSync(dir, { recursive: true, force: true });

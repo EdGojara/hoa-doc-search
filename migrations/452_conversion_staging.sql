@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS conversion_staged_rows (
   source_file_id          UUID NOT NULL REFERENCES conversion_source_files(id) ON DELETE RESTRICT,
   input_kind              TEXT NOT NULL,
   line_no                 INTEGER NOT NULL,                    -- line in the supplied file (header = 1)
+  conversion_source_key   TEXT NOT NULL,                       -- <batch>:<file sha256>:<source_row or line>; stable audit identity
   row_data                JSONB NOT NULL,                      -- parsed row exactly as validated (amounts in cents)
   vantaca_account_id      TEXT,
   account_number          TEXT,
@@ -84,7 +85,8 @@ CREATE TABLE IF NOT EXISTS conversion_staged_rows (
   mapped_vendor_id        UUID REFERENCES vendors(id) ON DELETE RESTRICT,
   map_status              TEXT NOT NULL CHECK (map_status IN ('mapped','exception','not_applicable')),
   created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (source_file_id, line_no)
+  UNIQUE (source_file_id, line_no),
+  UNIQUE (batch_id, conversion_source_key)
 );
 CREATE INDEX IF NOT EXISTS idx_conversion_staged_rows_batch_kind ON conversion_staged_rows (batch_id, input_kind);
 CREATE INDEX IF NOT EXISTS idx_conversion_staged_rows_account ON conversion_staged_rows (batch_id, vantaca_account_id) WHERE vantaca_account_id IS NOT NULL;
