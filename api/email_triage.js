@@ -1934,6 +1934,7 @@ router.post('/:id/to-gl', express.json(), async (req, res) => {
       const detail = out.error === 'no_account' ? 'Couldn\'t confidently pick an expense account. Record it in Accounting so it\'s coded right.'
         : out.error === 'no_cash' ? 'No 1000 Operating Cash account on this community\'s chart.'
         : out.error === 'period_closed' ? 'That accounting period is closed. Record it in the current period from Accounting.'
+        : out.error === 'before_gl_cutover' ? 'This payment is dated before this community\'s books moved to Trusted. That period was converted and is already accounted for, so it was not posted.'
         : 'Could not record to the GL.';
       return res.status(400).json({ error: out.error, detail });
     }

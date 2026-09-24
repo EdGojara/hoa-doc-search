@@ -660,7 +660,7 @@ router.post('/invoices/:id/attach-pdf', upload.single('pdf'), async (req, res) =
       source_document_id: libDoc?.id || null,
     });
   } catch (err) {
-    if (err.code === 'invalid_input' || err.code === 'invalid_state') {
+    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'before_gl_cutover') {
       return res.status(400).json({ error: err.message, code: err.code });
     }
     console.error('[ap] attach-pdf failed:', err);
@@ -676,7 +676,7 @@ router.post('/invoices', express.json(), async (req, res) => {
     const result = await createInvoice(req.body || {});
     res.json(result);
   } catch (err) {
-    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'period_closed') {
+    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'period_closed' || err.code === 'before_gl_cutover') {
       return res.status(400).json({ error: err.message, code: err.code });
     }
     console.error('[ap] create invoice failed:', err);
@@ -793,7 +793,7 @@ router.post('/reimbursements', express.json(), async (req, res) => {
       related_party: true,
     });
   } catch (err) {
-    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'period_closed') {
+    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'period_closed' || err.code === 'before_gl_cutover') {
       return res.status(400).json({ error: err.message, code: err.code });
     }
     console.error('[ap] reimbursement failed:', err);
@@ -1166,7 +1166,7 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
       solo_release: solo, path: policy ? policy.path : null,
     });
   } catch (err) {
-    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'not_found') {
+    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'not_found' || err.code === 'before_gl_cutover') {
       return res.status(400).json({ error: err.message, code: err.code });
     }
     console.error('[ap] approve invoice failed:', err);
@@ -1239,7 +1239,7 @@ router.post('/invoices/:id/mark-paid', express.json(), async (req, res) => {
     });
     res.json({ ok: true, method, amount_cents: amt, ...result });
   } catch (err) {
-    if (err.code === 'invalid_input' || err.code === 'invalid_state') return res.status(400).json({ error: err.message, code: err.code });
+    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'before_gl_cutover') return res.status(400).json({ error: err.message, code: err.code });
     console.error('[ap] mark-paid failed:', err); res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -1848,7 +1848,7 @@ router.post('/payments', express.json(), async (req, res) => {
     const result = await recordPayment(req.body || {});
     res.json(result);
   } catch (err) {
-    if (err.code === 'invalid_input' || err.code === 'invalid_state') {
+    if (err.code === 'invalid_input' || err.code === 'invalid_state' || err.code === 'before_gl_cutover') {
       return res.status(400).json({ error: err.message, code: err.code });
     }
     console.error('[ap] record payment failed:', err);
