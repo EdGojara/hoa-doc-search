@@ -24,3 +24,13 @@ scripts/hcad-data/
 # Temp diagnostics, wherever they live.
 **/_tmp_*.js
 tmp/
+
+# Migration backups, before-state snapshots, rollback SQL and verification
+# output. These hold homeowner personal data (names, mailing addresses, letter
+# text, violation records) and must never be committed. The repo is PUBLIC.
+# 2026-09-24: 18 files under backups/ had been committed before this rule
+# existed; they were untracked (local copies kept) in the same commit.
+/backups/
+*-BEFORE-snapshot*.json
+*-ROLLBACK*.sql
+*-POST-APPLY-*
