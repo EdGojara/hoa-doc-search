@@ -1181,6 +1181,31 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
 // POST /invoices/:id/add-convenience-fee — staff adds the (usually $1) fee to an
 // invoice by hand, so they don't have to wait for the auto path (MUD ACH bills).
 // Idempotent; posts the GL delta if the bill already accrued. (Ed 2026-09-03.)
+// Pre-cutover review (mig 458): an invoice dated before the community's GL
+// cutover was not auto-posted. The reviewer decides:
+//   ALREADY_IN_CONVERTED_BOOKS  no GL posting
+//   NOT_IN_CONVERTED_BOOKS      post the accrual effective gl_cutover_date
+//   NEEDS_REVIEW                undecided; stays out of the GL
+router.post('/invoices/:id/cutover-review', express.json(), async (req, res) => {
+  try {
+    const { resolveUserRole } = require('./users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx || !ctx.supabaseUserId) return res.status(401).json({ error: 'sign_in_required', detail: 'Sign in to review invoices.' });
+    if (ctx.user && ctx.user.is_active === false) return res.status(403).json({ error: 'account_deactivated' });
+    const reviewedBy = (ctx.user && (ctx.user.full_name || ctx.user.email)) || 'staff';
+    const { decision, notes } = req.body || {};
+    const { reviewPreCutoverInvoice } = require('../lib/ap/cutover_review');
+    const out = await reviewPreCutoverInvoice(supabase, { invoiceId: req.params.id, decision, reviewedBy, notes });
+    res.json(out);
+  } catch (err) {
+    if (['invalid_input', 'invalid_state', 'not_found', 'before_gl_cutover'].includes(err.code)) {
+      return res.status(err.code === 'not_found' ? 404 : 400).json({ error: err.message, code: err.code });
+    }
+    console.error('[ap] cutover review failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/invoices/:id/add-convenience-fee', express.json(), async (req, res) => {
   try {
     const { id } = req.params;

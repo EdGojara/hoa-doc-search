@@ -47125,6 +47125,19 @@ ${questionsPage}
 
           <div id="ap-amort-${inv.id}" style="margin-bottom:14px;"></div>
 
+          ${inv.cutover_review ? `<div style="margin-bottom:14px; padding:10px 12px; border-radius:8px; border:1px solid ${inv.cutover_review === 'ALREADY_IN_CONVERTED_BOOKS' || inv.cutover_review === 'NOT_IN_CONVERTED_BOOKS' ? '#cbd5e1; background:#f8fafc' : '#f59e0b; background:#fffbeb'}; font-size:12.5px;">
+            <b>Dated before this community's books moved to Trusted.</b>
+            ${inv.cutover_review === 'ALREADY_IN_CONVERTED_BOOKS' ? ` Reviewed: <b>already in the converted books</b> — no GL posting.`
+              : inv.cutover_review === 'NOT_IN_CONVERTED_BOOKS' ? ` Reviewed: <b>not in the converted books</b> — posted at the GL cutover date.`
+              : ` Not posted to the GL. Is it already in the converted (prior-system) books?
+                <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+                  <button class="secondary-btn" style="font-size:12px; padding:5px 12px;" onclick="apCutoverReview('${inv.id}','ALREADY_IN_CONVERTED_BOOKS')">Already in converted books (no posting)</button>
+                  <button class="secondary-btn" style="font-size:12px; padding:5px 12px;" onclick="apCutoverReview('${inv.id}','NOT_IN_CONVERTED_BOOKS')">Not in converted books (post at cutover)</button>
+                  ${inv.cutover_review !== 'NEEDS_REVIEW' ? `<button class="secondary-btn" style="font-size:12px; padding:5px 12px;" onclick="apCutoverReview('${inv.id}','NEEDS_REVIEW')">Needs review</button>` : '<span style="color:#92400e;">Marked needs review.</span>'}
+                </div>`}
+            ${inv.cutover_reviewed_by ? `<div style="color:#64748b; margin-top:4px;">${apEsc(inv.cutover_reviewed_by)}${inv.cutover_reviewed_at ? ' · ' + apEsc(String(inv.cutover_reviewed_at).slice(0, 10)) : ''}${inv.cutover_review_notes ? ' — ' + apEsc(inv.cutover_review_notes) : ''}</div>` : ''}
+          </div>` : ''}
+
           ${(inv.status !== 'paid' && inv.status !== 'voided') ? `<div id="ap-convfee-${inv.id}" style="margin-bottom:14px;">
             ${/convenience fee/i.test(inv.notes || '') ? `<span style="font-size:12px; color:#166534;">✓ Convenience fee added</span>` : `<button class="secondary-btn" style="font-size:12px; padding:5px 12px;" onclick="apAddConvenienceFee('${inv.id}')" title="Add the $1 convenience fee (MUD/ACH auto-draft bills) to this invoice so you don't have to wait for the auto path">＋ Add $1 convenience fee</button>`}
             <span id="ap-convfee-msg-${inv.id}" style="font-size:12px; margin-left:8px;"></span>
@@ -47418,6 +47431,24 @@ ${questionsPage}
           : `✓ Manager approved as ${j.by || 'you'}. It now needs Ed's release before it can be paid.`);
         apOpenInvoice(id); apLoadList(); apLoadCounts(); apLoadManagerQueue();
       } catch (e) { alert('Could not record approval: ' + e.message); }
+    };
+
+    // Pre-cutover review (mig 458): the reviewer decides whether a bill dated
+    // before the GL cutover is already in the converted books.
+    window.apCutoverReview = async function (id, decision) {
+      const label = decision === 'ALREADY_IN_CONVERTED_BOOKS' ? 'ALREADY in the converted books — no GL posting'
+        : decision === 'NOT_IN_CONVERTED_BOOKS' ? 'NOT in the converted books — post it to the GL at the cutover date'
+        : 'Needs review — leave it out of the GL for now';
+      const notes = prompt(`Record this decision:\n\n${label}\n\nNote (optional, recorded on the invoice):`, '');
+      if (notes === null) return;
+      try {
+        const r = await (window._authFetch || fetch)('/api/ap/invoices/' + encodeURIComponent(id) + '/cutover-review', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, notes: notes || null }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || j.error || 'review failed');
+        apOpenInvoice(id); apLoadList();
+      } catch (e) { alert('Could not record the review: ' + e.message); }
     };
 
     // Add the $1 convenience fee to a bill by hand (MUD/ACH auto-draft), so staff

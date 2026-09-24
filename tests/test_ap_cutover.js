@@ -16,16 +16,16 @@ const tests = [];
 const t = (name, fn) => tests.push([name, fn]);
 const CUT = '2026-08-01';
 
-t('invoice dated BEFORE cutover posts on the cutover date', () => {
+t('date rule for a reviewed NOT_IN invoice: dated BEFORE cutover -> the cutover date', () => {
   assert.strictEqual(apInvoicePostingDate('2026-07-13', CUT), CUT);
 });
-t('invoice dated ON cutover posts on its own date', () => {
+t('date rule: dated ON cutover -> its own date', () => {
   assert.strictEqual(apInvoicePostingDate('2026-08-01', CUT), '2026-08-01');
 });
-t('invoice dated AFTER cutover posts on its own date', () => {
+t('date rule: dated AFTER cutover -> its own date', () => {
   assert.strictEqual(apInvoicePostingDate('2026-08-11', CUT), '2026-08-11');
 });
-t('late-arriving invoice (dated 7/13, processed 9/24) posts at cutover; invoice date is not rewritten', () => {
+t('date rule for a late-arriving invoice (dated 7/13, processed 9/24) -> cutover; invoice date is not rewritten', () => {
   const invoice = { invoice_date: '2026-07-13', processed_at: '2026-09-24' };
   assert.strictEqual(apInvoicePostingDate(invoice.invoice_date, CUT), CUT);
   assert.strictEqual(invoice.invoice_date, '2026-07-13');
@@ -66,6 +66,90 @@ t('every AP posting call site is covered by the guard', () => {
     assert.ok(n > 0, `${f}: no posting call found (test is stale)`);
   }
 });
+// ---- pre-cutover review policy (mig 458, lib/ap/cutover_review.js) ----------
+const { isPreCutover, reviewPreCutoverInvoice, preCutoverHold } = require('../lib/ap/cutover_review');
+function fakeDb(seed) {
+  const db = JSON.parse(JSON.stringify(seed));
+  const from = (table) => {
+    const f = []; let upd = null;
+    const api = {
+      select() { return api; }, eq(c, v) { f.push((r) => r[c] === v); return api; },
+      update(p) { upd = p; return api; },
+      maybeSingle() { return api._run(true); }, single() { return api._run(true); },
+      then(res, rej) { return api._run(false).then(res, rej); },
+      _run(one) {
+        const rows = (db[table] || []).filter((r) => f.every((fn) => fn(r)));
+        if (upd) rows.forEach((r) => Object.assign(r, upd));
+        return Promise.resolve({ data: one ? rows[0] || null : rows, error: null });
+      },
+    };
+    return api;
+  };
+  return { db, client: { from } };
+}
+const seedDb = (inv) => ({
+  communities: [{ id: 'c1', gl_cutover_date: CUT }],
+  chart_of_accounts: [{ id: 'ap', community_id: 'c1', account_number: '2000', is_active: true }],
+  ap_invoice_lines: [{ invoice_id: 'i1', gl_account_id: 'exp', amount_cents: 1700, tax_amount_cents: 34 }],
+  ap_invoices: [{ id: 'i1', community_id: 'c1', vendor_id: 'v1', vendor_invoice_number: 'N-1', invoice_date: '2026-07-13', total_cents: 1734, status: 'awaiting_approval', posting_journal_entry_id: null, cutover_review: 'PENDING', ...inv }],
+});
+
+t('pre-cutover test: before / on / after cutover, and no cutover', () => {
+  assert.deepStrictEqual([isPreCutover('2026-07-13', CUT), isPreCutover('2026-08-01', CUT), isPreCutover('2026-08-11', CUT), isPreCutover('2026-07-13', null)], [true, false, false, false]);
+});
+t('intake gate holds a pre-cutover invoice and lets on/after-cutover invoices post', async () => {
+  const { client } = fakeDb(seedDb({}));
+  assert.strictEqual((await preCutoverHold(client, 'c1', '2026-07-13')).hold, true);
+  assert.strictEqual((await preCutoverHold(client, 'c1', '2026-08-01')).hold, false);
+  assert.strictEqual((await preCutoverHold(client, 'c1', '2026-08-11')).hold, false);
+});
+t('ALREADY_IN_CONVERTED_BOOKS: recorded, no GL posting', async () => {
+  const { client, db } = fakeDb(seedDb({}));
+  let posted = 0;
+  await reviewPreCutoverInvoice(client, { invoiceId: 'i1', decision: 'ALREADY_IN_CONVERTED_BOOKS', reviewedBy: 'Ed' }, { postJournalEntry: async () => { posted++; } });
+  const inv = db.ap_invoices[0];
+  assert.deepStrictEqual([posted, inv.cutover_review, inv.posting_journal_entry_id, inv.invoice_date, inv.cutover_reviewed_by], [0, 'ALREADY_IN_CONVERTED_BOOKS', null, '2026-07-13', 'Ed']);
+});
+t('NOT_IN_CONVERTED_BOOKS: posts once, effective the cutover date, through the guarded poster; invoice date kept', async () => {
+  const { client, db } = fakeDb(seedDb({}));
+  const calls = [];
+  await reviewPreCutoverInvoice(client, { invoiceId: 'i1', decision: 'NOT_IN_CONVERTED_BOOKS', reviewedBy: 'Ed' },
+    { postJournalEntry: async (o) => { calls.push(o); return { entry: { id: 'je-new' } }; } });
+  assert.strictEqual(calls.length, 1);
+  const o = calls[0];
+  assert.strictEqual(o.posting_date, CUT);
+  assert.strictEqual(o.ap_posting, true);
+  const dr = o.lines.reduce((a, l) => a + (l.debit_cents || 0), 0); const cr = o.lines.reduce((a, l) => a + (l.credit_cents || 0), 0);
+  assert.deepStrictEqual([dr, cr], [1734, 1734]);
+  assert.deepStrictEqual([db.ap_invoices[0].posting_journal_entry_id, db.ap_invoices[0].invoice_date], ['je-new', '2026-07-13']);
+});
+t('NEEDS_REVIEW: stays out of the GL; can be decided later', async () => {
+  const { client, db } = fakeDb(seedDb({}));
+  let posted = 0;
+  await reviewPreCutoverInvoice(client, { invoiceId: 'i1', decision: 'NEEDS_REVIEW', reviewedBy: 'Ed' }, { postJournalEntry: async () => { posted++; } });
+  assert.deepStrictEqual([posted, db.ap_invoices[0].cutover_review, db.ap_invoices[0].needs_review], [0, 'NEEDS_REVIEW', true]);
+  await reviewPreCutoverInvoice(client, { invoiceId: 'i1', decision: 'ALREADY_IN_CONVERTED_BOOKS', reviewedBy: 'Ed' });
+  assert.strictEqual(db.ap_invoices[0].cutover_review, 'ALREADY_IN_CONVERTED_BOOKS');
+});
+t('a final decision cannot be flipped, and an on/after-cutover invoice cannot be put through review', async () => {
+  const done = fakeDb(seedDb({ cutover_review: 'ALREADY_IN_CONVERTED_BOOKS' }));
+  await assert.rejects(() => reviewPreCutoverInvoice(done.client, { invoiceId: 'i1', decision: 'NOT_IN_CONVERTED_BOOKS', reviewedBy: 'Ed' }), /already decided/);
+  const late = fakeDb(seedDb({ invoice_date: '2026-08-11', cutover_review: null }));
+  await assert.rejects(() => reviewPreCutoverInvoice(late.client, { invoiceId: 'i1', decision: 'NOT_IN_CONVERTED_BOOKS', reviewedBy: 'Ed' }), /not_dated_before_cutover/);
+  await assert.rejects(() => reviewPreCutoverInvoice(done.client, { invoiceId: 'i1', decision: 'MAYBE', reviewedBy: 'Ed' }), /decision must be/);
+});
+t('intake no longer auto-posts pre-cutover invoices (review gate, not a date move)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib/ap/intake.js'), 'utf8');
+  assert.ok(!/apPostingDateFor|apInvoicePostingDate/.test(src), 'intake still moves pre-cutover invoices to the cutover date');
+  assert.strictEqual((src.match(/await cutoverPostingDate\(a\)/g) || []).length, 2, 'both accrual paths must pass the review gate');
+});
+t('AP aging never counts an invoice already in the converted books', () => {
+  const { openApAsOf } = require('../lib/accounting/ap_as_of');
+  const rows = openApAsOf({ invoices: [{ id: 'x', invoice_date: '2026-07-13', total_cents: 1000, status: 'awaiting_approval', posting_journal_entry_id: null, cutover_review: 'ALREADY_IN_CONVERTED_BOOKS' }],
+    jesById: {}, applications: [], paymentsById: {}, asOf: '2026-09-24', cutoverDate: CUT });
+  assert.strictEqual(rows.length, 0);
+});
+
 t('LIVE: the real poster refuses an AP entry dated before LOPF cutover (checked before any write)', async () => {
   if (!process.env.SUPABASE_URL) return console.log('      (skipped: no SUPABASE_URL)');
   const { postJournalEntry } = require('../lib/accounting/posting');
