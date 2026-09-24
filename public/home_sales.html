@@ -294,6 +294,7 @@
     if (!f) { alert('Choose a file first.'); return; }
     $('sc-go').disabled = true; $('sc-out').innerHTML = '<div class="muted">Reading the document…</div>';
     try {
+      window._scanFileName = f.name || null;
       const fd = new FormData(); fd.append('file', f); fd.append('community_id', CID);
       const r = await fetch('/api/home-sales/scan', { method:'POST', body: fd });
       const j = await r.json();
@@ -322,13 +323,24 @@
           <div class="field"><label>Buyer (new owner)</label><input type="text" id="sc-buyer" value="${esc(ex.buyer_name||'')}"></div>
           <div class="field"><label>Closing date</label><input type="date" id="sc-closing" value="${esc(ex.closing_date||'')}"></div>
           <div class="field"><label>Buyer email</label><input type="email" id="sc-bemail" value="${esc(ex.buyer_email||'')}"></div>
+          <div class="field"><label>Buyer phone</label><input type="text" id="sc-bphone" value="${esc(ex.buyer_phone||'')}"></div>
           <div class="field"><label>Buyer mailing address</label><input type="text" id="sc-bmail" value="${esc(ex.buyer_mailing_address||'')}"></div>
-          <div class="field"><label>Transfer fee → association ($)</label><input type="text" id="sc-tfee" value="${ex.transfer_fee_cents!=null?(ex.transfer_fee_cents/100):''}"></div>
-          <div class="field"><label>Bedrock transfer fee ($)</label><input type="text" id="sc-mfee" value="${ex.management_transfer_fee_cents!=null?(ex.management_transfer_fee_cents/100):''}"></div>
         </div>
         <div id="sc-seller-check"></div>
+        <div style="margin-top:14px;"><b>Checks in this packet</b>
+          <div class="muted" style="font-size:12px; margin:2px 0 6px;">Each check is identified by who it is payable to, never by its memo. Bedrock fees never go on the Association's books.</div>
+          <div id="sc-checks"></div>
+          <button class="btn ghost" id="sc-addcheck" style="margin-top:6px; padding:5px 12px; font-size:12.5px;">+ Add a check</button>
+        </div>
+        <div id="sc-payoff" style="margin-top:14px;"></div>
+        <div id="sc-block" class="muted" style="font-size:12.5px; margin-top:8px;"></div>
         <button class="btn gold" id="sc-record" style="margin-top:8px;">Record closing &amp; update ownership</button>
       </div>`;
+    window._scanTitle = ex.title_company_name || null;
+    window._scanChecks = (ex.checks || []).map((c) => ({ ...c, purpose: null }));
+    window._payoffPreviewKey = null;
+    $('sc-addcheck').addEventListener('click', (e) => { e.preventDefault(); window._scanChecks.push({ check_number: '', amount_cents: null, check_date: '', payee: '', memo: '', classification: 'NEEDS_CLASSIFICATION', purpose: null }); renderChecks(); });
+    renderChecks();
     let t; $('sc-search').addEventListener('input', (e)=>{ clearTimeout(t); t=setTimeout(()=>propSearch(e.target.value,'sc'), 250); });
     const sel = $('sc-prop');
     if (sel) { sel.addEventListener('change', async ()=>{ window._scanProp = sel.value; renderSellerCheck(await fetchSnapshot(sel.value)); });
@@ -338,11 +350,122 @@
 
   function renderSellerCheck(snap) {
     const el = $('sc-seller-check'); if (!el) return;
+    window._scanSnap = snap || null; window._payoffPreviewKey = null;
+    if ($('sc-checks')) renderChecks();
     if (!snap) { el.innerHTML = ''; return; }
     const o = snap.owner || {};
     el.innerHTML = `<div class="kv"><span class="k">Seller of record</span><span class="v">${esc(o.owner_name||'—')}</span></div>
       <div class="kv"><span class="k">Seller balance at closing</span><span class="v">${balBadge(snap.balance_status==='KNOWN'?snap.balance_cents:null, '$0.00 — cleared', ' still owed')}</span></div>
       <div class="kv"><span class="k">DRV</span><span class="v">${snap.drv_clean?'<span class="badge ok">clean</span>':drvBadge(snap.property.id, snap.property.street_address, snap.open_violations_count+' open')}</span></div>`;
+  }
+
+  // ── Closing checks (scan form) ─────────────────────────────────────────────
+  const CLASS_LABEL = { BEDROCK_FEE: 'Bedrock fee (not HOA books)', ASSOCIATION_PAYMENT: 'Association payment', NEEDS_CLASSIFICATION: 'Needs classification' };
+  function renderChecks() {
+    const list = window._scanChecks || [];
+    const snap = window._scanSnap;
+    // An Association check that equals the seller's known balance is PROPOSED as the
+    // seller payoff (amount evidence, not memo). Staff still confirm it below.
+    list.forEach((c) => {
+      if (c.classification === 'ASSOCIATION_PAYMENT' && c.purpose == null && snap && snap.balance_status === 'KNOWN'
+          && Number(c.amount_cents) > 0 && Number(c.amount_cents) === Number(snap.balance_cents)) c.purpose = 'seller_payoff';
+    });
+    $('sc-checks').innerHTML = list.length ? '<div style="overflow-x:auto;"><table style="min-width:760px;"><thead><tr><th>Check #</th><th>Date</th><th class="num">Amount</th><th>Payable to</th><th>Memo</th><th>Identified as</th><th>Purpose</th></tr></thead><tbody>'
+      + list.map((c, i) => '<tr>'
+        + '<td><input data-ck="' + i + '" data-f="check_number" value="' + esc(c.check_number || '') + '" style="width:90px;"></td>'
+        + '<td><input type="date" data-ck="' + i + '" data-f="check_date" value="' + esc(c.check_date || '') + '"></td>'
+        + '<td class="num"><input data-ck="' + i + '" data-f="amount" value="' + (c.amount_cents != null ? (c.amount_cents / 100).toFixed(2) : '') + '" style="width:90px; text-align:right;"></td>'
+        + '<td><input data-ck="' + i + '" data-f="payee" value="' + esc(c.payee || '') + '" style="width:200px;"></td>'
+        + '<td><input data-ck="' + i + '" data-f="memo" value="' + esc(c.memo || '') + '" style="width:130px;"></td>'
+        + '<td><select data-ck="' + i + '" data-f="classification">' + ['BEDROCK_FEE', 'ASSOCIATION_PAYMENT', 'NEEDS_CLASSIFICATION'].map((k) => '<option value="' + k + '"' + (c.classification === k ? ' selected' : '') + '>' + CLASS_LABEL[k] + '</option>').join('') + '</select></td>'
+        + '<td>' + (c.classification === 'ASSOCIATION_PAYMENT'
+            ? '<select data-ck="' + i + '" data-f="purpose"><option value="">Choose…</option><option value="seller_payoff"' + (c.purpose === 'seller_payoff' ? ' selected' : '') + '>Pays the seller&#39;s balance</option><option value="association_fee"' + (c.purpose === 'association_fee' ? ' selected' : '') + '>Association fee (capital contribution)</option></select>'
+            : '<span class="muted">—</span>') + '</td></tr>').join('')
+      + '</tbody></table></div>'
+      : '<div class="muted">No checks were read from this document. Add each check by hand.</div>';
+    $('sc-checks').querySelectorAll('[data-ck]').forEach((el) => el.addEventListener('change', (e) => {
+      const c = window._scanChecks[Number(el.getAttribute('data-ck'))]; const fld = el.getAttribute('data-f');
+      if (fld === 'amount') c.amount_cents = dollarsToCents(el.value);
+      else if (fld === 'classification') { c.classification = el.value; c.purpose = null; }
+      else if (fld === 'purpose') c.purpose = el.value || null;
+      else c[fld] = el.value;
+      window._payoffPreviewKey = null;
+      renderChecks();
+    }));
+    renderPayoffBox();
+  }
+  function payoffCheck() { return (window._scanChecks || []).find((c) => c.classification === 'ASSOCIATION_PAYMENT' && c.purpose === 'seller_payoff') || null; }
+  function payoffKey(c) { return c ? [window._scanProp, c.check_number, c.amount_cents, c.check_date].join('|') : null; }
+  function renderPayoffBox() {
+    const box = $('sc-payoff'); const c = payoffCheck(); const snap = window._scanSnap;
+    if (!c) { box.innerHTML = ''; updateRecordGate(); return; }
+    const o = (snap && snap.owner) || {};
+    box.innerHTML = '<div class="card" style="background:#fff; margin:0;"><b>Seller balance payoff</b>'
+      + '<div class="kv"><span class="k">Applies to</span><span class="v">' + esc(o.owner_name || '—') + " (the seller's account, never the buyer's)</span></div>"
+      + '<div class="kv"><span class="k">Seller balance now</span><span class="v">' + balBadge(snap && snap.balance_status === 'KNOWN' ? snap.balance_cents : null, '$0.00', '') + '</span></div>'
+      + '<div class="kv"><span class="k">This payment</span><span class="v">' + fmt(c.amount_cents) + ' · check ' + esc(c.check_number || '?') + ' · ' + fmtDate(c.check_date) + '</span></div>'
+      + '<button class="btn ghost" id="sc-preview" style="margin-top:8px; padding:5px 12px; font-size:12.5px;">Preview how it applies</button>'
+      + '<div id="sc-preview-out" style="margin-top:8px;"></div></div>';
+    $('sc-preview').addEventListener('click', (e) => { e.preventDefault(); previewPayoff(); });
+    updateRecordGate();
+  }
+  async function previewPayoff() {
+    const c = payoffCheck(); const out = $('sc-preview-out');
+    if (!window._scanProp || !c) return;
+    out.innerHTML = '<div class="muted">Working out the application…</div>';
+    try {
+      const r = await fetch('/api/home-sales/payoff-preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        community_id: CID, property_id: window._scanProp, check_number: c.check_number, amount_cents: c.amount_cents, check_date: c.check_date, payee: c.payee }) });
+      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      const p = j.plan;
+      const rows = (p.applications || []).map((a, i) => '<tr><td>' + (i + 1) + '</td><td>' + fmtDate(a.date) + '</td><td>' + esc(a.category) + '</td><td>Step ' + a.step + '</td><td class="num">' + fmt(a.open_before_cents) + '</td><td class="num"><b>' + fmt(a.applied_cents) + '</b></td><td class="num">' + fmt(a.open_after_cents) + '</td></tr>').join('');
+      const flagged = (p.flagged || []).length ? '<div class="result-warn" style="margin-top:6px;">' + p.flagged.length + ' charge(s) need review and were not applied: ' + p.flagged.map((x) => esc(x.category || 'uncategorized') + ' ' + fmt(x.open_cents)).join('; ') + '</div>' : '';
+      out.innerHTML = '<div style="overflow-x:auto;"><table style="min-width:560px;"><thead><tr><th>#</th><th>Charge date</th><th>Category</th><th>Priority</th><th class="num">Open</th><th class="num">Applied</th><th class="num">Left</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+        + flagged
+        + '<div class="kv"><span class="k">Applied</span><span class="v">' + fmt(p.applied_cents) + ' of ' + fmt(p.amount_cents) + (j.ties ? ' <span class="badge ok">ties</span>' : ' <span class="badge err">does not tie</span>') + '</span></div>'
+        + '<div class="kv"><span class="k">Seller balance after</span><span class="v">' + fmt(p.open_after_cents) + '</span></div>'
+        + '<div class="muted" style="font-size:12px;">Books: Dr 1000 Operating Cash ' + fmt(p.amount_cents) + ' / Cr 1300 Accounts Receivable ' + fmt(p.amount_cents) + ', dated ' + fmtDate(c.check_date) + '.</div>'
+        + (j.ties ? '<label style="display:block; margin-top:8px;"><input type="checkbox" id="sc-payoff-ok"> Post this payment to the seller\'s account after the ownership transfer</label>' : '');
+      window._payoffPreviewKey = j.ties ? payoffKey(c) : null;
+      const cb = $('sc-payoff-ok'); if (cb) cb.addEventListener('change', updateRecordGate);
+    } catch (e) {
+      window._payoffPreviewKey = null;
+      out.innerHTML = '<div class="result-warn">' + esc(e.message) + '</div>';
+    }
+    updateRecordGate();
+  }
+  function recordBlockers() {
+    const list = window._scanChecks || []; const why = [];
+    if (list.some((c) => c.classification === 'NEEDS_CLASSIFICATION')) why.push('classify every check by who it is payable to');
+    if (list.some((c) => c.classification === 'ASSOCIATION_PAYMENT' && !c.purpose)) why.push('say what each Association check is for');
+    if (list.some((c) => !(Number(c.amount_cents) > 0))) why.push('enter every check amount');
+    const p = payoffCheck();
+    if (p) {
+      if (!p.check_number || !p.check_date) why.push('enter the payoff check number and date');
+      else if (window._payoffPreviewKey !== payoffKey(p)) why.push('preview the seller payoff');
+      else if (!($('sc-payoff-ok') && $('sc-payoff-ok').checked)) why.push('confirm the seller payoff');
+    }
+    return why;
+  }
+  function updateRecordGate() {
+    const btn = $('sc-record'); if (!btn) return;
+    const why = recordBlockers();
+    btn.disabled = why.length > 0;
+    $('sc-block').textContent = why.length ? 'Before recording: ' + why.join('; ') + '.' : '';
+  }
+  async function retryPayoff(saleId) {
+    const el = $('sc-payoff-result'); el.innerHTML = '<span class="muted">Retrying…</span>';
+    try {
+      const r = await fetch('/api/home-sales/payoff-retry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ home_sale_id: saleId }) });
+      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      el.innerHTML = payoffResultHtml(j.payoff, saleId);
+    } catch (e) { el.innerHTML = '<span class="badge err">Payoff still pending: ' + esc(e.message) + '</span> <a class="link" onclick="retryPayoff(\'' + saleId + '\')">Retry</a>'; }
+  }
+  window.retryPayoff = retryPayoff;
+  function payoffResultHtml(p, saleId) {
+    if (!p) return '';
+    if (p.status === 'pending') return '<span class="badge err">Seller payoff NOT posted yet</span> ' + esc(p.error || '') + ' <a class="link" onclick="retryPayoff(\'' + saleId + '\')">Retry</a>';
+    return '<span class="badge ok">Seller payoff posted</span> ' + fmt(p.amount_cents) + ' applied to the seller\'s account in ' + (p.applications ? p.applications.length : '?') + ' part(s); seller balance now ' + fmt(p.open_after_cents) + (p.journal_reference ? ' · GL ' + esc(p.journal_reference) : '') + '.';
   }
 
   async function recordClosing() {
@@ -354,14 +477,20 @@
     if (!seller) { alert('Seller (from the closing document) is required.'); return; }
     if (!buyer) { alert('Buyer name is required.'); return; }
     if (!closing) { alert('Closing date is required.'); return; }
+    const blockers = recordBlockers();
+    if (blockers.length) { alert('Before recording: ' + blockers.join('; ') + '.'); return; }
     $('sc-record').disabled = true;
     const body = {
       community_id: CID, property_id,
       seller_name: seller, buyer_name: buyer, closing_date: closing,
       buyer_email: $('sc-bemail').value || null,
+      buyer_phone: $('sc-bphone').value || null,
       buyer_mailing_address: $('sc-bmail').value || null,
-      transfer_fee_cents: dollarsToCents($('sc-tfee').value),
-      management_transfer_fee_cents: dollarsToCents($('sc-mfee').value),
+      checks: window._scanChecks || [],
+      payoff_confirmed: !!(payoffCheck() && $('sc-payoff-ok') && $('sc-payoff-ok').checked),
+      property_label: window._scanSnap && window._scanSnap.property ? window._scanSnap.property.street_address : null,
+      source_document_name: window._scanFileName || null,
+      title_company_name: window._scanTitle || null,
       raw_extraction: window._scanRaw || null,
     };
     try {
@@ -372,6 +501,7 @@
         <b>Ownership updated.</b> ${esc(buyer)} is now the owner of record as of ${fmtDate(closing)}; the prior owner moved into history.
         <div style="margin-top:8px;">Seller's final balance: ${balBadge(j.seller_balance_status==='UNKNOWN'?null:j.seller_final_balance_cents, '$0.00 — cleared at closing', ' — NOT zero, review before deposit')}</div>
         <div class="muted" style="margin-top:4px;">Seller's account stays with the seller (owned through ${esc(j.seller_end_date||'')}). The buyer starts a new account with a $0.00 balance.</div>
+        ${j.payoff ? '<div id="sc-payoff-result" style="margin-top:8px;">' + payoffResultHtml(j.payoff, j.sale && j.sale.id) + '</div>' : ''}
         ${(j.transfer_exceptions||[]).length ? `<div style="margin-top:8px;"><b>Needs accounting review:</b> ${j.transfer_exceptions.length} item(s) dated on or after closing are still on the seller and were not moved: ${j.transfer_exceptions.map(x=>esc(x.date+' '+(x.description||'')+' $'+(Number(x.amount_cents||0)/100).toFixed(2))).join('; ')}</div>` : ''}
         <div style="margin-top:14px; padding-top:12px; border-top:1px solid #e7e3d8;">
           <b>Next: welcome the new owner.</b>
