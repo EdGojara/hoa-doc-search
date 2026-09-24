@@ -8,6 +8,7 @@
 // server.js, same as the other admin modules).
 // ============================================================================
 const express = require('express');
+const { loadOpenApAsOf } = require('../lib/accounting/ap_as_of');
 const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
@@ -818,10 +819,15 @@ router.get('/:communityId/owners/:propertyId/statement', async (req, res) => {
 // ----------------------------------------------------------------------------
 async function computeApAging(cid, asOf) {
     asOf = asOf || _today();
-    const invoices = await _fetchAll('ap_invoices',
-      'vendor_id, total_cents, amount_paid_cents, due_date, status, vendors:vendor_id(name, category)',
-      { community_id: cid });
-    const open = invoices.filter((i) => (Number(i.total_cents) - Number(i.amount_paid_cents)) > 0 && !['paid', 'voided'].includes(i.status));
+    // A PAST as_of is point-in-time (effective / voided / paid as of that date,
+    // conversion-aware; lib/accounting/ap_as_of.js). Today or later keeps the
+    // current-status behavior unchanged.
+    const historical = asOf < _today();
+    const open = historical
+      ? (await loadOpenApAsOf(supabase, cid, asOf)).map((i) => ({ ...i, amount_paid_cents: Number(i.total_cents) - i.balance_cents }))
+      : (await _fetchAll('ap_invoices',
+          'vendor_id, total_cents, amount_paid_cents, due_date, status, vendors:vendor_id(name, category)',
+          { community_id: cid })).filter((i) => (Number(i.total_cents) - Number(i.amount_paid_cents)) > 0 && !['paid', 'voided'].includes(i.status));
 
     const byVendor = {};
     let grandTotal = 0;
@@ -856,10 +862,12 @@ router.get('/:communityId/ap-aging', async (req, res) => {
 router.get('/:communityId/ap-aging/vendor/:vendorId', async (req, res) => {
   try {
     const asOf = req.query.as_of || _today();
-    const invoices = await _fetchAll('ap_invoices',
-      'id, vendor_invoice_number, invoice_date, due_date, total_cents, amount_paid_cents, status',
-      { community_id: req.params.communityId, vendor_id: req.params.vendorId });
-    const rows = invoices.filter((i) => (Number(i.total_cents) - Number(i.amount_paid_cents)) > 0 && !['paid', 'voided'].includes(i.status)).map((i) => ({
+    const invoices = asOf < _today()
+      ? (await loadOpenApAsOf(supabase, req.params.communityId, asOf, req.params.vendorId)).map((i) => ({ ...i, amount_paid_cents: Number(i.total_cents) - i.balance_cents }))
+      : await _fetchAll('ap_invoices',
+          'id, vendor_invoice_number, invoice_date, due_date, total_cents, amount_paid_cents, status',
+          { community_id: req.params.communityId, vendor_id: req.params.vendorId });
+    const rows = invoices.filter((i) => (Number(i.total_cents) - Number(i.amount_paid_cents)) > 0 && (asOf < _today() || !['paid', 'voided'].includes(i.status))).map((i) => ({
       invoice_number: i.vendor_invoice_number, invoice_date: i.invoice_date, due_date: i.due_date,
       total_cents: Number(i.total_cents), balance_cents: Number(i.total_cents) - Number(i.amount_paid_cents),
       days_past_due: Math.max(0, Math.floor((Date.parse(asOf) - Date.parse(String(i.due_date || '').slice(0, 10))) / 86400000)),
