@@ -291,10 +291,14 @@ BEGIN
   OR b.ten_h <> (SELECT md5(coalesce(string_agg(id::text || coalesce(end_date::text, '') || coalesce(vantaca_account_id, ''), ',' ORDER BY id), '')) FROM ownership_tenures) THEN
     RAISE EXCEPTION 'guard: ownership / tenure rows changed';
   END IF;
-  SELECT coalesce(sum(balance_cents), 0) INTO v FROM v_current_owner_balance WHERE community_id = 'a0000000-0000-4000-8000-000000000002';
-  SELECT coalesce(sum(balance_cents), 0) INTO w FROM v_former_owner_ledger_balances WHERE community_id = 'a0000000-0000-4000-8000-000000000002';
-  IF v <> 5881849 OR w <> -33507 THEN
-    RAISE EXCEPTION 'guard: LOPF current % former % (expected 5881849 / -33507)', v, w;
+  -- LOPF conversion control BY DATE (Ed 2026-09-24): the committed ledger as of 7/31 is
+  -- immutable at 58,483.42; approved post-cutover activity (8/1 interest) is outside it.
+  -- The before/after fingerprints above already prove this migration moves no balance.
+  SELECT coalesce(sum(h.amount_cents), 0) INTO v FROM homeowner_transactions h
+    JOIN transaction_upload_batches tb ON tb.id = h.source_batch_id AND tb.status = 'committed'
+   WHERE h.community_id = 'a0000000-0000-4000-8000-000000000002' AND h.transaction_date <= '2026-07-31';
+  IF v <> 5848342 THEN
+    RAISE EXCEPTION 'guard: LOPF committed ledger as of 7/31 = % (expected 5848342)', v;
   END IF;
   --@@END@@
 END
