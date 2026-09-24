@@ -2688,10 +2688,11 @@ router.get('/transactions', async (req, res) => {
     if (!prop) return res.json({ property: null, transactions: [], balance: null, freshness: null });
 
     const community = prop.communities || {};
-    const vantacaAccountId = prop.vantaca_account_id;
+    const vantacaAccountId = prop.vantaca_account_id;   // displayed only; not the key
 
     if (!vantacaAccountId) {
-      // No Vantaca account linkage — return shape but empty
+      // Native (trustEd-numbered) lot: unchanged in this deployment. Showing
+      // native ledgers in the portal is a separate decision.
       return res.json({
         property: { id: prop.id, address: prop.street_address, community_name: community.name },
         transactions: [],
@@ -2703,28 +2704,12 @@ router.get('/transactions', async (req, res) => {
 
     const limit = Math.min(parseInt(req.query.limit || '100', 10), 500);
 
-    // Pull transactions joined to committed batches only (reverted batches
-    // are excluded structurally)
-    const { data: txns } = await supabase
-      .from('homeowner_transactions')
-      .select('id, transaction_date, description, txn_type, amount_cents, running_balance_cents, vantaca_account_id, source_batch:source_batch_id(status, as_of_date)')
-      .eq('community_id', community.id)
-      .eq('vantaca_account_id', vantacaAccountId)
-      .order('transaction_date', { ascending: false })
-      .limit(limit);
-    const visibleTxns = (txns || []).filter(t => t.source_batch?.status === 'committed');
-
-    // Running balance — sum of all visible transactions, using the view
-    let balance = null;
-    try {
-      const { data: bal } = await supabase
-        .from('v_homeowner_current_balance')
-        .select('balance_cents, most_recent_txn_date, txn_count')
-        .eq('community_id', community.id)
-        .eq('vantaca_account_id', vantacaAccountId)
-        .maybeSingle();
-      if (bal) balance = bal;
-    } catch (_) { /* view may not be ready on fresh deploys */ }
+    // The CURRENT OWNER's tenure only (committed batches, on the lot's current
+    // account), newest first with a deterministic tiebreak. A prior owner's
+    // rows and legacy accounts never appear here.
+    const { currentOwnerActivity, currentOwnerBalance } = require('../lib/ar/current_owner_ledger');
+    const visibleTxns = await currentOwnerActivity(supabase, prop.id, { ascending: false, limit });
+    const balance = await currentOwnerBalance(supabase, prop.id);
 
     // Freshness disclosure
     let freshness = null;

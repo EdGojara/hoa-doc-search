@@ -40,7 +40,62 @@ function makeDb(seed) {
     },
     // real column names of the SQL view (owner_contact_id, not contact_id)
     v_current_property_owners: () => db.property_ownerships.filter((o) => !o.end_date && o.is_primary).map((o) => ({ property_id: o.property_id, owner_contact_id: o.contact_id })),
+    // mig 457, computed exactly like the SQL: committed rows on the lot's
+    // current tenure still on the lot's current account (stamped), plus
+    // unstamped rows on the lot's current account (writers not switched yet).
+    v_current_owner_ledger: () => currentLedger(),
+    v_current_owner_balance: () => {
+      const g = new Map();
+      for (const r of currentLedger()) {
+        const x = g.get(r.property_id) || { community_id: r.community_id, property_id: r.property_id, tenure_id: r.tenure_id, balance_cents: 0, most_recent_txn_date: null, txn_count: 0, unstamped_count: 0 };
+        x.balance_cents += r.amount_cents; x.txn_count++; if (!r.stamped) x.unstamped_count++;
+        if (!x.most_recent_txn_date || r.transaction_date > x.most_recent_txn_date) x.most_recent_txn_date = r.transaction_date;
+        g.set(r.property_id, x);
+      }
+      return [...g.values()];
+    },
+    v_current_owner_balance_composition: () => {
+      const g = new Map();
+      for (const r of currentLedger()) {
+        const cat = r.charge_category || 'other'; const k = r.property_id + '|' + cat;
+        const x = g.get(k) || { community_id: r.community_id, property_id: r.property_id, tenure_id: r.tenure_id, charge_category: cat, amount_cents: 0 };
+        x.amount_cents += r.amount_cents; g.set(k, x);
+      }
+      return [...g.values()];
+    },
+    v_former_owner_ledger_balances: () => {
+      const cur = new Set(currentLedger().map((r) => r.id));
+      const committed = new Set(db.transaction_upload_batches.filter((b) => b.status === 'committed').map((b) => b.id));
+      const g = new Map();
+      for (const r of db.homeowner_transactions) {
+        if (!committed.has(r.source_batch_id) || cur.has(r.id)) continue;
+        const k = [r.community_id, r.tenure_id, r.vantaca_account_id].join('|');
+        const x = g.get(k) || { community_id: r.community_id, tenure_id: r.tenure_id || null, vantaca_account_id: r.vantaca_account_id, balance_cents: 0, txn_count: 0 };
+        x.balance_cents += r.amount_cents; x.txn_count++; g.set(k, x);
+      }
+      return [...g.values()];
+    },
   };
+  function currentLedger() {
+    const committed = new Set(db.transaction_upload_batches.filter((b) => b.status === 'committed').map((b) => b.id));
+    const tenures = db.ownership_tenures || [];
+    const curT = (pid) => tenures.find((t) => t.property_id === pid && t.kind === 'owner' && !t.end_date);
+    const out = [];
+    for (const h of db.homeowner_transactions) {
+      if (!committed.has(h.source_batch_id)) continue;
+      if (h.tenure_id) {
+        const t = tenures.find((x) => x.id === h.tenure_id);
+        if (!t || t.kind !== 'owner' || t.end_date) continue;
+        const p = db.properties.find((x) => x.id === t.property_id);
+        if (h.vantaca_account_id == null || h.vantaca_account_id === p.vantaca_account_id) out.push({ ...h, property_id: t.property_id, tenure_id: t.id, stamped: true });
+      } else if (h.vantaca_account_id) {
+        const ps = db.properties.filter((x) => x.community_id === h.community_id && x.vantaca_account_id === h.vantaca_account_id);
+        const t = ps.length === 1 ? curT(ps[0].id) : null;
+        if (t) out.push({ ...h, property_id: t.property_id, tenure_id: t.id, stamped: false });
+      }
+    }
+    return out;
+  }
   const rowsOf = (t) => (views[t] ? views[t]() : (db[t] = db[t] || []));
   function builder(table) {
     const f = []; let order = null; let lim = null; let ins = null; let single = null;
@@ -49,7 +104,11 @@ function makeDb(seed) {
       eq(c, v) { f.push((r) => r[c] === v); return api; },
       in(c, vs) { f.push((r) => vs.includes(r[c])); return api; },
       gt(c, v) { f.push((r) => r[c] > v); return api; },
+      gte(c, v) { f.push((r) => r[c] >= v); return api; },
+      lt(c, v) { f.push((r) => r[c] < v); return api; },
       lte(c, v) { f.push((r) => r[c] <= v); return api; },
+      not(c, op, v) { f.push((r) => (op === 'is' ? r[c] !== v : true)); return api; },
+      range(a, b) { lim = b + 1; return api; },
       is(c, v) { f.push((r) => r[c] === v); return api; },
       contains(c, obj) { f.push((r) => r[c] && Object.entries(obj).every(([k, v]) => r[c][k] === v)); return api; },
       order(c, o = {}) { order = [c, o.ascending !== false]; return api; },
@@ -92,6 +151,14 @@ const seed = () => ({
   ],
   communities: [{ id: C, management_company_id: 'mgmt' }],
   contacts: [{ id: 'c-buyer', vantaca_account_id: 'B2' }],
+  // mig 456 backfill: buyer's current tenure (xref B2), seller's ended tenure,
+  // legacy tenure for the no-lot former owner F9. Committed rows are stamped;
+  // retired-import rows are not.
+  ownership_tenures: [
+    { id: 't-buyer', community_id: C, property_id: P, kind: 'owner', start_date: '2026-06-02', end_date: null, vantaca_account_id: 'B2' },
+    { id: 't-seller', community_id: C, property_id: P, kind: 'owner', start_date: '2026-05-19', end_date: '2026-06-01', vantaca_account_id: null },
+    { id: 't-f9', community_id: C, property_id: null, kind: 'legacy', start_date: null, end_date: null, vantaca_account_id: 'F9' },
+  ],
   owner_ar_snapshots: [], v_current_enforcement_state: [],
   transaction_upload_batches: [
     { id: 'b-prior', community_id: C, status: 'reverted' },     // retired prior source import
@@ -100,10 +167,10 @@ const seed = () => ({
   homeowner_transactions: [
     { id: 'h1', source_batch_id: 'b-prior', source_row_index: 1, community_id: C, vantaca_account_id: 'S1', property_id: P, contact_id: 'c-seller', transaction_date: '2026-07-17', txn_type: 'balance_brought_forward', amount_cents: 76895 },
     { id: 'h2', source_batch_id: 'b-prior', source_row_index: 2, community_id: C, vantaca_account_id: 'B2', property_id: P, contact_id: 'c-buyer', transaction_date: '2026-07-17', txn_type: 'balance_brought_forward', amount_cents: 99999 },
-    { id: 'h3', source_batch_id: 'b-conv', source_row_index: 1, community_id: C, vantaca_account_id: 'B2', property_id: P, contact_id: 'c-buyer', transaction_date: '2026-07-31', txn_type: 'balance_brought_forward', charge_category: 'assessment', amount_cents: 26000 },
-    { id: 'h4', source_batch_id: 'b-conv', source_row_index: 2, community_id: C, vantaca_account_id: 'B2', property_id: P, contact_id: 'c-buyer', transaction_date: '2026-07-31', txn_type: 'balance_brought_forward', charge_category: 'late_fee', amount_cents: 1500 },
-    { id: 'h5', source_batch_id: 'b-conv', source_row_index: 3, community_id: C, vantaca_account_id: 'B2', property_id: P, contact_id: 'c-buyer', transaction_date: '2026-07-31', txn_type: 'credit', charge_category: 'other', amount_cents: -5000 },
-    { id: 'h6', source_batch_id: 'b-conv', source_row_index: 4, community_id: C, vantaca_account_id: 'F9', property_id: null, contact_id: null, transaction_date: '2026-07-31', txn_type: 'credit', charge_category: 'other', amount_cents: -31377 },
+    { tenure_id: 't-buyer', id: 'h3', source_batch_id: 'b-conv', source_row_index: 1, community_id: C, vantaca_account_id: 'B2', property_id: P, contact_id: 'c-buyer', transaction_date: '2026-07-31', txn_type: 'balance_brought_forward', charge_category: 'assessment', amount_cents: 26000 },
+    { tenure_id: 't-buyer', id: 'h4', source_batch_id: 'b-conv', source_row_index: 2, community_id: C, vantaca_account_id: 'B2', property_id: P, contact_id: 'c-buyer', transaction_date: '2026-07-31', txn_type: 'balance_brought_forward', charge_category: 'late_fee', amount_cents: 1500 },
+    { tenure_id: 't-buyer', id: 'h5', source_batch_id: 'b-conv', source_row_index: 3, community_id: C, vantaca_account_id: 'B2', property_id: P, contact_id: 'c-buyer', transaction_date: '2026-07-31', txn_type: 'credit', charge_category: 'other', amount_cents: -5000 },
+    { tenure_id: 't-f9', id: 'h6', source_batch_id: 'b-conv', source_row_index: 4, community_id: C, vantaca_account_id: 'F9', property_id: null, contact_id: null, transaction_date: '2026-07-31', txn_type: 'credit', charge_category: 'other', amount_cents: -31377 },
   ],
 });
 
@@ -154,6 +221,26 @@ t('a legacy unresolved former-owner credit never reaches a current owner', async
   const roster = view.data.filter((b) => b.property_id); // board-portal / staff roster rule
   assert.ok(!roster.some((b) => b.vantaca_account_id === 'F9'));
   assert.ok(view.data.some((b) => b.vantaca_account_id === 'F9' && b.balance_cents === -31377), 'legacy credit must still exist in the ledger total');
+});
+
+t('a new row a writer posts WITHOUT tenure_id still reaches the current owner (writers not switched yet)', async () => {
+  const { client, db } = makeDb(seed());
+  await postHomeownerCharge(client, { communityId: C, propertyId: P, transactionDate: '2026-08-05', description: 'Late fee', chargeCategory: 'late_fee', amountCents: 2500 });
+  const row = db.homeowner_transactions[db.homeowner_transactions.length - 1];
+  assert.ok(!row.tenure_id, 'writer is not switched: it must not be stamping tenure_id yet');
+  const bal = (await client.from('v_current_owner_balance').select('*').eq('property_id', P)).data[0];
+  assert.deepStrictEqual([bal.balance_cents, bal.unstamped_count], [25000, 1]);
+});
+
+t('a Vantaca account change: the new owner does not inherit the prior account; it moves to former-owner money', async () => {
+  const s = seed();
+  s.properties[0].vantaca_account_id = 'B3';   // Vantaca issued a new number (sale seen via import)
+  s.homeowner_transactions.push({ id: 'h8', source_batch_id: 'b-conv', source_row_index: 10, community_id: C, vantaca_account_id: 'B3', property_id: P, contact_id: 'c-new', transaction_date: '2026-08-10', txn_type: 'charge', charge_category: 'assessment', amount_cents: 4000 });
+  const { client } = makeDb(s);
+  const ar = await resolveCurrentAR(client, { propertyId: P });
+  assert.strictEqual(ar.balance_cents, 4000, 'new owner saw the prior account');
+  const former = (await client.from('v_former_owner_ledger_balances').select('*').eq('community_id', C)).data;
+  assert.ok(former.some((f) => f.vantaca_account_id === 'B2' && f.balance_cents === 22500), 'prior account balance must stay visible as former-owner money');
 });
 
 t('both native charge paths use the shared identity helper', () => {

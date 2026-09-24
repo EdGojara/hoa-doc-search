@@ -197,12 +197,24 @@ async function assemble(contactId) {
   const properties = await ownedProperties(contactId);
   const propIds = properties.map((p) => p.property_id);
 
-  // AR: current balance (sum across their properties) + recent transactions
-  const balRows = propIds.length ? await safe(() => supabase.from('v_homeowner_current_balance').select('balance_cents, property_id, most_recent_txn_date').in('property_id', propIds)) : [];
+  // AR: this person's CURRENT tenures only (sum across the lots they own now)
+  // + their recent transactions, newest first, deterministic tiebreak. A prior
+  // owner's rows and legacy accounts on these lots are never counted here.
+  const balRows = propIds.length ? await safe(() => supabase.from('v_current_owner_balance').select('balance_cents, property_id, most_recent_txn_date').in('property_id', propIds)) : [];
   const balance_cents = balRows.reduce((s, r) => s + (Number(r.balance_cents) || 0), 0);
-  const txns = propIds.length ? await safe(() => supabase.from('homeowner_transactions')
+  const txns = propIds.length ? await safe(() => supabase.from('v_current_owner_ledger')
     .select('transaction_date, description, amount_cents, txn_type, charge_category, running_balance_cents')
-    .in('property_id', propIds).order('transaction_date', { ascending: false }).limit(25)) : [];
+    .in('property_id', propIds)
+    .order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).order('id', { ascending: false })
+    .limit(25)) : [];
+  // Former-owner context: balances left on tenures this person USED to hold
+  // (lots they sold). Shown separately; never part of the current balance.
+  const endedTenures = await safe(() => supabase.from('property_ownerships')
+    .select('tenure_id').eq('contact_id', contactId).not('end_date', 'is', null).not('tenure_id', 'is', null));
+  const endedIds = [...new Set(endedTenures.map((r) => r.tenure_id))];
+  const former_tenures = endedIds.length ? (await safe(() => supabase.from('v_former_owner_ledger_balances')
+    .select('tenure_id, property_id, vantaca_account_id, balance_cents, most_recent_txn_date')
+    .in('tenure_id', endedIds))).filter((r) => Number(r.balance_cents) !== 0) : [];
 
   // Enforcement flags (SSOT) — open states
   const flags = propIds.length ? await safe(() => supabase.from('property_enforcement_states')
@@ -462,7 +474,7 @@ async function assemble(contactId) {
     drv_categories: drvAtAttorney.map((v) => catLabel[v.primary_category_id] || 'violation'),
   };
 
-  return { contact, properties, ar: { balance_cents, transactions: txns }, amenity, flags, collections, violations, arc, interactions: interactionsOut, emails, calls, poolAccess, paymentPlans, attachments, emailAttachments, at_attorney };
+  return { contact, properties, ar: { balance_cents, transactions: txns, former_tenures }, amenity, flags, collections, violations, arc, interactions: interactionsOut, emails, calls, poolAccess, paymentPlans, attachments, emailAttachments, at_attorney };
 }
 
 // GET /profile/:contactId — the assembled 360 (fast, no AI)
@@ -937,4 +949,4 @@ router.post('/interactions/:id/certified-number', express.json(), async (req, re
   }
 });
 
-module.exports = { router };
+module.exports = { router, _test: { assemble } };

@@ -52,14 +52,23 @@ function fakeSupabase(tables) {
     const b = balanceFromAR({ balance_cents: -5000, source: 'transactions' });
     assert.strictEqual(b.balance_is_zero, false);
   });
-  await t('resolver: ledger rows win and are summed across view rows', async () => {
+  await t('resolver: a property reads the CURRENT OWNER tenure balance', async () => {
     const sb = fakeSupabase({
       properties: [{ vantaca_account_id: '2012345', community_id: 'c1' }],
-      v_homeowner_current_balance: [{ balance_cents: 10000, most_recent_txn_date: '2026-08-01' }, { balance_cents: -2500, most_recent_txn_date: '2026-08-15' }],
+      v_current_owner_balance: [{ property_id: 'p1', tenure_id: 't1', balance_cents: 7500, most_recent_txn_date: '2026-08-15', txn_count: 2 }],
+      // the account-keyed view must NOT be consulted when a property is given
+      v_homeowner_current_balance: [{ balance_cents: 999999, most_recent_txn_date: '2026-01-01' }],
     });
     const ar = await resolveCurrentAR(sb, { propertyId: 'p1' });
     assert.deepStrictEqual([ar.balance_cents, ar.source, ar.as_of], [7500, 'transactions', '2026-08-15']);
     assert.strictEqual(balanceFromAR(ar).balance_status, 'KNOWN');
+  });
+  await t('resolver: account-only lookup still sums the account view rows', async () => {
+    const sb = fakeSupabase({
+      v_homeowner_current_balance: [{ balance_cents: 10000, most_recent_txn_date: '2026-08-01' }, { balance_cents: -2500, most_recent_txn_date: '2026-08-15' }],
+    });
+    const ar = await resolveCurrentAR(sb, { vantacaAccountId: '2012345', communityId: 'c1' });
+    assert.deepStrictEqual([ar.balance_cents, ar.source], [7500, 'transactions']);
   });
   await t('resolver: nothing on file returns null -> UNKNOWN', async () => {
     const sb = fakeSupabase({ properties: [{ vantaca_account_id: null, community_id: 'c1' }] });
