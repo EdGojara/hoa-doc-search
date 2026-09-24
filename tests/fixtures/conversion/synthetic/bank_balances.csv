@@ -1,0 +1,2 @@
+gl_account_number,bank_account_last4,statement_date,statement_ending_balance,outstanding_checks_total,deposits_in_transit_total,other_reconciling_total,reconciled_book_balance,source_report
+1000,0000,2026-07-31,110.00,10.00,0.00,0.00,100.00,SYNTHETIC bank rec

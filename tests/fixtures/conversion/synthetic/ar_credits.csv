@@ -1,0 +1,2 @@
+vantaca_account_id,vantaca_homeowner_id,owner_name,property_address,tenure_status,charge_category,effective_date,due_date,amount,aging_bucket,description,source_report,source_row
+9900003,,,,current,assessment,2026-07-01,,100.00,,owner_name blank on purpose,SYNTHETIC AR report,3

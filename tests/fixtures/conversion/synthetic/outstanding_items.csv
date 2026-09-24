@@ -1,0 +1,2 @@
+gl_account_number,item_type,check_number,item_date,payee,amount,cleared_date,source_report
+1000,check,101,2026-07-30,Synthetic Payee,10.00,,SYNTHETIC bank rec

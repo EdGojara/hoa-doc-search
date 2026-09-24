@@ -1,0 +1,4 @@
+account_number,account_name,fund,ending_debit,ending_credit,source_report
+1000,Operating Cash,OPR,100.00,0.00,SYNTHETIC TB
+2000,Accounts Payable,OPR,0.00,60.00,SYNTHETIC TB
+4000,Assessment Income,OPR,0.00,40.00,SYNTHETIC TB

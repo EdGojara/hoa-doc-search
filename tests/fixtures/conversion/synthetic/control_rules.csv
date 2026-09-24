@@ -1,0 +1,9 @@
+rule_code,left,right,note
+TB_FOOTS,SUM_gl_trial_balance_ending_debit,SUM_gl_trial_balance_ending_credit,synthetic: TB debits equal credits
+TB_DEBITS_TO_CONTROL,SUM_gl_trial_balance_ending_debit,TB_DEBITS,synthetic: TB debits equal supplied control
+AP_TO_CONTROL,SUM_ap_open_amount_open,AP_TOTAL,synthetic: AP file equals supplied control
+OS_CHECKS,SUM_outstanding_items_amount@item_type=check,OS_CHECKS_1000,synthetic: itemized checks equal control
+JULY_FOOTS,SUM_july_gl_activity_debit,SUM_july_gl_activity_credit,synthetic: July activity balances
+CASH_TO_CONTROL,SUM_gl_trial_balance_ending_debit@account_number=1000,CASH_1000,synthetic: shows a FAIL
+AR_TO_CONTROL,SUM_ar_debits_amount,AR_DEBIT_TOTAL,synthetic: shows BLOCKED (file has exceptions)
+UNKNOWN_DEMO,SUM_ar_credits_amount,PREPAID_TOTAL,synthetic: shows UNKNOWN_NAME (control not supplied)

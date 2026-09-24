@@ -1,0 +1,6 @@
+control_code,amount,as_of,source_report,note
+TB_DEBITS,100.00,2026-07-31,SYNTHETIC TB,
+AR_DEBIT_TOTAL,300.00,2026-07-31,SYNTHETIC AR report,
+AP_TOTAL,60.00,2026-07-31,SYNTHETIC AP aging,
+OS_CHECKS_1000,10.00,2026-07-31,SYNTHETIC bank rec,
+CASH_1000,99.00,2026-07-31,SYNTHETIC balance sheet,wrong on purpose to show FAIL
