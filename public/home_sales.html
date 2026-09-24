@@ -320,6 +320,8 @@
       $('sc-out').innerHTML = `<div class="${cleared?'result-ok':'result-warn'}">
         <b>Ownership updated.</b> ${esc(buyer)} is now the owner of record as of ${fmtDate(closing)}; the prior owner moved into history.
         <div style="margin-top:8px;">Seller's final balance: ${balBadge(j.seller_balance_status==='UNKNOWN'?null:j.seller_final_balance_cents, '$0.00 — cleared at closing', ' — NOT zero, review before deposit')}</div>
+        <div class="muted" style="margin-top:4px;">Seller's account stays with the seller (owned through ${esc(j.seller_end_date||'')}). The buyer starts a new account with a $0.00 balance.</div>
+        ${(j.transfer_exceptions||[]).length ? `<div style="margin-top:8px;"><b>Needs accounting review:</b> ${j.transfer_exceptions.length} item(s) dated on or after closing are still on the seller and were not moved: ${j.transfer_exceptions.map(x=>esc(x.date+' '+(x.description||'')+' $'+(Number(x.amount_cents||0)/100).toFixed(2))).join('; ')}</div>` : ''}
         <div style="margin-top:14px; padding-top:12px; border-top:1px solid #e7e3d8;">
           <b>Next: welcome the new owner.</b>
           <div class="muted" style="font-size:12.5px; margin:3px 0 8px;">This is the only moment we know a new person owns this lot. Everything in the packet is specific to this community.</div>

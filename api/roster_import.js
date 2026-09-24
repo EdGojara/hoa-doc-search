@@ -795,34 +795,17 @@ router.post('/communities/:id/mailing-delta/apply', express.json({ limit: '256kb
 // ----------------------------------------------------------------------------
 // One-click "claim" of an ownership transfer surfaced by the mailing-delta
 // preview. The preview detects transfers as "same property address, NEW
-// Vantaca account # in the export + OLD account # in trustEd" — this
-// endpoint actually performs the spine update:
+// Vantaca account # in the export + OLD account # in trustEd".
 //
-//   1. End the OLD ownership (sets end_date = now on the active
-//      property_ownerships row pointing at the old contact)
-//   2. Create or reuse a contact for the NEW owner. Reuse only when a
-//      contact with the same name AND the new vantaca_account_id already
-//      exists (defensive — fuzzy matching on name alone is risky here).
-//   3. Create a new property_ownerships row linking the new contact to
-//      the property with is_primary = true, start_date = now.
-//   4. Update properties.vantaca_account_id to the new Vantaca account
-//      so future syncs match correctly.
-//   5. Stamp data_verified_at + verified_by + verified_source on the new
-//      contact and the property. (verified_source = 'mailing_delta_transfer'
-//      makes the source of truth auditable.)
+// Since mig 459 this endpoint does NOT change ownership, tenures or the lot's
+// account. It files a PENDING ownership_change_proposal (source vantaca_import,
+// carrying the new account and the Vantaca mailing). Ownership changes only when
+// that proposal is approved in Ownership Review with a settlement date, through
+// approve_ownership_proposal (the one transfer path). Database triggers refuse
+// the old direct writes.
 //
-// Idempotency: if the property already carries the new_account as its
-// vantaca_account_id, we no-op with already_claimed = true so a double-
-// click from the operator doesn't create a second new contact/ownership.
-//
-// SAFETY:
-//   - All five writes happen in sequence; Supabase JS doesn't expose
-//     transactions through PostgREST. If the new-ownership insert fails
-//     after the old-ownership end, the operator gets a partial-fail
-//     error and can recover via the existing Roster Import / inline
-//     edit tools. Same pattern as the bedrock-vote in-person override.
-//   - We do NOT delete the old contact or its history. Old contact +
-//     old ownership row (now with end_date set) stay for audit.
+// Idempotency: the lot already on the new account, or a pending proposal for the
+// same lot + account, returns already_claimed = true without a second proposal.
 // ----------------------------------------------------------------------------
 router.post('/communities/:id/mailing-delta/claim-transfer', express.json({ limit: '8kb' }), async (req, res) => {
   try {
@@ -851,13 +834,26 @@ router.post('/communities/:id/mailing-delta/claim-transfer', express.json({ limi
     if (propErr || !property) return res.status(404).json({ error: 'property not found' });
     if (property.community_id !== communityId) return res.status(403).json({ error: 'property does not belong to this community' });
 
-    // Idempotency — if property already has the new account, this
-    // transfer was already claimed (operator double-clicked).
+    // One transfer path (mig 459): a claimed transfer becomes a PENDING
+    // ownership proposal. Ownership, tenure and the source account change only
+    // when it is approved in Ownership Review with a settlement date.
     if (_norm(property.vantaca_account_id) === _norm(new_account)) {
-      return res.json({ ok: true, already_claimed: true, message: 'Transfer was already claimed for this property.' });
+      return res.json({ ok: true, already_claimed: true, message: 'This lot already carries that account.' });
+    }
+    const { data: existing, error: exErr } = await supabase
+      .from('ownership_change_proposals')
+      .select('id')
+      .eq('property_id', property_id)
+      .eq('status', 'pending')
+      .eq('vantaca_account_id', _norm(new_account))
+      .limit(1)
+      .maybeSingle();
+    if (exErr) throw exErr;
+    if (existing) {
+      return res.json({ ok: true, already_claimed: true, pending_review: true, proposal_id: existing.id,
+        message: 'Already waiting in Ownership Review.' });
     }
 
-    const nowIso = new Date().toISOString();
     const street = _norm(new_mailing.street);
     const city   = _norm(new_mailing.city);
     const state  = _upper(new_mailing.state) || 'TX';
@@ -866,100 +862,37 @@ router.post('/communities/:id/mailing-delta/claim-transfer', express.json({ limi
       ? [street, city, [state, zip].filter(Boolean).join(' ').trim()].filter(Boolean).join(', ')
       : null;
 
-    // 1) End old ownership(s). There may be only one active per property
-    // under normal operation but defensive-update all active rows for
-    // safety.
-    if (old_contact_id) {
-      const { error: endErr } = await supabase
-        .from('property_ownerships')
-        .update({ end_date: nowIso })
-        .eq('property_id', property_id)
-        .eq('contact_id', old_contact_id)
-        .is('end_date', null);
-      if (endErr) {
-        return res.status(500).json({ error: 'failed to end old ownership: ' + endErr.message });
-      }
-    } else {
-      // No specific old contact passed — end ALL active ownerships for
-      // the property as a fallback. This protects against the panel
-      // not having an old contact id (legacy data, broken view).
-      await supabase
-        .from('property_ownerships')
-        .update({ end_date: nowIso })
-        .eq('property_id', property_id)
-        .is('end_date', null);
-    }
+    const { data: cur, error: curErr } = await supabase
+      .from('v_current_property_owners')
+      .select('owner_contact_id, owner_name, owner_email, owner_phone')
+      .eq('property_id', property_id)
+      .maybeSingle();
+    if (curErr) throw curErr;
 
-    // 2) Create new contact. We don't try to reuse here — even if
-    // someone named "Linden Spruce, Inc." exists elsewhere in the
-    // book, that contact has its own vantaca_account_id and shouldn't
-    // be re-linked. Cleaner to create a fresh contact and let the
-    // operator merge later if it's actually the same entity.
-    const { data: newContact, error: contactErr } = await supabase
-      .from('contacts')
-      .insert({
-        full_name: _norm(new_owner_name),
-        vantaca_account_id: _norm(new_account),
-        mailing_street: street || null,
-        mailing_city:   city || null,
-        mailing_state:  state,
-        mailing_zip:    zip || null,
-        mailing_address: composedMailing,
-        data_verified_at: nowIso,
-        verified_by,
-        verified_source: 'mailing_delta_transfer',
-      })
-      .select('id')
-      .single();
-    if (contactErr) return res.status(500).json({ error: 'failed to create new contact: ' + contactErr.message });
-
-    // 3) Insert new ownership
-    const { data: newOwnership, error: ownErr } = await supabase
-      .from('property_ownerships')
+    const { data: proposal, error: propInsErr } = await supabase
+      .from('ownership_change_proposals')
       .insert({
         property_id,
-        contact_id: newContact.id,
-        start_date: nowIso,
-        is_primary: true,
+        community_id: communityId,
+        current_contact_id:  old_contact_id || (cur && cur.owner_contact_id) || null,
+        current_owner_name:  (cur && cur.owner_name) || null,
+        current_owner_email: (cur && cur.owner_email) || null,
+        current_owner_phone: (cur && cur.owner_phone) || null,
+        proposed_owner_name: _norm(new_owner_name),
+        proposed_mailing_address: composedMailing,
+        source: 'vantaca_import',
+        source_filename: 'mailing-delta claim by ' + _norm(verified_by),
+        vantaca_account_id: _norm(new_account),
+        effective_start_date: req.body.settlement_date || null,
+        status: 'pending',
       })
       .select('id')
       .single();
-    if (ownErr) {
-      // New contact already exists but ownership insert failed. The
-      // operator now has a stranded contact. Surface clearly.
-      return res.status(500).json({
-        error: 'New contact was created but ownership insert failed: ' + ownErr.message,
-        partial_state: { new_contact_id: newContact.id },
-      });
-    }
+    if (propInsErr) throw propInsErr;
 
-    // 4) Update property's canonical account id + stamp verified
-    const { error: propUpdErr } = await supabase
-      .from('properties')
-      .update({
-        vantaca_account_id: _norm(new_account),
-        data_verified_at:   nowIso,
-        verified_by,
-        verified_source:    'mailing_delta_transfer',
-        updated_at:         nowIso,
-      })
-      .eq('id', property_id);
-    if (propUpdErr) {
-      // The transfer is now structurally correct (new ownership + new
-      // contact) but the property's vantaca_account_id still points
-      // at the old one. Idempotency won't catch a re-claim. Warn but
-      // don't fail.
-      console.warn('[mailing-delta/claim-transfer] property update failed:', propUpdErr.message);
-    }
-
-    console.log(`[mailing-delta/claim-transfer] community=${communityId} property=${property_id} old_contact=${old_contact_id || 'n/a'} new_contact=${newContact.id} new_account=${new_account} verified_by=${verified_by}`);
-
-    res.json({
-      ok: true,
-      new_contact_id: newContact.id,
-      new_ownership_id: newOwnership.id,
-      property_id,
-    });
+    console.log(`[mailing-delta/claim-transfer] community=${communityId} property=${property_id} proposal=${proposal.id} new_account=${new_account} by=${verified_by} (pending review)`);
+    res.json({ ok: true, pending_review: true, proposal_id: proposal.id, property_id,
+      message: 'Sent to Ownership Review. Approve it there with the settlement date.' });
   } catch (err) {
     console.error('[mailing-delta/claim-transfer]', err);
     res.status(500).json({ error: err.message });

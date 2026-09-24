@@ -380,105 +380,142 @@ router.post('/scan', upload.single('file'), async (req, res) => {
 // POST /api/home-sales/record-closing   — Part 2: transition ownership
 //   body: {
 //     community_id, property_id, sale_id?(existing request to close),
-//     closing_date, buyer_name, buyer_email?, buyer_mailing_address?,
+//     closing_date (= settlement date), buyer_name, buyer_email?, buyer_mailing_address?,
 //     transfer_fee_cents?, management_transfer_fee_cents?,
 //     raw_extraction?, reviewed_by?, notes?
 //   }
-//   Captures the seller's final balance (verify zero), creates + approves an
-//   ownership_change_proposal (seller -> buyer on closing_date), and writes the
-//   closed home_sales row linked to the proposal.
+//   One transfer path (mig 459): the sale row is written first (not closed),
+//   then a proposal carrying home_sale_id + the settlement date, then
+//   approve_ownership_proposal closes the seller (settlement - 1), opens the
+//   buyer's new tenure (settlement), and closes + links the home_sales row, all
+//   in ONE database transaction. If the transfer is refused nothing changes
+//   ownership; the proposal is withdrawn with the reason and a freshly created
+//   sale row is removed, so a retry starts clean.
 // ----------------------------------------------------------------------------
 router.post('/record-closing', express.json({ limit: '256kb' }), async (req, res) => {
+  let createdSaleId = null;
+  let proposalId = null;
   try {
     const b = req.body || {};
     if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
     if (!b.property_id) return res.status(400).json({ error: 'property_id_required' });
-    if (!b.buyer_name) return res.status(400).json({ error: 'buyer_name_required' });
-    if (!b.closing_date) return res.status(400).json({ error: 'closing_date_required' });
+    if (!b.buyer_name || !String(b.buyer_name).trim()) return res.status(400).json({ error: 'buyer_name_required' });
+    if (!b.closing_date || !/^\d{4}-\d{2}-\d{2}$/.test(String(b.closing_date))) return res.status(400).json({ error: 'closing_date_required' });
 
     const snap = await propertySnapshot(b.community_id, b.property_id);
     if (!snap) return res.status(404).json({ error: 'property_not_found' });
+    if (!snap.owner || !snap.owner.owner_contact_id) return res.status(409).json({ error: 'seller_required: this lot has no current owner on file' });
 
-    const sellerFinalCents = snap.balance_cents;          // captured at the moment of recording; null = UNKNOWN
-    const sellerCleared = snap.balance_is_zero;           // only a KNOWN $0 counts as cleared
+    // 1) The sale row, with everything staff entered, still open (requested/disclosed).
+    const saleFields = {
+      seller_contact_id: snap.owner.owner_contact_id,
+      seller_name: snap.owner.owner_name,
+      closing_notice_received_at: b.closing_notice_received_at || new Date().toISOString().slice(0, 10),
+      buyer_name: String(b.buyer_name).trim(),
+      buyer_email: b.buyer_email || null,
+      buyer_mailing_address: b.buyer_mailing_address || null,
+      transfer_fee_cents: b.transfer_fee_cents != null ? b.transfer_fee_cents : null,
+      management_transfer_fee_cents: b.management_transfer_fee_cents != null ? b.management_transfer_fee_cents : null,
+      raw_extraction: b.raw_extraction || null,
+      notes: b.notes || null,
+    };
+    let saleId;
+    if (b.sale_id) {
+      const { data: existing, error } = await supabase.from('home_sales')
+        .select('id, property_id, status').eq('id', b.sale_id).maybeSingle();
+      if (error) throw error;
+      if (!existing || existing.property_id !== b.property_id) return res.status(404).json({ error: 'home_sale_not_found_for_this_property' });
+      if (!['requested', 'disclosed'].includes(existing.status)) return res.status(409).json({ error: 'home_sale_already_' + existing.status });
+      const { error: uErr } = await supabase.from('home_sales').update(saleFields).eq('id', b.sale_id);
+      if (uErr) throw uErr;
+      saleId = b.sale_id;
+    } else {
+      const { data: created, error } = await supabase.from('home_sales')
+        .insert({ community_id: b.community_id, property_id: b.property_id, status: 'requested', request_source: 'other', ...saleFields })
+        .select('id').single();
+      if (error) throw error;
+      saleId = created.id;
+      createdSaleId = created.id;
+    }
 
-    // 1) Create the ownership-change proposal (source: title_company).
-    const propRow = {
+    // 2) The proposal (source: title_company), carrying the sale + settlement date.
+    const { data: prop, error: propErr } = await supabase.from('ownership_change_proposals').insert({
       property_id: b.property_id,
       community_id: b.community_id,
-      current_contact_id: snap.owner ? snap.owner.owner_contact_id : null,
-      current_owner_name: snap.owner ? snap.owner.owner_name : null,
-      current_owner_email: snap.owner ? snap.owner.owner_email : null,
-      proposed_owner_name: b.buyer_name,
+      current_contact_id: snap.owner.owner_contact_id,
+      current_owner_name: snap.owner.owner_name,
+      current_owner_email: snap.owner.owner_email,
+      proposed_owner_name: String(b.buyer_name).trim(),
       proposed_owner_email: b.buyer_email || null,
       proposed_mailing_address: b.buyer_mailing_address || null,
       source: 'title_company',
       status: 'pending',
       effective_start_date: b.closing_date,
-      effective_end_date_prior: b.closing_date,
-    };
-    const { data: prop, error: propErr } = await supabase
-      .from('ownership_change_proposals').insert(propRow).select().maybeSingle();
+      home_sale_id: saleId,
+    }).select('id').single();
     if (propErr) throw propErr;
+    proposalId = prop.id;
 
-    // 2) Approve it — this closes the seller (end_date = closing_date) and opens the buyer.
-    const { data: approveRes, error: approveErr } = await supabase.rpc('approve_ownership_proposal', {
+    // 3) The one transfer path.
+    const { data: t, error: tErr } = await supabase.rpc('approve_ownership_proposal', {
       p_proposal_id: prop.id,
       p_reviewed_by: b.reviewed_by || 'home_sales',
-      p_notes: `Closing recorded via Home Sales${b.notes ? ' — ' + b.notes : ''}`,
+      p_notes: `Closing recorded via Home Sales${b.notes ? ': ' + b.notes : ''}`,
+      p_settlement_date: b.closing_date,
+      p_home_sale_id: saleId,
     });
-    if (approveErr) throw approveErr;
-    const newContactId = approveRes && approveRes.new_contact_id ? approveRes.new_contact_id : null;
-
-    // 3) Write/upsert the closed home_sales row linked to the proposal.
-    const saleRow = {
-      community_id: b.community_id,
-      property_id: b.property_id,
-      status: 'closed',
-      seller_contact_id: snap.owner ? snap.owner.owner_contact_id : null,
-      seller_name: snap.owner ? snap.owner.owner_name : null,
-      closing_notice_received_at: b.closing_notice_received_at || new Date().toISOString().slice(0, 10),
-      closing_date: b.closing_date,
-      buyer_name: b.buyer_name,
-      buyer_email: b.buyer_email || null,
-      buyer_mailing_address: b.buyer_mailing_address || null,
-      buyer_contact_id: newContactId,
-      transfer_fee_cents: b.transfer_fee_cents != null ? b.transfer_fee_cents : null,
-      management_transfer_fee_cents: b.management_transfer_fee_cents != null ? b.management_transfer_fee_cents : null,
-      seller_final_balance_cents: sellerFinalCents,
-      raw_extraction: b.raw_extraction || null,
-      ownership_proposal_id: prop.id,
-      ownership_updated_at: new Date().toISOString(),
-      notes: b.notes || null,
-    };
-
-    let sale;
-    if (b.sale_id) {
-      const { data, error } = await supabase.from('home_sales')
-        .update(saleRow).eq('id', b.sale_id).select().maybeSingle();
-      if (error) throw error;
-      sale = data;
-    } else {
-      const { data, error } = await supabase.from('home_sales')
-        .insert(saleRow).select().maybeSingle();
-      if (error) throw error;
-      sale = data;
+    if (tErr) {
+      await undoRecordClosing(proposalId, createdSaleId, tErr.message);
+      proposalId = null;
+      if (tErr.code === 'P0001') return res.status(409).json({ error: tErr.message });
+      throw tErr;
     }
 
+    const { data: sale, error: sErr } = await supabase.from('home_sales').select('*').eq('id', saleId).maybeSingle();
+    if (sErr) throw sErr;
+    const sellerFinalCents = t.seller_balance_cents;
+    const sellerCleared = snap.balance_status !== 'UNKNOWN' && Number(sellerFinalCents) === 0;
     res.json({
       sale,
       ownership_proposal_id: prop.id,
-      new_owner_contact_id: newContactId,
+      new_owner_contact_id: t.new_contact_id,
+      settlement_date: t.settlement_date,
+      seller_end_date: t.seller_end_date,
       seller_final_balance_cents: sellerFinalCents,
       seller_cleared: sellerCleared,
       seller_balance_status: snap.balance_status,
+      transfer_exceptions: t.transfer_exceptions || [],
       warning: sellerCleared ? null : (snap.balance_status === 'UNKNOWN' ? 'seller_balance_unknown' : 'seller_balance_not_zero'),
     });
   } catch (err) {
     console.error('[home-sales] record-closing failed:', err.message);
+    if (proposalId) await undoRecordClosing(proposalId, createdSaleId, err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
+
+// A refused or failed transfer leaves no half-state: the pending proposal is
+// withdrawn with the reason (kept for audit) and a sale row created by this
+// request is removed. Ownership was never touched (the DB transfer is atomic).
+async function undoRecordClosing(proposalId, createdSaleId, reason) {
+  try {
+    const { data: p, error: pErr } = await supabase.from('ownership_change_proposals').select('status').eq('id', proposalId).maybeSingle();
+    if (pErr) throw pErr;
+    if (p && p.status === 'approved') return;               // the transfer did happen; keep everything
+    if (p && p.status === 'pending') {
+      const { error } = await supabase.from('ownership_change_proposals')
+        .update({ status: 'withdrawn', decision_notes: 'Home Sales record-closing refused: ' + String(reason).slice(0, 500), home_sale_id: null })
+        .eq('id', proposalId);
+      if (error) console.warn('[home-sales] could not withdraw proposal', proposalId, error.message);
+    }
+    if (createdSaleId) {
+      const { error } = await supabase.from('home_sales').delete().eq('id', createdSaleId).neq('status', 'closed');
+      if (error) console.warn('[home-sales] could not remove unclosed sale row', createdSaleId, error.message);
+    }
+  } catch (e) {
+    console.warn('[home-sales] undoRecordClosing failed:', e.message);
+  }
+}
 
 module.exports = router;
 module.exports._test = { balanceFromAR, propertySnapshot };

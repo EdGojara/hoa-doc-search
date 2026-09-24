@@ -78,21 +78,31 @@ router.get('/:id', async (req, res) => {
 
 // ============================================================================
 // POST /api/ownership-proposals/:id/approve
-// Body: { reviewed_by: required, notes: optional }
-// Calls approve_ownership_proposal RPC — closes old ownership, inserts new
-// ownership, links contact (creates or matches by email), all atomic.
+// Body: { reviewed_by: required, settlement_date: required (YYYY-MM-DD), notes }
+// Calls approve_ownership_proposal (mig 459), the one transfer path: seller
+// ownership + tenure end settlement - 1, buyer gets a new tenure from the
+// settlement date, all atomic. The DB refuses bad dates / stale sellers /
+// re-approval; its message is returned as-is (409) so staff can act on it.
 // ============================================================================
 router.post('/:id/approve', express.json({ limit: '16kb' }), async (req, res) => {
   try {
-    const { reviewed_by, notes } = req.body || {};
-    if (!reviewed_by) return res.status(400).json({ error: 'reviewed_by_required' });
+    const { reviewed_by, notes, settlement_date } = req.body || {};
+    if (!reviewed_by || !String(reviewed_by).trim()) return res.status(400).json({ error: 'reviewed_by_required' });
+    if (!settlement_date || !/^\d{4}-\d{2}-\d{2}$/.test(String(settlement_date))) {
+      return res.status(400).json({ error: 'settlement_date_required' });
+    }
 
     const { data, error } = await supabase.rpc('approve_ownership_proposal', {
       p_proposal_id: req.params.id,
-      p_reviewed_by: reviewed_by,
+      p_reviewed_by: String(reviewed_by).trim(),
       p_notes: notes || null,
+      p_settlement_date: settlement_date,
     });
-    if (error) throw error;
+    if (error) {
+      // A refused transfer (P0001 raised by the function) is a business answer, not an outage.
+      if (error.code === 'P0001') return res.status(409).json({ error: error.message });
+      throw error;
+    }
     res.json(data);
   } catch (err) {
     console.error('[ownership-proposals] approve failed:', err.message);

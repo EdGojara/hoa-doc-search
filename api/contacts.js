@@ -276,10 +276,25 @@ router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), asyn
           applied.skipped_verified_property_changes += 1;
           continue;
         }
+        // A new Vantaca account on a lot means a sale. The lot's account changes
+        // only through an approved transfer (mig 459), so it is never patched
+        // here; the owner change itself arrives as an ownership proposal.
         const patch = { updated_at: new Date().toISOString() };
-        for (const [field, change] of Object.entries(item.changes)) patch[field] = change.to;
+        for (const [field, change] of Object.entries(item.changes)) {
+          if (field === 'vantaca_account_id') {
+            applied.account_changes_left_for_review = (applied.account_changes_left_for_review || 0) + 1;
+            continue;
+          }
+          patch[field] = change.to;
+        }
+        if (Object.keys(patch).length === 1) continue;
         const { error: uErr } = await supabase.from('properties').update(patch).eq('id', item.property_id);
-        if (!uErr) applied.properties_updated += 1;
+        if (uErr) {
+          console.warn('[contacts/apply] property field update failed:', item.property_id, uErr.message);
+          applied.property_update_errors = (applied.property_update_errors || 0) + 1;
+        } else {
+          applied.properties_updated += 1;
+        }
       }
     }
 

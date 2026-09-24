@@ -314,6 +314,21 @@ function fmtDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
+// Date-only values (settlement dates) are calendar days, never shifted by timezone.
+function fmtDay(ymd) {
+  if (!ymd) return '—';
+  const [y, m, d] = String(ymd).slice(0, 10).split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+function dayBefore(ymd) {
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d) - 86400000);
+  return t.toISOString().slice(0, 10);
+}
+function todayLocal() {
+  const t = new Date();
+  return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+}
 function fmtAge(days) {
   if (days == null) return '';
   const d = Number(days);
@@ -485,15 +500,21 @@ function renderDetail(p) {
         <h3>Decision</h3>
         <dl>
           <dt>Status</dt> <dd><span class="badge ${p.status}">${escapeHtml(p.status)}</span></dd>
+          ${p.status === 'approved' ? '<dt>Settlement date</dt><dd>' + fmtDay(p.effective_start_date) + '</dd><dt>Seller ended</dt><dd>' + fmtDay(p.effective_end_date_prior) + '</dd>' : ''}
           <dt>Reviewed by</dt> <dd>${escapeHtml(p.reviewed_by || '—')}</dd>
-          <dt>Reviewed at</dt> <dd>${fmtDate(p.reviewed_at)}</dd>
+          <dt>Processed</dt> <dd>${fmtDate(p.reviewed_at)}</dd>
           ${p.decision_notes ? '<dt>Notes</dt><dd>' + escapeHtml(p.decision_notes) + '</dd>' : ''}
         </dl>
+        ${exceptionsHtml(p.transfer_exceptions)}
       </section>
     ` : `
       <section>
         <h3>Decision</h3>
         <div class="action-form">
+          ${missingHtml(p)}
+          <label>Settlement date (closing date on the deed / closing statement)</label>
+          <input type="date" id="settlementDate" value="${escapeHtml((p.effective_start_date || '').slice(0, 10))}" max="${todayLocal()}">
+          <div id="settlementHint" style="font-size:12px;color:var(--ink-faint);margin:-4px 0 10px;"></div>
           <label>Your name (audit trail)</label>
           <input type="text" id="reviewedBy" placeholder="Your name">
           <label>Notes (optional for approve, required for reject)</label>
@@ -511,7 +532,38 @@ function renderDetail(p) {
   if (isPending) {
     $('approveBtn').addEventListener('click', () => decide(p.id, 'approve'));
     $('rejectBtn').addEventListener('click', () => decide(p.id, 'reject'));
+    // Approve stays unavailable until property, seller, buyer, settlement date and reviewer are all present.
+    const sync = () => {
+      const d = $('settlementDate').value;
+      $('settlementHint').textContent = d
+        ? 'Seller owns through ' + fmtDay(dayBefore(d)) + '. Buyer owns from ' + fmtDay(d) + ' with a new account period and a $0 opening balance.'
+        : 'Required. Approve unlocks once the settlement date is entered.';
+      $('approveBtn').disabled = !(transferReady(p) && d && $('reviewedBy').value.trim());
+    };
+    $('settlementDate').addEventListener('input', sync);
+    $('reviewedBy').addEventListener('input', sync);
+    sync();
   }
+}
+
+function transferReady(p) {
+  return !!(p.property_id && (p.current_contact_id || p.current_owner_name) && p.proposed_owner_name);
+}
+function missingHtml(p) {
+  const miss = [];
+  if (!p.property_id) miss.push('property');
+  if (!(p.current_contact_id || p.current_owner_name)) miss.push('seller (current owner on file)');
+  if (!p.proposed_owner_name) miss.push('buyer');
+  return miss.length
+    ? '<div style="padding:10px 12px;border:1px solid rgba(220,80,80,0.4);border-radius:8px;margin-bottom:12px;">Cannot approve: missing ' + escapeHtml(miss.join(', ')) + '. Reject this proposal and re-enter the sale in Home Sales.</div>'
+    : '';
+}
+function exceptionsHtml(list) {
+  if (!Array.isArray(list) || !list.length) return '';
+  const rows = list.map((x) => '<li>' + fmtDay(x.date) + ' · ' + escapeHtml(x.description || '') + ' · $' + (Number(x.amount_cents || 0) / 100).toFixed(2) + '</li>').join('');
+  return '<div style="margin-top:12px;padding:10px 12px;border:1px solid rgba(212,175,55,0.5);border-radius:8px;">'
+    + '<strong>Needs accounting review:</strong> ' + list.length + ' item(s) dated on or after settlement are still on the seller. They were NOT moved to the buyer.'
+    + '<ul style="margin:8px 0 0 18px;">' + rows + '</ul></div>';
 }
 
 async function decide(id, action) {
@@ -525,8 +577,16 @@ async function decide(id, action) {
   btn.innerHTML = `<span class="loader"></span> ${action === 'approve' ? 'Approving' : 'Rejecting'}…`;
 
   try {
-    await api('POST', `/api/ownership-proposals/${id}/${action}`, { reviewed_by, notes: notes || null });
-    toast(action === 'approve' ? 'Ownership transition applied.' : 'Proposal rejected.', 'success');
+    const body = { reviewed_by, notes: notes || null };
+    if (action === 'approve') {
+      body.settlement_date = $('settlementDate').value;
+      if (!body.settlement_date) { toast('Enter the settlement date first.', 'error'); btn.disabled = false; btn.textContent = '✓ Approve — apply ownership transition'; return; }
+    }
+    const res = await api('POST', `/api/ownership-proposals/${id}/${action}`, body);
+    const nExc = res && Array.isArray(res.transfer_exceptions) ? res.transfer_exceptions.length : 0;
+    toast(action === 'approve'
+      ? 'Transfer applied. Seller ends ' + fmtDay(res.seller_end_date) + ', buyer starts ' + fmtDay(res.settlement_date) + '.' + (nExc ? ' ' + nExc + ' item(s) need accounting review.' : '')
+      : 'Proposal rejected.', 'success');
     await loadQueue();
     await loadDetail(id);
   } catch (err) {

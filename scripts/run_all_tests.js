@@ -78,6 +78,7 @@ const CHECKS = [
   'tests/test_ap_as_of.js',
   'tests/test_ap_cutover.js',
   'tests/test_home_sales_balance.js',
+  'tests/test_ownership_transfer_single_path.js',
   'tests/test_reply_recipient.js',
   'tests/test_reply_learning.js',
   'tests/test_acc_application_matching.js',

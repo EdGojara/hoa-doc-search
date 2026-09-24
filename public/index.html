@@ -7821,11 +7821,9 @@
   }
 
   // Click handler for the "🔄 Claim transfer" button on each ownership-
-  // transfer row. POSTs to /mailing-delta/claim-transfer which ends the
-  // old ownership, creates a new contact for the new owner, links a new
-  // ownership, and updates the property's canonical Vantaca account #.
-  // On success the row is replaced with a green "claimed" stub; on
-  // failure the row's button is re-enabled so the operator can retry.
+  // transfer row. POSTs to /mailing-delta/claim-transfer, which files a
+  // PENDING ownership proposal (mig 459). Ownership changes only when it is
+  // approved in Ownership Review with the settlement date.
   async function mailingDeltaClaimTransfer(rowId, encodedPayload) {
     const row = document.getElementById(rowId);
     if (!row) return;
@@ -7836,9 +7834,9 @@
     if (!cid) { alert('Pick a community first.'); return; }
     const verifiedBy = prompt(
       `Claim this transfer?\n\n` +
-      `${payload.new_owner_name} will replace the current owner on ${payload.new_mailing.street}.\n` +
-      `Old ownership will be ended (preserved for audit), new contact created with the Vantaca mailing.\n\n` +
-      `Enter your name or email to record who performed the transfer:`
+      `${payload.new_owner_name} as the new owner of ${payload.new_mailing.street}.\n` +
+      `This sends the sale to Ownership Review. Nothing changes until it is approved there with the settlement date.\n\n` +
+      `Enter your name or email:`
     );
     if (!verifiedBy || !verifiedBy.trim()) return;
     // Disable the button while the request is in flight.
@@ -7860,7 +7858,7 @@
       if (btn) {
         btn.style.background = '#15803d';
         btn.style.borderColor = '#15803d';
-        btn.textContent = alreadyClaimed ? '✓ Already claimed' : '✓ Claimed';
+        btn.textContent = alreadyClaimed ? '✓ Already in review' : '✓ Sent to Ownership Review';
         btn.disabled = true;
       }
     } catch (e) {
