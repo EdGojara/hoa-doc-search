@@ -34,6 +34,7 @@ const { extractBudget } = require('../lib/accounting/budget_pdf_extractor');
 const { rollForwardBudget } = require('../lib/accounting/budget_roll_forward');
 const { safeErrorMessage } = require('./_safe_error');
 const Anthropic = require('@anthropic-ai/sdk');
+const { COUNTED_JE_STATUSES, countsInGl } = require('../lib/accounting/je_status');
 const _anthropic = new Anthropic();
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -619,15 +620,16 @@ router.get('/budgets/:id/seasonalize', async (req, res) => {
       const ids = acctIds.slice(batch, batch + 100);
       for (let f = 0; ; f += 1000) {
         const { data: jl, error } = await supabase.from('journal_entry_lines')
-          .select('account_id, debit_cents, credit_cents, journal_entries!inner(posting_date, status)')
+          .select('account_id, debit_cents, credit_cents, journal_entries!inner(posting_date, status, void_reversal_je_id)')
           .in('account_id', ids)
-          .eq('journal_entries.status', 'posted')
+          .in('journal_entries.status', COUNTED_JE_STATUSES)
           .gte('journal_entries.posting_date', start)
           .lte('journal_entries.posting_date', end)
           .order('id', { ascending: true })
           .range(f, f + 999);
         if (error) throw error;
         (jl || []).forEach((row) => {
+          if (!countsInGl(row.journal_entries)) return;
           const d = row.journal_entries && row.journal_entries.posting_date;
           if (!d) return;
           const mo = parseInt(String(d).slice(5, 7), 10) - 1; // 0..11
@@ -1510,9 +1512,9 @@ router.get('/undeposited', async (req, res) => {
 
     // All posted lines touching the undeposited account.
     const { data: lines } = await supabase.from('journal_entry_lines')
-      .select('debit_cents, credit_cents, journal_entries!inner(id, reference, posting_date, description, status, source_module, source_reference)')
-      .eq('account_id', undep.id).eq('journal_entries.status', 'posted').limit(5000);
-    const rows = lines || [];
+      .select('debit_cents, credit_cents, journal_entries!inner(id, reference, posting_date, description, status, source_module, source_reference, void_reversal_je_id)')
+      .eq('account_id', undep.id).in('journal_entries.status', COUNTED_JE_STATUSES).limit(5000);
+    const rows = (lines || []).filter((r) => countsInGl(r.journal_entries));
     const balance = rows.reduce((s, r) => s + (r.debit_cents || 0) - (r.credit_cents || 0), 0);
 
     // Receipts = debit entries (money into undeposited). A receipt is "deposited"

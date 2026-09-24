@@ -35,6 +35,7 @@ const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
+const { countsInGl } = require('../lib/accounting/je_status');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const router = express.Router();
@@ -666,10 +667,10 @@ const WASH_RE = /credit distribution/i;
 // result plus the inputs the worksheet needs to present it.
 async function reconcileMonthCore(community_id, ba, cashAcctId, period_end) {
   const { data: glRaw } = await supabase.from('journal_entry_lines')
-    .select('id, debit_cents, credit_cents, memo, journal_entries!inner(posting_date, source_module, community_id, status, description)')
+    .select('id, debit_cents, credit_cents, memo, journal_entries!inner(posting_date, source_module, community_id, status, description, void_reversal_je_id)')
     .eq('account_id', cashAcctId).lte('journal_entries.posting_date', period_end)
     .eq('journal_entries.community_id', community_id).limit(100000);
-  const glLive = (glRaw || []).filter((l) => (l.journal_entries.status || 'posted') !== 'voided');
+  const glLive = (glRaw || []).filter((l) => countsInGl(l.journal_entries));
   const { data: baOpen } = await supabase.from('bank_accounts').select('opening_position').eq('id', ba.id).maybeSingle();
   const openPos = (baOpen && baOpen.opening_position) || {};
   const anchor = openPos.gl_anchor || null;
@@ -932,12 +933,12 @@ router.post('/reconciliations/:id/run-match', async (req, res) => {
     let liveLines = [];
     if (cashAcctId && periodEnd) {
       const { data: ll } = await supabase.from('journal_entry_lines')
-        .select('debit_cents, credit_cents, memo, journal_entries!inner(posting_date, description, source_module, community_id, status)')
+        .select('debit_cents, credit_cents, memo, journal_entries!inner(posting_date, description, source_module, community_id, status, void_reversal_je_id)')
         .eq('account_id', cashAcctId)
         .lte('journal_entries.posting_date', periodEnd)
         .eq('journal_entries.community_id', rec.community_id)
         .limit(50000);
-      liveLines = (ll || []).filter((l) => (l.journal_entries.status || 'posted') !== 'voided');
+      liveLines = (ll || []).filter((l) => countsInGl(l.journal_entries));
     }
 
     if (liveLines.length) {
