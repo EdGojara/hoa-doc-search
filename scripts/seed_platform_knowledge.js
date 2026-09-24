@@ -117,7 +117,7 @@ const FEATURES = [
   },
   {
     situation: 'How do I handle a resale request, a closing, or a new-owner ownership transfer?',
-    response: 'Home Sales (/admin/home-sales) handles resale requests before closing and closing packets after: scan the title company’s closing mail and the system records the ownership transfer from seller to buyer and the transfer fee.',
+    response: 'Home Sales (/admin/home-sales) handles resale requests before closing and closing packets after: scan the title company’s closing mail and the system records the ownership transfer from seller to buyer and the transfer fee. The seller named on the closing document must match the owner on file, so a lot sold twice (even on the same day) is entered one closing at a time, in order. Clicking a red DRV badge such as "1 open" shows that home’s violations read-only (category, opened date, status, most recent notice, next step), with a link to the full record in Homeowner 360.',
   },
   {
     situation: 'How do I log physical mail that comes into the office?',
