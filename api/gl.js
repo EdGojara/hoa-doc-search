@@ -220,17 +220,22 @@ router.get('/:communityId/income-statement-print', async (req, res) => {
     const fmt = (c) => { const n = Number(c || 0) / 100; if (Math.round(n) === 0) return '<span class="dot">·</span>'; return (n < 0 ? '(' : '') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US') + (n < 0 ? ')' : ''); };
     const esc = (x) => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
     const K = data.amount_keys;
-    const cells = (o) => K.map((k, i) => `<td class="num${i === 0 || i === 3 ? ' a' : ''}">${fmt(o[k])}</td>`).join('');
+    const cells = (o) => K.map((k, i) => `<td class="num${i === 0 || i === 3 || i === 6 ? ' a' : ''}">${fmt(o[k])}</td>`).join('');
     const acctRow = (r) => `<tr><td class="acct">${esc(r.account_number)} ${esc(r.account_name)}</td>${cells(r)}</tr>`;
-    const grpBlock = (g) => `<tr class="grp"><td class="acct">${esc(g.group)}</td><td colspan="6"></td></tr>` + g.rows.map(acctRow).join('') + `<tr class="sub"><td class="acct">Total ${esc(g.group)}</td>${cells(g.totals)}</tr>`;
+    // Reporting categories (Phase 1): a mapped community's groups carry subgroups
+    // (subcategories) and possibly an Unmapped group; others keep the flat group.
+    const subBlock = (sg) => `<tr class="grp3"><td class="acct">${esc(sg.group)}</td><td colspan="7"></td></tr>` + sg.rows.map(acctRow).join('') + (sg.rows.length > 1 ? `<tr class="sub3"><td class="acct">Total ${esc(sg.group)}</td>${cells(sg.totals)}</tr>` : '');
+    const grpBlock = (g) => `<tr class="grp${g.unmapped ? ' unm' : ''}"><td class="acct">${esc(g.group)}</td><td colspan="7"></td></tr>`
+      + (g.subgroups ? (g.direct_rows || []).map(acctRow).join('') + g.subgroups.map(subBlock).join('') : g.rows.map(acctRow).join(''))
+      + `<tr class="sub"><td class="acct">Total ${esc(g.group)}</td>${cells(g.totals)}</tr>`;
     const totRow = (label, o, cls) => `<tr class="${cls}"><td class="acct">${label}</td>${cells(o)}</tr>`;
-    const fundBlock = (f) => `<tr class="fund"><td class="acct" colspan="7">${esc(f.fund_name)} Fund</td></tr>`
-      + `<tr class="section"><td class="acct">Revenue</td><td colspan="6"></td></tr>${f.revenue_groups.map(grpBlock).join('')}${totRow('Total Revenue', f.revenue_totals, 'sub2')}`
-      + (f.expense_groups.length ? `<tr class="section"><td class="acct">Expense</td><td colspan="6"></td></tr>${f.expense_groups.map(grpBlock).join('')}${totRow('Total Expense', f.expense_totals, 'sub2')}` : '')
+    const fundBlock = (f) => `<tr class="fund"><td class="acct" colspan="8">${esc(f.fund_name)} Fund</td></tr>`
+      + `<tr class="section"><td class="acct">Revenue</td><td colspan="7"></td></tr>${f.revenue_groups.map(grpBlock).join('')}${totRow('Total Revenue', f.revenue_totals, 'sub2')}`
+      + (f.expense_groups.length ? `<tr class="section"><td class="acct">Expense</td><td colspan="7"></td></tr>${f.expense_groups.map(grpBlock).join('')}${totRow('Total Expense', f.expense_totals, 'sub2')}` : '')
       + totRow(`${esc(f.fund_name)} Net Income`, f.net_totals, 'net');
-    const style = _printStyle() + '<style>td.a{border-left:1px solid var(--rule)}thead tr.grp2 th{background:#16304d;font-size:10px;letter-spacing:.05em;text-align:center}tr.fund td{background:var(--navy);color:#fff;font-weight:800;text-transform:uppercase;letter-spacing:.04em}tr.sub2 td{font-weight:800;background:#e8eef6;border-top:1px solid var(--navy)}@media(prefers-color-scheme:dark){tr.sub2 td{background:#1b2c40}}</style>';
-    const head = `<thead><tr class="grp2"><th class="acct"></th><th class="num a" colspan="3">Current Period (${monthName})</th><th class="num" colspan="3">Year to Date</th></tr>`
-      + `<tr><th class="acct">Account</th><th class="num a">Actual</th><th class="num">Budget</th><th class="num">Variance</th><th class="num a">Actual</th><th class="num">Budget</th><th class="num">Variance</th></tr></thead>`;
+    const style = _printStyle() + '<style>td.a{border-left:1px solid var(--rule)}tr.grp3 td{font-weight:600;font-style:italic;padding-left:14px}tr.sub3 td{font-style:italic;border-top:1px dotted var(--rule)}tr.unm td{color:#92400e;background:#fef3c7}thead tr.grp2 th{background:#16304d;font-size:10px;letter-spacing:.05em;text-align:center}tr.fund td{background:var(--navy);color:#fff;font-weight:800;text-transform:uppercase;letter-spacing:.04em}tr.sub2 td{font-weight:800;background:#e8eef6;border-top:1px solid var(--navy)}@media(prefers-color-scheme:dark){tr.sub2 td{background:#1b2c40}}</style>';
+    const head = `<thead><tr class="grp2"><th class="acct"></th><th class="num a" colspan="3">Current Period (${monthName})</th><th class="num" colspan="3">Year to Date</th><th class="num a"></th></tr>`
+      + `<tr><th class="acct">Account</th><th class="num a">Actual</th><th class="num">Budget</th><th class="num">Variance</th><th class="num a">Actual</th><th class="num">Budget</th><th class="num">Variance</th><th class="num a">Annual Budget</th></tr></thead>`;
     const html = `${style}<div class="doc"><h1>${esc(comm ? comm.name : '')}</h1><p class="sub">Statement of Revenues and Expenses — by fund · ${monthName} ${period_end.slice(0, 4)} &amp; Year-to-Date</p><table>${head}<tbody>${data.funds.map(fundBlock).join('')}</tbody></table></div>`;
     res.set('Content-Type', 'text/html').send(html);
   } catch (err) {

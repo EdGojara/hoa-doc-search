@@ -29,11 +29,11 @@ const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { postJournalEntry, voidJournalEntry, editJournalEntry } = require('../lib/accounting/posting');
 const { onboardCommunityToGL, openInitialPeriods } = require('../lib/accounting/coa_template');
-const { balanceSheet, incomeStatement, equityStatement, budgetVsActual } = require('../lib/accounting/financial_statements');
+const { balanceSheet, incomeStatement, equityStatement, budgetVsActual, budgetVsActualGrouped } = require('../lib/accounting/financial_statements');
 const { extractBudget } = require('../lib/accounting/budget_pdf_extractor');
 const { rollForwardBudget } = require('../lib/accounting/budget_roll_forward');
 const { mergeBudgetLines } = require('../lib/accounting/budget_merge');
-const { requireOwner } = require('./_require_admin');
+const { requireOwner, requireAdmin } = require('./_require_admin');
 const LOCKED_BUDGET_STATUSES = ['approved', 'active'];
 const { safeErrorMessage } = require('./_safe_error');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -423,11 +423,133 @@ router.get('/equity-statement', async (req, res) => {
 router.get('/budget-vs-actual', async (req, res) => {
   try {
     const { community_id, period_end, fund_id } = req.query;
-    const result = await budgetVsActual({ community_id, period_end, fund_id });
+    // ?grouped=1 adds the reporting-category tree; without it the response is
+    // exactly the flat Budget vs Actual (Phase 1: flat view unchanged).
+    const result = req.query.grouped === '1'
+      ? await budgetVsActualGrouped({ community_id, period_end, fund_id })
+      : await budgetVsActual({ community_id, period_end, fund_id });
     res.json(result);
   } catch (err) {
     if (err.code === 'invalid_input') return res.status(400).json({ error: err.message });
     console.error('[books] budget-vs-actual failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// REPORT CATEGORIES (Phase 1, migration 463) — presentation only. The GL
+// account is never changed; this is how each account presents on statements.
+// ============================================================================
+const REPORT_STATEMENT = 'income_statement';
+
+// Setup screen data: every income/expense account with its fund and current
+// category (or Unmapped), plus the community's categories.
+router.get('/report-categories', async (req, res) => {
+  try {
+    const { community_id } = req.query;
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    const [cats, maps, coa] = await Promise.all([
+      supabase.from('report_categories').select('id, section, name, report_label, parent_category_id, display_order, is_active, updated_by, updated_at')
+        .eq('community_id', community_id).eq('statement', REPORT_STATEMENT).order('display_order').order('name').limit(2000),
+      supabase.from('account_report_map').select('account_id, category_id, display_order, updated_by, updated_at')
+        .eq('community_id', community_id).eq('statement', REPORT_STATEMENT).order('account_id').limit(5000),
+      supabase.from('chart_of_accounts').select('id, account_number, account_name, account_type, is_active, account_funds(fund_code)')
+        .eq('community_id', community_id).in('account_type', ['revenue', 'expense']).order('account_number').limit(5000),
+    ]);
+    for (const r of [cats, maps, coa]) if (r.error) throw r.error;
+    const catById = new Map((cats.data || []).map((c) => [c.id, c]));
+    const mapByAcct = new Map((maps.data || []).map((m) => [m.account_id, m]));
+    const accounts = (coa.data || []).map((a) => {
+      const m = mapByAcct.get(a.id); const leaf = m ? catById.get(m.category_id) : null;
+      const top = leaf ? (leaf.parent_category_id ? catById.get(leaf.parent_category_id) : leaf) : null;
+      return {
+        account_id: a.id, account_number: a.account_number, account_name: a.account_name, account_type: a.account_type,
+        is_active: a.is_active, fund_code: a.account_funds ? a.account_funds.fund_code : null,
+        category_id: m ? m.category_id : null,
+        category_name: top ? top.name : null,
+        subcategory_name: leaf && leaf.parent_category_id ? leaf.name : null,
+        display_order: m ? m.display_order : null,
+        updated_by: m ? m.updated_by : null, updated_at: m ? m.updated_at : null,
+      };
+    });
+    res.json({ categories: cats.data || [], accounts, unmapped_count: accounts.filter((a) => !a.category_id).length });
+  } catch (err) {
+    console.error('[books] report-categories read failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Writes below are admin/owner only (Ed 2026-09-25); any signed-in staffer can view.
+// Create or edit a category/subcategory. Categories are never deleted
+// (deactivate instead); the database refuses anything that would orphan accounts.
+router.post('/report-categories', express.json(), async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res); if (!user) return;   // configuration: admin/owner only
+    const b = req.body || {};
+    if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
+    const actor = user.email || 'staff';
+    const patch = { updated_by: actor };
+    if (b.name !== undefined) { if (!String(b.name).trim()) return res.status(400).json({ error: 'name_required' }); patch.name = String(b.name).trim(); }
+    if (b.report_label !== undefined) patch.report_label = String(b.report_label || '').trim() || null;
+    if (b.display_order !== undefined) { const n = parseInt(b.display_order, 10); if (!Number.isFinite(n)) return res.status(400).json({ error: 'display_order_must_be_a_number' }); patch.display_order = n; }
+    if (b.is_active !== undefined) patch.is_active = !!b.is_active;
+    if (b.parent_category_id !== undefined) patch.parent_category_id = b.parent_category_id || null;
+    let q;
+    if (b.id) {
+      const { data: cur, error: cErr } = await supabase.from('report_categories').select('community_id').eq('id', b.id).maybeSingle();
+      if (cErr) throw cErr;
+      if (!cur) return res.status(404).json({ error: 'category_not_found' });
+      if (cur.community_id !== b.community_id) return res.status(403).json({ error: 'category_belongs_to_a_different_community' });
+      q = supabase.from('report_categories').update(patch).eq('id', b.id);
+    } else {
+      if (!['revenue', 'expense'].includes(b.section)) return res.status(400).json({ error: 'section_must_be_revenue_or_expense' });
+      if (!patch.name) return res.status(400).json({ error: 'name_required' });
+      q = supabase.from('report_categories').insert({ ...patch, community_id: b.community_id, statement: REPORT_STATEMENT, section: b.section });
+    }
+    const { data, error } = await q.select('*').single();
+    if (error) return res.status(error.code === 'P0001' || error.code === '23505' ? 409 : 500).json({ error: error.code === '23505' ? 'a category with that name already exists here' : (error.code === 'P0001' ? error.message : safeErrorMessage(error)) });
+    res.json({ category: data });
+  } catch (err) {
+    console.error('[books] report-categories save failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Assign (or with category_id null, unmap) one or many accounts. Explicit only:
+// nothing here guesses a category.
+router.post('/report-map', express.json(), async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res); if (!user) return;   // configuration: admin/owner only
+    const { community_id, account_ids, category_id } = req.body || {};
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (!Array.isArray(account_ids) || !account_ids.length) return res.status(400).json({ error: 'account_ids_required' });
+    if (account_ids.length > 500) return res.status(400).json({ error: 'too_many_accounts' });
+    const { data, error } = await supabase.rpc('set_account_report_category', {
+      p_community_id: community_id, p_account_ids: account_ids, p_category_id: category_id || null, p_actor: user.email || 'staff', p_statement: REPORT_STATEMENT,
+    });
+    if (error) return res.status(error.code === 'P0001' ? 409 : 500).json({ error: error.code === 'P0001' ? error.message : safeErrorMessage(error) });
+    res.json(data);
+  } catch (err) {
+    console.error('[books] report-map save failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Order of an account within its category (blank = by account number).
+router.post('/report-map/order', express.json(), async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res); if (!user) return;   // configuration: admin/owner only
+    const { community_id, account_id, display_order } = req.body || {};
+    if (!community_id || !account_id) return res.status(400).json({ error: 'community_id_and_account_id_required' });
+    const n = display_order === null || display_order === '' || display_order === undefined ? null : parseInt(display_order, 10);
+    if (n !== null && !Number.isFinite(n)) return res.status(400).json({ error: 'display_order_must_be_a_number' });
+    const { data, error } = await supabase.from('account_report_map').update({ display_order: n, updated_by: user.email || 'staff' })
+      .eq('community_id', community_id).eq('account_id', account_id).eq('statement', REPORT_STATEMENT).select('account_id');
+    if (error) throw error;
+    if (!data || !data.length) return res.status(404).json({ error: 'account_is_unmapped' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[books] report-map order failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

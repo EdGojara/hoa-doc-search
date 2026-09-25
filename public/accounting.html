@@ -77,7 +77,7 @@
     { id:'bank',       label:'🏦 Bank Rec',   views:[['bankrec','Reconciliation']] },
     { id:'financials', label:'📊 Financials', views:[['bs','Balance Sheet'],['is','Income Statement'],['eq','Equity'],['undeposited','Undeposited'],['trial','Trial Balance'],['tieout','Tie-Out']] },
     { id:'budget',     label:'📈 Budget',     views:[['bva','Budget vs Actual'],['budget','Budget']] },
-    { id:'setup',      label:'⚙️ Setup',      views:[['onlinepay','Online Payments'],['periods','Periods'],['policy','Billing Policy'],['coa','Chart of Accounts'],['je','Journal Entries']] },
+    { id:'setup',      label:'⚙️ Setup',      views:[['onlinepay','Online Payments'],['periods','Periods'],['policy','Billing Policy'],['coa','Chart of Accounts'],['rptcat','Report Categories'],['je','Journal Entries']] },
   ];
   let CID = null, GROUP = 'homeowners', VIEW = 'owners';
 
@@ -149,6 +149,7 @@
       if (VIEW==='checks') return renderChecks();
       if (VIEW==='bankrec') return renderBankRec();
       if (VIEW==='coa') return renderCoa();
+      if (VIEW==='rptcat') return renderReportCategories();
       if (VIEW==='je') return renderJe();
       if (VIEW==='bs') return renderBalanceSheet();
       if (VIEW==='is') return renderIncomeStatement();
@@ -235,6 +236,11 @@
         .fav { color:#166534; } .unfav { color:#991b1b; }
         .subtot td { font-weight:700; border-top:1px solid #0B1D34; }
         .grouphdr td { font-weight:700; color:#0B1D34; background:#f4f7fb; text-transform:uppercase; font-size:10.5px; letter-spacing:.04em; }
+        .cathdr td { font-weight:700; color:#0B1D34; padding-top:6px; }
+        .cathdr.unm td { color:#92400e; background:#fef3c7; }
+        .subcathdr td { font-style:italic; font-weight:600; color:#475569; }
+        .subcattot td { font-style:italic; border-top:1px dotted #cbd5e1; }
+        .cattot td { font-weight:700; border-top:1px solid #cbd5e1; }
         .fundsec { font-size:14px; font-weight:700; color:#0B1D34; margin:18px 0 4px; border-bottom:2px solid #D4AF37; padding-bottom:3px; page-break-after:avoid; }
         .netrow td { font-weight:700; border-top:1.5px solid #0B1D34; border-bottom:1.5px double #0B1D34; }
         .foot { margin-top:22px; padding-top:8px; border-top:1px solid #ddd; font-size:9.5px; color:#888; font-style:italic; }
@@ -277,7 +283,7 @@
     return `<td class="num ${fav?'fav':'unfav'}">${fmt(v)}</td>`;
   }
   function _bvaSum(list, field){ return (list||[]).reduce((s,r)=>s+(Number(r[field])||0),0); }
-  function _budgetISBody(rows, fiscalYear, hasBudget){
+  function _budgetISBody(rows, fiscalYear, hasBudget, grouped){
     if (!hasBudget) {
       return `<div class="muted" style="padding:14px 0;">No approved budget is on file for ${esc(String(fiscalYear||''))}. Load the annual budget in the <strong>Budget</strong> tab, then this statement will show budget vs actual.</div>`;
     }
@@ -287,21 +293,31 @@
     const order = ['OPR','RES','SAV'];
     const codes = Object.keys(byFund).sort((a,b)=>{ const ia=order.indexOf(a), ib=order.indexOf(b); return (ia<0?99:ia)-(ib<0?99:ib) || a.localeCompare(b); });
     const numW = 74;
-    const col = `<colgroup><col style="width:44px"><col>${Array(6).fill(`<col style="width:${numW}px">`).join('')}</colgroup>`;
+    const col = `<colgroup><col style="width:44px"><col>${Array(7).fill(`<col style="width:${numW}px">`).join('')}</colgroup>`;
     const head = `<thead>
       <tr><th rowspan="2" style="vertical-align:bottom;">Acct</th><th rowspan="2" style="vertical-align:bottom;">Account</th>
-        <th class="grp" colspan="3">Month</th><th class="grp" colspan="3">Year to Date</th></tr>
+        <th class="grp" colspan="3">Current Period</th><th class="grp" colspan="3">Year to Date</th><th rowspan="2" class="num" style="vertical-align:bottom;">Annual Budget</th></tr>
       <tr><th class="num">Actual</th><th class="num">Budget</th><th class="num">Variance</th>
           <th class="num">Actual</th><th class="num">Budget</th><th class="num">Variance</th></tr></thead>`;
     const dataRow = (r)=>`<tr><td class="mono">${esc(r.account_number||'')}</td><td>${esc(r.account_name||'')}</td>
       <td class="num">${fmt(r.mtd_actual_cents)}</td><td class="num">${fmt(r.mtd_budget_cents)}</td>${_bvaVarCell(r.mtd_actual_cents,r.mtd_budget_cents,r.account_type)}
-      <td class="num">${fmt(r.ytd_actual_cents)}</td><td class="num">${fmt(r.ytd_budget_cents)}</td>${_bvaVarCell(r.ytd_actual_cents,r.ytd_budget_cents,r.account_type)}</tr>`;
-    const subtot = (label, list, type)=>{
-      const ma=_bvaSum(list,'mtd_actual_cents'), mb=_bvaSum(list,'mtd_budget_cents'), ya=_bvaSum(list,'ytd_actual_cents'), yb=_bvaSum(list,'ytd_budget_cents');
-      return `<tr class="subtot"><td></td><td>${esc(label)}</td>
+      <td class="num">${fmt(r.ytd_actual_cents)}</td><td class="num">${fmt(r.ytd_budget_cents)}</td>${_bvaVarCell(r.ytd_actual_cents,r.ytd_budget_cents,r.account_type)}
+      <td class="num">${fmt(r.annual_budget_cents)}</td></tr>`;
+    const subtot = (label, list, type, cls)=>{
+      const ma=_bvaSum(list,'mtd_actual_cents'), mb=_bvaSum(list,'mtd_budget_cents'), ya=_bvaSum(list,'ytd_actual_cents'), yb=_bvaSum(list,'ytd_budget_cents'), an=_bvaSum(list,'annual_budget_cents');
+      return `<tr class="${cls||'subtot'}"><td></td><td>${esc(label)}</td>
         <td class="num">${fmt(ma)}</td><td class="num">${fmt(mb)}</td>${_bvaVarCell(ma,mb,type)}
-        <td class="num">${fmt(ya)}</td><td class="num">${fmt(yb)}</td>${_bvaVarCell(ya,yb,type)}</tr>`;
+        <td class="num">${fmt(ya)}</td><td class="num">${fmt(yb)}</td>${_bvaVarCell(ya,yb,type)}
+        <td class="num">${fmt(an)}</td></tr>`;
     };
+    // Category blocks for a mapped community (Phase 1). The tree comes from the
+    // server; its totals are summed from these same rows.
+    const catBlock = (sec, type) => sec.categories.map((c)=>
+        `<tr class="cathdr"><td colspan="9">${esc(c.label)}</td></tr>`
+      + c.rows.map(dataRow).join('')
+      + c.subcategories.map((sc)=>`<tr class="subcathdr"><td></td><td colspan="8">${esc(sc.label)}</td></tr>` + sc.rows.map(dataRow).join('') + (sc.rows.length>1 ? subtot('Total '+sc.label, sc.rows, type, 'subcattot') : '')).join('')
+      + subtot('Total '+c.label, [...c.rows, ...c.subcategories.flatMap((sc)=>sc.rows)], type, 'cattot')).join('')
+      + (sec.unmapped.rows.length ? `<tr class="cathdr unm"><td colspan="9">⚠ ${esc(sec.unmapped.label)}</td></tr>` + sec.unmapped.rows.map(dataRow).join('') + subtot('Total unmapped', sec.unmapped.rows, type, 'cattot') : '');
     let html = '';
     for (const code of codes){
       const fr = byFund[code];
@@ -314,17 +330,20 @@
       const nYa=_bvaSum(rev,'ytd_actual_cents')-_bvaSum(exp,'ytd_actual_cents');
       const nYb=_bvaSum(rev,'ytd_budget_cents')-_bvaSum(exp,'ytd_budget_cents');
       const netVar = (a,b)=>{ const v=a-b; return `<td class="num ${v>=0?'fav':'unfav'}">${fmt(v)}</td>`; };
+      const nAn=_bvaSum(rev,'annual_budget_cents')-_bvaSum(exp,'annual_budget_cents');
+      const tree = grouped && grouped.has_mapping && grouped.by_fund ? grouped.by_fund[code] : null;
       html += `<div class="fundsec">${esc(title)}</div>
         <table style="table-layout:fixed;">${col}${head}<tbody>
-          <tr class="grouphdr"><td colspan="8">Revenue</td></tr>
-          ${rev.length ? rev.map(dataRow).join('') : `<tr><td colspan="8" class="muted">— none —</td></tr>`}
+          <tr class="grouphdr"><td colspan="9">Revenue</td></tr>
+          ${!rev.length ? `<tr><td colspan="9" class="muted">— none —</td></tr>` : (tree ? catBlock(tree.sections[0], 'revenue') : rev.map(dataRow).join(''))}
           ${subtot('Total Revenue', rev, 'revenue')}
-          <tr class="grouphdr"><td colspan="8">Expenses</td></tr>
-          ${exp.length ? exp.map(dataRow).join('') : `<tr><td colspan="8" class="muted">— none —</td></tr>`}
+          <tr class="grouphdr"><td colspan="9">Expenses</td></tr>
+          ${!exp.length ? `<tr><td colspan="9" class="muted">— none —</td></tr>` : (tree ? catBlock(tree.sections[1], 'expense') : exp.map(dataRow).join(''))}
           ${subtot('Total Expenses', exp, 'expense')}
           <tr class="netrow"><td></td><td>Net Income — ${esc(title)}</td>
             <td class="num">${fmt(nMa)}</td><td class="num">${fmt(nMb)}</td>${netVar(nMa,nMb)}
-            <td class="num">${fmt(nYa)}</td><td class="num">${fmt(nYb)}</td>${netVar(nYa,nYb)}</tr>
+            <td class="num">${fmt(nYa)}</td><td class="num">${fmt(nYb)}</td>${netVar(nYa,nYb)}
+            <td class="num">${fmt(nAn)}</td></tr>
         </tbody></table>`;
     }
     return html;
@@ -334,12 +353,12 @@
     if (!end) { alert('Pick the "to" date first, then print.'); return; }
     let data;
     try {
-      data = await (await fetch(`/api/books/budget-vs-actual?community_id=${CID}&period_end=${end}`)).json();
+      data = await (await fetch(`/api/books/budget-vs-actual?community_id=${CID}&period_end=${end}&grouped=1`)).json();
       if (data.error) throw new Error(data.error);
     } catch (e) { alert("Couldn't load budget vs actual: " + e.message); return; }
     const monthName = new Date(end + 'T12:00:00').toLocaleDateString('en-US', { month:'long', year:'numeric' });
     const sub = `Month of ${monthName} and Year to Date · through ${fmtDate(end)}`;
-    const body = _budgetISBody(data.rows || [], data.fiscal_year, data.has_budget);
+    const body = _budgetISBody(data.rows || [], data.fiscal_year, data.has_budget, data.grouped);
     await _acctPrintWindow('Income Statement vs Budget', sub, body);
   }
 
@@ -502,15 +521,27 @@
     $('body').innerHTML = `<div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
         <h2 class="sec">Budget vs Actual</h2>
-        <div style="display:flex; gap:8px; align-items:center;"><span class="muted" style="font-size:12px;">Through</span>${dateInput('bva-end',dToday())}${goBtn('bva-go')}</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <div class="bva-mode" role="group" aria-label="View" style="display:inline-flex; border:1px solid var(--rule); border-radius:7px; overflow:hidden;">
+            <button type="button" data-mode="flat" style="padding:6px 12px; border:none; cursor:pointer; font-size:12.5px; font-weight:600;">Flat</button>
+            <button type="button" data-mode="grouped" style="padding:6px 12px; border:none; border-left:1px solid var(--rule); cursor:pointer; font-size:12.5px; font-weight:600;">Grouped</button>
+          </div>
+          <span class="muted" style="font-size:12px;">Through</span>${dateInput('bva-end',dToday())}${goBtn('bva-go')}</div>
       </div><div id="bva-out" class="muted">Loading…</div></div>`;
+    let mode = 'flat'; try { if (localStorage.getItem('bvaMode') === 'grouped') mode = 'grouped'; } catch (_) {}
+    const paintMode = () => document.querySelectorAll('.bva-mode button').forEach((b)=>{ const on=b.dataset.mode===mode; b.style.background=on?'var(--navy)':'#fff'; b.style.color=on?'#fff':'var(--navy)'; b.setAttribute('aria-pressed', on?'true':'false'); });
     const run = async () => {
       const e=$('bva-end').value; if (!e) { $('bva-out').innerHTML='Pick a period end.'; return; }
       $('bva-out').innerHTML='Loading…';
-      try { const j = await (await fetch(`/api/books/budget-vs-actual?community_id=${CID}&period_end=${e}`)).json();
-        if (j.error) throw new Error(j.error); $('bva-out').innerHTML = bvaHTML(j);
+      try {
+        // Flat is the unchanged request and renderer. Grouped adds ?grouped=1.
+        const j = await (await fetch(`/api/books/budget-vs-actual?community_id=${CID}&period_end=${e}${mode==='grouped'?'&grouped=1':''}`)).json();
+        if (j.error) throw new Error(j.error);
+        $('bva-out').innerHTML = mode==='grouped' ? bvaGroupedHTML(j) : bvaHTML(j);
       } catch (err) { $('bva-out').innerHTML = `<div style="color:var(--err)">Couldn't load: ${esc(err.message)}</div>`; }
     };
+    document.querySelectorAll('.bva-mode button').forEach((b)=>b.addEventListener('click',()=>{ mode=b.dataset.mode; try { localStorage.setItem('bvaMode', mode); } catch (_) {} paintMode(); run(); }));
+    paintMode();
     $('bva-go').addEventListener('click', run); run();
   }
   function bvaHTML(j) {
@@ -524,6 +555,160 @@
       <td class="num">${fmt(r.ytd_budget_cents)}</td><td class="num">${fmt(r.ytd_actual_cents)}</td><td class="num" style="color:${vc(r.ytd_variance_cents, r)};">${fmt(r.ytd_variance_cents)}</td>
       <td class="num">${fmt(r.annual_budget_cents)}</td></tr>`).join('');
     return `<table><thead><tr><th>#</th><th>Account</th><th class="num">MTD Bud</th><th class="num">MTD Act</th><th class="num">MTD Var</th><th class="num">YTD Bud</th><th class="num">YTD Act</th><th class="num">YTD Var</th><th class="num">Annual</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  // Grouped Budget vs Actual (Reporting categories Phase 1). Same columns and the
+  // same variance colours as the flat view; every subtotal comes from the server
+  // tree, which is summed from the flat rows and checked to tie.
+  const _BVA_KEYS = ['mtd_budget_cents','mtd_actual_cents','mtd_variance_cents','ytd_budget_cents','ytd_actual_cents','ytd_variance_cents','annual_budget_cents'];
+  function bvaGroupedHTML(j) {
+    if (!j.has_budget) return bvaHTML(j);
+    const g = j.grouped;
+    if (!g || !g.has_mapping) {
+      return `<div style="padding:10px 12px; background:#fef3c7; border:1px solid #fcd34d; border-radius:8px; color:#92400e; font-size:13px; margin-bottom:10px;">No report categories are set up for this community yet, so there is nothing to group by. Set them up in <strong>Setup › Report Categories</strong>. Showing the flat view.</div>` + bvaHTML(j);
+    }
+    const t = g.all;
+    const multiFund = new Set((j.rows||[]).map((r)=>r.fund_code||'')).size > 1;
+    // variance = budget - actual (unchanged). Revenue: favourable when <= 0; expense: >= 0.
+    const vcol = (v, section) => { if (Math.abs(v)<=1) return 'var(--ink-soft)'; const fav = section==='revenue' ? v<=0 : v>=0; return fav?'#166534':'#991b1b'; };
+    const nums = (o, section) => _BVA_KEYS.map((k)=>`<td class="num"${/variance/.test(k)?` style="color:${vcol(o[k]||0, section)};"`:''}>${fmt(o[k]||0)}</td>`).join('');
+    const ncol = 2 + (multiFund?1:0) + _BVA_KEYS.length;
+    const acct = (r, pad) => `<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft); padding-left:${pad}px;">${esc(r.account_number)}</td><td>${esc(r.account_name)}</td>${multiFund?`<td class="muted" style="font-size:11.5px;">${esc(r.fund_code||'')}</td>`:''}${nums(r, r.account_type)}</tr>`;
+    const hdr = (txt, style) => `<tr><td colspan="${ncol}" style="${style}">${esc(txt)}</td></tr>`;
+    const tot = (txt, o, section, style) => `<tr style="${style}"><td></td><td>${esc(txt)}</td>${multiFund?'<td></td>':''}${nums(o, section)}</tr>`;
+    let body = '';
+    for (const sec of t.sections) {
+      body += hdr(sec.label, 'font-weight:800; text-transform:uppercase; letter-spacing:.04em; font-size:11px; background:#eef2f7; color:var(--navy); padding-top:10px;');
+      for (const c of sec.categories) {
+        body += hdr(c.label, 'font-weight:700; color:var(--navy); padding-top:8px;');
+        body += c.rows.map((r)=>acct(r, 14)).join('');
+        for (const sc of c.subcategories) {
+          body += hdr(sc.label, 'font-style:italic; font-weight:600; padding-left:14px; color:var(--ink-soft);');
+          body += sc.rows.map((r)=>acct(r, 26)).join('');
+          if (sc.rows.length > 1) body += tot('Total ' + sc.label, sc.totals, sec.section, 'font-style:italic; border-top:1px dotted var(--rule);');
+        }
+        body += tot('Total ' + c.label, c.totals, sec.section, 'font-weight:700; border-top:1px solid var(--rule);');
+      }
+      if (sec.unmapped.rows.length) {
+        body += hdr(`⚠ ${sec.unmapped.label}`, 'font-weight:700; background:#fef3c7; color:#92400e; padding-top:8px;');
+        body += sec.unmapped.rows.map((r)=>acct(r, 14)).join('');
+        body += tot('Total unmapped ' + sec.label.toLowerCase(), sec.unmapped.totals, sec.section, 'font-weight:700; background:#fffbeb;');
+      }
+      body += tot('Total ' + sec.label, sec.totals, sec.section, 'font-weight:800; background:#e8eef6; border-top:1px solid var(--navy);');
+    }
+    body += tot('Net (Revenue − Expenses)', t.totals.net, 'revenue', 'font-weight:800; border-top:2px solid var(--navy);');
+    const note = t.unmapped_count ? `<div style="padding:8px 12px; background:#fef3c7; border-radius:6px; color:#92400e; font-size:12.5px; margin-bottom:8px;">${t.unmapped_count} account line${t.unmapped_count===1?' has':'s have'} no report category. They are shown under Unmapped and included in every total.</div>` : '';
+    return note + `<table><thead><tr><th>#</th><th>Account</th>${multiFund?'<th>Fund</th>':''}<th class="num">MTD Bud</th><th class="num">MTD Act</th><th class="num">MTD Var</th><th class="num">YTD Bud</th><th class="num">YTD Act</th><th class="num">YTD Var</th><th class="num">Annual</th></tr></thead><tbody>${body}</tbody></table>`;
+  }
+
+  // ── Report Categories setup (Phase 1) ─────────────────────────────────────
+  // Presentation only: which category each GL account shows under on the
+  // statements. Nothing is mapped automatically; every change is logged.
+  let _rc = null, _rcFilter = 'all', _rcSearch = '';
+  async function renderReportCategories() {
+    $('body').innerHTML = `<div class="card"><h2 class="sec" style="margin-bottom:4px;">Report Categories</h2>
+      <div class="muted" style="font-size:12.5px; margin-bottom:12px;">How each income and expense account is grouped on Budget vs Actual and the Income Statement. Presentation only: GL account numbers, names and amounts never change. Every change is logged.</div>
+      <div id="rc-out" class="muted">Loading…</div></div>`;
+    try {
+      const j = await (await fetch(`/api/books/report-categories?community_id=${CID}`)).json();
+      if (j.error) throw new Error(j.error);
+      await _adminReady;
+      _rc = j; rcPaint();
+    } catch (e) { $('rc-out').innerHTML = `<div style="color:var(--err)">Couldn't load: ${esc(e.message)}</div>`; }
+  }
+  function rcLeaves(section) {
+    const cats = (_rc.categories||[]).filter((c)=>c.is_active && c.section===section);
+    const byId = new Map(cats.map((c)=>[c.id,c]));
+    const hasKids = new Set(cats.filter((c)=>c.parent_category_id).map((c)=>c.parent_category_id));
+    return cats.filter((c)=>!hasKids.has(c.id)).map((c)=>({ id:c.id, label: c.parent_category_id ? `${(byId.get(c.parent_category_id)||{}).name||'?'} › ${c.name}` : c.name }))
+      .sort((a,b)=>a.label.localeCompare(b.label));
+  }
+  function rcPaint() {
+    const canEdit = !!window._isAdmin;   // server enforces admin/owner on every write
+    const accts = (_rc.accounts||[]).filter((a)=>(_rcFilter==='unmapped' ? !a.category_id : true)
+      && (!_rcSearch || (a.account_number+' '+a.account_name+' '+(a.category_name||'')+' '+(a.subcategory_name||'')).toLowerCase().includes(_rcSearch)));
+    const opt = (section, sel) => `<option value="">— Unmapped —</option>` + rcLeaves(section).map((l)=>`<option value="${l.id}"${l.id===sel?' selected':''}>${esc(l.label)}</option>`).join('');
+    const rows = accts.map((a)=>`<tr${a.category_id?'':' style="background:#fffbeb;"'}>
+      <td>${canEdit?`<input type="checkbox" class="rc-pick" value="${a.account_id}" data-section="${a.account_type}">`:''}</td>
+      <td style="font-family:ui-monospace,monospace;">${esc(a.account_number)}</td><td>${esc(a.account_name)}${a.is_active?'':' <span class="muted">(inactive)</span>'}</td>
+      <td>${esc(a.fund_code||'')}</td><td>${a.account_type==='revenue'?'Revenue':'Expense'}</td>
+      <td>${canEdit ? `<select class="rc-cat" data-acct="${a.account_id}" style="padding:4px 6px; border:1px solid var(--rule); border-radius:6px; max-width:320px;">${opt(a.account_type, a.category_id)}</select>`
+        : (a.category_id ? esc((a.category_name||'') + (a.subcategory_name ? ' › ' + a.subcategory_name : '')) : '<span style="color:#92400e; font-weight:600;">Unmapped</span>')}</td>
+      <td>${canEdit ? `<input class="rc-ord" data-acct="${a.account_id}" value="${a.display_order==null?'':a.display_order}" ${a.category_id?'':'disabled'} placeholder="#" style="width:52px; padding:4px; border:1px solid var(--rule); border-radius:6px;">` : esc(a.display_order==null?'':String(a.display_order))}</td>
+      <td class="muted" style="font-size:11px;">${a.updated_by?esc(a.updated_by):''}</td></tr>`).join('');
+    const cats = (_rc.categories||[]);
+    const tops = cats.filter((c)=>!c.parent_category_id).sort((a,b)=>(a.section===b.section?0:(a.section==='revenue'?-1:1)) || a.display_order-b.display_order || a.name.localeCompare(b.name));
+    const catRow = (c, sub) => `<tr${c.is_active?'':' class="muted"'}><td style="padding-left:${sub?22:6}px;">${sub?'› ':''}${esc(c.name)}${c.report_label?` <span class="muted" style="font-size:11px;">(prints as "${esc(c.report_label)}")</span>`:''}${c.is_active?'':' <span class="muted">(inactive)</span>'}</td>
+      <td>${c.section==='revenue'?'Revenue':'Expense'}</td><td class="num">${c.display_order}</td><td>${(_rc.accounts||[]).filter((a)=>a.category_id===c.id).length||''}</td>
+      <td style="white-space:nowrap;">${!canEdit?'':`<button class="rc-edit" data-id="${c.id}" style="font-size:11.5px; padding:2px 8px; border:1px solid var(--rule); border-radius:5px; background:#fff; cursor:pointer;">Edit</button>${sub?'':` <button class="rc-addsub" data-id="${c.id}" style="font-size:11.5px; padding:2px 8px; border:1px solid var(--rule); border-radius:5px; background:#fff; cursor:pointer;">+ Subcategory</button>`}`}</td></tr>`;
+    const catTable = tops.map((c)=>catRow(c,false) + cats.filter((x)=>x.parent_category_id===c.id).sort((a,b)=>a.display_order-b.display_order||a.name.localeCompare(b.name)).map((x)=>catRow(x,true)).join('')).join('');
+    $('rc-out').innerHTML = `
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+        <button class="rc-f" data-f="all" style="padding:6px 12px; border:1px solid var(--rule); border-radius:7px; cursor:pointer; font-weight:600; background:${_rcFilter==='all'?'var(--navy)':'#fff'}; color:${_rcFilter==='all'?'#fff':'var(--navy)'};">All accounts (${(_rc.accounts||[]).length})</button>
+        <button class="rc-f" data-f="unmapped" style="padding:6px 12px; border:1px solid #fcd34d; border-radius:7px; cursor:pointer; font-weight:700; background:${_rcFilter==='unmapped'?'#92400e':'#fef3c7'}; color:${_rcFilter==='unmapped'?'#fff':'#92400e'};">Unmapped (${_rc.unmapped_count})</button>
+        <input id="rc-search" value="${esc(_rcSearch)}" placeholder="Search account or category" style="padding:6px 9px; border:1px solid var(--rule); border-radius:7px; min-width:200px;">
+      </div>
+      ${canEdit ? '' : '<div style="padding:8px 12px; background:#f5f8fc; border-radius:8px; font-size:12.5px; margin-bottom:10px;">View only. Changing report categories is limited to admins.</div>'}
+      <div style="display:${canEdit?'flex':'none'}; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; padding:8px 10px; background:#f5f8fc; border-radius:8px; font-size:12.5px;">
+        <strong>Bulk:</strong> tick accounts, then
+        <select id="rc-bulk-cat" style="padding:5px 7px; border:1px solid var(--rule); border-radius:6px; max-width:320px;"><option value="">choose a category…</option><optgroup label="Revenue">${rcLeaves('revenue').map((l)=>`<option value="${l.id}" data-section="revenue">${esc(l.label)}</option>`).join('')}</optgroup><optgroup label="Expense">${rcLeaves('expense').map((l)=>`<option value="${l.id}" data-section="expense">${esc(l.label)}</option>`).join('')}</optgroup></select>
+        <button id="rc-bulk-go" style="padding:5px 12px; border:none; border-radius:6px; background:var(--navy); color:#fff; font-weight:600; cursor:pointer;">Assign</button>
+        <button id="rc-bulk-unmap" style="padding:5px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer;">Unmap</button>
+        <span id="rc-msg" class="muted"></span>
+      </div>
+      <table><thead><tr><th>${canEdit?'<input type="checkbox" id="rc-all">':''}</th><th>Acct</th><th>Account</th><th>Fund</th><th>Type</th><th>Category › Subcategory</th><th>Order</th><th>Last changed by</th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="muted" style="padding:14px;">Nothing here.</td></tr>'}</tbody></table>
+      <h3 class="sec" style="font-size:14px; margin:18px 0 6px;">Categories</h3>
+      <div style="margin-bottom:6px; display:${canEdit?'block':'none'};"><button id="rc-addcat" style="font-size:12px; padding:5px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer; font-weight:600;">+ Category</button></div>
+      <table><thead><tr><th>Name</th><th>Section</th><th class="num">Order</th><th>Accounts</th><th></th></tr></thead><tbody>${catTable || '<tr><td colspan="5" class="muted" style="padding:14px;">No categories yet.</td></tr>'}</tbody></table>`;
+    const msg = (t, bad) => { const m=$('rc-msg'); if (m) { m.textContent=t; m.style.color = bad?'var(--err)':''; } };
+    const post = async (url, body) => { const r = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json', ...(await chkAuthHeader()) }, body: JSON.stringify({ community_id: CID, ...body }) }); const j = await r.json(); if (j.error) throw new Error(j.error); return j; };
+    document.querySelectorAll('.rc-f').forEach((b)=>b.addEventListener('click',()=>{ _rcFilter=b.dataset.f; rcPaint(); }));
+    $('rc-search').addEventListener('change',(e)=>{ _rcSearch=e.target.value.trim().toLowerCase(); rcPaint(); });
+    if (!canEdit) return;   // read-only: no edit handlers
+    $('rc-all').addEventListener('change',(e)=>document.querySelectorAll('.rc-pick').forEach((c)=>{ c.checked=e.target.checked; }));
+    document.querySelectorAll('.rc-cat').forEach((sel)=>sel.addEventListener('change', async ()=>{
+      try { await post('/api/books/report-map', { account_ids:[sel.dataset.acct], category_id: sel.value || null }); await renderReportCategories(); }
+      catch (e) { alert('Not saved: ' + e.message); await renderReportCategories(); }
+    }));
+    document.querySelectorAll('.rc-ord').forEach((inp)=>inp.addEventListener('change', async ()=>{
+      try { await post('/api/books/report-map/order', { account_id: inp.dataset.acct, display_order: inp.value.trim() }); }
+      catch (e) { alert('Not saved: ' + e.message); }
+    }));
+    const picked = () => [...document.querySelectorAll('.rc-pick:checked')];
+    $('rc-bulk-go').addEventListener('click', async ()=>{
+      const sel = $('rc-bulk-cat'); const o = sel.options[sel.selectedIndex];
+      const p = picked(); if (!p.length) return msg('Tick at least one account.', true); if (!sel.value) return msg('Choose a category.', true);
+      const wrong = p.filter((c)=>c.dataset.section !== o.dataset.section);
+      if (wrong.length) return msg(`${wrong.length} ticked account${wrong.length===1?' is':'s are'} not ${o.dataset.section}; untick ${wrong.length===1?'it':'them'} first.`, true);
+      try { const j = await post('/api/books/report-map', { account_ids: p.map((c)=>c.value), category_id: sel.value }); msg(`${j.changed} changed.`); await renderReportCategories(); }
+      catch (e) { msg('Not saved: ' + e.message, true); }
+    });
+    $('rc-bulk-unmap').addEventListener('click', async ()=>{
+      const p = picked(); if (!p.length) return msg('Tick at least one account.', true);
+      if (!confirm(`Move ${p.length} account${p.length===1?'':'s'} to Unmapped?`)) return;
+      try { const j = await post('/api/books/report-map', { account_ids: p.map((c)=>c.value), category_id: null }); msg(`${j.unmapped} unmapped.`); await renderReportCategories(); }
+      catch (e) { msg('Not saved: ' + e.message, true); }
+    });
+    const editCat = async (c, parent) => {
+      const name = prompt(c ? 'Category name' : (parent ? `New subcategory under ${parent.name}` : 'New category name'), c ? c.name : '');
+      if (name === null || !name.trim()) return;
+      let section = c ? c.section : (parent ? parent.section : null);
+      if (!section) { const s2 = prompt('Revenue or Expense?', 'Expense'); if (s2 === null) return; section = /^rev/i.test(s2.trim()) ? 'revenue' : 'expense'; }
+      const label = prompt('Printed label (optional, e.g. "Less: Reserve Contribution"). Leave blank to print the name.', c && c.report_label ? c.report_label : '');
+      if (label === null) return;
+      const ord = prompt('Display order (lower shows first)', c ? String(c.display_order) : '100');
+      if (ord === null) return;
+      let active = c ? c.is_active : true;
+      if (c) active = confirm(`Keep "${name.trim()}" active?\n\nOK = active. Cancel = deactivate (only allowed when no accounts or subcategories use it).`);
+      try {
+        await post('/api/books/report-categories', { id: c ? c.id : undefined, section, name: name.trim(), report_label: label, display_order: ord, is_active: active, parent_category_id: c ? undefined : (parent ? parent.id : null) });
+        await renderReportCategories();
+      } catch (e) { alert('Not saved: ' + e.message); }
+    };
+    const byId = new Map(cats.map((c)=>[c.id,c]));
+    $('rc-addcat').addEventListener('click', ()=>editCat(null, null));
+    document.querySelectorAll('.rc-edit').forEach((b)=>b.addEventListener('click', ()=>editCat(byId.get(b.dataset.id), null)));
+    document.querySelectorAll('.rc-addsub').forEach((b)=>b.addEventListener('click', ()=>editCat(null, byId.get(b.dataset.id))));
   }
 
   async function renderPeriods() {
