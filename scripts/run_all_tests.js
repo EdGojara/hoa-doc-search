@@ -81,6 +81,7 @@ const CHECKS = [
   'tests/test_ownership_transfer_single_path.js',
   'tests/test_home_sales_closing_checks.js',
   'tests/test_graph_send_errors.js',
+  'tests/test_budget_phase0.js',
   'tests/test_reply_recipient.js',
   'tests/test_reply_learning.js',
   'tests/test_acc_application_matching.js',
