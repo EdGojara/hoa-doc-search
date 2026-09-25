@@ -144,5 +144,20 @@ t('assessment authority: verified synthetic 10% cap → shortfall at cap and mem
   assert.strictEqual(r.member_approval.basis, 'votes_cast');
 });
 
+t('management action: no configured policy → neutral review, never an invented board threshold', () => {
+  const line = { ytd_budget: 2100100, ytd_actual: 3120200, annual_budget: 2800000, annual_forecast: 3820100, method: 'remaining_budget', basis: 'calculated', confidence: 'medium', explanation: '' };
+  const none = E.managementFacts({ account: '5105', account_type: 'expense', line });
+  assert.strictEqual(none.recommended_action, 'review variance');
+  assert.strictEqual(none.material, null);
+  assert.strictEqual(none.variance_policy, null);
+  const zero = E.managementFacts({ account: 'x', account_type: 'expense', line: { ...line, ytd_actual: 2100100, annual_forecast: 2800000 } });
+  assert.strictEqual(zero.recommended_action, 'no action');
+  const policy = { materiality_cents: 50000, board_decision_overrun_pct: 10, source: 'SYNTHETIC board policy' };
+  const cfg = E.managementFacts({ account: '5105', account_type: 'expense', line, policy });
+  assert.strictEqual(cfg.recommended_action, 'board decision required (forecast overrun beyond configured policy)');
+  assert.strictEqual(cfg.material, true);
+  assert.strictEqual(cfg.variance_policy.source, 'SYNTHETIC board policy');
+});
+
 console.log(failed ? `\n${failed} failure(s)` : '\nall passed');
 process.exitCode = failed ? 1 : 0;
