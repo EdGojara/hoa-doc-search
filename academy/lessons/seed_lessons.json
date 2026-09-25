@@ -1,0 +1,35 @@
+[
+  {
+    "lesson_id": "LSN-JDG-001", "version": 1, "agent": "amanda", "domain": "judgment",
+    "trigger": "Insurance, a contract, a license, or any coverage is past its end date and no renewal evidence has been found.",
+    "principle": "Unconfirmed is not the same as lapsed. State exactly what is known, treat the rest as unknown, and escalate the verification the same day.",
+    "bad_pattern": "Saying 'coverage lapsed' or 'we are covered' when neither has been proven.",
+    "preferred_pattern": "'Liability is confirmed. Property ended 9/15 and I have not found a renewal binder yet, so it is unconfirmed. I am calling the broker today and will update the board.'",
+    "examples": ["2026-09-25 ICAT property renewal: expired 9/15, no binder, invoice, or payment found; correctly reported as unconfirmed and escalated."],
+    "source": "human_correction", "originating_case": "AA-TEC-004", "human_correction": "Ed 2026-09-25: report it as not confirmed and act today; never estimate a premium.",
+    "confidence": "high", "status": "draft", "regression_case_ids": ["AA-TEC-004", "AA-REL-006"],
+    "reviewed_by": null, "reviewed_at": null, "approved_by": null, "approved_at": null, "history": []
+  },
+  {
+    "lesson_id": "LSN-EXP-001", "version": 1, "agent": "amanda", "domain": "expertise",
+    "trigger": "Explaining or forecasting an expense account that has a recognition schedule (prepaid insurance, deferred revenue).",
+    "principle": "One recognition schedule is one component of the account, not the whole account.",
+    "bad_pattern": "Presenting the Harned $1,020.17 per month as the association's full insurance cost.",
+    "preferred_pattern": "Name the schedule as one component and list what else hits the account (property policy, other invoices), marking unknown amounts as unknown.",
+    "examples": ["5600 Insurance = Harned liability schedule + ICAT property (unconfirmed, premium unknown)."],
+    "source": "human_correction", "originating_case": "AA-TEC-002", "human_correction": "Ed 2026-09-25: recognition schedules are forecast components, not the whole account.",
+    "confidence": "high", "status": "draft", "regression_case_ids": ["AA-TEC-002", "AA-REL-008", "AA-TEC-012"],
+    "reviewed_by": null, "reviewed_at": null, "approved_by": null, "approved_at": null, "history": []
+  },
+  {
+    "lesson_id": "LSN-EXE-001", "version": 1, "agent": "amanda", "domain": "execution",
+    "trigger": "An invoice looks unpaid, but a receipt, confirmation, or bank record says it was paid.",
+    "principle": "Stop the payment first, then record what actually happened through the normal process; never pay on the system status alone.",
+    "bad_pattern": "Cutting a check because AP shows the invoice open.",
+    "preferred_pattern": "'Do not pay it. It was paid 8/31 by ACH. Record the payment and the $12 fee through AP and match it to the bank.'",
+    "examples": ["Harned $12,242 invoice showed awaiting approval; ACH receipt proved $12,254 paid 8/31."],
+    "source": "incident", "originating_case": "AA-TEC-005", "human_correction": "Ed 2026-09-25: record the payment correctly and prevent a duplicate.",
+    "confidence": "high", "status": "draft", "regression_case_ids": ["AA-TEC-005"],
+    "reviewed_by": null, "reviewed_at": null, "approved_by": null, "approved_at": null, "history": []
+  }
+]

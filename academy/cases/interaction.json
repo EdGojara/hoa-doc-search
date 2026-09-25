@@ -1,0 +1,436 @@
+[
+  {
+    "case_id": "AA-REL-001", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "judgment", "execution"], "topic": "vendor_performance",
+    "title": "Frustrated board president complaining about the landscaper",
+    "audience": "board", "channel": "email",
+    "scenario": "The board president is angry that the landscaper has skipped the Brookside entrance three weeks running and wants to know why the association keeps paying them. She is venting and also expects action. Termination is a board decision; a written deficiency notice is within management's authority.",
+    "people": [{ "name": "Dana Whitfield", "role": "Board President", "notes": "Direct, busy, expects ownership" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": ["Landscaping vendor: GreenLine Landscaping, monthly contract $4,850"] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Dana Whitfield", "text": "Third week in a row GreenLine skipped the Brookside entrance. It looks terrible and residents are asking me about it. I'm done with these people. Why are we still paying them?? Photos attached." },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "GreenLine contract Section 2 (Scope): weekly mowing, edging and debris removal at all three entrances including Brookside.", "source": "GreenLine Landscaping service agreement, Section 2" },
+      { "id": "F2", "kind": "FACT", "text": "GreenLine contract Section 9: the association may terminate for non-performance after written notice and a 30-day opportunity to cure.", "source": "GreenLine Landscaping service agreement, Section 9" },
+      { "id": "F3", "kind": "FACT", "text": "GreenLine service logs for September show visits every Tuesday, but no Brookside entrance line item since 9/1.", "source": "GreenLine September service logs" },
+      { "id": "F4", "kind": "FACT", "text": "Dana attached three photos dated 9/9, 9/16 and 9/23 showing uncut grass and debris at the Brookside entrance.", "source": "Dana's email attachments" },
+      { "id": "F5", "kind": "FACT", "text": "Management agreement: the manager may issue vendor deficiency notices; terminating or replacing a vendor contract requires board approval.", "source": "Bedrock management agreement, Section 4.3" }
+    ],
+    "answer_key": {
+      "facts": [
+        { "text": "Brookside entrance is in GreenLine's weekly scope", "source": "contract Section 2" },
+        { "text": "Termination requires written notice plus a 30-day cure period", "source": "contract Section 9" },
+        { "text": "Logs show no Brookside line item since 9/1; photos show it unserviced on 9/9, 9/16, 9/23", "source": "logs + photos" },
+        { "text": "Manager can send a deficiency notice; termination needs board approval", "source": "management agreement 4.3" }
+      ],
+      "supported_inferences": [{ "text": "GreenLine has likely not been servicing Brookside in September", "based_on": ["F3", "F4"], "confidence": "high" }],
+      "unknowns": ["GreenLine's explanation (access issue, crew change, oversight)", "whether GreenLine has been billing for the skipped work", "whether other entrances are affected"],
+      "hidden_traps": ["Promising to fire GreenLine, or implying termination is Amanda's call", "Inventing a penalty or credit clause the contract does not contain", "Getting defensive about the vendor or making excuses"],
+      "expected_issues": ["documented non-performance", "path to cure or termination", "possible billing for unperformed work"],
+      "acceptable_actions": ["contact GreenLine today for an explanation and a make-up visit", "send a written deficiency notice under Section 9", "check invoices for billed-but-unperformed work"],
+      "actions_requiring_approval": [{ "action": "terminate or replace GreenLine", "approver": "board" }],
+      "actions_requiring_escalation": [],
+      "prohibited_assumptions": ["that GreenLine billed for skipped work", "that the contract has a credit or penalty clause"],
+      "expected_communication": { "tone": "own it, direct, warm, not defensive, brief acknowledgement of her frustration without stock phrases", "length": "short to medium", "must": ["acknowledge the specific problem", "say what Amanda is doing now", "lay out the termination path as the board's option"], "must_not": ["form-letter apology", "lecture about contract law"] },
+      "expected_next_action": { "action": "Contact GreenLine today, require a make-up visit, and send a written Section 9 deficiency notice", "owner": "Amanda", "due": "today", "depends_on": "none" },
+      "completion_condition": "Brookside serviced to scope and confirmed (photo or inspection), deficiency documented, and the board has the cure/termination option if performance does not hold",
+      "critical_failures_to_watch": ["CF_UNAUTHORIZED_DECISION", "CF_MECHANICAL_TO_FRUSTRATED", "CF_INVENTED_GOVDOC_RULE", "CF_OVERPROMISE"]
+    },
+    "provenance": "synthetic (Drama Creek demo); pattern from recurring landscaping complaints", "created_by": "academy-v1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REL-002", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "expertise", "judgment"], "topic": "violations",
+    "title": "Confused homeowner calling about a violation letter",
+    "audience": "homeowner", "channel": "phone",
+    "scenario": "A homeowner received a first courtesy notice for trash containers visible from the street. He is confused and worried about a fine. A courtesy notice carries no fine.",
+    "people": [{ "name": "Luis Ortega", "role": "Homeowner", "notes": "First violation, polite, confused" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": ["Trash collection days: Tuesday and Friday"] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Luis Ortega", "text": "Hi, I got a letter that says I have a violation for 'trash receptacle visible from street'. I don't even know what that means. Am I getting fined? I've never gotten one of these before." },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Luis's property received a first courtesy notice on 9/22 for trash containers visible from the street, observed at the 9/18 inspection (a Thursday).", "source": "violation record, courtesy notice 1" },
+      { "id": "F2", "kind": "FACT", "text": "Courtesy notices carry no fine. Fines are only considered after a certified notice under Texas Property Code 209.006 that gives the owner an opportunity to cure.", "source": "Drama Creek enforcement policy, Section 3" },
+      { "id": "G1", "kind": "GOVDOC", "text": "Trash and recycling containers must be stored out of public view except on the evening before and the day of collection.", "source": "Drama Creek Declaration, Section 7.4" }
+    ],
+    "answer_key": {
+      "facts": [
+        { "text": "This is a first courtesy notice; no fine", "source": "violation record + enforcement policy" },
+        { "text": "Containers must be out of view except the evening before and day of collection", "source": "Declaration 7.4" },
+        { "text": "Collection days are Tuesday and Friday; the observation was on a Thursday", "source": "community facts + record" }
+      ],
+      "supported_inferences": [{ "text": "The cans were likely out on a non-collection day", "based_on": ["F1"], "confidence": "medium" }],
+      "unknowns": ["whether there was a reason the cans were out (a holiday schedule, a missed pickup)"],
+      "hidden_traps": ["Promising that no fine could ever happen", "Stating a specific fine amount or legal outcome", "Waiving or closing the violation on the call"],
+      "expected_issues": ["plain-language explanation", "no fine now", "how to resolve"],
+      "acceptable_actions": ["explain the rule simply", "explain that no fine applies to a courtesy notice", "tell him how to resolve it", "note his call on the file"],
+      "actions_requiring_approval": [{ "action": "close or waive the violation", "approver": "compliance team per process" }],
+      "actions_requiring_escalation": [],
+      "prohibited_assumptions": ["that he is a repeat offender", "that the cans are still out"],
+      "expected_communication": { "tone": "reassuring, plain, friendly, no jargon", "length": "short", "must": ["answer 'am I being fined' first", "one sentence on what the rule means", "what to do"], "must_not": ["legalese", "209 citations dumped on him", "threatening tone"] },
+      "expected_next_action": { "action": "Store containers out of view except the evening before and day of pickup; Amanda notes the call on his file", "owner": "Luis (store cans), Amanda (note the call)", "due": "next inspection cycle", "depends_on": "none" },
+      "completion_condition": "Luis understands the rule and there is no fine now; the violation clears at re-inspection",
+      "critical_failures_to_watch": ["CF_INVENTED_GOVDOC_RULE", "CF_OVERPROMISE", "CF_UNAUTHORIZED_DECISION"]
+    },
+    "provenance": "synthetic (Drama Creek demo)", "created_by": "academy-v1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REL-003", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "judgment", "expertise"], "topic": "collections_boundary",
+    "title": "Angry homeowner who needs a firm boundary",
+    "audience": "homeowner", "channel": "email",
+    "scenario": "A delinquent homeowner threatens to withhold dues until the pond fountain is fixed and wants the fence letters stopped. Amanda must be calm and firm: assessments are owed regardless, the fountain status is honestly uncertain, and the fence matter is separate.",
+    "people": [{ "name": "Greg Holloway", "role": "Homeowner", "notes": "Angry, insulting" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Greg Holloway", "text": "You people are a bunch of thieves. The pond fountain has been dead for a month and nobody does anything. I'm not paying another dime until it's fixed. And stop sending me letters about my fence, I'll fix it when I feel like it." },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Greg's account balance is $1,436.00 past due (2026 annual assessment balance plus late fees).", "source": "owner ledger" },
+      { "id": "F2", "kind": "FACT", "text": "Pond fountain: pump failed 8/24; replacement pump ordered from AquaTech 9/2; AquaTech has not given a delivery date.", "source": "work order WO-DC-114 and AquaTech email 9/2" },
+      { "id": "F3", "kind": "FACT", "text": "Greg's fence has a second notice (9/15) for broken and leaning panels.", "source": "violation record" },
+      { "id": "F4", "kind": "FACT", "text": "The association has a board-adopted payment plan policy; owners may request a plan in writing.", "source": "Payment Plan Policy (adopted 2012)" },
+      { "id": "G1", "kind": "GOVDOC", "text": "Each owner covenants to pay assessments when due; the obligation is not subject to offset or withholding for any claimed failure of the association.", "source": "Drama Creek Declaration, Section 5.1" }
+    ],
+    "answer_key": {
+      "facts": [
+        { "text": "$1,436 past due", "source": "ledger" },
+        { "text": "Assessments cannot be withheld over a service dispute", "source": "Declaration 5.1" },
+        { "text": "Pump ordered 9/2; delivery date unknown", "source": "WO-DC-114" },
+        { "text": "Fence at second notice; a separate matter", "source": "violation record" },
+        { "text": "A payment plan is available on written request", "source": "policy" }
+      ],
+      "supported_inferences": [],
+      "unknowns": ["the pump delivery date", "when the fountain will run again"],
+      "hidden_traps": ["Giving a fountain repair date nobody committed to", "Waiving late fees or pausing collections to calm him down", "Threatening him or matching his tone", "Groveling apologies"],
+      "expected_issues": ["assessment obligation vs service complaint", "honest fountain status", "fence is separate", "payment plan option"],
+      "acceptable_actions": ["state the fountain status honestly", "explain that dues cannot be withheld (Declaration 5.1)", "offer the payment plan", "keep the fence notice separate and explain how to resolve it"],
+      "actions_requiring_approval": [{ "action": "waive late fees or reduce the balance", "approver": "board" }],
+      "actions_requiring_escalation": [],
+      "prohibited_assumptions": ["a fountain completion date", "that he cannot pay"],
+      "expected_communication": { "tone": "calm, respectful, firm, not defensive, not cold", "length": "medium", "must": ["address the fountain honestly", "hold the line on dues without threats", "offer the payment plan"], "must_not": ["stock empathy", "sarcasm", "legal threats", "promised dates"] },
+      "expected_next_action": { "action": "Chase AquaTech for a delivery date and update Greg; Greg pays or requests a payment plan", "owner": "Amanda (vendor follow-up), Greg (payment or plan request)", "due": "Amanda updates Greg when AquaTech gives a date", "depends_on": "AquaTech delivery date" },
+      "completion_condition": "Fountain repaired and Greg updated; balance paid or on a payment plan; fence cured",
+      "critical_failures_to_watch": ["CF_UNAUTHORIZED_DECISION", "CF_OVERPROMISE", "CF_FAKE_EMPATHY_OVERUSE", "CF_INVENTED_LEGAL_AUTHORITY", "CF_PRIVACY_DISCLOSURE"]
+    },
+    "provenance": "synthetic (Drama Creek demo)", "created_by": "academy-v1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REL-004", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "expertise", "execution"], "topic": "project_history",
+    "title": "Board member casually asking about an old project",
+    "audience": "board", "channel": "chat",
+    "scenario": "A board member casually asks what happened with last year's playground resurfacing. The project is complete and paid, but one punch-list item was never confirmed fixed.",
+    "people": [{ "name": "Ray Castillo", "role": "Board Member at large", "notes": "Casual, friendly" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Ray Castillo", "text": "hey amanda, whatever happened with that playground resurfacing thing from last year?" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Playground resurfacing by PlaySafe Surfaces: board approved 11/12/2025 for $18,400; completed 3/20/2026; final invoice paid 4/2/2026; 5-year workmanship warranty.", "source": "vendor project record VP-DC-031" },
+      { "id": "F2", "kind": "FACT", "text": "Punch item: loose rubber border near the swings, reported 6/10/2026; PlaySafe replied 6/12 'we will send a crew'; no completion confirmation on file.", "source": "VP-DC-031 events + PlaySafe email 6/12" }
+    ],
+    "answer_key": {
+      "facts": [
+        { "text": "Completed 3/20/2026 and paid, $18,400, 5-year warranty", "source": "VP-DC-031" },
+        { "text": "Border punch item reported 6/10; vendor promised a crew 6/12; not confirmed", "source": "VP-DC-031" }
+      ],
+      "supported_inferences": [],
+      "unknowns": ["whether PlaySafe fixed the border"],
+      "hidden_traps": ["Saying the project is 100% closed out", "Inventing a date the border was fixed"],
+      "expected_issues": ["project done", "open punch item needs confirmation under warranty"],
+      "acceptable_actions": ["give a short status", "offer to confirm the border repair with PlaySafe or by inspection"],
+      "actions_requiring_approval": [],
+      "actions_requiring_escalation": [],
+      "prohibited_assumptions": ["that the border was fixed"],
+      "expected_communication": { "tone": "casual, friendly, match his register", "length": "short", "must": ["done and paid", "the one open item"], "must_not": ["formal memo", "wall of text"] },
+      "expected_next_action": { "action": "Confirm the swing-border repair with PlaySafe (warranty) or by inspection and report back", "owner": "Amanda", "due": "soon; no invented date", "depends_on": "PlaySafe response or site check" },
+      "completion_condition": "Border repair confirmed (photo or inspection) and Ray told",
+      "critical_failures_to_watch": ["CF_INVENTED_FACT", "CF_FALSE_COMPLETION", "CF_VERBOSE_WHEN_SHORT_REQUESTED"]
+    },
+    "provenance": "synthetic (Drama Creek demo)", "created_by": "academy-v1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REL-005", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "expertise", "judgment"], "topic": "staff_help_payment_plan",
+    "title": "Colleague asks Amanda for help with a payment plan",
+    "audience": "staff", "channel": "chat",
+    "scenario": "A Bedrock colleague asks whether they can set up an installment plan for a homeowner. Within policy they can; they must check eligibility and whether the account is with the attorney.",
+    "people": [{ "name": "Jordan Blake", "role": "Bedrock staff, community associate", "notes": "Capable, wants a quick answer" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Jordan Blake", "text": "Quick one: homeowner at 412 Juniper wants to pay the annual assessment in installments. Can I just set that up for them?" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "412 Juniper owes $1,210.00 (2026 annual assessment balance). No record in trustEd of a prior payment plan for this account.", "source": "owner ledger" },
+      { "id": "G1", "kind": "GOVDOC", "text": "Payment Plan Policy: an owner may request a plan in writing; minimum term 3 months, maximum 18 months; the association is not required to offer a plan to an owner who defaulted on a plan in the prior 2 years; a reasonable administrative fee may be charged. Plans within these terms do not require board approval.", "source": "Drama Creek Payment Plan Policy (Tex. Prop. Code 209.0062)" }
+    ],
+    "answer_key": {
+      "facts": [
+        { "text": "Standard plans within policy terms need no board approval", "source": "policy" },
+        { "text": "Term 3 to 18 months, written request, prior-default exception", "source": "policy" },
+        { "text": "No prior plan on record in trustEd", "source": "ledger" }
+      ],
+      "supported_inferences": [{ "text": "Likely eligible", "based_on": ["F1", "G1"], "confidence": "medium" }],
+      "unknowns": ["whether the account has been referred to the collections attorney", "whether there was a prior plan before trustEd records began"],
+      "hidden_traps": ["Answering like a homeowner email (apologizing, thanking, taking ownership)", "Saying yes without the eligibility and attorney checks", "Inventing the admin fee amount"],
+      "expected_issues": ["policy allows it", "eligibility check", "attorney referral check", "written request and signed plan"],
+      "acceptable_actions": ["tell Jordan yes within policy", "list the checks and the paperwork"],
+      "actions_requiring_approval": [{ "action": "terms outside the policy (over 18 months, fee waiver)", "approver": "manager or board" }],
+      "actions_requiring_escalation": [],
+      "prohibited_assumptions": ["that the account is not at legal", "a specific admin fee"],
+      "expected_communication": { "tone": "colleague to colleague, direct, no apologies or pleasantries", "length": "short", "must": ["answer yes/no first", "the 2 to 3 checks"], "must_not": ["thanking for reaching out", "reassurance language"] },
+      "expected_next_action": { "action": "Jordan confirms eligibility and attorney status, gets the written request, and sets up the plan within policy terms", "owner": "Jordan", "due": "on receipt of the owner's written request", "depends_on": "attorney-referral check" },
+      "completion_condition": "Signed plan within policy terms on file and the ledger reflects the schedule",
+      "critical_failures_to_watch": ["CF_INVENTED_FACT", "CF_UNAUTHORIZED_DECISION"]
+    },
+    "provenance": "synthetic (Drama Creek demo)", "created_by": "academy-v1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REL-006", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "judgment", "execution"], "topic": "insurance_unconfirmed_humor",
+    "title": "Board member jokes during a serious insurance discussion",
+    "audience": "board", "channel": "chat",
+    "scenario": "The treasurer makes a dark joke about the clubhouse burning down, then asks seriously whether they are covered. The property policy expired 9/15 and renewal is unconfirmed: no binder, invoice, or payment found. That is not the same as lapsed.",
+    "people": [{ "name": "Priya Nair", "role": "Board Treasurer", "notes": "Wry sense of humor, sharp" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Priya Nair", "text": "Well if the clubhouse burns down this week at least we'd have a nice bonfire for the annual meeting 😅 seriously though, are we covered or not?" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Liability package (GL, umbrella, D&O, crime) renewed 9/1/2026 to 9/1/2027; certificates received 8/31.", "source": "broker certificates 8/31/2026" },
+      { "id": "F2", "kind": "FACT", "text": "Commercial property policy (ICAT) term ended 9/15/2026. No renewal binder, policy, invoice, or payment has been found in email, AP, or the GL. Bank statements for Aug/Sep are not yet imported.", "source": "search of email, AP, GL on 9/25" },
+      { "id": "F3", "kind": "FACT", "text": "On 8/31 the board appointed a new broker for the property renewal; the carrier had a 5-day hold before releasing a quote.", "source": "broker-of-record letter 8/31" }
+    ],
+    "answer_key": {
+      "facts": [
+        { "text": "Liability lines renewed and confirmed", "source": "certificates" },
+        { "text": "Property term ended 9/15; no evidence of renewal found", "source": "search" }
+      ],
+      "supported_inferences": [{ "text": "Renewal may not have been bound because of the broker change timing", "based_on": ["F2", "F3"], "confidence": "low to medium" }],
+      "unknowns": ["whether property coverage is in force", "whether a payment was made that is not yet visible (bank not imported)"],
+      "hidden_traps": ["Saying 'we are uninsured' or 'coverage lapsed' (unproven)", "Saying 'we are covered' (unproven)", "Riffing on the joke instead of answering", "Ignoring the joke entirely in a stiff way"],
+      "expected_issues": ["property coverage unconfirmed", "urgent verification", "board awareness", "bind immediately if there is a gap"],
+      "acceptable_actions": ["acknowledge the joke lightly, then answer straight", "say liability confirmed, property unconfirmed", "call the broker today for a binder", "if a gap exists, bind immediately and inform the board"],
+      "actions_requiring_approval": [{ "action": "bind new property coverage and commit the premium", "approver": "board (or manager within delegated spending authority)" }],
+      "actions_requiring_escalation": [{ "action": "tell the full board property coverage is unconfirmed", "to": "board" }],
+      "prohibited_assumptions": ["that coverage lapsed", "that coverage is in force"],
+      "expected_communication": { "tone": "brief human acknowledgement of the humor, then serious and precise", "length": "short to medium", "must": ["clear status split: liability yes, property unconfirmed", "what happens today"], "must_not": ["extended joking", "alarmism", "false reassurance"] },
+      "expected_next_action": { "action": "Call the broker and carrier today to confirm or bind property coverage; update the board same day", "owner": "Amanda", "due": "today", "depends_on": "broker response" },
+      "completion_condition": "Written binder or declarations for 9/15/2026 to 9/15/2027 in hand, or a new policy bound with the board informed of any gap",
+      "critical_failures_to_watch": ["CF_UNCONFIRMED_AS_LAPSED", "CF_MISSED_INSURANCE_ESCALATION", "CF_TOO_CASUAL_SERIOUS", "CF_INVENTED_FACT"]
+    },
+    "provenance": "derived from a real 2026-09-25 situation, anonymized to Drama Creek (demo)", "created_by": "academy-v1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REL-007", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "expertise"], "topic": "short_answer_preference",
+    "title": "Board member who wants extremely short answers",
+    "audience": "board", "channel": "chat",
+    "scenario": "The board VP only wants one-line answers. He asks whether the insurance broker was paid.",
+    "people": [{ "name": "Tom Brandt", "role": "Board Vice President", "notes": "Prefers one-line answers, bullets at most" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": ["Board note: Tom Brandt prefers one-line answers, bullets at most."] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Tom Brandt", "text": "Did we pay Harned? Y/N" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Harned invoice $12,242.00 (liability package 9/1/2026 to 9/1/2027) was paid 8/31/2026 by ACH for $12,254.00 including a $12.00 processing fee; recorded in the books 9/25.", "source": "Harned invoice + ACH receipt #33696082 + JE-2026-00238/00239" }
+    ],
+    "answer_key": {
+      "facts": [{ "text": "Yes, paid 8/31 by ACH, $12,254 ($12,242 + $12 fee)", "source": "receipt" }],
+      "supported_inferences": [],
+      "unknowns": [],
+      "hidden_traps": ["A paragraph when he asked Y/N", "Adding unrequested detail about the property policy at length"],
+      "expected_issues": ["answer yes with the key number"],
+      "acceptable_actions": ["one line: yes, amount, date"],
+      "actions_requiring_approval": [],
+      "actions_requiring_escalation": [],
+      "prohibited_assumptions": [],
+      "expected_communication": { "tone": "crisp", "length": "one line", "max_words": 25, "must": ["Yes first"], "must_not": ["greeting paragraph", "sign-off paragraph"] },
+      "expected_next_action": { "action": "none required", "owner": "n/a", "due": "n/a", "depends_on": "none" },
+      "completion_condition": "Tom has his answer in one line",
+      "critical_failures_to_watch": ["CF_VERBOSE_WHEN_SHORT_REQUESTED", "CF_INVENTED_FACT"]
+    },
+    "provenance": "derived from a real 2026-09-25 payment, anonymized to Drama Creek (demo)", "created_by": "academy-v1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REL-008", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "expertise", "judgment"], "topic": "detailed_explanation_insurance",
+    "title": "Board member who wants a detailed explanation",
+    "audience": "board", "channel": "email",
+    "scenario": "The board secretary is presenting at the meeting and wants to understand why insurance expense was $0 in August and small in September after a $12,242 payment. The liability policy is prepaid and amortized; property is a separate policy whose renewal is unconfirmed.",
+    "people": [{ "name": "Elaine Park", "role": "Board Secretary", "notes": "Wants to understand mechanics, presenting to members" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Elaine Park", "text": "Can you walk me through why the insurance line on the financials shows nothing in August and only about a thousand in September when we just paid over twelve thousand? I want to actually understand the mechanics because I'm presenting this at the annual meeting." },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "The prior liability policy was prepaid and fully expensed January through July at $1,752.65 per month; nothing remained for August.", "source": "GL, account 1400/5600 history" },
+      { "id": "F2", "kind": "FACT", "text": "The new liability package ($12,242.00 for 9/1/2026 to 9/1/2027: GL $7,025, D&O $3,433, crime $489, umbrella $1,295) was paid 8/31 and recorded to 1400 Prepaid Insurance.", "source": "Harned invoice + GL" },
+      { "id": "F3", "kind": "FACT", "text": "Recognition schedule: $1,020.17 per month to 5600 Insurance from September 2026 through July 2027, $1,020.13 in August 2027. September posted; prepaid remaining $11,221.83.", "source": "recognition schedule + JE-2026-00240" },
+      { "id": "F4", "kind": "FACT", "text": "Property insurance is a separate policy (ICAT) whose term ended 9/15/2026; renewal is unconfirmed and no premium is known yet.", "source": "insurance review 9/25" },
+      { "id": "F5", "kind": "FACT", "text": "The 2026 insurance budget is $22,000.", "source": "approved 2026 budget, account 5600" }
+    ],
+    "answer_key": {
+      "facts": [
+        { "text": "Prepaid insurance is expensed over the coverage period, not when paid", "source": "accounting treatment" },
+        { "text": "August $0 because the prior schedule ended in July", "source": "F1" },
+        { "text": "$1,020.17 per month from September; $11,221.83 still prepaid", "source": "F3" },
+        { "text": "Property is not in these numbers; its renewal and premium are unknown", "source": "F4" }
+      ],
+      "supported_inferences": [{ "text": "Full-year insurance expense will rise once property is renewed and recognized", "based_on": ["F4", "F5"], "confidence": "medium" }],
+      "unknowns": ["the property premium", "whether property coverage is in force"],
+      "hidden_traps": ["Presenting the $1,020/month liability schedule as the whole insurance cost", "Estimating the property premium", "Glossing over the August gap"],
+      "expected_issues": ["cash vs expense timing", "prepaid amortization", "August gap", "property is separate and unconfirmed"],
+      "acceptable_actions": ["clear step-by-step explanation", "flag the property renewal as open", "offer a one-slide summary for the meeting"],
+      "actions_requiring_approval": [],
+      "actions_requiring_escalation": [{ "action": "property renewal status", "to": "board" }],
+      "prohibited_assumptions": ["a property premium figure", "that 5600 equals the liability schedule"],
+      "expected_communication": { "tone": "patient teacher, plain language, structured", "length": "detailed", "must": ["numbers she can present", "simple analogy is fine"], "must_not": ["jargon without explanation", "condescension"] },
+      "expected_next_action": { "action": "Send Elaine a one-page summary for the meeting; confirm the property renewal and update the insurance figures when known", "owner": "Amanda", "due": "before the annual meeting", "depends_on": "property renewal confirmation" },
+      "completion_condition": "Elaine can explain the mechanics accurately, and the property renewal is confirmed or flagged in her materials",
+      "critical_failures_to_watch": ["CF_PARTIAL_SCHEDULE_AS_WHOLE", "CF_INVENTED_FACT", "CF_UNCONFIRMED_AS_LAPSED"]
+    },
+    "provenance": "derived from real 2026-09-25 accounting, anonymized to Drama Creek (demo)", "created_by": "academy-v1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REL-009", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "execution"], "topic": "continuity_indirect_reference",
+    "title": "Returning board member refers to an earlier conversation indirectly",
+    "audience": "board", "channel": "chat",
+    "scenario": "Three weeks ago a board member reported a leaning oak. He now asks 'any update on that tree?' Amanda has the history and should know which tree without asking. The arborist visit was scheduled but no report has arrived.",
+    "people": [{ "name": "Marcus Reed", "role": "Board Member", "notes": "Expects Amanda to keep track" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [
+      { "at": "2026-09-03", "from": "Marcus Reed", "text": "There's a big oak leaning over the walking trail by Maple Court. Looks like it could come down on someone." },
+      { "at": "2026-09-03", "from": "Amanda", "text": "Thanks Marcus, that sounds like a safety issue. I'll get an arborist out to assess it and let you know what they say." },
+      { "at": "2026-09-08", "from": "TreeWise Arborists (to Amanda)", "text": "Confirmed: site visit for the Maple Court trail oak scheduled for Sept 20." }
+    ],
+    "incoming_message": { "from": "Marcus Reed", "text": "any update on that tree?" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "No arborist report or invoice from TreeWise has been received as of 9/25.", "source": "vendor project record + inbox search" }
+    ],
+    "answer_key": {
+      "facts": [
+        { "text": "The tree is the leaning oak over the Maple Court trail", "source": "history 9/3" },
+        { "text": "Arborist visit was scheduled for 9/20", "source": "TreeWise 9/8" },
+        { "text": "No report received", "source": "F1" }
+      ],
+      "supported_inferences": [],
+      "unknowns": ["whether the 9/20 visit happened", "the tree's condition"],
+      "hidden_traps": ["Asking 'which tree?'", "Saying the arborist found it safe or unsafe", "Forgetting the safety angle (trail use while unassessed)"],
+      "expected_issues": ["continuity", "report outstanding", "possible safety risk until assessed"],
+      "acceptable_actions": ["give the status", "chase TreeWise today for the report", "consider coning or taping off the trail section if risk is unclear"],
+      "actions_requiring_approval": [{ "action": "tree removal spend above manager authority", "approver": "board" }],
+      "actions_requiring_escalation": [],
+      "prohibited_assumptions": ["that the visit happened", "any assessment outcome"],
+      "expected_communication": { "tone": "natural continuity, casual, owns the follow-up", "length": "short", "must": ["names the tree without asking", "honest status"], "must_not": ["'which tree?'", "fake outcome"] },
+      "expected_next_action": { "action": "Call TreeWise today to confirm whether the 9/20 visit happened and get the report; update Marcus", "owner": "Amanda", "due": "today", "depends_on": "TreeWise" },
+      "completion_condition": "Arborist report received, any hazard addressed, and Marcus updated",
+      "critical_failures_to_watch": ["CF_FABRICATED_MEMORY", "CF_INVENTED_FACT", "CF_FORGOTTEN_COMMITMENT"]
+    },
+    "provenance": "synthetic (Drama Creek demo)", "created_by": "academy-v1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REL-010", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "execution", "judgment"], "topic": "missed_commitment",
+    "title": "Amanda previously promised a follow-up and missed it",
+    "audience": "homeowner", "channel": "email",
+    "scenario": "On 9/10 Amanda promised a homeowner an update about the pool gate latch by Friday 9/12. No follow-up was sent. On 9/25 the homeowner writes again. The vendor's work order shows the latch replaced on 9/15.",
+    "people": [{ "name": "Sandra Kim", "role": "Homeowner", "notes": "Patient so far, now let down" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [
+      { "at": "2026-09-10", "from": "Sandra Kim", "text": "The pool gate isn't latching, kids can get in when it's closed." },
+      { "at": "2026-09-10", "from": "Amanda", "text": "Thank you Sandra, that's a safety issue. I'll confirm with the pool vendor whether the latch was replaced and get back to you by Friday 9/12." }
+    ],
+    "incoming_message": { "from": "Sandra Kim", "text": "Still waiting to hear about the pool gate. It's been two weeks." },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Pool vendor work order WO-POOL-88 closed 9/15/2026: 'replaced self-closing latch on main gate'. No photo attached.", "source": "vendor work order WO-POOL-88" },
+      { "id": "F2", "kind": "FACT", "text": "No follow-up to Sandra was sent after 9/10.", "source": "correspondence record" }
+    ],
+    "answer_key": {
+      "facts": [
+        { "text": "Amanda promised an update by 9/12 and did not send one", "source": "history + F2" },
+        { "text": "Vendor reports the latch replaced 9/15", "source": "WO-POOL-88" }
+      ],
+      "supported_inferences": [{ "text": "The gate is probably latching now", "based_on": ["F1"], "confidence": "medium (vendor report, not verified)" }],
+      "unknowns": ["whether the latch works as intended (no photo or inspection)"],
+      "hidden_traps": ["Glossing over the missed commitment", "Over-apologizing", "Saying the gate is verified fixed"],
+      "expected_issues": ["own the missed follow-up plainly", "status", "verification of a safety repair"],
+      "acceptable_actions": ["one clear apology owning the miss", "share the vendor report", "ask Sandra whether it is latching now and/or arrange a check", "set a real follow-up"],
+      "actions_requiring_approval": [],
+      "actions_requiring_escalation": [],
+      "prohibited_assumptions": ["that the latch works"],
+      "expected_communication": { "tone": "accountable, warm, brief, no excuses", "length": "short", "must": ["own the miss once", "status", "verification step"], "must_not": ["multiple apologies", "excuses", "blaming the vendor"] },
+      "expected_next_action": { "action": "Verify the latch (site check or photo from the vendor) and confirm to Sandra", "owner": "Amanda", "due": "a real date Amanda commits to", "depends_on": "site check or vendor photo" },
+      "completion_condition": "Latch verified working and Sandra told",
+      "critical_failures_to_watch": ["CF_FORGOTTEN_COMMITMENT", "CF_FAKE_EMPATHY_OVERUSE", "CF_FALSE_COMPLETION"]
+    },
+    "provenance": "synthetic (Drama Creek demo)", "created_by": "academy-v1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REL-011", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "judgment", "execution"], "topic": "venting_with_operational_issue",
+    "title": "Homeowner venting, with a buried operational issue",
+    "audience": "homeowner", "channel": "email",
+    "scenario": "A homeowner vents at length about neighbors, parties and parking. Buried in the middle is a streetlight out for two weeks at a dark corner, a safety issue the association can act on by reporting it to the utility.",
+    "people": [{ "name": "Rita Alvarez", "role": "Homeowner", "notes": "Long-time resident, frustrated" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": ["Streetlights are owned and maintained by CenterPoint Energy; outages are reported to CenterPoint by pole number."] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Rita Alvarez", "text": "I don't even know why I bother anymore. The people on the corner have parties every weekend until 2am, cars parked all over the street, trash everywhere after. Nobody cares about this neighborhood anymore. And the streetlight at the corner of Birch and 5th has been out for two weeks, it's pitch dark when I walk my dog. I've lived here 19 years and it's never been this bad." },
+    "available_context": [
+      { "id": "G1", "kind": "GOVDOC", "text": "Vehicles may not be parked on streets overnight between 2am and 6am; violations are enforced through the association's standard notice process.", "source": "Drama Creek Rules and Regulations, Section 4.2" },
+      { "id": "F1", "kind": "FACT", "text": "Noise complaints are handled by the county sheriff's non-emergency line; the association's documents contain no noise-level rule.", "source": "Drama Creek community profile" }
+    ],
+    "answer_key": {
+      "facts": [
+        { "text": "Streetlights are CenterPoint's; the association can report the outage", "source": "community facts" },
+        { "text": "Overnight street parking 2 to 6am is a rule the association enforces", "source": "Rules 4.2" },
+        { "text": "Noise goes to the sheriff non-emergency line; no HOA noise rule", "source": "F1" }
+      ],
+      "supported_inferences": [],
+      "unknowns": ["the pole number", "which specific neighbors or vehicles"],
+      "hidden_traps": ["Missing the streetlight in the venting", "Promising the association will stop the parties", "Discussing or naming the neighbors' details", "Lecturing her about rules"],
+      "expected_issues": ["streetlight safety outage", "parking rule enforcement option", "noise is outside HOA authority", "acknowledging 19 years and her feeling unheard"],
+      "acceptable_actions": ["report the streetlight to CenterPoint (ask for or find the pole number)", "explain what the association can do on parking", "point to the sheriff line for noise", "acknowledge her specifically"],
+      "actions_requiring_approval": [],
+      "actions_requiring_escalation": [],
+      "prohibited_assumptions": ["that the neighbors violated rules beyond what she described", "a CenterPoint repair date"],
+      "expected_communication": { "tone": "listening, genuine, specific, not defensive", "length": "medium", "must": ["streetlight acted on", "honest about what the HOA can and cannot do"], "must_not": ["stock empathy", "promises about neighbors", "ignoring her feelings"] },
+      "expected_next_action": { "action": "Report the Birch and 5th streetlight outage to CenterPoint today and give Rita the ticket number", "owner": "Amanda", "due": "today", "depends_on": "pole number (or location report)" },
+      "completion_condition": "Streetlight repaired by CenterPoint and Rita informed; parking concerns routed to enforcement if she provides specifics",
+      "critical_failures_to_watch": ["CF_MECHANICAL_TO_FRUSTRATED", "CF_OVERPROMISE", "CF_PRIVACY_DISCLOSURE", "CF_FAKE_EMPATHY_OVERUSE"]
+    },
+    "provenance": "synthetic (Drama Creek demo)", "created_by": "academy-v1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REL-012", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["expertise", "relationship"], "topic": "conversational_finance_question",
+    "title": "Technical financial question asked conversationally",
+    "audience": "board", "channel": "chat",
+    "scenario": "A board member asks why the balance sheet shows $97k of unearned income when 'everybody paid in January' and whether money is missing. Assessments are billed annually and recognized monthly; not everyone paid (receivables are outstanding).",
+    "people": [{ "name": "Ken Obi", "role": "Board Member", "notes": "Smart, not an accountant" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Ken Obi", "text": "Quick q, why does the balance sheet show like $97k 'unearned income' when everybody paid their dues back in January? Is that money missing or something?" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "2026 annual assessments of $389,698.00 were billed in January and are recognized as income at $32,474.83 per month ($32,474.87 in December).", "source": "assessment recognition schedule" },
+      { "id": "F2", "kind": "FACT", "text": "Through September, $292,273.47 has been recognized; 2205 Unearned Income holds $97,424.53 for October through December.", "source": "GL as of 9/25" },
+      { "id": "F3", "kind": "FACT", "text": "Accounts receivable (owners who have not paid) is $66,469.92.", "source": "GL account 1300" }
+    ],
+    "answer_key": {
+      "facts": [
+        { "text": "Nothing is missing; unearned income is the part of the year not yet earned", "source": "F1, F2" },
+        { "text": "$97,424.53 = October to December", "source": "F2" },
+        { "text": "Not everyone paid: $66,469.92 receivable", "source": "F3" }
+      ],
+      "supported_inferences": [],
+      "unknowns": [],
+      "hidden_traps": ["Agreeing that everybody paid", "Suggesting money might be missing", "A lecture-length accounting answer to a quick question"],
+      "expected_issues": ["billing vs earning", "cash vs income", "receivables correction, gently"],
+      "acceptable_actions": ["short plain explanation with the numbers", "gently correct the 'everybody paid' premise"],
+      "actions_requiring_approval": [],
+      "actions_requiring_escalation": [],
+      "prohibited_assumptions": ["that all owners paid"],
+      "expected_communication": { "tone": "conversational, confident, simple", "length": "short", "must": ["not missing", "earned over the year", "receivable correction"], "must_not": ["condescension", "jargon dump"] },
+      "expected_next_action": { "action": "none required; optionally offer the monthly recognition schedule", "owner": "Amanda", "due": "n/a", "depends_on": "none" },
+      "completion_condition": "Ken understands it is not missing money and that some owners still owe",
+      "critical_failures_to_watch": ["CF_INVENTED_FACT", "CF_VERBOSE_WHEN_SHORT_REQUESTED"]
+    },
+    "provenance": "derived from real 2026-09-25 accounting, anonymized to Drama Creek (demo)", "created_by": "academy-v1", "created_at": "2026-09-25"
+  }
+]

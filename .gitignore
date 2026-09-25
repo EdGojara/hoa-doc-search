@@ -34,3 +34,7 @@ tmp/
 *-BEFORE-snapshot*.json
 *-ROLLBACK*.sql
 *-POST-APPLY-*
+
+# Amanda Academy run reports (keep only the committed sample baselines)
+academy/reports/*
+!academy/reports/sample-*

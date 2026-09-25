@@ -60,6 +60,7 @@ const CHECKS = [
   'tests/test_builder_letter_validate.js',
   'tests/test_forecast_engine.js',
   'tests/test_recognition_schedule.js',
+  'tests/test_academy.js',
   'tests/test_forward_note_voice.js',
   'tests/test_persona_knows_team.js',
   'tests/test_vendor_master.js',
