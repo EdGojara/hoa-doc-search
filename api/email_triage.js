@@ -1696,7 +1696,11 @@ router.post('/:id/send', express.json(), async (req, res) => {
     res.json({ sent: true, to: recipient, from: fromMailbox, persona, also_handled: alsoHandle.length, followups });
   } catch (err) {
     console.error('[email_triage] send failed:', err.message);
-    res.status(500).json({ error: safeErrorMessage(err) });
+    // Nothing above marks the email handled or logs an outbound row until the
+    // send succeeded, so a failure here leaves the thread exactly as it was.
+    // A temporary mailbox state (e.g. Microsoft moving the mailbox) is a 503 the
+    // screen can explain; it is never retried automatically.
+    res.status(err && err.temporary ? 503 : 500).json({ error: safeErrorMessage(err), code: (err && err.code) || null, sent: false, retryable: !!(err && err.temporary) });
   }
 });
 

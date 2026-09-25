@@ -467,7 +467,7 @@ function msgHtml(m){
       <div class="link-row">${linkCell(m)}</div>
       <div id="glentry-${m.id}"></div>
       <div id="filemsg-${m.id}" class="result" style="margin-top:4px;"></div>
-      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire', null, m.extracted.draft.attachments, m.sender_email):''}</div>
+      <div id="draft-${m.id}">${m.extracted&&m.extracted.draft?draftBoxHtml(m.id, m.extracted.draft.subject, m.extracted.draft.body, m.extracted.draft.careful, m.persona||'claire', null, m.extracted.draft.attachments, m.sender_email, {restore:true}):''}</div>
     </div>`;
 }
 // Expand/collapse the full message body + its email chain for reference.
@@ -616,8 +616,23 @@ function groundingPanelHtml(grounding, verification){
     + `<summary style="cursor:pointer;font-size:12px;font-weight:700;color:#0B1D34;">Sources &amp; confidence${hasMismatch?' <span style="color:#b91c1c;">· check flagged numbers</span>':''}</summary>`
     + `<div style="margin-top:6px;">${inner}</div></details>`;
 }
-function draftBoxHtml(id, subject, body, careful, persona, covers, genAtts, sender){
+// Unsent edits survive a failed send (e.g. Microsoft moving the mailbox): the
+// edited text, To, Cc and attached files are kept in this browser until the
+// reply actually sends, and restored when this email's draft is shown again.
+// Per-viewer convenience only; the server never marked anything sent.
+const UNSENT_KEY = (id) => 'trusted.unsentReply.' + id;
+function saveUnsent(id, v){ try { localStorage.setItem(UNSENT_KEY(id), JSON.stringify({ ...v, savedAt: new Date().toISOString() })); } catch(_){} }
+function loadUnsent(id){ try { const v = JSON.parse(localStorage.getItem(UNSENT_KEY(id)) || 'null'); return v && typeof v.body === 'string' ? v : null; } catch(_){ return null; } }
+function clearUnsent(id){ try { localStorage.removeItem(UNSENT_KEY(id)); } catch(_){} }
+function discardUnsent(id){ clearUnsent(id); const n = document.getElementById('unsent-'+id); if(n) n.textContent = 'Saved edits discarded. Reload to see the original draft.'; }
+function draftBoxHtml(id, subject, body, careful, persona, covers, genAtts, sender, opts){
   persona = persona || 'claire';
+  const unsent = (opts && opts.restore) ? loadUnsent(id) : null;
+  if (unsent) {
+    body = unsent.body;
+    recipientByMsg[id] = { ...(recipientByMsg[id] || { source: 'sender', onFile: [] }), to: unsent.to || '' };
+    if (!(attachByMsg[id] && attachByMsg[id].length) && Array.isArray(unsent.attach)) attachByMsg[id] = unsent.attach;
+  }
   const who = PNAME[persona] || 'Claire';
   const whoFirst = who.split(' ')[0];
   const mail = PMAIL[persona] || 'claire@bedrocktx.com';
@@ -649,12 +664,13 @@ function draftBoxHtml(id, subject, body, careful, persona, covers, genAtts, send
     ${careful?`<div class="refuse">⚠ Compliance-sensitive (legal / violation / ACC / money). ${esc(whoFirst)} drafted a careful answer from the account + §209 / governing docs — <strong>read carefully</strong> before sending.</div>`:''}
     ${coversNote}
     <div class="note">${esc(whoFirst)}'s draft${subject?' ('+esc(subject)+')':''} — review / edit, then approve. Nothing sends until you click.</div>
+    ${unsent?`<div class="note" id="unsent-${id}" style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:6px 9px;color:#9a3412;">↺ Restored your unsent edits from ${esc(new Date(unsent.savedAt).toLocaleString())}. This reply has <strong>not</strong> been sent. <a href="#" onclick="event.preventDefault();discardUnsent('${id}')" style="color:#9a3412;font-weight:600;">Discard saved edits</a></div>`:''}
     <textarea id="dt-${id}">${esc(body||'')}</textarea>
     <div class="note" style="margin-top:5px;">Sends from <strong>${esc(mail)}</strong> with ${esc(whoFirst)}'s AI signature appended.</div>
     ${toRowHtml(id)}
     <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
       <label style="font-size:12px;color:var(--muted);min-width:24px;">Cc</label>
-      <input id="cc-${id}" type="text" placeholder="copy anyone — a teammate, the board, another owner (commas for multiple)" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;flex:1;">
+      <input id="cc-${id}" type="text" value="${esc(unsent?(unsent.cc||''):'')}" placeholder="copy anyone — a teammate, the board, another owner (commas for multiple)" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;flex:1;">
       <button class="act" style="font-size:11px;padding:4px 9px;white-space:nowrap;" onclick="doReplyAll('${id}')" title="Copy everyone else on this email thread (board members, etc.) — pulls the real To/Cc.">↩ Reply all</button>
     </div>
     ${genAttHtml}
@@ -1164,8 +1180,15 @@ async function doSend(id, btn, careful, persona){
     const fu = j.followups||{};
     const fuMsg = (fu.queued&&fu.queued.length) ? `<div class="note" style="color:#166534;margin-top:4px;">✉️ Also queued a follow-up draft to ${fu.queued.map(q=>esc(q.name||q.email)).join(', ')} — review it in the <a href="/admin/draft-queue" style="color:#0B1D34;font-weight:600;">Draft Queue</a>.</div>` : '';
     const fuWarn = (fu.unresolved&&fu.unresolved.length) ? `<div class="note" style="color:#8a6d00;margin-top:4px;">⚠ Couldn't find an address for ${fu.unresolved.map(esc).join(', ')} — reach them separately so it doesn't fall through.</div>` : '';
+    clearUnsent(id);
     document.getElementById('draft-'+id).innerHTML = `<div class="draftbox"><div class="note">✅ Sent as ${esc(PNAME[j.persona]?PNAME[j.persona].split(' ')[0]:who)} to ${esc(j.to)}${j.also_handled?` — cleared ${j.also_handled+1} emails`:''}.</div>${fuMsg}${fuWarn}</div>`; delete coversByMsg[id]; delete verificationByMsg[id]; loadStats(); setTimeout(loadList, 800); }
-  else { btn.disabled=false; btn.textContent='✅ Approve & send as '+who; alert(j.detail || j.error || 'Send failed'); }
+  else {
+    // Not sent. Keep everything exactly as typed (text, To, Cc, files) so it can be
+    // retried; also save it in this browser in case the page is closed first.
+    saveUnsent(id, { body, to, cc, attach: manual });
+    btn.disabled=false; btn.textContent='✅ Approve & send as '+who;
+    alert(j.detail || j.error || 'Send failed. Your message was not sent.');
+  }
 }
 // ---- Forward to a teammate (loop someone in before replying) --------------
 let staffCache = [];

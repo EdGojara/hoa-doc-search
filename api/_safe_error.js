@@ -9,6 +9,9 @@
 
 function safeErrorMessage(err, fallback = 'Something went wrong. Please try again.') {
   if (!err) return fallback;
+  // A normalized error that already carries plain words for staff (e.g. a
+  // temporary Microsoft mailbox state, lib/email/graph_errors.js) wins as-is.
+  if (typeof err === 'object' && err.userMessage) return String(err.userMessage);
   let msg = (typeof err === 'string') ? err : (err.message || err.error || String(err));
   if (!msg) return fallback;
 
