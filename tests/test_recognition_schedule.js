@@ -89,13 +89,31 @@ t('forecast: insurance paid Jan 1 forecasts $2,000/month of expense, not $24,000
   assert.strictEqual(line.confidence, 'high');
 });
 
-t('forecast precedence: manual reason > documented schedule > calculated schedule > components > remaining budget; never run-rate', () => {
+t('forecast precedence: manual reason > schedules as components (whole-line only if explicitly covering the account) > components > remaining budget; never run-rate', () => {
   assert.strictEqual(E.chooseForecastMethod({ manual_reason: 'board approved rebid', schedules: [{ status: 'active', schedule_basis: 'documented' }] }).method, 'manual');
-  assert.strictEqual(E.chooseForecastMethod({ schedules: [{ status: 'active', schedule_basis: 'documented' }], has_components: true }).method, 'recognition_schedule');
+  assert.strictEqual(E.chooseForecastMethod({ schedules: [{ status: 'active', schedule_basis: 'documented' }] }).method, 'components');
+  assert.strictEqual(E.chooseForecastMethod({ schedules: [{ status: 'active', schedule_basis: 'documented' }], schedules_cover_account: true }).method, 'recognition_schedule');
   assert.strictEqual(E.chooseForecastMethod({ schedules: [{ status: 'draft', schedule_basis: 'documented' }] }).method, 'remaining_budget');
   assert.strictEqual(E.chooseForecastMethod({ has_components: true }).method, 'components');
   assert.strictEqual(E.chooseForecastMethod({}).method, 'remaining_budget');
   assert.throws(() => E.buildForecastLine({ account_type: 'expense', budget_months: Array(12).fill(0), as_of_month: 9, method: 'recognition_schedule', settings: { schedules: [{ status: 'draft', periods: [{ period_month: '2026-10-01', scheduled_cents: 1 }] }], fiscal_year: 2026 } }), /not_active/);
+});
+
+t('5600 hybrid: base + Harned recognition component + another policy invoice; one schedule never becomes the whole account', () => {
+  const hp = R.buildRecognitionPeriods({ total_cents: 1224200, start_month: '2026-09-01', term_months: 12 });
+  const harned = { id: 'harned', description: 'Harned 9/1/26-9/1/27', status: 'active', schedule_basis: 'documented', periods: hp, postings: [] };
+  const components = [
+    { kind: 'recognition', label: 'Harned policy', schedule: harned },
+    { kind: 'known_invoice', label: 'D&O renewal (synthetic)', months: [...Array(10).fill(0), 350000, 0], basis: 'documented', refs: { ap_invoice_id: 'inv-do' } },
+    { kind: 'recurring', label: 'Base: other policies (synthetic)', months: [...Array(9).fill(0), 50000, 50000, 50000], basis: 'calculated' },
+  ];
+  const line = E.buildForecastLine({ account_type: 'expense', budget_months: Array(12).fill(183333), actual_months: [0, 0, 0, 0, 0, 0, 1226855, 0, 0, 0, 0, 0], as_of_month: 9, method: 'components', settings: { fiscal_year: 2026 }, components });
+  // Oct: Harned Sep catch-up + Oct (2 x 1,020.17) + base 500; Nov: Harned + D&O 3,500 + base; Dec: Harned + base
+  assert.deepStrictEqual(line.remaining.slice(9), [102017 * 2 + 50000, 102017 + 350000 + 50000, 102017 + 50000]);
+  assert.strictEqual(line.annual_forecast, 1226855 + 102017 * 4 + 350000 + 150000);
+  assert.notStrictEqual(line.remaining_total, 102017 * 4);
+  assert.ok(line.explanation.includes('Harned policy (documented)'), line.explanation);
+  assert.throws(() => E.buildForecastLine({ account_type: 'expense', budget_months: Array(12).fill(0), as_of_month: 9, method: 'components', settings: { fiscal_year: 2026 }, components: [{ kind: 'recognition', label: 'x' }] }), /needs_its_schedule/);
 });
 
 t('LOPF shape: 2205 balance $162,374.19 recognized Aug-Dec; Aug/Sep unposted = timing, forecast ties to the levy exactly', () => {
