@@ -31,6 +31,7 @@
   .stab.active { background:var(--gold); color:var(--navy); border-color:var(--gold); }
   .subnav.solo { display:none; }
   .card { background:#fff; border:1px solid var(--rule); border-radius:12px; padding:18px 20px; box-shadow:0 1px 2px rgba(0,0,0,0.03); }
+  .mp-chip { display:inline-block; font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:9px; white-space:nowrap; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th { text-align:left; padding:8px 10px; color:var(--ink-faint); font-size:11px; letter-spacing:0.05em; text-transform:uppercase; border-bottom:2px solid var(--rule); }
   td { padding:7px 10px; border-bottom:1px solid #f1efe8; }
@@ -772,7 +773,7 @@
             const isApproved = b.status==='approved';
             const statusTxt = isApproved ? ('Finalized'+(b.approved_at?' '+fmtDate(b.approved_at.slice(0,10)):'')) : 'Draft';
             const statusColor = isApproved ? 'var(--ok)' : 'var(--ink-faint)';
-            return `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 10px; background:#f5f8fc; border-radius:6px; margin-bottom:6px; font-size:12.5px;"><span>FY ${esc(String(b.fiscal_year))}${b.source_filename?' · '+esc(b.source_filename):''}</span><span style="display:flex; align-items:center; gap:12px;"><span style="color:${statusColor}; font-weight:600;">${statusTxt}</span><button onclick="renderBudgetPlanner('${esc(String(b.fiscal_year))}')" style="border:1px solid var(--rule); background:#fff; color:var(--navy); border-radius:6px; padding:3px 12px; cursor:pointer; font-weight:600; font-size:12px;">Open</button><button onclick="bdgDelete('${b.id}','${esc(String(b.fiscal_year))}')" title="Delete this budget" style="border:1px solid #fecaca; background:#fff; color:var(--err); border-radius:6px; padding:3px 10px; cursor:pointer; font-weight:600; font-size:12px;">🗑</button></span></div>`;
+            return `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 10px; background:#f5f8fc; border-radius:6px; margin-bottom:6px; font-size:12.5px;"><span>FY ${esc(String(b.fiscal_year))}${b.source_filename?' · '+esc(b.source_filename):''}</span><span style="display:flex; align-items:center; gap:12px;"><span style="color:${statusColor}; font-weight:600;">${statusTxt}</span><button onclick="renderBudgetPlanner('${esc(String(b.fiscal_year))}')" style="border:1px solid var(--rule); background:#fff; color:var(--navy); border-radius:6px; padding:3px 12px; cursor:pointer; font-weight:600; font-size:12px;">Open</button><button onclick="renderBudgetMonthly('${b.id}')" title="Jan-Dec plan, phasing and components" style="border:1px solid var(--rule); background:#fff; color:var(--navy); border-radius:6px; padding:3px 12px; cursor:pointer; font-weight:600; font-size:12px;">📅 Monthly plan</button><button onclick="bdgDelete('${b.id}','${esc(String(b.fiscal_year))}')" title="Delete this budget" style="border:1px solid #fecaca; background:#fff; color:var(--err); border-radius:6px; padding:3px 10px; cursor:pointer; font-weight:600; font-size:12px;">🗑</button></span></div>`;
           }).join('')
         : '<div class="muted">No budgets saved yet.</div>';
     } catch (e) { $('bdg-list').innerHTML = ''; }
@@ -964,6 +965,261 @@
       }
       alert(`Saved budget — ${j.line_items_count} operating lines${excluded.length?`, ${excluded.length} unmatched line${excluded.length===1?'':'s'} left out`:''}${resvMsg}, status ${j.budget.status}.`); _pendingBudget=null; renderBudget();
     } catch (e) { alert('Save failed: '+e.message); }
+  }
+
+  // ── Monthly plan (Budget Phase 2, Ed 2026-09-25) ──────────────────────────
+  // The Jan-Dec plan is the operating layer: each line gets a deliberate
+  // schedule, a recorded phasing method, what that timing can honestly claim
+  // (documented / calculated / manual), and optional components that explain
+  // 100% of the line. Draft budgets only; approved budgets are view-only here
+  // and locked in the database. All math runs on the server (one code path).
+  const _MP_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const _MP_METHOD = { even:'Even monthly', manual:'Manual by month', prior_budget:'Prior-year budget pattern', prior_actual:'Prior-year actual pattern', contract:'Contract schedule', project:'Project / components', weighted:'Percentage-weighted' };
+  const _MP_KIND = { recurring:'Recurring / base', project:'Project', contract:'Contract', other:'Other' };
+  let _mp = null;
+  const mpSum = (m) => (m||[]).reduce((s,v)=>s+(Number(v)||0),0);
+  const mpD = (c) => (Number(c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2});
+  const mpParse = (t) => { const n = Number(String(t==null?'':t).replace(/[$,\s]/g,'')); return Number.isFinite(n) ? Math.round(n*100) : NaN; };
+  function mpBasisChip(line){
+    const b = line.schedule_basis, st = line.phasing_settings || {};
+    if (!b) return '<span class="mp-chip" style="background:#f1f5f9; color:#475569;" title="Set before monthly planning; timing as imported">As imported</span>';
+    if (b === 'documented') return '<span class="mp-chip" style="background:#dcfce7; color:#166534;" title="Months come from the source document\'s own schedule">Documented</span>';
+    if (b === 'manual') return '<span class="mp-chip" style="background:#e0e7ff; color:#3730a3;">Manual</span>';
+    if (st.assumption && !st.confirmed_at) return '<span class="mp-chip" style="background:#fef3c7; color:#92400e;" title="Calculated from contract amount and dates; the contract has no payment schedule. Confirm or edit.">Assumed · confirm</span>';
+    if (st.assumption) return `<span class="mp-chip" style="background:#fef9c3; color:#854d0e;" title="Assumed timing, confirmed by ${esc(st.confirmed_by||'')}">Assumed · confirmed</span>`;
+    return '<span class="mp-chip" style="background:#f1f5f9; color:#0B1D34;">Calculated</span>';
+  }
+  function mpWarnings(line){
+    const w = [];
+    if (mpSum(line.monthly_amounts_cents) !== Number(line.annual_amount_cents)) w.push('Months do not add to the annual amount.');
+    const comps = line.components || [];
+    if (comps.length) {
+      const res = line.monthly_amounts_cents.map((v,i)=>v - comps.reduce((s,c)=>s+(Number(c.monthly_amounts_cents[i])||0),0));
+      if (res.some((v)=>v!==0)) w.push('Components do not explain the whole line.');
+      comps.filter((c)=>c.kind==='project' && !c.monthly_amounts_cents.some((v)=>Number(v)!==0)).forEach((c)=>w.push(`Project "${c.name}" has no planned month.`));
+    }
+    const st = line.phasing_settings || {};
+    if (st.assumption && !st.confirmed_at) w.push('Contract timing is an assumption; confirm or edit it.');
+    return w;
+  }
+
+  window.renderBudgetMonthly = async function(budgetId){
+    $('body').innerHTML = '<div class="card"><div class="muted" style="padding:20px;">Loading monthly plan…</div></div>';
+    try {
+      const j = await (await fetch(`/api/books/budgets/${encodeURIComponent(budgetId)}/plan?community_id=${encodeURIComponent(CID)}`)).json();
+      if (j.error) throw new Error(j.error);
+      _mp = { plan: j, open: new Set(), work: {} };
+      mpPaint();
+    } catch (e) { $('body').innerHTML = `<div class="card" style="color:var(--err)">Couldn't load the monthly plan: ${esc(e.message)}</div>`; }
+  };
+
+  function mpLineHTML(line){
+    const open = _mp.open.has(line.id);
+    const wk = _mp.work[line.id];
+    const warns = mpWarnings(wk ? { ...line, ...wk.line } : line);
+    const comps = (wk ? wk.line.components : line.components) || [];
+    return `<div class="mp-line" data-line="${line.id}" style="border-bottom:1px solid #eef2f7;">
+      <div class="mp-row" data-toggle="${line.id}" style="display:grid; grid-template-columns:16px 58px minmax(160px,1fr) 44px 112px 150px 118px minmax(80px,.6fr); gap:8px; align-items:center; padding:7px 6px; cursor:pointer; font-size:12.5px;">
+        <span style="color:var(--ink-soft);">${open?'▾':'▸'}</span>
+        <span style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(line.account_number)}</span>
+        <span>${esc(line.account_name)}${line.description?` <span class="muted" style="font-size:11.5px;">· ${esc(line.description)}</span>`:''}${comps.length?` <span class="mp-chip" style="background:#ede9fe; color:#5b21b6;">${comps.length} component${comps.length===1?'':'s'}</span>`:''}${warns.length?` <span class="mp-chip" style="background:#fee2e2; color:#991b1b;" title="${esc(warns.join(' '))}">⚠ ${warns.length}</span>`:''}</span>
+        <span class="muted" style="font-size:11.5px;">${esc(line.fund_code||'')}</span>
+        <span class="num" style="font-weight:600;">${fmt(line.annual_amount_cents)}</span>
+        <span style="font-size:11.5px;">${line.phasing_method?esc(_MP_METHOD[line.phasing_method]):'<span class="muted">Not set</span>'}</span>
+        <span>${mpBasisChip(line)}</span>
+        <span class="muted" style="font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(line.notes||'')}">${esc(line.notes||'')}</span>
+      </div>
+      ${open ? mpDetailHTML(line) : ''}
+    </div>`;
+  }
+
+  function mpMonthsRow(label, months, opts){
+    const o = opts || {};
+    const cells = months.map((v,i)=> o.edit
+      ? `<td><input class="mp-m" data-scope="${o.scope}" data-i="${i}" value="${mpD(v)}" style="width:100%; min-width:62px; padding:3px 4px; border:1px solid var(--rule); border-radius:5px; text-align:right; font-variant-numeric:tabular-nums; font-size:12px;"></td>`
+      : `<td class="num" style="font-size:12px;">${Number(v)?mpD(v):'<span class="muted">·</span>'}</td>`).join('');
+    return `<tr${o.style?` style="${o.style}"`:''}><td style="font-size:12px; white-space:nowrap; padding-right:8px;">${label}</td>${cells}<td class="num" style="font-weight:700; font-size:12px;">${mpD(mpSum(months))}</td></tr>`;
+  }
+
+  function mpDetailHTML(line){
+    const plan = _mp.plan; const edit = plan.editable;
+    if (!_mp.work[line.id]) _mp.work[line.id] = { line: JSON.parse(JSON.stringify({ monthly_amounts_cents: line.monthly_amounts_cents, phasing_method: line.phasing_method, phasing_settings: line.phasing_settings, schedule_basis: line.schedule_basis, description: line.description||'', notes: line.notes||'', components: line.components||[] })), note: '' };
+    const W = _mp.work[line.id].line; const comps = W.components || [];
+    const head = `<tr><th style="text-align:left;"></th>${_MP_MONTHS.map((m)=>`<th class="num" style="font-size:11px;">${m}</th>`).join('')}<th class="num" style="font-size:11px;">Annual</th></tr>`;
+    let rows = mpMonthsRow('<strong>Line</strong>', W.monthly_amounts_cents, { edit: edit && !comps.length, scope: 'line' });
+    comps.forEach((c,ci)=>{
+      rows += mpMonthsRow(`<span style="padding-left:10px;">${esc(_MP_KIND[c.kind]||c.kind)}: ${esc(c.name)}${c.schedule_basis==='calculated'&&(c.schedule_settings||{}).assumption?' <span class="mp-chip" style="background:#fef3c7; color:#92400e;">assumed</span>':''}</span>`, c.monthly_amounts_cents, { edit, scope: 'comp:'+ci, style: 'background:#faf5ff;' });
+    });
+    if (comps.length) {
+      const res = W.monthly_amounts_cents.map((v,i)=>v - comps.reduce((s,c)=>s+(Number(c.monthly_amounts_cents[i])||0),0));
+      if (res.some((v)=>v!==0)) rows += mpMonthsRow('<span style="color:#991b1b; font-weight:700;">Unexplained</span>', res, { style: 'background:#fee2e2;' });
+    }
+    if (line.prior_budget_months) rows += mpMonthsRow(`<span class="muted">FY${plan.prior_budget_year} budget</span>`, line.prior_budget_months, { style: 'color:#64748b;' });
+    if (line.prior_actual_months) rows += mpMonthsRow(`<span class="muted">FY${plan.prior_actual_year} actual</span>`, line.prior_actual_months, { style: 'color:#64748b;' });
+    const st = W.phasing_settings || {};
+    const methodOpts = Object.entries(_MP_METHOD).map(([k,v])=>`<option value="${k}"${W.phasing_method===k?' selected':''}>${v}</option>`).join('');
+    const contractOpts = (plan.contract_sources||[]).map((c)=>`<option value="${esc(c.ref)}"${st.contract_ref===c.ref?' selected':''}>${esc(c.source_label)}${c.documented_schedule?' · documented schedule':' · amount/dates only'}</option>`).join('');
+    const projectOpts = (plan.projects||[]).map((p)=>`<option value="${p.id}">${esc(p.title)}${p.target_date?' · target '+esc(p.target_date):''}${p.approved_cost_cents||p.estimated_cost_cents?' · '+fmt(p.approved_cost_cents||p.estimated_cost_cents):''}</option>`).join('');
+    const warns = mpWarnings({ ...line, ...W });
+    const controls = !edit ? `<div class="muted" style="font-size:12px; margin-top:8px;">View only: this FY${plan.budget.fiscal_year} budget is ${esc(plan.budget.status)} and locked.</div>` : `
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top:10px; font-size:12px;">
+        <label>Phasing method<br><select class="mp-method" style="padding:5px 7px; border:1px solid var(--rule); border-radius:6px;">${methodOpts}</select></label>
+        <label class="mp-set mp-set-contract" style="display:${W.phasing_method==='contract'?'block':'none'};">Contract<br><select class="mp-contract" style="padding:5px 7px; border:1px solid var(--rule); border-radius:6px; max-width:300px;"><option value="">choose…</option>${contractOpts}</select></label>
+        <label class="mp-set mp-set-weighted" style="display:${W.phasing_method==='weighted'?'block':'none'};">Weights % (Jan…Dec, total 100)<br><input class="mp-weights" value="${esc((st.weights_pct||[]).join(', '))}" placeholder="e.g. 5,5,5,5,10,15,15,10,10,10,5,5" style="width:280px; padding:5px 7px; border:1px solid var(--rule); border-radius:6px;"></label>
+        <button class="mp-apply" style="padding:6px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer; font-weight:600;">Apply method</button>
+        <span style="flex:1;"></span>
+        <label>New annual<br><input class="mp-newannual" placeholder="${mpD(mpSum(W.monthly_amounts_cents))}" style="width:110px; padding:5px 7px; border:1px solid var(--rule); border-radius:6px; text-align:right;"></label>
+        <label>then<br><select class="mp-choice" style="padding:5px 7px; border:1px solid var(--rule); border-radius:6px;"><option value="">choose how…</option><option value="scale">Scale the existing pattern</option><option value="even">Spread evenly</option><option value="allocate_difference">Put the difference in selected months</option><option value="keep_months">Keep months; I'll edit them</option></select></label>
+        <label class="mp-alloc" style="display:none;">Months<br><span>${_MP_MONTHS.map((m,i)=>`<label style="margin-right:4px;"><input type="checkbox" class="mp-alloc-m" value="${i}">${m}</label>`).join('')}</span></label>
+        <button class="mp-annual" style="padding:6px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer; font-weight:600;">Apply annual</button>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-top:10px; font-size:12px; padding:8px 10px; background:#faf5ff; border-radius:8px;">
+        <strong style="align-self:center;">Components</strong>
+        <label>Kind<br><select class="mp-c-kind" style="padding:5px 7px; border:1px solid var(--rule); border-radius:6px;">${Object.entries(_MP_KIND).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></label>
+        <label>Name<br><input class="mp-c-name" placeholder="e.g. Fence replacement" style="width:170px; padding:5px 7px; border:1px solid var(--rule); border-radius:6px;"></label>
+        <label>Project (optional)<br><select class="mp-c-project" style="padding:5px 7px; border:1px solid var(--rule); border-radius:6px; max-width:220px;"><option value="">none</option>${projectOpts}</select></label>
+        <label>Amount<br><input class="mp-c-amount" placeholder="30,000.00" style="width:100px; padding:5px 7px; border:1px solid var(--rule); border-radius:6px; text-align:right;"></label>
+        <label>In month(s)<br><span>${_MP_MONTHS.map((m,i)=>`<label style="margin-right:3px;"><input type="checkbox" class="mp-c-m" value="${i}">${m}</label>`).join('')}</span></label>
+        <label style="align-self:center;"><input type="checkbox" class="mp-c-carve"> carve out of the current total</label>
+        <button class="mp-c-add" style="padding:6px 12px; border:none; border-radius:6px; background:#5b21b6; color:#fff; cursor:pointer; font-weight:600;">+ Add</button>
+        ${comps.length ? '<button class="mp-c-base" style="padding:6px 12px; border:1px solid #c4b5fd; border-radius:6px; background:#fff; cursor:pointer; font-weight:600;">Add remainder as Recurring / base</button> <button class="mp-c-clear" style="padding:6px 10px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer;">Remove components</button>' : ''}
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top:10px; font-size:12px;">
+        <label>Description<br><input class="mp-desc" value="${esc(W.description)}" style="width:260px; padding:5px 7px; border:1px solid var(--rule); border-radius:6px;"></label>
+        <label>Notes / assumptions<br><input class="mp-notes" value="${esc(W.notes)}" style="width:340px; padding:5px 7px; border:1px solid var(--rule); border-radius:6px;"></label>
+        ${st.assumption && !st.confirmed_at ? '<label style="color:#92400e; font-weight:600; align-self:center;"><input type="checkbox" class="mp-confirm"> I confirm this assumed contract timing</label>' : ''}
+        <span style="flex:1;"></span>
+        <button class="mp-save" style="padding:8px 18px; border:none; border-radius:8px; background:#166534; color:#fff; cursor:pointer; font-weight:700;">Save line</button>
+        <button class="mp-discard" style="padding:8px 12px; border:1px solid var(--rule); border-radius:8px; background:#fff; cursor:pointer;">Discard changes</button>
+      </div>`;
+    return `<div class="mp-detail" style="padding:6px 10px 12px 30px; background:#fbfcfe;">
+      <div style="overflow-x:auto;"><table style="margin:0; min-width:980px;"><thead>${head}</thead><tbody>${rows}</tbody></table></div>
+      ${st.explanation ? `<div style="font-size:12px; margin-top:6px; color:#475569;"><strong>Why these months:</strong> ${esc(st.explanation)}</div>` : ''}
+      ${warns.length ? `<div style="margin-top:6px; padding:6px 10px; background:#fee2e2; border-radius:6px; color:#991b1b; font-size:12px;">${warns.map(esc).join('<br>')}</div>` : ''}
+      ${controls}
+      <div class="mp-msg" style="font-size:12px; margin-top:6px;">${esc(_mp.work[line.id].note||'')}</div>
+    </div>`;
+  }
+
+  function mpPaint(){
+    const plan = _mp.plan; const b = plan.budget;
+    const lines = plan.lines || [];
+    let body = ''; let lastSec = null, lastCat = null, lastSub = null;
+    for (const l of lines) {
+      if (l.account_type !== lastSec) { lastSec = l.account_type; lastCat = lastSub = undefined; body += `<div style="padding:9px 6px 4px; font-weight:800; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--navy); background:#eef2f7;">${lastSec==='revenue'?'Revenue':'Expenses'}</div>`; }
+      if (plan.has_categories && l.category !== lastCat) { lastCat = l.category; lastSub = undefined; body += `<div style="padding:8px 6px 2px; font-weight:700; color:var(--navy);">${esc(l.category || 'Unmapped (needs a report category)')}</div>`; }
+      if (plan.has_categories && l.subcategory && l.subcategory !== lastSub) { lastSub = l.subcategory; body += `<div style="padding:3px 6px 1px 18px; font-style:italic; color:#64748b; font-size:12px;">${esc(l.subcategory)}</div>`; }
+      body += mpLineHTML(l);
+    }
+    const tot = (t) => lines.filter((l)=>l.account_type===t).reduce((s,l)=>s+Number(l.annual_amount_cents||0),0);
+    const nWarn = lines.reduce((s,l)=>s+mpWarnings(l).length,0);
+    $('body').innerHTML = `<div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px;">
+        <h2 class="sec" style="margin:0;">FY ${esc(String(b.fiscal_year))} Monthly Plan</h2>
+        <div style="display:flex; gap:8px; align-items:center;">${plan.editable?'<span class="mp-chip" style="background:#dbeafe; color:#1e3a8a;">Draft · editable</span>':`<span class="mp-chip" style="background:#dcfce7; color:#166534;">${esc(b.status)} · locked, view only</span>`}
+          <button onclick="renderBudget()" style="padding:7px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer; font-size:12.5px;">← Back</button></div>
+      </div>
+      <div class="muted" style="font-size:12.5px; margin-bottom:10px;">Every line has a deliberate Jan–Dec plan; the annual is always the sum of the 12 months. Click a line to see and edit its months, phasing and components. Budget vs Actual reads these months.</div>
+      <div style="display:flex; gap:18px; flex-wrap:wrap; font-size:12.5px; margin-bottom:10px;"><span>Revenue <strong>${fmt(tot('revenue'))}</strong></span><span>Expenses <strong>${fmt(tot('expense'))}</strong></span><span>Net <strong>${fmt(tot('revenue')-tot('expense'))}</strong></span>${nWarn?`<span style="color:#991b1b; font-weight:700;">⚠ ${nWarn} warning${nWarn===1?'':'s'}</span>`:''}</div>
+      <div style="display:grid; grid-template-columns:16px 58px minmax(160px,1fr) 44px 112px 150px 118px minmax(80px,.6fr); gap:8px; padding:4px 6px; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:#64748b; border-bottom:1px solid var(--rule);"><span></span><span>Account</span><span>Description</span><span>Fund</span><span class="num">Annual</span><span>Phasing</span><span>Timing basis</span><span>Notes</span></div>
+      <div id="mp-lines">${body || '<div class="muted" style="padding:14px;">This budget has no lines.</div>'}</div>
+    </div>`;
+    mpWire();
+  }
+
+  function mpWire(){
+    const plan = _mp.plan;
+    document.querySelectorAll('.mp-row').forEach((r)=>r.addEventListener('click',()=>{ const id=r.dataset.toggle; _mp.open.has(id)?_mp.open.delete(id):_mp.open.add(id); mpPaint(); }));
+    document.querySelectorAll('.mp-line').forEach((el)=>{
+      const id = el.dataset.line; const line = plan.lines.find((l)=>l.id===id); const wk = _mp.work[id];
+      if (!wk || !plan.editable) return;
+      const W = wk.line; const q = (sel)=>el.querySelector(sel); const qa = (sel)=>[...el.querySelectorAll(sel)];
+      const say = (t, bad)=>{ wk.note = t; const m=q('.mp-msg'); if (m) { m.textContent=t; m.style.color = bad?'var(--err)':'#166534'; } };
+      const post = async (path, body) => { const r = await fetch(`/api/books/budgets/${plan.budget.id}/lines/${id}/${path}`, { method:'POST', headers:{ 'Content-Type':'application/json', ...(await chkAuthHeader()) }, body: JSON.stringify({ community_id: CID, ...body }) }); const j = await r.json(); if (j.error) throw new Error(Array.isArray(j.detail) ? j.detail.join('; ') : (j.detail || j.error)); return j; };
+      qa('.mp-m').forEach((inp)=>inp.addEventListener('change',()=>{
+        const v = mpParse(inp.value); if (!Number.isFinite(v)) { say('Enter a number.', true); return; }
+        const i = Number(inp.dataset.i), sc = inp.dataset.scope;
+        if (sc === 'line') { W.monthly_amounts_cents[i] = v; W.phasing_method = 'manual'; W.schedule_basis = 'manual'; W.phasing_settings = null; }
+        else { const c = W.components[Number(sc.split(':')[1])]; c.monthly_amounts_cents[i] = v; c.schedule_basis = 'manual'; W.monthly_amounts_cents = W.components.reduce((a,cc)=>a.map((x,k)=>x+(Number(cc.monthly_amounts_cents[k])||0)), Array(12).fill(0)); }
+        mpPaint();
+      }));
+      q('.mp-method') && q('.mp-method').addEventListener('change',(e)=>{ qa('.mp-set').forEach((x)=>x.style.display='none'); const box=q('.mp-set-'+e.target.value); if (box) box.style.display='block'; });
+      q('.mp-apply') && q('.mp-apply').addEventListener('click', async ()=>{
+        const method = q('.mp-method').value;
+        if (method === 'project') { say('Project phasing comes from components: add the project (and a recurring base if needed) below.'); return; }
+        if (W.components.length) { say('This line is explained by components. Remove them first, or edit the components.', true); return; }
+        try {
+          const body = { method, annual_cents: mpSum(W.monthly_amounts_cents), current_months: W.monthly_amounts_cents };
+          if (method === 'contract') body.contract_ref = q('.mp-contract').value;
+          if (method === 'weighted') body.settings = { weights_pct: q('.mp-weights').value.split(/[,\s]+/).filter(Boolean).map(Number) };
+          const r = await post('phase-preview', body);
+          W.monthly_amounts_cents = r.monthly; W.phasing_method = method; W.schedule_basis = r.basis; W.phasing_settings = { ...(r.settings||{}), explanation: r.explanation };
+          wk.note = 'Preview applied; not saved yet.'; mpPaint();
+        } catch (e) { say(e.message, true); }
+      });
+      q('.mp-choice') && q('.mp-choice').addEventListener('change',(e)=>{ q('.mp-alloc').style.display = e.target.value==='allocate_difference'?'block':'none'; });
+      q('.mp-annual') && q('.mp-annual').addEventListener('click', async ()=>{
+        if (W.components.length) { say('Change the components; the line follows them.', true); return; }
+        const nv = mpParse(q('.mp-newannual').value), choice = q('.mp-choice').value;
+        if (!Number.isFinite(nv)) { say('Enter the new annual amount.', true); return; }
+        if (!choice) { say('Choose how the months should change. Nothing is redistributed automatically.', true); return; }
+        try {
+          const r = await post('annual-change', { current_months: W.monthly_amounts_cents, new_annual_cents: nv, choice, months: qa('.mp-alloc-m:checked').map((x)=>Number(x.value)) });
+          W.monthly_amounts_cents = r.monthly;
+          if (choice === 'even') { W.phasing_method = 'even'; W.schedule_basis = 'calculated'; W.phasing_settings = { explanation: r.explanation }; }
+          else if (choice !== 'keep_months') { W.phasing_settings = { ...(W.phasing_settings||{}), explanation: r.explanation }; if (choice === 'allocate_difference') { W.phasing_method = 'manual'; W.schedule_basis = 'manual'; } }
+          wk.note = choice === 'keep_months' ? 'Months kept. Edit them; the annual follows.' : 'Preview applied; not saved yet.'; mpPaint();
+        } catch (e) { say(e.message, true); }
+      });
+      q('.mp-c-add') && q('.mp-c-add').addEventListener('click',()=>{
+        const kind = q('.mp-c-kind').value, name = q('.mp-c-name').value.trim(), amt = mpParse(q('.mp-c-amount').value);
+        const months = qa('.mp-c-m:checked').map((x)=>Number(x.value)); const pid = q('.mp-c-project').value;
+        const proj = (plan.projects||[]).find((p)=>p.id===pid);
+        if (!name && !proj) { say('Give the component a name (or pick a project).', true); return; }
+        if (!Number.isFinite(amt) || !amt) { say('Enter the component amount.', true); return; }
+        if (!months.length) { say('Choose the month(s) it lands in.', true); return; }
+        const per = Array(12).fill(0); const each = Math.trunc(amt / months.length); months.forEach((m)=>{ per[m] = each; }); per[months[months.length-1]] += amt - each*months.length;
+        if (!W.components.length) W.components.push({ name:'Recurring / base', kind:'recurring', monthly_amounts_cents: W.monthly_amounts_cents.slice(), schedule_basis: W.schedule_basis || 'manual', schedule_settings: { derived: 'existing_line_months' } });
+        W.components.push({ name: name || proj.title, kind: proj ? 'project' : kind, vendor_project_id: proj ? proj.id : null, vendor_name: proj ? proj.vendor_name : null,
+          project_stage_at_budget: proj ? proj.stage : null, project_cost_at_budget_cents: proj ? (proj.approved_cost_cents || proj.estimated_cost_cents || null) : null,
+          monthly_amounts_cents: per, schedule_basis: 'manual', schedule_settings: { placed_in_months: months } });
+        if (q('.mp-c-carve') && q('.mp-c-carve').checked) {
+          // Carve out: the line total stays; the Recurring / base component shrinks by the new amount.
+          const base = W.components.find((c)=>c.kind==='recurring' && (c.schedule_settings||{}).derived);
+          if (!base) { W.components.pop(); say('Carving out needs a Recurring / base component to take it from.', true); return; }
+          const nb = base.monthly_amounts_cents.map((v,k)=>v - per[k]);
+          if (nb.some((v)=>v<0)) { W.components.pop(); say('That is more than the line has in those months. Untick carve-out to add it on top instead.', true); return; }
+          base.monthly_amounts_cents = nb; base.schedule_settings = { derived: 'remainder_of_line' };
+          wk.note = 'Component carved out of the existing total; not saved yet.';
+        } else {
+          W.monthly_amounts_cents = W.components.reduce((a,cc)=>a.map((x,k)=>x+(Number(cc.monthly_amounts_cents[k])||0)), Array(12).fill(0));
+          wk.note = 'Component added (the line total grew by its amount); not saved yet.';
+        }
+        W.phasing_method = 'project'; W.schedule_basis = 'manual';
+        mpPaint();
+      });
+      q('.mp-c-base') && q('.mp-c-base').addEventListener('click',()=>{
+        const res = W.monthly_amounts_cents.map((v,i)=>v - W.components.reduce((s,c)=>s+(Number(c.monthly_amounts_cents[i])||0),0));
+        if (res.every((v)=>v===0)) { say('Components already explain the whole line.'); return; }
+        if (res.some((v)=>v<0)) { say('Components exceed the line in some months; adjust them first.', true); return; }
+        W.components.push({ name:'Recurring / base', kind:'recurring', monthly_amounts_cents: res, schedule_basis:'calculated', schedule_settings:{ derived:'remainder_of_line' } });
+        mpPaint();
+      });
+      q('.mp-c-clear') && q('.mp-c-clear').addEventListener('click',()=>{ if (!confirm('Remove all components from this line? The line keeps its current months.')) return; W.components = []; W.phasing_method = 'manual'; W.schedule_basis = 'manual'; mpPaint(); });
+      q('.mp-desc') && q('.mp-desc').addEventListener('change',(e)=>{ W.description = e.target.value; });
+      q('.mp-notes') && q('.mp-notes').addEventListener('change',(e)=>{ W.notes = e.target.value; });
+      q('.mp-discard') && q('.mp-discard').addEventListener('click',()=>{ delete _mp.work[id]; mpPaint(); });
+      q('.mp-save') && q('.mp-save').addEventListener('click', async ()=>{
+        try {
+          const settings = W.phasing_settings ? { ...W.phasing_settings } : null;
+          await post('plan', { monthly_amounts_cents: W.monthly_amounts_cents, phasing_method: W.phasing_method || null, phasing_settings: settings, schedule_basis: W.schedule_basis || null,
+            description: W.description, notes: W.notes, components: W.components, confirm_assumption: !!(q('.mp-confirm') && q('.mp-confirm').checked) });
+          const open = new Set(_mp.open); await renderBudgetMonthly(plan.budget.id); _mp.open = open; _mp.work[id] = null; delete _mp.work[id];
+          const fresh = _mp.plan.lines.find((l)=>l.id===id); mpPaint();
+          const m = document.querySelector(`.mp-line[data-line="${id}"] .mp-msg`); if (m) { m.textContent = `Saved. Annual ${fmt(fresh.annual_amount_cents)}.`; m.style.color = '#166534'; }
+        } catch (e) { say('Not saved: ' + e.message, true); }
+      });
+    });
   }
 
   // ── Budget PLANNING — build next year from actuals (Ed 2026-06-30) ─────────

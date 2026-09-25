@@ -83,6 +83,7 @@ const CHECKS = [
   'tests/test_graph_send_errors.js',
   'tests/test_budget_phase0.js',
   'tests/test_report_categories.js',
+  'tests/test_budget_monthly_plan.js',
   'tests/test_reply_recipient.js',
   'tests/test_reply_learning.js',
   'tests/test_acc_application_matching.js',

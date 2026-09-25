@@ -33,7 +33,9 @@ const { balanceSheet, incomeStatement, equityStatement, budgetVsActual, budgetVs
 const { extractBudget } = require('../lib/accounting/budget_pdf_extractor');
 const { rollForwardBudget } = require('../lib/accounting/budget_roll_forward');
 const { mergeBudgetLines } = require('../lib/accounting/budget_merge');
-const { requireOwner, requireAdmin } = require('./_require_admin');
+const { requireOwner, requireAdmin, getAuthedUser } = require('./_require_admin');
+const phasing = require('../lib/accounting/budget_phasing');
+const { loadBudgetPlan } = require('../lib/accounting/budget_plan_data');
 const LOCKED_BUDGET_STATUSES = ['approved', 'active'];
 const { safeErrorMessage } = require('./_safe_error');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -864,6 +866,19 @@ router.post('/budgets', express.json({ limit: '1mb' }), async (req, res) => {
     }
     const merged = mergeBudgetLines(saved, line_items, { phasing: req.body.phasing || null, removeAccountIds: req.body.remove_account_ids || [] });
     if (merged.errors.length) return res.status(400).json({ error: 'invalid_budget_lines', detail: merged.errors });
+    // Budget Phase 2: a line explained by components can only change in the
+    // monthly plan (where the components change with it). Refuse here rather
+    // than let the save fail on the completeness rule.
+    if (existing) {
+      const { data: cl, error: clErr } = await supabase.from('budget_line_components').select('budget_line_id, budget_line_items!inner(account_id, monthly_amounts_cents)').eq('budget_id', existing.id).limit(5000);
+      if (clErr) throw clErr;
+      const withComps = new Map((cl || []).map((c) => [c.budget_line_items.account_id, (c.budget_line_items.monthly_amounts_cents || []).map(Number)]));
+      const touched = merged.rows.filter((r) => withComps.has(r.account_id) && r.monthly_amounts_cents.some((v, i) => v !== withComps.get(r.account_id)[i]));
+      const removedWithComps = merged.removed.filter((id) => withComps.has(id));
+      if (touched.length || removedWithComps.length) {
+        return res.status(409).json({ error: 'line_has_components', detail: 'These lines are explained by components (for example a recurring allowance plus a project). Change them in the monthly plan so the components change with them.', account_ids: [...touched.map((r) => r.account_id), ...removedWithComps] });
+      }
+    }
     if (merged.decisionsNeeded.length) {
       return res.status(409).json({ error: 'monthly_schedule_decision_required',
         detail: 'Some lines have a seasonal monthly schedule and their annual changed. Choose: keep each pattern (scaled to the new annual) or spread evenly.',
@@ -917,6 +932,116 @@ router.post('/budgets', express.json({ limit: '1mb' }), async (req, res) => {
     res.json({ budget, line_items_count: rows.length, lines_kept_unchanged: merged.kept.length, lines_removed: merged.removed.length });
   } catch (err) {
     console.error('[books] save budget failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// MONTHLY PLAN (Budget Phase 2, migration 464). Draft budgets only; approved
+// budgets are view-only here and locked in the database.
+// ============================================================================
+async function _planLine(req, res) {
+  const { data: line, error } = await supabase.from('budget_line_items').select('id, budget_id, account_id, annual_amount_cents, monthly_amounts_cents').eq('id', req.params.lineId).maybeSingle();
+  if (error) throw error;
+  if (!line || line.budget_id !== req.params.id) { res.status(404).json({ error: 'budget_line_not_found' }); return null; }
+  const { data: bud, error: bErr } = await supabase.from('community_budgets').select('id, community_id, fiscal_year, status').eq('id', line.budget_id).maybeSingle();
+  if (bErr) throw bErr;
+  if (req.body && req.body.community_id && bud.community_id !== req.body.community_id) { res.status(403).json({ error: 'budget_belongs_to_a_different_community' }); return null; }
+  return { line, bud };
+}
+
+// Everything the monthly plan screen shows for one budget.
+router.get('/budgets/:id/plan', async (req, res) => {
+  try {
+    if (!/^[0-9a-fA-F-]{36}$/.test(req.params.id)) return res.status(400).json({ error: 'invalid_budget_id' });
+    const plan = await loadBudgetPlan(supabase, req.params.id);
+    if (!plan) return res.status(404).json({ error: 'budget_not_found' });
+    if (req.query.community_id && plan.budget.community_id !== req.query.community_id) return res.status(403).json({ error: 'budget_belongs_to_a_different_community' });
+    res.json(plan);
+  } catch (err) {
+    console.error('[books] budget plan read failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Compute (never save) a line's months for a phasing method.
+// Body: { method, annual_cents, settings, contract_ref, current_months }
+router.post('/budgets/:id/lines/:lineId/phase-preview', express.json(), async (req, res) => {
+  try {
+    const ctx = await _planLine(req, res); if (!ctx) return;
+    const b = req.body || {};
+    let contract = null;
+    if (b.method === 'contract') {
+      const plan = await loadBudgetPlan(supabase, ctx.bud.id);
+      contract = plan.contract_sources.find((c) => c.ref === b.contract_ref);
+      if (!contract) return res.status(400).json({ error: 'choose_a_contract' });
+    }
+    let prior_budget_months = null, prior_actual_months = null;
+    if (b.method === 'prior_budget' || b.method === 'prior_actual') {
+      const plan = await loadBudgetPlan(supabase, ctx.bud.id);
+      const pl = plan.lines.find((l) => l.id === ctx.line.id);
+      prior_budget_months = pl.prior_budget_months; prior_actual_months = pl.prior_actual_months;
+    }
+    const settings = { ...(b.settings || {}) };
+    if (b.method === 'prior_budget') settings.source_year = ctx.bud.fiscal_year - 1;
+    if (b.method === 'prior_actual') settings.source_year = ctx.bud.fiscal_year - 1;
+    if (contract) Object.assign(settings, { contract_ref: contract.ref, vendor_contract_id: contract.vendor_contract_id || null, amenity_id: contract.amenity_id || null, source_label: contract.source_label });
+    const r = phasing.phase({ method: b.method, annual_cents: b.annual_cents, settings, fy: ctx.bud.fiscal_year, prior_budget_months, prior_actual_months, contract, current_months: b.current_months });
+    res.json({ ...r, annual_cents: phasing.sum(r.monthly) });
+  } catch (err) {
+    if (/^[a-z_]+$/.test(err.message)) return res.status(400).json({ error: err.message });
+    console.error('[books] phase preview failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Compute (never save) the months after an annual change: scale | even | allocate_difference | keep_months.
+router.post('/budgets/:id/lines/:lineId/annual-change', express.json(), async (req, res) => {
+  try {
+    const ctx = await _planLine(req, res); if (!ctx) return;
+    const b = req.body || {};
+    const r = phasing.applyAnnualChange(b.current_months, b.new_annual_cents, b.choice, { months: b.months || [] });
+    res.json({ ...r, annual_cents: phasing.sum(r.monthly) });
+  } catch (err) {
+    if (/^[a-z_]+$/.test(err.message)) return res.status(400).json({ error: err.message });
+    console.error('[books] annual change failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Save one line's plan atomically: months + phasing + (optionally) components.
+// Body: { monthly_amounts_cents, phasing_method, phasing_settings, schedule_basis, description, notes,
+//         components: null (leave) | [] (remove) | [..] (replace), confirm_assumption }
+router.post('/budgets/:id/lines/:lineId/plan', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const ctx = await _planLine(req, res); if (!ctx) return;
+    if (ctx.bud.status !== 'draft') return res.status(409).json({ error: 'budget_locked', detail: `The FY${ctx.bud.fiscal_year} budget is ${ctx.bud.status}; only draft budgets can be edited.` });
+    const b = req.body || {};
+    const months = (b.monthly_amounts_cents || []).map((v) => Math.round(Number(v)));
+    if (months.length !== 12 || months.some((v) => !Number.isFinite(v))) return res.status(400).json({ error: 'a line needs 12 monthly values' });
+    if (b.phasing_method != null && !phasing.METHODS.includes(b.phasing_method)) return res.status(400).json({ error: 'unknown phasing method' });
+    if (b.schedule_basis != null && !phasing.BASES.includes(b.schedule_basis)) return res.status(400).json({ error: 'unknown schedule basis' });
+    let components = b.components === undefined ? null : b.components;
+    if (components !== null) {
+      if (!Array.isArray(components)) return res.status(400).json({ error: 'components must be a list' });
+      if (components.length > 50) return res.status(400).json({ error: 'too many components' });
+      components = components.map((c) => ({ ...c, monthly_amounts_cents: (c.monthly_amounts_cents || []).map((v) => Math.round(Number(v))) }));
+      const chk = phasing.checkComponents(months, components);
+      if (!chk.ok) return res.status(400).json({ error: 'components_incomplete', detail: chk.problems, residual_cents: chk.residual });
+    }
+    const settings = b.phasing_settings && typeof b.phasing_settings === 'object' ? { ...b.phasing_settings } : null;
+    if (settings && settings.assumption && b.confirm_assumption) {
+      const u = await getAuthedUser(req);
+      settings.confirmed_by = (u && u.email) || 'staff'; settings.confirmed_at = new Date().toISOString();
+    }
+    const { data, error } = await supabase.rpc('save_budget_line_plan', {
+      p_line_id: ctx.line.id, p_monthly: months, p_phasing_method: b.phasing_method || null, p_phasing_settings: settings,
+      p_schedule_basis: b.schedule_basis || null, p_description: b.description || null, p_notes: b.notes || null, p_components: components,
+    });
+    if (error) return res.status(error.code === 'P0001' ? 409 : 500).json({ error: error.code === 'P0001' ? error.message : safeErrorMessage(error) });
+    res.json(data);
+  } catch (err) {
+    console.error('[books] save line plan failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
