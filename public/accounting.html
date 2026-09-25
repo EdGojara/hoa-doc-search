@@ -612,6 +612,7 @@
     try {
       const j = await (await fetch(`/api/books/report-categories?community_id=${CID}`)).json();
       if (j.error) throw new Error(j.error);
+      await _adminReady;
       _rc = j; rcPaint();
     } catch (e) { $('rc-out').innerHTML = `<div style="color:var(--err)">Couldn't load: ${esc(e.message)}</div>`; }
   }
@@ -623,21 +624,23 @@
       .sort((a,b)=>a.label.localeCompare(b.label));
   }
   function rcPaint() {
+    const canEdit = !!window._isAdmin;   // server enforces admin/owner on every write
     const accts = (_rc.accounts||[]).filter((a)=>(_rcFilter==='unmapped' ? !a.category_id : true)
       && (!_rcSearch || (a.account_number+' '+a.account_name+' '+(a.category_name||'')+' '+(a.subcategory_name||'')).toLowerCase().includes(_rcSearch)));
     const opt = (section, sel) => `<option value="">— Unmapped —</option>` + rcLeaves(section).map((l)=>`<option value="${l.id}"${l.id===sel?' selected':''}>${esc(l.label)}</option>`).join('');
     const rows = accts.map((a)=>`<tr${a.category_id?'':' style="background:#fffbeb;"'}>
-      <td><input type="checkbox" class="rc-pick" value="${a.account_id}" data-section="${a.account_type}"></td>
+      <td>${canEdit?`<input type="checkbox" class="rc-pick" value="${a.account_id}" data-section="${a.account_type}">`:''}</td>
       <td style="font-family:ui-monospace,monospace;">${esc(a.account_number)}</td><td>${esc(a.account_name)}${a.is_active?'':' <span class="muted">(inactive)</span>'}</td>
       <td>${esc(a.fund_code||'')}</td><td>${a.account_type==='revenue'?'Revenue':'Expense'}</td>
-      <td><select class="rc-cat" data-acct="${a.account_id}" style="padding:4px 6px; border:1px solid var(--rule); border-radius:6px; max-width:320px;">${opt(a.account_type, a.category_id)}</select></td>
-      <td><input class="rc-ord" data-acct="${a.account_id}" value="${a.display_order==null?'':a.display_order}" ${a.category_id?'':'disabled'} placeholder="#" style="width:52px; padding:4px; border:1px solid var(--rule); border-radius:6px;"></td>
+      <td>${canEdit ? `<select class="rc-cat" data-acct="${a.account_id}" style="padding:4px 6px; border:1px solid var(--rule); border-radius:6px; max-width:320px;">${opt(a.account_type, a.category_id)}</select>`
+        : (a.category_id ? esc((a.category_name||'') + (a.subcategory_name ? ' › ' + a.subcategory_name : '')) : '<span style="color:#92400e; font-weight:600;">Unmapped</span>')}</td>
+      <td>${canEdit ? `<input class="rc-ord" data-acct="${a.account_id}" value="${a.display_order==null?'':a.display_order}" ${a.category_id?'':'disabled'} placeholder="#" style="width:52px; padding:4px; border:1px solid var(--rule); border-radius:6px;">` : esc(a.display_order==null?'':String(a.display_order))}</td>
       <td class="muted" style="font-size:11px;">${a.updated_by?esc(a.updated_by):''}</td></tr>`).join('');
     const cats = (_rc.categories||[]);
     const tops = cats.filter((c)=>!c.parent_category_id).sort((a,b)=>(a.section===b.section?0:(a.section==='revenue'?-1:1)) || a.display_order-b.display_order || a.name.localeCompare(b.name));
     const catRow = (c, sub) => `<tr${c.is_active?'':' class="muted"'}><td style="padding-left:${sub?22:6}px;">${sub?'› ':''}${esc(c.name)}${c.report_label?` <span class="muted" style="font-size:11px;">(prints as "${esc(c.report_label)}")</span>`:''}${c.is_active?'':' <span class="muted">(inactive)</span>'}</td>
       <td>${c.section==='revenue'?'Revenue':'Expense'}</td><td class="num">${c.display_order}</td><td>${(_rc.accounts||[]).filter((a)=>a.category_id===c.id).length||''}</td>
-      <td style="white-space:nowrap;"><button class="rc-edit" data-id="${c.id}" style="font-size:11.5px; padding:2px 8px; border:1px solid var(--rule); border-radius:5px; background:#fff; cursor:pointer;">Edit</button>${sub?'':` <button class="rc-addsub" data-id="${c.id}" style="font-size:11.5px; padding:2px 8px; border:1px solid var(--rule); border-radius:5px; background:#fff; cursor:pointer;">+ Subcategory</button>`}</td></tr>`;
+      <td style="white-space:nowrap;">${!canEdit?'':`<button class="rc-edit" data-id="${c.id}" style="font-size:11.5px; padding:2px 8px; border:1px solid var(--rule); border-radius:5px; background:#fff; cursor:pointer;">Edit</button>${sub?'':` <button class="rc-addsub" data-id="${c.id}" style="font-size:11.5px; padding:2px 8px; border:1px solid var(--rule); border-radius:5px; background:#fff; cursor:pointer;">+ Subcategory</button>`}`}</td></tr>`;
     const catTable = tops.map((c)=>catRow(c,false) + cats.filter((x)=>x.parent_category_id===c.id).sort((a,b)=>a.display_order-b.display_order||a.name.localeCompare(b.name)).map((x)=>catRow(x,true)).join('')).join('');
     $('rc-out').innerHTML = `
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
@@ -645,21 +648,23 @@
         <button class="rc-f" data-f="unmapped" style="padding:6px 12px; border:1px solid #fcd34d; border-radius:7px; cursor:pointer; font-weight:700; background:${_rcFilter==='unmapped'?'#92400e':'#fef3c7'}; color:${_rcFilter==='unmapped'?'#fff':'#92400e'};">Unmapped (${_rc.unmapped_count})</button>
         <input id="rc-search" value="${esc(_rcSearch)}" placeholder="Search account or category" style="padding:6px 9px; border:1px solid var(--rule); border-radius:7px; min-width:200px;">
       </div>
-      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; padding:8px 10px; background:#f5f8fc; border-radius:8px; font-size:12.5px;">
+      ${canEdit ? '' : '<div style="padding:8px 12px; background:#f5f8fc; border-radius:8px; font-size:12.5px; margin-bottom:10px;">View only. Changing report categories is limited to admins.</div>'}
+      <div style="display:${canEdit?'flex':'none'}; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; padding:8px 10px; background:#f5f8fc; border-radius:8px; font-size:12.5px;">
         <strong>Bulk:</strong> tick accounts, then
         <select id="rc-bulk-cat" style="padding:5px 7px; border:1px solid var(--rule); border-radius:6px; max-width:320px;"><option value="">choose a category…</option><optgroup label="Revenue">${rcLeaves('revenue').map((l)=>`<option value="${l.id}" data-section="revenue">${esc(l.label)}</option>`).join('')}</optgroup><optgroup label="Expense">${rcLeaves('expense').map((l)=>`<option value="${l.id}" data-section="expense">${esc(l.label)}</option>`).join('')}</optgroup></select>
         <button id="rc-bulk-go" style="padding:5px 12px; border:none; border-radius:6px; background:var(--navy); color:#fff; font-weight:600; cursor:pointer;">Assign</button>
         <button id="rc-bulk-unmap" style="padding:5px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer;">Unmap</button>
         <span id="rc-msg" class="muted"></span>
       </div>
-      <table><thead><tr><th><input type="checkbox" id="rc-all"></th><th>Acct</th><th>Account</th><th>Fund</th><th>Type</th><th>Category › Subcategory</th><th>Order</th><th>Last changed by</th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="muted" style="padding:14px;">Nothing here.</td></tr>'}</tbody></table>
+      <table><thead><tr><th>${canEdit?'<input type="checkbox" id="rc-all">':''}</th><th>Acct</th><th>Account</th><th>Fund</th><th>Type</th><th>Category › Subcategory</th><th>Order</th><th>Last changed by</th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="muted" style="padding:14px;">Nothing here.</td></tr>'}</tbody></table>
       <h3 class="sec" style="font-size:14px; margin:18px 0 6px;">Categories</h3>
-      <div style="margin-bottom:6px;"><button id="rc-addcat" style="font-size:12px; padding:5px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer; font-weight:600;">+ Category</button></div>
+      <div style="margin-bottom:6px; display:${canEdit?'block':'none'};"><button id="rc-addcat" style="font-size:12px; padding:5px 12px; border:1px solid var(--rule); border-radius:6px; background:#fff; cursor:pointer; font-weight:600;">+ Category</button></div>
       <table><thead><tr><th>Name</th><th>Section</th><th class="num">Order</th><th>Accounts</th><th></th></tr></thead><tbody>${catTable || '<tr><td colspan="5" class="muted" style="padding:14px;">No categories yet.</td></tr>'}</tbody></table>`;
     const msg = (t, bad) => { const m=$('rc-msg'); if (m) { m.textContent=t; m.style.color = bad?'var(--err)':''; } };
     const post = async (url, body) => { const r = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json', ...(await chkAuthHeader()) }, body: JSON.stringify({ community_id: CID, ...body }) }); const j = await r.json(); if (j.error) throw new Error(j.error); return j; };
     document.querySelectorAll('.rc-f').forEach((b)=>b.addEventListener('click',()=>{ _rcFilter=b.dataset.f; rcPaint(); }));
     $('rc-search').addEventListener('change',(e)=>{ _rcSearch=e.target.value.trim().toLowerCase(); rcPaint(); });
+    if (!canEdit) return;   // read-only: no edit handlers
     $('rc-all').addEventListener('change',(e)=>document.querySelectorAll('.rc-pick').forEach((c)=>{ c.checked=e.target.checked; }));
     document.querySelectorAll('.rc-cat').forEach((sel)=>sel.addEventListener('change', async ()=>{
       try { await post('/api/books/report-map', { account_ids:[sel.dataset.acct], category_id: sel.value || null }); await renderReportCategories(); }

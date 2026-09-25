@@ -33,7 +33,7 @@ const { balanceSheet, incomeStatement, equityStatement, budgetVsActual, budgetVs
 const { extractBudget } = require('../lib/accounting/budget_pdf_extractor');
 const { rollForwardBudget } = require('../lib/accounting/budget_roll_forward');
 const { mergeBudgetLines } = require('../lib/accounting/budget_merge');
-const { requireOwner, requireStaff } = require('./_require_admin');
+const { requireOwner, requireAdmin } = require('./_require_admin');
 const LOCKED_BUDGET_STATUSES = ['approved', 'active'];
 const { safeErrorMessage } = require('./_safe_error');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -479,11 +479,12 @@ router.get('/report-categories', async (req, res) => {
   }
 });
 
+// Writes below are admin/owner only (Ed 2026-09-25); any signed-in staffer can view.
 // Create or edit a category/subcategory. Categories are never deleted
 // (deactivate instead); the database refuses anything that would orphan accounts.
 router.post('/report-categories', express.json(), async (req, res) => {
   try {
-    const user = await requireStaff(req, res); if (!user) return;
+    const user = await requireAdmin(req, res); if (!user) return;   // configuration: admin/owner only
     const b = req.body || {};
     if (!b.community_id) return res.status(400).json({ error: 'community_id_required' });
     const actor = user.email || 'staff';
@@ -518,7 +519,7 @@ router.post('/report-categories', express.json(), async (req, res) => {
 // nothing here guesses a category.
 router.post('/report-map', express.json(), async (req, res) => {
   try {
-    const user = await requireStaff(req, res); if (!user) return;
+    const user = await requireAdmin(req, res); if (!user) return;   // configuration: admin/owner only
     const { community_id, account_ids, category_id } = req.body || {};
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
     if (!Array.isArray(account_ids) || !account_ids.length) return res.status(400).json({ error: 'account_ids_required' });
@@ -537,7 +538,7 @@ router.post('/report-map', express.json(), async (req, res) => {
 // Order of an account within its category (blank = by account number).
 router.post('/report-map/order', express.json(), async (req, res) => {
   try {
-    const user = await requireStaff(req, res); if (!user) return;
+    const user = await requireAdmin(req, res); if (!user) return;   // configuration: admin/owner only
     const { community_id, account_id, display_order } = req.body || {};
     if (!community_id || !account_id) return res.status(400).json({ error: 'community_id_and_account_id_required' });
     const n = display_order === null || display_order === '' || display_order === undefined ? null : parseInt(display_order, 10);

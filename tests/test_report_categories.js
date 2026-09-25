@@ -125,6 +125,50 @@ function pageFns(names) {
     assert.ok(/budget-vs-actual\?community_id=\$\{CID\}&period_end=\$\{e\}\$\{mode==='grouped'\?'&grouped=1':''\}/.test(cur), 'flat request adds nothing');
   });
 
+  // ---- write access: admin/owner only (Ed 2026-09-25) ----
+  await t('report category writes: staff get 403 with nothing written; admin passes the gate; staff can still read', async () => {
+    const path_ = require.resolve('../api/_require_admin.js');
+    const real = require(path_);
+    // Stand-in auth: role from a test header. Exercises the ROUTE wiring; requireAdmin itself is shared and unchanged.
+    const fakeUser = (req) => { const r = req.headers['x-test-role']; return r ? { role: r, email: r + '@test' } : null; };
+    require.cache[path_].exports = { ...real,
+      getAuthedUser: async (req) => fakeUser(req),
+      requireStaff: async (req, res) => { const u = fakeUser(req); if (!u) { res.status(403).json({ error: 'sign_in_required' }); return null; } return u; },
+      requireAdmin: async (req, res) => { const u = fakeUser(req); if (!u || u.role !== 'admin') { res.status(403).json({ error: 'admin_only' }); return null; } return u; },
+      requireOwner: async (req, res) => { res.status(403).json({ error: 'owner_only' }); return null; } };
+    const sbjs = require('@supabase/supabase-js'); const realCreate = sbjs.createClient; const writes = [];
+    sbjs.createClient = (...x) => { const c = realCreate(...x); const from = c.from.bind(c);
+      c.from = (tb) => { const q = from(tb); for (const w of ['insert', 'update', 'upsert', 'delete']) q[w] = () => { writes.push(tb + '.' + w); throw new Error('write blocked in test'); }; return q; };
+      c.rpc = async (fn) => { writes.push('rpc.' + fn); return { data: null, error: { code: 'XX', message: 'rpc blocked in test' } }; }; return c; };
+    delete require.cache[require.resolve('../api/books.js')];
+    const { router } = require('../api/books.js');
+    sbjs.createClient = realCreate; require.cache[path_].exports = real; delete require.cache[require.resolve('../api/books.js')];
+    const express = require('express'); const app = express(); app.use('/api/books', router);
+    const srv = app.listen(0); const base = 'http://127.0.0.1:' + srv.address().port + '/api/books';
+    const post = (p, body, role) => fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(role ? { 'x-test-role': role } : {}) }, body: JSON.stringify(body) });
+    const CID = '00000000-0000-0000-0000-000000000001';
+    try {
+      const calls = [
+        ['/report-categories', { community_id: CID, section: 'expense', name: 'New cat' }],
+        ['/report-categories', { community_id: CID, id: CID, name: 'Renamed', display_order: 5, is_active: false }],
+        ['/report-map', { community_id: CID, account_ids: [CID], category_id: CID }],
+        ['/report-map', { community_id: CID, account_ids: [CID], category_id: null }],
+        ['/report-map/order', { community_id: CID, account_id: CID, display_order: 3 }],
+      ];
+      for (const [p, body] of calls) {
+        for (const role of [null, 'staff']) { const r = await post(p, body, role); assert.strictEqual(r.status, 403, (role || 'anon') + ' ' + p + ' -> ' + r.status); }
+      }
+      assert.deepStrictEqual(writes, [], 'staff/anon attempted a write: ' + writes.join(','));
+      // Admin passes the gate: validation answers (400) before any write, and a map call reaches the (blocked) RPC.
+      assert.strictEqual((await post('/report-categories', { community_id: CID, section: 'expense', name: '  ' }, 'admin')).status, 400);
+      const am = await post('/report-map', { community_id: CID, account_ids: [CID], category_id: CID }, 'admin');
+      assert.ok(writes.includes('rpc.set_account_report_category'), 'admin reached the audited write path (status ' + am.status + ')');
+      // Staff can read.
+      const g = await fetch(base + '/report-categories?community_id=' + CID, { headers: { 'x-test-role': 'staff' } });
+      assert.notStrictEqual(g.status, 403, 'staff must be able to view');   // 200 once 463 exists
+    } finally { srv.close(); }
+  });
+
   // ---- live LOPF ----
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) { console.log('      (live checks skipped: no Supabase env)'); return done(); }
   const { createClient } = require('@supabase/supabase-js');
