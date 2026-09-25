@@ -12,6 +12,8 @@
 // ----------------------------------------------------------------------------
 const { systemFor } = require('./live_prompt');
 const { amandaView } = require('./case_schema');
+const { classifyIntent } = require('./intent');
+const { candidateSystem } = require('./candidate_prompt');
 
 const CONTRACT_FIELDS = ['facts', 'supported_inferences', 'unknowns', 'issues', 'proposed_actions', 'authority_required', 'escalation', 'communication_plan', 'next_action', 'completion_condition'];
 
@@ -52,7 +54,28 @@ function userContent(c) {
     + `Draft Amanda's reply to ${first}.`;
 }
 
+function contextText(c) {
+  return [...(c.available_context || []).map((x) => `${x.text} ${x.source}`), ...(c.conversation_history || []).map((h) => h.text),
+    ...((c.community_context && c.community_context.facts) || []).map((x) => (typeof x === 'string' ? x : x.text))].join('\n');
+}
+
+function actionsBlock(c) {
+  const log = c.action_log || [];
+  return 'ACTIONS ON RECORD (what you or the team have actually done; anything not listed has NOT happened):\n'
+    + (log.length ? log.map((a) => `- [${a.at}] ${a.type}: ${a.what} (record: ${a.ref})`).join('\n') : '- none recorded') + '\n\n';
+}
+
+// baseline: production prompt, unmodified. contract: + internal contract.
+// candidate (v1.1): minimal prompt edits + integrity / certainty / channel
+// blocks + the classified intent + actions on record. Sandbox only.
 function buildRequest(c, { mode = 'baseline', learnedGuidance = '' } = {}) {
+  if (mode === 'candidate') {
+    const intent = classifyIntent({ message: c.incoming_message.text, channel: c.channel, contextText: contextText(c), audience: c.audience });
+    const system = candidateSystem({ audience: c.audience, communityName: c.community_context.name, channel: c.channel, intent, learnedGuidance });
+    const base = userContent(c);
+    const cut = base.lastIndexOf("Draft Amanda's reply to");
+    return { system, prompt: base.slice(0, cut) + actionsBlock(c) + base.slice(cut), intent };
+  }
   let system = systemFor(c.audience, c.community_context.name, { learnedGuidance });
   if (mode === 'contract') system += '\n\n' + CONTRACT_ADDENDUM;
   return { system, prompt: userContent(c) };
@@ -71,4 +94,4 @@ function parseResponse(text, mode) {
   }
 }
 
-module.exports = { buildRequest, parseResponse, userContent, CONTRACT_FIELDS, CONTRACT_ADDENDUM };
+module.exports = { buildRequest, parseResponse, userContent, contextText, CONTRACT_FIELDS, CONTRACT_ADDENDUM };

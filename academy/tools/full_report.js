@@ -112,6 +112,15 @@ function render(report) {
       if (run.error) { L.push(`Amanda call failed: ${run.error}`, ''); continue; }
       L.push(`**Amanda's raw response** (${wordCount(run.message)} words, verbatim):`, '', '```text', run.message, '```', '');
       if (run.internal) L.push('<details><summary>Internal contract</summary>', '', '```json', JSON.stringify(run.internal, null, 2), '```', '</details>', '');
+      if (run.guard) {
+        const g = run.guard;
+        L.push(`**Classified intent:** ${g.intent ? `${g.intent.mode}${g.intent.underlying_mode !== g.intent.mode ? ` (over ${g.intent.underlying_mode})` : ''}, confidence ${g.intent.confidence}, signals ${g.intent.signals.join(', ') || 'none'}` : 'n/a'}`, '');
+        if (g.first_violations && g.first_violations.length) {
+          L.push(`**Integrity guard fired on the first draft** (${g.first_violations.length}): ${g.first_violations.map((v) => `${v.rule}: "${esc(v.sentence)}"`).join(' | ')}`, '');
+          if (g.first_draft) L.push('<details><summary>First draft (before the guard-requested revision), verbatim</summary>', '', '```text', g.first_draft, '```', '</details>', '');
+          L.push(`**After one revision:** ${g.final_violations && g.final_violations.length ? g.final_violations.map((v) => `${v.rule} still present: "${esc(v.sentence)}"`).join(' | ') : 'clean'}`, '');
+        } else L.push('**Integrity guard:** clean on the first draft', '');
+      }
       const judgeErrs = run.judge_errors || (run.judges || []).filter((j) => j && j.error);
       if (judgeErrs.length) L.push(`**Judge errors:** ${judgeErrs.map((j) => `${judgeName(j.judge)}: ${esc(j.error)}`).join(' | ')} (the remaining judge's verdict stands as single_judge)`, '');
       for (const d of DIMS) {

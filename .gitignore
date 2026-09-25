@@ -1,6 +1,8 @@
 node_modules/
 .env
 docs/
+# Amanda Academy design docs are source, not generated output
+!academy/docs/
 .cache/
 
 # County parcel shapefiles — FBCAD/HCAD bulk data, hundreds of MB.

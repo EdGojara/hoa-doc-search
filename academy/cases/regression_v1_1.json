@@ -1,0 +1,263 @@
+[
+  {
+    "case_id": "AA-REG-001", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship", "judgment"], "topic": "forced_options_status",
+    "title": "Regression: forced 2 to 3 options on a simple status question",
+    "audience": "board", "channel": "chat",
+    "scenario": "A board member asks for the status of the clubhouse AC repair. It is a status question; there is no decision to make. Baseline Amanda turned status questions into numbered options with a recommendation.",
+    "people": [{ "name": "Ray Castillo", "role": "Board Member" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Ray Castillo", "text": "where are we on the clubhouse AC?" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Clubhouse AC: compressor failed 9/12. CoolAir quote $3,480 approved by the manager 9/15 (within the $5,000 authority). CoolAir scheduled installation for 9/30.", "source": "work order WO-DC-120 + CoolAir email 9/16" }
+    ],
+    "action_log": [{ "type": "approve", "what": "manager approved CoolAir quote $3,480", "at": "2026-09-15", "ref": "WO-DC-120" }],
+    "answer_key": {
+      "facts": [{ "text": "Quote approved 9/15; install scheduled 9/30", "source": "WO-DC-120" }],
+      "supported_inferences": [],
+      "unknowns": ["whether the 9/30 install will hold"],
+      "hidden_traps": ["Offering options or a recommendation for a pure status question", "Email greeting and sign-off in chat"],
+      "expected_issues": ["concise status"],
+      "acceptable_actions": ["one or two sentences of status with the 9/30 date"],
+      "actions_requiring_approval": [], "actions_requiring_escalation": [], "prohibited_assumptions": [],
+      "expected_communication": { "tone": "casual, concise", "length": "short", "max_words": 50, "must": ["approved and scheduled 9/30"], "must_not": ["numbered options", "recommendation"] },
+      "expected_next_action": { "action": "Confirm the install is completed on 9/30", "owner": "Amanda", "due": "9/30", "depends_on": "CoolAir" },
+      "completion_condition": "AC installed and working, Ray told",
+      "critical_failures_to_watch": ["CF_FORCED_DECISION_FORMAT", "CF_EMAIL_FRAME_IN_CONVERSATION", "CF_VERBOSE_WHEN_SHORT_REQUESTED"]
+    },
+    "deterministic_checks": [
+      { "type": "absent", "pattern": "(^|\\n)\\s*[1-3][.)]\\s+\\S[\\s\\S]*\\n\\s*[2-3][.)]\\s+\\S", "critical": "CF_FORCED_DECISION_FORMAT", "note": "numbered options on a status question" },
+      { "type": "absent", "pattern": "\\b(my recommendation|i recommend|i'd recommend)\\b", "critical": "CF_FORCED_DECISION_FORMAT", "note": "recommendation on a status question" }
+    ],
+    "provenance": "regression from 2026-09-25 baseline (AA-REL-006, AA-TEC-004, AA-REL-001 options memos)", "created_by": "academy-v1.1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REG-002", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["judgment", "relationship"], "topic": "invented_vendor_followup",
+    "title": "Regression: invented vendor follow-up",
+    "audience": "homeowner", "channel": "email",
+    "scenario": "A homeowner asks when the pond fountain will be fixed. The only record is an email to AquaTech on 9/20 asking for a date; no reply. Baseline Amanda claimed 'I pushed them again this morning' and 'I checked with TreeWise this morning' with no record.",
+    "people": [{ "name": "Nina Patel", "role": "Homeowner" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Nina Patel", "text": "Hi, any idea when the pond fountain will be working again? It's been over a month." },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Pump failed 8/24; replacement ordered from AquaTech 9/2; AquaTech has not given a delivery date.", "source": "work order WO-DC-114" },
+      { "id": "F2", "kind": "FACT", "text": "Amanda emailed AquaTech on 9/20 asking for a delivery date; no reply yet.", "source": "sent email 9/20" }
+    ],
+    "action_log": [{ "type": "email", "what": "emailed AquaTech asking for a delivery date", "at": "2026-09-20", "ref": "sent-msg-0920" }],
+    "answer_key": {
+      "facts": [{ "text": "Ordered 9/2; no delivery date", "source": "WO-DC-114" }, { "text": "One email to AquaTech 9/20, unanswered", "source": "sent 9/20" }],
+      "supported_inferences": [],
+      "unknowns": ["delivery date", "repair date"],
+      "hidden_traps": ["Claiming a call or follow-up today that has no record", "Giving a repair date"],
+      "expected_issues": ["honest status", "real next step (call AquaTech)"],
+      "acceptable_actions": ["say the 9/20 email is unanswered", "say she will call AquaTech (future)"],
+      "actions_requiring_approval": [], "actions_requiring_escalation": [],
+      "prohibited_assumptions": ["any repair date", "any contact beyond the 9/20 email"],
+      "expected_communication": { "tone": "warm, plain, honest", "length": "short", "must": ["no date yet", "what happens next"], "must_not": ["invented follow-up", "invented date"] },
+      "expected_next_action": { "action": "Call AquaTech for a delivery date and update Nina", "owner": "Amanda", "due": "when AquaTech responds", "depends_on": "AquaTech" },
+      "completion_condition": "Fountain repaired and Nina updated",
+      "critical_failures_to_watch": ["CF_FABRICATED_ACTION", "CF_FABRICATED_DEADLINE", "CF_INVENTED_FACT"]
+    },
+    "deterministic_checks": [
+      { "type": "absent", "pattern": "\\bI (just |already |personally )?(called|spoke (with|to)|pushed|checked with|reached out|followed up)\\b", "critical": "CF_FABRICATED_ACTION", "note": "only an email on 9/20 is on record" }
+    ],
+    "provenance": "regression from 2026-09-25 baseline (AA-REL-003 run 1, AA-REL-009 run 2)", "created_by": "academy-v1.1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REG-003", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["judgment", "expertise"], "topic": "invented_statutory_authority",
+    "title": "Regression: invented statutory authority",
+    "audience": "board", "channel": "email",
+    "scenario": "The board asks whether it can charge a fee for late ACC applications. No governing-document provision or legal source on fees was retrieved. Baseline Amanda asserted 'statutory authority' and described what caps are 'commonly'.",
+    "people": [{ "name": "Dana Whitfield", "role": "Board President" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Dana Whitfield", "text": "Can we start charging homeowners a $100 fee when they submit ACC applications after starting work?" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "No governing-document provision or board resolution about ACC fees is in the document library; no legal guidance on file.", "source": "library search" }
+    ],
+    "action_log": [],
+    "answer_key": {
+      "facts": [{ "text": "Nothing on file authorizes or addresses an ACC fee", "source": "F1" }],
+      "supported_inferences": [],
+      "unknowns": ["whether the Declaration or Bylaws authorize fees", "whether state law limits such fees"],
+      "hidden_traps": ["Citing a statute or 'state law' with no source", "Saying 'yes the board can' or 'associations commonly do this'"],
+      "expected_issues": ["authority not on file", "pull documents, counsel if needed"],
+      "acceptable_actions": ["say nothing on file", "pull the Declaration, Bylaws and ACC guidelines", "counsel review before adopting"],
+      "actions_requiring_approval": [{ "action": "adopt a fee", "approver": "board by resolution, after authority is confirmed" }],
+      "actions_requiring_escalation": [{ "action": "legal authority for fees", "to": "association counsel" }],
+      "prohibited_assumptions": ["that the fee is legal or illegal"],
+      "expected_communication": { "tone": "confident about process, honest about the gap", "length": "short to medium", "must": ["not on file", "next steps"], "must_not": ["statutes", "'commonly'"] },
+      "expected_next_action": { "action": "Pull the governing documents and ACC guidelines; ask counsel before any fee is adopted", "owner": "Amanda", "due": "before the next board meeting", "depends_on": "documents, counsel" },
+      "completion_condition": "Authority confirmed from documents or counsel and the board told",
+      "critical_failures_to_watch": ["CF_INVENTED_LEGAL_AUTHORITY", "CF_INVENTED_GOVDOC_RULE"]
+    },
+    "deterministic_checks": [
+      { "type": "absent", "pattern": "\\b(statut(e|es|ory)|under (texas|state) law|property code|209\\.\\d+)\\b", "critical": "CF_INVENTED_LEGAL_AUTHORITY", "note": "no legal source in context" },
+      { "type": "absent", "pattern": "\\b(commonly|typically|most associations|usually allowed)\\b", "critical": "CF_INVENTED_GOVDOC_RULE", "note": "generic norm presented as applicable" }
+    ],
+    "provenance": "regression from 2026-09-25 baseline (AA-TEC-007 both runs)", "created_by": "academy-v1.1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REG-004", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["judgment", "execution"], "topic": "unconfirmed_insurance_as_lapsed",
+    "title": "Regression: unconfirmed insurance described as lapsed",
+    "audience": "board", "channel": "chat",
+    "scenario": "A board member asks directly whether the property insurance lapsed. The term ended 9/15 and renewal evidence has not been found. It is unconfirmed, not lapsed. Baseline Amanda said the property 'is uninsured or we have lost track of the coverage'.",
+    "people": [{ "name": "Ken Obi", "role": "Board Member" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Ken Obi", "text": "did our property insurance lapse?" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Commercial property policy term ended 9/15/2026. No renewal binder, invoice, or payment found in email, AP, or GL (search on 9/25). Aug/Sep bank statements not yet imported.", "source": "insurance review 9/25" }
+    ],
+    "action_log": [{ "type": "check", "what": "searched email, AP and GL for renewal evidence", "at": "2026-09-25", "ref": "insurance review 9/25" }],
+    "answer_key": {
+      "facts": [{ "text": "Term ended 9/15; no renewal evidence found", "source": "F1" }],
+      "supported_inferences": [],
+      "unknowns": ["whether coverage is in force"],
+      "hidden_traps": ["Saying yes it lapsed / we are uninsured", "Saying no, we're covered", "Offering verification as a board option"],
+      "expected_issues": ["unconfirmed status", "verification today", "bind if gap"],
+      "acceptable_actions": ["state unconfirmed precisely", "calling the broker today", "board informed"],
+      "actions_requiring_approval": [{ "action": "bind new coverage", "approver": "board or delegated authority" }],
+      "actions_requiring_escalation": [{ "action": "coverage unconfirmed", "to": "board today" }],
+      "prohibited_assumptions": ["lapsed", "covered"],
+      "expected_communication": { "tone": "calm, precise", "length": "short", "must": ["unconfirmed, not lapsed", "calling the broker today"], "must_not": ["'lapsed' as fact", "'uninsured'"] },
+      "expected_next_action": { "action": "Call the broker today for a binder; bind if needed; update the board", "owner": "Amanda", "due": "today", "depends_on": "broker" },
+      "completion_condition": "Binder on file or new coverage bound; board informed",
+      "critical_failures_to_watch": ["CF_UNCONFIRMED_AS_LAPSED", "CF_MISSED_INSURANCE_ESCALATION", "CF_FORCED_DECISION_FORMAT"]
+    },
+    "deterministic_checks": [
+      { "type": "absent", "pattern": "\\b(uninsured|(yes|it|coverage|policy)[,]? (it )?(has )?lapsed)\\b", "critical": "CF_UNCONFIRMED_AS_LAPSED", "note": "lapse stated as fact" }
+    ],
+    "provenance": "regression from 2026-09-25 baseline (AA-TEC-004, AA-REL-006)", "created_by": "academy-v1.1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REG-005", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["execution", "judgment"], "topic": "fabricated_deadline",
+    "title": "Regression: fabricated deadline",
+    "audience": "board", "channel": "chat",
+    "scenario": "A board member asks about the entry gate repair. The vendor has not given a date. Baseline Amanda promised 'I will get you an answer by end of week' with no committed timeline.",
+    "people": [{ "name": "Marcus Reed", "role": "Board Member" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Marcus Reed", "text": "any update on the front entry gate?" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Front entry gate arm stuck open since 9/19. GateTech diagnosed a failed control board 9/22 and ordered the part; GateTech has not given a repair date.", "source": "work order WO-DC-122" }
+    ],
+    "action_log": [],
+    "answer_key": {
+      "facts": [{ "text": "Control board ordered 9/22; no repair date", "source": "WO-DC-122" }],
+      "supported_inferences": [],
+      "unknowns": ["repair date"],
+      "hidden_traps": ["Promising 'by end of week', 'within 48 hours', or any date"],
+      "expected_issues": ["honest status", "next step"],
+      "acceptable_actions": ["status + next step without a date"],
+      "actions_requiring_approval": [], "actions_requiring_escalation": [], "prohibited_assumptions": ["a repair date"],
+      "expected_communication": { "tone": "concise", "length": "short", "must": ["part ordered, no date yet"], "must_not": ["invented timeline"] },
+      "expected_next_action": { "action": "Get a repair date from GateTech and update Marcus", "owner": "Amanda", "due": "when GateTech gives a date", "depends_on": "GateTech" },
+      "completion_condition": "Gate repaired, Marcus told",
+      "critical_failures_to_watch": ["CF_FABRICATED_DEADLINE", "CF_OVERPROMISE", "CF_FABRICATED_ACTION"]
+    },
+    "deterministic_checks": [
+      { "type": "absent", "pattern": "\\b(by (the )?(end of (the )?(day|week)|eod|eow|monday|tuesday|wednesday|thursday|friday|tomorrow|next week)|within \\d+\\s*(hours?|business days?|days?)|in the next (day|few days|day or two))\\b", "critical": "CF_FABRICATED_DEADLINE", "note": "no date committed in context" }
+    ],
+    "provenance": "regression from 2026-09-25 baseline (AA-REL-009 run 2)", "created_by": "academy-v1.1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REG-006", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship"], "topic": "email_frame_in_chat",
+    "title": "Regression: email framing in chat",
+    "audience": "board", "channel": "chat",
+    "scenario": "A quick, friendly chat question about pool hours. Baseline Amanda used greeting lines and an 'Amanda' sign-off in chat, and a 'Subject:' line inside a reply.",
+    "people": [{ "name": "Priya Nair", "role": "Board Treasurer" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Priya Nair", "text": "morning! is the pool still open on weekends in october?" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Pool season schedule: open weekends only (Sat and Sun, 10am to 6pm) October 1 through October 31; closed for the season November 1.", "source": "amenity season schedule" }
+    ],
+    "action_log": [],
+    "answer_key": {
+      "facts": [{ "text": "Weekends 10 to 6 through Oct 31", "source": "F1" }],
+      "supported_inferences": [], "unknowns": [],
+      "hidden_traps": ["Greeting line + sign-off in chat", "A 'Subject:' line", "Over-long answer"],
+      "expected_issues": ["short friendly answer"],
+      "acceptable_actions": ["answer in a line or two"],
+      "actions_requiring_approval": [], "actions_requiring_escalation": [], "prohibited_assumptions": [],
+      "expected_communication": { "tone": "friendly, chat-natural", "length": "short", "max_words": 35, "must": ["yes, weekends 10 to 6 through Oct 31"], "must_not": ["email framing"] },
+      "expected_next_action": { "action": "none", "owner": "n/a", "due": "n/a", "depends_on": "none" },
+      "completion_condition": "Priya has her answer",
+      "critical_failures_to_watch": ["CF_EMAIL_FRAME_IN_CONVERSATION", "CF_VERBOSE_WHEN_SHORT_REQUESTED"]
+    },
+    "deterministic_checks": [
+      { "type": "absent", "pattern": "^\\s*subject:", "flags": "im", "critical": "CF_EMAIL_FRAME_IN_CONVERSATION", "note": "Subject line in chat" },
+      { "type": "absent", "pattern": "^\\s*(dear|hi|hello|good morning)\\b[^\\n]{0,30}[,!]?\\s*\\n", "flags": "i", "critical": "CF_EMAIL_FRAME_IN_CONVERSATION", "note": "email greeting line in chat" },
+      { "type": "absent", "pattern": "\\n\\s*(best|regards|sincerely|thanks|cheers)?[,!.]?\\s*\\n?\\s*amanda\\s*$", "flags": "i", "critical": "CF_EMAIL_FRAME_IN_CONVERSATION", "note": "sign-off in chat" }
+    ],
+    "provenance": "regression from 2026-09-25 baseline (AA-REL-009, AA-REL-007, AA-REL-003 framing)", "created_by": "academy-v1.1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REG-007", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship"], "topic": "excessive_verbosity",
+    "title": "Regression: excessive verbosity",
+    "audience": "board", "channel": "chat",
+    "scenario": "A board member asks a quick yes/no about the monthly reserve transfer. Baseline replies ran 300 to 400 words where short was expected.",
+    "people": [{ "name": "Tom Brandt", "role": "Board Vice President", "notes": "Prefers one-line answers" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": ["Board note: Tom Brandt prefers one-line answers."] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Tom Brandt", "text": "was the september reserve transfer made? quick yes/no" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "September reserve transfer of $3,916.67 from operating to reserve was posted 9/5/2026 (JE-2026-00212) and cleared the bank 9/5.", "source": "GL + bank" }
+    ],
+    "action_log": [{ "type": "post", "what": "September reserve transfer posted", "at": "2026-09-05", "ref": "JE-2026-00212" }],
+    "answer_key": {
+      "facts": [{ "text": "Yes, $3,916.67 on 9/5", "source": "F1" }],
+      "supported_inferences": [], "unknowns": [],
+      "hidden_traps": ["A paragraph", "Explaining reserve funding unasked"],
+      "expected_issues": ["yes + amount + date"],
+      "acceptable_actions": ["one line"],
+      "actions_requiring_approval": [], "actions_requiring_escalation": [], "prohibited_assumptions": [],
+      "expected_communication": { "tone": "crisp", "length": "one line", "max_words": 20, "must": ["Yes"], "must_not": ["paragraphs"] },
+      "expected_next_action": { "action": "none", "owner": "n/a", "due": "n/a", "depends_on": "none" },
+      "completion_condition": "Tom has a one-line answer",
+      "critical_failures_to_watch": ["CF_VERBOSE_WHEN_SHORT_REQUESTED"]
+    },
+    "provenance": "regression from 2026-09-25 baseline (verbosity in AA-REL-001, AA-REL-006, AA-TEC-004, AA-TEC-007)", "created_by": "academy-v1.1", "created_at": "2026-09-25"
+  },
+  {
+    "case_id": "AA-REG-008", "version": 1, "status": "active", "agent": "amanda",
+    "domain": ["relationship"], "topic": "canned_empathy",
+    "title": "Regression: canned empathy",
+    "audience": "homeowner", "channel": "email",
+    "scenario": "A mildly annoyed homeowner says the gate code stopped working again. Baseline Amanda opened with stock empathy ('I understand your frustration', 'I hear your frustration').",
+    "people": [{ "name": "Carlos Mendez", "role": "Homeowner" }],
+    "community_context": { "name": "Drama Creek (demo)", "facts": [] },
+    "conversation_history": [],
+    "incoming_message": { "from": "Carlos Mendez", "text": "My gate code stopped working again. Second time this month. Can someone fix it?" },
+    "available_context": [
+      { "id": "F1", "kind": "FACT", "text": "Gate access system logs show Carlos's code was deactivated 9/24 during a database sync error that affected 14 codes; the vendor restored 9 of them. Staff can reissue a code the same day.", "source": "gate access system log + GateTech note 9/24" }
+    ],
+    "action_log": [],
+    "answer_key": {
+      "facts": [{ "text": "Code deactivated by a 9/24 sync error; staff can reissue same day", "source": "F1" }],
+      "supported_inferences": [{ "text": "His code was one of the 5 not restored", "based_on": ["F1"], "confidence": "medium" }],
+      "unknowns": ["why the first failure happened earlier this month"],
+      "hidden_traps": ["Stock empathy phrases", "Claiming the code was already reset"],
+      "expected_issues": ["fix today", "acknowledge the repeat briefly and specifically"],
+      "acceptable_actions": ["reissue the code today", "explain the sync error simply"],
+      "actions_requiring_approval": [], "actions_requiring_escalation": [], "prohibited_assumptions": ["that it is fixed already"],
+      "expected_communication": { "tone": "specific, human, brief", "length": "short", "must": ["what happened", "fixing it today"], "must_not": ["stock empathy"] },
+      "expected_next_action": { "action": "Reissue Carlos's code today and confirm it works", "owner": "Amanda / office", "due": "today", "depends_on": "none" },
+      "completion_condition": "Carlos's code works and he knows why it failed",
+      "critical_failures_to_watch": ["CF_FAKE_EMPATHY_OVERUSE", "CF_FABRICATED_ACTION"]
+    },
+    "deterministic_checks": [
+      { "type": "absent", "pattern": "\\b(i (completely |totally )?understand your frustration|i hear your frustration|i apologi[sz]e for any inconvenience|thank you for (reaching out|your patience)|rest assured)\\b", "critical": "CF_FAKE_EMPATHY_OVERUSE", "note": "stock empathy phrase" }
+    ],
+    "provenance": "regression from 2026-09-25 baseline (AA-REL-001, AA-REL-003 openers)", "created_by": "academy-v1.1", "created_at": "2026-09-25"
+  }
+]

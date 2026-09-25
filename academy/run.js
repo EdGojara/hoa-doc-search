@@ -23,7 +23,8 @@ require('dotenv').config({ quiet: true, path: require('path').join(__dirname, '.
 const fs = require('fs');
 const path = require('path');
 const { validateCase } = require('./lib/case_schema');
-const { buildRequest, parseResponse } = require('./lib/amanda_under_test');
+const { buildRequest, parseResponse, contextText } = require('./lib/amanda_under_test');
+const { guard, revisionRequest } = require('./lib/action_guard');
 const { judgePrompt, parseJudge, mergeJudges, RUBRIC } = require('./lib/rubric');
 const { runDetectors } = require('./lib/critical');
 const { loadLivePrompts } = require('./lib/live_prompt');
@@ -96,7 +97,20 @@ async function main() {
     for (let n = 1; n <= o.runs; n++) {
       const a = await callModel({ ...amanda, system: req.system, prompt: req.prompt, maxTokens: o.mode === 'contract' ? 2600 : 1400, kind: 'amanda' });
       if (!a.ok) { runs.push({ run: n, error: a.error }); console.error(`${c.case_id} run ${n}: Amanda call failed: ${a.error}`); continue; }
-      const resp = parseResponse(a.text, o.mode);
+      const resp = parseResponse(a.text, o.mode === 'candidate' ? 'baseline' : o.mode);
+      // v1.1 candidate: machine-checkable integrity guard; ONE revision if it fires.
+      let guardInfo = null;
+      if (o.mode === 'candidate') {
+        const ctx = contextText(c);
+        const first = guard({ message: resp.message, actionLog: c.action_log || [], contextText: ctx });
+        guardInfo = { intent: req.intent, first_violations: first, revised: false };
+        if (first.length) {
+          const rv = await callModel({ ...amanda, system: req.system, prompt: `${req.prompt}\n\nYOUR DRAFT:\n${resp.message}\n\n${revisionRequest(first)}`, maxTokens: 1400, kind: 'amanda_revision' });
+          if (rv.ok) { guardInfo.first_draft = resp.message; resp.message = rv.text.trim(); guardInfo.revised = true; }
+          else guardInfo.revision_error = rv.error;
+          guardInfo.final_violations = guard({ message: resp.message, actionLog: c.action_log || [], contextText: ctx });
+        } else guardInfo.final_violations = [];
+      }
       const detectors = runDetectors(c, resp.message);
       const judgments = [];
       for (const j of judges) {
@@ -113,7 +127,12 @@ async function main() {
       }
       // merged.judges lists the judges that succeeded; failures are kept separately
       // (a bug here once overwrote them, hiding single-judge verdicts).
-      runs.push({ run: n, message: resp.message, internal: resp.internal, contract_ok: resp.contract_ok, detectors, ...merged, judge_errors: judgments.filter((x) => x.error).map((x) => ({ judge: x.judge, error: x.error })) });
+      for (const v of (guardInfo && guardInfo.final_violations) || []) {
+        const hit = merged.critical_failures.find((f) => f.code === v.code);
+        if (hit) { hit.flags.push({ judge: 'action_guard', evidence: v.sentence, why: v.detail }); if (hit.status === 'disputed') hit.status = 'confirmed'; }
+        else merged.critical_failures.push({ code: v.code, label: v.code, status: 'detector_only', flags: [{ judge: 'action_guard', evidence: v.sentence, why: v.detail }] });
+      }
+      runs.push({ run: n, message: resp.message, internal: resp.internal, contract_ok: resp.contract_ok, detectors, guard: guardInfo, ...merged, judge_errors: judgments.filter((x) => x.error).map((x) => ({ judge: x.judge, error: x.error })) });
       const v = Object.fromEntries(Object.entries(merged.dimensions).map(([d, x]) => [d, x.verdict + (x.agreement === 'disagree' ? '*' : '')]));
       console.log(`${c.case_id} run ${n}: ${JSON.stringify(v)} critical=${merged.critical_failures.map((f) => f.code + ':' + f.status).join(',') || 'none'}`);
     }

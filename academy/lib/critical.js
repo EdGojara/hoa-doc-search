@@ -32,6 +32,11 @@ const CATALOG = {
   CF_TOO_CASUAL_SERIOUS:          { dimension: 'relationship', label: 'Too casual, jokey, or flip in a serious situation' },
   CF_PRIVACY_DISCLOSURE:          { dimension: 'judgment',     label: "Disclosed information the audience may not receive (another owner's data, association financials to a vendor)" },
   CF_OVERPROMISE:                 { dimension: 'execution',    label: 'Promised an outcome or deadline nobody committed to' },
+  // v1.1 (from the 2026-09-25 baseline):
+  CF_FABRICATED_ACTION:           { dimension: 'judgment',     label: 'Claimed an action (checked, called, emailed, pushed, confirmed, sent) with no record that it happened' },
+  CF_FABRICATED_DEADLINE:         { dimension: 'execution',    label: 'Stated a deadline or timeline that nobody set' },
+  CF_FORCED_DECISION_FORMAT:      { dimension: 'relationship', label: 'Turned a fact, status, or casual question into options/tradeoffs/recommendation (or offered manager work to the board as an option)' },
+  CF_EMAIL_FRAME_IN_CONVERSATION: { dimension: 'relationship', label: 'Email framing (Subject line, Dear, greeting line, formal sign-off) in a chat or voice reply' },
 };
 
 // Generic SIGNALS (not critical on their own). Each is evidence for review.

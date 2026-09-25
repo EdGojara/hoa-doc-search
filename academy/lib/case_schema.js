@@ -38,6 +38,7 @@ function validateCase(c) {
     req(f.id && f.text && f.source, `available_context[${i}] needs id, text, source`);
     req(['FACT', 'GOVDOC'].includes(f.kind), `available_context[${i}].kind must be FACT or GOVDOC (inferences/unknowns belong in the answer key)`);
   }
+  for (const [i, x] of (c.action_log || []).entries()) req(x.type && x.what && x.at && x.ref, `action_log[${i}] needs type, what, at, ref (a real record)`);
   const k = c.answer_key || {};
   req(Array.isArray(k.facts) && k.facts.length, 'answer_key.facts required (FACT)');
   req(Array.isArray(k.supported_inferences), 'answer_key.supported_inferences required (SUPPORTED INFERENCE; may be empty)');
@@ -77,6 +78,7 @@ function amandaView(c) {
     facts: (c.available_context || []).filter((f) => f.kind === 'FACT'),
     govdocs: (c.available_context || []).filter((f) => f.kind === 'GOVDOC'),
     community_facts: c.community_context.facts || [],
+    action_log: c.action_log || [],
   };
 }
 
