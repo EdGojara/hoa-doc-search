@@ -3560,6 +3560,7 @@
           <div style="font-size:13px; font-weight:700; color:#1E2761; margin-bottom:6px;">Next step: push to bedrock-vote</div>
           <p style="font-size:11.5px; color:#475569; margin:0 0 8px 0; line-height:1.5;">Sends voters + the locked slate to bedrock-vote, where QR-coded mailing labels get generated. Do this BEFORE printing the envelopes — the labels are what go on them.</p>
           <button id="amnSendToVoteBtn" onclick="amnSendToBedrockVote()" disabled style="background:#7c3aed; color:#fff; border:1px solid #7c3aed; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600; opacity:0.5;" title="Push this cycle's voters + candidates to bedrock-vote. Idempotent — safe to click twice.">🗳️ Send to bedrock-vote</button>
+          <div id="amnSendToVoteBlocker" role="status" style="display:none; margin-top:8px; font-size:13px; font-weight:600; color:#b45309;"></div>
           <div id="amnSendToVoteStatus" style="margin-top:8px; font-size:13px; color:#475569;"></div>
         </div>
       </div>
@@ -52357,6 +52358,21 @@ ${questionsPage}
           if (!hasPdf) blockers.push('generate the Mailing version PDF above first');
           sendVoteBtn.title = 'Blocked: ' + blockers.join(', ');
         }
+        // A disabled production action must say why (Ed 2026-09-25).
+        const blockerEl = document.getElementById('amnSendToVoteBlocker');
+        if (blockerEl) {
+          if (sendVoteBtn.disabled) {
+            const reasons = [];
+            if (slate.length === 0) reasons.push('no candidates are on the ballot');
+            if (!isClosed) reasons.push('the nomination cycle is not closed (close it on the Call for Nominations tab)');
+            if (!hasPdf) reasons.push('the Mailing version of the notice has not been generated');
+            blockerEl.textContent = 'Cannot send yet: ' + reasons.join('; ') + '.';
+            blockerEl.style.display = 'block';
+          } else {
+            blockerEl.textContent = '';
+            blockerEl.style.display = 'none';
+          }
+        }
       }
 
       // Surface whether the community has a website on file. The Notice
@@ -52385,6 +52401,18 @@ ${questionsPage}
     }
   }
 
+  // Re-read this cycle from the server and redraw the panel. The screen used
+  // to call a non-existent amnPickCycle() behind a typeof guard, so saves and
+  // PDF generation never refreshed it (stale Send button, stale website hint).
+  async function amnReloadCurrentCycle() {
+    const id = amnCurrentCycleId;
+    if (!id) return;
+    await amnLoadCycles();                       // fresh cycle rows (notice PDF, cutoff, status)
+    const sel = document.getElementById('amnCycleSelect');
+    if (sel) sel.value = id;
+    await amnLoadCycle();
+  }
+
   // Inline prompt to set the community.website_url. Saves the operator
   // a round-trip to a separate Community Settings page just to enter
   // one URL the AMN renderer wants. Used by the "Add website URL →"
@@ -52407,15 +52435,19 @@ ${questionsPage}
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ website_url: url }),
       });
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || `HTTP ${r.status}`);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Trust only what the server says it stored.
+      if (!j || j.website_url !== url) throw new Error('the server did not confirm the saved URL');
+      const hint = document.getElementById('amnWebsiteUrlHint');
+      if (hint) {
+        hint.innerHTML = `🌐 Community website: <strong>${escapeHtml(j.website_url)}</strong> — saved. Homeowners will be directed here for candidate bios.`;
+        hint.style.color = '#15803d';
       }
-      // Reload the AMN panel so the hint refreshes with the new URL.
-      if (typeof amnPickCycle === 'function' && amnCurrentCycleId) {
-        amnPickCycle(amnCurrentCycleId);
-      }
+      await amnReloadCurrentCycle();
     } catch (e) {
+      const hint = document.getElementById('amnWebsiteUrlHint');
+      if (hint) { hint.innerHTML = `❌ Website URL was NOT saved: ${escapeHtml(e.message)}`; hint.style.color = '#b91c1c'; }
       alert(`Couldn't save website URL: ${e.message}`);
     }
   }
@@ -52456,11 +52488,9 @@ ${questionsPage}
       URL.revokeObjectURL(url);
       const label = withBios ? 'Website version' : 'Mailing version';
       status.innerHTML = `<span style="color:#15803d;">✓ ${label} generated and downloaded.</span> Also saved alongside this cycle in storage.`;
-      // After mailing-version generation, re-pick the cycle so the
-      // Send-to-bedrock-vote button enables (its gate is hasPdf).
-      if (!withBios && typeof amnPickCycle === 'function' && amnCurrentCycleId) {
-        setTimeout(() => amnPickCycle(amnCurrentCycleId), 500);
-      }
+      // After generation, re-read the cycle so the Send-to-bedrock-vote
+      // button reflects the saved notice PDF (its gate is hasPdf).
+      await amnReloadCurrentCycle();
     } catch (e) {
       status.innerHTML = `<span style="color:#b91c1c;">Generate failed: ${escapeHtml(e.message)}</span>`;
     } finally {
