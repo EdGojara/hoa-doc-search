@@ -80,3 +80,21 @@ Guard trigger, the same rules as `academy/lib/lessons.js`:
 
 ## Order
 A and B first, since they only need evaluation and lessons. C once the retrieval contract is agreed. D when the authority matrix is sourced per community. Each migration gets a rolled-back rehearsal first, like 465 and 466.
+
+## v1.2 addition (proposed, NOT applied): human functional roles
+
+Ed 2026-09-25: read active humans from `user_profiles`, never infer a missing role, and flag anyone without one for Ed to complete. Today `user_profiles.role` holds only `staff` / `admin` (an access level, not a job), so there is nowhere to record a functional role.
+
+```sql
+-- proposed migration (next free number at apply time)
+BEGIN;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS functional_role text;   -- e.g. 'Community Manager', 'Accounting'
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS functional_role_set_by text;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS functional_role_set_at timestamptz;
+COMMIT;
+```
+
+- `academy/team/directory.js loadFunctionalRoles` already reads this column when it exists, and treats a missing column as "not recorded" (any other query error is thrown, not read as empty).
+- `rolesNeedingEd(humans)` lists active people with no role. The admin surface for Ed to fill them in is not built.
+- Routing stays role/queue first: a named human becomes the route only when they are the assigned owner (`work_items.assigned_to`, `objectives.owner_persona`).
+- Note: the `work_items.assigned_to` column comment hardcodes staff first names. Per the no-individual-routing rule, new defaults should be roles or queues.

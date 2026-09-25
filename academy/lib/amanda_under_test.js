@@ -68,10 +68,10 @@ function actionsBlock(c) {
 // baseline: production prompt, unmodified. contract: + internal contract.
 // candidate (v1.1): minimal prompt edits + integrity / certainty / channel
 // blocks + the classified intent + actions on record. Sandbox only.
-function buildRequest(c, { mode = 'baseline', learnedGuidance = '' } = {}) {
+function buildRequest(c, { mode = 'baseline', learnedGuidance = '', team = {} } = {}) {
   if (mode === 'candidate') {
     const intent = classifyIntent({ message: c.incoming_message.text, channel: c.channel, contextText: contextText(c), audience: c.audience });
-    const system = candidateSystem({ audience: c.audience, communityName: c.community_context.name, channel: c.channel, intent, learnedGuidance });
+    const system = candidateSystem({ audience: c.audience, communityName: c.community_context.name, channel: c.channel, intent, learnedGuidance, team, agent: 'amanda' });
     const base = userContent(c);
     const cut = base.lastIndexOf("Draft Amanda's reply to");
     return { system, prompt: base.slice(0, cut) + actionsBlock(c) + base.slice(cut), intent };

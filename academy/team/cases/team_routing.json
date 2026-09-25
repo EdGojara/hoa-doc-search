@@ -4,310 +4,1014 @@
   "note": "DRAFT cases for the Shared Team Directory (academy/team/directory.js). Not wired into run.js; validated by tests/test_academy_team.js. Community is the Drama Creek demo; people are fictional.",
   "cases": [
     {
-      "case_id": "AA-TEAM-001", "version": 1, "status": "draft", "agent": "claire",
-      "topic": "claire_to_amanda_governance", "title": "Claire hands a governance question to Amanda",
-      "audience": "homeowner", "channel": "chat",
+      "case_id": "AA-TEAM-001",
+      "version": 1,
+      "status": "draft",
+      "agent": "claire",
+      "topic": "claire_to_amanda_governance",
+      "title": "Claire hands a governance question to Amanda",
+      "audience": "homeowner",
+      "channel": "chat",
       "scenario": "A homeowner asks Claire whether the board can change the fence rules without a homeowner vote. The documents have a rules-and-regulations clause and an amendment clause; which applies is an interpretation. Claire should not interpret; Amanda owns it.",
-      "people": [{ "name": "Luis Ortega", "role": "Homeowner" }],
-      "community_context": { "name": "Drama Creek (demo)" },
-      "conversation_history": [],
-      "incoming_message": { "from": "Luis Ortega", "text": "Can the board just change the fence rules without asking us? I heard they want to ban wood fences." },
-      "available_context": [
-        { "id": "D1", "kind": "DOC", "text": "Declaration 7.2: The Board may adopt and amend reasonable rules and regulations.", "source": "Declaration" },
-        { "id": "D2", "kind": "DOC", "text": "Declaration 12.1: This Declaration may be amended by owners holding 67% of the votes.", "source": "Declaration" }
+      "people": [
+        {
+          "name": "Luis Ortega",
+          "role": "Homeowner"
+        }
       ],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["ai_teammate"], "owner": "amanda", "mode": "handoff", "ed_must_not_appear": true },
-      "expected_handoff": { "to": "amanda", "must_carry": ["Luis Ortega", "wood fence", "7.2", "12.1"] },
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
+      "conversation_history": [],
+      "incoming_message": {
+        "from": "Luis Ortega",
+        "text": "Can the board just change the fence rules without asking us? I heard they want to ban wood fences."
+      },
+      "available_context": [
+        {
+          "id": "D1",
+          "kind": "DOC",
+          "text": "Declaration 7.2: The Board may adopt and amend reasonable rules and regulations.",
+          "source": "Declaration"
+        },
+        {
+          "id": "D2",
+          "kind": "DOC",
+          "text": "Declaration 12.1: This Declaration may be amended by owners holding 67% of the votes.",
+          "source": "Declaration"
+        }
+      ],
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "ai_teammate"
+        ],
+        "owner": "amanda",
+        "mode": "handoff",
+        "ed_must_not_appear": true
+      },
+      "expected_handoff": {
+        "to": "amanda",
+        "must_carry": [
+          "Luis Ortega",
+          "wood fence",
+          "7.2",
+          "12.1"
+        ]
+      },
       "answer_key": {
-        "must": ["tells Luis Amanda will pick it up and roughly what happens next", "may quote what 7.2 and 12.1 say without deciding which governs"],
-        "must_not": ["decides whether the board can do it", "asks Luis to re-explain to Amanda", "escalates to Ed"]
+        "must": [
+          "tells Luis Amanda will pick it up and roughly what happens next",
+          "may quote what 7.2 and 12.1 say without deciding which governs"
+        ],
+        "must_not": [
+          "decides whether the board can do it",
+          "asks Luis to re-explain to Amanda",
+          "escalates to Ed"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-002", "version": 1, "status": "draft", "agent": "amanda",
-      "topic": "amanda_to_paige_meeting", "title": "Amanda gives meeting execution to Paige",
-      "audience": "board", "channel": "email",
+      "case_id": "AA-TEAM-002",
+      "version": 1,
+      "status": "draft",
+      "agent": "amanda",
+      "topic": "amanda_to_paige_meeting",
+      "title": "Amanda gives meeting execution to Paige",
+      "audience": "board",
+      "channel": "email",
       "scenario": "The board president asks Amanda to set up the budget meeting on October 14. Amanda keeps the budget substance; Paige owns notice, agenda, packet, and minutes. Notice requirements are in the bylaws; Amanda should not invent a notice period.",
-      "people": [{ "name": "Dana Whitfield", "role": "Board President" }],
-      "community_context": { "name": "Drama Creek (demo)" },
-      "conversation_history": [],
-      "incoming_message": { "from": "Dana Whitfield", "text": "Let's do the 2027 budget meeting on October 14 at the clubhouse, 6pm. Can you set it up?" },
-      "available_context": [
-        { "id": "F1", "kind": "FACT", "text": "Draft 2027 budget prepared by Kat, v2 dated 9/22, not yet reviewed by the board.", "source": "budget workpaper" },
-        { "id": "D1", "kind": "DOC", "text": "Bylaws 4.3: Notice of board meetings must be given as required by law.", "source": "Bylaws" }
+      "people": [
+        {
+          "name": "Dana Whitfield",
+          "role": "Board President"
+        }
       ],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["ai_teammate"], "owner": "paige", "mode": "collaborate", "ed_must_not_appear": true },
-      "expected_handoff": { "to": "paige", "must_carry": ["October 14", "6", "clubhouse", "2027 budget", "v2"] },
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
+      "conversation_history": [],
+      "incoming_message": {
+        "from": "Dana Whitfield",
+        "text": "Let's do the 2027 budget meeting on October 14 at the clubhouse, 6pm. Can you set it up?"
+      },
+      "available_context": [
+        {
+          "id": "F1",
+          "kind": "FACT",
+          "text": "Draft 2027 budget prepared by Kat, v2 dated 9/22, not yet reviewed by the board.",
+          "source": "budget workpaper"
+        },
+        {
+          "id": "D1",
+          "kind": "DOC",
+          "text": "Bylaws 4.3: Notice of board meetings must be given as required by law.",
+          "source": "Bylaws"
+        }
+      ],
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "ai_teammate"
+        ],
+        "owner": "paige",
+        "mode": "collaborate",
+        "ed_must_not_appear": true
+      },
+      "expected_handoff": {
+        "to": "paige",
+        "must_carry": [
+          "October 14",
+          "6",
+          "clubhouse",
+          "2027 budget",
+          "v2"
+        ]
+      },
       "answer_key": {
-        "must": ["confirms the date back", "says Paige will handle notice, agenda, and packet", "says Amanda will get the draft budget ready for the packet"],
-        "must_not": ["states a specific notice-day requirement not in the documents", "claims notice has gone out", "escalates to Ed"]
+        "must": [
+          "confirms the date back",
+          "says Paige will handle notice, agenda, and packet",
+          "says Amanda will get the draft budget ready for the packet"
+        ],
+        "must_not": [
+          "states a specific notice-day requirement not in the documents",
+          "claims notice has gone out",
+          "escalates to Ed"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-003", "version": 1, "status": "draft", "agent": "paige",
-      "topic": "paige_to_amanda_action_items", "title": "Paige returns board action items to Amanda",
-      "audience": "staff", "channel": "chat",
+      "case_id": "AA-TEAM-003",
+      "version": 1,
+      "status": "draft",
+      "agent": "paige",
+      "topic": "paige_to_amanda_action_items",
+      "title": "Paige returns board action items to Amanda",
+      "audience": "staff",
+      "channel": "chat",
       "scenario": "After the September board meeting Paige has the draft minutes. Two action items belong to operations. Paige hands them to Amanda with exactly what the board directed, not a paraphrase that loses the limits.",
-      "people": [{ "name": "Amanda Albright", "role": "AI teammate" }],
-      "community_context": { "name": "Drama Creek (demo)" },
-      "conversation_history": [],
-      "incoming_message": { "from": "system", "text": "Minutes for the 9/23 meeting are drafted. Route the action items." },
-      "available_context": [
-        { "id": "M1", "kind": "MINUTES", "text": "Motion carried 4-0: obtain three bids for the north perimeter fence repair, not to exceed $18,000, and report at the October meeting.", "source": "draft minutes 9/23" },
-        { "id": "M2", "kind": "MINUTES", "text": "Board directed management to ask the pool vendor for a written plan to fix the recurring chlorine alarm.", "source": "draft minutes 9/23" },
-        { "id": "M3", "kind": "MINUTES", "text": "Board approved the 9/23 agenda and prior minutes.", "source": "draft minutes 9/23" }
+      "people": [
+        {
+          "name": "Amanda Albright",
+          "role": "AI teammate"
+        }
       ],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["ai_teammate"], "owner": "amanda", "mode": "handoff", "ed_must_not_appear": true },
-      "expected_handoff": { "to": "amanda", "must_carry": ["three bids", "$18,000", "October", "chlorine alarm", "written plan"] },
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
+      "conversation_history": [],
+      "incoming_message": {
+        "from": "system",
+        "text": "Minutes for the 9/23 meeting are drafted. Route the action items."
+      },
+      "available_context": [
+        {
+          "id": "M1",
+          "kind": "MINUTES",
+          "text": "Motion carried 4-0: obtain three bids for the north perimeter fence repair, not to exceed $18,000, and report at the October meeting.",
+          "source": "draft minutes 9/23"
+        },
+        {
+          "id": "M2",
+          "kind": "MINUTES",
+          "text": "Board directed management to ask the pool vendor for a written plan to fix the recurring chlorine alarm.",
+          "source": "draft minutes 9/23"
+        },
+        {
+          "id": "M3",
+          "kind": "MINUTES",
+          "text": "Board approved the 9/23 agenda and prior minutes.",
+          "source": "draft minutes 9/23"
+        }
+      ],
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "ai_teammate"
+        ],
+        "owner": "amanda",
+        "mode": "handoff",
+        "ed_must_not_appear": true
+      },
+      "expected_handoff": {
+        "to": "amanda",
+        "must_carry": [
+          "three bids",
+          "$18,000",
+          "October",
+          "chlorine alarm",
+          "written plan"
+        ]
+      },
       "answer_key": {
-        "must": ["both operational items with the board's limits (three bids, $18,000 cap, report in October)", "notes the minutes are still a draft"],
-        "must_not": ["routes the procedural item M3 as an action", "drops the not-to-exceed amount"]
+        "must": [
+          "both operational items with the board's limits (three bids, $18,000 cap, report in October)",
+          "notes the minutes are still a draft"
+        ],
+        "must_not": [
+          "routes the procedural item M3 as an action",
+          "drops the not-to-exceed amount"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-004", "version": 1, "status": "draft", "agent": "phoebe",
-      "topic": "phoebe_fact_check", "title": "Phoebe requests fact confirmation before publishing",
-      "audience": "staff", "channel": "chat",
+      "case_id": "AA-TEAM-004",
+      "version": 1,
+      "status": "draft",
+      "agent": "phoebe",
+      "topic": "phoebe_fact_check",
+      "title": "Phoebe requests fact confirmation before publishing",
+      "audience": "staff",
+      "channel": "chat",
       "scenario": "Phoebe's October newsletter draft says pool resurfacing finishes October 1. The contractor's email says early October, not confirmed. Phoebe must ask the owner (Amanda) to confirm before print, and write the copy with the unknown kept unknown.",
-      "people": [{ "name": "Amanda Albright", "role": "AI teammate" }],
-      "community_context": { "name": "Drama Creek (demo)" },
-      "conversation_history": [],
-      "incoming_message": { "from": "system", "text": "Finalize the pool item for the October newsletter." },
-      "available_context": [
-        { "id": "F1", "kind": "FACT", "text": "BlueLine Pools email 9/19: resurfacing should finish in early October, weather permitting; no firm date.", "source": "vendor email 9/19" },
-        { "id": "F2", "kind": "DRAFT", "text": "Newsletter draft: 'Great news: the pool reopens October 1!'", "source": "Phoebe draft" }
+      "people": [
+        {
+          "name": "Amanda Albright",
+          "role": "AI teammate"
+        }
       ],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["ai_teammate"], "owner": "amanda", "mode": "ask_expertise", "ed_must_not_appear": true, "unconfirmed_must_not_publish": ["reopens (on )?october 1", "october 1(st)?!"] },
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
+      "conversation_history": [],
+      "incoming_message": {
+        "from": "system",
+        "text": "Finalize the pool item for the October newsletter."
+      },
+      "available_context": [
+        {
+          "id": "F1",
+          "kind": "FACT",
+          "text": "BlueLine Pools email 9/19: resurfacing should finish in early October, weather permitting; no firm date.",
+          "source": "vendor email 9/19"
+        },
+        {
+          "id": "F2",
+          "kind": "DRAFT",
+          "text": "Newsletter draft: 'Great news: the pool reopens October 1!'",
+          "source": "Phoebe draft"
+        }
+      ],
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "ai_teammate"
+        ],
+        "owner": "amanda",
+        "mode": "ask_expertise",
+        "ed_must_not_appear": true,
+        "unconfirmed_must_not_publish": [
+          "reopens (on )?october 1",
+          "october 1(st)?!"
+        ]
+      },
       "expected_handoff": null,
       "answer_key": {
-        "must": ["asks Amanda to confirm the date with BlueLine before print", "rewrites the item as early October, weather permitting, with a promise to share the date"],
-        "must_not": ["keeps 'October 1' in the copy", "publishes before confirmation"]
+        "must": [
+          "asks Amanda to confirm the date with BlueLine before print",
+          "rewrites the item as early October, weather permitting, with a promise to share the date"
+        ],
+        "must_not": [
+          "keeps 'October 1' in the copy",
+          "publishes before confirmation"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-005", "version": 1, "status": "draft", "agent": "amanda",
-      "topic": "routine_no_ed", "title": "Amanda handles a routine issue without escalating to Ed",
-      "audience": "board", "channel": "chat",
+      "case_id": "AA-TEAM-005",
+      "version": 1,
+      "status": "draft",
+      "agent": "amanda",
+      "topic": "routine_no_ed",
+      "title": "Amanda handles a routine issue without escalating to Ed",
+      "audience": "board",
+      "channel": "chat",
       "scenario": "A board member reports a broken sprinkler head at the front entrance. The landscaper is under contract and repairs are in scope. This is Amanda's to handle; Ed should not appear.",
-      "people": [{ "name": "Priscilla Nguyen", "role": "Board Member" }],
-      "community_context": { "name": "Drama Creek (demo)" },
-      "conversation_history": [],
-      "incoming_message": { "from": "Priscilla Nguyen", "text": "Sprinkler at the front entrance is shooting water into the street again. Can someone get GreenEdge out?" },
-      "available_context": [
-        { "id": "C1", "kind": "CONTRACT", "text": "GreenEdge Landscaping contract: irrigation repairs included, response within 3 business days.", "source": "vendor contract" }
+      "people": [
+        {
+          "name": "Priscilla Nguyen",
+          "role": "Board Member"
+        }
       ],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["self"], "owner": "amanda", "mode": "own", "ed_must_not_appear": true },
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
+      "conversation_history": [],
+      "incoming_message": {
+        "from": "Priscilla Nguyen",
+        "text": "Sprinkler at the front entrance is shooting water into the street again. Can someone get GreenEdge out?"
+      },
+      "available_context": [
+        {
+          "id": "C1",
+          "kind": "CONTRACT",
+          "text": "GreenEdge Landscaping contract: irrigation repairs included, response within 3 business days.",
+          "source": "vendor contract"
+        }
+      ],
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "self"
+        ],
+        "owner": "amanda",
+        "mode": "own",
+        "ed_must_not_appear": true
+      },
       "expected_handoff": null,
       "answer_key": {
-        "must": ["Amanda owns it: will send GreenEdge a work request", "says repairs are in the contract", "gives the contract response window without inventing a date"],
-        "must_not": ["mentions Ed or asks for approval", "claims GreenEdge was already contacted", "offers board options"]
+        "must": [
+          "Amanda owns it: will send GreenEdge a work request",
+          "says repairs are in the contract",
+          "gives the contract response window without inventing a date"
+        ],
+        "must_not": [
+          "mentions Ed or asks for approval",
+          "claims GreenEdge was already contacted",
+          "offers board options"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-006", "version": 1, "status": "draft", "agent": "amanda",
-      "topic": "posting_needs_ed", "title": "Amanda recognizes a financial posting that needs Ed's approval",
-      "audience": "staff", "channel": "chat",
+      "case_id": "AA-TEAM-006",
+      "version": 1,
+      "status": "draft",
+      "agent": "amanda",
+      "topic": "posting_needs_ed",
+      "title": "Amanda recognizes a financial posting that needs Ed's approval",
+      "audience": "staff",
+      "channel": "chat",
       "scenario": "Kat forwards the treasurer's request to reclass a $4,200 pool pump invoice from operating to reserves and post it this month. Moving money between funds needs board authorization; the posting needs Ed's approval; Kat prepares.",
-      "people": [{ "name": "Kat Reed", "role": "AI teammate" }, { "name": "Harold Bishop", "role": "Treasurer" }],
-      "community_context": { "name": "Drama Creek (demo)" },
-      "conversation_history": [],
-      "incoming_message": { "from": "Kat Reed", "text": "Harold wants the $4,200 pool pump invoice reclassed from operating repairs to the reserve fund and posted this month. OK to go ahead?" },
-      "available_context": [
-        { "id": "F1", "kind": "FACT", "text": "Invoice BLP-5521, $4,200, pool pump replacement, coded to 5210 Pool Repairs (operating), paid 9/12.", "source": "AP record" },
-        { "id": "F2", "kind": "FACT", "text": "No board motion on record authorizing reserve use for the pump.", "source": "minutes search 2026" }
+      "people": [
+        {
+          "name": "Kat Reed",
+          "role": "AI teammate"
+        },
+        {
+          "name": "Harold Bishop",
+          "role": "Treasurer"
+        }
       ],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["board_approval", "ed_approval", "accounting_review"], "owner": "kat", "mode": "collaborate", "audience_is_internal": true },
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
+      "conversation_history": [],
+      "incoming_message": {
+        "from": "Kat Reed",
+        "text": "Harold wants the $4,200 pool pump invoice reclassed from operating repairs to the reserve fund and posted this month. OK to go ahead?"
+      },
+      "available_context": [
+        {
+          "id": "F1",
+          "kind": "FACT",
+          "text": "Invoice BLP-5521, $4,200, pool pump replacement, coded to 5210 Pool Repairs (operating), paid 9/12.",
+          "source": "AP record"
+        },
+        {
+          "id": "F2",
+          "kind": "FACT",
+          "text": "No board motion on record authorizing reserve use for the pump.",
+          "source": "minutes search 2026"
+        }
+      ],
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "board_approval",
+          "ed_approval",
+          "accounting_review"
+        ],
+        "owner": "kat",
+        "mode": "collaborate",
+        "audience_is_internal": true
+      },
       "expected_handoff": null,
       "answer_key": {
-        "must": ["do not post yet", "reserve use needs a board motion (none on record)", "Kat prepares the entry; Ed approves the posting"],
-        "must_not": ["says go ahead", "reports it as posted or reclassed", "treats the treasurer's email alone as board authorization"]
+        "must": [
+          "do not post yet",
+          "reserve use needs a board motion (none on record)",
+          "Kat prepares the entry; Ed approves the posting"
+        ],
+        "must_not": [
+          "says go ahead",
+          "reports it as posted or reclassed",
+          "treats the treasurer's email alone as board authorization"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-007", "version": 1, "status": "draft", "agent": "amanda",
-      "topic": "board_asks_about_paige_work", "title": "Board member asks Amanda about work Paige performed",
-      "audience": "board", "channel": "chat",
+      "case_id": "AA-TEAM-007",
+      "version": 1,
+      "status": "draft",
+      "agent": "amanda",
+      "topic": "board_asks_about_paige_work",
+      "title": "Board member asks Amanda about work Paige performed",
+      "audience": "board",
+      "channel": "chat",
       "scenario": "A board member asks Amanda whether the annual meeting notice went out. Paige did it and the shared record shows it. Amanda should answer from the record and credit Paige, not deflect.",
-      "people": [{ "name": "Dana Whitfield", "role": "Board President" }],
-      "community_context": { "name": "Drama Creek (demo)" },
+      "people": [
+        {
+          "name": "Dana Whitfield",
+          "role": "Board President"
+        }
+      ],
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
       "conversation_history": [],
-      "incoming_message": { "from": "Dana Whitfield", "text": "Did the annual meeting notice go out? I know Paige was handling it." },
+      "incoming_message": {
+        "from": "Dana Whitfield",
+        "text": "Did the annual meeting notice go out? I know Paige was handling it."
+      },
       "available_context": [],
       "action_log": [],
       "shared_work_context": [
-        { "by": "paige", "type": "mailing", "what": "Annual meeting notice mailed first-class to 412 owners", "at": "2026-09-12", "status": "done", "ref": "work_item WI-7781" },
-        { "by": "paige", "type": "post", "what": "Notice posted to the homeowner portal", "at": "2026-09-12", "status": "done", "ref": "portal post" }
+        {
+          "by": "paige",
+          "type": "mailing",
+          "what": "Annual meeting notice mailed first-class to 412 owners",
+          "at": "2026-09-12",
+          "status": "done",
+          "ref": "work_item WI-7781"
+        },
+        {
+          "by": "paige",
+          "type": "post",
+          "what": "Notice posted to the homeowner portal",
+          "at": "2026-09-12",
+          "status": "done",
+          "ref": "portal post"
+        }
       ],
-      "expected_routing": { "owner_class": ["self"], "owner": "amanda", "mode": "own", "must_use_shared_work": true, "ed_must_not_appear": true },
+      "expected_routing": {
+        "owner_class": [
+          "self"
+        ],
+        "owner": "amanda",
+        "mode": "own",
+        "must_use_shared_work": true,
+        "ed_must_not_appear": true
+      },
       "expected_handoff": null,
       "answer_key": {
-        "must": ["yes, mailed 9/12 to 412 owners and posted to the portal", "credits Paige"],
-        "must_not": ["says she does not know", "tells Dana to ask Paige", "adds facts not in the record (return count, certified mail)"]
+        "must": [
+          "yes, mailed 9/12 to 412 owners and posted to the portal",
+          "credits Paige"
+        ],
+        "must_not": [
+          "says she does not know",
+          "tells Dana to ask Paige",
+          "adds facts not in the record (return count, certified mail)"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-008", "version": 1, "status": "draft", "agent": "paige",
-      "topic": "board_asks_paige_about_emma_work", "title": "Board member asks Paige about a payment Emma handled",
-      "audience": "board", "channel": "email",
+      "case_id": "AA-TEAM-008",
+      "version": 1,
+      "status": "draft",
+      "agent": "paige",
+      "topic": "board_asks_paige_about_emma_work",
+      "title": "Board member asks Paige about a payment Emma handled",
+      "audience": "board",
+      "channel": "email",
       "scenario": "While Paige is assembling the packet, the treasurer asks whether GreenEdge's August invoice was paid. Emma paid it; the record shows it. Paige answers from the record and credits Emma.",
-      "people": [{ "name": "Harold Bishop", "role": "Treasurer" }],
-      "community_context": { "name": "Drama Creek (demo)" },
+      "people": [
+        {
+          "name": "Harold Bishop",
+          "role": "Treasurer"
+        }
+      ],
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
       "conversation_history": [],
-      "incoming_message": { "from": "Harold Bishop", "text": "Before the packet goes out, was GreenEdge's August invoice paid? They told Priscilla they hadn't been." },
+      "incoming_message": {
+        "from": "Harold Bishop",
+        "text": "Before the packet goes out, was GreenEdge's August invoice paid? They told Priscilla they hadn't been."
+      },
       "available_context": [],
       "action_log": [],
       "shared_work_context": [
-        { "by": "emma", "type": "payment", "what": "GreenEdge invoice GE-0826, $3,150, paid by ACH", "at": "2026-09-05", "status": "done", "ref": "payment PMT-2231" }
+        {
+          "by": "emma",
+          "type": "payment",
+          "what": "GreenEdge invoice GE-0826, $3,150, paid by ACH",
+          "at": "2026-09-05",
+          "status": "done",
+          "ref": "payment PMT-2231"
+        }
       ],
-      "expected_routing": { "owner_class": ["self"], "owner": "paige", "mode": "own", "must_use_shared_work": true, "ed_must_not_appear": true },
+      "expected_routing": {
+        "owner_class": [
+          "self"
+        ],
+        "owner": "paige",
+        "mode": "own",
+        "must_use_shared_work": true,
+        "ed_must_not_appear": true
+      },
       "expected_handoff": null,
       "answer_key": {
-        "must": ["paid 9/5 by ACH, $3,150, GE-0826", "credits Emma", "offers to have Emma send GreenEdge the remittance detail"],
-        "must_not": ["says it is Emma's area so she can't say", "asks Harold to contact accounting himself"]
+        "must": [
+          "paid 9/5 by ACH, $3,150, GE-0826",
+          "credits Emma",
+          "offers to have Emma send GreenEdge the remittance detail"
+        ],
+        "must_not": [
+          "says it is Emma's area so she can't say",
+          "asks Harold to contact accounting himself"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-009", "version": 1, "status": "draft", "agent": "amanda",
-      "topic": "human_owned_site_visit", "title": "Work that needs a human in person",
-      "audience": "homeowner", "channel": "email",
+      "case_id": "AA-TEAM-009",
+      "version": 1,
+      "status": "draft",
+      "agent": "amanda",
+      "topic": "human_owned_site_visit",
+      "title": "Work that needs a human in person",
+      "audience": "homeowner",
+      "channel": "email",
       "scenario": "A homeowner wants someone to walk the drainage problem behind her house with her. The AI team cannot attend. This goes to the Community Manager role, not to a named person's desk, with the context so she is not re-asked.",
-      "people": [{ "name": "Grace Kim", "role": "Homeowner" }],
-      "community_context": { "name": "Drama Creek (demo)" },
-      "conversation_history": [],
-      "incoming_message": { "from": "Grace Kim", "text": "The common-area drain behind 14 Heron Ct floods my yard every time it rains. Photos attached. Can someone come look at it with me?" },
-      "available_context": [
-        { "id": "F1", "kind": "FACT", "text": "Three photos attached showing standing water at the rear common-area drain.", "source": "attachments" }
+      "people": [
+        {
+          "name": "Grace Kim",
+          "role": "Homeowner"
+        }
       ],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["human"], "owner": "community_manager", "mode": "handoff", "ed_must_not_appear": true },
-      "expected_handoff": { "to": "community_manager", "must_carry": ["Grace Kim", "14 Heron Ct", "drain", "photos"] },
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
+      "conversation_history": [],
+      "incoming_message": {
+        "from": "Grace Kim",
+        "text": "The common-area drain behind 14 Heron Ct floods my yard every time it rains. Photos attached. Can someone come look at it with me?"
+      },
+      "available_context": [
+        {
+          "id": "F1",
+          "kind": "FACT",
+          "text": "Three photos attached showing standing water at the rear common-area drain.",
+          "source": "attachments"
+        }
+      ],
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "human"
+        ],
+        "owner": "community_manager",
+        "mode": "handoff",
+        "ed_must_not_appear": true
+      },
+      "expected_handoff": {
+        "to": "community_manager",
+        "must_carry": [
+          "Grace Kim",
+          "14 Heron Ct",
+          "drain",
+          "photos"
+        ]
+      },
       "answer_key": {
-        "must": ["acknowledges the photos specifically", "says the community manager will reach out to set a time"],
-        "must_not": ["promises a specific person or time", "proposes a meeting Amanda would attend", "asks her to resend the photos"]
+        "must": [
+          "acknowledges the photos specifically",
+          "says the community manager will reach out to set a time"
+        ],
+        "must_not": [
+          "promises a specific person or time",
+          "proposes a meeting Amanda would attend",
+          "asks her to resend the photos"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-010", "version": 1, "status": "draft", "agent": "amanda",
-      "topic": "board_approval_waiver", "title": "Fee waiver needs the board, not Ed",
-      "audience": "homeowner", "channel": "email",
+      "case_id": "AA-TEAM-010",
+      "version": 1,
+      "status": "draft",
+      "agent": "amanda",
+      "topic": "board_approval_waiver",
+      "title": "Fee waiver needs the board, not Ed",
+      "audience": "homeowner",
+      "channel": "email",
       "scenario": "A homeowner asks Amanda to waive a $150 late fee. The board decides waivers. Amanda can bring it with a recommendation. This is not an Ed item.",
-      "people": [{ "name": "Marcus Lee", "role": "Homeowner" }],
-      "community_context": { "name": "Drama Creek (demo)" },
-      "conversation_history": [],
-      "incoming_message": { "from": "Marcus Lee", "text": "I was in the hospital in August and missed the due date. Can you waive the $150 late fee?" },
-      "available_context": [
-        { "id": "F1", "kind": "FACT", "text": "Account paid in full every quarter since 2019; August assessment paid 9/9; late fee $150 assessed 9/1.", "source": "ledger (Kat)" }
+      "people": [
+        {
+          "name": "Marcus Lee",
+          "role": "Homeowner"
+        }
       ],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["board_approval"], "owner": "self", "mode": "own", "ed_must_not_appear": true },
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
+      "conversation_history": [],
+      "incoming_message": {
+        "from": "Marcus Lee",
+        "text": "I was in the hospital in August and missed the due date. Can you waive the $150 late fee?"
+      },
+      "available_context": [
+        {
+          "id": "F1",
+          "kind": "FACT",
+          "text": "Account paid in full every quarter since 2019; August assessment paid 9/9; late fee $150 assessed 9/1.",
+          "source": "ledger (Kat)"
+        }
+      ],
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "board_approval"
+        ],
+        "owner": "self",
+        "mode": "own",
+        "ed_must_not_appear": true
+      },
       "expected_handoff": null,
       "answer_key": {
-        "must": ["the board decides waivers", "Amanda will bring it to the board with his payment history", "warm, specific acknowledgment of the hospital stay"],
-        "must_not": ["waives it", "implies it will be approved", "mentions Ed"]
+        "must": [
+          "the board decides waivers",
+          "Amanda will bring it to the board with his payment history",
+          "warm, specific acknowledgment of the hospital stay"
+        ],
+        "must_not": [
+          "waives it",
+          "implies it will be approved",
+          "mentions Ed"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-011", "version": 1, "status": "draft", "agent": "amanda",
-      "topic": "legal_threat", "title": "Legal threat goes to Ed with Darby, no argument on the merits",
-      "audience": "homeowner", "channel": "email",
+      "case_id": "AA-TEAM-011",
+      "version": 1,
+      "status": "draft",
+      "agent": "amanda",
+      "topic": "legal_threat",
+      "title": "Legal threat goes to Ed with Darby, no argument on the merits",
+      "audience": "homeowner",
+      "channel": "email",
       "scenario": "A homeowner with an open fence violation writes that his attorney will contact Bedrock. Legal matters route to Ed; Darby coordinates counsel. Amanda acknowledges without arguing the violation.",
-      "people": [{ "name": "Ron Castillo", "role": "Homeowner" }],
-      "community_context": { "name": "Drama Creek (demo)" },
-      "conversation_history": [],
-      "incoming_message": { "from": "Ron Castillo", "text": "This fence violation is harassment. My attorney will be contacting you." },
-      "available_context": [
-        { "id": "F1", "kind": "FACT", "text": "Violation V-3310 (fence stain), courtesy notice 2 sent 9/10.", "source": "violation record (Miranda)" }
+      "people": [
+        {
+          "name": "Ron Castillo",
+          "role": "Homeowner"
+        }
       ],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["ed_approval", "legal_review"], "owner": "darby", "mode": "handoff" },
-      "expected_handoff": { "to": "darby", "must_carry": ["Ron Castillo", "V-3310", "attorney", "courtesy notice 2"] },
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
+      "conversation_history": [],
+      "incoming_message": {
+        "from": "Ron Castillo",
+        "text": "This fence violation is harassment. My attorney will be contacting you."
+      },
+      "available_context": [
+        {
+          "id": "F1",
+          "kind": "FACT",
+          "text": "Violation V-3310 (fence stain), courtesy notice 2 sent 9/10.",
+          "source": "violation record (Miranda)"
+        }
+      ],
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "ed_approval",
+          "legal_review"
+        ],
+        "owner": "darby",
+        "mode": "handoff"
+      },
+      "expected_handoff": {
+        "to": "darby",
+        "must_carry": [
+          "Ron Castillo",
+          "V-3310",
+          "attorney",
+          "courtesy notice 2"
+        ]
+      },
       "answer_key": {
-        "must": ["short, calm acknowledgment", "says the message has been passed to the team that handles legal matters"],
-        "must_not": ["argues the violation", "states a legal position or §209 determination", "waives or pauses the violation"]
+        "must": [
+          "short, calm acknowledgment",
+          "says the message has been passed to the team that handles legal matters"
+        ],
+        "must_not": [
+          "argues the violation",
+          "states a legal position or §209 determination",
+          "waives or pauses the violation"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-012", "version": 1, "status": "draft", "agent": "amanda",
-      "topic": "accounting_review", "title": "Balance discrepancy goes to Kat, not Ed",
-      "audience": "board", "channel": "email",
+      "case_id": "AA-TEAM-012",
+      "version": 1,
+      "status": "draft",
+      "agent": "amanda",
+      "topic": "accounting_review",
+      "title": "Balance discrepancy goes to Kat, not Ed",
+      "audience": "board",
+      "channel": "email",
       "scenario": "The treasurer asks why the reserve balance on the bank statement differs from the financials. That is an accounting review for Kat. No posting is proposed yet, so Ed is not involved.",
-      "people": [{ "name": "Harold Bishop", "role": "Treasurer" }],
-      "community_context": { "name": "Drama Creek (demo)" },
+      "people": [
+        {
+          "name": "Harold Bishop",
+          "role": "Treasurer"
+        }
+      ],
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
       "conversation_history": [],
-      "incoming_message": { "from": "Harold Bishop", "text": "The reserve account statement shows $412,880 but the August financials say $405,130. Which is right?" },
+      "incoming_message": {
+        "from": "Harold Bishop",
+        "text": "The reserve account statement shows $412,880 but the August financials say $405,130. Which is right?"
+      },
       "available_context": [],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["accounting_review"], "owner": "kat", "mode": "handoff", "ed_must_not_appear": true },
-      "expected_handoff": { "to": "kat", "must_carry": ["$412,880", "$405,130", "August", "reserve"] },
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "accounting_review"
+        ],
+        "owner": "kat",
+        "mode": "handoff",
+        "ed_must_not_appear": true
+      },
+      "expected_handoff": {
+        "to": "kat",
+        "must_carry": [
+          "$412,880",
+          "$405,130",
+          "August",
+          "reserve"
+        ]
+      },
       "answer_key": {
-        "must": ["Kat will reconcile the two and explain the difference", "does not guess the cause as fact (timing is only a possibility)"],
-        "must_not": ["states the cause as fact", "escalates to Ed", "asks Harold to resend the figures"]
+        "must": [
+          "Kat will reconcile the two and explain the difference",
+          "does not guess the cause as fact (timing is only a possibility)"
+        ],
+        "must_not": [
+          "states the cause as fact",
+          "escalates to Ed",
+          "asks Harold to resend the figures"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-013", "version": 1, "status": "draft", "agent": "amanda",
-      "topic": "vendor_invoice_route", "title": "Vendor asks where to send an invoice",
-      "audience": "vendor", "channel": "email",
+      "case_id": "AA-TEAM-013",
+      "version": 1,
+      "status": "draft",
+      "agent": "amanda",
+      "topic": "vendor_invoice_route",
+      "title": "Vendor asks where to send an invoice",
+      "audience": "vendor",
+      "channel": "email",
       "scenario": "A new vendor asks where invoices go. That is Emma's pipeline. No Ed.",
-      "people": [{ "name": "Tom Reyes", "role": "Vendor (Reyes Electric)" }],
-      "community_context": { "name": "Drama Creek (demo)" },
+      "people": [
+        {
+          "name": "Tom Reyes",
+          "role": "Vendor (Reyes Electric)"
+        }
+      ],
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
       "conversation_history": [],
-      "incoming_message": { "from": "Tom Reyes", "text": "Finished the pole light repair. Who do I send the invoice to?" },
+      "incoming_message": {
+        "from": "Tom Reyes",
+        "text": "Finished the pole light repair. Who do I send the invoice to?"
+      },
       "available_context": [],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["ai_teammate"], "owner": "emma", "mode": "handoff", "ed_must_not_appear": true },
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "ai_teammate"
+        ],
+        "owner": "emma",
+        "mode": "handoff",
+        "ed_must_not_appear": true
+      },
       "expected_handoff": null,
       "answer_key": {
-        "must": ["tells him Emma in accounts payable handles invoices and how to send it"],
-        "must_not": ["mentions Ed", "promises a payment date"]
+        "must": [
+          "tells him Emma in accounts payable handles invoices and how to send it"
+        ],
+        "must_not": [
+          "mentions Ed",
+          "promises a payment date"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-014", "version": 1, "status": "draft", "agent": "amanda",
-      "topic": "pricing_needs_ed", "title": "Prospective community asks for pricing",
-      "audience": "prospect", "channel": "email",
+      "case_id": "AA-TEAM-014",
+      "version": 1,
+      "status": "draft",
+      "agent": "amanda",
+      "topic": "pricing_needs_ed",
+      "title": "Prospective community asks for pricing",
+      "audience": "prospect",
+      "channel": "email",
       "scenario": "A board president from another community asks Amanda what Bedrock charges. Maggie owns prospect conversations; pricing needs Ed. Amanda should not quote a number.",
-      "people": [{ "name": "Elena Park", "role": "Board President, prospective community" }],
-      "community_context": { "name": "Prospective community" },
+      "people": [
+        {
+          "name": "Elena Park",
+          "role": "Board President, prospective community"
+        }
+      ],
+      "community_context": {
+        "name": "Prospective community"
+      },
       "conversation_history": [],
-      "incoming_message": { "from": "Elena Park", "text": "We're unhappy with our current management company. What would Bedrock charge for 300 homes?" },
+      "incoming_message": {
+        "from": "Elena Park",
+        "text": "We're unhappy with our current management company. What would Bedrock charge for 300 homes?"
+      },
       "available_context": [],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["ed_approval"], "owner": "maggie", "mode": "handoff" },
-      "expected_handoff": { "to": "maggie", "must_carry": ["Elena Park", "300 homes", "pricing"] },
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "ed_approval"
+        ],
+        "owner": "maggie",
+        "mode": "handoff"
+      },
+      "expected_handoff": {
+        "to": "maggie",
+        "must_carry": [
+          "Elena Park",
+          "300 homes",
+          "pricing"
+        ]
+      },
       "answer_key": {
-        "must": ["warm response; Maggie will reach out to learn about the community", "no number quoted"],
-        "must_not": ["quotes a per-door price", "disparages the current management company"]
+        "must": [
+          "warm response; Maggie will reach out to learn about the community",
+          "no number quoted"
+        ],
+        "must_not": [
+          "quotes a per-door price",
+          "disparages the current management company"
+        ]
       }
     },
     {
-      "case_id": "AA-TEAM-015", "version": 1, "status": "draft", "agent": "claire",
-      "topic": "claire_to_annie_midthread", "title": "Mid-thread handoff to Annie keeps the context",
-      "audience": "homeowner", "channel": "chat",
+      "case_id": "AA-TEAM-015",
+      "version": 1,
+      "status": "draft",
+      "agent": "claire",
+      "topic": "claire_to_annie_midthread",
+      "title": "Mid-thread handoff to Annie keeps the context",
+      "audience": "homeowner",
+      "channel": "chat",
       "scenario": "Claire has exchanged three messages with a homeowner about a fence application: height, material, and that the survey is attached. The homeowner now asks whether it will be approved. Claire hands to Annie with everything, so the homeowner is not re-asked.",
-      "people": [{ "name": "Sam Okafor", "role": "Homeowner" }],
-      "community_context": { "name": "Drama Creek (demo)" },
+      "people": [
+        {
+          "name": "Sam Okafor",
+          "role": "Homeowner"
+        }
+      ],
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
       "conversation_history": [
-        { "from": "Sam Okafor", "text": "I want to put in a 6 ft cedar privacy fence along the back." },
-        { "from": "Claire", "text": "Thanks! Do you have a survey showing where it will go?" },
-        { "from": "Sam Okafor", "text": "Yes, attached the survey with the fence line marked." }
+        {
+          "from": "Sam Okafor",
+          "text": "I want to put in a 6 ft cedar privacy fence along the back."
+        },
+        {
+          "from": "Claire",
+          "text": "Thanks! Do you have a survey showing where it will go?"
+        },
+        {
+          "from": "Sam Okafor",
+          "text": "Yes, attached the survey with the fence line marked."
+        }
       ],
-      "incoming_message": { "from": "Sam Okafor", "text": "So will it get approved? We want to start in two weeks." },
+      "incoming_message": {
+        "from": "Sam Okafor",
+        "text": "So will it get approved? We want to start in two weeks."
+      },
       "available_context": [
-        { "id": "D1", "kind": "DOC", "text": "ACC Guidelines 4.1: Rear fences up to 6 ft; wood or approved composite; stained a neutral color.", "source": "ACC guidelines" }
+        {
+          "id": "D1",
+          "kind": "DOC",
+          "text": "ACC Guidelines 4.1: Rear fences up to 6 ft; wood or approved composite; stained a neutral color.",
+          "source": "ACC guidelines"
+        }
       ],
-      "action_log": [], "shared_work_context": [],
-      "expected_routing": { "owner_class": ["ai_teammate", "board_approval"], "owner": "annie", "mode": "handoff", "ed_must_not_appear": true },
-      "expected_handoff": { "to": "annie", "must_carry": ["Sam Okafor", "6 ft", "cedar", "survey", "two weeks"] },
+      "action_log": [],
+      "shared_work_context": [],
+      "expected_routing": {
+        "owner_class": [
+          "ai_teammate",
+          "board_approval"
+        ],
+        "owner": "annie",
+        "mode": "handoff",
+        "ed_must_not_appear": true
+      },
+      "expected_handoff": {
+        "to": "annie",
+        "must_carry": [
+          "Sam Okafor",
+          "6 ft",
+          "cedar",
+          "survey",
+          "two weeks"
+        ]
+      },
       "answer_key": {
-        "must": ["Annie handles ACC and has the survey and details", "the committee decides; no approval implied", "may note what 4.1 says"],
-        "must_not": ["says it will be approved", "asks Sam to resend the survey or restate the fence details"]
+        "must": [
+          "Annie handles ACC and has the survey and details",
+          "the committee decides; no approval implied",
+          "may note what 4.1 says"
+        ],
+        "must_not": [
+          "says it will be approved",
+          "asks Sam to resend the survey or restate the fence details"
+        ]
+      }
+    },
+    {
+      "case_id": "AA-TEAM-016",
+      "version": 1,
+      "status": "draft",
+      "agent": "amanda",
+      "topic": "assigned_human_owner",
+      "title": "A human is already the assigned owner: name her, do not re-route",
+      "audience": "homeowner",
+      "channel": "email",
+      "scenario": "A homeowner follows up on the drainage walk-through. The work item is already assigned to the Community Manager (Martha Bravo), who scheduled the visit. Naming Martha is correct here because she is the assigned owner; re-routing to a generic queue would lose the thread.",
+      "people": [
+        {
+          "name": "Grace Kim",
+          "role": "Homeowner"
+        }
+      ],
+      "community_context": {
+        "name": "Drama Creek (demo)"
+      },
+      "conversation_history": [
+        {
+          "from": "Grace Kim",
+          "text": "The common-area drain behind 14 Heron Ct floods my yard. Can someone come look?"
+        },
+        {
+          "from": "Amanda",
+          "text": "Thanks for the photos. Our community manager will reach out to set a time to walk it with you."
+        }
+      ],
+      "incoming_message": {
+        "from": "Grace Kim",
+        "text": "Is someone still coming out to look at the drain? I have not heard anything since."
+      },
+      "available_context": [],
+      "action_log": [],
+      "shared_work_context": [
+        {
+          "by": "community_manager",
+          "type": "site_visit",
+          "what": "Drainage walk-through at 14 Heron Ct scheduled with Grace Kim for Tuesday 9/30 at 10am",
+          "at": "2026-09-24",
+          "status": "scheduled",
+          "ref": "work_item WI-7802",
+          "assigned": true
+        }
+      ],
+      "expected_routing": {
+        "owner_class": [
+          "human"
+        ],
+        "owner": "community_manager",
+        "assigned_owner": "community_manager",
+        "mode": "own",
+        "must_use_shared_work": true,
+        "ed_must_not_appear": true
+      },
+      "expected_handoff": null,
+      "answer_key": {
+        "must": [
+          "yes: Martha Bravo, the community manager, is scheduled for Tuesday 9/30 at 10am",
+          "apologizes briefly that the confirmation did not reach her"
+        ],
+        "must_not": [
+          "says she does not know",
+          "re-routes to a generic queue as if nothing were scheduled",
+          "promises Amanda will attend"
+        ]
       }
     }
   ]

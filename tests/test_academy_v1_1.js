@@ -52,25 +52,33 @@ t('decision format is only requested for decision_support', () => {
     const asks = /2 to 3 real options|state your recommendation/.test(SHAPES[m]);
     assert.strictEqual(asks, m === 'decision_support', m);
   }
-  assert.ok(/never offer it as an option/.test(SHAPES.escalation_risk));
+  // v1.2: escalation names only directory paths; money/coverage goes to the board or Ed.
+  assert.ok(/ESCALATION PATHS/.test(SHAPES.escalation_risk) && /bring it to them, not that you will do it/.test(SHAPES.escalation_risk));
+  assert.ok(!/binding coverage\)/.test(SHAPES.escalation_risk), 'the v1.1 binding example that taught overreach is gone');
 });
 
 t('action guard: every baseline fabrication is caught; honest phrasing passes', () => {
   const bad = [
     ['I checked with TreeWise this morning.', 'FABRICATED_ACTION'],
     ['I pushed them again this morning for a firm timeline.', 'FABRICATED_ACTION'],
-    ['I will stay on this and get you an answer by end of week.', 'FABRICATED_DEADLINE'],
+    ['I will stay on this and get you an answer by end of week.', 'UNTRACKED_COMMITMENT'],
+    ["I'll call TreeWise today and let you know what they say.", 'CAPABILITY'],
+    ['I will go to the pool today to check the latch myself.', 'CAPABILITY'],
+    ["I'm escalating to our risk team and our VP of operations.", 'INVENTED_ORG_ROLE'],
+    ['If coverage did lapse, I will bind replacement coverage today.', 'AUTHORITY'],
+    ['Chapter 209 limits what fees an association can charge.', 'UNSOURCED_LEGAL'],
     ["The association's real property is uninsured or we have lost track of the coverage.", 'UNCONFIRMED_AS_FACT'],
-    ['which would mean the board has the statutory authority to set assessments without a member vote.', 'UNSOURCED_LEGAL_AUTHORITY'],
+    ['which would mean the board has the statutory authority to set assessments without a member vote.', 'UNSOURCED_LEGAL'],
   ];
   const ctx = 'Property term ended 9/15. Renewal unconfirmed; no binder found.';
   for (const [msg, rule] of bad) assert.ok(guard({ message: msg, contextText: ctx }).some((v) => v.rule === rule), `${rule}: ${msg}`);
   const good = [
-    "I'll call TreeWise today and let you know what they say.",
+    "I'll email TreeWise now and let you know what they say.",
     'I can check that now.',
-    "I don't see confirmation from AquaTech yet; the next step is to call them.",
+    "I don't see confirmation from AquaTech yet; the next step is to email them.",
     'The prior term ended September 15 and I have not found evidence of renewal, so current coverage is unconfirmed.',
-    "I haven't called them yet. I will today.",
+    "I haven't called them and I have not been to the pool.",
+    "I'll bring the board a quote that is ready to bind so they can decide.",
   ];
   for (const msg of good) assert.deepStrictEqual(guard({ message: msg, contextText: ctx }).map((v) => v.rule), [], msg);
 });
@@ -78,7 +86,12 @@ t('action guard: every baseline fabrication is caught; honest phrasing passes', 
 t('action guard: a claim with a matching record is allowed; without one it is not', () => {
   const log = [{ type: 'email', what: 'emailed AquaTech', at: '2026-09-20', ref: 'sent-0920' }];
   assert.deepStrictEqual(guard({ message: 'I emailed AquaTech on 9/20 asking for a date.', actionLog: log }), []);
-  assert.ok(guard({ message: 'I called AquaTech this morning.', actionLog: log }).some((v) => v.rule === 'FABRICATED_ACTION'));
+  assert.ok(guard({ message: 'I followed up with AquaTech this morning.', actionLog: log }).some((v) => v.rule === 'FABRICATED_ACTION'));
+  assert.ok(guard({ message: 'I called AquaTech this morning.', actionLog: log }).some((v) => v.rule === 'CAPABILITY'), 'Amanda cannot place calls at all');
+  // a promised time is allowed only with a recorded commitment
+  const msg = "I'll email you this afternoon with what I find.";
+  assert.ok(guard({ message: msg }).some((v) => v.rule === 'UNTRACKED_COMMITMENT'));
+  assert.deepStrictEqual(guard({ message: msg, commitments: [{ what: 'email findings', due: 'today 16:00', capability: 'send_email' }] }), []);
   assert.strictEqual(actionClaims('We followed up twice.')[0].type, 'follow_up');
 });
 
@@ -90,7 +103,7 @@ t('deadline guard allows dates that are actually committed in the context', () =
 t('every candidate edit targets verbatim production text (diff cannot drift)', () => {
   const L = loadLivePrompts();
   for (const e of EDITS) {
-    const src = { board: L.board('X'), homeowner: L.homeowner('X'), vendor: L.vendor('X') }[e.target];
+    const src = { board: L.board('X'), homeowner: L.homeowner('X'), vendor: L.vendor('X'), routing_rule: L.CONTACT_ROUTING_RULE }[e.target];
     assert.ok(src.includes(e.from), `${e.id} from-text not in live ${e.target} prompt`);
     assert.ok(e.problem && e.cases.length, `${e.id} documents problem + cases`);
   }

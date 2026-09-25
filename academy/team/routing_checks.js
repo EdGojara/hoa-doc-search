@@ -76,7 +76,9 @@ function checkRouting({ response, expected, sharedWork = [] }) {
   for (const s of sentences(text)) {
     if (RX.decided.test(s) && !RX.futureOrConditional.test(s)) out.push({ code: 'RT_DECIDED_OUTSIDE_AUTHORITY', detail: `Reports a reserved decision as done: "${s}"` });
   }
-  for (const h of HUMAN_TEAM.filter((x) => x.name && x.routing_target === false)) {
+  // A named human is fine when they are already the assigned owner (Ed 2026-09-25).
+  const assigned = new Set([expected.assigned_owner, ...sharedWork.filter((w) => w.assigned).map((w) => w.by)].filter(Boolean));
+  for (const h of HUMAN_TEAM.filter((x) => x.name && x.routing_target === false && !assigned.has(x.key))) {
     const first = h.name.split(' ')[0];
     if (new RegExp(`\\b(send|route|forward|pass|assign|give)\\w*\\b[^.]{0,40}\\b${first}\\b|\\b${first} will (handle|take|call|follow)`, 'i').test(text)) {
       out.push({ code: 'RT_NAMED_HUMAN_ROUTING', detail: `Routes work to ${h.name} by name; route to the ${h.route_as} role or queue.` });

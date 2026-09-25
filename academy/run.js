@@ -28,6 +28,10 @@ const { guard, revisionRequest } = require('./lib/action_guard');
 const { judgePrompt, parseJudge, mergeJudges, RUBRIC } = require('./lib/rubric');
 const { runDetectors } = require('./lib/critical');
 const { loadLivePrompts } = require('./lib/live_prompt');
+const { teamRequest, parseAgentOutput, teamContextText, validateTeamCase } = require('./team/agent_under_test');
+const { checkRouting, validateHandoff } = require('./team/routing_checks');
+const { directoryBlock, liveHumans, liveOwnership, rolesNeedingEd } = require('./team/directory');
+const { capabilityBlock } = require('./team/capabilities');
 
 const PRICES = {
   'claude-sonnet-4-5': { price_in: 3, price_out: 15 }, 'claude-sonnet-5': { price_in: 2, price_out: 10 },
@@ -48,13 +52,27 @@ function args() {
 const spec = (s) => { const [provider, model] = s.split(':'); return { provider, model, price: PRICES[model] }; };
 
 function loadCases() {
-  const dir = path.join(__dirname, 'cases');
   const all = [];
-  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.json')).sort()) {
-    const arr = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-    for (const c of (Array.isArray(arr) ? arr : [arr])) all.push({ ...c, _file: f });
+  for (const [dir, team] of [[path.join(__dirname, 'cases'), false], [path.join(__dirname, 'team', 'cases'), true]]) {
+    if (!fs.existsSync(dir)) continue;
+    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.json')).sort()) {
+      const raw = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      const arr = Array.isArray(raw) ? raw : raw.cases ? raw.cases : [raw];
+      for (const c of arr) all.push({ ...c, _file: f, _team: team });
+    }
   }
   return all;
+}
+
+// Live team context (v1.2): active humans + recorded roles + current ownership.
+// Loaded once per run; a failure stops the run rather than silently teaching an
+// empty team.
+async function loadTeamContext() {
+  const { createClient } = require('@supabase/supabase-js');
+  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+  const humans = await liveHumans({ supabase });
+  const ownership = await liveOwnership(supabase);
+  return { humans, ownership };
 }
 
 async function main() {
@@ -63,7 +81,7 @@ async function main() {
   const ids = new Set();
   let bad = 0;
   for (const c of cases) {
-    const errs = validateCase(c);
+    const errs = c._team ? validateTeamCase(c) : validateCase(c);
     if (ids.has(c.case_id)) errs.push('duplicate case_id');
     ids.add(c.case_id);
     if (errs.length) { bad++; console.error(`INVALID ${c.case_id || '(no id)'} [${c._file}]: ${errs.join('; ')}`); }
@@ -79,7 +97,7 @@ async function main() {
 
   if (o.dry) {
     for (const c of selected) {
-      const r = buildRequest(c, { mode: o.mode });
+      const r = c._team ? teamRequest(c, { team: {} }) : buildRequest(c, { mode: o.mode });
       console.log(`\n===== ${c.case_id} (${o.mode}) SYSTEM (${r.system.length} chars) =====\n${r.system.slice(0, 600)}\n...\n===== USER =====\n${r.prompt}`);
     }
     return;
@@ -89,32 +107,57 @@ async function main() {
   const usage = require('../lib/ai/usage');
   const amanda = spec(o.amanda);
   const judges = o.judges.split(',').map(spec);
-  const report = { harness: 'amanda-academy v1', at: new Date().toISOString(), mode: o.mode, amanda: o.amanda, judges: o.judges.split(','), runs: o.runs, live_prompt_fingerprint: live.fingerprint, results: [] };
+  const needTeam = o.mode === 'candidate' || selected.some((c) => c._team);
+  const team = needTeam ? await loadTeamContext() : {};
+  const report = { harness: 'amanda-academy v1.2', candidate_version: needTeam ? 'v1.2' : null, at: new Date().toISOString(), mode: o.mode, amanda: o.amanda, judges: o.judges.split(','), runs: o.runs, live_prompt_fingerprint: live.fingerprint,
+    // counts only: no staff names in reports (the repo is public)
+    team_context: needTeam ? { active_humans: team.humans.length, humans_without_recorded_role: rolesNeedingEd(team.humans).length, open_items: Object.values(team.ownership).reduce((a, v) => a + v.length, 0) } : null,
+    results: [] };
 
   for (const c of selected) {
-    const req = buildRequest(c, { mode: o.mode });
+    const agent = c.agent || 'amanda';
+    const layered = c._team || o.mode === 'candidate';   // v1.2 team layers + guard
+    const req = c._team ? teamRequest(c, { team }) : buildRequest(c, { mode: o.mode, team });
+    const ctx = c._team ? teamContextText(c) : contextText(c);
+    const orgContext = layered ? directoryBlock(agent, team) + '\n\n' + capabilityBlock(agent) : null;
     const runs = [];
     for (let n = 1; n <= o.runs; n++) {
-      const a = await callModel({ ...amanda, system: req.system, prompt: req.prompt, maxTokens: o.mode === 'contract' ? 2600 : 1400, kind: 'amanda' });
-      if (!a.ok) { runs.push({ run: n, error: a.error }); console.error(`${c.case_id} run ${n}: Amanda call failed: ${a.error}`); continue; }
-      const resp = parseResponse(a.text, o.mode === 'candidate' ? 'baseline' : o.mode);
-      // v1.1 candidate: machine-checkable integrity guard; ONE revision if it fires.
+      const a = await callModel({ ...amanda, system: req.system, prompt: req.prompt, maxTokens: o.mode === 'contract' ? 2600 : layered ? 2000 : 1400, kind: 'amanda' });
+      if (!a.ok) { runs.push({ run: n, error: a.error }); console.error(`${c.case_id} run ${n}: agent call failed: ${a.error}`); continue; }
+      let resp; let out = { commitments: [], handoff: null, parse_errors: [] };
+      if (layered) { out = parseAgentOutput(a.text); resp = { message: out.message, internal: null, contract_ok: null }; }
+      else resp = parseResponse(a.text, o.mode);
+      // Integrity + capability guard; ONE natural revision if it fires.
       let guardInfo = null;
-      if (o.mode === 'candidate') {
-        const ctx = contextText(c);
-        const first = guard({ message: resp.message, actionLog: c.action_log || [], contextText: ctx });
-        guardInfo = { intent: req.intent, first_violations: first, revised: false };
+      if (layered) {
+        const g = (m, cm) => guard({ message: m, actionLog: c.action_log || [], contextText: ctx, agent, commitments: cm });
+        const first = g(resp.message, out.commitments);
+        guardInfo = { intent: req.intent, prompt_source: req.prompt_source || 'amanda v1.2 candidate', first_violations: first, revised: false };
         if (first.length) {
-          const rv = await callModel({ ...amanda, system: req.system, prompt: `${req.prompt}\n\nYOUR DRAFT:\n${resp.message}\n\n${revisionRequest(first)}`, maxTokens: 1400, kind: 'amanda_revision' });
-          if (rv.ok) { guardInfo.first_draft = resp.message; resp.message = rv.text.trim(); guardInfo.revised = true; }
-          else guardInfo.revision_error = rv.error;
-          guardInfo.final_violations = guard({ message: resp.message, actionLog: c.action_log || [], contextText: ctx });
+          const rv = await callModel({ ...amanda, system: req.system, prompt: `${req.prompt}\n\nYOUR DRAFT:\n${a.text}\n\n${revisionRequest(first)}`, maxTokens: 2000, kind: 'amanda_revision' });
+          if (rv.ok) {
+            guardInfo.first_draft = resp.message; guardInfo.first_commitments = out.commitments;
+            const r2 = parseAgentOutput(rv.text);
+            out = { commitments: r2.commitments, handoff: r2.handoff || out.handoff, parse_errors: [...out.parse_errors, ...r2.parse_errors] };
+            resp.message = r2.message; guardInfo.revised = true;
+          } else guardInfo.revision_error = rv.error;
+          guardInfo.final_violations = g(resp.message, out.commitments);
         } else guardInfo.final_violations = [];
+        guardInfo.capability_first = first.filter((v) => v.rule === 'CAPABILITY');
+        guardInfo.capability_final = guardInfo.final_violations.filter((v) => v.rule === 'CAPABILITY');
+      }
+      let routing = null;
+      if (c._team) {
+        routing = {
+          violations: checkRouting({ response: resp.message, expected: c.expected_routing, sharedWork: c.shared_work_context || [] }),
+          handoff_present: !!out.handoff,
+          handoff_problems: c.expected_handoff ? validateHandoff(out.handoff, c.expected_handoff) : [],
+        };
       }
       const detectors = runDetectors(c, resp.message);
       const judgments = [];
       for (const j of judges) {
-        const jr = await callModel({ ...j, system: 'You are a strict, fair evaluator. Output only JSON.', prompt: judgePrompt(c, resp), maxTokens: 6000, kind: 'judge' });
+        const jr = await callModel({ ...j, system: 'You are a strict, fair evaluator. Output only JSON.', prompt: judgePrompt(c, resp, layered ? { orgContext, commitments: out.commitments, handoff: out.handoff } : {}), maxTokens: 6000, kind: 'judge' });
         if (!jr.ok) { judgments.push({ judge: `${j.provider}:${j.model}`, error: jr.error }); continue; }
         try { judgments.push({ judge: `${j.provider}:${j.model}`, result: parseJudge(jr.text) }); }
         catch (e) { judgments.push({ judge: `${j.provider}:${j.model}`, error: 'unparseable judge output: ' + e.message }); }
@@ -132,16 +175,16 @@ async function main() {
         if (hit) { hit.flags.push({ judge: 'action_guard', evidence: v.sentence, why: v.detail }); if (hit.status === 'disputed') hit.status = 'confirmed'; }
         else merged.critical_failures.push({ code: v.code, label: v.code, status: 'detector_only', flags: [{ judge: 'action_guard', evidence: v.sentence, why: v.detail }] });
       }
-      runs.push({ run: n, message: resp.message, internal: resp.internal, contract_ok: resp.contract_ok, detectors, guard: guardInfo, ...merged, judge_errors: judgments.filter((x) => x.error).map((x) => ({ judge: x.judge, error: x.error })) });
+      runs.push({ run: n, message: resp.message, internal: resp.internal, contract_ok: resp.contract_ok, commitments: out.commitments, handoff: out.handoff, output_parse_errors: out.parse_errors, routing, detectors, guard: guardInfo, ...merged, judge_errors: judgments.filter((x) => x.error).map((x) => ({ judge: x.judge, error: x.error })) });
       const v = Object.fromEntries(Object.entries(merged.dimensions).map(([d, x]) => [d, x.verdict + (x.agreement === 'disagree' ? '*' : '')]));
-      console.log(`${c.case_id} run ${n}: ${JSON.stringify(v)} critical=${merged.critical_failures.map((f) => f.code + ':' + f.status).join(',') || 'none'}`);
+      console.log(`${c.case_id} run ${n}: ${JSON.stringify(v)} critical=${merged.critical_failures.map((f) => f.code + ':' + f.status).join(',') || 'none'}${guardInfo ? ` capability=${guardInfo.capability_first.length}->${guardInfo.capability_final.length}` : ''}${routing ? ` routing=${routing.violations.map((x) => x.code).concat(routing.handoff_problems.map((x) => x.code)).join(',') || 'ok'}` : ''}`);
     }
     const ok = runs.filter((r) => r.dimensions);
     const consistency = Object.fromEntries(Object.keys(RUBRIC).map((d) => {
       const vs = ok.map((r) => r.dimensions[d].verdict);
       return [d, { verdicts: vs, consistent: vs.length <= 1 || vs.every((x) => x === vs[0]) }];
     }));
-    report.results.push({ case_id: c.case_id, version: c.version, title: c.title, audience: c.audience, domain: c.domain, runs, consistency });
+    report.results.push({ case_id: c.case_id, version: c.version, title: c.title, agent, suite: c._team ? 'team_routing' : 'amanda', audience: c.audience, domain: c.domain, runs, consistency });
   }
   report.usage = usage.summary();
   const out = o.out || path.join(__dirname, 'reports', `${report.at.replace(/[:.]/g, '-')}.json`);

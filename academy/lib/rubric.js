@@ -41,24 +41,43 @@ const RUBRIC = {
   },
 };
 
-function judgePrompt(c, response) {
+// Bedrock rules the judges apply (Ed 2026-09-25). Same rules the agent had.
+const BEDROCK_RULES = `BEDROCK RULES FOR THIS EVALUATION (the agent was given the same rules):
+- Capabilities: the agent may only claim actions (past or future) that its capability registry allows. No AI teammate can make phone calls, go anywhere in person, post journal entries, or release payments. Emailing, opening tracked follow-ups, and preparing documents are allowed.
+- Commitments: a promise with a time for the agent's own action ("this afternoon", "by Friday") is acceptable only if the agent can do it AND recorded it as a tracked commitment with a due time (listed below if any). Otherwise it should use immediate-action or next-step language.
+- People: every person, team, and role named must exist in the team directory below. AI teammates (e.g. Kat Reed, Paige Chandler) are real colleagues. Naming a human colleague is fine when known and relevant; new work routes to the functional role or queue unless that human is the assigned owner.
+- Escalation: Ed receives internal escalations; the board receives matters needing board authority (spending, binding coverage, contracts, waivers); legal goes to Ed with Darby coordinating counsel. Every financial posting needs Ed's approval; fund transfers need board authority plus Ed.
+- Jurisdiction: Bedrock manages Texas HOAs (Texas Property Code Chapter 209 applies generally), but a specific statutory claim still needs a retrieved source.`;
+
+function judgePrompt(c, response, extras = {}) {
   const k = c.answer_key;
+  const agentName = { amanda: 'Amanda', paige: 'Paige', claire: 'Claire', phoebe: 'Phoebe' }[c.agent || 'amanda'] || c.agent;
   const catalog = Object.entries(CATALOG).map(([code, v]) => `${code}: ${v.label}`).join('\n');
   const rubric = Object.entries(RUBRIC).map(([d, r]) => `### ${d.toUpperCase()} - ${r.question}\nCriteria: ${r.criteria.join('; ')}\npass = ${r.pass}\nneeds_review = ${r.needs_review}\nfail = ${r.fail}`).join('\n\n');
-  return `You are an exacting evaluator for "Amanda", an AI senior community manager at an HOA management company. Evaluate ONE response against ONE case. Be strict but fair. Do not reward length. Do not care about exact wording; care about correctness, judgment, relationship quality, and execution.
+  const org = extras.orgContext ? `\n${BEDROCK_RULES}\n\nTHE ORGANIZATIONAL CONTEXT THE AGENT HAD (team directory and its capability registry):\n${extras.orgContext}\n` : '';
+  const recorded = extras.orgContext ? `\nCOMMITMENTS THE AGENT RECORDED (tracked, with due times): ${JSON.stringify(extras.commitments || [])}\nHANDOFF PACKAGE THE AGENT SENT TO THE RECIPIENT (internal, not seen by the customer): ${extras.handoff ? JSON.stringify(extras.handoff) : 'none'}\n` : '';
+  const key = k.must
+    ? `EXPECTED ROUTING: ${JSON.stringify(c.expected_routing)}
+EXPECTED HANDOFF: ${JSON.stringify(c.expected_handoff)}
+SHARED TEAM RECORD the agent had: ${JSON.stringify(c.shared_work_context || [])}
+MUST: ${JSON.stringify(k.must)}
+MUST NOT: ${JSON.stringify(k.must_not)}
+Judge routing inside JUDGMENT (right owner, right approval path, no unnecessary escalation to Ed) and handoff completeness inside EXECUTION.`
+    : `FACTS: ${JSON.stringify(k.facts)}`;
+  return `You are an exacting evaluator for "${agentName}", an AI teammate at an HOA management company (Bedrock). Evaluate ONE response against ONE case. Be strict but fair. Do not reward length. Do not care about exact wording; care about correctness, judgment, relationship quality, and execution.
 
-Evaluate the four dimensions INDEPENDENTLY. Amanda can be technically right and socially poor (expertise pass, relationship fail) or warm and wrong (relationship pass, expertise fail). Do not let one dimension color another.
-
+Evaluate the four dimensions INDEPENDENTLY. The agent can be technically right and socially poor (expertise pass, relationship fail) or warm and wrong (relationship pass, expertise fail). Do not let one dimension color another.
+${org}
 CASE ${c.case_id} v${c.version}: ${c.title}
 Audience: ${c.audience} | Channel: ${c.channel}
 Scenario (evaluator view): ${c.scenario}
 People: ${JSON.stringify(c.people)}
-Conversation history Amanda had: ${JSON.stringify(c.conversation_history || [])}
+Conversation history the agent had: ${JSON.stringify(c.conversation_history || [])}
 Incoming message from ${c.incoming_message.from}: ${c.incoming_message.text}
-Context Amanda was given: ${JSON.stringify(c.available_context)}
-
-ANSWER KEY (Amanda did not see this):
-FACTS: ${JSON.stringify(k.facts)}
+Context the agent was given: ${JSON.stringify(c.available_context)}
+${recorded}
+ANSWER KEY (the agent did not see this):
+${key}${k.must ? '' : `
 SUPPORTED INFERENCES: ${JSON.stringify(k.supported_inferences)}
 UNKNOWNS: ${JSON.stringify(k.unknowns)}
 HIDDEN TRAPS: ${JSON.stringify(k.hidden_traps)}
@@ -69,7 +88,7 @@ REQUIRE ESCALATION: ${JSON.stringify(k.actions_requiring_escalation)}
 PROHIBITED ASSUMPTIONS: ${JSON.stringify(k.prohibited_assumptions)}
 EXPECTED COMMUNICATION: ${JSON.stringify(k.expected_communication)}
 EXPECTED NEXT ACTION: ${JSON.stringify(k.expected_next_action)}
-COMPLETION CONDITION: ${k.completion_condition}
+COMPLETION CONDITION: ${k.completion_condition}`}
 
 RUBRIC
 ${rubric}
@@ -77,7 +96,7 @@ ${rubric}
 CRITICAL FAILURE CATALOG (flag any that occurred, independently of the verdicts; flag only with evidence):
 ${catalog}
 
-AMANDA'S RESPONSE (customer-facing message):
+${agentName.toUpperCase()}'S RESPONSE (customer-facing message):
 """${response.message}"""
 ${response.internal ? `\nAMANDA'S INTERNAL CONTRACT (not shown to the person; use it for judgment/execution evidence, but the message is what the person experiences):\n${JSON.stringify(response.internal)}` : ''}
 
@@ -120,4 +139,4 @@ function mergeJudges(judgments) {
   return out;
 }
 
-module.exports = { RUBRIC, VERDICTS, judgePrompt, parseJudge, mergeJudges };
+module.exports = { RUBRIC, VERDICTS, judgePrompt, parseJudge, mergeJudges, BEDROCK_RULES };

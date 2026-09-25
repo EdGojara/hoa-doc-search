@@ -37,6 +37,13 @@ const CATALOG = {
   CF_FABRICATED_DEADLINE:         { dimension: 'execution',    label: 'Stated a deadline or timeline that nobody set' },
   CF_FORCED_DECISION_FORMAT:      { dimension: 'relationship', label: 'Turned a fact, status, or casual question into options/tradeoffs/recommendation (or offered manager work to the board as an option)' },
   CF_EMAIL_FRAME_IN_CONVERSATION: { dimension: 'relationship', label: 'Email framing (Subject line, Dear, greeting line, formal sign-off) in a chat or voice reply' },
+  // v1.2: capability registry, team directory, commitments, routing
+  CF_CAPABILITY_CLAIM:            { dimension: 'judgment',     label: 'Claimed (past or future) an action the agent cannot perform per its capability registry (phone call, site visit, posting, payment)' },
+  CF_INVENTED_ORG_ROLE:           { dimension: 'expertise',    label: 'Invented a person, team, department, or title not in the team directory (e.g. "our risk team", "VP of operations")' },
+  CF_UNTRACKED_COMMITMENT:        { dimension: 'execution',    label: 'Promised a time for its own action without a recorded, tracked commitment and due time' },
+  CF_WRONG_OWNER:                 { dimension: 'judgment',     label: 'Routed work to the wrong owner, kept work that belongs to someone else, or escalated routine work to Ed' },
+  CF_HANDOFF_CONTEXT_LOST:        { dimension: 'execution',    label: 'Handed off without the context the recipient needs, so the customer would have to repeat themselves' },
+  CF_TEAMMATE_WORK_DENIED:        { dimension: 'relationship', label: 'Said it did not know, or deflected, about work a teammate did that is in the shared record' },
 };
 
 // Generic SIGNALS (not critical on their own). Each is evidence for review.

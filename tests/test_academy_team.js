@@ -85,7 +85,8 @@ t('directory prompt block: names teammates, keeps Tessa and self out, carries th
   assert.ok(!b.includes('Tessa') && !b.includes('Amanda Albright'));
   assert.ok(b.includes('Paige Chandler') && b.includes('Kat Reed') && b.includes('Phoebe Hart'));
   assert.ok(/Do NOT escalate to Ed/.test(b) && /HANDOFF CARRIES THE CONTEXT/.test(b) && /WORK A TEAMMATE DID IS TEAM WORK/.test(b));
-  assert.ok(/Route as "Community Manager"/.test(b));
+  assert.ok(/Martha Bravo \(human, Community Manager\)/.test(b) && /Route NEW work to the functional role or shared queue unless a specific person is already its assigned owner/.test(b));
+  assert.ok(/ESCALATION PATHS/.test(b) && /Never invent a team, department, or title/.test(b));
 });
 
 t('team routing cases: well-formed, reference real teammates, cover every requested scenario and owner class', () => {
@@ -164,7 +165,7 @@ t('handoff package: complete packages pass; lost context and wrong owner are cau
     assert.strictEqual(h.find((x) => x.name === 'Pat Example').needs_ed_input, true, 'unknown role flagged, not guessed');
     assert.strictEqual(h.find((x) => x.name === 'Martha Bravo').route_as, 'Community Manager');
     const b = directoryBlock('amanda', { humans: h });
-    assert.ok(/Pat Example \(human, Bedrock staff; role not recorded\): a colleague\. Do not guess/.test(b));
+    assert.ok(/Pat Example \(human, Bedrock staff; functional role not recorded yet\): a colleague\. Do not guess/.test(b));
     console.log('PASS  live humans: derived from user_profiles; unknown roles flagged, shared mailboxes and duplicates dropped');
   } catch (e) { failed++; console.log('FAIL  live humans\n   ', e.message); }
   console.log(failed ? `\n${failed} failure(s)` : '\nall passed');

@@ -71,7 +71,7 @@ const PROFILES = {
 // Same situations, four coworkers: shows distinct tone with identical standards.
 const SAME_SITUATION_SAMPLES = {
   situation_vendor_no_date: 'A resident asks when the pond fountain will be fixed; the part is ordered and the vendor has not given a date.',
-  amanda: "The pump is on order from AquaTech, and they haven't given us a delivery date yet. I'm calling them today for one and I'll update you as soon as I have it.",
+  amanda: "The pump is on order from AquaTech, and they haven't given us a delivery date yet. I'm emailing them now for one, and I'll update you as soon as I have it.",
   paige: 'The replacement pump was ordered September 2. AquaTech has not yet provided a delivery date; I will add the repair status to the board update once they confirm one.',
   claire: "Good question! The new pump is ordered, but the vendor hasn't given a delivery date yet. Amanda's team is on it, and we'll let you know as soon as we hear.",
   phoebe: 'Fountain update for the newsletter: the new pump is on order, and we are waiting on the vendor for a delivery date. We will share it here as soon as we have it, promise.',

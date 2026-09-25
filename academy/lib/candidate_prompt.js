@@ -53,15 +53,22 @@ const EDITS = [
     problem: 'Email framing everywhere: a "Subject:" line inside a homeowner reply; greeting and sign-off in chat and phone contexts.',
     cases: ['AA-REL-003', 'AA-REG-006'],
   },
+  {
+    id: 'E7-routing-rule-names-and-roles', target: 'routing_rule',
+    from: 'NEVER name a specific staff member, offer to route to a named person, or give any individual staffer\'s direct email or phone — a named handoff just recreates the gatekeeper. Route to the team or function instead (for example "our compliance team" or "our office").',
+    to: 'Refer to AI teammates by name. Name a human colleague only when their identity is known and relevant (they own the work or are already involved); route new work to the functional role or shared queue in YOUR TEAM unless a specific person is already its assigned owner. Never give an individual staffer\'s direct email or phone. Never invent a team, department, or title: use only the people, roles, and queues listed in YOUR TEAM.',
+    problem: 'The production rule\'s own examples ("our compliance team", "our office") model invented org units; v1.1 replies escalated to "our risk team", "our VP of operations and our E&O carrier", and "leadership", none of which exist. It also forbade naming anyone, which conflicts with Ed\'s 2026-09-25 decision (AI teammates by name; humans when known and relevant).',
+    cases: ['AA-REL-006', 'AA-REG-004', 'AA-TEC-004', 'AA-REL-009'],
+  },
 ];
 
 const FACTUAL_INTEGRITY = `FACTUAL INTEGRITY (always on, overrides tone and helpfulness):
 Never state as fact any of the following unless the CONTEXT shows it:
-- an action you took (checked, called, emailed, followed up, pushed, confirmed, sent). ACTIONS ON RECORD lists what has actually been done; anything not listed there has not happened. Say what you will do instead ("I'll call them today", "I can check that now").
+- an action you took (checked, called, emailed, followed up, pushed, confirmed, sent). ACTIONS ON RECORD lists what has actually been done; anything not listed there has not happened. Say what you will do instead, using only what you can actually do (WHAT YOU CAN ACTUALLY DO).
 - an email, call, or reply you cannot point to in the CONTEXT.
 - a document you were not given, or what it says.
 - a board decision or vote that is not in the CONTEXT.
-- a legal rule, statute, or authority without a source in the CONTEXT. If none is retrieved, say the rule is not on file and what you will pull, or that counsel should confirm. Do not describe what is "typical" or "common" as if it applied here.
+- a legal rule, statute, chapter, section, or "state law" that no retrieved document states. If none is retrieved, say the rule is not on file and what you will pull, or that it goes to legal review. Do not describe what is "typical" or "common" elsewhere as if it answered this community's question.
 - a deadline or timeline nobody set.
 - insurance coverage or any other status the evidence does not support.
 When evidence is missing, say what is known, what is unknown, and the next action. Never invent a bridge between them.`;
@@ -85,6 +92,14 @@ function responseShape(intent) {
 HOW TO SHAPE THE REPLY: ${SHAPES[intent.mode]}`;
 }
 
+// Team layers (v1.2): directory, capabilities, commitments. Humans/ownership are
+// loaded once per run (async, live) and passed in; tests pass nothing.
+function teamLayers(agent, { humans, ownership } = {}) {
+  const { directoryBlock } = require('../team/directory');
+  const { capabilityBlock, COMMITMENT_RULE } = require('../team/capabilities');
+  return directoryBlock(agent, { humans, ownership }) + '\n\n' + capabilityBlock(agent) + '\n\n' + COMMITMENT_RULE;
+}
+
 function applyEdits(text, target) {
   let out = text;
   for (const e of EDITS.filter((x) => x.target === target)) {
@@ -94,16 +109,17 @@ function applyEdits(text, target) {
   return out;
 }
 
-function candidateSystem({ audience, communityName, channel, intent, learnedGuidance = '' }) {
+function candidateSystem({ audience, communityName, channel, intent, learnedGuidance = '', team = {}, agent = 'amanda' }) {
   const L = loadLivePrompts();
   let base;
   if (audience === 'staff') base = `${L.staffPersona}\n\nCOMMUNITY: ${communityName || '(none)'}`;
   else base = applyEdits(({ board: L.board, vendor: L.vendor }[audience] || L.homeowner)(communityName), audience === 'board' ? 'board' : audience === 'vendor' ? 'vendor' : 'homeowner');
   const finance = L.FINANCE_PRIMER + '\n\n' + L.financeAddendum;
-  let system = audience === 'staff' ? base : (audience === 'vendor' ? base : base + '\n\n' + finance) + '\n\n' + L.CONTACT_ROUTING_RULE + '\n\n' + L.NO_OVERPROMISE_RULE;
-  system += '\n\n' + FACTUAL_INTEGRITY + '\n\n' + UNCERTAINTY + '\n\n' + channelFormat(channel) + '\n\n' + responseShape(intent);
+  const routing = applyEdits(L.CONTACT_ROUTING_RULE, 'routing_rule');
+  let system = audience === 'staff' ? base : (audience === 'vendor' ? base : base + '\n\n' + finance) + '\n\n' + routing + '\n\n' + L.NO_OVERPROMISE_RULE;
+  system += '\n\n' + FACTUAL_INTEGRITY + '\n\n' + UNCERTAINTY + '\n\n' + teamLayers(agent, team) + '\n\n' + channelFormat(channel) + '\n\n' + responseShape(intent);
   if (learnedGuidance) system += `\n\n${learnedGuidance}`;
   return system;
 }
 
-module.exports = { EDITS, FACTUAL_INTEGRITY, UNCERTAINTY, channelFormat, responseShape, candidateSystem, applyEdits };
+module.exports = { EDITS, FACTUAL_INTEGRITY, UNCERTAINTY, channelFormat, responseShape, candidateSystem, applyEdits, teamLayers };
