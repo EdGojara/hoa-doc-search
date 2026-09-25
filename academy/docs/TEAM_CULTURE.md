@@ -2,7 +2,7 @@
 
 Goal: four distinct coworkers who share one standard. Not four versions of the same AI.
 
-Code: `academy/team/culture.js`, `academy/team/personalities.js`, `academy/team/team_awareness.js`. Tests: `tests/test_academy_team.js`. Nothing is loaded by production or by the v1.1 candidate prompt yet.
+Code: `academy/team/culture.js`, `academy/team/personalities.js`, `academy/team/team_awareness.js`, `academy/team/directory.js`, `academy/team/routing_checks.js`; cases in `academy/team/cases/team_routing.json`. Tests: `tests/test_academy_team.js`. Nothing is loaded by production or by the v1.1 candidate prompt yet.
 
 ## Layers (a lower layer can shape HOW, never WHETHER)
 
@@ -10,9 +10,10 @@ Code: `academy/team/culture.js`, `academy/team/personalities.js`, `academy/team/
 |---|---|---|---|
 | 1 | Factual integrity and authority boundaries | always-on rules plus the action guard (v1.1) | **never** |
 | 2 | Shared Bedrock culture | `culture.js` (8 principles) | **never** |
-| 3 | Role / lane | `lib/team/roster.js` (lane, domain, tier, reports_to) | **never** |
-| 4 | Personality | `personalities.js` | n/a: this layer is tone and style |
-| 5 | Channel and intent shape | `candidate_prompt.js`, `intent.js` | personality flavors it |
+| 3 | Shared team directory and organizational context | `directory.js` (who's who, human or AI, decision authority, Ed's role, handoff package) | **never** |
+| 4 | Role / lane | `lib/team/roster.js` (lane, domain, tier, reports_to) | **never** |
+| 5 | Personality | `personalities.js` | n/a: this layer is tone and style |
+| 6 | Channel and intent shape | `candidate_prompt.js`, `intent.js` | personality flavors it |
 
 ## Shared culture (every agent)
 
@@ -61,6 +62,75 @@ Each principle is written as **looks like** (observable behavior) and **never be
 - **Tessa** (Ed's private assistant) is never offered as a handoff.
 
 **Open question for Ed.** `CONTACT_ROUTING_RULE` says "never name a specific staff member". `roster.handoffLine` names AI teammates ("Let me bring in Annie Reeves…"). The intent seems to be: name AI teammates, never route to named *human* staff. The rule wording should say that explicitly before team awareness is wired in.
+
+## Shared team directory and organizational context (`directory.js`)
+
+Sits beneath the personalities. Every agent gets the same directory; personality changes how a handoff sounds, never who owns the work or who approves it.
+
+**Who's on the team.** The directory is derived, not restated:
+- **AI teammates:** all 15 come from `roster.js` (name, role, tier, lane, reports_to). The directory adds only what each may and may not decide.
+- **Humans:**
+  - **Ed:** organizational context only (below).
+  - **Community Manager:** Martha Bravo. Agents know her by name so they recognize her, but route work to the *Community Manager role*. That follows the no-individual-routing rule in `lib/ops/sla.js`.
+  - **Other staff: roles not recorded yet.** They are flagged `needs_ed_input`, and agents never invent a person.
+- **Shared queues:** info@, accounting@, violations@, acc@, builders@.
+
+**Ed, in organizational terms.**
+- **Role:** owner of Bedrock; founder of trustEd.
+- **Expertise:** accounting, audit and controls, operations.
+- **Approves:**
+  - every financial posting;
+  - pricing and contracts for new communities;
+  - legal, government and tax matters;
+  - collections referrals;
+  - changes to how the AI team works.
+- **Involve him when:** something on the approval list is on the table, Bedrock itself made a mistake a customer saw, or a risk can't be closed by the owning lane today.
+- **Do not escalate:** 8 kinds of routine work are listed. They include vendor scheduling, meeting logistics, invoice status, ACC intake, and any board decision the board can make itself.
+- **How to bring him something:** a decision, not a problem.
+
+**Kept separate from personal memory.** There is no biography and nothing personal in this layer. A test fails if personal fields appear, such as age, health, family or finances. Relationship memory, like a specific board member's preferences, belongs to the memory layer and is scoped per relationship.
+
+**Decision-authority matrix.** Six owner classes, plus *self*:
+- **self:** the agent owns it;
+- **ai_teammate:** another AI teammate owns it;
+- **human:** a human role owns it;
+- **ed_approval:** Ed must approve;
+- **board_approval:** the board must approve;
+- **legal_review** or **accounting_review:** review is required first.
+
+Each of the 14 rows either cites where the rule already lives in code or is marked `proposed: true` for you to confirm. **Three rows are proposals:**
+- postings need your approval;
+- fund transfers need both the board and you;
+- pricing needs you.
+
+**Handoff package.** Ten fields travel with the work: from, to, person, ask, known, unknown, actions on record, promised, why theirs, next step. The validator catches missing fields, the wrong owner, and lost context (a case's must-carry facts missing from the package).
+
+**Shared work context.** When a board member asks one teammate about another teammate's work, the answer comes from the shared record, and the teammate who did the work gets credit. A work record has: by, type, what, at, status, ref.
+
+Production sources would be work_items (migration 256), interactions, operator_actions audit records, and each persona's sent mail. None of them is wired in yet.
+
+**Routing cases.** There are 15 draft cases in `academy/team/cases/team_routing.json`. They cover every owner class and all seven scenarios you named, plus:
+- a site visit that needs a human in person;
+- a fee waiver that goes to the board, not Ed;
+- a legal threat;
+- a balance discrepancy;
+- a vendor invoice question;
+- a prospect asking for pricing;
+- a mid-thread handoff to Annie.
+
+Nine deterministic detectors are in `routing_checks.js`:
+- teammate work denied;
+- customer asked to repeat;
+- Ed brought in unnecessarily;
+- Ed or board approval missing;
+- owner not named;
+- decision reported as done outside authority;
+- routing to a named human's desk;
+- Phoebe printing an unconfirmed fact.
+
+Tests show each detector fires on a bad reply and stays quiet on a good one.
+
+**Not wired yet.** `run.js` only runs Amanda cases. Team cases need a small harness change (run as the case's agent, include the shared work context, and ask for a handoff package), and that waits for your review.
 
 ## How it gets evaluated (when approved)
 

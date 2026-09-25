@@ -10,9 +10,11 @@
 // never WHETHER a higher-layer obligation is met:
 //   1. Factual integrity + authority boundaries (always-on rules, action guard)
 //   2. Shared Bedrock culture (this file)
-//   3. Role / lane (roster.js lane + domain; what this teammate owns)
-//   4. Personality (personalities.js; tone and interaction style only)
-//   5. Channel + intent shape (candidate_prompt / intent.js)
+//   3. Shared team directory + organizational context (directory.js: who's
+//      who, human or AI, decision authority, Ed's role, handoff package)
+//   4. Role / lane (roster.js lane + domain; what this teammate owns)
+//   5. Personality (personalities.js; tone and interaction style only)
+//   6. Channel + intent shape (candidate_prompt / intent.js)
 // ----------------------------------------------------------------------------
 
 const PRINCIPLES = [
