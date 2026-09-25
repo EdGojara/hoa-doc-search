@@ -32,6 +32,9 @@ const { onboardCommunityToGL, openInitialPeriods } = require('../lib/accounting/
 const { balanceSheet, incomeStatement, equityStatement, budgetVsActual } = require('../lib/accounting/financial_statements');
 const { extractBudget } = require('../lib/accounting/budget_pdf_extractor');
 const { rollForwardBudget } = require('../lib/accounting/budget_roll_forward');
+const { mergeBudgetLines } = require('../lib/accounting/budget_merge');
+const { requireOwner } = require('./_require_admin');
+const LOCKED_BUDGET_STATUSES = ['approved', 'active'];
 const { safeErrorMessage } = require('./_safe_error');
 const Anthropic = require('@anthropic-ai/sdk');
 const { COUNTED_JE_STATUSES, countsInGl } = require('../lib/accounting/je_status');
@@ -685,11 +688,21 @@ router.post('/budgets/preview-pdf', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'file_required' });
     const extracted = await extractBudget(req.file.buffer, req.file.mimetype, req.file.originalname);
+    const sha256 = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    // Keep the source file (Phase 0): the saved budget references exactly what was uploaded.
+    let source_storage_path = null;
+    const cid = (req.body && req.body.community_id) || 'unscoped';
+    const ext = (String(req.file.originalname || '').match(/\.[a-z0-9]{1,5}$/i) || [''])[0].toLowerCase();
+    const path = `budgets/${cid}/${sha256}${ext}`;
+    const { error: upErr } = await supabase.storage.from('documents').upload(path, req.file.buffer, { contentType: req.file.mimetype || 'application/octet-stream', upsert: true });
+    if (upErr) console.warn('[books] budget source file not stored:', upErr.message);
+    else source_storage_path = path;
     res.json({
       extraction: extracted,
       filename: req.file.originalname,
-      sha256: crypto.createHash('sha256').update(req.file.buffer).digest('hex'),
+      sha256,
       file_size_bytes: req.file.size,
+      source_storage_path,
     });
   } catch (err) {
     console.error('[books] budget pdf extract failed:', err);
@@ -700,68 +713,108 @@ router.post('/budgets/preview-pdf', upload.single('file'), async (req, res) => {
 // Commit an extracted budget — operator confirms mapping after preview.
 // Body: { community_id, fiscal_year, status, source_filename, line_items: [{account_id, annual_amount_cents, monthly_amounts_cents}], notes }
 router.post('/budgets', express.json({ limit: '1mb' }), async (req, res) => {
+  // Budget Phase 0 (Ed 2026-09-25): an approved budget is locked; a save never
+  // drops saved lines it wasn't sent and never flattens a monthly schedule.
+  // Body: { community_id, fiscal_year, status, source_filename, source_storage_path, notes,
+  //         line_items:[{account_id, fund_id?, annual_amount_cents, monthly_amounts_cents?, phasing?}],
+  //         phasing?: 'scale'|'even', remove_account_ids?: [] }
   try {
-    const { community_id, fiscal_year, status = 'draft', source_filename, line_items, notes, approved_by_user_id } = req.body || {};
+    const { community_id, fiscal_year, status = 'draft', source_filename, source_storage_path, line_items, notes, approved_by_user_id } = req.body || {};
     if (!community_id || !fiscal_year) return res.status(400).json({ error: 'community_id_and_fiscal_year_required' });
     if (!Array.isArray(line_items) || line_items.length === 0) return res.status(400).json({ error: 'line_items_required' });
+    if (!['draft', 'approved'].includes(status)) return res.status(400).json({ error: 'status_must_be_draft_or_approved' });
 
-    // Upsert the budget header
-    const { data: existing } = await supabase
+    const { data: existing, error: exErr } = await supabase
       .from('community_budgets')
-      .select('id').eq('community_id', community_id).eq('fiscal_year', fiscal_year).maybeSingle();
+      .select('id, status, fiscal_year').eq('community_id', community_id).eq('fiscal_year', fiscal_year).maybeSingle();
+    if (exErr) throw exErr;
+    if (existing && LOCKED_BUDGET_STATUSES.includes(existing.status)) {
+      return res.status(409).json({ error: 'budget_locked', detail: `The FY${fiscal_year} budget is approved and locked. It can't be changed in place; an admin must reopen it (with a reason) first.` });
+    }
 
+    // Merge with what is saved (read everything; this budget's lines are small).
+    let saved = [];
+    if (existing) {
+      const { data: sl, error: slErr } = await supabase.from('budget_line_items')
+        .select('account_id, fund_id, annual_amount_cents, monthly_amounts_cents, notes').eq('budget_id', existing.id);
+      if (slErr) throw slErr;
+      saved = sl || [];
+    }
+    const merged = mergeBudgetLines(saved, line_items, { phasing: req.body.phasing || null, removeAccountIds: req.body.remove_account_ids || [] });
+    if (merged.errors.length) return res.status(400).json({ error: 'invalid_budget_lines', detail: merged.errors });
+    if (merged.decisionsNeeded.length) {
+      return res.status(409).json({ error: 'monthly_schedule_decision_required',
+        detail: 'Some lines have a seasonal monthly schedule and their annual changed. Choose: keep each pattern (scaled to the new annual) or spread evenly.',
+        lines: merged.decisionsNeeded });
+    }
+
+    // Header: always written as draft; the lock engages only when approved last.
     let budgetId;
     if (existing) {
-      const { error } = await supabase.from('community_budgets').update({
-        status,
-        source_filename: source_filename || null,
-        notes: notes || null,
-        approved_at: status === 'approved' ? new Date().toISOString() : null,
-        approved_by_user_id: approved_by_user_id || null,
-      }).eq('id', existing.id);
-      if (error) throw error;
+      // Only fields the caller sent: a planner save must not erase the upload's source reference.
+      const hdr = {};
+      if (source_filename !== undefined) hdr.source_filename = source_filename || null;
+      if (source_storage_path !== undefined) hdr.source_storage_path = source_storage_path || null;
+      if (notes !== undefined) hdr.notes = notes || null;
+      if (Object.keys(hdr).length) {
+        const { error } = await supabase.from('community_budgets').update(hdr).eq('id', existing.id);
+        if (error) throw error;
+      }
       budgetId = existing.id;
-      // Wipe existing lines for clean upsert
-      await supabase.from('budget_line_items').delete().eq('budget_id', budgetId);
     } else {
       const { data: ins, error } = await supabase.from('community_budgets').insert({
-        community_id, fiscal_year, status,
+        community_id, fiscal_year, status: 'draft',
         source_filename: source_filename || null,
+        source_storage_path: source_storage_path || null,
         notes: notes || null,
-        approved_at: status === 'approved' ? new Date().toISOString() : null,
-        approved_by_user_id: approved_by_user_id || null,
       }).select('id').single();
       if (error) throw error;
       budgetId = ins.id;
     }
 
-    // Insert line items
-    const rows = line_items.map((li) => {
-      let monthly = Array.isArray(li.monthly_amounts_cents) ? li.monthly_amounts_cents.map((n) => Number(n) || 0) : [];
-      if (monthly.length !== 12) {
-        const annual = Number(li.annual_amount_cents) || 0;
-        const each = Math.floor(annual / 12);
-        monthly = Array(12).fill(each);
-        monthly[11] += annual - each * 12;
-      }
-      return {
-        budget_id: budgetId,
-        account_id: li.account_id,
-        fund_id: li.fund_id || null,
-        annual_amount_cents: Number(li.annual_amount_cents) || 0,
-        monthly_amounts_cents: monthly,
-        notes: li.notes || null,
-      };
-    });
-    if (rows.length > 0) {
-      const { error: lnErr } = await supabase.from('budget_line_items').insert(rows);
+    // Lines: upsert what was sent; keep everything else; remove only on request.
+    const rows = merged.rows.map((r) => ({ ...r, budget_id: budgetId }));
+    if (rows.length) {
+      const { error: lnErr } = await supabase.from('budget_line_items').upsert(rows, { onConflict: 'budget_id,account_id' });
       if (lnErr) throw lnErr;
     }
+    if (merged.removed.length) {
+      const { error: rmErr } = await supabase.from('budget_line_items').delete().eq('budget_id', budgetId).in('account_id', merged.removed);
+      if (rmErr) throw rmErr;
+    }
 
-    const { data: budget } = await supabase.from('community_budgets').select('*').eq('id', budgetId).maybeSingle();
-    res.json({ budget, line_items_count: rows.length });
+    if (status === 'approved') {
+      const { error: apErr } = await supabase.from('community_budgets').update({
+        status: 'approved', approved_at: new Date().toISOString(), approved_by_user_id: approved_by_user_id || null,
+      }).eq('id', budgetId);
+      if (apErr) throw apErr;
+    }
+
+    const { data: budget, error: bErr } = await supabase.from('community_budgets').select('*').eq('id', budgetId).maybeSingle();
+    if (bErr) throw bErr;
+    res.json({ budget, line_items_count: rows.length, lines_kept_unchanged: merged.kept.length, lines_removed: merged.removed.length });
   } catch (err) {
     console.error('[books] save budget failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Reopen an approved budget (owner only, reason required, logged). The only way
+// to change an approved budget until budget versions exist.
+router.post('/budgets/:id/reopen', express.json(), async (req, res) => {
+  try {
+    const user = await requireOwner(req, res); if (!user) return;
+    const reason = String((req.body && req.body.reason) || '').trim();
+    if (!reason) return res.status(400).json({ error: 'reason_required' });
+    const { data: bud, error: bErr } = await supabase.from('community_budgets').select('id, community_id').eq('id', req.params.id).maybeSingle();
+    if (bErr) throw bErr;
+    if (!bud) return res.status(404).json({ error: 'budget_not_found' });
+    if (req.body.community_id && bud.community_id !== req.body.community_id) return res.status(403).json({ error: 'budget_belongs_to_a_different_community' });
+    const { data, error } = await supabase.rpc('reopen_community_budget', { p_budget_id: bud.id, p_reason: reason, p_by: user.email || user.id || 'admin' });
+    if (error) return res.status(error.code === 'P0001' ? 409 : 500).json({ error: error.code === 'P0001' ? error.message : safeErrorMessage(error) });
+    res.json(data);
+  } catch (err) {
+    console.error('[books] reopen budget failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -808,7 +861,13 @@ router.delete('/budgets/:id', async (req, res) => {
     if (findErr) throw findErr;
     if (!bud) return res.status(404).json({ error: 'budget_not_found' });
     if (bud.community_id !== community_id) return res.status(403).json({ error: 'budget_belongs_to_a_different_community' });
-    await supabase.from('budget_line_items').delete().eq('budget_id', id);
+    const { data: st, error: stErr } = await supabase.from('community_budgets').select('status').eq('id', id).maybeSingle();
+    if (stErr) throw stErr;
+    if (st && LOCKED_BUDGET_STATUSES.includes(st.status)) {
+      return res.status(409).json({ error: 'budget_locked', detail: `The FY${bud.fiscal_year} budget is approved and locked; it can't be deleted. An admin must reopen it (with a reason) first.` });
+    }
+    const { error: lnDelErr } = await supabase.from('budget_line_items').delete().eq('budget_id', id);
+    if (lnDelErr) throw lnDelErr;
     const { error: delErr } = await supabase.from('community_budgets').delete().eq('id', id).eq('community_id', community_id);
     if (delErr) throw delErr;
     res.json({ deleted: true, fiscal_year: bud.fiscal_year });
@@ -848,6 +907,11 @@ router.post('/reserve-budget', express.json({ limit: '512kb' }), async (req, res
     if (!community_id || !fiscal_year) return res.status(400).json({ error: 'community_id_and_fiscal_year_required' });
     if (!Array.isArray(items)) return res.status(400).json({ error: 'items_required' });
     const fy = parseInt(fiscal_year, 10);
+    const { data: bdg, error: bdgErr } = await supabase.from('community_budgets').select('status').eq('community_id', community_id).eq('fiscal_year', fy).maybeSingle();
+    if (bdgErr) throw bdgErr;
+    if (bdg && LOCKED_BUDGET_STATUSES.includes(bdg.status)) {
+      return res.status(409).json({ error: 'budget_locked', detail: `The FY${fy} budget is approved and locked; its reserve projects can't be replaced.` });
+    }
     const rows = items
       .map((it, i) => ({
         community_id,

@@ -515,10 +515,13 @@
   }
   function bvaHTML(j) {
     if (!j.has_budget) return `<div class="muted" style="padding:24px; text-align:center;">No budget loaded for fiscal year ${esc(String(j.fiscal_year||''))}. Use the <strong>Budget</strong> tab to upload one.</div>`;
-    const vc = (v) => Math.abs(v)<=1 ? 'var(--ink-soft)' : (v>=0?'#166534':'#991b1b');
+    // variance = budget - actual (unchanged). Expense under budget is good; revenue
+    // under budget (actual > budget gives a negative variance) is ALSO good, so the
+    // favourable sign flips for revenue.
+    const vc = (v, r) => { if (Math.abs(v)<=1) return 'var(--ink-soft)'; const fav = r && r.account_type==='revenue' ? v<=0 : v>=0; return fav?'#166534':'#991b1b'; };
     const rows = (j.rows||[]).map((r)=>`<tr><td style="font-family:ui-monospace,monospace; color:var(--ink-soft);">${esc(r.account_number)}</td><td>${esc(r.account_name)}</td>
-      <td class="num">${fmt(r.mtd_budget_cents)}</td><td class="num">${fmt(r.mtd_actual_cents)}</td><td class="num" style="color:${vc(r.mtd_variance_cents)};">${fmt(r.mtd_variance_cents)}</td>
-      <td class="num">${fmt(r.ytd_budget_cents)}</td><td class="num">${fmt(r.ytd_actual_cents)}</td><td class="num" style="color:${vc(r.ytd_variance_cents)};">${fmt(r.ytd_variance_cents)}</td>
+      <td class="num">${fmt(r.mtd_budget_cents)}</td><td class="num">${fmt(r.mtd_actual_cents)}</td><td class="num" style="color:${vc(r.mtd_variance_cents, r)};">${fmt(r.mtd_variance_cents)}</td>
+      <td class="num">${fmt(r.ytd_budget_cents)}</td><td class="num">${fmt(r.ytd_actual_cents)}</td><td class="num" style="color:${vc(r.ytd_variance_cents, r)};">${fmt(r.ytd_variance_cents)}</td>
       <td class="num">${fmt(r.annual_budget_cents)}</td></tr>`).join('');
     return `<table><thead><tr><th>#</th><th>Account</th><th class="num">MTD Bud</th><th class="num">MTD Act</th><th class="num">MTD Var</th><th class="num">YTD Bud</th><th class="num">YTD Act</th><th class="num">YTD Var</th><th class="num">Annual</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
@@ -592,7 +595,7 @@
   async function uploadBudget(f) {
     $('bdg-preview').innerHTML = `<div style="margin-top:12px; padding:14px; background:#f5f8fc; border-radius:8px; color:#315A87;">⏳ Extracting <strong>${esc(f.name)}</strong> (~30s)…</div>`;
     try {
-      const fd = new FormData(); fd.append('file', f);
+      const fd = new FormData(); fd.append('community_id', CID); fd.append('file', f);
       const j = await (await fetch('/api/books/budgets/preview-pdf', { method:'POST', body:fd })).json();
       if (j.error) throw new Error(j.error); _pendingBudget = j; renderBudgetPreview(j);
     } catch (e) { $('bdg-preview').innerHTML = `<div style="margin-top:12px; color:var(--err); padding:12px;">Extraction failed: ${esc(e.message)}</div>`; }
@@ -673,12 +676,36 @@
       vcLoad();
     }catch(e){ alert('Could not delete: '+e.message); }
   };
+  // Budget Phase 0: POST /budgets refuses a locked (approved) budget and asks how
+  // to handle a seasonal monthly schedule whose annual changed. One helper for
+  // both save paths so the handling can't drift.
+  async function bdgPostBudget(body) {
+    let r = await fetch('/api/books/budgets', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    let j = await r.json();
+    if (j.error === 'monthly_schedule_decision_required') {
+      const names = (j.lines||[]).map((l)=>{ const row=(_bdgPlanRows||[]).find((x)=>x.account_id===l.account_id) || (_coaCache||[]).find((x)=>x.id===l.account_id); return (row&&(row.account_number?row.account_number+' ':'')+(row.account_name||row.name||''))||l.account_id; });
+      const keep = confirm(`${names.length} line${names.length===1?' has':'s have'} a seasonal monthly schedule and a new annual amount:\n\n  ${names.slice(0,12).join('\n  ')}${names.length>12?'\n  …':''}\n\nOK = keep each month's pattern, scaled to the new annual (recommended).\nCancel = choose even spreading instead.`);
+      let phasing = 'scale';
+      if (!keep) { if (!confirm('Spread these lines evenly across 12 months? Their seasonal pattern will be replaced.')) throw new Error('Not saved. Nothing was changed.'); phasing = 'even'; }
+      r = await fetch('/api/books/budgets', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ ...body, phasing }) });
+      j = await r.json();
+    }
+    if (j.error) throw new Error(j.detail && typeof j.detail === 'string' ? j.detail : (Array.isArray(j.detail) ? j.error+': '+j.detail.map((d)=>d.error).join(', ') : j.error));
+    return j;
+  }
+
   function renderBudgetPreview(payload) {
     const ex = payload.extraction;
-    const byV={}, byN={}; (_coaCache||[]).forEach((a)=>{ if(a.vantaca_account_number) byV[a.vantaca_account_number]=a; if(a.account_number) byN[a.account_number]=a; });
     let matched=0, unmatched=0;
-    const lines = (ex.line_items||[]).map((li)=>{ const a=byV[li.account_number]||byN[li.account_number]||null; if(a)matched++; else unmatched++; return {...li,_a:a}; });
-    const tr = lines.map((li)=>`<tr><td style="font-family:ui-monospace,monospace; font-size:11.5px;">${esc(li.account_number)}</td><td style="font-size:11.5px;">${esc(li.account_name)}</td><td style="font-size:11.5px;">${esc(li.account_type||'')}</td><td class="num" style="font-size:11.5px;">${fmt(li.annual_amount_cents)}</td><td style="font-size:11.5px; color:${li._a?'#166534':'#991b1b'};">${li._a?'✓ '+esc(li._a.account_number):'⚠ no match'}</td></tr>`).join('');
+    const lines = bdgMatchLines(ex.line_items||[]); lines.forEach((li)=>{ if(li._a) matched++; else unmatched++; });
+    const tr = lines.map((li)=>`<tr><td style="font-family:ui-monospace,monospace; font-size:11.5px;">${esc(li.account_number)}</td><td style="font-size:11.5px;">${esc(li.account_name)}</td><td style="font-size:11.5px;">${esc(li.account_type||'')}</td><td class="num" style="font-size:11.5px;">${fmt(li.annual_amount_cents)}</td><td style="font-size:11.5px; color:${li._a?'#166534':'#991b1b'};">${li._a?'✓ '+esc(li._a.account_number):(li._why==='ambiguous'?'⚠ ambiguous: '+esc(li._cands.join(' / ')):'⚠ no match')}</td></tr>`).join('');
+    const unm = lines.filter((li)=>!li._a); const unmTotal = unm.reduce((s,li)=>s+(Number(li.annual_amount_cents)||0),0);
+    const unmBanner = unm.length ? `<div style="padding:12px 14px; background:#fef3c7; border:1px solid #fcd34d; border-radius:8px; margin:10px 0; color:#92400e; font-size:13px;">
+        <div style="font-weight:800; margin-bottom:4px;">⚠ ${unm.length} line${unm.length===1?'':'s'} (${fmt(unmTotal)} a year) could not be matched to an account and will NOT be saved</div>
+        ${unm.map((li)=>`<div style="font-size:12px;">${esc(li.account_number||'—')} ${esc(li.account_name||'')} · ${fmt(li.annual_amount_cents)}${li._why==='ambiguous'?' · matches more than one account ('+esc(li._cands.join(' / '))+')':''}</div>`).join('')}
+        <div style="font-size:12px; margin-top:6px;">To include them, add the source account number to the chart of accounts and upload again. The uploaded file is kept, and the excluded lines are recorded in the budget notes.</div>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:9px; font-weight:600; cursor:pointer;"><input type="checkbox" id="bdg-unm-ack"> I understand these ${unm.length} line${unm.length===1?'':'s'} will be left out.</label>
+      </div>` : '';
     // Wrong-community guard: a budget for THIS community's chart of accounts
     // should match most of its accounts. A low match rate (or an extracted
     // community name that doesn't match the selected one) means this file is
@@ -704,8 +731,8 @@
       </div>
       ${guardBanner}
       ${ex.warnings&&ex.warnings.length?`<div style="padding:8px 12px; background:#fef3c7; border-radius:6px; font-size:12px; color:#92400e; margin-bottom:10px;">⚠ ${ex.warnings.map(esc).join('<br>⚠ ')}</div>`:''}
+      ${unmBanner}
       <table><thead><tr><th>Source #</th><th>Account</th><th>Type</th><th class="num">Annual</th><th>Match</th></tr></thead><tbody>${tr}</tbody></table>
-      ${unmatched>0?`<div class="muted" style="margin-top:10px; font-size:12px;">⚠ Unmatched accounts are skipped on save. Add the Vantaca account number to your CoA to map them.</div>`:''}
       ${(ex.reserve_projects&&ex.reserve_projects.length)?`<div style="margin-top:14px; border-top:1px solid var(--rule); padding-top:12px;">
         <div style="font-weight:700; margin-bottom:6px;">Reserve budget — ${ex.reserve_projects.length} capital project${ex.reserve_projects.length===1?'':'s'} · ${fmt(ex.reserve_projects.reduce((s,p)=>s+(p.planned_amount_cents||0),0))}</div>
         <div class="muted" style="font-size:12px; margin-bottom:6px;">Picked up from the reserve sheet — saved to the Reserve Budget alongside the operating lines.</div>
@@ -713,27 +740,44 @@
       </div>`:''}
     </div>`;
     const draftBtn=$('bdg-draft'), apprBtn=$('bdg-approve');
-    const applyGuard=()=>{ const ok = !wrongComm || ($('bdg-override') && $('bdg-override').checked); [draftBtn,apprBtn].forEach((b)=>{ b.disabled=!ok; b.style.opacity=ok?'1':'.45'; b.style.cursor=ok?'pointer':'not-allowed'; }); };
+    const applyGuard=()=>{ const ok = (!wrongComm || ($('bdg-override') && $('bdg-override').checked)) && (!unm.length || ($('bdg-unm-ack') && $('bdg-unm-ack').checked)); [draftBtn,apprBtn].forEach((b)=>{ b.disabled=!ok; b.style.opacity=ok?'1':'.45'; b.style.cursor=ok?'pointer':'not-allowed'; }); };
     if (wrongComm && $('bdg-override')) $('bdg-override').addEventListener('change', applyGuard);
+    if (unm.length && $('bdg-unm-ack')) $('bdg-unm-ack').addEventListener('change', applyGuard);
     applyGuard();
     draftBtn.addEventListener('click',()=>{ if(!draftBtn.disabled) commitBudget('draft'); });
     apprBtn.addEventListener('click',()=>{ if(!apprBtn.disabled) commitBudget('approved'); });
   }
+  // A source number maps only when it points to exactly ONE account (by Vantaca
+  // number first, else by account number). Two candidates = ambiguous = not mapped.
+  function bdgMatchLines(items) {
+    const byV={}, byN={};
+    (_coaCache||[]).forEach((a)=>{ if(a.vantaca_account_number) (byV[a.vantaca_account_number]=byV[a.vantaca_account_number]||[]).push(a); if(a.account_number) (byN[a.account_number]=byN[a.account_number]||[]).push(a); });
+    return items.map((li)=>{
+      const k = String(li.account_number||'').trim();
+      const v = byV[k]||[]; const n = byN[k]||[];
+      const cands = v.length ? v : n;
+      if (cands.length === 1) return {...li, _a:cands[0]};
+      if (cands.length > 1) return {...li, _a:null, _why:'ambiguous', _cands:cands.map((a)=>a.account_number+(a.fund_code?' '+a.fund_code:''))};
+      return {...li, _a:null, _why:'none', _cands:[]};
+    });
+  }
   async function commitBudget(status) {
     if (!_pendingBudget) return; const ex = _pendingBudget.extraction;
-    const byV={}, byN={}; (_coaCache||[]).forEach((a)=>{ if(a.vantaca_account_number) byV[a.vantaca_account_number]=a; if(a.account_number) byN[a.account_number]=a; });
-    const matched = (ex.line_items||[]).map((li)=>{ const a=byV[li.account_number]||byN[li.account_number]; return a?{account_id:a.id,fund_id:a.fund_id||null,annual_amount_cents:li.annual_amount_cents,monthly_amounts_cents:li.monthly_amounts_cents}:null; }).filter(Boolean);
+    const all = bdgMatchLines(ex.line_items||[]);
+    const matched = all.filter((li)=>li._a).map((li)=>({account_id:li._a.id,fund_id:li._a.fund_id||null,annual_amount_cents:li.annual_amount_cents,monthly_amounts_cents:Array.isArray(li.monthly_amounts_cents)&&li.monthly_amounts_cents.length===12?li.monthly_amounts_cents:undefined}));
+    const excluded = all.filter((li)=>!li._a);
     if (!matched.length) { alert('No matched lines to save.'); return; }
+    const notes = excluded.length ? 'Excluded on upload (no single matching account): ' + excluded.map((li)=>`${li.account_number||'?'} ${li.account_name||''} ${(Number(li.annual_amount_cents||0)/100).toFixed(2)}`).join('; ') : undefined;
     const resvProjects=(ex.reserve_projects||[]).filter(p=>(p.project_name||'').trim());
     try {
-      const j = await (await fetch('/api/books/budgets', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ community_id:CID, fiscal_year:ex.fiscal_year, status, source_filename:_pendingBudget.filename, line_items:matched }) })).json();
-      if (j.error) throw new Error(j.error);
+      const j = await bdgPostBudget({ community_id:CID, fiscal_year:ex.fiscal_year, status, source_filename:_pendingBudget.filename, source_storage_path:_pendingBudget.source_storage_path||null, notes, line_items:matched });
       let resvMsg='';
       if (resvProjects.length) {
         const rj = await (await fetch('/api/books/reserve-budget', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ community_id:CID, fiscal_year:ex.fiscal_year, items:resvProjects }) })).json();
         if (!rj.error) resvMsg = ` + ${rj.count} reserve project${rj.count===1?'':'s'}`;
+        else resvMsg = `. Reserve projects were NOT saved: ${rj.detail||rj.error}`;
       }
-      alert(`Saved budget — ${j.line_items_count} operating lines${resvMsg}, status ${j.budget.status}.`); _pendingBudget=null; renderBudget();
+      alert(`Saved budget — ${j.line_items_count} operating lines${excluded.length?`, ${excluded.length} unmatched line${excluded.length===1?'':'s'} left out`:''}${resvMsg}, status ${j.budget.status}.`); _pendingBudget=null; renderBudget();
     } catch (e) { alert('Save failed: '+e.message); }
   }
 
@@ -881,10 +925,9 @@
     if(!line_items.length){ alert('Nothing to save — load a starting point first.'); return; }
     const resvItems=(window._reserveProjects||[]).filter(p=>(p.project_name||'').trim());
     const isFinal=status==='approved';
-    if(!confirm(`${isFinal?'Finalize':'Save a draft of'} the FY ${fy} budget — ${line_items.length} operating lines + ${resvItems.length} reserve project${resvItems.length===1?'':'s'}?${isFinal?'\n\nFinalizing marks it approved and flows it to Budget vs Actual and the board packet. You can still edit and re-finalize.':''}`)) return;
+    if(!confirm(`${isFinal?'Finalize':'Save a draft of'} the FY ${fy} budget — ${line_items.length} operating lines + ${resvItems.length} reserve project${resvItems.length===1?'':'s'}?${isFinal?'\n\nFinalizing marks it approved and locks it. It flows to Budget vs Actual and the board packet, and it can\'t be edited afterward unless the owner reopens it with a reason.':''}`)) return;
     try {
-      const j = await (await fetch('/api/books/budgets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:CID, fiscal_year:fy, status, source_filename:'Planned in trustEd (from actuals)', line_items})})).json();
-      if(j.error) throw new Error(j.error);
+      const j = await bdgPostBudget({community_id:CID, fiscal_year:fy, status, line_items});
       const rj = await (await fetch('/api/books/reserve-budget',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({community_id:CID, fiscal_year:fy, items:resvItems})})).json();
       if(rj.error) throw new Error('Operating budget saved, but reserve projects failed: '+rj.error);
       alert(`${isFinal?'✓ Finalized':'💾 Draft saved'} — FY ${fy}: ${j.line_items_count} operating lines, ${rj.count} reserve projects.`);
