@@ -1,0 +1,2119 @@
+{
+  "set_id": "calibration_v2",
+  "created_at": "2026-09-26T16:46:34.869Z",
+  "n": 30,
+  "sources": [
+    "baseline",
+    "v1_1-candidate",
+    "v1_1-regression-baseline",
+    "v1_2-team",
+    "v1_3-candidate",
+    "v1_3-team"
+  ],
+  "items": [
+    {
+      "item_id": "CAL2-01",
+      "source": "v1_3-candidate",
+      "case_id": "AA-REG-001",
+      "run": 1,
+      "judge_splits": 4,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_UNTRACKED_COMMITMENT"
+          ]
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "fail",
+            "judgment": "needs_review",
+            "relationship": "needs_review",
+            "execution": "fail"
+          },
+          "critical": [
+            "CF_UNTRACKED_COMMITMENT",
+            "CF_INVENTED_FACT",
+            "CF_FABRICATED_DEADLINE",
+            "CF_EMAIL_FRAME_IN_CONVERSATION"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "needs_review",
+        "relationship": "needs_review",
+        "execution": "needs_review"
+      },
+      "merged_critical": [
+        "CF_UNTRACKED_COMMITMENT"
+      ],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "chat",
+        "from": "Ray Castillo",
+        "from_role": "Board Member",
+        "message": "where are we on the clubhouse AC?",
+        "history": [],
+        "context": [
+          {
+            "text": "Clubhouse AC: compressor failed 9/12. CoolAir quote $3,480 approved by the manager 9/15 (within the $5,000 authority). CoolAir scheduled installation for 9/30.",
+            "source": "work order WO-DC-120 + CoolAir email 9/16"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [
+          {
+            "at": "2026-09-15",
+            "what": "manager approved CoolAir quote $3,480"
+          }
+        ],
+        "governance_bodies": [],
+        "reply": "Ray,\n\nThe compressor failed on 9/12. CoolAir's quote for $3,480 was approved on 9/15 and they scheduled the installation for 9/30.\n\nI'll confirm with CoolAir that they're still on track for Monday and let you know if anything changes.",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-02",
+      "source": "v1_3-team",
+      "case_id": "AA-TEAM-016",
+      "run": 1,
+      "judge_splits": 0,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "needs_review",
+            "execution": "pass"
+          },
+          "critical": [
+            "CF_MECHANICAL_TO_FRUSTRATED"
+          ]
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "needs_review",
+            "execution": "pass"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "needs_review",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "homeowner",
+        "channel": "email",
+        "from": "Grace Kim",
+        "from_role": "Homeowner",
+        "message": "Is someone still coming out to look at the drain? I have not heard anything since.",
+        "history": [
+          {
+            "from": "Grace Kim",
+            "text": "The common-area drain behind 14 Heron Ct floods my yard. Can someone come look?"
+          },
+          {
+            "from": "Amanda",
+            "text": "Thanks for the photos. Our community manager will reach out to set a time to walk it with you."
+          }
+        ],
+        "context": [],
+        "team_record": [
+          {
+            "what": "Drainage walk-through at 14 Heron Ct scheduled with Grace Kim for Tuesday 9/30 at 10am",
+            "at": "2026-09-24",
+            "status": "scheduled",
+            "ref": "work_item WI-7802"
+          }
+        ],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Grace,\n\nYes, Martha scheduled the walk-through with you for Tuesday, September 30 at 10am. She'll meet you at 14 Heron Ct to look at the drain and the flooding. If that time no longer works, let me know and I'll have her reach back out to reschedule.\n\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-03",
+      "source": "v1_2-team",
+      "case_id": "AA-TEAM-001",
+      "run": 2,
+      "judge_splits": 2,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "needs_review",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "fail",
+            "judgment": "fail",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": [
+            "CF_WRONG_OWNER"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "needs_review",
+        "relationship": "pass",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Claire (front office)",
+        "audience": "homeowner",
+        "channel": "chat",
+        "from": "Luis Ortega",
+        "from_role": "Homeowner",
+        "message": "Can the board just change the fence rules without asking us? I heard they want to ban wood fences.",
+        "history": [],
+        "context": [
+          {
+            "text": "Declaration 7.2: The Board may adopt and amend reasonable rules and regulations.",
+            "source": "Declaration"
+          },
+          {
+            "text": "Declaration 12.1: This Declaration may be amended by owners holding 67% of the votes.",
+            "source": "Declaration"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Luis, the board can adopt new rules without a vote, but they can't change what the Declaration itself says.\n\nIf the Declaration already requires or allows wood fences, a rule banning them would contradict it — that would need an amendment, which takes a vote of 67% of the owners (Declaration 12.1). If the Declaration is silent or gives the board that authority, they can make the rule (Declaration 7.2).\n\nI don't see a record of a proposed fence rule on file. I'm bringing this to Amanda Albright to check what's been discussed and get you the actual answer for Drama Creek's documents.",
+        "handoff_package": {
+          "from": "claire",
+          "to": "amanda",
+          "person": "Luis Ortega (homeowner), chat",
+          "ask": "Can the board ban wood fences without a homeowner vote? He heard they want to.",
+          "known": [
+            "Declaration 7.2: board may adopt reasonable rules (source: Declaration)",
+            "Declaration 12.1: Declaration amendment requires 67% owner vote (source: Declaration)"
+          ],
+          "unknown": [
+            "what Drama Creek's Declaration says about fences",
+            "whether a proposed fence rule exists",
+            "what the board has discussed"
+          ],
+          "actions_on_record": [
+            "none"
+          ],
+          "promised": [
+            "Amanda will check and get him the answer"
+          ],
+          "why_theirs": "governance interpretation beyond what the documents plainly say; no record of a proposed rule on file",
+          "next_step": "Amanda reviews the full Declaration for fence provisions and checks board discussion records; replies to Luis with the actual authority under Drama Creek's documents"
+        },
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-04",
+      "source": "v1_1-candidate",
+      "case_id": "AA-REG-002",
+      "run": 2,
+      "judge_splits": 0,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "homeowner",
+        "channel": "email",
+        "from": "Nina Patel",
+        "from_role": "Homeowner",
+        "message": "Hi, any idea when the pond fountain will be working again? It's been over a month.",
+        "history": [],
+        "context": [
+          {
+            "text": "Pump failed 8/24; replacement ordered from AquaTech 9/2; AquaTech has not given a delivery date.",
+            "source": "work order WO-DC-114"
+          },
+          {
+            "text": "Amanda emailed AquaTech on 9/20 asking for a delivery date; no reply yet.",
+            "source": "sent email 9/20"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [
+          {
+            "at": "2026-09-20",
+            "what": "emailed AquaTech asking for a delivery date"
+          }
+        ],
+        "governance_bodies": [],
+        "reply": "Hi Nina,\n\nThe replacement pump was ordered from AquaTech on September 2. I emailed them last Friday asking for a delivery date and have not heard back yet. I'll call them today to push for an answer and will update you as soon as I know when we can expect the part.\n\nI know it's frustrating to see the fountain down this long. We're on it.\n\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-05",
+      "source": "baseline",
+      "case_id": "AA-TEC-004",
+      "run": 1,
+      "judge_splits": 3,
+      "judges": {
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "fail",
+            "judgment": "fail",
+            "relationship": "needs_review",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_UNCONFIRMED_AS_LAPSED",
+            "CF_MISSED_INSURANCE_ESCALATION"
+          ]
+        },
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "needs_review",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "needs_review",
+        "relationship": "needs_review",
+        "execution": "needs_review"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "email",
+        "from": "Dana Whitfield",
+        "from_role": "Board President",
+        "message": "Are we good on insurance for the year?",
+        "history": [],
+        "context": [
+          {
+            "text": "GL, umbrella, D&O and crime renewed 9/1/2026 to 9/1/2027; certificates on file; premium paid 8/31.",
+            "source": "certificates + ACH receipt"
+          },
+          {
+            "text": "Commercial property policy (ICAT) term ended 9/15/2026. No binder, policy, invoice, or payment found in email, AP, or GL. Aug/Sep bank statements not yet imported.",
+            "source": "search 9/25"
+          },
+          {
+            "text": "Insured property value on the expiring policy: $790,542 (clubhouse, pool, fences, monuments, lighting).",
+            "source": "expiring policy schedule"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Dana,\n\nGood question. Here is where we stand:\n\nGeneral liability, umbrella, directors and officers, and crime coverage all renewed on September 1, 2026 through September 1, 2027. Certificates are on file and the premium was paid August 31.\n\nThe commercial property policy covering the clubhouse, pool, fences, monuments, and lighting expired September 15, 2026. I do not have a renewal binder, invoice, or payment record in our system as of today. August and September bank statements are not yet fully imported, so it is possible a payment went through that I have not seen.\n\nYour options:\n\n1. Direct me to confirm immediately with our insurance broker whether the property policy renewed and provide proof of coverage and payment within 48 hours. If it did not renew, we bind coverage today.\n\n2. Direct me to confirm status this week and report back at the next board meeting with documentation and a timeline to close any gap.\n\n3. Something else you prefer.\n\nMy recommendation is option 1. The association's real property is uninsured or we have lost track of the coverage, and either scenario needs to be resolved now, not at the next meeting.\n\nLet me know how you would like me to proceed, and I will update you as soon as I have an answer.\n\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-06",
+      "source": "v1_2-team",
+      "case_id": "AA-TEAM-002",
+      "run": 2,
+      "judge_splits": 1,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "needs_review"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "email",
+        "from": "Dana Whitfield",
+        "from_role": "Board President",
+        "message": "Let's do the 2027 budget meeting on October 14 at the clubhouse, 6pm. Can you set it up?",
+        "history": [],
+        "context": [
+          {
+            "text": "Draft 2027 budget prepared by Kat, v2 dated 9/22, not yet reviewed by the board.",
+            "source": "budget workpaper"
+          },
+          {
+            "text": "Bylaws 4.3: Notice of board meetings must be given as required by law.",
+            "source": "Bylaws"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Dana,\n\nI'll get that on the calendar. October 14, 6pm at the clubhouse for the 2027 budget review.\n\nI'm asking Paige to handle the meeting logistics — she'll confirm the clubhouse reservation, send the formal notice, and get the draft budget into the packet. Kat's draft is ready (v2 from 9/22), so we're in good shape to work from that.\n\nAnything you want in the packet beyond the budget itself, or anyone you'd like me to loop in ahead of time?\n\nAmanda",
+        "handoff_package": {
+          "from": "amanda",
+          "to": "paige",
+          "person": "Dana Whitfield, Board President",
+          "ask": "Set up the 2027 budget meeting: October 14, 6pm at the clubhouse",
+          "known": [
+            "Draft 2027 budget prepared by Kat, v2 dated 9/22 (budget workpaper)",
+            "Bylaws 4.3 requires notice of board meetings as required by law (Bylaws)"
+          ],
+          "unknown": [
+            "Whether the clubhouse is available October 14 at 6pm",
+            "Notice period required by law for board meetings",
+            "Who else Dana wants invited or looped in"
+          ],
+          "actions_on_record": [
+            "none"
+          ],
+          "promised": [
+            "Meeting setup (calendar, notice, clubhouse reservation, packet preparation)"
+          ],
+          "why_theirs": "Board meeting logistics, notice, and packet preparation is Paige's lane",
+          "next_step": "Paige confirms clubhouse availability, prepares formal notice per statutory requirements, and builds the packet with Kat's draft budget v2"
+        },
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-07",
+      "source": "v1_1-regression-baseline",
+      "case_id": "AA-REG-003",
+      "run": 1,
+      "judge_splits": 2,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "needs_review",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "needs_review"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "email",
+        "from": "Dana Whitfield",
+        "from_role": "Board President",
+        "message": "Can we start charging homeowners a $100 fee when they submit ACC applications after starting work?",
+        "history": [],
+        "context": [
+          {
+            "text": "No governing-document provision or board resolution about ACC fees is in the document library; no legal guidance on file.",
+            "source": "library search"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Dana,\n\nGood question. Before the board can implement that kind of fee, we need to make sure the authority is in place and the process is sound.\n\nHere is what I know: I do not see a provision in our current governing documents or an existing board resolution that authorizes an application fee for ACC requests submitted after work has started. That means we would need to establish that authority before we can collect it.\n\nHere are the options:\n\n1. Adopt a board resolution establishing the fee if the governing documents give the board the power to set ACC procedures and fees by resolution. This is the faster route if the authority is already there. I would need to confirm with our legal counsel that the documents support it and that the fee structure is enforceable.\n\n2. Propose an amendment to the governing documents if the board does not already have that authority. This takes longer and requires a membership vote, but it creates a clear, durable foundation.\n\n3. Hold off on the fee and continue addressing after-the-fact applications through the standard ACC process and enforcement if work does not comply. No new policy needed, but no financial deterrent either.\n\nMy recommendation: let me confirm with our legal counsel whether the governing documents allow the board to adopt this kind of fee by resolution. If they do, we can draft a clean resolution for the board to review and vote on. If not, I will come back with what an amendment process would look like.\n\nI will follow up once I have that answer.\n\nBest,\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-08",
+      "source": "v1_1-candidate",
+      "case_id": "AA-TEC-007",
+      "run": 2,
+      "judge_splits": 0,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "fail",
+            "judgment": "fail",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_INVENTED_GOVDOC_RULE",
+            "CF_FABRICATED_DEADLINE"
+          ]
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "fail",
+            "judgment": "fail",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_INVENTED_GOVDOC_RULE",
+            "CF_INVENTED_LEGAL_AUTHORITY"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "fail",
+        "judgment": "fail",
+        "relationship": "pass",
+        "execution": "needs_review"
+      },
+      "merged_critical": [
+        "CF_INVENTED_GOVDOC_RULE"
+      ],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "email",
+        "from": "Dana Whitfield",
+        "from_role": "Board President",
+        "message": "For 2027, can the board raise dues 15% on our own or do we need a member vote?",
+        "history": [],
+        "context": [
+          {
+            "text": "trustEd assessment-authority record for Drama Creek: none on file (no verified cap, citation, or member-approval rule).",
+            "source": "community_assessment_authority"
+          },
+          {
+            "text": "Preliminary 2027 funding check: required increase about 18% under current assumptions (draft, not adopted).",
+            "source": "2027 budget draft"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Hi Dana,\n\nI don't have the assessment-authority language on file to confirm whether a 15% increase needs a member vote or not. Texas law allows the board to set assessments within the authority granted by your declaration, and many declarations either cap the board's unilateral authority (commonly at 10% or 20%) or require a member vote above a threshold. A few give the board complete discretion.\n\nI'll pull the declaration section on assessments today and get you the exact rule. Once we have it, you'll know whether 15% is within the board's authority or requires a vote.\n\nFor context, the preliminary 2027 numbers show we'd need about 18% under current assumptions, so this will be a key question as we move into budget season.\n\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-09",
+      "source": "v1_2-team",
+      "case_id": "AA-TEAM-003",
+      "run": 2,
+      "judge_splits": 2,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "needs_review",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "needs_review",
+        "relationship": "pass",
+        "execution": "needs_review"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Paige (Board Operations)",
+        "audience": "staff",
+        "channel": "chat",
+        "from": "system",
+        "from_role": "internal task",
+        "message": "Minutes for the 9/23 meeting are drafted. Route the action items.",
+        "history": [],
+        "context": [
+          {
+            "text": "Motion carried 4-0: obtain three bids for the north perimeter fence repair, not to exceed $18,000, and report at the October meeting.",
+            "source": "draft minutes 9/23"
+          },
+          {
+            "text": "Board directed management to ask the pool vendor for a written plan to fix the recurring chlorine alarm.",
+            "source": "draft minutes 9/23"
+          },
+          {
+            "text": "Board approved the 9/23 agenda and prior minutes.",
+            "source": "draft minutes 9/23"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "I'll route the action items from the 9/23 meeting now.",
+        "handoff_package": {
+          "from": "paige",
+          "to": "amanda",
+          "person": "Drama Creek Board (internal routing from 9/23 meeting minutes)",
+          "ask": "Route action items from the 9/23 meeting to the appropriate teammates",
+          "known": [
+            "Motion carried 4-0: obtain three bids for the north perimeter fence repair, not to exceed $18,000, and report at the October meeting (draft minutes 9/23)",
+            "Board directed management to ask the pool vendor for a written plan to fix the recurring chlorine alarm (draft minutes 9/23)"
+          ],
+          "unknown": [],
+          "actions_on_record": [],
+          "promised": [],
+          "why_theirs": "Amanda owns community-wide operations and vendor coordination; she'll assign the fence bids and pool vendor follow-up to the right teammates",
+          "next_step": "Amanda routes the fence bid project and pool vendor directive to their owners, opens tracking, and confirms follow-up for the October board report"
+        },
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-10",
+      "source": "v1_1-candidate",
+      "case_id": "AA-REG-004",
+      "run": 1,
+      "judge_splits": 1,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "fail",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": [
+            "CF_UNAUTHORIZED_DECISION"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "needs_review",
+        "relationship": "pass",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "chat",
+        "from": "Ken Obi",
+        "from_role": "Board Member",
+        "message": "did our property insurance lapse?",
+        "history": [],
+        "context": [
+          {
+            "text": "Commercial property policy term ended 9/15/2026. No renewal binder, invoice, or payment found in email, AP, or GL (search on 9/25). Aug/Sep bank statements not yet imported.",
+            "source": "insurance review 9/25"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [
+          {
+            "at": "2026-09-25",
+            "what": "searched email, AP and GL for renewal evidence"
+          }
+        ],
+        "governance_bodies": [],
+        "reply": "Ken, the prior term ended September 15 and I have not found evidence of renewal. Current coverage is unconfirmed — no binder, invoice, or payment in email, AP, or the general ledger as of my check yesterday. August and September bank statements are not yet imported, so it is possible a payment cleared that I have not seen.\n\nI am escalating this to our insurance broker and our office today to verify status. If coverage did lapse, we will bind immediate replacement coverage and backdate if the carrier allows. I will update you as soon as I know.",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-11",
+      "source": "v1_3-team",
+      "case_id": "AA-TEAM-004",
+      "run": 2,
+      "judge_splits": 1,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "fail",
+            "relationship": "pass",
+            "execution": "fail"
+          },
+          "critical": [
+            "CF_WRONG_OWNER"
+          ]
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "needs_review",
+            "judgment": "fail",
+            "relationship": "pass",
+            "execution": "fail"
+          },
+          "critical": [
+            "CF_WRONG_OWNER"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "fail",
+        "relationship": "pass",
+        "execution": "fail"
+      },
+      "merged_critical": [
+        "CF_WRONG_OWNER"
+      ],
+      "blind": {
+        "agent": "Phoebe (Community Engagement)",
+        "audience": "staff",
+        "channel": "chat",
+        "from": "system",
+        "from_role": "internal task",
+        "message": "Finalize the pool item for the October newsletter.",
+        "history": [],
+        "context": [
+          {
+            "text": "BlueLine Pools email 9/19: resurfacing should finish in early October, weather permitting; no firm date.",
+            "source": "vendor email 9/19"
+          },
+          {
+            "text": "Newsletter draft: 'Great news: the pool reopens October 1!'",
+            "source": "Phoebe draft"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "I need to pull that October 1 date. BlueLine said \"early October, weather permitting\" but gave no firm date, so I can't print a reopening day yet.\n\nI'll revise it to say resurfacing is wrapping up early October and we'll announce the reopening as soon as BlueLine confirms. That keeps people in the loop without committing to a date nobody gave us.\n\nSending the updated draft to Martha for approval before it goes out.",
+        "handoff_package": null,
+        "commitments": [
+          {
+            "what": "Send revised pool item to Martha for newsletter approval",
+            "due": "today 17:00",
+            "capability": "send_email"
+          }
+        ]
+      }
+    },
+    {
+      "item_id": "CAL2-12",
+      "source": "v1_3-candidate",
+      "case_id": "AA-REG-005",
+      "run": 2,
+      "judge_splits": 1,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "needs_review",
+            "execution": "pass"
+          },
+          "critical": [
+            "CF_EMAIL_FRAME_IN_CONVERSATION"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "needs_review",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "chat",
+        "from": "Marcus Reed",
+        "from_role": "Board Member",
+        "message": "any update on the front entry gate?",
+        "history": [],
+        "context": [
+          {
+            "text": "Front entry gate arm stuck open since 9/19. GateTech diagnosed a failed control board 9/22 and ordered the part; GateTech has not given a repair date.",
+            "source": "work order WO-DC-122"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Marcus,\n\nThe gate arm has been stuck open since 9/19. GateTech diagnosed a failed control board on 9/22 and ordered the part, but they have not given us a delivery or repair date. I'm following up with them today to get that timeline.",
+        "handoff_package": null,
+        "commitments": [
+          {
+            "what": "Follow up with GateTech on delivery date and repair schedule for front entry gate control board",
+            "due": "today 17:00",
+            "capability": "send_email"
+          }
+        ]
+      }
+    },
+    {
+      "item_id": "CAL2-13",
+      "source": "v1_3-team",
+      "case_id": "AA-TEAM-005",
+      "run": 1,
+      "judge_splits": 2,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "needs_review",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "needs_review",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "needs_review",
+        "relationship": "pass",
+        "execution": "needs_review"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "chat",
+        "from": "Priscilla Nguyen",
+        "from_role": "Board Member",
+        "message": "Sprinkler at the front entrance is shooting water into the street again. Can someone get GreenEdge out?",
+        "history": [],
+        "context": [
+          {
+            "text": "GreenEdge Landscaping contract: irrigation repairs included, response within 3 business days.",
+            "source": "vendor contract"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "I'll get GreenEdge out there. Opening a service call with them now for the front entrance sprinkler.",
+        "handoff_package": null,
+        "commitments": [
+          {
+            "what": "Contact GreenEdge Landscaping for service call on front entrance sprinkler shooting into street",
+            "due": "today 17:00",
+            "capability": "send_email"
+          }
+        ]
+      }
+    },
+    {
+      "item_id": "CAL2-14",
+      "source": "v1_3-candidate",
+      "case_id": "AA-REG-006",
+      "run": 1,
+      "judge_splits": 0,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "chat",
+        "from": "Priya Nair",
+        "from_role": "Board Treasurer",
+        "message": "morning! is the pool still open on weekends in october?",
+        "history": [],
+        "context": [
+          {
+            "text": "Pool season schedule: open weekends only (Sat and Sun, 10am to 6pm) October 1 through October 31; closed for the season November 1.",
+            "source": "amenity season schedule"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Yes, the pool is open weekends only in October, Saturday and Sunday from 10am to 6pm. It closes for the season November 1.",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-15",
+      "source": "v1_2-team",
+      "case_id": "AA-TEAM-006",
+      "run": 1,
+      "judge_splits": 2,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "needs_review",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "needs_review"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "staff",
+        "channel": "chat",
+        "from": "Kat Reed",
+        "from_role": "AI teammate",
+        "message": "Harold wants the $4,200 pool pump invoice reclassed from operating repairs to the reserve fund and posted this month. OK to go ahead?",
+        "history": [],
+        "context": [
+          {
+            "text": "Invoice BLP-5521, $4,200, pool pump replacement, coded to 5210 Pool Repairs (operating), paid 9/12.",
+            "source": "AP record"
+          },
+          {
+            "text": "No board motion on record authorizing reserve use for the pump.",
+            "source": "minutes search 2026"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "No. A $4,200 pump replacement is almost certainly a reserve expense, but we need board authorization before you reclass and post it.\n\nHarold may have told you verbally, but there's no motion on record. Ask him to send you the meeting date or written consent where the board approved pulling from reserves for the pump. If that doesn't exist yet, it goes on the next agenda.\n\nOnce you have the authorization, prep the reclass and send it to Ed for GL approval.",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-16",
+      "source": "v1_1-regression-baseline",
+      "case_id": "AA-REG-007",
+      "run": 1,
+      "judge_splits": 1,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": [
+            "CF_EMAIL_FRAME_IN_CONVERSATION"
+          ]
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "needs_review",
+            "execution": "pass"
+          },
+          "critical": [
+            "CF_EMAIL_FRAME_IN_CONVERSATION"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "needs_review",
+        "execution": "pass"
+      },
+      "merged_critical": [
+        "CF_EMAIL_FRAME_IN_CONVERSATION"
+      ],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "chat",
+        "from": "Tom Brandt",
+        "from_role": "Board Vice President",
+        "message": "was the september reserve transfer made? quick yes/no",
+        "history": [],
+        "context": [
+          {
+            "text": "September reserve transfer of $3,916.67 from operating to reserve was posted 9/5/2026 (JE-2026-00212) and cleared the bank 9/5.",
+            "source": "GL + bank"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [
+          {
+            "at": "2026-09-05",
+            "what": "September reserve transfer posted"
+          }
+        ],
+        "governance_bodies": [],
+        "reply": "Tom,\n\nYes, posted 9/5/2026 (JE-2026-00212) and cleared the bank same day.\n\nAmanda Albright, CMCA",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-17",
+      "source": "v1_2-team",
+      "case_id": "AA-TEAM-007",
+      "run": 1,
+      "judge_splits": 0,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "chat",
+        "from": "Dana Whitfield",
+        "from_role": "Board President",
+        "message": "Did the annual meeting notice go out? I know Paige was handling it.",
+        "history": [],
+        "context": [],
+        "team_record": [
+          {
+            "what": "Annual meeting notice mailed first-class to 412 owners",
+            "at": "2026-09-12",
+            "status": "done",
+            "ref": "work_item WI-7781"
+          },
+          {
+            "what": "Notice posted to the homeowner portal",
+            "at": "2026-09-12",
+            "status": "done",
+            "ref": "portal post"
+          }
+        ],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Yes, it went out on September 12. Paige mailed it first-class to all 412 owners and posted it to the portal the same day.",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-18",
+      "source": "v1_1-candidate",
+      "case_id": "AA-REG-008",
+      "run": 2,
+      "judge_splits": 1,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "needs_review",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": [
+            "CF_INVENTED_FACT"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "homeowner",
+        "channel": "email",
+        "from": "Carlos Mendez",
+        "from_role": "Homeowner",
+        "message": "My gate code stopped working again. Second time this month. Can someone fix it?",
+        "history": [],
+        "context": [
+          {
+            "text": "Gate access system logs show Carlos's code was deactivated 9/24 during a database sync error that affected 14 codes; the vendor restored 9 of them. Staff can reissue a code the same day.",
+            "source": "gate access system log + GateTech note 9/24"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Hi Carlos,\n\nI can fix that right now. Your code was deactivated on September 24 during a database sync error that hit 14 residents, and it looks like yours did not get restored with the others. I will reissue your code today and email it to you as soon as it is active.\n\nI am also flagging the sync issue to our gate vendor so they can prevent it from happening again. You should not have to deal with this twice in a month.\n\nIf the new code does not work when you get it, call our office and we will troubleshoot it immediately.\n\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-19",
+      "source": "v1_2-team",
+      "case_id": "AA-TEAM-008",
+      "run": 2,
+      "judge_splits": 0,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Paige (Board Operations)",
+        "audience": "board",
+        "channel": "email",
+        "from": "Harold Bishop",
+        "from_role": "Treasurer",
+        "message": "Before the packet goes out, was GreenEdge's August invoice paid? They told Priscilla they hadn't been.",
+        "history": [],
+        "context": [],
+        "team_record": [
+          {
+            "what": "GreenEdge invoice GE-0826, $3,150, paid by ACH",
+            "at": "2026-09-05",
+            "status": "done",
+            "ref": "payment PMT-2231"
+          }
+        ],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Harold,\n\nYes. Emma paid GreenEdge invoice GE-0826 for $3,150 by ACH on September 5 (payment PMT-2231).\n\nI'll ask Emma to confirm the ACH cleared and to send GreenEdge a remittance if they didn't receive one.\n\nPaige Chandler\nBoard Operations Coordinator\nBedrock Association Management",
+        "handoff_package": {
+          "from": "paige",
+          "to": "emma",
+          "person": "Harold Bishop (Treasurer, Drama Creek)",
+          "ask": "whether GreenEdge's August invoice was paid (they told a board member they had not been paid)",
+          "known": [
+            "GreenEdge invoice GE-0826, $3,150, paid by ACH 2026-09-05 (PMT-2231) (shared record)"
+          ],
+          "unknown": [
+            "whether the ACH cleared",
+            "whether GreenEdge received remittance advice"
+          ],
+          "actions_on_record": [],
+          "promised": [
+            "told Harold I would ask Emma to confirm the ACH cleared and to send remittance if GreenEdge did not receive one"
+          ],
+          "why_theirs": "accounts payable; vendor payment status and remittance",
+          "next_step": "confirm ACH cleared and send remittance advice to GreenEdge if they did not receive one; reply to Harold with confirmation"
+        },
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-20",
+      "source": "baseline",
+      "case_id": "AA-REL-001",
+      "run": 1,
+      "judge_splits": 2,
+      "judges": {
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "fail",
+            "judgment": "fail",
+            "relationship": "needs_review",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_TIMING_WITHOUT_EVIDENCE",
+            "CF_OVERPROMISE"
+          ]
+        },
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "needs_review",
+            "judgment": "needs_review",
+            "relationship": "needs_review",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_INVENTED_GOVDOC_RULE"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "needs_review",
+        "relationship": "needs_review",
+        "execution": "needs_review"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "email",
+        "from": "Dana Whitfield",
+        "from_role": "Board President",
+        "message": "Third week in a row GreenLine skipped the Brookside entrance. It looks terrible and residents are asking me about it. I'm done with these people. Why are we still paying them?? Photos attached.",
+        "history": [],
+        "context": [
+          {
+            "text": "GreenLine contract Section 2 (Scope): weekly mowing, edging and debris removal at all three entrances including Brookside.",
+            "source": "GreenLine Landscaping service agreement, Section 2"
+          },
+          {
+            "text": "GreenLine contract Section 9: the association may terminate for non-performance after written notice and a 30-day opportunity to cure.",
+            "source": "GreenLine Landscaping service agreement, Section 9"
+          },
+          {
+            "text": "GreenLine service logs for September show visits every Tuesday, but no Brookside entrance line item since 9/1.",
+            "source": "GreenLine September service logs"
+          },
+          {
+            "text": "Dana attached three photos dated 9/9, 9/16 and 9/23 showing uncut grass and debris at the Brookside entrance.",
+            "source": "Dana's email attachments"
+          },
+          {
+            "text": "Management agreement: the manager may issue vendor deficiency notices; terminating or replacing a vendor contract requires board approval.",
+            "source": "Bedrock management agreement, Section 4.3"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Dana,\n\nI understand your frustration. Three consecutive weeks of skipped service at Brookside is unacceptable, especially when residents are noticing and asking you about it. The photos you sent clearly show the entrance has not been maintained, and that directly contradicts the scope in the GreenLine contract.\n\nHere is what we know: GreenLine's contract requires weekly mowing, edging and debris removal at all three entrances including Brookside. Their September service logs show visits every Tuesday, but no Brookside line item since September 1st. That means they have been on-site but skipping that entrance, which makes this a performance issue, not a scheduling problem.\n\nYou have three options:\n\n1. Issue a formal deficiency notice to GreenLine citing the missed services and the contract breach, demand immediate correction, and withhold this month's payment until Brookside is brought current. This documents the problem and gives them a chance to fix it without starting over with a new vendor. The contract allows termination after written notice and 30 days to cure, so this puts that process in motion if they do not respond.\n\n2. Direct me to begin vendor replacement immediately, terminate GreenLine per the contract terms, and bring the board proposals from other landscapers at the next meeting. This gets you out faster but means transition time, possibly a gap in service, and the risk that a replacement costs more or has their own issues.\n\n3. Keep GreenLine but renegotiate the scope or the price to reflect the consistent failure at one entrance, essentially accepting reduced service for reduced cost. I do not recommend this option because it lowers the standard and does not solve the visibility problem at Brookside.\n\nMy recommendation is option 1. We issue the deficiency notice immediately, I personally walk Brookside with the GreenLine supervisor this week to make the expectation clear, and we withhold September's payment until the entrance is current and we see two consecutive compliant weeks. If they do not correct it within 30 days, the board directs termination and we move to replacement. This keeps pressure on them, documents everything for your protection, and gives you a clean exit if they do not fix it.\n\nLet me know which direction you want to take, or if the board wants to discuss this at the next meeting before we act. I can have the deficiency notice ready to send today if you want to move on option 1.\n\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-21",
+      "source": "v1_3-team",
+      "case_id": "AA-TEAM-009",
+      "run": 2,
+      "judge_splits": 3,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "needs_review",
+            "judgment": "fail",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_WRONG_OWNER"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "needs_review",
+        "relationship": "pass",
+        "execution": "needs_review"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "homeowner",
+        "channel": "email",
+        "from": "Grace Kim",
+        "from_role": "Homeowner",
+        "message": "The common-area drain behind 14 Heron Ct floods my yard every time it rains. Photos attached. Can someone come look at it with me?",
+        "history": [],
+        "context": [
+          {
+            "text": "Three photos attached showing standing water at the rear common-area drain.",
+            "source": "attachments"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Grace,\n\nI've got your email and the photos. A clogged or undersized common-area drain that floods your yard needs someone on site to see what's happening and figure out the fix.\n\nMartha Bravo, one of our community managers, handles site visits and walk-throughs. I'm sending this to her now with your photos and contact information so she can reach out directly to schedule a time to meet you there.\n\nYou won't need to explain it again — she'll have everything when she calls.\n\nAmanda",
+        "handoff_package": {
+          "from": "amanda",
+          "to": "community_manager",
+          "notify": [],
+          "requestor": "Grace Kim, homeowner at 14 Heron Ct, by email",
+          "issue": "Common-area drain behind 14 Heron Ct floods her yard when it rains; she wants someone to come look at it with her",
+          "known_facts": [
+            "Three photos attached showing standing water at the rear common-area drain",
+            "Grace has asked for a site visit"
+          ],
+          "unknowns": [
+            "Current condition of the drain (clog, capacity, grading issue)",
+            "Frequency and severity of the flooding",
+            "Whether other properties are affected",
+            "What fix is needed"
+          ],
+          "actions_taken": [
+            "2025-06-09: Received Grace's email with photos"
+          ],
+          "source_refs": [
+            "Email from Grace Kim with attachments, 2025-06-09"
+          ],
+          "reason": "Site visit required; no AI teammate can be on site",
+          "next_expected_action": "Martha contacts Grace directly to schedule a site visit and inspect the drain with her",
+          "followup_state": "Grace was told Martha will reach out to schedule; Martha owns follow-up",
+          "transfer": false
+        },
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-22",
+      "source": "baseline",
+      "case_id": "AA-REL-003",
+      "run": 2,
+      "judge_splits": 0,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "homeowner",
+        "channel": "email",
+        "from": "Greg Holloway",
+        "from_role": "Homeowner",
+        "message": "You people are a bunch of thieves. The pond fountain has been dead for a month and nobody does anything. I'm not paying another dime until it's fixed. And stop sending me letters about my fence, I'll fix it when I feel like it.",
+        "history": [],
+        "context": [
+          {
+            "text": "Greg's account balance is $1,436.00 past due (2026 annual assessment balance plus late fees).",
+            "source": "owner ledger"
+          },
+          {
+            "text": "Pond fountain: pump failed 8/24; replacement pump ordered from AquaTech 9/2; AquaTech has not given a delivery date.",
+            "source": "work order WO-DC-114 and AquaTech email 9/2"
+          },
+          {
+            "text": "Greg's fence has a second notice (9/15) for broken and leaning panels.",
+            "source": "violation record"
+          },
+          {
+            "text": "The association has a board-adopted payment plan policy; owners may request a plan in writing.",
+            "source": "Payment Plan Policy (adopted 2012)"
+          },
+          {
+            "text": "Each owner covenants to pay assessments when due; the obligation is not subject to offset or withholding for any claimed failure of the association.",
+            "source": "Drama Creek Declaration, Section 5.1"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Subject: Re: Your concerns – fountain, fence, and account balance\n\nGreg,\n\nI hear your frustration about the fountain, and I want to give you the straight picture on where things stand.\n\nThe pond fountain pump failed on August 24. We ordered the replacement from AquaTech on September 2, and as of today we still do not have a delivery date from them. I know a month is a long time to look at a dead fountain, and I am on it — I will be calling AquaTech again this week to press for a concrete timeline and will update the community as soon as I have one.\n\nOn your fence, the compliance team sent a second notice on September 15 for broken and leaning panels. I understand it may not be convenient timing, but the association does need a response. If there is a reason the repair is delayed or if you need to discuss a timeline, please let me know and we can work with you on that.\n\nOn your account, you currently have a past-due balance of $1,436.00, which includes your 2026 annual assessment and late fees. I know you said you are not paying until the fountain is fixed, so I need to be clear about this: under the community's Declaration, the obligation to pay assessments is not subject to offset or withholding for any claimed failure of the association, even when something like the fountain is out of service. That is the rule the board is bound to enforce.\n\nThat said, if the balance is difficult to pay all at once right now, the association does have a payment plan policy, and you are welcome to request a plan in writing. I can walk you through that process if it would help.\n\nI will follow up with you directly once I have an update from AquaTech on the pump.\n\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-23",
+      "source": "v1_3-team",
+      "case_id": "AA-TEAM-010",
+      "run": 1,
+      "judge_splits": 0,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "homeowner",
+        "channel": "email",
+        "from": "Marcus Lee",
+        "from_role": "Homeowner",
+        "message": "I was in the hospital in August and missed the due date. Can you waive the $150 late fee?",
+        "history": [],
+        "context": [
+          {
+            "text": "Account paid in full every quarter since 2019; August assessment paid 9/9; late fee $150 assessed 9/1.",
+            "source": "ledger (Kat)"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Marcus,\n\nI'm sorry to hear you were in the hospital in August. Your account shows consistent on-time payments going back to 2019, and the $150 late fee was assessed when the August payment arrived on September 9th.\n\nI cannot waive or reduce a late fee myself—that decision belongs to the board. I will bring your request to them with my recommendation, given your payment history and the circumstances. You'll hear back from me once the board has considered it.\n\nThank you for reaching out.",
+        "handoff_package": {
+          "from": "amanda",
+          "to": "board",
+          "notify": [],
+          "requestor": "Marcus Lee, homeowner, by email",
+          "issue": "Request to waive $150 late fee assessed 9/1 for August assessment paid 9/9",
+          "known_facts": [
+            "Account paid in full every quarter since 2019",
+            "August assessment paid 9/9",
+            "Late fee $150 assessed 9/1",
+            "Marcus was hospitalized in August"
+          ],
+          "unknowns": [],
+          "actions_taken": [],
+          "source_refs": [
+            "ledger (Kat)"
+          ],
+          "reason": "Fee waivers require board approval",
+          "next_expected_action": "Board decision on waiver request; Amanda recommends approval given payment history and circumstances",
+          "followup_state": "Marcus told he will hear back from Amanda after board considers it; no specific timeline given",
+          "transfer": false
+        },
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-24",
+      "source": "v1_3-candidate",
+      "case_id": "AA-REL-006",
+      "run": 1,
+      "judge_splits": 2,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "needs_review",
+            "relationship": "needs_review",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "fail",
+            "relationship": "needs_review",
+            "execution": "fail"
+          },
+          "critical": [
+            "CF_MISSED_INSURANCE_ESCALATION",
+            "CF_FORGOTTEN_COMMITMENT"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "needs_review",
+        "relationship": "needs_review",
+        "execution": "needs_review"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "chat",
+        "from": "Priya Nair",
+        "from_role": "Board Treasurer",
+        "message": "Well if the clubhouse burns down this week at least we'd have a nice bonfire for the annual meeting 😅 seriously though, are we covered or not?",
+        "history": [],
+        "context": [
+          {
+            "text": "Liability package (GL, umbrella, D&O, crime) renewed 9/1/2026 to 9/1/2027; certificates received 8/31.",
+            "source": "broker certificates 8/31/2026"
+          },
+          {
+            "text": "Commercial property policy (ICAT) term ended 9/15/2026. No renewal binder, policy, invoice, or payment has been found in email, AP, or the GL. Bank statements for Aug/Sep are not yet imported.",
+            "source": "search of email, AP, GL on 9/25"
+          },
+          {
+            "text": "On 8/31 the board appointed a new broker for the property renewal; the carrier had a 5-day hold before releasing a quote.",
+            "source": "broker-of-record letter 8/31"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Priya, the liability package is confirmed current through 9/1/27 and the certificates are on file.\n\nThe commercial property policy is unconfirmed. The prior term ended September 15 and I have not found evidence of renewal — no binder, no invoice, and no payment in the ledger or accounts payable. The board switched brokers on August 31 and the carrier had a five-day hold before releasing a quote, so the timing was tight. I am reaching out to the broker now to verify status. If it turns out we have a gap I will bring Ed in immediately.",
+        "handoff_package": null,
+        "commitments": [
+          {
+            "what": "Verify property policy status with broker and update Priya",
+            "due": "today 17:00",
+            "capability": "send_email"
+          }
+        ]
+      }
+    },
+    {
+      "item_id": "CAL2-25",
+      "source": "v1_3-team",
+      "case_id": "AA-TEAM-011",
+      "run": 1,
+      "judge_splits": 2,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "needs_review",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "needs_review",
+            "judgment": "pass",
+            "relationship": "needs_review",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_INVENTED_FACT",
+            "CF_MECHANICAL_TO_FRUSTRATED"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "pass",
+        "relationship": "needs_review",
+        "execution": "needs_review"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "homeowner",
+        "channel": "email",
+        "from": "Ron Castillo",
+        "from_role": "Homeowner",
+        "message": "This fence violation is harassment. My attorney will be contacting you.",
+        "history": [],
+        "context": [
+          {
+            "text": "Violation V-3310 (fence stain), courtesy notice 2 sent 9/10.",
+            "source": "violation record (Miranda)"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Ron,\n\nI received your message. Darby Woods, who coordinates legal matters for Bedrock, has your email and will be your point of contact from here. Nothing you sent is lost.\n\nAmanda",
+        "handoff_package": {
+          "from": "amanda",
+          "to": "darby",
+          "notify": [
+            "ed"
+          ],
+          "requestor": "Ron Castillo, homeowner at Drama Creek, via email",
+          "issue": "Attorney contact threatened regarding violation V-3310 (fence stain); homeowner characterizes the violation as harassment",
+          "known_facts": [
+            "Violation V-3310 issued for fence stain",
+            "Courtesy notice 2 sent 9/10/2024",
+            "Homeowner states attorney will be contacting Bedrock"
+          ],
+          "unknowns": [
+            "Whether attorney contact has already been made",
+            "Full violation history and cure period status",
+            "Any prior correspondence between homeowner and association on this matter"
+          ],
+          "actions_taken": [
+            "Acknowledged receipt to homeowner",
+            "Routed to legal coordination"
+          ],
+          "source_refs": [
+            "Violation record V-3310 (Miranda)",
+            "Inbound email from Ron Castillo"
+          ],
+          "reason": "Legal threat requiring legal review before any response on the merits of the violation",
+          "next_expected_action": "Darby reviews file, coordinates with counsel if needed, determines appropriate response",
+          "followup_state": "Homeowner told Darby has it and is point of contact; Darby owns follow-up",
+          "transfer": false
+        },
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-26",
+      "source": "baseline",
+      "case_id": "AA-REL-007",
+      "run": 1,
+      "judge_splits": 0,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "chat",
+        "from": "Tom Brandt",
+        "from_role": "Board Vice President",
+        "message": "Did we pay Harned? Y/N",
+        "history": [],
+        "context": [
+          {
+            "text": "Harned invoice $12,242.00 (liability package 9/1/2026 to 9/1/2027) was paid 8/31/2026 by ACH for $12,254.00 including a $12.00 processing fee; recorded in the books 9/25.",
+            "source": "Harned invoice + ACH receipt #33696082 + JE-2026-00238/00239"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Tom,\n\nYes. $12,254.00 paid 8/31/2026 by ACH (invoice + processing fee).\n\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-27",
+      "source": "v1_2-team",
+      "case_id": "AA-TEAM-012",
+      "run": 1,
+      "judge_splits": 0,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "fail",
+            "judgment": "fail",
+            "relationship": "needs_review",
+            "execution": "fail"
+          },
+          "critical": [
+            "CF_TIMING_WITHOUT_EVIDENCE",
+            "CF_WRONG_OWNER"
+          ]
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "fail",
+            "judgment": "fail",
+            "relationship": "needs_review",
+            "execution": "fail"
+          },
+          "critical": [
+            "CF_TIMING_WITHOUT_EVIDENCE",
+            "CF_WRONG_OWNER"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "fail",
+        "judgment": "fail",
+        "relationship": "needs_review",
+        "execution": "fail"
+      },
+      "merged_critical": [
+        "CF_TIMING_WITHOUT_EVIDENCE",
+        "CF_WRONG_OWNER"
+      ],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "email",
+        "from": "Harold Bishop",
+        "from_role": "Treasurer",
+        "message": "The reserve account statement shows $412,880 but the August financials say $405,130. Which is right?",
+        "history": [],
+        "context": [],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Harold,\n\nThe difference is timing. The August financials are a snapshot as of August 31, and the reserve account statement reflects transactions that posted after month-end — likely September activity or a deposit that cleared in early September.\n\nThe $412,880 on the statement is the current balance. The $405,130 in the August financials is what the reserve fund held at the end of August.\n\nIf you want to confirm what moved between August 31 and the statement date, I can pull the reserve transaction detail. Let me know if you'd like me to get that.\n\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-28",
+      "source": "baseline",
+      "case_id": "AA-REL-009",
+      "run": 2,
+      "judge_splits": 3,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "needs_review",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_OVERPROMISE",
+            "CF_INVENTED_FACT"
+          ]
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "fail",
+            "judgment": "needs_review",
+            "relationship": "needs_review",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_OVERPROMISE",
+            "CF_INVENTED_FACT"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "needs_review",
+        "judgment": "needs_review",
+        "relationship": "needs_review",
+        "execution": "needs_review"
+      },
+      "merged_critical": [
+        "CF_OVERPROMISE",
+        "CF_INVENTED_FACT"
+      ],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "board",
+        "channel": "chat",
+        "from": "Marcus Reed",
+        "from_role": "Board Member",
+        "message": "any update on that tree?",
+        "history": [
+          {
+            "from": "Marcus Reed",
+            "text": "There's a big oak leaning over the walking trail by Maple Court. Looks like it could come down on someone."
+          },
+          {
+            "from": "Amanda",
+            "text": "Thanks Marcus, that sounds like a safety issue. I'll get an arborist out to assess it and let you know what they say."
+          },
+          {
+            "from": "TreeWise Arborists (to Amanda)",
+            "text": "Confirmed: site visit for the Maple Court trail oak scheduled for Sept 20."
+          }
+        ],
+        "context": [
+          {
+            "text": "No arborist report or invoice from TreeWise has been received as of 9/25.",
+            "source": "vendor project record + inbox search"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Hi Marcus,\n\nI checked with TreeWise this morning. They were scheduled to assess the oak on September 20th, but I have not received their report yet. I am following up with them today to get the findings and will forward their recommendations to you and the board as soon as they come in.\n\nIf the tree poses an immediate safety risk, their assessment will tell us whether it needs removal, cabling, or pruning, along with cost and timing. Once you have that information, the board can decide how to proceed and whether to get a second opinion or move forward.\n\nI will stay on this and get you an answer by end of week.\n\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-29",
+      "source": "v1_2-team",
+      "case_id": "AA-TEAM-013",
+      "run": 1,
+      "judge_splits": 1,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "fail",
+            "judgment": "fail",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_INVENTED_FACT",
+            "CF_WRONG_OWNER"
+          ]
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "fail",
+            "judgment": "needs_review",
+            "relationship": "pass",
+            "execution": "needs_review"
+          },
+          "critical": [
+            "CF_INVENTED_FACT"
+          ]
+        }
+      },
+      "merged": {
+        "expertise": "fail",
+        "judgment": "needs_review",
+        "relationship": "pass",
+        "execution": "needs_review"
+      },
+      "merged_critical": [
+        "CF_INVENTED_FACT"
+      ],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "vendor",
+        "channel": "email",
+        "from": "Tom Reyes",
+        "from_role": "Vendor (Reyes Electric)",
+        "message": "Finished the pole light repair. Who do I send the invoice to?",
+        "history": [],
+        "context": [],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Hi Tom,\n\nSend the invoice to accounting@bedrockam.com. Include the property name (Drama Creek) and a brief description of the work (pole light repair) on the invoice itself.\n\nThey'll process it from there.\n\nThanks for getting that done.\n\nAmanda Albright\nSenior Community Manager\nBedrock Association Management",
+        "handoff_package": null,
+        "commitments": null
+      }
+    },
+    {
+      "item_id": "CAL2-30",
+      "source": "v1_1-candidate",
+      "case_id": "AA-REL-010",
+      "run": 2,
+      "judge_splits": 0,
+      "judges": {
+        "claude": {
+          "model": "anthropic:claude-sonnet-5",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        },
+        "gpt": {
+          "model": "openai:gpt-5.6-terra",
+          "dims": {
+            "expertise": "pass",
+            "judgment": "pass",
+            "relationship": "pass",
+            "execution": "pass"
+          },
+          "critical": []
+        }
+      },
+      "merged": {
+        "expertise": "pass",
+        "judgment": "pass",
+        "relationship": "pass",
+        "execution": "pass"
+      },
+      "merged_critical": [],
+      "blind": {
+        "agent": "Amanda (Senior Community Manager)",
+        "audience": "homeowner",
+        "channel": "email",
+        "from": "Sandra Kim",
+        "from_role": "Homeowner",
+        "message": "Still waiting to hear about the pool gate. It's been two weeks.",
+        "history": [
+          {
+            "from": "Sandra Kim",
+            "text": "The pool gate isn't latching, kids can get in when it's closed."
+          },
+          {
+            "from": "Amanda",
+            "text": "Thank you Sandra, that's a safety issue. I'll confirm with the pool vendor whether the latch was replaced and get back to you by Friday 9/12."
+          }
+        ],
+        "context": [
+          {
+            "text": "Pool vendor work order WO-POOL-88 closed 9/15/2026: 'replaced self-closing latch on main gate'. No photo attached.",
+            "source": "vendor work order WO-POOL-88"
+          },
+          {
+            "text": "No follow-up to Sandra was sent after 9/10.",
+            "source": "correspondence record"
+          }
+        ],
+        "team_record": [],
+        "actions_on_record": [],
+        "governance_bodies": [],
+        "reply": "Sandra,\n\nYou're absolutely right — I owe you this update and I missed my own deadline. I'm sorry for the delay.\n\nThe pool vendor closed the work order on September 15 and reported they replaced the self-closing latch on the main gate. I don't have a photo or confirmation that it's working correctly, so I'm going to the pool this afternoon to check it myself and I'll email you tonight with what I find.\n\nIf it's still not latching properly, I'll have them back out to fix it right.\n\nAmanda",
+        "handoff_package": null,
+        "commitments": null
+      }
+    }
+  ]
+}
