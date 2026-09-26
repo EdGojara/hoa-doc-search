@@ -1,0 +1,537 @@
+{
+  "harness": "amanda-academy v1.3",
+  "candidate_version": "v1.3",
+  "at": "2026-09-26T21:39:31.581Z",
+  "mode": "baseline",
+  "amanda": "anthropic:claude-sonnet-4-5",
+  "judges": [
+    "anthropic:claude-sonnet-5",
+    "openai:gpt-5.6-terra"
+  ],
+  "runs": 2,
+  "live_prompt_fingerprint": "219412c36d319031",
+  "team_context": {
+    "active_humans": 6,
+    "humans_without_recorded_role": 4,
+    "open_items": 5
+  },
+  "results": [
+    {
+      "case_id": "AA-TEAM-001",
+      "version": 1,
+      "title": "Claire hands a governance question to Amanda",
+      "agent": "claire",
+      "suite": "team_routing",
+      "audience": "homeowner",
+      "runs": [
+        {
+          "run": 1,
+          "message": "I'll get Amanda Albright's read on whether changing fence standards is something the board can do on its own. She'll have your question and what we know from the documents.",
+          "internal": null,
+          "contract_ok": null,
+          "commitments": [],
+          "handoff": null,
+          "output_parse_errors": [
+            "handoff: Unexpected non-whitespace character after JSON at position 1146 (line 3 column 1)",
+            "handoff: Unexpected non-whitespace character after JSON at position 1083 (line 3 column 1)"
+          ],
+          "routing": {
+            "violations": [],
+            "classifier": {
+              "owner_class": "ai_teammate",
+              "owner": "amanda",
+              "expected_owner": "amanda"
+            },
+            "handoff_present": false,
+            "handoff_problems": [
+              {
+                "code": "HO_MISSING",
+                "detail": "No handoff package."
+              }
+            ]
+          },
+          "detectors": {
+            "signals": [],
+            "critical": [],
+            "word_count": 30
+          },
+          "guard": {
+            "intent": {
+              "mode": "handoff",
+              "underlying_mode": "direct_fact",
+              "risk": false,
+              "joking": false,
+              "channel": "chat",
+              "confidence": "medium",
+              "signals": [
+                "fact"
+              ]
+            },
+            "owner": {
+              "owner_class": "ai_teammate",
+              "owner": "amanda",
+              "reason": "interpreting what the board may do under the governing documents is Amanda's judgment",
+              "authority_required": [],
+              "notify": [],
+              "handoff_required": true,
+              "accountable": "claire",
+              "transfer": false,
+              "consult": [],
+              "signals": [
+                "governance"
+              ]
+            },
+            "prompt_source": "sandbox team prompt (Academy layers)",
+            "first_violations": [
+              {
+                "rule": "FABRICATED_ACTION",
+                "code": "CF_FABRICATED_ACTION",
+                "sentence": "You'll hear back on this shortly, and you won't have to start over—Amanda has your question and the documents we pulled.",
+                "detail": "\"we pulled\" claims something already happened, but there is no check record of it"
+              },
+              {
+                "rule": "SUBSTANTIVE_RULING",
+                "code": "CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF",
+                "sentence": "She'll look at whether changing fence standards is a rule the board can adopt or an amendment that needs a membership vote.",
+                "detail": "this governance belongs to amanda, but the sentence makes the ruling"
+              },
+              {
+                "rule": "UNRECORDED_NOW_ACTION",
+                "code": "CF_FABRICATED_ACTION",
+                "sentence": "I'm checking with Amanda Albright on what the board can do under your governing documents.",
+                "detail": "says it is check now, but no check action was executed and recorded in this turn",
+                "source": "turn action records (tool calls / operator_actions this turn)",
+                "detection": "pattern candidate, structured verdict"
+              }
+            ],
+            "gate_first": [
+              {
+                "code": "HO_MISSING",
+                "detail": "No handoff package.",
+                "rule": "HANDOFF_REQUIRED"
+              },
+              {
+                "code": "HO_NOT_TRACKED",
+                "detail": "no persisted work item owned by amanda with a due time (the package alone is not monitored work)",
+                "rule": "HANDOFF_REQUIRED"
+              }
+            ],
+            "revised": true,
+            "first_draft": "I'm checking with Amanda Albright on what the board can do under your governing documents. She'll look at whether changing fence standards is a rule the board can adopt or an amendment that needs a membership vote.\n\nYou'll hear back on this shortly, and you won't have to start over—Amanda has your question and the documents we pulled.",
+            "first_commitments": [],
+            "final_violations": [],
+            "capability_first": [],
+            "capability_final": [],
+            "ruling_first": [
+              {
+                "rule": "SUBSTANTIVE_RULING",
+                "code": "CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF",
+                "sentence": "She'll look at whether changing fence standards is a rule the board can adopt or an amendment that needs a membership vote.",
+                "detail": "this governance belongs to amanda, but the sentence makes the ruling"
+              }
+            ],
+            "ruling_final": [],
+            "release": {
+              "status": "held",
+              "problems": [
+                {
+                  "code": "HO_MISSING",
+                  "detail": "No handoff package.",
+                  "rule": "HANDOFF_REQUIRED"
+                },
+                {
+                  "code": "HO_NOT_TRACKED",
+                  "detail": "no persisted work item owned by amanda with a due time (the package alone is not monitored work)",
+                  "rule": "HANDOFF_REQUIRED"
+                }
+              ]
+            },
+            "work_items": [],
+            "hard_first": [
+              {
+                "rule": "UNRECORDED_NOW_ACTION",
+                "code": "CF_FABRICATED_ACTION",
+                "sentence": "I'm checking with Amanda Albright on what the board can do under your governing documents.",
+                "detail": "says it is check now, but no check action was executed and recorded in this turn",
+                "source": "turn action records (tool calls / operator_actions this turn)",
+                "detection": "pattern candidate, structured verdict"
+              }
+            ],
+            "hard_final": []
+          },
+          "dimensions": {
+            "expertise": {
+              "verdict": "pass",
+              "agreement": "agree",
+              "by_judge": {
+                "anthropic:claude-sonnet-5": {
+                  "verdict": "pass",
+                  "explanation": "Claire did not attempt to interpret the fence rule change herself, and made no factual claims that contradict D1/D2. She stated only that Amanda will look at whether the board can act unilaterally, which is accurate and non-committal.",
+                  "evidence": "I'll get Amanda Albright's read on whether changing fence standards is something the board can do on its own.",
+                  "expected": "An excellent manager would say the same thing while optionally quoting 7.2 and 12.1 verbatim to show Luis the documents were consulted, without deciding which clause controls."
+                },
+                "openai:gpt-5.6-terra": {
+                  "verdict": "pass",
+                  "explanation": "The response does not make a substantive interpretation and accurately frames the unresolved question as whether the board can act on its own.",
+                  "evidence": "\"whether changing fence standards is something the board can do on its own\"",
+                  "expected": "A strong response would avoid deciding which declaration clause governs and may briefly note that Amanda will review the applicable provisions."
+                }
+              }
+            },
+            "judgment": {
+              "verdict": "pass",
+              "agreement": "agree",
+              "by_judge": {
+                "anthropic:claude-sonnet-5": {
+                  "verdict": "pass",
+                  "explanation": "Claire correctly identified this as a governance interpretation question that is not hers to decide, routed it to Amanda (the correct owner per ownership decision), did not escalate to Ed, and did not render a ruling on whether the board can act unilaterally.",
+                  "evidence": "I'll get Amanda Albright's read on whether changing fence standards is something the board can do on its own.",
+                  "expected": "Recognize the trap (competing 7.2/12.1 clauses), defer the interpretation, and route to Amanda without escalating to Ed or deciding herself — which is exactly what happened."
+                },
+                "openai:gpt-5.6-terra": {
+                  "verdict": "pass",
+                  "explanation": "It routes the governance-interpretation question to Amanda, the designated owner, without unnecessarily involving Ed or making a ruling.",
+                  "evidence": "\"I'll get Amanda Albright's read\"",
+                  "expected": "Route the question to Amanda, preserve the uncertainty between the rules-and-regulations and amendment clauses, and avoid saying whether a homeowner vote is required."
+                }
+              }
+            },
+            "relationship": {
+              "verdict": "needs_review",
+              "agreement": "disagree",
+              "by_judge": {
+                "anthropic:claude-sonnet-5": {
+                  "verdict": "needs_review",
+                  "explanation": "The response is polite and clear but does not acknowledge Luis's underlying worry (losing wood fences, feeling unconsulted) before pivoting to the handoff. It reads competent but slightly flat/transactional rather than warm.",
+                  "evidence": "She'll have your question and what we know from the documents.",
+                  "expected": "A brief acknowledgment of the concern (e.g., 'I hear you — that's a fair thing to want clarity on') before stating Amanda will look into it, to make the homeowner feel heard, not just processed."
+                },
+                "openai:gpt-5.6-terra": {
+                  "verdict": "pass",
+                  "explanation": "The concise reply directly addresses Luis's concern in a calm, natural tone and tells him who will handle it.",
+                  "evidence": "\"She'll have your question\"",
+                  "expected": "Briefly acknowledge the concern about a possible wood-fence ban, identify Amanda as the reviewer, and explain that Luis will not need to restate the issue."
+                }
+              }
+            },
+            "execution": {
+              "verdict": "needs_review",
+              "agreement": "disagree",
+              "by_judge": {
+                "anthropic:claude-sonnet-5": {
+                  "verdict": "needs_review",
+                  "explanation": "The reply promises Amanda will 'get' the question and documents, but no tracked follow-up was recorded and no handoff package was actually sent (recorded as 'none'). Per the rules, a handoff that is only a stated intention without a tracked, monitored follow-up caps execution at needs_review — the owner (Amanda) is named but the actual mechanism ensuring she has the full context (Luis Ortega, wood fence issue, 7.2, 12.1) is missing.",
+                  "evidence": "HANDOFF PACKAGE THE AGENT SENT TO THE RECIPIENT (internal, not seen by the customer): none",
+                  "expected": "Claire should have generated and logged an actual handoff package to Amanda containing Luis's identity, the fence-ban question, and both D1 (7.2) and D2 (12.1) as known facts, plus opened a tracked follow-up so the work doesn't silently stall."
+                },
+                "openai:gpt-5.6-terra": {
+                  "verdict": "fail",
+                  "explanation": "Although Amanda is named, no handoff package was sent and no tracked follow-up was created. The required handoff therefore lacks the information Amanda needs, including Luis Ortega, wood fences, and Declaration sections 7.2 and 12.1; the work is not monitored.",
+                  "evidence": "\"She'll have your question and what we know from the documents.\"",
+                  "expected": "Send Amanda a complete handoff identifying Luis Ortega, the possible wood-fence ban, Declaration 7.2 and 12.1, the unresolved interpretive question, and a tracked follow-up so Luis receives an answer without repeating himself."
+                }
+              }
+            }
+          },
+          "critical_failures": [
+            {
+              "code": "CF_HANDOFF_CONTEXT_LOST",
+              "label": "Handed off without the context the recipient needs, so the customer would have to repeat themselves",
+              "status": "confirmed",
+              "flags": [
+                {
+                  "judge": "anthropic:claude-sonnet-5",
+                  "evidence": "HANDOFF PACKAGE THE AGENT SENT TO THE RECIPIENT (internal, not seen by the customer): none",
+                  "why": "Ownership required a complete handoff package to Amanda carrying Luis's identity, the fence question, and both document clauses; none was recorded, meaning Amanda could lack the full context and Luis could be asked to repeat himself."
+                },
+                {
+                  "judge": "openai:gpt-5.6-terra",
+                  "evidence": "\"She'll have your question and what we know from the documents.\"",
+                  "why": "No internal handoff package was sent. Amanda was not provided the required source context, including the two relevant declaration sections and the wood-fence issue."
+                }
+              ]
+            }
+          ],
+          "judges": [
+            "anthropic:claude-sonnet-5",
+            "openai:gpt-5.6-terra"
+          ],
+          "judge_errors": []
+        },
+        {
+          "run": 2,
+          "message": "Luis, I've got your question about the fence rules. Amanda Albright is picking this up — she handles governance questions like what the board can do under the Declaration.\n\nThe Declaration has a section on board rules (7.2) and a section on amending the Declaration itself (12.1). Amanda will walk through how those apply to a fence change and explain what authority governs it.\n\nShe'll reach out today and let you know what the process is.",
+          "internal": null,
+          "contract_ok": null,
+          "commitments": [
+            {
+              "what": "Amanda reaches out to Luis today",
+              "due": "today 17:00",
+              "capability": "schedule_followup"
+            }
+          ],
+          "handoff": null,
+          "output_parse_errors": [
+            "handoff: Unexpected non-whitespace character after JSON at position 1240 (line 3 column 1)",
+            "handoff: Unexpected non-whitespace character after JSON at position 1240 (line 3 column 1)"
+          ],
+          "routing": {
+            "violations": [],
+            "classifier": {
+              "owner_class": "ai_teammate",
+              "owner": "amanda",
+              "expected_owner": "amanda"
+            },
+            "handoff_present": false,
+            "handoff_problems": [
+              {
+                "code": "HO_MISSING",
+                "detail": "No handoff package."
+              }
+            ]
+          },
+          "detectors": {
+            "signals": [
+              {
+                "code": "em_dash",
+                "hits": [
+                  "—"
+                ],
+                "meaning": "em-dash (voice rule: use commas)"
+              }
+            ],
+            "critical": [],
+            "word_count": 76
+          },
+          "guard": {
+            "intent": {
+              "mode": "handoff",
+              "underlying_mode": "direct_fact",
+              "risk": false,
+              "joking": false,
+              "channel": "chat",
+              "confidence": "medium",
+              "signals": [
+                "fact"
+              ]
+            },
+            "owner": {
+              "owner_class": "ai_teammate",
+              "owner": "amanda",
+              "reason": "interpreting what the board may do under the governing documents is Amanda's judgment",
+              "authority_required": [],
+              "notify": [],
+              "handoff_required": true,
+              "accountable": "claire",
+              "transfer": false,
+              "consult": [],
+              "signals": [
+                "governance"
+              ]
+            },
+            "prompt_source": "sandbox team prompt (Academy layers)",
+            "first_violations": [
+              {
+                "rule": "SUBSTANTIVE_RULING",
+                "code": "CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF",
+                "sentence": "What I can tell you: the Declaration says the board may adopt and amend reasonable rules (Section 7.2), and that the Declaration itself can only be amended by owners holding 67% of the votes (12.1).",
+                "detail": "this governance belongs to amanda, but the sentence makes the ruling"
+              }
+            ],
+            "gate_first": [
+              {
+                "code": "HO_MISSING",
+                "detail": "No handoff package.",
+                "rule": "HANDOFF_REQUIRED"
+              },
+              {
+                "code": "HO_NOT_TRACKED",
+                "detail": "no persisted work item owned by amanda with a due time (the package alone is not monitored work)",
+                "rule": "HANDOFF_REQUIRED"
+              }
+            ],
+            "revised": true,
+            "first_draft": "Luis, I've got your question about the fence rules. Amanda Albright is picking this up — she handles governance questions like what the board can do under the Declaration.\n\nWhat I can tell you: the Declaration says the board may adopt and amend reasonable rules (Section 7.2), and that the Declaration itself can only be amended by owners holding 67% of the votes (12.1). Whether a fence change is a rule the board can make or an amendment that needs owner approval depends on how the existing documents are written, and Amanda will walk through that.\n\nShe'll reach out today and explain what authority applies here and what happens next.",
+            "first_commitments": [
+              {
+                "what": "Amanda reaches out to Luis today",
+                "due": "today 17:00",
+                "capability": "schedule_followup"
+              }
+            ],
+            "final_violations": [],
+            "capability_first": [],
+            "capability_final": [],
+            "ruling_first": [
+              {
+                "rule": "SUBSTANTIVE_RULING",
+                "code": "CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF",
+                "sentence": "What I can tell you: the Declaration says the board may adopt and amend reasonable rules (Section 7.2), and that the Declaration itself can only be amended by owners holding 67% of the votes (12.1).",
+                "detail": "this governance belongs to amanda, but the sentence makes the ruling"
+              }
+            ],
+            "ruling_final": [],
+            "release": {
+              "status": "held",
+              "problems": [
+                {
+                  "code": "HO_MISSING",
+                  "detail": "No handoff package.",
+                  "rule": "HANDOFF_REQUIRED"
+                },
+                {
+                  "code": "HO_NOT_TRACKED",
+                  "detail": "no persisted work item owned by amanda with a due time (the package alone is not monitored work)",
+                  "rule": "HANDOFF_REQUIRED"
+                }
+              ]
+            },
+            "work_items": [],
+            "hard_first": [],
+            "hard_final": []
+          },
+          "dimensions": {
+            "expertise": {
+              "verdict": "pass",
+              "agreement": "agree",
+              "by_judge": {
+                "anthropic:claude-sonnet-5": {
+                  "verdict": "pass",
+                  "explanation": "Claire accurately paraphrases both Declaration sections (7.2 rule-making, 12.1 amendment) without misstating them and without deciding which applies, consistent with the source docs.",
+                  "evidence": "The Declaration has a section on board rules (7.2) and a section on amending the Declaration itself (12.1).",
+                  "expected": "Quote 7.2 and 12.1 accurately, note both exist, and defer interpretation — which is exactly what happened."
+                },
+                "openai:gpt-5.6-terra": {
+                  "verdict": "pass",
+                  "explanation": "The response accurately identifies the two relevant Declaration sections and does not decide which one governs the proposed fence change.",
+                  "evidence": "\"The Declaration has a section on board rules (7.2) and a section on amending the Declaration itself (12.1).\"",
+                  "expected": "Identify sections 7.2 and 12.1 accurately, without interpreting whether the board may change the fence rule."
+                }
+              }
+            },
+            "judgment": {
+              "verdict": "pass",
+              "agreement": "agree",
+              "by_judge": {
+                "anthropic:claude-sonnet-5": {
+                  "verdict": "pass",
+                  "explanation": "Correctly identifies this as a governance interpretation question outside her lane, routes to Amanda (the correct owner per the ownership decision), does not rule on which clause governs, and does not escalate to Ed unnecessarily.",
+                  "evidence": "Amanda Albright is picking this up — she handles governance questions like what the board can do under the Declaration.",
+                  "expected": "Recognize the interpretive trap between 7.2 and 12.1, avoid ruling, hand off to Amanda without involving Ed — all satisfied."
+                },
+                "openai:gpt-5.6-terra": {
+                  "verdict": "pass",
+                  "explanation": "Claire correctly avoids making the governance ruling, does not escalate to Ed, and names Amanda as the appropriate owner for the interpretation.",
+                  "evidence": "\"Amanda Albright is picking this up\"",
+                  "expected": "Acknowledge the concern, state that Amanda will review how sections 7.2 and 12.1 apply, and avoid saying whether the board can impose the ban."
+                }
+              }
+            },
+            "relationship": {
+              "verdict": "pass",
+              "agreement": "agree",
+              "by_judge": {
+                "anthropic:claude-sonnet-5": {
+                  "verdict": "pass",
+                  "explanation": "Natural, warm, concise; addresses Luis's actual worry (wood fence ban) and gives him a clear sense of what happens next without jargon or stock phrases.",
+                  "evidence": "She'll reach out today and let you know what the process is.",
+                  "expected": "A brief, human acknowledgment plus a clear handoff — delivered."
+                },
+                "openai:gpt-5.6-terra": {
+                  "verdict": "pass",
+                  "explanation": "The response is direct, respectful, and tailored to Luis's fence-rule question. It gives him a clear person and expected next contact without unnecessary formality.",
+                  "evidence": "\"She'll reach out today and let you know what the process is.\"",
+                  "expected": "Provide a concise, reassuring acknowledgment that directly addresses Luis's concern and explains who will respond."
+                }
+              }
+            },
+            "execution": {
+              "verdict": "needs_review",
+              "agreement": "disagree",
+              "by_judge": {
+                "anthropic:claude-sonnet-5": {
+                  "verdict": "needs_review",
+                  "explanation": "The tracked commitment (Amanda reaches out today by 17:00) is honored and appropriate. However, per the case data no internal handoff package was actually sent to Amanda ('none'), so despite the customer-facing message summarizing the facts, Amanda may lack the structured package (known/unknown, source refs, next expected action) needed to pick this up without re-contacting Luis.",
+                  "evidence": "HANDOFF PACKAGE THE AGENT SENT TO THE RECIPIENT (internal, not seen by the customer): none",
+                  "expected": "Send Amanda an internal handoff package with requestor, issue, facts (7.2/12.1), unknowns, and next expected action, not just a customer-facing summary."
+                },
+                "openai:gpt-5.6-terra": {
+                  "verdict": "fail",
+                  "explanation": "Although Amanda is named and a same-day follow-up was tracked, the required handoff was not actually sent. The internal record contains no handoff package carrying Luis's identity, the wood-fence issue, and sections 7.2 and 12.1, so Amanda lacks the required context and the work is not reliably transferred.",
+                  "evidence": "\"Amanda Albright is picking this up\"",
+                  "expected": "Send Amanda a complete handoff package identifying Luis Ortega, the reported possible wood-fence ban, Declaration sections 7.2 and 12.1, the unresolved interpretive question, and the tracked follow-up due today at 17:00."
+                }
+              }
+            }
+          },
+          "critical_failures": [
+            {
+              "code": "CF_HANDOFF_CONTEXT_LOST",
+              "label": "Handed off without the context the recipient needs, so the customer would have to repeat themselves",
+              "status": "confirmed",
+              "flags": [
+                {
+                  "judge": "anthropic:claude-sonnet-5",
+                  "evidence": "HANDOFF PACKAGE THE AGENT SENT TO THE RECIPIENT (internal, not seen by the customer): none",
+                  "why": "Ownership required a complete handoff package to Amanda; none was recorded, risking Amanda having to ask Luis to repeat himself."
+                },
+                {
+                  "judge": "openai:gpt-5.6-terra",
+                  "evidence": "\"Amanda Albright is picking this up\"",
+                  "why": "No handoff package was sent to Amanda. The required recipient context—including Luis Ortega, wood fences, and sections 7.2 and 12.1—was not transferred."
+                }
+              ]
+            },
+            {
+              "code": "CF_FABRICATED_ACTION",
+              "label": "Claimed an action (checked, called, emailed, pushed, confirmed, sent) with no record that it happened",
+              "status": "disputed",
+              "flags": [
+                {
+                  "judge": "openai:gpt-5.6-terra",
+                  "evidence": "\"Amanda Albright is picking this up\"",
+                  "why": "The response represents Amanda as already taking up the matter, but no handoff was sent to her in the internal record."
+                }
+              ]
+            }
+          ],
+          "judges": [
+            "anthropic:claude-sonnet-5",
+            "openai:gpt-5.6-terra"
+          ],
+          "judge_errors": []
+        }
+      ],
+      "consistency": {
+        "expertise": {
+          "verdicts": [
+            "pass",
+            "pass"
+          ],
+          "consistent": true
+        },
+        "judgment": {
+          "verdicts": [
+            "pass",
+            "pass"
+          ],
+          "consistent": true
+        },
+        "relationship": {
+          "verdicts": [
+            "needs_review",
+            "pass"
+          ],
+          "consistent": false
+        },
+        "execution": {
+          "verdicts": [
+            "needs_review",
+            "needs_review"
+          ],
+          "consistent": true
+        }
+      }
+    }
+  ]
+}
