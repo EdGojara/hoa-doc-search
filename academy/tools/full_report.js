@@ -19,6 +19,16 @@ const { wordCount } = require('../lib/critical');
 const casesDir = path.join(__dirname, '..', 'cases');
 const CASES = Object.fromEntries(fs.readdirSync(casesDir, { withFileTypes: true }).filter((d) => d.isFile() && d.name.endsWith('.json'))
   .flatMap((d) => JSON.parse(fs.readFileSync(path.join(casesDir, d.name), 'utf8'))).map((c) => [c.case_id, c]));
+// Team cases (wrapped in { cases }) use must / must_not keys; map them onto the
+// fields this report reads so their replies and judge reasoning render too.
+const teamDir = path.join(__dirname, '..', 'team', 'cases');
+if (fs.existsSync(teamDir)) {
+  for (const f of fs.readdirSync(teamDir).filter((x) => x.endsWith('.json'))) {
+    for (const c of JSON.parse(fs.readFileSync(path.join(teamDir, f), 'utf8')).cases || []) {
+      CASES[c.case_id] = { domain: ['judgment', 'execution', 'relationship'], ...c, answer_key: { facts: c.answer_key.must || [], unknowns: [], hidden_traps: c.answer_key.must_not || [], expected_communication: { tone: 'see routing', must: c.answer_key.must, must_not: c.answer_key.must_not }, expected_next_action: { action: `${c.expected_routing.mode} (${c.expected_routing.owner_class.join(', ')})`, owner: c.expected_routing.owner }, ...c.answer_key } };
+    }
+  }
+}
 
 const DIMS = ['expertise', 'judgment', 'relationship', 'execution'];
 const LENGTH_WORDS = { 'one line': 25, short: 90, 'short to medium': 160, medium: 220, detailed: 600 };
