@@ -189,3 +189,36 @@ Otherwise the agent uses immediate-action or next-step language.
 1. Review the v1.1 before-and-after results first; this layer isn't wired into any run.
 2. Then add `cultureBlock()`, the agent's profile voice and `teamBlock(agent)` to the sandbox candidate prompt, and run the distinctness and handoff cases.
 3. Production only after calibration and your approval, one agent at a time (Amanda first, since she has the most Academy coverage).
+
+## v1.3: ownership before drafting (Ed 2026-09-26)
+
+**Flow:** request → owner/authority classification (`owner_classifier.js`) → intent classification → context → plan → draft → fact/capability guard → release gate (`release_gate.js`) → send, or hand off.
+
+**Owner classes.** Eight: current_agent, ai_teammate, human_role, ed, board, legal, accounting, community_governance_body. Each decision records:
+- the owner;
+- the reason;
+- the authority required;
+- who gets notified (the internal escalation);
+- whether a handoff is required;
+- who stays accountable.
+
+The originating agent keeps follow-through unless ownership explicitly transfers. For example, Claire stays on the thread while Amanda reviews a governance question.
+
+**How the decision reaches the agent.** It's stated as already decided (OWNERSHIP). When a handoff is required, a handoff shape overrides the conversational intent, so a legal threat read as "casual" can't get a chatty reply.
+
+**Legal threats:**
+- Darby (legal review) owns them.
+- Ed is notified as the internal escalation.
+- The agent acknowledges in one human sentence, names Darby, and says nothing on the merits.
+
+**Release gate.** When a handoff is required, the reply is held until a valid package exists. The package has eleven fields:
+- from, to;
+- requestor, issue;
+- known facts, unknowns;
+- actions taken, source references;
+- reason, next expected action;
+- follow-up state.
+
+It must be addressed to the classified owner and must carry any required notification. The gate joins the guard's single revision; a reply that still fails is held and never sent.
+
+**Governance bodies.** They must be specific to the community, backed by a source, and within active dates (`governance.js`). There is no generic committee. With none on record, the board decides.

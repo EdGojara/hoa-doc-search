@@ -98,3 +98,32 @@ COMMIT;
 - `rolesNeedingEd(humans)` lists active people with no role. The admin surface for Ed to fill them in is not built.
 - Routing stays role/queue first: a named human becomes the route only when they are the assigned owner (`work_items.assigned_to`, `objectives.owner_persona`).
 - Note: the `work_items.assigned_to` column comment hardcodes staff first names. Per the no-individual-routing rule, new defaults should be roles or queues.
+
+## v1.3 addition (proposed, NOT applied): community governance bodies
+
+Ed 2026-09-26: never assume a generic "compliance committee". A body exists only when it is established for that community, backed by a source, and active.
+
+```sql
+-- proposed migration (next free number at apply time)
+BEGIN;
+CREATE TABLE IF NOT EXISTS community_governance_bodies (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  community_id uuid NOT NULL REFERENCES communities(id) ON DELETE RESTRICT,
+  name         text NOT NULL,                        -- as the source names it
+  body_type    text NOT NULL CHECK (body_type IN ('acc','arc','board_committee','nominating','other')),
+  scope        text NOT NULL,                        -- what it may decide, from the source
+  source_library_document_id uuid REFERENCES library_documents(id) ON DELETE RESTRICT,
+  source_citation text NOT NULL,                     -- e.g. 'Declaration Art. 8'
+  active_from  date NOT NULL,
+  active_to    date,
+  record_ownership text NOT NULL DEFAULT 'association_record',
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_cgb_community ON community_governance_bodies(community_id) WHERE active_to IS NULL;
+GRANT SELECT, INSERT, UPDATE, DELETE ON community_governance_bodies TO service_role;
+GRANT SELECT ON community_governance_bodies TO authenticated;
+COMMIT;
+```
+
+- `academy/team/governance.js bodiesFor()` is the reader contract: it takes only rows with a source whose active dates cover today.
+- The action guard allows a committee name only when one is on record for that community. With none on record, the board decides what the documents give it.
