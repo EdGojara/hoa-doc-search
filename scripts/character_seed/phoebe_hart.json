@@ -1,0 +1,119 @@
+{
+  "character": { "slug": "phoebe_hart", "display_name": "Phoebe Hart", "roster_persona": "phoebe", "face_token": "PHOEBE" },
+  "components": [
+    {
+      "key": "face.v1", "component": "face",
+      "change_reason": "Pre-registry canon: the original 640px Phoebe. Preserved as the parent / legacy source of the high-resolution image.",
+      "spec": {
+        "apparent_age_range": [28, 34],
+        "hair": { "color": "honey blonde", "style": "wavy, loosely pinned up with face-framing strands" },
+        "eyes": "blue",
+        "skin_tone": "fair, warm, rosy cheeks",
+        "distinguishing": ["big open smile", "small gold hoop earrings", "gold disc pendant"],
+        "visual_vibe": "immediately approachable",
+        "canonical_image_notes": "640x640. Cornflower-blue ribbed V-neck knit, bright home office."
+      },
+      "assets": [
+        { "file": "phoebe_group_original.jpg", "role": "canonical", "origin": "heygen_group_source", "origin_ref": "HeyGen avatar group source image (made from the repo portrait)" },
+        { "file": "phoebe_look_e72aa425_IN-USE.webp", "role": "provider_copy", "origin": "heygen_look_image", "origin_ref": "HeyGen look preview", "parent_file": "phoebe_group_original.jpg" },
+        { "repo": "public/assets/presentations/team/phoebe.jpg", "role": "derived", "origin": "repo", "origin_ref": "public/assets/presentations/team/phoebe.jpg", "parent_file": "phoebe_group_original.jpg" }
+      ]
+    },
+    {
+      "key": "face.v2", "component": "face", "parent": "face.v1",
+      "change_reason": "Ed 2026-09-26: higher-resolution Phoebe is canonical. Same face, same styling; resolution upgrade from 640 to 1254.",
+      "spec": {
+        "apparent_age_range": [28, 34],
+        "hair": { "color": "honey blonde", "style": "wavy, loosely pinned up with face-framing strands" },
+        "eyes": "blue",
+        "skin_tone": "fair, warm, rosy cheeks",
+        "distinguishing": ["big open smile", "small gold hoop earrings", "textured gold disc pendant"],
+        "visual_vibe": "immediately approachable; natural rather than polished",
+        "canonical_image_notes": "1254x1254 upgrade of face v1: cornflower-blue ribbed V-neck knit, bright home office."
+      },
+      "assets": [
+        { "file": "phoebe_hires_2026-09-26.png", "role": "canonical", "origin": "chatgpt", "origin_ref": "Higher-resolution Phoebe supplied by Ed 2026-09-26", "parent_file": "phoebe_group_original.jpg" }
+      ]
+    },
+    {
+      "key": "body.v1", "component": "body",
+      "change_reason": "Character Bible v1 (Ed 2026-09-26). Text canon only; no body reference images exist yet.",
+      "spec": {
+        "height_range_in": [64, 65],
+        "build": "fit, healthy, athletic, proportional; active and energetic without being very thin",
+        "posture": "open and relaxed",
+        "movement_style": "the most expressive of the three; more gestures and smiles; comfortable in busy social settings; never cartoonishly bubbly"
+      },
+      "assets": []
+    },
+    {
+      "key": "voice.v1", "component": "voice",
+      "change_reason": "Phase A: no canonical voice declared. Voices in use today are recorded as provider mappings only. Evaluation order set by Ed 2026-09-26: Phoebe second.",
+      "spec": {
+        "status": "under_evaluation",
+        "description": "Not yet canonical. Target: warm, bright, community-facing; energetic but not bubbly."
+      },
+      "assets": []
+    },
+    {
+      "key": "wardrobe.v1", "component": "wardrobe",
+      "change_reason": "Character Bible v1 (Ed 2026-09-26).",
+      "spec": {
+        "contexts": {
+          "boardroom": ["casual blazer", "blouse or smart top", "trousers or dark jeans"],
+          "business_casual": ["jeans", "nice shirt", "knit top", "casual jacket", "cardigan", "clean sneakers or boots"],
+          "field_community": ["Bedrock polo", "Bedrock T-shirt when appropriate", "quarter-zip", "jeans", "sneakers"],
+          "bedrock_branded": ["fitted Bedrock polo", "soft Bedrock crew-neck shirt", "branded quarter-zip", "casual vest", "Bedrock event shirt"],
+          "casual_life": ["community events, setting up tables or signage, grabbing coffee"]
+        },
+        "palette": ["cornflower blue", "white", "navy"],
+        "jewelry_signature": "small gold hoops and a textured gold disc pendant",
+        "never": ["provocative clothing", "fashion-shoot styling"]
+      },
+      "assets": []
+    },
+    {
+      "key": "persona.v1", "component": "persona",
+      "change_reason": "Roster role plus Character Bible v1 presence. Live behavior prompt is unchanged and referenced, not copied.",
+      "spec": {
+        "role_snapshot": { "display_name": "Phoebe Hart", "title": "Community Engagement Coordinator" },
+        "temperament": "warm, optimistic, energetic",
+        "communication_style": "friendly and people-first; writes only from the facts supplied",
+        "warmth": "highest on the team",
+        "confidence": "socially comfortable",
+        "presence": "the person residents naturally talk to at a community event",
+        "mannerisms": ["gestures more", "smiles often", "interacts casually with people around her"],
+        "would_never_say": ["that she is a human", "anything about enforcement, legal or account matters", "a name, date or quote she was not given"],
+        "persona_prompt_ref": "lib/team/roster.js (persona: phoebe)"
+      },
+      "assets": []
+    },
+    {
+      "key": "guardrails.v1", "component": "guardrails",
+      "change_reason": "Character Bible v1 do-not-drift list and the team visual continuity rule.",
+      "spec": {
+        "face_drift": ["preserve the canonical face"],
+        "age_drift": ["no overly youthful appearance"],
+        "body_drift": ["not overly thin", "no exaggerated curves"],
+        "wardrobe_drift": ["no influencer look", "no cheerleader look", "no provocative clothing", "no fashion-shoot styling"],
+        "personality_drift": ["never excessively bubbly"],
+        "voice_drift": ["one voice across video, phone and realtime once the canonical voice is set"]
+      },
+      "assets": []
+    }
+  ],
+  "releases": [
+    { "key": "r1", "legacy": true, "notes": "Legacy Phoebe (640px face). Produced the existing Phoebe videos.",
+      "components": { "face": "face.v1", "body": "body.v1", "voice": "voice.v1", "wardrobe": "wardrobe.v1", "persona": "persona.v1", "guardrails": "guardrails.v1" } },
+    { "key": "r2", "current": true, "parent": "r1", "notes": "Current Phoebe: high-resolution canonical face (Ed 2026-09-26). No videos rendered from it yet.",
+      "components": { "face": "face.v2", "body": "body.v1", "voice": "voice.v1", "wardrobe": "wardrobe.v1", "persona": "persona.v1", "guardrails": "guardrails.v1" } }
+  ],
+  "mappings": [
+    { "provider": "heygen", "kind": "look", "resolve": { "env": "PHOEBE_AVATAR_ID" }, "license_class": "owned", "channel": "video",
+      "notes": "Look in use by production today. Built from the 640px legacy face.", "sources": [{ "component": "face.v1", "file": "phoebe_group_original.jpg" }] },
+    { "provider": "heygen", "kind": "avatar_group", "resolve": { "group_of_env": "PHOEBE_AVATAR_ID" }, "license_class": "owned",
+      "sources": [{ "component": "face.v1", "file": "phoebe_group_original.jpg" }] },
+    { "provider": "heygen", "kind": "voice", "resolve": { "heygen_voice_for_face": "PHOEBE" }, "license_class": "stock", "channel": "video",
+      "notes": "HeyGen stock voice used for Phoebe videos today. Not canonical.", "sources": [{ "component": "voice.v1" }] }
+  ]
+}

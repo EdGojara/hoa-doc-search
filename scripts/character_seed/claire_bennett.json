@@ -1,0 +1,97 @@
+{
+  "character": { "slug": "claire_bennett", "display_name": "Claire Bennett", "roster_persona": "claire", "face_token": "CLAIRE" },
+  "components": [
+    {
+      "key": "face.v1", "component": "face",
+      "change_reason": "Existing Claire image remains canonical (Ed 2026-09-26). No visual redesign planned. The other generated looks in her HeyGen group are kept as unapproved variants.",
+      "spec": {
+        "apparent_age_range": [33, 40],
+        "hair": { "color": "medium brown", "style": "shoulder length, loose waves, side part" },
+        "eyes": "gray-green",
+        "skin_tone": "fair with light freckles",
+        "distinguishing": ["small stud earrings", "warm open smile"],
+        "visual_vibe": "warm, clear, trustworthy front-office voice of Bedrock",
+        "canonical_image_notes": "2048x2048, generated in HeyGen. Navy blazer over a cream top, wood-paneled office with a lamp and plants. Eye and skin descriptors await Ed's confirmation."
+      },
+      "assets": [
+        { "file": "claire_look_3d2a7d29_IN-USE.webp", "role": "canonical", "origin": "heygen_generated_look", "origin_ref": "HeyGen prompt-generated look in production use" },
+        { "repo": "public/assets/presentations/team/claire.jpg", "role": "derived", "origin": "repo", "origin_ref": "public/assets/presentations/team/claire.jpg", "parent_file": "claire_look_3d2a7d29_IN-USE.webp" },
+        { "bucket": "explainers", "key": "faces/claire.webp", "role": "provider_copy", "origin": "supabase_explainers_bucket", "origin_ref": "explainers/faces/claire.webp (public bucket)", "parent_file": "claire_look_3d2a7d29_IN-USE.webp" },
+        { "file": "claire_look_d1c09238.webp", "role": "unapproved_variant", "origin": "heygen_generated_look", "origin_ref": "Alternate generated look in the Claire group" },
+        { "file": "claire_look_4d5381b3.webp", "role": "unapproved_variant", "origin": "heygen_generated_look", "origin_ref": "Alternate generated look in the Claire group" },
+        { "file": "claire_look_d94cd6dd.webp", "role": "unapproved_variant", "origin": "heygen_generated_look", "origin_ref": "Alternate generated look in the Claire group" },
+        { "file": "claire_look_4fbb18c6.webp", "role": "unapproved_variant", "origin": "heygen_generated_look", "origin_ref": "Alternate generated look (plain background); also the group's preview image" }
+      ]
+    },
+    {
+      "key": "voice.v1", "component": "voice",
+      "change_reason": "Phase A: no canonical voice declared. Claire speaks with different voices on video and on the phone today; both are recorded as provider mappings. Evaluation order set by Ed 2026-09-26: Claire fourth.",
+      "spec": {
+        "status": "under_evaluation",
+        "description": "Not yet canonical. Callers hear her far more than viewers do, so phone familiarity weighs heavily in the decision."
+      },
+      "assets": []
+    },
+    {
+      "key": "wardrobe.v1", "component": "wardrobe",
+      "change_reason": "Observed from the canonical image only. No Character Bible entry for Claire yet.",
+      "spec": {
+        "contexts": {
+          "boardroom": ["navy blazer over a cream top"]
+        },
+        "palette": ["navy", "cream"],
+        "jewelry_signature": "small stud earrings",
+        "never": ["provocative or revealing clothing"],
+        "notes": "Full wardrobe canon pending a Character Bible entry."
+      },
+      "assets": []
+    },
+    {
+      "key": "persona.v1", "component": "persona",
+      "change_reason": "Roster role and the CLAUDE.md Claire persona rules. Live behavior prompt is unchanged and referenced, not copied.",
+      "spec": {
+        "role_snapshot": { "display_name": "Claire Bennett", "title": "Customer Support Specialist" },
+        "temperament": "warm, clear, honest",
+        "communication_style": "the casual email/chat tone: specific, brief, honest; offers a human handoff conversationally, never a phone tree",
+        "warmth": "high",
+        "firmness": "never grants waivers or decides violations; hands compliance matters to the team",
+        "would_say": ["Want me to put you through to someone on the team?"],
+        "would_never_say": ["that she is a human", "a waiver, violation decision, fine, deadline or legal position", "press 1"],
+        "persona_prompt_ref": "lib/voice/persona.js and lib/team/roster.js (persona: claire)"
+      },
+      "assets": []
+    },
+    {
+      "key": "guardrails.v1", "component": "guardrails",
+      "change_reason": "Team visual continuity rule and the honest-AI rule for voice surfaces.",
+      "spec": {
+        "face_drift": ["preserve the canonical face; no redesign planned"],
+        "personality_drift": ["identifies as AI on first contact in voice and video"],
+        "voice_drift": ["one voice across video, phone and realtime once the canonical voice is set"]
+      },
+      "assets": []
+    }
+  ],
+  "releases": [
+    { "key": "r1", "current": true, "notes": "Claire as she exists today. No visual redesign (Ed 2026-09-26). No body canon yet.",
+      "components": { "face": "face.v1", "voice": "voice.v1", "wardrobe": "wardrobe.v1", "persona": "persona.v1", "guardrails": "guardrails.v1" } }
+  ],
+  "mappings": [
+    { "provider": "heygen", "kind": "look", "resolve": { "env": "CLAIRE_AVATAR_ID" }, "license_class": "owned", "channel": "video",
+      "notes": "Look in use by production today (generated in HeyGen).", "sources": [{ "component": "face.v1", "file": "claire_look_3d2a7d29_IN-USE.webp" }] },
+    { "provider": "heygen", "kind": "avatar_group", "resolve": { "group_of_env": "CLAIRE_AVATAR_ID" }, "license_class": "owned",
+      "sources": [{ "component": "face.v1", "file": "claire_look_3d2a7d29_IN-USE.webp" }] },
+    { "provider": "heygen", "kind": "look", "resolve": { "group_of_env": "CLAIRE_AVATAR_ID", "look_prefix": "d1c09238" }, "license_class": "owned",
+      "notes": "Unapproved alternate look.", "sources": [{ "component": "face.v1", "file": "claire_look_d1c09238.webp" }] },
+    { "provider": "heygen", "kind": "look", "resolve": { "group_of_env": "CLAIRE_AVATAR_ID", "look_prefix": "4d5381b3" }, "license_class": "owned",
+      "notes": "Unapproved alternate look.", "sources": [{ "component": "face.v1", "file": "claire_look_4d5381b3.webp" }] },
+    { "provider": "heygen", "kind": "look", "resolve": { "group_of_env": "CLAIRE_AVATAR_ID", "look_prefix": "d94cd6dd" }, "license_class": "owned",
+      "notes": "Unapproved alternate look.", "sources": [{ "component": "face.v1", "file": "claire_look_d94cd6dd.webp" }] },
+    { "provider": "heygen", "kind": "look", "resolve": { "group_of_env": "CLAIRE_AVATAR_ID", "look_prefix": "4fbb18c6" }, "license_class": "owned",
+      "notes": "Unapproved alternate look (plain background).", "sources": [{ "component": "face.v1", "file": "claire_look_4fbb18c6.webp" }] },
+    { "provider": "heygen", "kind": "voice", "resolve": { "heygen_voice_for_face": "CLAIRE" }, "license_class": "stock", "channel": "video",
+      "notes": "HeyGen stock voice used for Claire videos today. Not canonical.", "sources": [{ "component": "voice.v1" }] },
+    { "provider": "elevenlabs", "kind": "voice", "resolve": { "phone_voice": true }, "license_class": "unknown", "channel": "phone",
+      "notes": "Voice the phone bridge speaks with today (hard-coded default). Library status unconfirmed (ElevenLabs key not available locally).", "sources": [{ "component": "voice.v1" }] }
+  ]
+}
