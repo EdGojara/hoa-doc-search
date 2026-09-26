@@ -114,6 +114,21 @@ async function main() {
     team_context: needTeam ? { active_humans: team.humans.length, humans_without_recorded_role: rolesNeedingEd(team.humans).length, open_items: Object.values(team.ownership).reduce((a, v) => a + v.length, 0) } : null,
     results: [] };
 
+  // Checkpoint after every case so a stopped run (machine off, sleep) resumes
+  // where it left off instead of losing finished, paid-for cases.
+  const out = o.out || path.join(__dirname, 'reports', `${report.at.replace(/[:.]/g, '-')}.json`);
+  const partial = out.replace(/\.json$/, '.partial.json');
+  if (fs.existsSync(partial)) {
+    const prev = JSON.parse(fs.readFileSync(partial, 'utf8'));
+    const want = new Set(selected.map((c) => c.case_id));
+    report.results = prev.results.filter((r) => want.has(r.case_id) && r.runs.length === o.runs && r.runs.every((x) => x.dimensions));
+    report.at = prev.at; report.resumed = true;
+    const done = new Set(report.results.map((r) => r.case_id));
+    selected = selected.filter((c) => !done.has(c.case_id));
+    console.log(`resuming from checkpoint: ${done.size} case(s) already done, ${selected.length} to go`);
+  }
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+
   for (const c of selected) {
     const agent = c.agent || 'amanda';
     const layered = c._team || o.mode === 'candidate';   // v1.2 team layers + guard
@@ -185,11 +200,11 @@ async function main() {
       return [d, { verdicts: vs, consistent: vs.length <= 1 || vs.every((x) => x === vs[0]) }];
     }));
     report.results.push({ case_id: c.case_id, version: c.version, title: c.title, agent, suite: c._team ? 'team_routing' : 'amanda', audience: c.audience, domain: c.domain, runs, consistency });
+    fs.writeFileSync(partial, JSON.stringify(report, null, 2));
   }
   report.usage = usage.summary();
-  const out = o.out || path.join(__dirname, 'reports', `${report.at.replace(/[:.]/g, '-')}.json`);
-  fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, JSON.stringify(report, null, 2));
+  if (fs.existsSync(partial)) fs.unlinkSync(partial);
   fs.writeFileSync(out.replace(/\.json$/, '.md'), summarize(report));
   console.log(`\nreport: ${out}\ncost: ${JSON.stringify(report.usage)}`);
 }
