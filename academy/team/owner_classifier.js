@@ -146,7 +146,7 @@ function ownerBlock(o, { names = {} } = {}) {
   const n = (k) => names[k] || k;
   const lines = [`OWNERSHIP (decided before you draft; do not re-decide it): ${o.owner_class.replace(/_/g, ' ')}${o.owner && o.owner !== o.accountable ? `, owner: ${n(o.owner)}` : ''}.`, `Why: ${o.reason}.`];
   if (o.authority_required.length) lines.push(`Approval needed: ${o.authority_required.map((a) => a.replace(/_/g, ' ')).join(', ')}${o.decision_body ? ` (${o.decision_body})` : ''}. You do not make this decision.`);
-  if (o.handoff_required) lines.push(`HANDOFF REQUIRED to ${n(o.owner)}: tell the person who is picking it up, do not decide or argue the substance yourself, and include the HANDOFF package. Without a valid package your reply will not be released.`);
+  if (o.handoff_required) lines.push(`HANDOFF REQUIRED to ${n(o.owner)}: you may acknowledge the question, summarize the known facts, say who has it, and explain what happens next. Do not make the ruling yourself (no "so yes", no "the board can", no "it will be approved"). Include the HANDOFF package. Without a valid package your reply will not be released.`);
   if (o.notify.length) lines.push(`Internal escalation: also notify ${o.notify.map(n).join(', ')} (put them in the package's "notify").`);
   if (o.consult.length) lines.push(`Before you commit to facts, confirm them with ${o.consult.map(n).join(', ')}.`);
   lines.push(o.transfer ? `Ownership transfers to ${n(o.owner)}; say so plainly.` : `You stay accountable for follow-through: the person should hear from you (or know exactly who is on it) and never have to start over.`);

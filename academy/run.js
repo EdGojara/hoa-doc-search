@@ -33,6 +33,7 @@ const { checkRouting, validateHandoff } = require('./team/routing_checks');
 const { directoryBlock, liveHumans, liveOwnership, rolesNeedingEd } = require('./team/directory');
 const { capabilityBlock } = require('./team/capabilities');
 const { gateProblems, asViolations, release } = require('./team/release_gate');
+const { rulingViolations } = require('./team/ruling_guard');
 const { bodiesFor, governanceBlock } = require('./team/governance');
 const { ownerBlock } = require('./team/owner_classifier');
 const { NAMES } = require('./team/agent_under_test');
@@ -152,7 +153,8 @@ async function main() {
       // Integrity + capability guard; ONE natural revision if it fires.
       let guardInfo = null;
       if (layered) {
-        const g = (m, cm) => guard({ message: m, actionLog: c.action_log || [], contextText: ctx, agent, commitments: cm, governanceBodies: bodies });
+        // fact/capability guard + substantive-ruling guard (no ruling on a decision ownership sent elsewhere)
+        const g = (m, cm) => [...guard({ message: m, actionLog: c.action_log || [], contextText: ctx, agent, commitments: cm, governanceBodies: bodies }), ...rulingViolations({ message: m, owner, agent })];
         const first = g(resp.message, out.commitments);
         // release gate: a required handoff needs a valid package before release
         const gateFirst = gateProblems(owner, out.handoff);
@@ -170,6 +172,8 @@ async function main() {
         } else guardInfo.final_violations = [];
         guardInfo.capability_first = first.filter((v) => v.rule === 'CAPABILITY');
         guardInfo.capability_final = guardInfo.final_violations.filter((v) => v.rule === 'CAPABILITY');
+        guardInfo.ruling_first = first.filter((v) => v.rule === 'SUBSTANTIVE_RULING');
+        guardInfo.ruling_final = guardInfo.final_violations.filter((v) => v.rule === 'SUBSTANTIVE_RULING');
         guardInfo.release = release(owner, out.handoff);   // held = never sent
       }
       let routing = null;

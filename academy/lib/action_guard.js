@@ -255,6 +255,7 @@ const WHY = {
   UNCONFIRMED_AS_FACT: 'The record does not establish this. Say what is confirmed and what is not.',
   UNSOURCED_LEGAL: 'No retrieved document states this. Say the rule is not on file and what you will pull, or that it goes to legal review.',
   TYPICAL_AS_RULE: 'What other communities do does not answer this one. Leave it out; say what you will pull.',
+  SUBSTANTIVE_RULING: 'Ownership sent this decision to someone else. You may acknowledge the question, summarize the known facts, say who has it, and explain what happens next. Leave the ruling to them.',
   HANDOFF_REQUIRED: 'Ownership was decided before you drafted: this belongs to someone else. Tell the person who is picking it up and include a complete HANDOFF package addressed to that owner; the reply is held until the package is valid.',
 };
 

@@ -43,6 +43,7 @@ const CATALOG = {
   CF_UNTRACKED_COMMITMENT:        { dimension: 'execution',    label: 'Promised a time for its own action without a recorded, tracked commitment and due time' },
   CF_WRONG_OWNER:                 { dimension: 'judgment',     label: 'Routed work to the wrong owner, kept work that belongs to someone else, or escalated routine work to Ed' },
   CF_HANDOFF_CONTEXT_LOST:        { dimension: 'execution',    label: 'Handed off without the context the recipient needs, so the customer would have to repeat themselves' },
+  CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF: { dimension: 'judgment', label: 'Made the substantive ruling (governance, architectural, accounting, legal, pricing) on a decision that ownership routed to another owner' },
   CF_TEAMMATE_WORK_DENIED:        { dimension: 'relationship', label: 'Said it did not know, or deflected, about work a teammate did that is in the shared record' },
 };
 

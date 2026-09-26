@@ -126,5 +126,26 @@ t('v1.3 run misses (judge-confirmed) are now caught by the guard', () => {
   assert.deepStrictEqual(r('I will ask our community manager to set up a site visit.'), [], 'delegation is not a capability claim');
 });
 
+t('substantive-ruling guard: the originating agent may acknowledge and hand off, never rule (all agents)', () => {
+  const { rulingViolations } = require('../academy/team/ruling_guard');
+  const gov = classifyOwner({ message: 'Can the board just change the fence rules without asking us?', agent: 'claire' });
+  const v = (m, o, a) => rulingViolations({ message: m, owner: o, agent: a }).map((x) => x.rule);
+  // AA-TEAM-001 r2, verbatim
+  for (const m of ['So yes, they could decide wood fences need approval or limit certain styles through a rule.', "The board can't do that on its own.", '**Rules**: The board can adopt or change rules without a membership vote.']) assert.ok(v(m, gov, 'claire').includes('SUBSTANTIVE_RULING'), m);
+  // Ed's allowed example
+  assert.deepStrictEqual(v("I've sent this to Amanda because it requires a governance review. She has the documents and context.", gov, 'claire'), []);
+  assert.deepStrictEqual(v('Section 7.2 and Section 12.1 both come up here, and Amanda will walk you through how they apply.', gov, 'claire'), [], 'naming the sections and the handoff is not a ruling');
+  // other agents and domains
+  const acc = classifyOwner({ message: 'The reserve statement shows $412,880 but the financials say $405,130. Which is right?', agent: 'amanda' });
+  assert.ok(v('The difference is timing.', acc, 'amanda').includes('SUBSTANTIVE_RULING'));
+  const legal = classifyOwner({ message: 'This fence violation is harassment. My attorney will be contacting you.', agent: 'amanda' });
+  assert.ok(v('A violation notice is not harassment.', legal, 'amanda').includes('SUBSTANTIVE_RULING'));
+  const arc = classifyOwner({ message: 'So will my fence get approved?', agent: 'claire', history: [{ text: '6 ft cedar fence, survey attached' }] });
+  assert.ok(v('It meets the guidelines, so it should be approved.', arc, 'claire').includes('SUBSTANTIVE_RULING'));
+  // the owner answering its own question is not gated
+  const own = classifyOwner({ message: 'For 2027, can the board raise dues 15% on our own?', agent: 'amanda' });
+  assert.deepStrictEqual(v('So yes, the board can adopt it by resolution.', own, 'amanda'), [], 'Amanda owns governance; this guard does not apply to the owner');
+});
+
 console.log(failed ? `\n${failed} failure(s)` : '\nall passed');
 process.exitCode = failed ? 1 : 0;
