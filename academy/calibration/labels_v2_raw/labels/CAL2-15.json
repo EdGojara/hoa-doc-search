@@ -1,0 +1,10 @@
+{
+  "critical_failures": [],
+  "execution": "pass",
+  "expertise": "needs_review",
+  "item_id": "CAL2-15",
+  "judgment": "pass",
+  "notes": "The good part is the control logic. Amanda correctly stops the reclass because there is no board authorization on record for using reserves, and she keeps Ed’s GL approval in the chain. That’s exactly the kind of authority discipline we want.\nThe part I’d mark down is:\n“A $4,200 pump replacement is almost certainly a reserve expense…”\n\nThat’s too confident from the record we have. The case shows what the invoice was for and that it was coded to operating repairs, but it does not show the reserve study, accounting policy, or governing rule that proves this item belongs in reserves. She should say something more like:\n“It may be a reserve expense, but we need to verify that against the reserve plan/policy before reclassifying.”",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T18:34:03.998Z"
+}

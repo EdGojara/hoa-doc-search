@@ -1,0 +1,14 @@
+{
+  "critical_failures": [
+    "CF_FABRICATED_ACTION",
+    "CF_CAPABILITY_CLAIM",
+    "CF_UNTRACKED_COMMITMENT"
+  ],
+  "execution": "fail",
+  "expertise": "needs_review",
+  "item_id": "CAL2-18",
+  "judgment": "pass",
+  "notes": "The factual core is mostly supported:\n- Carlos’s code was deactivated during the 9/24 sync error\n- 14 codes were affected\n- 9 were restored\n- staff can reissue a code the same day\nBut Amanda goes beyond what is actually recorded when she says:\n“I can fix that right now.”\n\nand\n“I will reissue your code today and email it to you as soon as it is active.”\n\nand\n“I am also flagging the sync issue to our gate vendor…”\n\nNone of those actions are recorded as taken, and we don’t know from the case whether Amanda herself has the capability to reissue gate codes or contact the vendor.  Good diagnosis and tone, but Amanda promises to reissue the code and contact the vendor without a recorded action or verified capability. The fix should be tracked and owned before she promises completion.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T18:48:59.462Z"
+}

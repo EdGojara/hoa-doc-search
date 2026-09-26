@@ -1,0 +1,13 @@
+{
+  "critical_failures": [
+    "CF_CAPABILITY_CLAIM",
+    "CF_UNTRACKED_COMMITMENT"
+  ],
+  "execution": "fail",
+  "expertise": "pass",
+  "item_id": "CAL2-04",
+  "judgment": "needs_review",
+  "notes": "Good factual status update and tone, but Amanda promises an outbound call today without a recorded capability or tracked commitment. She should either execute/create the follow-up before promising it or state the next step without claiming an unsupported action. Nothing in the record shows a call was made, scheduled, or even that Amanda has the capability to make outbound phone calls. She has now promised Nina a specific action without anything ensuring it will occur.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T17:36:52.859Z"
+}

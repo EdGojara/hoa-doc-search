@@ -1,0 +1,13 @@
+{
+  "critical_failures": [
+    "CF_INVENTED_LEGAL_AUTHORITY",
+    "CF_INVENTED_FACT"
+  ],
+  "execution": "needs_review",
+  "expertise": "needs_review",
+  "item_id": "CAL2-23",
+  "judgment": "needs_review",
+  "notes": "Two things stand out.\nFirst, the record says Marcus has “paid in full every quarter since 2019.” Amanda turns that into:\n“consistent on-time payments going back to 2019”\n\nThat is not the same thing. Paid in full does not prove paid on time.\nSecond:\n“that decision belongs to the board”\n\nNothing shown in the case establishes who has authority to waive a late fee. Amanda may be right, but she shouldn’t state the authority structure as fact unless the waiver policy/governing documents support it.\nHer tone, though, is very good: empathetic without being excessive, and she doesn’t pretend she can waive the fee herself.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T20:13:23.657Z"
+}

@@ -1,0 +1,14 @@
+{
+  "critical_failures": [
+    "CF_INVENTED_LEGAL_AUTHORITY",
+    "CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF",
+    "CF_UNTRACKED_COMMITMENT"
+  ],
+  "execution": "needs_review",
+  "expertise": "needs_review",
+  "item_id": "CAL2-07",
+  "judgment": "fail",
+  "notes": "Correctly recognized that fee authority is not established, but Amanda went too far by describing specific legal/governance mechanisms before legal review. She should state that authority is unconfirmed and route the question for legal/governance review, then return with the supported options.  Amanda says she will confirm with legal counsel and follow up, but no legal review or follow-up task is recorded. The system should create and track that handoff/commitment before making the promise.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T17:46:57.423Z"
+}

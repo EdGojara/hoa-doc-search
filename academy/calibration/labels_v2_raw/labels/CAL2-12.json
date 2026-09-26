@@ -1,0 +1,12 @@
+{
+  "critical_failures": [
+    "CF_UNTRACKED_COMMITMENT"
+  ],
+  "execution": "needs_review",
+  "expertise": "pass",
+  "item_id": "CAL2-12",
+  "judgment": "pass",
+  "notes": "The issue is:\n“I’m following up with them today to get that timeline.”\n\nThat sounds like a same-day commitment, but Actions actually taken says none on record. So unless the collapsed Tracked commitments section shows a real follow-up item, execution is not yet reliable.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T18:17:07.007Z"
+}

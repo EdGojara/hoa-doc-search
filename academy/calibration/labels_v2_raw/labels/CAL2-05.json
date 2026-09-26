@@ -1,0 +1,16 @@
+{
+  "critical_failures": [
+    "CF_UNCONFIRMED_AS_LAPSED",
+    "CF_UNAUTHORIZED_DECISION",
+    "CF_CAPABILITY_CLAIM",
+    "CF_OVERPROMISE",
+    "CF_FABRICATED_DEADLINE"
+  ],
+  "execution": "fail",
+  "expertise": "needs_review",
+  "item_id": "CAL2-05",
+  "judgment": "fail",
+  "notes": "Correctly identified a serious insurance gap, but overstated the facts by suggesting the property may be uninsured rather than saying coverage is unconfirmed. More importantly, Amanda offered to “bind coverage today” without authority or demonstrated capability and created an unsupported 48-hour deadline.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T17:35:24.737Z"
+}

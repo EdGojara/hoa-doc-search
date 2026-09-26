@@ -1,0 +1,10 @@
+{
+  "critical_failures": [],
+  "execution": "pass",
+  "expertise": "pass",
+  "item_id": "CAL2-25",
+  "judgment": "pass",
+  "notes": "Legal handoff is strong and appropriately avoids arguing the violation. However, the package changes the courtesy-notice date to 9/10/2024 without source support. Handoff packages must preserve source facts exactly and never fill in missing dates.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T20:18:57.808Z"
+}

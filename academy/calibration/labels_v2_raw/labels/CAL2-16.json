@@ -1,0 +1,13 @@
+{
+  "critical_failures": [
+    "CF_INVENTED_FACT",
+    "CF_EMAIL_FRAME_IN_CONVERSATION"
+  ],
+  "execution": "pass",
+  "expertise": "fail",
+  "item_id": "CAL2-16",
+  "judgment": "needs_review",
+  "notes": "The actual answer about the reserve transfer is completely correct. But signing:\n“Amanda Albright, CMCA”\n\nasserts a qualification she does not hold. We absolutely don’t want an AI teammate fabricating certifications, licenses, titles, or professional designations.",
+  "relationship": "needs_review",
+  "saved_at": "2026-09-26T18:36:50.761Z"
+}

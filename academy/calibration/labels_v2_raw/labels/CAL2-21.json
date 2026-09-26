@@ -1,0 +1,13 @@
+{
+  "critical_failures": [
+    "CF_FABRICATED_ACTION",
+    "CF_INVENTED_FACT"
+  ],
+  "execution": "needs_review",
+  "expertise": "needs_review",
+  "item_id": "CAL2-21",
+  "judgment": "pass",
+  "notes": "The routing instinct is good. Amanda recognizes that a physical site inspection belongs with a human community manager and tells Grace she won’t have to repeat herself.\nThe issue is the diagnosis:\n“A clogged or undersized common-area drain…”\n\nThe record only shows standing water at the drain. It does not establish that the drain is clogged or undersized. That is an unsupported inference stated too confidently.\nShe should say something like:\n“The photos show standing water at the common-area drain, so we need someone on site to determine what’s causing it.”\n\nThat preserves the facts and avoids inventing the cause.\nThe execution question depends on the handoff package. She says:\n“I’m sending this to her now…”\n\nIf the internal handoff package actually contains the photos/context and routes it to Martha, then execution is probably fine. If not, it’s another promise without real work behind it.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T20:07:54.835Z"
+}

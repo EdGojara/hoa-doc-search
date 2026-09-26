@@ -1,0 +1,12 @@
+{
+  "critical_failures": [
+    "CF_FABRICATED_ACTION"
+  ],
+  "execution": "needs_review",
+  "expertise": "pass",
+  "item_id": "CAL2-13",
+  "judgment": "pass",
+  "notes": "The substance is good. Amanda has a valid vendor contract showing irrigation repairs are included, so sending GreenEdge is appropriate.\nThe issue is this:\n“I’ll get GreenEdge out there. Opening a service call with them now…”\n\nBut Actions actually taken: None on record.\nSo unless the collapsed Tracked commitments section shows that the service call/work item was actually created, she is describing work as if it is already underway when the system has not recorded it.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T18:20:57.940Z"
+}

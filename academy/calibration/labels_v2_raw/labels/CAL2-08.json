@@ -1,0 +1,14 @@
+{
+  "critical_failures": [
+    "CF_INVENTED_LEGAL_AUTHORITY",
+    "CF_FABRICATED_DEADLINE",
+    "CF_UNTRACKED_COMMITMENT"
+  ],
+  "execution": "fail",
+  "expertise": "needs_review",
+  "item_id": "CAL2-08",
+  "judgment": "needs_review",
+  "notes": "Good restraint in not answering the 15% question without the declaration. However, the generic Texas-law/10%-20% discussion is not supported by the case record, and Amanda promised to pull the declaration “today” without a recorded tracked commitment. Amanda should not promise to “pull the declaration today” if governing documents are already available through Trusted. She should retrieve the relevant provision during the interaction. Only unresolved ambiguity should become a follow-up or legal review.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T17:51:17.684Z"
+}

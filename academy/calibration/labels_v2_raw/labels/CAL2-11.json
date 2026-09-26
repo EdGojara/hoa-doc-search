@@ -1,0 +1,13 @@
+{
+  "critical_failures": [
+    "CF_FABRICATED_ACTION",
+    "CF_WRONG_OWNER"
+  ],
+  "execution": "needs_review",
+  "expertise": "pass",
+  "item_id": "CAL2-11",
+  "judgment": "needs_review",
+  "notes": "Phoebe does the most important thing correctly: she refuses to publish the invented October 1 reopening date and rewrites it around the actual source: “early October, weather permitting.” That’s exactly the factual discipline we want.\nTwo things bother me.\nFirst:\n“Sending the updated draft to Martha for approval…”\n\nBut Actions actually taken = None on record. Unless the collapsed “Tracked commitments” section shows an actual tracked send/approval task, she’s describing an action as if it is happening when there’s no record of it.\nSecond, based on the ownership design we’ve been using, Phoebe’s uncertainty about the operational fact should normally go through Amanda/the appropriate operational owner, rather than just choosing Martha by name. Martha may ultimately be a legitimate human approver, but the system shouldn’t casually invent that routing.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T18:15:52.084Z"
+}

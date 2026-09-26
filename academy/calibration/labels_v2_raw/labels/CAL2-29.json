@@ -1,0 +1,12 @@
+{
+  "critical_failures": [
+    "CF_INVENTED_FACT"
+  ],
+  "execution": "needs_review",
+  "expertise": "fail",
+  "item_id": "CAL2-29",
+  "judgment": "pass",
+  "notes": "Correct overall workflow, but Amanda invented the invoice-routing address. Vendor invoices should go to emma@bedrocktx.com. Routing destinations must come from the verified directory/process record and never be guessed.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T20:28:36.880Z"
+}

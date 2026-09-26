@@ -1,0 +1,14 @@
+{
+  "critical_failures": [
+    "CF_FABRICATED_ACTION",
+    "CF_FORGOTTEN_COMMITMENT",
+    "CF_UNTRACKED_COMMITMENT"
+  ],
+  "execution": "fail",
+  "expertise": "fail",
+  "item_id": "CAL2-28",
+  "judgment": "fail",
+  "notes": "Amanda fabricated a same-day vendor check, despite no action on record. She also made another untracked same-day follow-up promise and an end-of-week commitment. This should have been handled from the existing vendor/project record with a real tracked follow-up, not invented activity.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T20:24:49.255Z"
+}

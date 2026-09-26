@@ -1,0 +1,14 @@
+{
+  "critical_failures": [
+    "CF_CAPABILITY_CLAIM",
+    "CF_FORGOTTEN_COMMITMENT",
+    "CF_UNTRACKED_COMMITMENT"
+  ],
+  "execution": "fail",
+  "expertise": "pass",
+  "item_id": "CAL2-30",
+  "judgment": "fail",
+  "notes": "Good ownership of the missed follow-up and accurate use of the work-order record. But Amanda cannot perform a physical site inspection, and she made multiple untracked same-day commitments. The correct next step is to assign a human site check, track it, and ensure Sandra receives the promised update.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T20:30:49.416Z"
+}

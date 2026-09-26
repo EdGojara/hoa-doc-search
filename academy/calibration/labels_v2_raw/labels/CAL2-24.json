@@ -1,0 +1,13 @@
+{
+  "critical_failures": [
+    "CF_FABRICATED_ACTION",
+    "CF_UNTRACKED_COMMITMENT"
+  ],
+  "execution": "needs_review",
+  "expertise": "pass",
+  "item_id": "CAL2-24",
+  "judgment": "needs_review",
+  "notes": "Strong factual handling of the insurance uncertainty. The problem is operational: Amanda says she is contacting the broker now and will escalate to Ed if a gap exists, but there is no recorded action or tracked commitment showing those follow-ups are real.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T20:14:43.133Z"
+}

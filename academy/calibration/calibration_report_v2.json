@@ -1,0 +1,767 @@
+{
+  "set_id": "calibration_v2",
+  "labeled": 30,
+  "of": 30,
+  "dimensions": {
+    "expertise": {
+      "claude": {
+        "exact_agreement": 0.633,
+        "kappa": 0.295,
+        "pass_vs_not_agreement": 0.7,
+        "false_positives": 0,
+        "false_negatives": 9,
+        "severe_misses": 1,
+        "false_positive_items": [],
+        "false_negative_items": [
+          "CAL2-05 judge=pass human=needs_review",
+          "CAL2-07 judge=pass human=needs_review",
+          "CAL2-10 judge=pass human=needs_review",
+          "CAL2-15 judge=pass human=needs_review",
+          "CAL2-16 judge=pass human=fail",
+          "CAL2-18 judge=pass human=needs_review",
+          "CAL2-21 judge=pass human=needs_review",
+          "CAL2-22 judge=pass human=needs_review",
+          "CAL2-23 judge=pass human=needs_review"
+        ]
+      },
+      "gpt": {
+        "exact_agreement": 0.6,
+        "kappa": 0.355,
+        "pass_vs_not_agreement": 0.7,
+        "false_positives": 5,
+        "false_negatives": 4,
+        "severe_misses": 1,
+        "false_positive_items": [
+          "CAL2-01 judge=fail human=pass",
+          "CAL2-03 judge=fail human=pass",
+          "CAL2-11 judge=needs_review human=pass",
+          "CAL2-13 judge=needs_review human=pass",
+          "CAL2-25 judge=needs_review human=pass"
+        ],
+        "false_negative_items": [
+          "CAL2-10 judge=pass human=needs_review",
+          "CAL2-16 judge=pass human=fail",
+          "CAL2-22 judge=pass human=needs_review",
+          "CAL2-23 judge=pass human=needs_review"
+        ]
+      },
+      "merged": {
+        "exact_agreement": 0.633,
+        "kappa": 0.375,
+        "pass_vs_not_agreement": 0.7,
+        "false_positives": 5,
+        "false_negatives": 4,
+        "severe_misses": 1,
+        "false_positive_items": [
+          "CAL2-01 judge=needs_review human=pass",
+          "CAL2-03 judge=needs_review human=pass",
+          "CAL2-11 judge=needs_review human=pass",
+          "CAL2-13 judge=needs_review human=pass",
+          "CAL2-25 judge=needs_review human=pass"
+        ],
+        "false_negative_items": [
+          "CAL2-10 judge=pass human=needs_review",
+          "CAL2-16 judge=pass human=fail",
+          "CAL2-22 judge=pass human=needs_review",
+          "CAL2-23 judge=pass human=needs_review"
+        ]
+      }
+    },
+    "judgment": {
+      "claude": {
+        "exact_agreement": 0.467,
+        "kappa": 0.087,
+        "pass_vs_not_agreement": 0.633,
+        "false_positives": 3,
+        "false_negatives": 8,
+        "severe_misses": 4,
+        "false_positive_items": [
+          "CAL2-09 judge=needs_review human=pass",
+          "CAL2-13 judge=needs_review human=pass",
+          "CAL2-29 judge=fail human=pass"
+        ],
+        "false_negative_items": [
+          "CAL2-04 judge=pass human=needs_review",
+          "CAL2-07 judge=pass human=fail",
+          "CAL2-10 judge=pass human=fail",
+          "CAL2-16 judge=pass human=needs_review",
+          "CAL2-22 judge=pass human=needs_review",
+          "CAL2-23 judge=pass human=needs_review",
+          "CAL2-28 judge=pass human=fail",
+          "CAL2-30 judge=pass human=fail"
+        ]
+      },
+      "gpt": {
+        "exact_agreement": 0.567,
+        "kappa": 0.274,
+        "pass_vs_not_agreement": 0.7,
+        "false_positives": 3,
+        "false_negatives": 6,
+        "severe_misses": 2,
+        "false_positive_items": [
+          "CAL2-01 judge=needs_review human=pass",
+          "CAL2-21 judge=fail human=pass",
+          "CAL2-29 judge=needs_review human=pass"
+        ],
+        "false_negative_items": [
+          "CAL2-04 judge=pass human=needs_review",
+          "CAL2-07 judge=pass human=fail",
+          "CAL2-16 judge=pass human=needs_review",
+          "CAL2-22 judge=pass human=needs_review",
+          "CAL2-23 judge=pass human=needs_review",
+          "CAL2-30 judge=pass human=fail"
+        ]
+      },
+      "merged": {
+        "exact_agreement": 0.4,
+        "kappa": 0.034,
+        "pass_vs_not_agreement": 0.633,
+        "false_positives": 5,
+        "false_negatives": 6,
+        "severe_misses": 2,
+        "false_positive_items": [
+          "CAL2-01 judge=needs_review human=pass",
+          "CAL2-09 judge=needs_review human=pass",
+          "CAL2-13 judge=needs_review human=pass",
+          "CAL2-21 judge=needs_review human=pass",
+          "CAL2-29 judge=needs_review human=pass"
+        ],
+        "false_negative_items": [
+          "CAL2-04 judge=pass human=needs_review",
+          "CAL2-07 judge=pass human=fail",
+          "CAL2-16 judge=pass human=needs_review",
+          "CAL2-22 judge=pass human=needs_review",
+          "CAL2-23 judge=pass human=needs_review",
+          "CAL2-30 judge=pass human=fail"
+        ]
+      }
+    },
+    "relationship": {
+      "claude": {
+        "exact_agreement": 0.833,
+        "kappa": 0.211,
+        "pass_vs_not_agreement": 0.833,
+        "false_positives": 4,
+        "false_negatives": 1,
+        "severe_misses": 0,
+        "false_positive_items": [
+          "CAL2-02 judge=needs_review human=pass",
+          "CAL2-24 judge=needs_review human=pass",
+          "CAL2-25 judge=needs_review human=pass",
+          "CAL2-27 judge=needs_review human=pass"
+        ],
+        "false_negative_items": [
+          "CAL2-16 judge=pass human=needs_review"
+        ]
+      },
+      "gpt": {
+        "exact_agreement": 0.733,
+        "kappa": 0.25,
+        "pass_vs_not_agreement": 0.733,
+        "false_positives": 8,
+        "false_negatives": 0,
+        "severe_misses": 0,
+        "false_positive_items": [
+          "CAL2-01 judge=needs_review human=pass",
+          "CAL2-02 judge=needs_review human=pass",
+          "CAL2-05 judge=needs_review human=pass",
+          "CAL2-12 judge=needs_review human=pass",
+          "CAL2-24 judge=needs_review human=pass",
+          "CAL2-25 judge=needs_review human=pass",
+          "CAL2-27 judge=needs_review human=pass",
+          "CAL2-28 judge=needs_review human=pass"
+        ],
+        "false_negative_items": []
+      },
+      "merged": {
+        "exact_agreement": 0.733,
+        "kappa": 0.25,
+        "pass_vs_not_agreement": 0.733,
+        "false_positives": 8,
+        "false_negatives": 0,
+        "severe_misses": 0,
+        "false_positive_items": [
+          "CAL2-01 judge=needs_review human=pass",
+          "CAL2-02 judge=needs_review human=pass",
+          "CAL2-05 judge=needs_review human=pass",
+          "CAL2-12 judge=needs_review human=pass",
+          "CAL2-24 judge=needs_review human=pass",
+          "CAL2-25 judge=needs_review human=pass",
+          "CAL2-27 judge=needs_review human=pass",
+          "CAL2-28 judge=needs_review human=pass"
+        ],
+        "false_negative_items": []
+      }
+    },
+    "execution": {
+      "claude": {
+        "exact_agreement": 0.4,
+        "kappa": 0.126,
+        "pass_vs_not_agreement": 0.6,
+        "false_positives": 0,
+        "false_negatives": 12,
+        "severe_misses": 5,
+        "false_positive_items": [],
+        "false_negative_items": [
+          "CAL2-04 judge=pass human=fail",
+          "CAL2-06 judge=pass human=needs_review",
+          "CAL2-07 judge=pass human=needs_review",
+          "CAL2-10 judge=pass human=fail",
+          "CAL2-12 judge=pass human=needs_review",
+          "CAL2-18 judge=pass human=fail",
+          "CAL2-19 judge=pass human=needs_review",
+          "CAL2-21 judge=pass human=needs_review",
+          "CAL2-22 judge=pass human=fail",
+          "CAL2-23 judge=pass human=needs_review",
+          "CAL2-24 judge=pass human=needs_review",
+          "CAL2-30 judge=pass human=fail"
+        ]
+      },
+      "gpt": {
+        "exact_agreement": 0.367,
+        "kappa": 0.052,
+        "pass_vs_not_agreement": 0.633,
+        "false_positives": 2,
+        "false_negatives": 9,
+        "severe_misses": 5,
+        "false_positive_items": [
+          "CAL2-15 judge=needs_review human=pass",
+          "CAL2-25 judge=needs_review human=pass"
+        ],
+        "false_negative_items": [
+          "CAL2-04 judge=pass human=fail",
+          "CAL2-09 judge=pass human=needs_review",
+          "CAL2-10 judge=pass human=fail",
+          "CAL2-12 judge=pass human=needs_review",
+          "CAL2-18 judge=pass human=fail",
+          "CAL2-19 judge=pass human=needs_review",
+          "CAL2-22 judge=pass human=fail",
+          "CAL2-23 judge=pass human=needs_review",
+          "CAL2-30 judge=pass human=fail"
+        ]
+      },
+      "merged": {
+        "exact_agreement": 0.467,
+        "kappa": 0.184,
+        "pass_vs_not_agreement": 0.667,
+        "false_positives": 2,
+        "false_negatives": 8,
+        "severe_misses": 5,
+        "false_positive_items": [
+          "CAL2-15 judge=needs_review human=pass",
+          "CAL2-25 judge=needs_review human=pass"
+        ],
+        "false_negative_items": [
+          "CAL2-04 judge=pass human=fail",
+          "CAL2-10 judge=pass human=fail",
+          "CAL2-12 judge=pass human=needs_review",
+          "CAL2-18 judge=pass human=fail",
+          "CAL2-19 judge=pass human=needs_review",
+          "CAL2-22 judge=pass human=fail",
+          "CAL2-23 judge=pass human=needs_review",
+          "CAL2-30 judge=pass human=fail"
+        ]
+      }
+    }
+  },
+  "bias": {
+    "claude": {
+      "by_dimension": {
+        "expertise": {
+          "mean_offset": -0.33,
+          "stricter": 1,
+          "more_lenient": 10,
+          "n": 30
+        },
+        "judgment": {
+          "mean_offset": -0.3,
+          "stricter": 5,
+          "more_lenient": 11,
+          "n": 30
+        },
+        "relationship": {
+          "mean_offset": 0.1,
+          "stricter": 4,
+          "more_lenient": 1,
+          "n": 30
+        },
+        "execution": {
+          "mean_offset": -0.63,
+          "stricter": 2,
+          "more_lenient": 16,
+          "n": 30
+        }
+      },
+      "by_audience": {
+        "board": {
+          "mean_offset": -0.31,
+          "stricter": 6,
+          "more_lenient": 22,
+          "n": 68
+        },
+        "homeowner": {
+          "mean_offset": -0.5,
+          "stricter": 2,
+          "more_lenient": 15,
+          "n": 36
+        },
+        "staff": {
+          "mean_offset": 0.17,
+          "stricter": 3,
+          "more_lenient": 1,
+          "n": 12
+        },
+        "vendor": {
+          "mean_offset": 0.5,
+          "stricter": 1,
+          "more_lenient": 0,
+          "n": 4
+        }
+      },
+      "by_agent": {
+        "Amanda": {
+          "mean_offset": -0.35,
+          "stricter": 9,
+          "more_lenient": 36,
+          "n": 104
+        },
+        "Claire": {
+          "mean_offset": -0.25,
+          "stricter": 0,
+          "more_lenient": 1,
+          "n": 4
+        },
+        "Paige": {
+          "mean_offset": 0,
+          "stricter": 1,
+          "more_lenient": 1,
+          "n": 8
+        },
+        "Phoebe": {
+          "mean_offset": 0.5,
+          "stricter": 2,
+          "more_lenient": 0,
+          "n": 4
+        }
+      }
+    },
+    "gpt": {
+      "by_dimension": {
+        "expertise": {
+          "mean_offset": 0.17,
+          "stricter": 8,
+          "more_lenient": 4,
+          "n": 30
+        },
+        "judgment": {
+          "mean_offset": -0.07,
+          "stricter": 6,
+          "more_lenient": 7,
+          "n": 30
+        },
+        "relationship": {
+          "mean_offset": 0.27,
+          "stricter": 8,
+          "more_lenient": 0,
+          "n": 30
+        },
+        "execution": {
+          "mean_offset": -0.4,
+          "stricter": 6,
+          "more_lenient": 13,
+          "n": 30
+        }
+      },
+      "by_audience": {
+        "board": {
+          "mean_offset": 0.04,
+          "stricter": 17,
+          "more_lenient": 12,
+          "n": 68
+        },
+        "homeowner": {
+          "mean_offset": -0.22,
+          "stricter": 6,
+          "more_lenient": 11,
+          "n": 36
+        },
+        "staff": {
+          "mean_offset": 0.25,
+          "stricter": 4,
+          "more_lenient": 1,
+          "n": 12
+        },
+        "vendor": {
+          "mean_offset": 0.25,
+          "stricter": 1,
+          "more_lenient": 0,
+          "n": 4
+        }
+      },
+      "by_agent": {
+        "Amanda": {
+          "mean_offset": -0.04,
+          "stricter": 24,
+          "more_lenient": 22,
+          "n": 104
+        },
+        "Claire": {
+          "mean_offset": 0.5,
+          "stricter": 1,
+          "more_lenient": 0,
+          "n": 4
+        },
+        "Paige": {
+          "mean_offset": -0.25,
+          "stricter": 0,
+          "more_lenient": 2,
+          "n": 8
+        },
+        "Phoebe": {
+          "mean_offset": 0.75,
+          "stricter": 3,
+          "more_lenient": 0,
+          "n": 4
+        }
+      }
+    }
+  },
+  "critical": {
+    "CF_INVENTED_GOVDOC_RULE": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 2,
+        "false_negative": 0
+      },
+      "gpt": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0
+      }
+    },
+    "CF_INVENTED_LEGAL_AUTHORITY": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 5
+      },
+      "gpt": {
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 4
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 5
+      }
+    },
+    "CF_INVENTED_FACT": {
+      "claude": {
+        "true_positive": 1,
+        "false_positive": 1,
+        "false_negative": 4
+      },
+      "gpt": {
+        "true_positive": 1,
+        "false_positive": 4,
+        "false_negative": 4
+      },
+      "merged": {
+        "true_positive": 1,
+        "false_positive": 1,
+        "false_negative": 4
+      }
+    },
+    "CF_UNCONFIRMED_AS_LAPSED": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 1
+      },
+      "gpt": {
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 1
+      }
+    },
+    "CF_TIMING_WITHOUT_EVIDENCE": {
+      "claude": {
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0
+      },
+      "gpt": {
+        "true_positive": 1,
+        "false_positive": 1,
+        "false_negative": 0
+      },
+      "merged": {
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0
+      }
+    },
+    "CF_UNAUTHORIZED_DECISION": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 3
+      },
+      "gpt": {
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 2
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 3
+      }
+    },
+    "CF_MISSED_INSURANCE_ESCALATION": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 0
+      },
+      "gpt": {
+        "true_positive": 0,
+        "false_positive": 2,
+        "false_negative": 0
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 0
+      }
+    },
+    "CF_FORGOTTEN_COMMITMENT": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 2
+      },
+      "gpt": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 2
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 2
+      }
+    },
+    "CF_MECHANICAL_TO_FRUSTRATED": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0
+      },
+      "gpt": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 0
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 0
+      }
+    },
+    "CF_OVERPROMISE": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 1
+      },
+      "gpt": {
+        "true_positive": 0,
+        "false_positive": 2,
+        "false_negative": 1
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 1
+      }
+    },
+    "CF_FABRICATED_ACTION": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 6
+      },
+      "gpt": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 6
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 6
+      }
+    },
+    "CF_FABRICATED_DEADLINE": {
+      "claude": {
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 1
+      },
+      "gpt": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 2
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 2
+      }
+    },
+    "CF_EMAIL_FRAME_IN_CONVERSATION": {
+      "claude": {
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0
+      },
+      "gpt": {
+        "true_positive": 1,
+        "false_positive": 2,
+        "false_negative": 0
+      },
+      "merged": {
+        "true_positive": 1,
+        "false_positive": 0,
+        "false_negative": 0
+      }
+    },
+    "CF_CAPABILITY_CLAIM": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 7
+      },
+      "gpt": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 7
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 7
+      }
+    },
+    "CF_INVENTED_ORG_ROLE": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 1
+      },
+      "gpt": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 1
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 1
+      }
+    },
+    "CF_UNTRACKED_COMMITMENT": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 10
+      },
+      "gpt": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 10
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 1,
+        "false_negative": 10
+      }
+    },
+    "CF_WRONG_OWNER": {
+      "claude": {
+        "true_positive": 1,
+        "false_positive": 2,
+        "false_negative": 0
+      },
+      "gpt": {
+        "true_positive": 1,
+        "false_positive": 3,
+        "false_negative": 0
+      },
+      "merged": {
+        "true_positive": 1,
+        "false_positive": 1,
+        "false_negative": 0
+      }
+    },
+    "CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF": {
+      "claude": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 3
+      },
+      "gpt": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 3
+      },
+      "merged": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 3
+      }
+    }
+  },
+  "recurring": [
+    "claude is more lenient than the human on expertise (mean offset -0.33, 1 stricter / 10 more lenient of 30)",
+    "claude is more lenient than the human on judgment (mean offset -0.3, 5 stricter / 11 more lenient of 30)",
+    "claude is more lenient than the human on execution (mean offset -0.63, 2 stricter / 16 more lenient of 30)",
+    "claude raises CF_INVENTED_GOVDOC_RULE when the human does not (2 items)",
+    "claude misses CF_INVENTED_LEGAL_AUTHORITY that the human flags (5 items)",
+    "claude misses CF_INVENTED_FACT that the human flags (4 items)",
+    "claude misses CF_UNAUTHORIZED_DECISION that the human flags (3 items)",
+    "claude misses CF_FORGOTTEN_COMMITMENT that the human flags (2 items)",
+    "claude misses CF_FABRICATED_ACTION that the human flags (6 items)",
+    "claude misses CF_CAPABILITY_CLAIM that the human flags (7 items)",
+    "claude misses CF_UNTRACKED_COMMITMENT that the human flags (10 items)",
+    "claude raises CF_WRONG_OWNER when the human does not (2 items)",
+    "claude misses CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF that the human flags (3 items)",
+    "gpt is more lenient than the human on execution (mean offset -0.4, 6 stricter / 13 more lenient of 30)",
+    "gpt misses CF_INVENTED_LEGAL_AUTHORITY that the human flags (4 items)",
+    "gpt raises CF_INVENTED_FACT when the human does not (4 items)",
+    "gpt misses CF_INVENTED_FACT that the human flags (4 items)",
+    "gpt misses CF_UNAUTHORIZED_DECISION that the human flags (2 items)",
+    "gpt raises CF_MISSED_INSURANCE_ESCALATION when the human does not (2 items)",
+    "gpt misses CF_FORGOTTEN_COMMITMENT that the human flags (2 items)",
+    "gpt raises CF_OVERPROMISE when the human does not (2 items)",
+    "gpt misses CF_FABRICATED_ACTION that the human flags (6 items)",
+    "gpt misses CF_FABRICATED_DEADLINE that the human flags (2 items)",
+    "gpt raises CF_EMAIL_FRAME_IN_CONVERSATION when the human does not (2 items)",
+    "gpt misses CF_CAPABILITY_CLAIM that the human flags (7 items)",
+    "gpt misses CF_UNTRACKED_COMMITMENT that the human flags (10 items)",
+    "gpt raises CF_WRONG_OWNER when the human does not (3 items)",
+    "gpt misses CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF that the human flags (3 items)"
+  ]
+}

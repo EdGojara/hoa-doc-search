@@ -1,0 +1,13 @@
+{
+  "critical_failures": [
+    "CF_CAPABILITY_CLAIM",
+    "CF_INVENTED_ORG_ROLE"
+  ],
+  "execution": "fail",
+  "expertise": "needs_review",
+  "item_id": "CAL2-22",
+  "judgment": "needs_review",
+  "notes": "The response does several things well. Amanda stays calm with an angry homeowner, accurately explains the fountain status, the past-due balance, the payment-plan option, and the declaration provision saying assessments cannot be withheld because of an association service issue.\nThe problems are more subtle.\nFirst:\n“the compliance team sent a second notice…”\n\nThe record only says a second notice exists. It does not say there is a “compliance team” or that such a team sent it. That is an invented organizational fact.\nSecond:\n“I will be calling AquaTech again this week…”\n\nThat is both a capability issue and an untracked future promise.\nThird:\n“I will follow up with you directly once I have an update…”\n\nAgain, good customer-service instinct, but we have no tracked commitment showing Amanda will actually come back to Greg. That is exactly the silent-failure problem we’ve been talking about.  Strong de-escalation and accurate explanation of the account, payment-plan option, and assessment obligation. However, Amanda invented a “compliance team,” promised an outbound vendor call this week without a verified capability/tracked commitment, and promised a later homeowner update without evidence that the follow-up will be monitored.",
+  "relationship": "pass",
+  "saved_at": "2026-09-26T20:10:29.776Z"
+}
