@@ -91,7 +91,7 @@ t('action guard: a claim with a matching record is allowed; without one it is no
   // a promised time is allowed only with a recorded commitment
   const msg = "I'll email you this afternoon with what I find.";
   assert.ok(guard({ message: msg }).some((v) => v.rule === 'UNTRACKED_COMMITMENT'));
-  assert.deepStrictEqual(guard({ message: msg, commitments: [{ what: 'email findings', due: 'today 16:00', capability: 'send_email' }] }), []);
+  assert.deepStrictEqual(guard({ message: msg, commitments: [{ what: 'email you what I find', due: 'today 16:00', capability: 'send_email' }] }), []);
   assert.strictEqual(actionClaims('We followed up twice.')[0].type, 'follow_up');
 });
 

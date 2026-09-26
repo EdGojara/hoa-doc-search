@@ -54,7 +54,7 @@ const FUTURE = new RegExp(`\\b(?:(I|we)(?:'ll|\\s+will|'m|\\s+am|'re|\\s+are|\\s
 const NEGATED = /^(not|never|cannot|can'?t|won'?t|don'?t|do not|didn'?t|did not|haven'?t|have not|hadn'?t|am not|'m not|unable)\b/i;
 const MODAL_SKIP = /^(will|can|could|would|should|am|'ll|need|want|plan|hope|expect|think|know|understand|see|hear|appreciate|apologize|agree|recommend|suggest|believe|am sorry|sorry|owe|get it|realize)\b/i;
 
-const TIME_PHRASE = /\b(today|tonight|this (morning|afternoon|evening|week)|tomorrow|by (the )?(end of (the )?(day|week|month)|eod|eow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|next week|tonight|close of business|noon|\d{1,2}(:\d\d)?\s*(am|pm)?)|within \d+\s*(hours?|business days?|days?|minutes?)|in the next (day|few days|day or two|\d+ (hours?|days?))|(later|early|end of) this week|next week|before (the )?(weekend|meeting))\b/i;
+const TIME_PHRASE = /\b(today|tonight|this (morning|afternoon|evening|week)|tomorrow|by (the )?(end of (the )?(day|week|month)|eod|eow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|next week|tonight|close of business|noon|\d{1,2}(:\d\d)?\s*(am|pm)?)|within (\d+|a|an|one|two|three|four|five|a few|several)\s*(hours?|business days?|days?|weeks?|minutes?)|in the next (day|few days|day or two|week|(\d+|two|three|few) (hours?|days?|weeks?))|(later|early|end of) this week|next week|before (the )?(weekend|meeting))\b/i;
 const DEADLINE = /\b(by (the )?(end of (the )?(day|week|month)|eod|eow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|next week|tonight|close of business)|within \d+\s*(hours?|business days?|days?)|in the next (day|few days|day or two|\d+ (hours?|days?))|(later|early) this week)\b/gi;
 const LAPSE = /\b((coverage|policy|insurance)\s+(has\s+)?(lapsed|expired and is gone|is (no longer|not) in force)|(we are|we're|the association is|property is|it is)\s+(currently\s+)?uninsured|real property is uninsured)\b/gi;
 const COVERED = /\b(we('re| are) (fully )?(covered|insured)|coverage is (in place|active|in force))\b/gi;
@@ -73,6 +73,35 @@ const INVENTED_ROLE = /\b(?:our|the|my|a)\s+((?:senior\s+)?leadership(?: team)?|
 const LEGAL_CITE = /\b(chapter \d{2,4}|§\s?\d+(\.\d+)*|\d{3}\.\d{3,5}|property code|texas law|state law|federal law|statut(e|es|ory)|the law (says|requires|allows|permits|limits)|legally (required|allowed|permitted)|under (texas|state|the) (law|statute))\b/gi;
 const TYPICAL_NORM = /\b(commonly|typically|usually|often|generally|standard(ly)?|many|most|some)\b[^.]{0,80}\b(\d{1,2}\s?%|declarations|associations|hoas|communities|documents|bylaws)\b[^.]{0,60}\b(\d{1,2}\s?%)?/i;
 
+// Any "our/the <words> coordinator|committee|manager|team|..." must be a role
+// that exists (roster titles, directory roles, governance bodies). Built lazily
+// from the roster so a new teammate's title is never flagged.
+const ROLE_NOUN = /\b(?:our|the|my)\s+((?:[a-z&]+\s+){0,4}?(?:coordinator|committee|manager|team|department|specialist|officer|director|supervisor|lead|contact|group|desk))\b/gi;
+let _allowed = null;
+function allowedRoles() {
+  if (_allowed) return _allowed;
+  const { ROSTER } = require('../../lib/team/roster');
+  const norm = (x) => String(x || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ').trim();
+  _allowed = new Set(['community manager', 'senior community manager', 'board', 'acc committee', 'architectural committee', 'architectural review committee', 'architectural control committee', 'committee', 'team',
+    // accurate short forms of real lanes (Kat + Emma; Annie's ACC/ARC lane)
+    'accounting team', 'arc coordinator', 'acc coordinator', 'architectural review coordinator']);
+  for (const p of ROSTER) for (const t of [p.title, p.signature_title]) if (t) _allowed.add(norm(t));
+  return _allowed;
+}
+function inventedRoles(s) {
+  const hits = [];
+  ROLE_NOUN.lastIndex = 0;
+  let m;
+  while ((m = ROLE_NOUN.exec(s))) {
+    const phrase = m[1].toLowerCase().replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ').trim();
+    // "our Director" is fine when the sentence spells out a real roster title
+    const sl = s.toLowerCase().replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ');
+    const ok = allowedRoles().has(phrase) || [...allowedRoles()].some((a) => a.includes(' ') && a.includes(phrase) && sl.includes(a));
+    if (!ok) hits.push(m[0].trim());
+  }
+  return hits;
+}
+
 function sentences(text) { return String(text || '').split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean); }
 
 function firstPersonClaims(text) {
@@ -86,7 +115,7 @@ function firstPersonClaims(text) {
         if (NEGATED.test(tail)) continue;                 // "I have not called" is not a claim
         if (tense === 'past' && MODAL_SKIP.test(tail)) continue;
         if (tense === 'past' && /^(be|been|being)\b/i.test(tail) && !/\bbeen (out )?to the\b/i.test(tail)) continue;
-        out.push({ tense, sentence: s, phrase: `${m[1] || 'let me'} ${tail}`, tail });
+        out.push({ tense, sentence: s, phrase: `${m[1] || 'let me'} ${tail}`, tail, raw: m[0] });
       }
     }
   }
@@ -103,10 +132,14 @@ function actionClaims(text) {
   return out.filter((x) => { const k = x.type + '|' + x.sentence; if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
-const words = (s) => new Set(String(s || '').toLowerCase().match(/[a-z]{4,}/g) || []);
+const STOP = new Set(['with', 'will', 'your', 'this', 'that', 'them', 'they', 'have', 'from', 'what', 'when', 'about', 'just', 'know', 'today', 'afternoon', 'morning', 'tonight', 'tomorrow', 'week', 'update', 'back', 'soon', 'then', 'also', 'once', 'there', 'their', 'would', 'could', 'should']);
+const words = (s) => new Set((String(s || '').toLowerCase().match(/[a-z]{4,}/g) || []).map((w) => w.replace(/(ing|ed|es|s)$/, '')).filter((w) => !STOP.has(w)));
+// A time-bound promise is tracked only if a recorded commitment with a due time
+// shares at least two content words with it (one shared word, e.g. "code",
+// matched an unrelated commitment in v1.2 run 1).
 function matchesCommitment(sentence, commitments) {
   const w = words(sentence);
-  return commitments.find((c) => c && c.due && [...words(c.what)].some((x) => w.has(x)));
+  return commitments.find((c) => c && c.due && [...words(c.what)].filter((x) => w.has(x)).length >= 2);
 }
 
 /**
@@ -127,8 +160,9 @@ function guard({ message, actionLog = [], contextText = '', agent = 'amanda', co
 
   // 1 + 2. first-person claims: records (past) and capability (both tenses)
   for (const c of firstPersonClaims(message)) {
-    const cap = capabilityForClaim(c.tail);
-    if (cap && !caps[cap].enabled) {
+    const cap = capabilityForClaim(c.tail) || capabilityForClaim(c.raw || '');
+    const delegated = /^(ask|have|get|let|bring in|hand\w*|loop\w* in|pass\w*|route\w*|send\w* (this|it) to|connect you with|put you in touch)\b/i.test(c.tail);
+    if (cap && !caps[cap].enabled && !delegated) {
       push({ rule: 'CAPABILITY', code: 'CF_CAPABILITY_CLAIM', capability: cap, tense: c.tense, sentence: c.sentence,
         detail: `"${c.phrase}" needs ${cap} (${CAPABILITIES[cap].label}), which ${agent} does not have: ${caps[cap].why}` });
       continue;
@@ -164,7 +198,11 @@ function guard({ message, actionLog = [], contextText = '', agent = 'amanda', co
     }
     // 6. invented org roles
     const r = s.match(INVENTED_ROLE);
-    if (r) push({ rule: 'INVENTED_ORG_ROLE', code: 'CF_INVENTED_ORG_ROLE', sentence: s, detail: `"${r[0].trim()}" is not anyone in the team directory` });
+    const realTitle = r && [...allowedRoles()].some((a) => a.includes(String(r[1] || '').toLowerCase().replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ').trim()) && s.toLowerCase().includes(a));
+    const rr = r && !realTitle && !allowedRoles().has(String(r[1] || '').toLowerCase().trim()) ? [r[0].trim()] : inventedRoles(s);
+    if (rr.length) push({ rule: 'INVENTED_ORG_ROLE', code: 'CF_INVENTED_ORG_ROLE', sentence: s, detail: `"${rr[0]}" is not anyone in the team directory` });
+    // an invitation to phone the agent needs an inbound line
+    if (/\b(call|phone|ring) (me|us)\b|\bgive (me|us) a (call|ring)\b/i.test(s) && !caps.receive_phone.enabled) push({ rule: 'CAPABILITY', code: 'CF_CAPABILITY_CLAIM', capability: 'receive_phone', sentence: s, detail: `invites a phone call, but ${agent} has no phone line` });
     // 7. coverage certainty
     if (UNCONFIRMED_CTX.test(ctx)) {
       LAPSE.lastIndex = 0; COVERED.lastIndex = 0;

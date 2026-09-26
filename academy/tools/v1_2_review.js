@@ -48,12 +48,13 @@ const AUDIT = { INVENTED_ORG_ROLE: 'invented org role', AUTHORITY: 'unauthorized
 function ctxOf(c) { return [...(c.available_context || []).map((x) => `${x.text} ${x.source}`), ...(c.conversation_history || []).map((h) => h.text)].join('\n'); }
 const CASES = {};
 for (const f of ['interaction.json', 'technical.json', 'regression_v1_1.json']) { const raw = require(path.join(__dirname, '..', 'cases', f)); for (const c of (raw.cases || raw)) CASES[c.case_id] = c; }
+for (const c of require(path.join(__dirname, '..', 'team', 'cases', 'team_routing.json')).cases) CASES[c.case_id] = { ...c, available_context: [...(c.available_context || []), ...(c.shared_work_context || []).map((w) => ({ text: `${w.what} ${w.at} ${w.status}`, source: w.ref }))] };
 function audit(set, ids) {
   const counts = Object.fromEntries(Object.keys(AUDIT).map((k) => [k, 0])); const hits = [];
   for (const id of ids) {
     const c = set[id]; if (!c) continue;
     for (const r of c.runs.filter((x) => x.message)) {
-      for (const v of guard({ message: r.message, contextText: ctxOf(CASES[id] || {}), actionLog: (CASES[id] || {}).action_log || [], agent: 'amanda', commitments: r.commitments || [] })) {
+      for (const v of guard({ message: r.message, contextText: ctxOf(CASES[id] || {}), actionLog: (CASES[id] || {}).action_log || [], agent: (CASES[id] || {}).agent || 'amanda', commitments: r.commitments || [] })) {
         if (counts[v.rule] === undefined) continue;
         counts[v.rule]++; hits.push(`${id} r${r.run} ${v.rule}: "${v.sentence}"`);
       }
@@ -105,11 +106,11 @@ if (!nCap) P('- none');
 P('');
 
 // ---- 3. the five v1.1 regressions, audited identically ------------------------------
-P('## C. The v1.1 regressions, audited with the same v1.2 guard on final messages (16 Amanda cases x 2)', '');
-const aB = audit(BASE, amandaIds), a11 = audit(V11, amandaIds), a12 = audit(V12, amandaIds);
-P('| Pattern | baseline | v1.1 | v1.2 |', '|---|---|---|---|');
-for (const [k, lab] of Object.entries(AUDIT)) P(`| ${lab} | ${aB.counts[k]} | ${a11.counts[k]} | ${a12.counts[k]} |`);
-P('', 'v1.2 hits:', ...(a12.hits.length ? a12.hits.map((h) => `- ${h}`) : ['- none']), '');
+P('## C. The v1.1 regressions, audited on SENT messages with the current (post-fix) guard', '', 'Same detector applied to every version, so the columns are comparable. The guard that ran live during v1.2 missed some of these; the fixed guard counts them here.', '');
+const aB = audit(BASE, amandaIds), a11 = audit(V11, amandaIds), a12 = audit(V12, amandaIds), aT = audit(TEAM, teamIds);
+P('| Pattern | baseline (32) | v1.1 (32) | v1.2 (32) | v1.2 team suite (32) |', '|---|---|---|---|---|');
+for (const [k, lab] of Object.entries(AUDIT)) P(`| ${lab} | ${aB.counts[k]} | ${a11.counts[k]} | ${a12.counts[k]} | ${aT.counts[k]} |`);
+P('', 'v1.2 hits (existing cases):', ...(a12.hits.length ? a12.hits.map((h) => `- ${h}`) : ['- none']), '', 'v1.2 hits (team suite):', ...(aT.hits.length ? aT.hits.map((h) => `- ${h}`) : ['- none']), '');
 
 // ---- 4. v1.1 cases: baseline -> v1.1 -> v1.2 ----------------------------------------
 P('## D. Existing cases: baseline -> v1.1 -> v1.2 (run 1/run 2)', '');

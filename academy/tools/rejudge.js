@@ -15,9 +15,18 @@ const { judgePrompt, parseJudge, mergeJudges, RUBRIC } = require('../lib/rubric'
 const { runDetectors } = require('../lib/critical');
 const { callModel } = require('../../lib/ai/model_client');
 
-const casesDir = path.join(__dirname, '..', 'cases');
-const CASES = Object.fromEntries(fs.readdirSync(casesDir, { withFileTypes: true }).filter((d) => d.isFile() && d.name.endsWith('.json'))
-  .flatMap((d) => JSON.parse(fs.readFileSync(path.join(casesDir, d.name), 'utf8'))).map((c) => [c.case_id, c]));
+const { directoryBlock, liveHumans, liveOwnership } = require('../team/directory');
+const { capabilityBlock } = require('../team/capabilities');
+
+// Amanda cases and team cases (team files wrap their cases in { cases: [...] }).
+const CASES = {};
+for (const [dir, team] of [[path.join(__dirname, '..', 'cases'), false], [path.join(__dirname, '..', 'team', 'cases'), true]]) {
+  if (!fs.existsSync(dir)) continue;
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.json'))) {
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+    for (const c of (Array.isArray(raw) ? raw : raw.cases || [raw])) CASES[c.case_id] = { ...c, _team: team };
+  }
+}
 
 // Rebuild a judge's full result object from what the merged run stored.
 function storedResult(run, judge) {
@@ -40,13 +49,22 @@ async function main() {
   if (!fs.existsSync(backup)) fs.writeFileSync(backup, JSON.stringify(report, null, 2));
   report.rejudge_log = report.rejudge_log || [];
   const allJudges = report.judges;
+  // v1.2 reports: judges must get the same organizational context the agent had.
+  let team = null;
+  if (report.candidate_version) {
+    const { createClient } = require('@supabase/supabase-js');
+    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+    team = { humans: await liveHumans({ supabase }), ownership: await liveOwnership(supabase) };
+  }
   for (const x of report.results) {
     const c = CASES[x.case_id];
     for (const run of x.runs) {
       if (!run.dimensions || run.dimensions.expertise.by_judge[want]) continue;
       let result = null, error = null;
       for (let attempt = 1; attempt <= 2 && !result; attempt++) {
-        const jr = await callModel({ provider, model, system: 'You are a strict, fair evaluator. Output only JSON.', prompt: judgePrompt(c, { message: run.message, internal: run.internal }), maxTokens: 6000, kind: 'judge' });
+        const agent = c.agent || 'amanda';
+        const extras = team ? { orgContext: directoryBlock(agent, team) + '\n\n' + capabilityBlock(agent), commitments: run.commitments || [], handoff: run.handoff || null } : {};
+        const jr = await callModel({ provider, model, system: 'You are a strict, fair evaluator. Output only JSON.', prompt: judgePrompt(c, { message: run.message, internal: run.internal }, extras), maxTokens: 10000, kind: 'judge' });
         if (!jr.ok) { error = jr.error; continue; }
         try { result = parseJudge(jr.text); } catch (e) { error = 'unparseable judge output: ' + e.message; }
       }
@@ -58,6 +76,12 @@ async function main() {
         const hit = merged.critical_failures.find((f) => f.code === d.code);
         if (hit) { hit.flags.push({ judge: d.source, evidence: d.evidence, why: d.note }); if (hit.status === 'disputed') hit.status = 'confirmed'; }
         else merged.critical_failures.push({ code: d.code, label: d.code, status: 'detector_only', flags: [{ judge: d.source, evidence: d.evidence, why: d.note }] });
+      }
+      // keep the action guard's surviving violations, as run.js merged them
+      for (const v of (run.guard && run.guard.final_violations) || []) {
+        const hit = merged.critical_failures.find((f) => f.code === v.code);
+        if (hit) { hit.flags.push({ judge: 'action_guard', evidence: v.sentence, why: v.detail }); if (hit.status === 'disputed') hit.status = 'confirmed'; }
+        else merged.critical_failures.push({ code: v.code, label: v.code, status: 'detector_only', flags: [{ judge: 'action_guard', evidence: v.sentence, why: v.detail }] });
       }
       const before = Object.fromEntries(Object.entries(run.dimensions).map(([d, v]) => [d, v.verdict]));
       Object.assign(run, merged, { judge_errors: result ? [] : [{ judge: want, error }] });
