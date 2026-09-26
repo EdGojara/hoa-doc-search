@@ -11,8 +11,21 @@ const { RUBRIC } = require('../lib/rubric');
 const { CATALOG } = require('../lib/critical');
 
 const blind = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'calibration', 'blind_v2.json'), 'utf8'));
-const rubric = Object.fromEntries(Object.entries(RUBRIC).map(([d, r]) => [d, { q: r.question.replace(' (Judge this SEPARATELY from correctness.)', ''), pass: r.pass, nr: r.needs_review, fail: r.fail }]));
-const catalog = Object.entries(CATALOG).map(([code, v]) => ({ code, dim: v.dimension, label: v.label }));
+// The judges' rubric and catalog were written for Amanda. On this page the
+// agent varies (Claire, Paige, Phoebe), so every name becomes an {agent}
+// token filled per item at render time, and pronouns become neutral
+// ("their", "them"). UI text only: the judges' own rubric is unchanged.
+const neutral = (s) => String(s)
+  .replace(/\bAmanda\b/g, '{agent}')
+  .replace(/\bstay inside her authority\b/g, 'stay inside their authority')
+  .replace(/\btrust her\b/g, 'trust them')
+  .replace(/\bsaid she would\b/g, 'said {agent} would')
+  .replace(/\bsomething she cannot\b/g, 'something {agent} cannot')
+  .replace(/\b(she|her)\b/g, (m) => (m === 'she' ? 'they' : 'their'));
+const rubric = Object.fromEntries(Object.entries(RUBRIC).map(([d, r]) => [d, {
+  q: neutral(r.question.replace(' (Judge this SEPARATELY from correctness.)', '')).replace('CORRECT?', 'correct?'),
+  pass: neutral(r.pass), nr: neutral(r.needs_review), fail: neutral(r.fail) }]));
+const catalog = Object.entries(CATALOG).map(([code, v]) => ({ code, dim: v.dimension, label: neutral(v.label) }));
 const data = JSON.stringify({ items: blind, rubric, catalog }).replace(/</g, '\\u003c');
 
 const html = `<title>Judge Calibration Set</title>
@@ -158,6 +171,10 @@ function renderList() {
 
 function factsList(arr, fmt) { return arr.length ? '<ul class="facts">' + arr.map(fmt).join('') + '</ul>' : ''; }
 
+// the agent's first name, from the item itself (e.g. "Claire (front office)" -> "Claire")
+const agentName = (it) => String(it.agent || 'the agent').split(' ')[0];
+const fill = (s, it) => String(s).split('{agent}').join(agentName(it));
+
 function show(i) {
   current = i;
   const it = DATA.items[i];
@@ -177,14 +194,14 @@ function show(i) {
   h += '<form class="grade" id="gradeform">';
   for (const d of DIMS) {
     const r = DATA.rubric[d];
-    h += '<div class="dim"><div class="q">' + DIMNAME[d] + ': ' + esc(r.q) + '</div><div class="seg" role="radiogroup" aria-label="' + DIMNAME[d] + '">'
+    h += '<div class="dim"><div class="q">' + DIMNAME[d] + ': ' + esc(fill(r.q, it)) + '</div><div class="seg" role="radiogroup" aria-label="' + DIMNAME[d] + '">'
       + ['pass','needs_review','fail'].map((v) => '<input type="radio" id="' + d + '-' + v + '" name="' + d + '" value="' + v + '"' + (L[d] === v ? ' checked' : '') + '><label for="' + d + '-' + v + '">' + ({pass:'Pass',needs_review:'Needs review',fail:'Fail'}[v]) + '</label>').join('')
-      + '</div><div class="hint"><b>Pass:</b> ' + esc(r.pass) + ' <b>Fail:</b> ' + esc(r.fail) + '</div></div>';
+      + '</div><div class="hint"><b>Pass:</b> ' + esc(fill(r.pass, it)) + ' <b>Fail:</b> ' + esc(fill(r.fail, it)) + '</div></div>';
   }
   const groups = {judgment:'Judgment',expertise:'Expertise',execution:'Execution',relationship:'Relationship'};
   h += '<details class="crit"' + (crit.size ? ' open' : '') + '><summary>Critical failures you see <span>(optional, ' + crit.size + ' marked)</span></summary><div class="critgrid">';
   for (const g of Object.keys(groups)) {
-    h += '<h4>' + groups[g] + '</h4>' + DATA.catalog.filter((c) => c.dim === g).map((c) => '<label><input type="checkbox" name="crit" value="' + c.code + '"' + (crit.has(c.code) ? ' checked' : '') + '><span>' + esc(c.label) + '</span></label>').join('');
+    h += '<h4>' + groups[g] + '</h4>' + DATA.catalog.filter((c) => c.dim === g).map((c) => '<label><input type="checkbox" name="crit" value="' + c.code + '"' + (crit.has(c.code) ? ' checked' : '') + '><span>' + esc(fill(c.label, it)) + '</span></label>').join('');
   }
   h += '</div></details>';
   h += '<div><label for="notes" class="q" style="font-weight:600">Notes <span style="font-weight:400;color:var(--muted)">(optional: what you saw that the grade alone does not say)</span></label><textarea id="notes" name="notes">' + esc(L.notes || '') + '</textarea></div>';
