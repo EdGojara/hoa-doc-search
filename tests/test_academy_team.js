@@ -138,18 +138,24 @@ t('routing checks fire on the failures and stay quiet on good replies', () => {
 });
 
 t('handoff package: complete packages pass; lost context and wrong owner are caught', () => {
+  // Ed 2026-09-26 required fields
   const good = {
-    from: 'claire', to: 'annie', person: 'Sam Okafor, homeowner, chat', ask: 'will the fence be approved; wants to start in two weeks',
-    known: ['6 ft cedar privacy fence, rear (Sam, chat)', 'survey attached with fence line (attachment)', 'Guidelines 4.1 allow up to 6 ft wood'],
-    unknown: ['stain color'], actions_on_record: [], promised: ['Annie will follow up'], why_theirs: 'ACC applications are Annie\'s lane', next_step: 'open the ACC application from the survey',
+    from: 'claire', to: 'annie', requestor: 'Sam Okafor, homeowner, chat', issue: 'will the fence be approved; wants to start in two weeks',
+    known_facts: ['6 ft cedar privacy fence, rear', 'survey attached with fence line', 'Guidelines 4.1 allow up to 6 ft wood'],
+    unknowns: ['stain color'], actions_taken: [], source_refs: ['chat with Sam', 'survey attachment', 'ACC Guidelines 4.1'],
+    reason: "ACC applications are Annie's lane", next_expected_action: 'open the ACC application from the survey',
+    followup_state: 'Sam was told Annie has his details; Claire keeps the thread until Annie confirms', transfer: false,
   };
   assert.deepStrictEqual(validateHandoff(good, byId['AA-TEAM-015'].expected_handoff), []);
-  const lost = { ...good, known: ['homeowner wants a fence'], ask: 'fence question' };
+  const lost = { ...good, known_facts: ['homeowner wants a fence'], issue: 'fence question' };
   assert.ok(validateHandoff(lost, byId['AA-TEAM-015'].expected_handoff).some((p) => p.code === 'HO_CONTEXT_LOST'));
   assert.ok(validateHandoff({ ...good, to: 'amanda' }, byId['AA-TEAM-015'].expected_handoff).some((p) => p.code === 'HO_WRONG_OWNER'));
-  const { next_step, ...noNext } = good;
-  assert.ok(validateHandoff(noNext).some((p) => p.detail === 'missing next_step'));
-  assert.strictEqual(Object.keys(HANDOFF_FIELDS).length, 10);
+  const { next_expected_action, ...noNext } = good;
+  assert.ok(validateHandoff(noNext).some((p) => p.detail === 'missing next_expected_action'));
+  const { source_refs, ...noSources } = good;
+  assert.ok(validateHandoff(noSources).some((p) => p.detail === 'missing source_refs'));
+  assert.ok(validateHandoff({ ...good, to: 'darby' }, { to: 'darby', notify: ['ed'] }).some((p) => p.code === 'HO_NOTIFY_MISSING'), 'a legal handoff must notify Ed');
+  assert.deepStrictEqual(Object.keys(HANDOFF_FIELDS), ['from', 'to', 'requestor', 'issue', 'known_facts', 'unknowns', 'actions_taken', 'source_refs', 'reason', 'next_expected_action', 'followup_state']);
 });
 
 (async () => {

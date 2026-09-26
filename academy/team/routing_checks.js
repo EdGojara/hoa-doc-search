@@ -16,7 +16,7 @@
 //   RT_NAMED_HUMAN_ROUTING    routes work to a named human desk instead of the role
 //   RT_PUBLISHED_UNCONFIRMED  (Phoebe) puts an unconfirmed date/status in copy
 // ----------------------------------------------------------------------------
-const { aiTeam, HUMAN_TEAM, HANDOFF_FIELDS } = require('./directory');
+const { aiTeam, HUMAN_TEAM, HANDOFF_FIELDS, HANDOFF_MAY_BE_EMPTY } = require('./directory');
 
 const RX = {
   denied: /\b(i (do not|don't) (know|have (any )?(visibility|information|access))|i('m| am) not (sure|aware) (what|whether|if) (paige|kat|emma|annie|miranda|amanda|claire|phoebe|reese|darby)|you('d| would) (have|need) to ask (paige|kat|emma|annie|miranda|amanda|claire|phoebe|reese|darby)|(that|this) (is|was) (paige|kat|emma|annie|miranda|amanda|claire|phoebe|reese|darby)'s (area|department|lane),? so i)\b/i,
@@ -50,10 +50,23 @@ function mentionsOwner(text, key) {
  * @param {object} p.expected        case.expected_routing
  * @param {Array}  [p.sharedWork]    case.shared_work_context
  */
-function checkRouting({ response, expected, sharedWork = [] }) {
+function checkRouting({ response, expected, sharedWork = [], handoff = null }) {
   const out = [];
   const text = String(response || '');
   const cls = new Set(expected.owner_class || []);
+  const pkgNames = handoff ? [].concat(handoff.to || [], handoff.notify || []).map((x) => String(x).toLowerCase()) : [];
+
+  // Missed Ed escalation: an internal reply must name him; an external one
+  // must carry him in the package (the customer need not hear the name).
+  if (expected.ed_required) {
+    const inReply = /\b(ed|ed gojara)\b/i.test(text);
+    const inPkg = pkgNames.some((x) => x === 'ed' || x.includes('gojara'));
+    if (!(expected.audience_is_internal ? inReply : (inReply || inPkg))) out.push({ code: 'RT_MISSED_ED', detail: 'Ed must receive this internal escalation, but neither the reply nor the handoff package includes him.' });
+  }
+  // Unnecessary Ed escalation also counts when it is hidden in the package.
+  if (!cls.has('ed_approval') && expected.ed_must_not_appear && !RX.ed.test(text) && pkgNames.some((x) => x === 'ed' || x.includes('gojara'))) {
+    out.push({ code: 'RT_UNNEEDED_ED', detail: 'Routine work escalated to Ed in the handoff package.' });
+  }
 
   if (sharedWork.length && expected.must_use_shared_work && RX.denied.test(text)) {
     out.push({ code: 'RT_TEAMMATE_WORK_DENIED', detail: 'The shared record shows the teammate\'s work, but the reply says it does not know or deflects.' });
@@ -102,10 +115,14 @@ function validateHandoff(pkg, expected = {}) {
   for (const f of Object.keys(HANDOFF_FIELDS)) {
     const v = pkg[f];
     const empty = v == null || (typeof v === 'string' && !v.trim()) || (Array.isArray(v) && !v.length);
-    // unknown and promised may legitimately be empty lists, but must be present
-    if (v === undefined || (empty && !['unknown', 'promised', 'actions_on_record'].includes(f))) problems.push({ code: 'HO_FIELD', detail: `missing ${f}` });
+    // unknowns and actions_taken may legitimately be empty lists, but must be present
+    if (v === undefined || (empty && !HANDOFF_MAY_BE_EMPTY.includes(f))) problems.push({ code: 'HO_FIELD', detail: `missing ${f}` });
   }
-  if (expected.to && pkg.to !== expected.to) problems.push({ code: 'HO_WRONG_OWNER', detail: `to=${pkg.to}, expected ${expected.to}` });
+  if (expected.to && String(pkg.to || '').toLowerCase() !== expected.to) problems.push({ code: 'HO_WRONG_OWNER', detail: `to=${pkg.to}, expected ${expected.to}` });
+  for (const n of expected.notify || []) {
+    const got = [].concat(pkg.notify || []).map((x) => String(x).toLowerCase());
+    if (!got.some((x) => x === n || x.includes(n))) problems.push({ code: 'HO_NOTIFY_MISSING', detail: `internal escalation to ${n} is missing from notify` });
+  }
   const blob = JSON.stringify(pkg).toLowerCase();
   for (const must of expected.must_carry || []) {
     if (!blob.includes(String(must).toLowerCase())) problems.push({ code: 'HO_CONTEXT_LOST', detail: `does not carry "${must}"` });

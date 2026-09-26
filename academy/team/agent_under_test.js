@@ -12,16 +12,18 @@
 // Layer precedence (highest first): integrity + capabilities > culture >
 // shared directory > role/lane > personality > channel/intent.
 // ----------------------------------------------------------------------------
-const { classifyIntent } = require('../lib/intent');
+const { classifyIntent, withOwnership } = require('../lib/intent');
 const { candidateSystem, teamLayers, FACTUAL_INTEGRITY, UNCERTAINTY, channelFormat, responseShape } = require('../lib/candidate_prompt');
 const { cultureBlock } = require('./culture');
 const { PROFILES } = require('./personalities');
 const { aiTeam, directory } = require('./directory');
+const { classifyOwner, ownerBlock } = require('./owner_classifier');
+const { governanceBlock } = require('./governance');
 
-const HANDOFF_RULE = `HANDOFFS: if this belongs to someone else (a teammate, a human role, Ed, the board, legal review), or you are bringing someone in, do everything inside your authority, tell the person who picks it up, and end your output with the package that travels with the work:
+const HANDOFF_RULE = `HANDOFF PACKAGE: when OWNERSHIP says a handoff is required (or you bring someone in), do everything inside your authority, tell the person who is picking it up, and end your output with the package that travels with the work:
 ---HANDOFF---
-{"from":"<you>","to":"<teammate key: amanda|paige|claire|phoebe|kat|emma|annie|miranda|reese|darby|maggie, or community_manager|ed|board|legal_review>","person":"who they are and how they reached us","ask":"what they asked","known":["fact (source)"],"unknown":["..."],"actions_on_record":["..."],"promised":["..."],"why_theirs":"...","next_step":"..."}
-The package goes to the recipient, never to the customer. If you own it yourself, leave it out.`;
+{"from":"<you>","to":"<owner key: amanda|paige|claire|phoebe|kat|emma|annie|miranda|reese|darby|maggie|community_manager|ed|board|legal>","notify":["<internal escalation, e.g. ed, if OWNERSHIP names one>"],"requestor":"who asked, their role, and how they reached us","issue":"what they asked or need","known_facts":["..."],"unknowns":["..."],"actions_taken":["what has actually been done, with dates"],"source_refs":["where each fact comes from"],"reason":"why this belongs to the recipient","next_expected_action":"the first thing the recipient should do","followup_state":"what the requestor was told, who follows up, and any due time","transfer":false}
+The package goes to the recipient, never to the customer. "transfer" is true only if ownership explicitly moves; otherwise you stay accountable for follow-through. If you own it yourself, leave the package out.`;
 
 const HARD_LIMITS = 'HARD LIMITS: you never waive or reduce a fine or fee, approve or deny an ACC application, take a legal position, make a Texas Chapter 209 determination, commit association funds, sign a contract, or post an accounting entry. You bring those to whoever decides (YOUR TEAM, ESCALATION PATHS).';
 
@@ -41,13 +43,15 @@ Under pressure: ${p.under_pressure}
 Watch for: ${p.blind_spot}`;
 }
 
-function sandboxSystem(agent, c, intent, team) {
+function sandboxSystem(agent, c, intent, team, ownership = '') {
   const me = aiTeam().find((t) => t.key === agent);
   return [
     `You are ${me.name}, ${me.role} at Bedrock Association Management, an AI teammate (say so if asked). Your lane: ${me.lane}. Community: ${c.community_context.name}.`,
     FACTUAL_INTEGRITY, UNCERTAINTY, HARD_LIMITS,
     cultureBlock(),
     teamLayers(agent, team),
+    governanceBlock(c.community_context),
+    ownership,
     personalityBlock(agent),
     'No em-dashes; use commas. Plain text, no markdown.',
     channelFormat(c.channel), responseShape(intent), HANDOFF_RULE,
@@ -70,17 +74,26 @@ function teamUserContent(c) {
 
 const AMANDA_AUDIENCES = new Set(['board', 'homeowner', 'vendor', 'staff']);
 
+const NAMES = () => Object.fromEntries(directory().map((m) => [m.key, m.name ? `${m.name}${m.kind === 'human' && m.role ? ` (${m.role})` : ''}` : m.role]).concat([['board', 'the board'], ['legal', 'legal review'], ['community_manager', 'the Community Manager'], ['ed', 'Ed Gojara']]));
+
+// Step 1 of the flow: ownership, decided before intent and before drafting.
+function ownerFor(c, agent) {
+  return classifyOwner({ message: c.incoming_message.text, agent, audience: c.audience, contextText: teamContextText(c), history: c.conversation_history || [], sharedWork: c.shared_work_context || [], community: c.community_context || {} });
+}
+
 function teamRequest(c, { team = {} } = {}) {
-  const intent = classifyIntent({ message: c.incoming_message.text, channel: c.channel, contextText: teamContextText(c), audience: c.audience });
+  const owner = ownerFor(c, c.agent);
+  const ownership = ownerBlock(owner, { names: NAMES() });
+  const intent = withOwnership(classifyIntent({ message: c.incoming_message.text, channel: c.channel, contextText: teamContextText(c), audience: c.audience }), owner);
   let system; let prompt_source;
   if (c.agent === 'amanda' && AMANDA_AUDIENCES.has(c.audience)) {
-    system = candidateSystem({ audience: c.audience, communityName: c.community_context.name, channel: c.channel, intent, team, agent: 'amanda' }) + '\n\n' + personalityBlock('amanda') + '\n\n' + HANDOFF_RULE;
-    prompt_source = 'amanda v1.2 candidate (production-derived) + team layers';
+    system = candidateSystem({ audience: c.audience, communityName: c.community_context.name, channel: c.channel, intent, team, agent: 'amanda', ownership, governance: governanceBlock(c.community_context) }) + '\n\n' + personalityBlock('amanda') + '\n\n' + HANDOFF_RULE;
+    prompt_source = 'amanda v1.3 candidate (production-derived) + team layers';
   } else {
-    system = sandboxSystem(c.agent, c, intent, team);
+    system = sandboxSystem(c.agent, c, intent, team, ownership);
     prompt_source = 'sandbox team prompt (Academy layers)';
   }
-  return { system, prompt: teamUserContent(c), intent, prompt_source };
+  return { system, prompt: teamUserContent(c), intent, owner, prompt_source };
 }
 
 // Split the model output into the customer message and the internal blocks.
@@ -110,4 +123,4 @@ function validateTeamCase(c) {
   return errs;
 }
 
-module.exports = { teamRequest, parseAgentOutput, teamContextText, validateTeamCase, sandboxSystem, HANDOFF_RULE, personalityBlock };
+module.exports = { teamRequest, parseAgentOutput, teamContextText, validateTeamCase, sandboxSystem, HANDOFF_RULE, personalityBlock, ownerFor, NAMES };

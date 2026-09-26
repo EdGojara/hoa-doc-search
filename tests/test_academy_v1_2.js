@@ -121,7 +121,9 @@ t('v1.2 run misses (judge-confirmed, guard-missed) are now caught; real titles a
   assert.ok(rules('If they cannot turn it around today I will follow up with you this afternoon and get you a temporary code.', { c: [{ what: "Email GateTech to reissue Carlos Mendez's gate code", due: 'today 17:00', capability: 'send_email' }] }).includes('UNTRACKED_COMMITMENT'));
   // not flagged: a real roster title (AA-TEAM-014 false positive), governance bodies, delegation
   assert.deepStrictEqual(rules('Maggie Sullivan, our Director of Growth & Community Relations, will send you information.'), []);
-  assert.deepStrictEqual(rules('I will bring it to the architectural review committee.'), []);
+  // v1.3: a committee exists only when established for the community
+  assert.ok(rules('I will bring it to the architectural review committee.').includes('INVENTED_ORG_ROLE'), 'no body on record');
+  assert.deepStrictEqual(guard({ message: 'I will bring it to the Architectural Review Committee.', governanceBodies: [{ name: 'Architectural Review Committee', type: 'arc', scope: 'exterior changes', source: 'Declaration Art. 8', active_from: '2019-01-01' }] }).map((v) => v.rule), []);
   assert.deepStrictEqual(rules("I'll ask our community manager to schedule a site visit with you."), []);
 });
 

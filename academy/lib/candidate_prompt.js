@@ -109,7 +109,10 @@ function applyEdits(text, target) {
   return out;
 }
 
-function candidateSystem({ audience, communityName, channel, intent, learnedGuidance = '', team = {}, agent = 'amanda' }) {
+// v1.3: `ownership` (owner_classifier.ownerBlock) and `governance`
+// (governance.governanceBlock) are decided before drafting and placed after the
+// team layers, ahead of the channel and intent shape.
+function candidateSystem({ audience, communityName, channel, intent, learnedGuidance = '', team = {}, agent = 'amanda', ownership = '', governance = '' }) {
   const L = loadLivePrompts();
   let base;
   if (audience === 'staff') base = `${L.staffPersona}\n\nCOMMUNITY: ${communityName || '(none)'}`;
@@ -117,7 +120,9 @@ function candidateSystem({ audience, communityName, channel, intent, learnedGuid
   const finance = L.FINANCE_PRIMER + '\n\n' + L.financeAddendum;
   const routing = applyEdits(L.CONTACT_ROUTING_RULE, 'routing_rule');
   let system = audience === 'staff' ? base : (audience === 'vendor' ? base : base + '\n\n' + finance) + '\n\n' + routing + '\n\n' + L.NO_OVERPROMISE_RULE;
-  system += '\n\n' + FACTUAL_INTEGRITY + '\n\n' + UNCERTAINTY + '\n\n' + teamLayers(agent, team) + '\n\n' + channelFormat(channel) + '\n\n' + responseShape(intent);
+  system += '\n\n' + FACTUAL_INTEGRITY + '\n\n' + UNCERTAINTY + '\n\n' + teamLayers(agent, team)
+    + (governance ? '\n\n' + governance : '') + (ownership ? '\n\n' + ownership : '')
+    + '\n\n' + channelFormat(channel) + '\n\n' + responseShape(intent);
   if (learnedGuidance) system += `\n\n${learnedGuidance}`;
   return system;
 }

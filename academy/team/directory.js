@@ -213,13 +213,18 @@ const AUTHORITY = [
 // ---- Handoff package -------------------------------------------------------------
 // What must travel with the work so the recipient never asks the customer to
 // repeat themselves. Validated by routing_checks.validateHandoff.
+// Required package fields (Ed 2026-09-26). Optional: notify (internal
+// escalation, e.g. Ed on a legal matter), transfer (true only when ownership
+// explicitly moves; otherwise the sender stays accountable for follow-through).
 const HANDOFF_FIELDS = {
-  from: 'who is handing off', to: 'who now owns it (teammate key, role, or approval class)',
-  person: 'who the customer is and how they reached us', ask: 'what they asked, in their words where it matters',
-  known: 'facts established, with where each came from', unknown: 'what is not yet confirmed',
-  actions_on_record: 'what has actually been done, with dates', promised: 'anything already promised to the customer, and by when',
-  why_theirs: 'why this belongs to the recipient', next_step: 'the first thing the recipient should do',
+  from: 'who is handing off', to: 'who owns the next step (teammate key, role, ed, board, legal)',
+  requestor: 'who asked, their role, and how they reached us', issue: 'what they asked or need, in their words where it matters',
+  known_facts: 'facts established so far', unknowns: 'what is not yet confirmed (may be empty)',
+  actions_taken: 'what has actually been done, with dates (may be empty)', source_refs: 'where the facts come from (documents, records, messages)',
+  reason: 'why this belongs to the recipient', next_expected_action: 'the first thing the recipient should do',
+  followup_state: 'what the requestor was told, who follows up, and any due time',
 };
+const HANDOFF_MAY_BE_EMPTY = ['unknowns', 'actions_taken'];
 
 // ---- Shared work context -----------------------------------------------------------
 // When a board member asks one teammate about work another teammate did, the
@@ -273,5 +278,5 @@ function directoryBlock(self, { humans, ownership } = {}) {
 
 module.exports = {
   ED_CONTEXT, HUMAN_TEAM, SHARED_QUEUES, AI_AUTHORITY, OWNER_CLASSES, AUTHORITY,
-  HANDOFF_FIELDS, WORK_RECORD_FIELDS, ESCALATION_PATHS, aiTeam, directory, directoryBlock, liveHumans, liveOwnership, loadFunctionalRoles, rolesNeedingEd,
+  HANDOFF_FIELDS, HANDOFF_MAY_BE_EMPTY, WORK_RECORD_FIELDS, ESCALATION_PATHS, aiTeam, directory, directoryBlock, liveHumans, liveOwnership, loadFunctionalRoles, rolesNeedingEd,
 };

@@ -12,7 +12,7 @@
 // ----------------------------------------------------------------------------
 const { systemFor } = require('./live_prompt');
 const { amandaView } = require('./case_schema');
-const { classifyIntent } = require('./intent');
+const { classifyIntent, withOwnership } = require('./intent');
 const { candidateSystem } = require('./candidate_prompt');
 
 const CONTRACT_FIELDS = ['facts', 'supported_inferences', 'unknowns', 'issues', 'proposed_actions', 'authority_required', 'escalation', 'communication_plan', 'next_action', 'completion_condition'];
@@ -70,11 +70,16 @@ function actionsBlock(c) {
 // blocks + the classified intent + actions on record. Sandbox only.
 function buildRequest(c, { mode = 'baseline', learnedGuidance = '', team = {} } = {}) {
   if (mode === 'candidate') {
-    const intent = classifyIntent({ message: c.incoming_message.text, channel: c.channel, contextText: contextText(c), audience: c.audience });
-    const system = candidateSystem({ audience: c.audience, communityName: c.community_context.name, channel: c.channel, intent, learnedGuidance, team, agent: 'amanda' });
+    // v1.3 flow: ownership first, then intent, then drafting.
+    const { classifyOwner, ownerBlock } = require('../team/owner_classifier');
+    const { governanceBlock } = require('../team/governance');
+    const { NAMES, HANDOFF_RULE } = require('../team/agent_under_test');
+    const owner = classifyOwner({ message: c.incoming_message.text, agent: 'amanda', audience: c.audience, contextText: contextText(c), history: c.conversation_history || [], sharedWork: [], community: c.community_context || {} });
+    const intent = withOwnership(classifyIntent({ message: c.incoming_message.text, channel: c.channel, contextText: contextText(c), audience: c.audience }), owner);
+    const system = candidateSystem({ audience: c.audience, communityName: c.community_context.name, channel: c.channel, intent, learnedGuidance, team, agent: 'amanda', ownership: ownerBlock(owner, { names: NAMES() }), governance: governanceBlock(c.community_context) }) + (owner.handoff_required ? '\n\n' + HANDOFF_RULE : '');
     const base = userContent(c);
     const cut = base.lastIndexOf("Draft Amanda's reply to");
-    return { system, prompt: base.slice(0, cut) + actionsBlock(c) + base.slice(cut), intent };
+    return { system, prompt: base.slice(0, cut) + actionsBlock(c) + base.slice(cut), intent, owner };
   }
   let system = systemFor(c.audience, c.community_context.name, { learnedGuidance });
   if (mode === 'contract') system += '\n\n' + CONTRACT_ADDENDUM;

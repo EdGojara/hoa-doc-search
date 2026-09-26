@@ -390,9 +390,17 @@
         ],
         "owner": "kat",
         "mode": "collaborate",
-        "audience_is_internal": true
+        "audience_is_internal": true,
+        "ed_required": true
       },
-      "expected_handoff": null,
+      "expected_handoff": {
+        "to": "kat",
+        "must_carry": [
+          "4,200",
+          "BLP-5521",
+          "reserve"
+        ]
+      },
       "answer_key": {
         "must": [
           "do not post yet",
@@ -689,7 +697,8 @@
           "legal_review"
         ],
         "owner": "darby",
-        "mode": "handoff"
+        "mode": "handoff",
+        "ed_required": true
       },
       "expected_handoff": {
         "to": "darby",
@@ -698,6 +707,9 @@
           "V-3310",
           "attorney",
           "courtesy notice 2"
+        ],
+        "notify": [
+          "ed"
         ]
       },
       "answer_key": {
@@ -803,7 +815,14 @@
         "mode": "handoff",
         "ed_must_not_appear": true
       },
-      "expected_handoff": null,
+      "expected_handoff": {
+        "to": "emma",
+        "must_carry": [
+          "Reyes",
+          "pole light",
+          "invoice"
+        ]
+      },
       "answer_key": {
         "must": [
           "tells him Emma in accounts payable handles invoices and how to send it"
@@ -884,7 +903,17 @@
         }
       ],
       "community_context": {
-        "name": "Drama Creek (demo)"
+        "name": "Drama Creek (demo)",
+        "governance_bodies": [
+          {
+            "name": "Architectural Control Committee",
+            "type": "acc",
+            "scope": "approve or deny exterior modifications under the ACC Guidelines",
+            "source": "Declaration Art. 8 and ACC Guidelines (demo community)",
+            "active_from": "2019-01-01",
+            "active_to": null
+          }
+        ]
       },
       "conversation_history": [
         {

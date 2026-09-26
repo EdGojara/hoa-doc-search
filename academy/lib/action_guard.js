@@ -77,17 +77,28 @@ const TYPICAL_NORM = /\b(commonly|typically|usually|often|generally|standard(ly)
 // that exists (roster titles, directory roles, governance bodies). Built lazily
 // from the roster so a new teammate's title is never flagged.
 const ROLE_NOUN = /\b(?:our|the|my)\s+((?:[a-z&]+\s+){0,4}?(?:coordinator|committee|manager|team|department|specialist|officer|director|supervisor|lead|contact|group|desk))\b/gi;
-let _allowed = null;
-function allowedRoles() {
-  if (_allowed) return _allowed;
-  const { ROSTER } = require('../../lib/team/roster');
-  const norm = (x) => String(x || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ').trim();
-  _allowed = new Set(['community manager', 'senior community manager', 'board', 'acc committee', 'architectural committee', 'architectural review committee', 'architectural control committee', 'committee', 'team',
-    // accurate short forms of real lanes (Kat + Emma; Annie's ACC/ARC lane)
-    'accounting team', 'arc coordinator', 'acc coordinator', 'architectural review coordinator']);
-  for (const p of ROSTER) for (const t of [p.title, p.signature_title]) if (t) _allowed.add(norm(t));
-  return _allowed;
+const normRole = (x) => String(x || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ').trim();
+let _roster = null;
+// Committees are NOT in the permanent list (Ed 2026-09-26): a governance body
+// is allowed only when it is established for this community (governance.js).
+function allowedRoles(bodies = []) {
+  if (!_roster) {
+    const { ROSTER } = require('../../lib/team/roster');
+    _roster = new Set(['community manager', 'senior community manager', 'board', 'team',
+      // accurate short forms of real lanes (Kat + Emma; Annie's ACC/ARC lane)
+      'accounting team', 'arc coordinator', 'acc coordinator', 'architectural review coordinator']);
+    for (const p of ROSTER) for (const t of [p.title, p.signature_title]) if (t) _roster.add(normRole(t));
+  }
+  if (!bodies.length) return _roster;
+  const set = new Set(_roster);
+  for (const b of bodies) {
+    set.add(normRole(b.name));
+    set.add('committee');                                   // "the committee" once one exists
+    if (b.type === 'acc' || b.type === 'arc') { set.add('acc'); set.add('arc'); set.add(`${b.type} committee`); }
+  }
+  return set;
 }
+let _bodies = [];   // set per guard() call; guard is synchronous
 function inventedRoles(s) {
   const hits = [];
   ROLE_NOUN.lastIndex = 0;
@@ -96,7 +107,7 @@ function inventedRoles(s) {
     const phrase = m[1].toLowerCase().replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ').trim();
     // "our Director" is fine when the sentence spells out a real roster title
     const sl = s.toLowerCase().replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ');
-    const ok = allowedRoles().has(phrase) || [...allowedRoles()].some((a) => a.includes(' ') && a.includes(phrase) && sl.includes(a));
+    const ok = allowedRoles(_bodies).has(phrase) || [...allowedRoles(_bodies)].some((a) => a.includes(' ') && a.includes(phrase) && sl.includes(a));
     if (!ok) hits.push(m[0].trim());
   }
   return hits;
@@ -150,7 +161,8 @@ function matchesCommitment(sentence, commitments) {
  * @param {string} [p.agent]        roster persona key (capability registry)
  * @param {Array}  [p.commitments]  [{what, due, capability}] recorded by the agent
  */
-function guard({ message, actionLog = [], contextText = '', agent = 'amanda', commitments = [] }) {
+function guard({ message, actionLog = [], contextText = '', agent = 'amanda', commitments = [], governanceBodies = [] }) {
+  _bodies = governanceBodies || [];
   const violations = [];
   const ctx = String(contextText || '');
   const ctxLower = ctx.toLowerCase();
@@ -198,8 +210,8 @@ function guard({ message, actionLog = [], contextText = '', agent = 'amanda', co
     }
     // 6. invented org roles
     const r = s.match(INVENTED_ROLE);
-    const realTitle = r && [...allowedRoles()].some((a) => a.includes(String(r[1] || '').toLowerCase().replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ').trim()) && s.toLowerCase().includes(a));
-    const rr = r && !realTitle && !allowedRoles().has(String(r[1] || '').toLowerCase().trim()) ? [r[0].trim()] : inventedRoles(s);
+    const realTitle = r && [...allowedRoles(_bodies)].some((a) => a.includes(String(r[1] || '').toLowerCase().replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ').trim()) && s.toLowerCase().includes(a));
+    const rr = r && !realTitle && !allowedRoles(_bodies).has(String(r[1] || '').toLowerCase().trim()) ? [r[0].trim()] : inventedRoles(s);
     if (rr.length) push({ rule: 'INVENTED_ORG_ROLE', code: 'CF_INVENTED_ORG_ROLE', sentence: s, detail: `"${rr[0]}" is not anyone in the team directory` });
     // an invitation to phone the agent needs an inbound line
     if (/\b(call|phone|ring) (me|us)\b|\bgive (me|us) a (call|ring)\b/i.test(s) && !caps.receive_phone.enabled) push({ rule: 'CAPABILITY', code: 'CF_CAPABILITY_CLAIM', capability: 'receive_phone', sentence: s, detail: `invites a phone call, but ${agent} has no phone line` });
@@ -236,10 +248,11 @@ const WHY = {
   UNTRACKED_COMMITMENT: 'A promised time needs a recorded commitment (the COMMITMENTS block) or it becomes an unmonitored promise. Either record it or describe the action without a time.',
   FABRICATED_DEADLINE: 'Nobody committed to that date. Say the date is not set yet, or leave timing out.',
   AUTHORITY: 'This is not your decision. Say who decides and what you will bring them.',
-  INVENTED_ORG_ROLE: 'That person or group does not exist. Use only people, roles, and queues in YOUR TEAM (the board, Ed, named teammates).',
+  INVENTED_ORG_ROLE: 'That person or group does not exist. Use only people, roles, and queues in YOUR TEAM (the board, Ed, named teammates) and the governance bodies on record for this community.',
   UNCONFIRMED_AS_FACT: 'The record does not establish this. Say what is confirmed and what is not.',
   UNSOURCED_LEGAL: 'No retrieved document states this. Say the rule is not on file and what you will pull, or that it goes to legal review.',
   TYPICAL_AS_RULE: 'What other communities do does not answer this one. Leave it out; say what you will pull.',
+  HANDOFF_REQUIRED: 'Ownership was decided before you drafted: this belongs to someone else. Tell the person who is picking it up and include a complete HANDOFF package addressed to that owner; the reply is held until the package is valid.',
 };
 
 function revisionRequest(violations) {

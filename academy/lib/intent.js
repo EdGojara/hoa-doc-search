@@ -87,4 +87,14 @@ const SHAPES = {
   escalation_risk: 'Lead with the risk status, labelling what is confirmed, unconfirmed, or unknown precisely. Verifying it is your job: say what you are doing about it now, using only what you can actually do. If someone else needs to know, name them from YOUR TEAM and its ESCALATION PATHS (Ed for internal escalation, the board for anything needing board authority, legal review for legal matters); if no one else needs to know yet, say nothing about escalation. Anything that commits money or coverage (binding, signing, paying) is a decision for the board or Ed: say you will bring it to them, not that you will do it. Keep the tone proportionate to what is actually known. If they joked, a brief human nod is fine, then be serious.',
 };
 
-module.exports = { MODES, classifyIntent, SHAPES };
+// v1.3: when the pre-draft owner classifier requires a handoff, ownership wins
+// over the conversational intent (a legal threat read as "casual" must not get a
+// chatty reply). Not a classifier mode; applied by withOwnership().
+SHAPES.handoff = 'This belongs to someone else (see OWNERSHIP). Acknowledge what they raised in a sentence, in your own words. Say plainly who is taking it (by name or role) and what happens next, and that nothing is lost (they will not have to start over). Say nothing on the substance that belongs to the owner: no rulings, no arguments, no numbers you have not confirmed. Keep it short.';
+
+function withOwnership(intent, owner) {
+  if (!owner || !owner.handoff_required) return intent;
+  return { ...intent, mode: 'handoff', underlying_mode: intent.mode };
+}
+
+module.exports = { MODES, classifyIntent, SHAPES, withOwnership };
