@@ -116,5 +116,15 @@ t('flow: ownership is decided before intent; a required handoff overrides the co
   assert.ok(contextText);
 });
 
+t('v1.3 run misses (judge-confirmed) are now caught by the guard', () => {
+  const { guard } = require('../academy/lib/action_guard');
+  const r = (m) => guard({ message: m, agent: 'amanda' }).map((v) => v.rule);
+  // AA-REL-010 r1: a physical visit phrased as a calendar entry
+  assert.ok(r("I'm putting a site visit on my calendar for this afternoon to verify the gate closes and latches properly.").includes('CAPABILITY'));
+  // AA-REG-003 r2: what other associations may do, offered as if it answered this one
+  assert.ok(r('Many communities can adopt fees through a board resolution, but some require an amendment.').includes('TYPICAL_AS_RULE'));
+  assert.deepStrictEqual(r('I will ask our community manager to set up a site visit.'), [], 'delegation is not a capability claim');
+});
+
 console.log(failed ? `\n${failed} failure(s)` : '\nall passed');
 process.exitCode = failed ? 1 : 0;

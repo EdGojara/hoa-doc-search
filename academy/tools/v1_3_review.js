@@ -61,7 +61,8 @@ let clsWrong = 0;
 for (const id of teamIds) {
   const o = T13[id].runs[0].guard.owner; const exp = TEAMCASES[id].expected_routing;
   const expOwner = exp.owner === 'self' ? TEAMCASES[id].agent : exp.owner;
-  const ok = o.owner === expOwner || (exp.owner === 'self' && o.owner_class === 'board');
+  // ask_expertise: the agent keeps the work and consults the expected owner
+  const ok = o.owner === expOwner || (exp.owner === 'self' && o.owner_class === 'board') || (exp.mode === 'ask_expertise' && (o.consult || []).includes(expOwner));
   if (!ok) { clsWrong++; P(`- classifier: ${id} classified ${o.owner_class}/${o.owner}, expected ${exp.owner}`); }
 }
 P(`- Classifier: ${teamIds.length - clsWrong} of ${teamIds.length} team cases classified to the expected owner.`, '');

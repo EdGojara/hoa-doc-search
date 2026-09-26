@@ -232,7 +232,10 @@ function guard({ message, actionLog = [], contextText = '', agent = 'amanda', co
       if (!inCtx) push({ rule: 'UNSOURCED_LEGAL', code: 'CF_INVENTED_LEGAL_AUTHORITY', sentence: s, detail: `cites "${phrase}", which no retrieved source states` });
     }
     const t = s.match(TYPICAL_NORM);
-    if (t && /\d{1,2}\s?%|declarations|bylaws/i.test(t[0]) && !ctxLower.includes(t[0].toLowerCase().slice(0, 30))) {
+    // "Many communities can adopt fees through a board resolution" (v1.3 AA-REG-003)
+    // is the same move without a number: what other associations may do.
+    const elsewhere = /\b(many|most|some|other|a lot of)\s+(communities|associations|hoas|boards|declarations)\s+(can|may|are able to|allow|let|require|use|have|adopt|charge|set)\b/i.test(s);
+    if (((t && /\d{1,2}\s?%|declarations|bylaws/i.test(t[0])) || elsewhere) && !ctxLower.includes(((t && t[0]) || s).toLowerCase().slice(0, 30))) {
       push({ rule: 'TYPICAL_AS_RULE', code: 'CF_INVENTED_GOVDOC_RULE', sentence: s, detail: 'describes what is common elsewhere; only this community\'s documents answer the question' });
     }
   }
