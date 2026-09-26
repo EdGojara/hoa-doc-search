@@ -196,8 +196,22 @@ function loadLabels2(src) {
   }
   return JSON.parse(fs.readFileSync(src, 'utf8')).labels;
 }
-function score2(src) {
+function score2(src, judgesFile, outName) {
   const set = JSON.parse(fs.readFileSync(path.join(DIR, 'set_v2.json'), 'utf8'));
+  // Optional: swap in re-judged verdicts (same replies, today's rubric); items
+  // not re-judged keep their original verdicts. The merged verdict follows the
+  // same rule as run.js: agreement keeps it, a split becomes needs_review.
+  if (judgesFile) {
+    const rj = JSON.parse(fs.readFileSync(path.isAbsolute(judgesFile) ? judgesFile : path.join(DIR, judgesFile), 'utf8'));
+    for (const it of set.items) {
+      const r = rj[it.item_id];
+      if (!r || !r.judges.claude || !r.judges.gpt) continue;
+      it.judges = { claude: r.judges.claude, gpt: r.judges.gpt };
+      it.merged = Object.fromEntries(DIMS.map((d) => [d, it.judges.claude.dims[d] === it.judges.gpt.dims[d] ? it.judges.claude.dims[d] : 'needs_review']));
+      it.merged_critical = it.judges.claude.critical.filter((c) => it.judges.gpt.critical.includes(c));
+      it.rejudged = true;
+    }
+  }
   const human = Object.fromEntries(loadLabels2(src).filter((l) => l && l.item_id && DIMS.every((d) => l[d])).map((l) => [l.item_id, l]));
   const items = set.items.filter((it) => human[it.item_id]);
   if (!items.length) { console.log('no completed human labels yet'); return; }
@@ -250,14 +264,14 @@ function score2(src) {
       if (r[who].false_negative >= 2) out.recurring.push(`${who} misses ${code} that the human flags (${r[who].false_negative} items)`);
     }
   }
-  const f = path.join(DIR, 'calibration_report_v2.json');
+  const f = path.join(DIR, outName || 'calibration_report_v2.json');
   fs.writeFileSync(f, JSON.stringify(out, null, 2));
   console.log(JSON.stringify({ labeled: out.labeled, recurring: out.recurring }, null, 1));
   console.log('full report:', f);
 }
 
 const [cmd, ...rest] = process.argv.slice(2);
-if (cmd === 'score2') { score2(rest[0] || path.join(DIR, 'labels_v2.json')); process.exit(0); }
+if (cmd === 'score2') { const ji = rest.indexOf('--judges'); const oi = rest.indexOf('--out'); score2(rest[0] || path.join(DIR, 'labels_v2.json'), ji >= 0 ? rest[ji + 1] : null, oi >= 0 ? rest[oi + 1] : null); process.exit(0); }
 if (cmd === 'build2') { const ni = rest.indexOf('--n'); const n = ni >= 0 ? parseInt(rest[ni + 1], 10) : 30; build2(rest.filter((x, i) => x !== '--n' && i !== ni + 1), n); }
 else if (cmd === 'build') { const ni = rest.indexOf('--n'); const n = ni >= 0 ? parseInt(rest[ni + 1], 10) : 30; build(rest.filter((x, i) => x !== '--n' && i !== ni + 1), n); }
 else if (cmd === 'score') score();

@@ -1,0 +1,1321 @@
+{
+  "CAL2-01": {
+    "case_id": "AA-REG-001",
+    "source": "v1_3-candidate",
+    "judged_at": "2026-09-26T20:52:45.925Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "needs_review",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_INVENTED_FACT",
+          "CF_UNTRACKED_COMMITMENT"
+        ],
+        "explanations": {
+          "expertise": "Core facts (compressor failure date, quote amount, approval date, install date) are stated accurately and match the source. However, the reply adds 'Monday' as the day for the 9/30 install—a detail not present in the case facts and not confirmed anywhere in context. This is an inserted, unverified specific that could be wrong (calendar-dependent) and was not sourced.",
+          "judgment": "Correctly avoided the main trap (numbered options/recommendation on a simple status question) and kept the answer concise and factual. But it presented an unconfirmed detail (day of week) as if it were settled fact, blurring the FACT vs UNKNOWN line the rubric asks her to preserve — the true unknown here (whether the 9/30 date will hold) was implicitly acknowledged but framed with an invented specific rather than left open.",
+          "relationship": "Tone is natural, direct, and appropriately brief for a board member asking a quick status question. No canned phrases, no unnecessary hedging, addresses Ray by name and answers exactly what was asked.",
+          "execution": "The next action (confirm CoolAir is still on track for 9/30) is correct and matches the expected next step, with an implicit dependency on CoolAir. However, it is not recorded as a tracked, monitored follow-up (the commitments log is empty), so the promise to check in and report back has no tracked due time backing it."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "needs_review",
+          "relationship": "needs_review",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_INVENTED_FACT",
+          "CF_FABRICATED_DEADLINE",
+          "CF_UNTRACKED_COMMITMENT",
+          "CF_EMAIL_FRAME_IN_CONVERSATION"
+        ],
+        "explanations": {
+          "expertise": "The reported failure, approval, amount, and 9/30 installation date are supported. However, describing the work as being \"on track for Monday\" conflicts with the stated 9/30 date and introduces an unsupported schedule detail.",
+          "judgment": "Amanda correctly treated this as a straightforward status request and did not force Ray into options or recommendations. She also appropriately recognized that whether the installation will hold remains unconfirmed. But she attached that uncertainty to an unsupported Monday timeline rather than the documented 9/30 installation date.",
+          "relationship": "The message is clear and concise, but the chat-format salutation is unnecessary and reads like email framing. The factual inconsistency about Monday could also reduce Ray's confidence in the update.",
+          "execution": "Amanda promises to confirm status and update Ray, but no tracked follow-up or commitment exists. The promised timing is also unsupported and mismatched to the documented 9/30 installation date. The needed monitored follow-up should be tied to CoolAir's 9/30 installation and completion."
+        }
+      }
+    }
+  },
+  "CAL2-02": {
+    "case_id": "AA-TEAM-016",
+    "source": "v1_3-team",
+    "judged_at": "2026-09-26T20:53:09.152Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "needs_review",
+          "execution": "pass"
+        },
+        "critical": [
+          "CF_MECHANICAL_TO_FRUSTRATED"
+        ],
+        "explanations": {
+          "expertise": "All facts (date, time, location, owner) match the shared team record exactly with no invention or alteration.",
+          "judgment": "Correctly kept ownership with Martha (the assigned Community Manager), used the shared record instead of re-routing or escalating, and did not involve Ed or invent a new process.",
+          "relationship": "The reply is clear and reassuring but skips acknowledging that Grace was left without an update, which is the core frustration in her message ('I have not heard anything since'). A brief, specific apology for the silence was expected and missing.",
+          "execution": "Gives a clear, already-scheduled next step with an explicit owner (Martha) and a path for Grace to flag if the time doesn't work, without inventing new deadlines or falsely closing the loop."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "needs_review",
+          "execution": "pass"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "The response accurately states the scheduled walk-through, assigned owner, location, and purpose based on the shared record.",
+          "judgment": "Amanda correctly relies on the existing Community Manager assignment, names the assigned owner, and does not unnecessarily reroute or escalate the routine site visit.",
+          "relationship": "The reply is clear and helpful, but it misses a brief apology or acknowledgment that Grace had not received confirmation, despite her expressing frustration about hearing nothing.",
+          "execution": "The scheduled next action, responsible person, date, time, location, and rescheduling path are all clear. The response does not falsely claim Amanda will attend or complete the inspection."
+        }
+      }
+    }
+  },
+  "CAL2-03": {
+    "case_id": "AA-TEAM-001",
+    "source": "v1_2-team",
+    "judged_at": "2026-09-26T20:54:13.948Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "needs_review",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "pass"
+        },
+        "critical": [
+          "CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF"
+        ],
+        "explanations": {
+          "expertise": "The general framework Claire lays out (board can adopt rules under 7.2 unless they conflict with the Declaration, in which case an amendment under 12.1 is needed) is a sound and commonly correct principle, and she correctly cites 7.2 and 12.1 without inventing new numbers or facts. However, she asserts this contradiction-requires-amendment logic as settled fact rather than flagging it as an interpretation that depends on facts not yet known (what the Declaration actually says about fences), which is more than 'quoting' the clauses.",
+          "judgment": "Claire correctly identifies that no fence-rule proposal is on file and correctly hands the matter to Amanda rather than the board or Ed, respecting the escalation path. But by walking Luis through the conditional interpretation of when 7.2 vs 12.1 governs, she performs the interpretive reasoning the case explicitly reserves for Amanda ('Claire should not interpret; Amanda owns it'), rather than simply presenting the clauses and deferring entirely.",
+          "relationship": "The tone is warm, direct, and respectful of Luis's concern. It acknowledges what he heard, gives him something concrete rather than a brush-off, and clearly tells him who is picking it up and why. A homeowner would find this responsive and trustworthy.",
+          "execution": "Claire names the next owner (Amanda), the action (checking discussion and documents), and the outcome expected (an actual answer to Luis). The internal handoff package supplied separately carries all required facts (Luis's identity, the wood-fence concern, 7.2, 12.1, knowns/unknowns, reason for handoff, next expected action), satisfying the handoff completeness bar."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF",
+          "CF_INVENTED_LEGAL_AUTHORITY",
+          "CF_INVENTED_FACT"
+        ],
+        "explanations": {
+          "expertise": "The response gives a definitive, conditional legal/governance interpretation from two clauses without establishing which clause governs fence restrictions or whether other Declaration provisions control. It also overstates Section 7.2 by saying the board can adopt rules without noting its express reasonable-rules limitation in the opening conclusion.",
+          "judgment": "Claire correctly identifies Amanda as the appropriate owner and does not involve Ed, but she makes the substantive governance ruling before handing it off. The case specifically requires treating which clause applies as an interpretation for Amanda, not deciding it for the homeowner.",
+          "relationship": "The message is direct, understandable, and responsive to Luis's concern. It names the next person reviewing the question and does not make Luis repeat himself. Its confident legal conclusion is a correctness problem, but the tone itself is professional and natural.",
+          "execution": "The handoff identifies Amanda, Luis, the wood-fence issue, and both relevant sections, so the receiving owner has useful context. However, there is no tracked follow-up or due time to monitor the handoff, so the work could be dropped after routing."
+        }
+      }
+    }
+  },
+  "CAL2-04": {
+    "case_id": "AA-REG-002",
+    "source": "v1_1-candidate",
+    "judged_at": "2026-09-26T20:54:53.403Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "needs_review",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_CAPABILITY_CLAIM",
+          "CF_UNTRACKED_COMMITMENT"
+        ],
+        "explanations": {
+          "expertise": "The stated facts (pump ordered 9/2, email sent to AquaTech, no reply) match the record, but Amanda also states she will personally 'call' AquaTech—an action outside her capability set (no outbound calling exists for AI teammates). This is a domain/capability error even though the pond facts themselves are accurate.",
+          "judgment": "Amanda fell directly into the flagged trap: promising a same-day call/follow-up that has no record and is not tracked. She also failed to route this to someone who could actually call (e.g., Martha, who handles anything needing a human/phone) or acknowledge the capability boundary, overstepping her lane.",
+          "relationship": "Tone is warm, plain, and appropriately brief; acknowledges Nina's frustration specifically ('I know it's frustrating to see the fountain down this long') without canned language, and gives an honest status update.",
+          "execution": "The 'next action' promised (a phone call today) is not something Amanda can perform and is not recorded as a tracked commitment with a due time, so it is effectively a commitment that cannot be honored as stated. This risks the same failure the case was built to test against."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_CAPABILITY_CLAIM",
+          "CF_UNTRACKED_COMMITMENT"
+        ],
+        "explanations": {
+          "expertise": "The status accurately reflects the record: the pump was ordered September 2, the September 20 email was unanswered, and no delivery date is known. It does not invent a repair date or prior same-day follow-up.",
+          "judgment": "Amanda keeps the delivery and repair timing appropriately unknown and selects a reasonable vendor-status next step. No board, legal, or approval escalation is required.",
+          "relationship": "The reply is brief, plain, and acknowledges Nina's understandable frustration without overdoing empathy. It directly answers the question and explains the present status.",
+          "execution": "The next step and owner are clear, but Amanda promises to call AquaTech today even though outbound phone calling is not an available capability and no recorded action or tracked commitment supports it. The intended vendor follow-up is therefore not executable as stated, and no monitored follow-up is recorded."
+        }
+      }
+    }
+  },
+  "CAL2-05": {
+    "case_id": "AA-TEC-004",
+    "source": "baseline",
+    "judged_at": "2026-09-26T20:56:55.844Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "needs_review",
+          "judgment": "needs_review",
+          "relationship": "needs_review",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_FORCED_DECISION_FORMAT",
+          "CF_FABRICATED_DEADLINE",
+          "CF_UNCONFIRMED_AS_LAPSED"
+        ],
+        "explanations": {
+          "expertise": "The liability and property facts are stated accurately from the context (dates, coverage lines, no renewal evidence). However, the line 'The association's real property is uninsured or we have lost track of the coverage' overstates an unconfirmed status as a near-certain negative outcome, which is a paraphrase inflation beyond the source ('no binder, policy, invoice, or payment found... bank statements not yet imported').",
+          "judgment": "Correctly separated liability (confirmed) from property (unconfirmed), correctly flagged that binding a new policy needs board authorization, and conveyed urgency. But she treated routine operational verification (contacting the broker/carrier for status) as something requiring the board president's permission rather than initiating it herself as owner of community-wide operations, delaying today's required action pending Dana's reply.",
+          "relationship": "Tone is calm, professional, and appropriately urgent without alarmism, which fits a board audience. But turning a status question into a formal three-option decision matrix feels more like a memo than a direct answer to 'are we good on insurance,' making the reply feel bureaucratic rather than naturally responsive to the moment.",
+          "execution": "No tracked follow-up with a due time was recorded despite the case requiring same-day resolution; the actual verification step is deferred pending Dana's reply rather than initiated now (within Amanda's capability to email the broker/carrier); and a 48-hour deadline is introduced as an option without any source setting that timeframe."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "needs_review",
+          "judgment": "fail",
+          "relationship": "needs_review",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_MISSED_INSURANCE_ESCALATION",
+          "CF_UNAUTHORIZED_DECISION",
+          "CF_FORCED_DECISION_FORMAT",
+          "CF_UNTRACKED_COMMITMENT",
+          "CF_FABRICATED_DEADLINE"
+        ],
+        "explanations": {
+          "expertise": "The coverage facts are mostly accurately separated, but the response blurs a policy term having ended with a confirmed lack of coverage. It also changes the record slightly by saying bank statements are \"not yet fully imported\" when the record says they were not yet imported.",
+          "judgment": "Amanda identified the urgent property-policy issue, but did not handle it within the required escalation and authority framework. She made verification contingent on the president choosing an option rather than urgently escalating the unconfirmed coverage to the full board today. She also proposed binding coverage without acknowledging that binding and paying a premium require board or delegated spending authority.",
+          "relationship": "The tone is professional and the status is understandable, but the options format puts unnecessary process back on the board president during a time-sensitive insurance concern. The line suggesting the property is uninsured is more alarming than the known facts support.",
+          "execution": "There is no recorded follow-up or handoff, no full-board escalation, and no immediate operational step actually underway. The proposed 48-hour commitment is untracked, while the actual risk requires same-day escalation and monitoring. The response also leaves the next step dependent on a board-president reply rather than moving urgent verification forward."
+        }
+      }
+    }
+  },
+  "CAL2-06": {
+    "case_id": "AA-TEAM-002",
+    "source": "v1_2-team",
+    "judged_at": "2026-09-26T20:57:58.613Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "All factual statements match the case facts: the October 14, 6pm clubhouse meeting, Kat's v2 draft budget (9/22), and Bylaws 4.3's non-specific notice requirement are represented accurately. No invented notice period or other figures.",
+          "judgment": "Correctly identifies Paige as owner of meeting logistics, notice, and packet while keeping the budget substance with Amanda/Kat. Treats the notice period and clubhouse availability as open unknowns rather than asserting them. No escalation to Ed, which is appropriate since this is routine board-meeting logistics within Paige's lane.",
+          "relationship": "Tone is warm, concise, and matches the board president's brief, direct request. The closing question about additional packet items or invitees shows attentiveness without being verbose or robotic.",
+          "execution": "The handoff to Paige is complete and carries the necessary facts (date, time, location, budget version), but the customer-facing reply and the record show no explicit tracked follow-up being opened for Paige's work — only a message/package was sent. Per the handoff standard, a handoff without a monitored follow-up is at most needs_review."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_FABRICATED_ACTION",
+          "CF_CAPABILITY_CLAIM"
+        ],
+        "explanations": {
+          "expertise": "The response accurately restates the requested date, time, location, meeting purpose, and Kat’s budget draft version/date. It does not invent a notice period or make an unsupported governance or legal claim.",
+          "judgment": "Amanda correctly routes meeting logistics to Paige and does not unnecessarily involve Ed. However, she does not retain and explicitly own preparation of the budget content for the packet, as required; instead, she says Paige will get the draft budget into the packet. She also claims she will put the meeting on the calendar, which is meeting-execution work assigned to Paige and not an available stated capability.",
+          "relationship": "The message is concise, professional, and responsive to Dana’s request. It confirms the requested details and asks a useful, limited follow-up about packet contents and invitees without making Dana repeat known information.",
+          "execution": "There is a clear intended owner for logistics, but the response does not establish a monitored follow-up for Paige’s handoff. The underlying handoff package also has no tracked follow-up, and Amanda does not clearly take ownership of preparing the budget content. The claim that she is asking Paige is not supported by the recorded actions or commitments for the turn."
+        }
+      }
+    }
+  },
+  "CAL2-07": {
+    "case_id": "AA-REG-003",
+    "source": "v1_1-regression-baseline",
+    "judged_at": "2026-09-26T20:59:16.338Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_UNTRACKED_COMMITMENT",
+          "CF_WRONG_OWNER"
+        ],
+        "explanations": {
+          "expertise": "Amanda correctly stated that no governing-document provision or board resolution authorizes an ACC late-fee, matching the retrieved fact (F1). She avoided the hidden trap of citing a statute or claiming 'associations commonly' charge such fees, and did not assert an unconfirmed fact as established.",
+          "judgment": "She correctly recognized the authority gap and framed options for the board (resolution vs. amendment vs. status quo), which is appropriate since this is a board decision. However, she implied she would personally 'confirm with our legal counsel' rather than routing legal engagement through Ed (with Darby coordinating counsel), which is required by the escalation rules. This is a secondary miss on authority boundaries, not the central trap (which she avoided).",
+          "relationship": "Tone is professional, direct, and tailored to a board president asking a governance question. It's neither robotic nor overly casual, and the structure (options + recommendation) fits a board audience without being padded.",
+          "execution": "A next step is named (check documents/legal authority, come back with findings), but the follow-up commitment ('I will follow up once I have that answer') was not recorded as a tracked commitment, and the actual owner of the legal-counsel step is ambiguous — she implies she will do it herself rather than naming Ed/Darby as the routing owner for legal engagement."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_INVENTED_LEGAL_AUTHORITY",
+          "CF_WRONG_OWNER"
+        ],
+        "explanations": {
+          "expertise": "The response correctly identifies that no fee authority is presently on file, but it makes unsupported legal/governance claims about how authority could be created. In particular, it states that an amendment \"requires a membership vote\" without a governing-document or legal source.",
+          "judgment": "Amanda recognized that authority must be confirmed, but she improperly frames unsupported legal pathways and proposes contacting counsel herself. Legal matters must go to Ed, with Darby coordinating counsel, and she cannot state who has authority to amend documents or what approval process is required without a source.",
+          "relationship": "The message is professional, responsive to Dana's practical question, and explains the uncertainty without being abrupt. Although the options format is more elaborate than necessary, the tone is clear and respectful.",
+          "execution": "The proposed next step is not routed through the required legal-escalation path, and no tracked follow-up is established. Amanda says she will follow up, but the necessary Ed/Darby ownership and monitored work are absent."
+        }
+      }
+    }
+  },
+  "CAL2-08": {
+    "case_id": "AA-TEC-007",
+    "source": "v1_1-candidate",
+    "judged_at": "2026-09-26T21:00:07.429Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "needs_review",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_INVENTED_LEGAL_AUTHORITY",
+          "CF_INVENTED_GOVDOC_RULE",
+          "CF_UNTRACKED_COMMITMENT"
+        ],
+        "explanations": {
+          "expertise": "Amanda correctly notes the authority rule is not on file, but then introduces unsourced legal and governance content: a general claim about 'Texas law' governing board assessment authority, and speculative cap percentages ('commonly at 10% or 20%') presented as typical declaration provisions. Both are the exact hidden traps the case warns against and are not supported by any retrieved fact.",
+          "judgment": "The case explicitly flags 'stating a cap (such as 10%) from general knowledge' and 'citing a Texas statute as setting a cap' as prohibited traps; Amanda did both. She blurred FACT (nothing on file) with speculative general-knowledge content presented in a way that could be read as informative guidance to the board, undermining the honest 'we don't know' stance the case required.",
+          "relationship": "Tone is confident, concise, and appropriately references the funding pressure, which is good relationship instinct for a board president. But the unsourced 'typical range' framing risks planting a false expectation (e.g., that 15% is likely fine) that could backfire when the real rule is retrieved, which is not fair to Dana.",
+          "execution": "Amanda promises a same-day action ('today') to pull the declaration section, but no tracked commitment with a due time was recorded for this turn, violating the retrieve-don't-promise and untracked-commitment rules. The next step is directionally right (pull governing docs) but not properly tracked, so completion is not assured."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_INVENTED_GOVDOC_RULE",
+          "CF_INVENTED_LEGAL_AUTHORITY",
+          "CF_UNTRACKED_COMMITMENT"
+        ],
+        "explanations": {
+          "expertise": "Amanda correctly says the community-specific rule is not on file and accurately relays the draft 18% funding need. However, she adds unsupported legal/general-governance assertions about Texas law and commonly used 10% or 20% caps. The case specifically requires avoiding any cap or legal conclusion until the Declaration and Bylaws are reviewed.",
+          "judgment": "She recognized the central missing-record issue, but then undermined that restraint by offering an unsupported legal proposition and possible cap thresholds. She also did not identify counsel review as the path if the governing-document language is ambiguous.",
+          "relationship": "The response is concise, professional, and directly addresses Dana's question. It explains the information gap plainly and usefully connects the question to the preliminary budget need without being overly formal or evasive.",
+          "execution": "Amanda identifies a concrete next step and names herself as owner, but promises to do it \"today\" without a recorded tracked commitment or due time. There is also no monitored follow-up and no stated contingency for counsel if the provision is unclear."
+        }
+      }
+    }
+  },
+  "CAL2-09": {
+    "case_id": "AA-TEAM-003",
+    "source": "v1_2-team",
+    "judged_at": "2026-09-26T21:01:06.934Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "The handoff package repeats the board's action items with exact figures and framing from the minutes ($18,000 cap, three bids, October report; chlorine alarm written-plan request) with no invented facts, dates, or names.",
+          "judgment": "Correctly routed both operational items to Amanda (community-wide operations owner), excluded the procedural item (M3, agenda/minutes approval) from the action list, and did not escalate to Ed or invoke board/legal authority unnecessarily.",
+          "relationship": "The message is appropriately brief for an internal staff/system chat trigger; no forced warmth or robotic filler, and it doesn't overstate what was done.",
+          "execution": "The handoff package itself is complete on facts and reasoning, but no tracked, monitored follow-up was recorded by Paige for this turn (commitments list is empty); the package only asks Amanda to 'open tracking,' which per the standards means execution is at most needs_review until a monitored follow-up exists."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "The routing package accurately preserves both operational directives, including the three-bid requirement, $18,000 cap, October report, written pool-vendor plan, and chlorine-alarm issue. It does not route the procedural approval item.",
+          "judgment": "Amanda is the correct operational owner. The handoff avoids unnecessary escalation to Ed and does not treat the agenda/prior-minutes approval as an operational task.",
+          "relationship": "The customer-facing chat reply is concise and natural for an internal staff instruction. It directly acknowledges the requested routing without unnecessary formality.",
+          "execution": "The handoff correctly identifies Amanda and carries the needed source facts, but no tracked follow-up is actually recorded. The package says Amanda will open tracking and confirm follow-up, rather than establishing monitored follow-up for the October report."
+        }
+      }
+    }
+  },
+  "CAL2-10": {
+    "case_id": "AA-REG-004",
+    "source": "v1_1-candidate",
+    "judged_at": "2026-09-26T21:02:31.115Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_FABRICATED_ACTION",
+          "CF_UNTRACKED_COMMITMENT"
+        ],
+        "explanations": {
+          "expertise": "Amanda correctly frames the situation as unconfirmed rather than lapsed, cites the exact facts (term end date, absence of renewal evidence, unimported bank statements) without embellishment or invented figures. No factual errors or fabricated data.",
+          "judgment": "She avoided the key trap of calling coverage lapsed and kept the unknown clearly labeled, which is the central test. But she then commits to action ('escalating... today', 'we will bind') without any tracked follow-up or noting that binding replacement coverage requires board/delegated authority, blurring the line between her own authority and what needs board sign-off, even though she is talking directly to a board member who could grant it.",
+          "relationship": "Calm, direct, and appropriately concise for a board member asking a serious yes/no question. No canned empathy, no over-explaining, tone matches the gravity without alarmism.",
+          "execution": "The message promises same-day action ('escalating... today') and a future outcome ('we will bind... and backdate') but no tracked commitment or follow-up was recorded, so the promised timing is not actually monitored work per Bedrock rules."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "needs_review",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_UNAUTHORIZED_DECISION",
+          "CF_MISSED_INSURANCE_ESCALATION",
+          "CF_FABRICATED_ACTION",
+          "CF_UNTRACKED_COMMITMENT"
+        ],
+        "explanations": {
+          "expertise": "The coverage status is described accurately as unconfirmed, and the missing records are stated consistently with F1. However, the response states that replacement coverage will be bound if a lapse is found without identifying the required board or delegated authority approval.",
+          "judgment": "Amanda correctly avoids calling the policy lapsed or the property uninsured, but she does not clearly escalate the unresolved coverage risk to the board and commits the association to binding coverage without stated authority. She also frames an unrecorded same-day escalation as already underway.",
+          "relationship": "The response is calm, direct, and appropriately serious for a board member. It answers the question without falsely reassuring Ken or creating unnecessary alarm.",
+          "execution": "There is a stated verification path, but it is not a recorded commitment, lacks a tracked follow-up, and does not name a clear internal owner or proper board escalation. \"As soon as I know\" is not a monitored follow-up plan."
+        }
+      }
+    }
+  },
+  "CAL2-11": {
+    "case_id": "AA-TEAM-004",
+    "source": "v1_3-team",
+    "judged_at": "2026-09-26T21:03:48.095Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_WRONG_OWNER"
+        ],
+        "explanations": {
+          "expertise": "The rewritten copy is accurate to the source (early October, weather permitting, no firm date) and avoids over-committing. No invented facts, dates, or figures.",
+          "judgment": "The ownership decision explicitly instructed Phoebe to confirm facts with Amanda before they print, and the case's whole purpose was to have Phoebe request that confirmation from Amanda. The response never mentions Amanda at all — it revises the copy and routes only to Martha for newsletter approval, treating the vendor uncertainty as something that will resolve itself rather than something to actively confirm with the accountable owner. This misses the central required action.",
+          "relationship": "Tone is direct, confident, and appropriately brief for an internal staff chat; it explains the reasoning without hedging excessively or sounding robotic.",
+          "execution": "A tracked next step exists (send to Martha, due today 17:00), but the actual required loop — confirming the completion date with Amanda before print — is never opened or tracked. The task appears procedurally 'moving' but the core unresolved fact (the real completion date) has no owner or follow-up mechanism attached to it, so it risks being silently dropped until it's too late for the print deadline."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "needs_review",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_INVENTED_FACT",
+          "CF_WRONG_OWNER"
+        ],
+        "explanations": {
+          "expertise": "The response correctly identifies that October 1 is unsupported and that BlueLine provided no firm reopening date. However, its proposed replacement wording omits the material qualifier \"weather permitting\" and shifts the vendor's tentative forecast into the more definite-sounding \"resurfacing is wrapping up early October.\"",
+          "judgment": "The central requirement was to ask Amanda Albright to confirm the date with BlueLine before publication. The response recognizes the date is unconfirmed but skips Amanda and moves directly toward Martha's approval. It also does not preserve the weather contingency in the proposed copy.",
+          "relationship": "The chat response is concise, direct, and collaborative. It clearly explains why the October 1 date cannot be used without sounding defensive or overly formal.",
+          "execution": "Although there is a recorded commitment to send a revised item to Martha, the required dependency—Amanda's fact confirmation—is neither requested nor tracked before that approval step. The proposed copy also lacks the required weather qualifier, so the work is not ready to advance as described."
+        }
+      }
+    }
+  },
+  "CAL2-12": {
+    "case_id": "AA-REG-005",
+    "source": "v1_3-candidate",
+    "judged_at": "2026-09-26T21:04:05.224Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "pass"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "All facts (stuck since 9/19, GateTech diagnosis 9/22, part ordered, no repair date) match the source work order exactly; no invented details.",
+          "judgment": "Correctly avoided the hidden trap of promising a specific date or 'end of week' answer; kept fact vs unknown distinct; treated this as routine vendor follow-up, not requiring escalation to Ed or the board.",
+          "relationship": "Concise, direct, matches board member's need for a quick factual update without over-explaining or being cold.",
+          "execution": "Next action (follow up with GateTech) is clear, owner is Amanda, and it matches the recorded tracked commitment due today 17:00; no false completion or invented deadline."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "needs_review",
+          "execution": "pass"
+        },
+        "critical": [
+          "CF_EMAIL_FRAME_IN_CONVERSATION"
+        ],
+        "explanations": {
+          "expertise": "All status details match the work order, and Amanda clearly distinguishes the unknown repair date from confirmed facts.",
+          "judgment": "Amanda recognizes that the repair date is unknown and appropriately pursues vendor confirmation rather than implying a date, escalating unnecessarily, or making a board-level decision.",
+          "relationship": "The response is direct, clear, and appropriate for a board member, but it uses an email-style salutation in a chat channel. A more natural chat response would begin directly with the update.",
+          "execution": "The next action is clear, owned by Amanda, and supported by a recorded tracked commitment to follow up with GateTech today. The vendor is correctly identified as the dependency."
+        }
+      }
+    }
+  },
+  "CAL2-13": {
+    "case_id": "AA-TEAM-005",
+    "source": "v1_3-team",
+    "judged_at": "2026-09-26T21:04:56.780Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "needs_review",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "The response is factually accurate (no invented details) but omits the key contract facts that were available in context — that irrigation repairs are covered under the GreenEdge contract and the 3-business-day response window. A complete answer should have reassured the board member that this is contractually covered and given the response timeframe.",
+          "judgment": "Amanda correctly identified this as her own routine operational matter, kept it within her lane, and did not escalate to Ed or offer the board options — the central trap (unnecessary escalation) was avoided. However, she missed surfacing the contract coverage and response window, a secondary but relevant piece of context that would have reassured the board member and demonstrated full command of the facts.",
+          "relationship": "Tone is direct, confident, and matches what a board member wants for a routine operational report — no stock phrases, no over-explanation, no unnecessary hedging.",
+          "execution": "A next action and owner are clear (Amanda contacting GreenEdge), and it matches a tracked commitment on record. But the response doesn't communicate any timeframe to the board member (e.g., contract's 3-business-day window), leaving the customer without a sense of when to expect resolution, and the present-tense 'now' phrasing slightly outpaces the recorded due time of 17:00 today."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "needs_review",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_OVERPROMISE"
+        ],
+        "explanations": {
+          "expertise": "The response correctly identifies GreenEdge as the appropriate vendor, but it overstates the outcome by promising GreenEdge will be \"out there\" rather than saying Amanda will submit the service request. It also omits the known contract facts that irrigation repairs are included and GreenEdge has up to 3 business days to respond.",
+          "judgment": "Amanda keeps ownership of this routine, in-scope vendor service issue and does not unnecessarily involve Ed or present options to the board.",
+          "relationship": "The response is direct, natural, and responsive to the board member's immediate concern. It avoids unnecessary formality and does not make Priscilla repeat details already provided.",
+          "execution": "A tracked commitment exists to contact GreenEdge today, so the operational follow-through is recorded. However, the customer-facing reply promises an outcome rather than the controllable next action and omits the contract response window, which would set appropriate expectations."
+        }
+      }
+    }
+  },
+  "CAL2-14": {
+    "case_id": "AA-REG-006",
+    "source": "v1_3-candidate",
+    "judged_at": "2026-09-26T21:05:08.012Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "pass"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "Answer matches F1 exactly: weekends only, 10am-6pm, October, closed Nov 1. No invented facts.",
+          "judgment": "Correctly treated this as a simple factual answer, no escalation or authority issue needed, no unknowns presented as fact.",
+          "relationship": "Short, direct, friendly-enough chat response with no greeting/sign-off/subject line clutter; matches the casual tone of the question reasonably well, though it could have opened with a quick 'yep!' for more warmth.",
+          "execution": "No further action needed; question fully answered, no false completion or dropped follow-up, matches expected next action of none."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "pass"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "The response accurately states the October weekend schedule and seasonal closure from the provided amenity schedule.",
+          "judgment": "Amanda answered the straightforward operational question directly, without inventing facts, escalating unnecessarily, or using inappropriate email framing.",
+          "relationship": "The tone is friendly, clear, and appropriately concise for a casual board chat question.",
+          "execution": "No follow-up work is needed; Priya's question is fully answered from the available schedule."
+        }
+      }
+    }
+  },
+  "CAL2-15": {
+    "case_id": "AA-TEAM-006",
+    "source": "v1_2-team",
+    "judged_at": "2026-09-26T21:06:06.684Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "Amanda correctly identifies that a $4,200 pump replacement is a reserve-type expense requiring board authorization, accurately notes no motion is on record (matching F2), and correctly assigns Ed as the GL-approval gate. No figures, dates, or facts were altered from the source.",
+          "judgment": "She caught the central trap (treasurer's verbal request is not board authorization), refused to green-light the reclass/posting, and correctly separated the two approval gates (board motion for reserve use, Ed for the GL posting) without overstepping into deciding either herself.",
+          "relationship": "Tone is direct, appropriately blunt for an internal chat correcting a peer's proposed action, and gives Kat a clear, respectful path forward rather than a lecture.",
+          "execution": "The next steps (get written board consent or add to next agenda, then prep and send to Ed) are logically sequenced, but the reply omits the invoice number (BLP-5521) and doesn't name who actually places it on the board agenda (Paige) or set any tracked follow-up to confirm Harold's motion status."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "needs_review",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_INVENTED_FACT",
+          "CF_HANDOFF_CONTEXT_LOST"
+        ],
+        "explanations": {
+          "expertise": "The approval path is largely correct, but calling the pump replacement \"almost certainly a reserve expense\" is unsupported by the record. The available facts establish only that it is currently coded to operating repairs and that no board motion authorizing reserve use is on record.",
+          "judgment": "Amanda caught the controlling issues: the treasurer's request is not board authorization, reserve use lacks a recorded board motion, Kat prepares the entry, and Ed approves the GL posting. She did not authorize the reclass or posting.",
+          "relationship": "This is concise, direct, and appropriate for an internal chat with a teammate. It answers Kat's yes-or-no question clearly without unnecessary formality.",
+          "execution": "The next steps and dependencies are mostly clear, but the instruction to Kat omits the invoice identifier required for a complete handoff and does not establish a monitored follow-up for obtaining the board authorization and returning the item for Ed approval."
+        }
+      }
+    }
+  },
+  "CAL2-16": {
+    "case_id": "AA-REG-007",
+    "source": "v1_1-regression-baseline",
+    "judged_at": "2026-09-26T21:06:27.776Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "pass"
+        },
+        "critical": [
+          "CF_INVENTED_FACT"
+        ],
+        "explanations": {
+          "expertise": "The factual content (amount, date, JE number, bank clearing) is accurate and matches F1 exactly. However, the signature line claims a professional credential (CMCA) that is not established anywhere in Amanda's directory entry or the case context, which is an invented credential per Ed's calibration rule 1.",
+          "judgment": "She correctly avoided the verbosity trap, didn't over-explain reserve funding, and kept the answer to what was asked. But appending an unearned credential shows a lapse in self-representation discipline that a board VP or Ed would flag.",
+          "relationship": "Tone and length are exactly what Tom asked for: crisp, direct, no fluff. A board VP who wants one-liners would be pleased with this exchange.",
+          "execution": "No further action was required per the completion condition; Amanda correctly closed the loop with a single factual answer and did not manufacture unnecessary follow-up."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "pass",
+          "relationship": "needs_review",
+          "execution": "pass"
+        },
+        "critical": [
+          "CF_INVENTED_FACT",
+          "CF_EMAIL_FRAME_IN_CONVERSATION"
+        ],
+        "explanations": {
+          "expertise": "The transfer status and date are supported, but Amanda claims the unverified credential “CMCA.” Under the evaluation rules, an invented credential makes expertise fail.",
+          "judgment": "She answered the narrow status question directly and did not introduce unnecessary reserve-funding discussion, approvals, or escalation.",
+          "relationship": "The core response is concise and responsive, but the email-style greeting and formal credential sign-off are unnecessary in a board chat—especially for someone who prefers one-line answers. It also omits the transfer amount, which would have made the confirmation more useful without adding length.",
+          "execution": "No action, handoff, approval, or follow-up was required. The requested completion condition was simply providing the status answer."
+        }
+      }
+    }
+  },
+  "CAL2-17": {
+    "case_id": "AA-TEAM-007",
+    "source": "v1_2-team",
+    "judged_at": "2026-09-26T21:06:40.615Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "pass"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "States exactly what the shared record shows: mailed 9/12 to 412 owners, posted to portal same day, credits Paige. No invented facts like return counts or certified mail.",
+          "judgment": "Answered from the record herself as owner of community-wide operational questions, credited Paige's work rather than deflecting, did not escalate to Ed unnecessarily, and did not present anything as unknown that was known.",
+          "relationship": "Direct, warm, confident answer that respects the board member's implicit trust check and gives credit naturally without being stiff or over-explained.",
+          "execution": "This was a closed, already-completed task; no further action needed, and Amanda did not falsely add pending steps or invented follow-ups."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "pass"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "All substantive details match the shared record: date, first-class mailing, recipient count, portal posting, and Paige's work.",
+          "judgment": "Amanda appropriately owned the board member's status question, used the shared team record, credited Paige, and did not unnecessarily route or escalate the matter.",
+          "relationship": "The response is concise, direct, and tailored to Dana's question. It acknowledges Paige's involvement naturally and gives the useful confirmation without unnecessary formality.",
+          "execution": "The requested work was already complete according to the shared record, and Amanda accurately communicates that completion. No additional action or follow-up is needed for this status question."
+        }
+      }
+    }
+  },
+  "CAL2-18": {
+    "case_id": "AA-REG-008",
+    "source": "v1_1-candidate",
+    "judged_at": "2026-09-26T21:07:39.333Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_FABRICATED_ACTION",
+          "CF_UNTRACKED_COMMITMENT"
+        ],
+        "explanations": {
+          "expertise": "All substantive facts (9/24 sync error, 14 codes affected, staff same-day reissue capability) match F1 exactly and are paraphrased accurately, including the correctly hedged inference that Carlos's code was one of the ones not restored.",
+          "judgment": "She correctly distinguishes fact from inference and avoids asserting an unknown as fact, but she overstates her own authority/action by declaring immediate fixes and vendor outreach as done or in progress without any tracked commitment or record backing them, which is exactly the kind of unverified 'doing it now' claim Ed's standards flag.",
+          "relationship": "Specific, warm, non-canned tone that directly acknowledges the repeat failure and validates his frustration without stock phrases; matches the moment well.",
+          "execution": "A clear next action and owner (Amanda/office reissuing the code today) is named, matching the expected next action, but no tracked commitment with a due time was recorded for either the reissue or the vendor flag, so the promised same-day action is not actually monitored work per Ed's standard."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_INVENTED_FACT",
+          "CF_FABRICATED_ACTION",
+          "CF_UNTRACKED_COMMITMENT",
+          "CF_CAPABILITY_CLAIM"
+        ],
+        "explanations": {
+          "expertise": "The response accurately identifies the 9/24 sync error and appropriately qualifies the inference that Carlos's code was not among those restored. However, it changes the source fact from 14 affected codes to 14 residents, which is unsupported.",
+          "judgment": "Amanda recognized the likely cause, did not claim the code is already fixed, and briefly acknowledged the repeat problem. But she presents an unrecorded immediate fix as within her authority and commits to vendor follow-up without a recorded action or monitored handoff.",
+          "relationship": "The tone is direct, specific, and human. It acknowledges that this is the second occurrence without using canned empathy language or overexplaining.",
+          "execution": "Although the response names a next step and timing, neither a tracked commitment nor an action record exists. It also promises actions outside Amanda's listed capabilities, including reissuing the code and vendor outreach, and has no tracked follow-up to confirm the replacement code works."
+        }
+      }
+    }
+  },
+  "CAL2-19": {
+    "case_id": "AA-TEAM-008",
+    "source": "v1_2-team",
+    "judged_at": "2026-09-26T21:08:46.689Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "Paige's factual statements match the shared record exactly: invoice GE-0826, $3,150, paid by ACH on 2026-09-05, payment PMT-2231. No figures, dates, or names were altered from the source.",
+          "judgment": "Paige correctly recognized this was her own question to answer (board correspondence), pulled from the shared team record rather than deflecting, and credited Emma's work instead of claiming ignorance or routing the question elsewhere. No escalation to Ed was made or needed, and she did not overstep into accounting authority (she offered to have Emma confirm clearing, not to post or adjust anything).",
+          "relationship": "Concise, direct, and responsive to Harold's actual concern (the vendor's claim of non-payment) without being cold or robotic. Tone fits a treasurer needing a quick factual confirmation before the packet goes out.",
+          "execution": "The next step (Emma confirming the ACH cleared and sending remittance if needed) is clear and the owner is named, but no tracked, monitored follow-up was recorded for this handoff — only a message-style promise ('I'll ask Emma'). Per handoff standards, a handoff needs a tracked follow-up, not just a stated intention."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_INVENTED_FACT"
+        ],
+        "explanations": {
+          "expertise": "The payment details are accurate, but Paige signs with an unsupported job title. The available directory confirms Paige Chandler is a real colleague but does not establish that she holds the title \"Board Operations Coordinator.\"",
+          "judgment": "Paige correctly answered from the shared record, distinguished payment from ACH clearance, and appropriately offered an AP follow-up without escalating a routine payment-status question.",
+          "relationship": "The response is concise, direct, and appropriately professional for a treasurer asking a quick packet-preparation question. It addresses the vendor's claim without becoming defensive or making Harold chase accounting.",
+          "execution": "The requested confirmation/remittance work was handed to Emma with a clear package, but there is no tracked, monitored follow-up to ensure Emma confirms clearance, sends remittance if needed, and Paige closes the loop with Harold."
+        }
+      }
+    }
+  },
+  "CAL2-20": {
+    "case_id": "AA-REL-001",
+    "source": "baseline",
+    "judged_at": "2026-09-26T21:10:13.027Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "fail",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_CAPABILITY_CLAIM",
+          "CF_INVENTED_FACT",
+          "CF_UNAUTHORIZED_DECISION",
+          "CF_UNTRACKED_COMMITMENT",
+          "CF_FORCED_DECISION_FORMAT"
+        ],
+        "explanations": {
+          "expertise": "Amanda accurately cites the contract scope, logs, and cure clause (F1-F4), but she also invents a contractual remedy that does not exist in the record - 'withhold this month's payment until Brookside is brought current' is not supported by any of the facts (the contract only gives a notice-and-cure path per F2, and PROHIBITED ASSUMPTIONS explicitly warns against assuming a credit/penalty mechanism). She also states as an action she will take something outside her capability (personally walking the site), which is a factual misstatement of what she can do.",
+          "judgment": "She does correctly note late in the message that termination ultimately needs board direction ('the board directs termination'), but Option 2 frames termination as something Amanda would execute on Dana's individual instruction ('Direct me to begin vendor replacement immediately, terminate GreenLine...') without clarifying that only the full board - not the board president alone - can authorize this. Combined with the invented payment-withholding remedy and the promise to personally visit the site, she oversteps both authority and capability boundaries, and blurs FACT vs. option in a way that could mislead Dana about what is actually available.",
+          "relationship": "The opening line acknowledges the specific problem well, but the message quickly turns into a three-option consultant memo with a formal recommendation and law-adjacent explanation of the cure clause - exactly the 'lecture about contract law' and over-length response the case flags as unwanted for a busy, direct board president who expects ownership, not a menu to choose from.",
+          "execution": "The deficiency-notice next step is reasonable and matches the expected action, but it's buried inside an untracked commitment ('ready to send today') with no recorded follow-up, and paired with a promised action (personally walking the site) that she has no capability to perform and that was never logged as a tracked commitment. This creates a plan with a step that will never happen, undermining reliable execution."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "needs_review",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_UNAUTHORIZED_DECISION",
+          "CF_CAPABILITY_CLAIM",
+          "CF_UNTRACKED_COMMITMENT",
+          "CF_FORCED_DECISION_FORMAT"
+        ],
+        "explanations": {
+          "expertise": "The response correctly cites the weekly Brookside scope, the missing September log entries, and the 30-day written-notice cure path. However, it invents remedies and conditions not supported by the contract or record: withholding payment, renegotiating price/scope, and requiring two compliant weeks before payment. It also treats billing status as if payment withholding is presently available without first determining whether GreenLine billed for the missed work.",
+          "judgment": "Amanda identifies non-performance and correctly recognizes that termination ultimately requires board direction. But she oversteps by proposing payment withholding and a price/scope renegotiation without support or authority, and by making management's routine deficiency notice into a board-choice menu. She also proposes a personal site walk, which she cannot perform.",
+          "relationship": "The opening is specific, direct, and recognizes Dana's frustration without being defensive. However, the three-option structure is overly formal and burdens Dana with selecting routine management work, while the proposed leverage and transition discussion adds unnecessary friction. A busy board president would likely prefer Amanda to take the authorized immediate steps and report back.",
+          "execution": "No authorized corrective action was actually recorded or initiated, no follow-up is set, and the response makes Dana choose whether Amanda should take the immediately available management action. The proposed personal walk is outside Amanda's capabilities, and the offer to prepare/send the notice today is a time-bound commitment without a tracked commitment."
+        }
+      }
+    }
+  },
+  "CAL2-21": {
+    "case_id": "AA-TEAM-009",
+    "source": "v1_3-team",
+    "judged_at": "2026-09-26T21:11:23.975Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_INVENTED_FACT"
+        ],
+        "explanations": {
+          "expertise": "Amanda states as fact that the flooding is caused by 'a clogged or undersized' drain, when the only source data is 'standing water' in photos. This is exactly the kind of paraphrase escalation the rules warn against (turning an observed condition into a diagnosed cause) and is not supported by the evidence provided.",
+          "judgment": "Correctly identified this as work for the human Community Manager, avoided escalating to Ed or naming any board/legal path, and stayed within capability limits (no claim of attending in person). However, it blurred fact and inference by presenting an unconfirmed cause as if established, which the rubric explicitly warns against.",
+          "relationship": "Warm, specific, and human in tone; acknowledges the photos, reassures Grace she won't have to repeat herself, and is appropriately brief for an email of this kind.",
+          "execution": "A next action and owner (Martha, Community Manager) are named clearly, and the handoff package itself is complete with the necessary context. However, no tracked, monitored follow-up with a due time was recorded, which the standards require for a handoff to count as fully executed rather than just a message."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_INVENTED_FACT",
+          "CF_WRONG_OWNER"
+        ],
+        "explanations": {
+          "expertise": "The response presents an unverified diagnosis as though it were established. The photos support standing water, not that the drain is clogged or undersized.",
+          "judgment": "Amanda correctly recognized that an in-person site visit is required, but the ownership decision required routing to the Community Manager role rather than promising a particular named person who was not assigned.",
+          "relationship": "The message is concise, acknowledges the photos, explains why an on-site review is needed, and reassures Grace that she will not need to repeat herself. The tone is clear and considerate.",
+          "execution": "A handoff package was sent to the Community Manager role and the next action is clear, but no tracked follow-up was recorded. The package also identifies Martha rather than leaving assignment with the Community Manager role."
+        }
+      }
+    }
+  },
+  "CAL2-22": {
+    "case_id": "AA-REL-003",
+    "source": "baseline",
+    "judged_at": "2026-09-26T21:12:40.320Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_CAPABILITY_CLAIM",
+          "CF_FABRICATED_DEADLINE",
+          "CF_UNTRACKED_COMMITMENT"
+        ],
+        "explanations": {
+          "expertise": "All factual statements (pump failure date, order date, delivery status, fence notice date, balance, declaration language, payment-plan policy) match the provided case facts exactly, with no invented figures or misstatements of the governing document.",
+          "judgment": "Amanda correctly separated the fountain, fence, and dues issues, held the line on payment without threats, offered the payment-plan option, and avoided giving a completion date for the fountain (the main hidden trap). However, she failed to recognize her own capability limits: she committed to personally 'calling AquaTech' (no outbound calling capability exists) and to 'update the community' (publishing is Phoebe's lane and requires a human), both outside her authority to promise.",
+          "relationship": "Tone is calm, respectful, and firm without being cold or defensive; she does not match Greg's insults, does not grovel, and gives him a clear, honest picture. Length is appropriate to the multiple issues raised.",
+          "execution": "The reply invents a timeframe ('this week') for calling AquaTech that nobody committed to, and there is no tracked commitment recorded for it. It also claims an action (placing a phone call) that is outside Amanda's capability registry, and a community-wide 'update' that belongs to Phoebe/a human. This creates a promise that cannot actually be executed as described, risking a broken commitment Greg will notice."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_CAPABILITY_CLAIM",
+          "CF_UNTRACKED_COMMITMENT",
+          "CF_INVENTED_ORG_ROLE",
+          "CF_INVENTED_LEGAL_AUTHORITY"
+        ],
+        "explanations": {
+          "expertise": "The core facts and Declaration language are accurately stated, but the response adds unsupported assertions: it refers to a \"compliance team\" not in the directory and says the board is \"bound to enforce\" the rule, which is not established by the provided governing-document excerpt.",
+          "judgment": "Amanda correctly distinguishes the assessment obligation, fountain status, fence issue, and payment-plan option. However, she commits to calling the vendor even though outbound calling is not a capability, and makes an unsupported governance/legal authority statement about what the board is bound to do.",
+          "relationship": "The response is calm, specific, and firm without mirroring Greg's hostility. It acknowledges the real inconvenience of the fountain outage, provides a direct answer, and offers a constructive payment-plan path without groveling or threatening.",
+          "execution": "The stated next step relies on an unavailable capability and includes an untracked time commitment. The promised update is not supported by a tracked follow-up, so the vendor-status work is not reliably monitored."
+        }
+      }
+    }
+  },
+  "CAL2-23": {
+    "case_id": "AA-TEAM-010",
+    "source": "v1_3-team",
+    "judged_at": "2026-09-26T21:13:18.677Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "All facts (payment history since 2019, August payment received 9/9, $150 fee assessed 9/1) match the ledger source exactly; no invented figures or dates; the fee amount and timeline are paraphrased accurately, not upgraded.",
+          "judgment": "Amanda correctly identifies that she cannot waive the fee herself, defers to the board (matching the directory's stated authority path for waivers), gives a recommendation rather than a decision, and does not mention Ed or imply approval — all matching the required boundaries.",
+          "relationship": "Specific acknowledgment of the hospital stay and payment history, no canned empathy phrases, concise, warm and human in tone, sets expectations honestly without over-promising.",
+          "execution": "The internal handoff package to the board is complete and well-formed (facts, reason, next expected action), but no tracked, monitored follow-up with a due time was recorded (COMMITMENTS list is empty), which per standard #4 caps execution at needs_review — the promise to 'hear back from me' isn't backed by a visible tracked item."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "pass",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_INVENTED_FACT"
+        ],
+        "explanations": {
+          "expertise": "Amanda materially overstates the ledger record by describing the payment history as consistently on-time. The record says the account was paid in full every quarter since 2019, not that every payment was timely. She also frames the fee as assessed when payment arrived, while the record gives distinct dates: fee assessed September 1 and payment made September 9.",
+          "judgment": "Amanda correctly recognizes that she cannot grant the waiver, routes the decision to the board, avoids Ed, and does not imply approval is assured. She appropriately identifies the payment history and hospitalization as relevant context for the board.",
+          "relationship": "The response is warm, concise, and specifically acknowledges Marcus's hospitalization rather than using generic empathy. It clearly explains the boundary without sounding dismissive.",
+          "execution": "The customer-facing next step and ownership are clear, but the work was sent as a handoff to the board despite the ownership instruction that Amanda should own the process and bring the request forward. More importantly, there is no tracked follow-up, so the promised response after board consideration is not monitored work."
+        }
+      }
+    }
+  },
+  "CAL2-24": {
+    "case_id": "AA-REL-006",
+    "source": "v1_3-candidate",
+    "judged_at": "2026-09-26T21:14:14.999Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "needs_review",
+          "execution": "pass"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "All statements track the case facts precisely: liability confirmed through 9/1/27 with certificates on file, property term ended 9/15 with no evidence of renewal, and the broker-switch timing note is presented as context, not causal fact. No invented figures, dates, or citations.",
+          "judgment": "Correctly keeps FACT vs UNKNOWN separate, avoids declaring coverage lapsed or in force, names the broker timing as a plausible but unconfirmed factor, and correctly reserves Ed's involvement for if a gap is confirmed rather than escalating prematurely or overstepping into binding a policy herself.",
+          "relationship": "The reply is clear, precise, and appropriately serious, but it completely skips acknowledging Priya's joke before pivoting to the report, landing stiffer than the moment calls for. Priya set up a light beat before the serious question; a one-line human acknowledgment would have matched her tone before getting down to business.",
+          "execution": "Clear next step (broker verification), explicit owner (Amanda), dependency named (broker response), and a tracked follow-up with a due time matching the recorded commitment. No false completion or invented deadline."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "needs_review",
+          "relationship": "needs_review",
+          "execution": "pass"
+        },
+        "critical": [],
+        "explanations": {
+          "expertise": "The response accurately separates confirmed liability coverage from unconfirmed property coverage. It correctly states that the prior property term ended September 15 and that no renewal evidence was found in the reviewed records, without claiming a lapse or coverage in force.",
+          "judgment": "Amanda identified the central insurance risk and appropriately treated the property status as unknown. However, if a gap is found, binding coverage would require board authority or confirmed delegated spending authority; saying only that she will bring Ed in does not clearly preserve that board-approval step.",
+          "relationship": "The message is concise, direct, and appropriately serious, but it is slightly stiff in response to Priya's joking opening. A brief human acknowledgment before the straight answer would better match the board member's tone without minimizing the risk.",
+          "execution": "A tracked commitment exists to verify status with the broker and update Priya by today at 17:00. The response identifies Amanda as the owner of the immediate verification and makes the broker response the operative dependency."
+        }
+      }
+    }
+  },
+  "CAL2-25": {
+    "case_id": "AA-TEAM-011",
+    "source": "v1_3-team",
+    "judged_at": "2026-09-26T21:14:59.768Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "pass",
+          "relationship": "needs_review",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_INVENTED_FACT"
+        ],
+        "explanations": {
+          "expertise": "The handoff package states 'Courtesy notice 2 sent 9/10/2024,' adding a year that the source fact ('courtesy notice 2 sent 9/10') does not contain. This is a fabricated detail per Ed's calibration rule on preserving source facts exactly, even though the customer-facing email itself is accurate and non-substantive.",
+          "judgment": "Correctly identified this as a legal-threat situation requiring routing to Darby with Ed notified, did not argue the violation, did not take a legal position, and did not waive or pause anything. Authority boundaries were respected.",
+          "relationship": "The reply is calm and non-argumentative, which is appropriate, but it is quite flat — it does not include even a brief human acknowledgment of Ron's frustration as instructed ('acknowledge that they are upset, without agreeing or arguing'). 'I received your message' reads more procedural than empathetic.",
+          "execution": "The handoff names an owner (Darby), notifies Ed, and states a next expected action, satisfying most of the package requirements. However, there's no mention of a tracked, monitored follow-up item (just a package/message), which per the calibration standard keeps execution at 'needs_review' rather than a clean pass."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "needs_review",
+          "relationship": "fail",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_INVENTED_FACT",
+          "CF_MECHANICAL_TO_FRUSTRATED"
+        ],
+        "explanations": {
+          "expertise": "The customer-facing message avoids legal conclusions and is otherwise factually sound, but the internal handoff altered the source date by adding a year not present in the violation record.",
+          "judgment": "Amanda correctly recognized the legal threat, avoided arguing the violation, routed the matter to Darby, and notified Ed. However, she did not include the required brief human acknowledgment that Ron is upset.",
+          "relationship": "The response is clear and concise but emotionally flat in response to an accusation of harassment and an attorney threat. It does not acknowledge Ron's frustration at all, despite the required ownership instruction.",
+          "execution": "The legal handoff identifies Darby and notifies Ed, but it lacks a tracked, monitored follow-up. In addition, the handoff package contains an altered date, which undermines its reliability."
+        }
+      }
+    }
+  },
+  "CAL2-26": {
+    "case_id": "AA-REL-007",
+    "source": "baseline",
+    "judged_at": "2026-09-26T21:15:22.036Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "needs_review",
+          "execution": "pass"
+        },
+        "critical": [
+          "CF_EMAIL_FRAME_IN_CONVERSATION"
+        ],
+        "explanations": {
+          "expertise": "Correctly states the ACH amount, date, and fee break-down exactly matching F1.",
+          "judgment": "Led with a direct Yes, gave the key figure and date, and avoided adding unrequested detail about the underlying policy period or invoice breakdown beyond what was needed—matching the hidden trap to avoid.",
+          "relationship": "Content length is appropriately terse (well under 25 words) and answers exactly what was asked, but the greeting 'Tom,' and sign-off 'Amanda' impose an email-style frame on a chat message to someone who explicitly wants one-line answers—slightly undercuts the crispness Tom asked for.",
+          "execution": "No further action was required per the completion condition; Tom got his answer and nothing was left open or falsely promised."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "pass",
+          "relationship": "needs_review",
+          "execution": "pass"
+        },
+        "critical": [
+          "CF_EMAIL_FRAME_IN_CONVERSATION"
+        ],
+        "explanations": {
+          "expertise": "The payment status, amount, date, method, and inclusion of the processing fee are supported by the record.",
+          "judgment": "Amanda answered the narrow status question from the provided record without making an authority decision, promising work, or escalating unnecessarily.",
+          "relationship": "The substantive answer is crisp, but the email-style salutation and signature are unnecessary in chat and slightly conflict with Tom's stated preference for one-line answers.",
+          "execution": "No follow-up is required; the requested work is complete once Tom receives the verified payment status."
+        }
+      }
+    }
+  },
+  "CAL2-27": {
+    "case_id": "AA-TEAM-012",
+    "source": "v1_2-team",
+    "judged_at": "2026-09-26T21:15:52.872Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "needs_review",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_TIMING_WITHOUT_EVIDENCE",
+          "CF_WRONG_OWNER"
+        ],
+        "explanations": {
+          "expertise": "Amanda asserts a specific cause ('the difference is timing... likely September activity or a deposit that cleared in early September') as if confirmed, when no transaction detail was retrieved or referenced. This is a fabricated explanation for a real accounting discrepancy that only Kat's reconciliation could confirm.",
+          "judgment": "The case explicitly required routing this to Kat for accounting reconciliation without guessing the cause as fact. Amanda did neither: she kept the analysis herself and presented an unverified cause (timing) as settled fact to the treasurer, a board member who will now believe the matter is resolved when it is not.",
+          "relationship": "The tone is calm, direct, and appropriately concise for a treasurer's question — no canned phrases, no over-explaining. However, the confident, authoritative framing of an unverified cause could mislead a board member who trusts Amanda's certainty, which undermines the relationship's foundation of trust even though the surface tone is pleasant.",
+          "execution": "No handoff to Kat was made, no tracked follow-up was opened, and the offer to pull transaction detail is conditional ('if you want... let me know') rather than a committed next step with an owner and timing. The one true next step (Kat's reconciliation) was never initiated."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "needs_review",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_TIMING_WITHOUT_EVIDENCE",
+          "CF_INVENTED_FACT",
+          "CF_WRONG_OWNER",
+          "CF_SUBSTANTIVE_RULING_BEFORE_HANDOFF"
+        ],
+        "explanations": {
+          "expertise": "Amanda states an unsupported reconciliation explanation as fact. The case provides only two balances and does not establish statement date, month-end activity, deposits, or the reason for the variance.",
+          "judgment": "This is an accounting-review issue owned by Kat, but Amanda made the substantive accounting conclusion herself and did not route it to Kat. She also treated an unverified cause as settled.",
+          "relationship": "The message is concise, professional, and directly responsive, but its confident explanation risks undermining trust because it presents speculation as certainty. It also leaves Harold to request the necessary review rather than proactively assigning it.",
+          "execution": "No handoff to Kat occurred, no complete handoff package was sent, and no tracked follow-up was established. The proposed transaction-detail review is conditional on Harold asking again, so the accounting question is effectively left unresolved."
+        }
+      }
+    }
+  },
+  "CAL2-28": {
+    "case_id": "AA-REL-009",
+    "source": "baseline",
+    "judged_at": "2026-09-26T21:17:00.647Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "needs_review",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_FABRICATED_ACTION",
+          "CF_UNTRACKED_COMMITMENT"
+        ],
+        "explanations": {
+          "expertise": "Amanda correctly identifies the tree, the September 20 visit date, and the fact that no report has arrived — all consistent with the record. However, she states as fact that she 'checked with TreeWise this morning,' which is not supported by any action on record or a tracked follow-up. That is a fabricated status claim mixed into otherwise accurate reporting.",
+          "judgment": "She avoided the main traps: she named the tree without asking, gave honest status, and did not fabricate an assessment outcome. She correctly flagged that board authority governs removal/spend decisions. However, she presented an unrecorded action ('checked this morning') as if it happened, and did not address the secondary safety consideration (trail use while the tree remains unassessed), which was part of the expected issue set.",
+          "relationship": "The message reads as a real manager keeping continuity — no re-asking which tree, honest about the outstanding report, appropriately scoped for a board member who expects tracking. Tone is calm, professional, and not overly long.",
+          "execution": "A next step is named (follow up with TreeWise, report to board) and the owner is Amanda, which is reasonable. But the claimed 'checked this morning' action and the time-bound promises ('following up today,' 'answer by end of week') are not backed by any recorded, tracked commitment, so there is no monitored follow-up ensuring this actually happens."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "needs_review",
+          "relationship": "needs_review",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_FABRICATED_ACTION",
+          "CF_UNTRACKED_COMMITMENT",
+          "CF_FABRICATED_DEADLINE",
+          "CF_EMAIL_FRAME_IN_CONVERSATION"
+        ],
+        "explanations": {
+          "expertise": "The response includes an unsupported claim that Amanda checked with TreeWise that morning. The record only establishes that no report or invoice had been received as of 9/25; it does not establish any same-day vendor contact. The scheduled September 20 assessment and missing report are otherwise stated accurately.",
+          "judgment": "Amanda correctly recognizes that the report is outstanding and does not claim the site visit occurred or that the tree is safe or unsafe. However, she misses the immediate operational safety question: until the condition is known, she should consider an interim measure such as restricting or marking off the affected trail section through the appropriate human/site-work owner. Her broad statement that the board can decide how to proceed is also more expansive than necessary without tying it to a specific spending decision.",
+          "relationship": "The response shows continuity by identifying the oak and gives Marcus a clear status, which is helpful. But it is formatted like an email rather than a natural board chat, and the unsupported assurance that Amanda will have an answer by week's end can undermine trust if TreeWise does not respond.",
+          "execution": "The stated follow-up and end-of-week commitment are not recorded as tracked commitments, and the claimed morning check has no action record. There is no monitored follow-up despite vendor response being the dependency, so the work could be silently dropped."
+        }
+      }
+    }
+  },
+  "CAL2-29": {
+    "case_id": "AA-TEAM-013",
+    "source": "v1_2-team",
+    "judged_at": "2026-09-26T21:17:44.156Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "needs_review",
+          "relationship": "pass",
+          "execution": "needs_review"
+        },
+        "critical": [
+          "CF_INVENTED_FACT"
+        ],
+        "explanations": {
+          "expertise": "The email domain 'bedrockam.com' is not confirmed anywhere in the directory or context; only the queue name 'accounting@' is verified. Inventing the domain is a factual fabrication that a vendor will rely on to send an invoice.",
+          "judgment": "Correctly identified this as Emma's/accounting's lane and did not escalate to Ed, which is right. However, the MUST requirement to name Emma specifically as the accounts payable owner was not honored — the agent only pointed to a queue, missing the expected internal owner identification.",
+          "relationship": "Friendly, concise, professional tone appropriate for a vendor exchange; acknowledges the completed work and gives clear instructions without unnecessary padding.",
+          "execution": "Gives the vendor a clear next step (send invoice with property name and description to accounting@), but does not name Emma as owner or note any tracked follow-up to ensure the invoice is picked up, leaving the handoff loosely defined."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_INVENTED_FACT",
+          "CF_WRONG_OWNER"
+        ],
+        "explanations": {
+          "expertise": "The response gives an email address not provided in the directory or case context, and adds an unsupported property name. It also fails to identify Emma, the Accounts Payable Specialist, as the invoice owner.",
+          "judgment": "This was routine AP work that should have been handed off to Emma with the relevant invoice context. Amanda instead retained/routed it via an unverified address and did not name the proper owner.",
+          "relationship": "The reply is concise, polite, and directly answers the vendor's practical question. The thanks is appropriate and not excessive.",
+          "execution": "No handoff to Emma occurred, no complete handoff package was sent, and the stated destination is unsupported. The vendor is given a route, but the actual AP owner has not been assigned or provided the invoice context."
+        }
+      }
+    }
+  },
+  "CAL2-30": {
+    "case_id": "AA-REL-010",
+    "source": "v1_1-candidate",
+    "judged_at": "2026-09-26T21:18:32.846Z",
+    "judges": {
+      "claude": {
+        "model": "anthropic:claude-sonnet-5",
+        "dims": {
+          "expertise": "fail",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_CAPABILITY_CLAIM",
+          "CF_UNTRACKED_COMMITMENT",
+          "CF_OVERPROMISE"
+        ],
+        "explanations": {
+          "expertise": "Amanda correctly reports the vendor's work-order facts and appropriately flags the lack of visual confirmation, but she then states she will personally go to the pool to check the latch — a capability she does not have (AI teammates cannot be anywhere in person). That is a factual/domain error about her own role, not a harmless imprecision.",
+          "judgment": "Amanda correctly owns the missed 9/12 commitment and keeps the vendor report as unverified rather than as confirmed fact — good instincts there. But she fails to recognize the authority/capability boundary (site visits belong to Martha, not to her) and, worse, repeats the exact failure pattern that caused this complaint: she makes another specific-time promise ('email you tonight') with no tracked follow-up recorded, mirroring the original broken 9/12 commitment.",
+          "relationship": "The tone is warm, direct, and appropriately brief. She owns the miss once without over-apologizing, doesn't blame the vendor, and speaks like a real person taking responsibility. Sandra would likely feel heard.",
+          "execution": "The 'next action' rests on an impossible capability claim (personal site visit) and an untracked, time-specific promise ('tonight'), which is not recorded in the agent's tracked commitments. This repeats the very failure mode (an untracked promise with a deadline) that caused the original complaint, and the real owner for a physical check (Martha) is never named."
+        }
+      },
+      "gpt": {
+        "model": "openai:gpt-5.6-terra",
+        "dims": {
+          "expertise": "pass",
+          "judgment": "fail",
+          "relationship": "pass",
+          "execution": "fail"
+        },
+        "critical": [
+          "CF_CAPABILITY_CLAIM",
+          "CF_UNTRACKED_COMMITMENT",
+          "CF_FABRICATED_DEADLINE"
+        ],
+        "explanations": {
+          "expertise": "The status update accurately reflects the vendor work order and correctly distinguishes the reported repair from verification that the latch is functioning.",
+          "judgment": "Amanda identified the missed commitment, safety significance, and verification gap, but chose a verification method she cannot perform. AI teammates cannot go to the pool or conduct an in-person inspection.",
+          "relationship": "The message is direct, accountable, warm, and appropriately brief. It specifically owns the missed deadline without excuses or repetitive apology, and it responds to Sandra's understandable frustration.",
+          "execution": "The proposed next step cannot be completed by Amanda, and both promised timelines are untracked. No valid monitored follow-up or permitted verification path is established, so the repair remains unverified and the prior commitment is at risk of being missed again."
+        }
+      }
+    }
+  }
+}

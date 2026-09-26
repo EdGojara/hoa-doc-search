@@ -1,0 +1,32 @@
+CAL2-01 v1_3-candidate: claude RRPR gpt FRRF
+CAL2-02 v1_3-team: claude PPRP gpt PPRP
+CAL2-03 v1_2-team: claude RRPP gpt FFPR
+CAL2-04 v1_1-candidate: claude RFPF gpt PPPR
+CAL2-05 baseline: claude RRRF gpt RFRF
+CAL2-06 v1_2-team: claude PPPR gpt PRPR
+CAL2-07 v1_1-regression-baseline: claude PRPR gpt FFPF
+CAL2-08 v1_1-candidate: claude FFRF gpt FFPR
+CAL2-09 v1_2-team: claude PPPR gpt PPPR
+CAL2-10 v1_1-candidate: claude PRPR gpt RFPR
+CAL2-11 v1_3-team: claude PFPF gpt RFPF
+CAL2-12 v1_3-candidate: claude PPPP gpt PPRP
+CAL2-13 v1_3-team: claude RRPR gpt RPPR
+CAL2-14 v1_3-candidate: claude PPPP gpt PPPP
+CAL2-15 v1_2-team: claude PPPR gpt RPPR
+CAL2-16 v1_1-regression-baseline: claude FRPP gpt FPRP
+CAL2-17 v1_2-team: claude PPPP gpt PPPP
+CAL2-18 v1_1-candidate: claude PRPR gpt FRPF
+CAL2-19 v1_2-team: claude PPPR gpt FPPR
+CAL2-20 baseline: claude FFFF gpt FFRF
+CAL2-21 v1_3-team: claude FRPR gpt FFPR
+CAL2-22 baseline: claude PRPF gpt FFPF
+CAL2-23 v1_3-team: claude PPPR gpt FPPR
+CAL2-24 v1_3-candidate: claude PPRP gpt PRRP
+CAL2-25 v1_3-team: claude FPRR gpt FRFR
+CAL2-26 baseline: claude PPRP gpt PPRP
+CAL2-27 v1_2-team: claude FFRF gpt FFRF
+CAL2-28 baseline: claude RRPR gpt FRRF
+CAL2-29 v1_2-team: claude FRPR gpt FFPF
+CAL2-30 v1_1-candidate: claude FFPF gpt PFPF
+written C:\Users\edget\hoa-doc-search\academy\calibration\rejudged_all_standards.json
+cost: {"calls":60,"errors":0,"retries":0,"cost_usd":0,"cost_known":false,"latency_ms":1610817,"by_kind":{"judge":{"calls":60,"cost_usd":0}}}
