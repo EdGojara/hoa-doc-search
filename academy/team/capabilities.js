@@ -26,6 +26,7 @@ const CAPABILITIES = {
   send_email:           { label: 'send or reply to email' },
   receive_phone:        { label: 'answer inbound phone calls' },
   make_phone_call:      { label: 'place an outbound phone call' },
+  send_sms:             { label: 'send a text message' },
   create_task:          { label: 'open a tracked work item or objective' },
   schedule_followup:    { label: 'set a tracked, monitored follow-up with a due time' },
   prepare_document:     { label: 'draft a document (letter, packet, entry, newsletter)' },
@@ -43,6 +44,7 @@ const BASE = {
   send_email:           { enabled: true, tool: 'graph_send.sendAs', approval: 'held for human release unless AUTO_OUTBOUND_EMAIL=on', scope: 'correspondence in its lane', live: 'outbound_mail' },
   receive_phone:        NO('no inbound voice line for this teammate'),
   make_phone_call:      NO('no outbound calling exists on the platform'),
+  send_sms:             NO('the text-message line is a test line only (no A2P registration); no teammate texts customers'),
   create_task:          { enabled: true, tool: 'objectives.openObjective (migration 399)', approval: 'none', scope: 'its own lane' },
   schedule_followup:    { enabled: true, tool: 'objectives.next_action_due, monitored by objectives.findStalled', approval: 'none', scope: 'its own commitments' },
   prepare_document:     { enabled: true, tool: 'drafting in its lane', approval: 'delivery follows send_email / publish rules', scope: 'its lane' },
@@ -93,6 +95,12 @@ function can(agent, cap) { return !!capabilitiesFor(agent)[cap].enabled; }
 // Map an action phrase (past or future) to the capability it needs.
 const CLAIM_PATTERNS = [
   ['physical_site_action', /\b(go|going|goes|went|head|heading|headed|drive|driving|drove|walk|walking|walked|swing|swinging|stop|stopping|come|coming|run|running|get|getting) (over |out |down |back )?(and )?(inspect|check|look at|see|walk|test|take a look)\b|\b(go|going|goes|went|head|heading|headed|drive|driving|drove|walk|walking|walked|swing|swinging|stop|stopping|come|coming|run|running|get|getting) (over |out |down |by |back )?(to|by|past) (the )?(pool|site|property|gate|latch|fence|drain|entrance|entrances|clubhouse|pond|fountain|amenity|community|house|lot|area|tree|damage|brookside)\b|\b(go|going|goes|went|head|heading|headed|drive|driving|drove|walk|walking|walked|swing|swinging|stop|stopping|come|coming|run|running|get|getting) out (there|to (see|check|look))\b|\binspect(ing)? (the )?(pool|site|property|gate|latch|fence|drain|entrance|entrances|clubhouse|pond|fountain|amenity|community|house|lot|area|tree|damage|brookside)\b|\b(check|test|inspect|look at|see|walk|verify)(ing)? (the |it|that|this|[a-z]+ ){0,3}(myself|in person|personally|on site|onsite)\b|\bin person\b|\bon[- ]site\b|\bdrive-?bys?\b|\b(be|meet you) (there|on site|out there)\b|\b(meet|walk) (you|with you)\b|\b(schedule|set up|arrange|book|put|putting|add|adding|block|blocking)(ing)? (a |the )?(site visit|walk-?through|visit|time to (check|inspect|look))\b|\bverify the (gate|latch|pool|fence|drain) (closes|latches|works|is working)/i],
+  ['send_sms', /\b(text|texting|texted) (you|them|him|her|the (vendor|resident|homeowner|owner))\b|\bsend (you|them) a text\b|\bshoot (you|them) a text\b|\bvia text\b|\bby text\b/i],
+  ['physical_site_action', /\bpersonally (walk|inspect|visit|check)\b|\bwalk (it|the \w+|[A-Za-z]+) with (the|you|them|him|her)\b|\b(stop|swing|drop|come|pop|head) (by|over|out)\b|\b(attend|be at) (the|your|a) (meeting|walk-?through|inspection|site)\b|\bmeet (you|them|him|her) (there|at|on|out)\b|\btake a look (at it )?(myself|in person|on site)\b|\bwalk (the|your) (property|site|community|lot|grounds)\b|\b(visit|tour) (the|your) (property|site|pool|clubhouse|community)\b|\bsee (it|the \w+) (for myself|in person)\b|\bcheck (on )?(it|the \w+) (out )?(myself|personally|in person)\b/i],
+  ['make_phone_call', /\bgive (them|you|him|her|the \w+) a (call|ring|buzz)\b|\breach out by phone\b|\bget (them|him|her|you|the \w+) on the phone\b|\bhop on a call\b|\bset up a call\b|\bphone (them|you|him|her)\b/i],
+  ['execute_payment', /\b(cut|send|mail|issue|write) (a|the|you a) (check|refund)\b|\bprocess (the|your|this) (payment|refund)\b|\bwire (the|it|them)\b|\bpay (the|this|that|their|your) (invoice|bill|balance)\b|\brelease (the|their) (payment|funds)\b/i],
+  ['post_financial_entry', /\b(post|book|record|enter) (the|this|that|a) (entry|reclass|adjustment|journal entry|payment)\b|\breclass(ify)? (it|the|this|that)\b|\bmake the (journal )?entry\b/i],
+  ['publish_content', /\bpublish (it|this|the \w+)\b|\bsend (it|this) (out )?to (all )?(residents|homeowners|the community)\b|\bpost (it|this) (to|on) the (portal|website)\b/i],
   ['make_phone_call', /\b(call(ing|ed)?|phon(e|ed|ing)|ring(ing)?|dial(ing)?)\b(?! (me|us) | (a|the|an) (special |board |member |annual |emergency )?(meeting|vote|election|question)| (it|this) (in|done|a))|\bget (them|him|her) on the phone\b|\bleave (a )?voicemail\b|\bspoke (with|to)\b/i],
   ['post_financial_entry', /\b(post(ed|ing)?|book(ed|ing)?|record(ed|ing)?) (the |a |this |that )?(journal )?(entry|reclass|adjustment|je)\b|\breclass(ed|ing|ify|ified)? (it|the|this|that)\b|\bpost (it|this|that)\b/i],
   ['execute_payment', /\b(pay(ing)?|paid|release(d)? (the )?payment|issue(d)? (a |the )?(check|payment|refund)|send (a |the )?payment|refund(ed)? (you|the))\b/i],
@@ -123,6 +131,6 @@ function capabilityBlock(agent, { env } = {}) {
 const COMMITMENT_RULE = `COMMITMENTS: you may promise something with a time ("today", "this afternoon", "by Friday") only if you can actually do it (WHAT YOU CAN ACTUALLY DO) AND you record it. To record it, end your output with:
 ---COMMITMENTS---
 [{"what":"...","due":"YYYY-MM-DD HH:MM or 'today 17:00'","capability":"send_email|schedule_followup|..."}]
-That block is removed before the person sees your reply; the platform turns each entry into a tracked follow-up with that due time and watches it. If you cannot or do not record it, say what you are doing now or the next step instead of promising a time.`;
+That block is removed before the person sees your reply; the platform turns each entry into a tracked follow-up with that due time and watches it. If you cannot or do not record it, say the next step instead of promising a time. Never say you are doing something now unless ACTIONS TAKEN THIS TURN lists it.`;
 
 module.exports = { CAPABILITIES, capabilitiesFor, can, capabilityForClaim, capabilityBlock, COMMITMENT_RULE, CLAIM_PATTERNS };

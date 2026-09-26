@@ -19,7 +19,6 @@
 const GENERIC = [
   /\b(so|then),? (yes|no)\b/i,
   /\bthe (short )?answer is (yes|no)\b/i,
-  /^(yes|no)[,.!]/i,
 ];
 
 // Domain rulings, keyed by the owner classifier's signal.

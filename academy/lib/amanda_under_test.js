@@ -61,7 +61,8 @@ function contextText(c) {
 
 function actionsBlock(c) {
   const log = c.action_log || [];
-  return 'ACTIONS ON RECORD (what you or the team have actually done; anything not listed has NOT happened):\n'
+  return 'ACTIONS TAKEN THIS TURN: none. You have no tools in this conversation, so do not say you are doing anything now; say the next step.\n\n'
+    + 'ACTIONS ON RECORD (what you or the team have actually done; anything not listed has NOT happened):\n'
     + (log.length ? log.map((a) => `- [${a.at}] ${a.type}: ${a.what} (record: ${a.ref})`).join('\n') : '- none recorded') + '\n\n';
 }
 
@@ -76,7 +77,7 @@ function buildRequest(c, { mode = 'baseline', learnedGuidance = '', team = {} } 
     const { NAMES, HANDOFF_RULE } = require('../team/agent_under_test');
     const owner = classifyOwner({ message: c.incoming_message.text, agent: 'amanda', audience: c.audience, contextText: contextText(c), history: c.conversation_history || [], sharedWork: [], community: c.community_context || {} });
     const intent = withOwnership(classifyIntent({ message: c.incoming_message.text, channel: c.channel, contextText: contextText(c), audience: c.audience }), owner);
-    const system = candidateSystem({ audience: c.audience, communityName: c.community_context.name, channel: c.channel, intent, learnedGuidance, team, agent: 'amanda', ownership: ownerBlock(owner, { names: NAMES() }), governance: governanceBlock(c.community_context) }) + (owner.handoff_required ? '\n\n' + HANDOFF_RULE : '');
+    const system = candidateSystem({ audience: c.audience, communityName: c.community_context.name, channel: c.channel, intent, learnedGuidance, team, agent: 'amanda', ownership: ownerBlock(owner, { names: NAMES() }), governance: governanceBlock(c.community_context) }) + (owner.handoff_required || (owner.notify || []).length ? '\n\n' + HANDOFF_RULE : '');
     const base = userContent(c);
     const cut = base.lastIndexOf("Draft Amanda's reply to");
     return { system, prompt: base.slice(0, cut) + actionsBlock(c) + base.slice(cut), intent, owner };

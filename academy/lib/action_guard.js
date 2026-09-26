@@ -67,7 +67,7 @@ const SELF_AUTH = /\b(?:I|we)(?:'ll|\s+will|'m|\s+am|\s+are|'re|\s+can|\s+would)
 const AUTHORITY_CTX = /\b(board (approved|authorized|voted|directed)|within (my|manager|management) (spending )?authority|authority to bind|delegated authority)\b/i;
 
 // Escalation targets that do not exist in the team directory.
-const INVENTED_ROLE = /\b(?:our|the|my|a)\s+((?:senior\s+)?leadership(?: team)?|risk(?: management)? (?:team|department|contact|manager|group)|risk team|executive team|exec team|management team|operations team|ops team|vp(?: of [a-z]+)?|vice president(?: of [a-z]+)?|director of [a-z]+|head of [a-z]+|supervisor|claims (?:team|department)|insurance (?:team|department)|legal department|e&o carrier|errors and omissions carrier|risk management contact)\b|\bleadership\b(?! (?:of|on) the board)/i;
+const INVENTED_ROLE = /\b(?:our|my)\s+((?:senior\s+)?leadership(?: team)?|risk(?: management)? (?:team|department|contact|manager|group)|risk team|executive team|exec team|management team|operations team|ops team|vp(?: of [a-z]+)?|vice president(?: of [a-z]+)?|director of [a-z]+|head of [a-z]+|supervisor|claims (?:team|department)|insurance (?:team|department)|legal department|e&o carrier|errors and omissions carrier|risk management contact)\b|\bleadership\b(?! (?:of|on) the board)/i;
 
 // Legal: a cited authority must appear in the retrieved context.
 const LEGAL_CITE = /\b(chapter \d{2,4}|§\s?\d+(\.\d+)*|\d{3}\.\d{3,5}|property code|texas law|state law|federal law|statut(e|es|ory)|the law (says|requires|allows|permits|limits)|legally (required|allowed|permitted)|under (texas|state|the) (law|statute))\b/gi;
@@ -76,7 +76,7 @@ const TYPICAL_NORM = /\b(commonly|typically|usually|often|generally|standard(ly)
 // Any "our/the <words> coordinator|committee|manager|team|..." must be a role
 // that exists (roster titles, directory roles, governance bodies). Built lazily
 // from the roster so a new teammate's title is never flagged.
-const ROLE_NOUN = /\b(?:our|the|my)\s+((?:[a-z&]+\s+){0,4}?(?:coordinator|committee|manager|team|department|specialist|officer|director|supervisor|lead|contact|group|desk))\b/gi;
+const ROLE_NOUN = /\b(?:our|my)\s+((?:[a-z&]+\s+){0,4}?(?:coordinator|committee|manager|team|department|specialist|officer|director|supervisor|lead|contact|group|desk))\b/gi;
 const normRole = (x) => String(x || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ').trim();
 let _roster = null;
 // Committees are NOT in the permanent list (Ed 2026-09-26): a governance body
@@ -99,10 +99,24 @@ function allowedRoles(bodies = []) {
   return set;
 }
 let _bodies = [];   // set per guard() call; guard is synchronous
+// Committees are governance bodies: checked whatever the article ("the
+// compliance committee"), against the community's bodies on record. Staff roles
+// are checked only when claimed as Bedrock's ("our coordinator"), so a vendor's
+// "the GreenLine supervisor" is not an invented Bedrock role.
+const COMMITTEE_NOUN = /\b(?:our|the|my|a|an)\s+((?:[a-z&]+\s+){0,3}?committee)\b/gi;
+// "the compliance team" claims a Bedrock department whatever the article
+const FUNCTION_TEAM = /\b(?:the|our|my)\s+((?:compliance|legal|risk|maintenance|operations|ops|insurance|management|leadership|executive|claims|billing|collections|hr|it|enforcement|violations?)\s+(?:team|department|group|desk))\b/gi;
 function inventedRoles(s) {
   const hits = [];
-  ROLE_NOUN.lastIndex = 0;
   let m;
+  FUNCTION_TEAM.lastIndex = 0;
+  while ((m = FUNCTION_TEAM.exec(s))) { if (!allowedRoles(_bodies).has(m[1].toLowerCase())) hits.push(m[0].trim()); }
+  COMMITTEE_NOUN.lastIndex = 0;
+  while ((m = COMMITTEE_NOUN.exec(s))) {
+    const phrase = m[1].toLowerCase().replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!allowedRoles(_bodies).has(phrase) && !(phrase === 'committee' && _bodies.length)) hits.push(m[0].trim());
+  }
+  ROLE_NOUN.lastIndex = 0;
   while ((m = ROLE_NOUN.exec(s))) {
     const phrase = m[1].toLowerCase().replace(/[^a-z& ]/g, ' ').replace(/\s+/g, ' ').trim();
     // "our Director" is fine when the sentence spells out a real roster title
@@ -260,9 +274,10 @@ const WHY = {
 };
 
 function revisionRequest(violations) {
+  const why = { ...WHY, ...require('../team/hard_guards').WHY };   // hard guards (G1-G8) explain themselves too
   return 'Some sentences in your draft are not supported. For each one: what is wrong, and why it matters.\n'
-    + violations.map((v, i) => `${i + 1}. "${v.sentence}"\n   Problem: ${v.detail}.\n   Why: ${WHY[v.rule] || ''}`).join('\n')
-    + '\nRewrite only what these problems require, in your own voice. Do not reuse stock phrases, do not say the same thing twice, and keep everything else as it was. Keep or update your COMMITMENTS block if you have one. Return only the revised output.';
+    + violations.map((v, i) => `${i + 1}. "${v.sentence}"\n   Problem: ${v.detail}.\n   Why: ${why[v.rule] || ''}`).join('\n')
+    + '\nRewrite only what these problems require, in your own voice. Do not reuse stock phrases, do not say the same thing twice, and keep everything else as it was. Keep or update your COMMITMENTS, HANDOFF, and WORK_ITEMS blocks. Return only the revised output.';
 }
 
 module.exports = { guard, actionClaims, firstPersonClaims, revisionRequest, sentences, WHY };

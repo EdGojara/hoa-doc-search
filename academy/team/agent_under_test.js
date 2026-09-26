@@ -23,7 +23,11 @@ const { governanceBlock } = require('./governance');
 const HANDOFF_RULE = `HANDOFF PACKAGE: when OWNERSHIP says a handoff is required (or you bring someone in), do everything inside your authority, tell the person who is picking it up, and end your output with the package that travels with the work:
 ---HANDOFF---
 {"from":"<you>","to":"<owner key: amanda|paige|claire|phoebe|kat|emma|annie|miranda|reese|darby|maggie|community_manager|ed|board|legal>","notify":["<internal escalation, e.g. ed, if OWNERSHIP names one>"],"requestor":"who asked, their role, and how they reached us","issue":"what they asked or need","known_facts":["..."],"unknowns":["..."],"actions_taken":["what has actually been done, with dates"],"source_refs":["where each fact comes from"],"reason":"why this belongs to the recipient","next_expected_action":"the first thing the recipient should do","followup_state":"what the requestor was told, who follows up, and any due time","transfer":false}
-The package goes to the recipient, never to the customer. "transfer" is true only if ownership explicitly moves; otherwise you stay accountable for follow-through. If you own it yourself, leave the package out.`;
+The package goes to the recipient, never to the customer. "transfer" is true only if ownership explicitly moves; otherwise you stay accountable for follow-through. If you own it yourself, leave the package out.
+A handoff also needs a TRACKED WORK ITEM, or it will not be released. Add:
+---WORK_ITEMS---
+[{"owner":"<same owner key as the package's to>","title":"what they need to do","due":"YYYY-MM-DD HH:MM","notify":["<e.g. ed, when OWNERSHIP names an internal escalation>"]}]
+The platform persists each item and monitors it. Use WORK_ITEMS with notify when you keep the work but OWNERSHIP says someone must be notified.`;
 
 const HARD_LIMITS = 'HARD LIMITS: you never waive or reduce a fine or fee, approve or deny an ACC application, take a legal position, make a Texas Chapter 209 determination, commit association funds, sign a contract, or post an accounting entry. You bring those to whoever decides (YOUR TEAM, ESCALATION PATHS).';
 
@@ -69,7 +73,8 @@ function teamUserContent(c) {
   const work = (c.shared_work_context || []).length
     ? `SHARED TEAM RECORD (work teammates have done; answer from it and credit them):\n${c.shared_work_context.map((w) => `- [${w.at}] ${names[w.by] || w.by}, ${w.type}: ${w.what} (${w.status}; ${w.ref})`).join('\n')}\n\n` : '';
   const acts = (c.action_log || []).length ? c.action_log.map((a) => `- [${a.at}] ${a.type}: ${a.what}`).join('\n') : '- none recorded';
-  return `THE MESSAGE (channel: ${c.channel}):\nFrom: ${who} (${role})\n\n${c.incoming_message.text}\n\n${hist}CONTEXT (${c.community_context.name}):\n${ctx}\n\n${work}ACTIONS ON RECORD (what you have actually done; anything not listed has NOT happened):\n${acts}\n\nDraft ${me.name.split(' ')[0]}'s ${who === 'system' ? 'message' : `reply to ${first}`}.`;
+  const turn = 'ACTIONS TAKEN THIS TURN: none. You have no tools in this conversation, so do not say you are doing anything now ("I\'m emailing", "opening a service call now"). Say the next step instead.';
+  return `${turn}\n\nTHE MESSAGE (channel: ${c.channel}):\nFrom: ${who} (${role})\n\n${c.incoming_message.text}\n\n${hist}CONTEXT (${c.community_context.name}):\n${ctx}\n\n${work}ACTIONS ON RECORD (what you have actually done; anything not listed has NOT happened):\n${acts}\n\nDraft ${me.name.split(' ')[0]}'s ${who === 'system' ? 'message' : `reply to ${first}`}.`;
 }
 
 const AMANDA_AUDIENCES = new Set(['board', 'homeowner', 'vendor', 'staff']);
@@ -99,7 +104,7 @@ function teamRequest(c, { team = {} } = {}) {
 // Split the model output into the customer message and the internal blocks.
 function parseAgentOutput(text) {
   let s = String(text || '');
-  const out = { message: '', commitments: [], handoff: null, parse_errors: [] };
+  const out = { message: '', commitments: [], handoff: null, work_items: [], parse_errors: [] };
   const grab = (tag) => {
     const i = s.indexOf(`---${tag}---`);
     if (i < 0) return null;
@@ -109,7 +114,8 @@ function parseAgentOutput(text) {
     s = s.slice(0, i) + (next >= 0 ? rest.slice(next) : '');
     return body.replace(/^```(json)?|```$/g, '').trim();
   };
-  const h = grab('HANDOFF'); const cm = grab('COMMITMENTS');
+  const h = grab('HANDOFF'); const cm = grab('COMMITMENTS'); const wi = grab('WORK_ITEMS');
+  if (wi) { try { const x = JSON.parse(wi); out.work_items = Array.isArray(x) ? x : [x]; } catch (e) { out.parse_errors.push('work_items: ' + e.message); } }
   if (h) { try { out.handoff = JSON.parse(h); } catch (e) { out.parse_errors.push('handoff: ' + e.message); } }
   if (cm) { try { const v = JSON.parse(cm); out.commitments = Array.isArray(v) ? v : [v]; } catch (e) { out.parse_errors.push('commitments: ' + e.message); } }
   out.message = s.trim();

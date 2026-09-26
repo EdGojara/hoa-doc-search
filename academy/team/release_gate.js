@@ -10,9 +10,15 @@
 // ----------------------------------------------------------------------------
 const { validateHandoff } = require('./routing_checks');
 
-function gateProblems(owner, handoff) {
+// G4 (Ed 2026-09-26): a required handoff also needs a PERSISTED tracked work
+// item owned by the recipient, with a due time. The package alone can be lost;
+// the work item is what gets monitored.
+function gateProblems(owner, handoff, workItems = []) {
   if (!owner || !owner.handoff_required) return [];
-  return validateHandoff(handoff, { to: owner.owner, notify: owner.notify || [] }).map((p) => ({ ...p, rule: 'HANDOFF_REQUIRED' }));
+  const problems = validateHandoff(handoff, { to: owner.owner, notify: owner.notify || [] });
+  const tracked = workItems.filter((w) => w && w.persisted && w.owner === String(owner.owner).toLowerCase() && w.due);
+  if (!tracked.length) problems.push({ code: 'HO_NOT_TRACKED', detail: `no persisted work item owned by ${owner.owner} with a due time (the package alone is not monitored work)` });
+  return problems.map((p) => ({ ...p, rule: 'HANDOFF_REQUIRED' }));
 }
 
 // Violation objects in the guard's shape, so one revision request covers both.
@@ -24,8 +30,8 @@ function asViolations(problems, owner) {
   }];
 }
 
-function release(owner, handoff) {
-  const problems = gateProblems(owner, handoff);
+function release(owner, handoff, workItems = []) {
+  const problems = gateProblems(owner, handoff, workItems);
   return { status: problems.length ? 'held' : 'released', problems };
 }
 

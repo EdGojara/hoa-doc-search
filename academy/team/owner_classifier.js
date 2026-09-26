@@ -44,6 +44,7 @@ const RX = {
   arcApproval: /\b(will (it|this|that|my \w+) (get|be) approved|approv(e|al) (of )?(my|the|our) (fence|application|plans?|request)|can i (build|install|put up|add|paint)|is my (application|request) approved)\b/i,
   arcHistory: /\b(fence|shed|pool|patio|addition|paint|roof|application|survey|plans?)\b/i,
   governance: /\b(can the board|without (asking us|a (member )?vote|member approval)|member vote|need a vote|amend\w*|bylaws|declaration|rules? change|change the (\w+ )?rules|on (our|its) own)\b/i,
+  vendorTermination: /\b(fire|terminate|replace|get rid of|drop|done with|cancel) (them|these (people|guys)|the (vendor|landscaper|contractor|company|pool company)|[A-Z][a-zA-Z]+(Scape|Line|Edge|Tech|Pools?|Lawn)?)\b|\bwhy are we (still )?paying (them|these people)\b|\b(new|different|another) (landscaper|vendor|contractor|pool company)\b/i,
   status: /\b(did (we|the|you)|was (the|our|it)|has (the|it)|have (we|you)|any update|where are we|is (someone|the|it|our)\b.*\?|still (coming|waiting|open)|go out\?|been paid|get paid)\b|\b(was|were|is|has|have) [\w' ]{0,40}\b(paid|sent|mailed|posted|done|made|completed|scheduled)\b/i,
 };
 
@@ -92,6 +93,13 @@ function classifyOwner({ message, agent, audience = '', contextText = '', histor
   }
   // 6. A balance or statement discrepancy: accounting review (Kat). [TRIGGERS.kat]
   if (RX.discrepancy.test(m) && agent !== 'kat') { sig('discrepancy'); return set({ owner_class: 'accounting', owner: 'kat', reason: 'explaining or reconciling a balance is Kat\'s accounting review', authority_required: [] }); }
+  // 6b. Vendor termination or replacement: the manager keeps the vendor work
+  //     (deficiency notice under the contract) but Ed must be involved on the
+  //     record, and ending the contract is a board decision. [Ed 2026-09-26]
+  if (RX.vendorTermination.test(m)) {
+    sig('vendor_termination');
+    return set({ owner_class: 'current_agent', owner: agent, reason: 'vendor performance is yours to manage under the contract; terminating or replacing a vendor needs Ed involved and board authority', authority_required: ['board_approval', 'ed_involvement'], notify: ['ed'], handoff_required: false });
+  }
   // 7. Waivers and spends: the board decides; a manager carries it to them,
   //    front office hands it to Amanda. [amanda_reply.js reserved decisions]
   if (RX.waiver.test(m) || RX.spend.test(m)) {
@@ -147,7 +155,8 @@ function ownerBlock(o, { names = {} } = {}) {
   const lines = [`OWNERSHIP (decided before you draft; do not re-decide it): ${o.owner_class.replace(/_/g, ' ')}${o.owner && o.owner !== o.accountable ? `, owner: ${n(o.owner)}` : ''}.`, `Why: ${o.reason}.`];
   if (o.authority_required.length) lines.push(`Approval needed: ${o.authority_required.map((a) => a.replace(/_/g, ' ')).join(', ')}${o.decision_body ? ` (${o.decision_body})` : ''}. You do not make this decision.`);
   if (o.handoff_required) lines.push(`HANDOFF REQUIRED to ${n(o.owner)}: you may acknowledge the question, summarize the known facts, say who has it, and explain what happens next. Do not make the ruling yourself (no "so yes", no "the board can", no "it will be approved"). Include the HANDOFF package. Without a valid package your reply will not be released.`);
-  if (o.notify.length) lines.push(`Internal escalation: also notify ${o.notify.map(n).join(', ')} (put them in the package's "notify").`);
+  if (o.notify.length) lines.push(`Internal escalation: also notify ${o.notify.map(n).join(', ')}: put them in the HANDOFF package's "notify", or, if you keep the work, record a WORK_ITEMS entry with "notify". Saying it in the reply is not enough.`);
+  if ((o.signals || []).includes('vendor_termination')) lines.push('Do not threaten, recommend, or start terminating or replacing the vendor in your reply. You may use the contract remedies you already have (a deficiency notice) and say the next step.');
   if (o.consult.length) lines.push(`Before you commit to facts, confirm them with ${o.consult.map(n).join(', ')}.`);
   lines.push(o.transfer ? `Ownership transfers to ${n(o.owner)}; say so plainly.` : `You stay accountable for follow-through: the person should hear from you (or know exactly who is on it) and never have to start over.`);
   if (o.owner_class === 'legal') lines.push(`Do not respond to the merits (whether the violation, fee, or decision was right). In one human sentence acknowledge that they are upset, without agreeing or arguing. Then say ${n(o.owner)}, who coordinates legal matters for Bedrock, has it, and that nothing they sent is lost. Stop there.`);

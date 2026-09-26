@@ -87,9 +87,14 @@ t('release gate: a required handoff blocks release without a valid package; vali
   const o = classify(byId['AA-TEAM-011']);
   assert.strictEqual(release(o, null).status, 'held');
   const pkg = { from: 'amanda', to: 'darby', notify: ['ed'], requestor: 'Ron Castillo, homeowner, email', issue: 'says the fence violation is harassment; attorney will contact us', known_facts: ['V-3310 fence stain, courtesy notice 2 sent 9/10'], unknowns: ['attorney name'], actions_taken: [], source_refs: ['violation record V-3310'], reason: 'legal threat goes to legal review', next_expected_action: 'Darby coordinates counsel and briefs Ed', followup_state: 'Ron told it has gone to the team that handles legal matters; Amanda keeps the thread' };
-  assert.strictEqual(release(o, pkg).status, 'released');
-  assert.strictEqual(release(o, { ...pkg, notify: [] }).status, 'held', 'missing Ed escalation holds it');
-  assert.strictEqual(release(o, { ...pkg, to: 'amanda' }).status, 'held', 'wrong owner holds it');
+  // G4: a valid package alone is not monitored work; a persisted work item owned by the recipient is required
+  const wi = [{ id: 'SBX-WI-1', owner: 'darby', title: 'legal review of Ron Castillo threat', due: '2026-09-29 17:00', notify: ['ed'], persisted: true }];
+  assert.strictEqual(release(o, pkg).status, 'held', 'package without a tracked work item is held');
+  assert.strictEqual(release(o, pkg, wi).status, 'released');
+  assert.strictEqual(release(o, pkg, [{ ...wi[0], persisted: false }]).status, 'held', 'an unpersisted item does not count');
+  assert.strictEqual(release(o, pkg, [{ ...wi[0], owner: 'amanda' }]).status, 'held', 'the work item must be owned by the recipient');
+  assert.strictEqual(release(o, { ...pkg, notify: [] }, wi).status, 'held', 'missing Ed escalation holds it');
+  assert.strictEqual(release(o, { ...pkg, to: 'amanda' }, wi).status, 'held', 'wrong owner holds it');
   assert.deepStrictEqual(gateProblems(classify(byId['AA-TEAM-007']), null), [], 'no handoff required, nothing to gate');
 });
 

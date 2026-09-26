@@ -14,9 +14,10 @@ const { ROSTER } = require('../lib/team/roster');
 let failed = 0;
 const t = (name, fn) => { try { fn(); console.log('PASS ', name); } catch (e) { failed++; console.log('FAIL ', name, '\n   ', e.message); } };
 const rules = (m, o = {}) => guard({ message: m, contextText: o.ctx || '', actionLog: o.log || [], agent: o.agent || 'amanda', commitments: o.c || [] }).map((v) => v.rule);
-const REQUIRED = ['read_email', 'send_email', 'receive_phone', 'make_phone_call', 'create_task', 'schedule_followup', 'prepare_document', 'publish_content', 'update_record', 'post_financial_entry', 'execute_payment', 'physical_site_action'];
+// Ed's 12 plus send_sms (added with the hard guards: the text line is test-only)
+const REQUIRED = ['read_email', 'send_email', 'receive_phone', 'make_phone_call', 'send_sms', 'create_task', 'schedule_followup', 'prepare_document', 'publish_content', 'update_record', 'post_financial_entry', 'execute_payment', 'physical_site_action'];
 
-t('registry: the 12 capabilities, each with enabled / tool / approval / scope / availability for every AI teammate', () => {
+t('registry: the 13 capabilities, each with enabled / tool / approval / scope / availability for every AI teammate', () => {
   assert.deepStrictEqual(Object.keys(CAPABILITIES).sort(), [...REQUIRED].sort());
   for (const p of ROSTER.filter((x) => x.persona && x.persona !== 'general')) {
     const caps = capabilitiesFor(p.persona);

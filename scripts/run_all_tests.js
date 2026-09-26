@@ -65,6 +65,7 @@ const CHECKS = [
   'tests/test_academy_team.js',
   'tests/test_academy_v1_2.js',
   'tests/test_academy_v1_3.js',
+  'tests/test_academy_hard_guards.js',
   'tests/test_forward_note_voice.js',
   'tests/test_persona_knows_team.js',
   'tests/test_vendor_master.js',

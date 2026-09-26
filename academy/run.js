@@ -34,6 +34,9 @@ const { directoryBlock, liveHumans, liveOwnership, rolesNeedingEd } = require('.
 const { capabilityBlock } = require('./team/capabilities');
 const { gateProblems, asViolations, release } = require('./team/release_gate');
 const { rulingViolations } = require('./team/ruling_guard');
+const { hardGuards } = require('./team/hard_guards');
+const { createLedger } = require('./team/work_ledger');
+const { directory: teamDirectory } = require('./team/directory');
 const { bodiesFor, governanceBlock } = require('./team/governance');
 const { ownerBlock } = require('./team/owner_classifier');
 const { NAMES } = require('./team/agent_under_test');
@@ -134,6 +137,8 @@ async function main() {
   }
   fs.mkdirSync(path.dirname(out), { recursive: true });
 
+  const ledger = createLedger();   // sandbox persistence for tracked work items (G4)
+  const knownNames = teamDirectory().map((m) => m.name).filter(Boolean).concat(['Ed Gojara']);
   for (const c of selected) {
     const agent = c.agent || 'amanda';
     const layered = c._team || o.mode === 'candidate';   // v1.2 team layers + guard
@@ -147,17 +152,21 @@ async function main() {
     for (let n = 1; n <= o.runs; n++) {
       const a = await callModel({ ...amanda, system: req.system, prompt: req.prompt, maxTokens: o.mode === 'contract' ? 2600 : layered ? 2000 : 1400, kind: 'amanda' });
       if (!a.ok) { runs.push({ run: n, error: a.error }); console.error(`${c.case_id} run ${n}: agent call failed: ${a.error}`); continue; }
-      let resp; let out = { commitments: [], handoff: null, parse_errors: [] };
+      let resp; let out = { commitments: [], handoff: null, work_items: [], parse_errors: [] };
       if (layered) { out = parseAgentOutput(a.text); resp = { message: out.message, internal: null, contract_ok: null }; }
       else resp = parseResponse(a.text, o.mode);
       // Integrity + capability guard; ONE natural revision if it fires.
       let guardInfo = null;
       if (layered) {
         // fact/capability guard + substantive-ruling guard (no ruling on a decision ownership sent elsewhere)
-        const g = (m, cm) => [...guard({ message: m, actionLog: c.action_log || [], contextText: ctx, agent, commitments: cm, governanceBodies: bodies }), ...rulingViolations({ message: m, owner, agent })];
-        const first = g(resp.message, out.commitments);
-        // release gate: a required handoff needs a valid package before release
-        const gateFirst = gateProblems(owner, out.handoff);
+        const turnActions = c.turn_actions || [];   // tool calls executed this turn (none in the sandbox)
+        // persisted work items: validated and saved by the ledger; only these count
+        let persisted = ledger.persist(out.work_items, { case_id: c.case_id, run: n, draft: 'first' });
+        const g = (m, cm, ho, wi) => [...guard({ message: m, actionLog: c.action_log || [], contextText: ctx, agent, commitments: cm, governanceBodies: bodies }), ...rulingViolations({ message: m, owner, agent }),
+          ...hardGuards({ message: m, agent, handoff: ho, workItems: wi, turnActions, owner, caseDef: c, knownNames })];
+        const first = g(resp.message, out.commitments, out.handoff, persisted);
+        // release gate: a required handoff needs a valid package AND a persisted work item
+        const gateFirst = gateProblems(owner, out.handoff, persisted);
         guardInfo = { intent: req.intent, owner, prompt_source: req.prompt_source || 'amanda v1.3 candidate', first_violations: first, gate_first: gateFirst, revised: false };
         const toFix = [...first, ...asViolations(gateFirst, owner || {})];
         if (toFix.length) {
@@ -165,16 +174,20 @@ async function main() {
           if (rv.ok) {
             guardInfo.first_draft = resp.message; guardInfo.first_commitments = out.commitments;
             const r2 = parseAgentOutput(rv.text);
-            out = { commitments: r2.commitments, handoff: r2.handoff || out.handoff, parse_errors: [...out.parse_errors, ...r2.parse_errors] };
+            out = { commitments: r2.commitments, handoff: r2.handoff || out.handoff, work_items: r2.work_items.length ? r2.work_items : out.work_items, parse_errors: [...out.parse_errors, ...r2.parse_errors] };
+            if (r2.work_items.length) persisted = ledger.persist(r2.work_items, { case_id: c.case_id, run: n, draft: 'revision' });
             resp.message = r2.message; guardInfo.revised = true;
           } else guardInfo.revision_error = rv.error;
-          guardInfo.final_violations = g(resp.message, out.commitments);
+          guardInfo.final_violations = g(resp.message, out.commitments, out.handoff, persisted);
         } else guardInfo.final_violations = [];
         guardInfo.capability_first = first.filter((v) => v.rule === 'CAPABILITY');
         guardInfo.capability_final = guardInfo.final_violations.filter((v) => v.rule === 'CAPABILITY');
         guardInfo.ruling_first = first.filter((v) => v.rule === 'SUBSTANTIVE_RULING');
         guardInfo.ruling_final = guardInfo.final_violations.filter((v) => v.rule === 'SUBSTANTIVE_RULING');
-        guardInfo.release = release(owner, out.handoff);   // held = never sent
+        guardInfo.release = release(owner, out.handoff, persisted);   // held = never sent
+        guardInfo.work_items = persisted;
+        guardInfo.hard_first = first.filter((x) => x.detection);
+        guardInfo.hard_final = guardInfo.final_violations.filter((x) => x.detection);
       }
       let routing = null;
       if (c._team) {
