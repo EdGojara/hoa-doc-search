@@ -165,6 +165,8 @@ const CHECKS = [
   'scripts/check_mgmt_id.js',
   'tests/test_character_registry.js',
   'scripts/check_migration_immutability.js',
+  'scripts/check_migration_checks.js',
+  'tests/sql/apply_one_rehearsal.mjs',
 ];
 
 const args = process.argv.slice(2);
