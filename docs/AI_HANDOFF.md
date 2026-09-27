@@ -4,7 +4,63 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): FINAL PRE-MERGE VERIFICATION, payment foundation (NOT merged, NOT deployed, sandbox NOT provisioned)
+## 2026-09-27 (latest): Payment foundation MERGED and DEPLOYED (Stripe TEST mode only)
+
+**Task.** Per ChatGPT's instruction in GitHub Issue #1 (Ed approved the merge): merge `feat/payments-safe-foundation`, push main, confirm the deploy, run read-only smoke checks. No live key, no sandbox data, no payments.
+
+**Status.** Merged and deployed. 17/19 smoke checks pass. **One config item is open: production does not see `STRIPE_CONNECT_WEBHOOK_SECRET`** (details below). It fails safe; payments are unaffected.
+
+**Commits.** Merge commit `6fdc7031` on main (merges `feat/payments-safe-foundation` at `79cbb258`; 28 files; 469 and its checks file unchanged). This handoff update is the commit after it.
+
+**Deploy.** Production `/version` = `6fdc7031`, booted 2026-09-27 22:04:31 UTC (live about 100 s after push).
+
+**Smoke checks** (read-only; HTTP probes were unsigned or invalid and refused before any handler work; DB selects only; no rows created):
+- OK: server healthy; `/version` is the merge commit.
+- OK: 469 recorded exactly once, clean, applied, approved hash. Migration status clean: 0 of 473 files pending.
+- OK: platform webhook reachable, signature verification active (bad signature refused with 400, source=platform).
+- OK: `STRIPE_WEBHOOK_SECRET` recognized (secret_present=true; not 503).
+- OK: Stripe mode is TEST (the test-mode-only delivery diagnostic is returned, and it is only returned with an `sk_test_` key).
+- **FAIL: connected-account webhook returned 503 `connect_webhook_secret_not_configured`.** The connect path is used correctly (source=connect), but the running server has no `STRIPE_CONNECT_WEBHOOK_SECRET` value.
+- **FAIL: `STRIPE_CONNECT_WEBHOOK_SECRET` recognized** (same cause).
+- OK: unsigned webhook delivery refused (400); no `stripe_events` row created by the probes.
+- OK: `PAYMENT_LINK_SECRET` recognized (a bad link returns 400 "isn't valid", not 503 "unavailable").
+- OK: portal checkout requires a signed-in homeowner (401 unauthenticated).
+- OK: real homeowner checkout in TEST mode is refused by the containment gate. This ran the deployed checkout code against production data (a real Quail Ridge lot, Stripe-onboarded, current owner) through a client that blocks all writes, with a Stripe stub. Result: `test_mode_sandbox_only`, no Stripe session attempted, no write attempted, payments table unchanged (10 before, 10 after).
+- OK: autopay begin returns 503 `autopay_unavailable`; charging disabled in the deployed code; `assessment_autopay` empty.
+
+**Open item: `STRIPE_CONNECT_WEBHOOK_SECRET` not visible to production.** It was reported as set, but the deployed process (booted 22:04 UTC) does not have it. Likely causes:
+- the key name differs (typo or spaces);
+- it was set on a different Render service or an unlinked environment group;
+- it was saved after this deploy started, or without a redeploy.
+
+Effect: connected-account `account.updated` deliveries get 503 and Stripe retries them. Platform payment events work. Nothing is lost while Stripe retries (up to about 3 days), but Stripe may disable an endpoint that keeps failing.
+
+Fix (Ed, in Render):
+1. Open the trustEd web service (the one that already has `STRIPE_WEBHOOK_SECRET`), then Environment.
+2. Confirm a variable named exactly `STRIPE_CONNECT_WEBHOOK_SECRET`, whose value is the **Connected accounts** endpoint's signing secret (Stripe Dashboard, Test mode, Webhooks, the Connected accounts endpoint, Signing secret). It is not the platform endpoint's secret.
+3. Save and redeploy.
+4. Claude reruns the read-only smoke check.
+
+**Remaining steps to an end-to-end sandbox payment today** (each needs Ed's explicit approval; all in Stripe TEST mode):
+1. (Recommended first) Fix `STRIPE_CONNECT_WEBHOOK_SECRET` as above. Not strictly required for the payment itself; it affects only `account.updated`.
+2. **Provision the sandbox** (Claude, via the owner/admin session in the browser pane): `POST /api/payments/test/payment-sandbox` with `plan`, show the 29 rows, then `apply`. It creates Drama Creek lot DC-45-060's sandbox flag, Trusted # 1002900060, GL (OPR fund, 1000/1090/1300, open periods, cutover 2026-09-01), account roles, test owner and portal login.
+3. **Create the Drama Creek test connected account** with `POST /api/payments/connect/test-onboard` for Drama Creek. This is a call to Stripe's TEST API using Stripe's documented test identity data.
+4. **One test payment.** The sandbox balance is $0, so use the staff test route `POST /api/payments/test/assessment-checkout` for DC-45-060 (a fixed $1 in test mode), then pay on Stripe's test checkout with a test card (4242 4242 4242 4242).
+5. **Verify read-only:** `stripe_events` has the delivery; the payment is settled and posted; the ledger has the payment row on the sandbox tenure; a JE `stripe:pay:<id>` debits 1090 and credits 1300 for $1; nothing touches real communities.
+6. (Optional) Test the refund path: refund the $1 in Stripe test mode, then confirm a separate `payment_reversal` row, JE `stripe:rev:<id>`, and the original payment still visible.
+
+**Remaining known limitations** (unchanged; blockers for LIVE only): payouts and bank reconciliation (1090 to operating cash); Stripe fee accounting and policy; no staff review UI; autopay off; old pay links invalid; the `api/system.js` env list lacks the two new secrets; the test-mode webhook diagnostic should be removed before live.
+
+**Decisions needed from Ed.**
+1. Fix `STRIPE_CONNECT_WEBHOOK_SECRET` in Render, then tell Claude to rerun the smoke check.
+2. Approve sandbox provisioning (step 2) and the Drama Creek test connected account (step 3).
+3. Approve the first $1 test payment (step 4).
+
+**Recommended next action.** Ed fixes the connect secret. Claude reruns the smoke check. Then, on approval, the sandbox steps 2 to 5 in order, reporting after each.
+
+---
+
+## 2026-09-27: FINAL PRE-MERGE VERIFICATION, payment foundation (NOT merged, NOT deployed, sandbox NOT provisioned)
 
 **Task.** Per ChatGPT's instruction in GitHub Issue #1: final pre-merge verification only. No code changes in this step.
 
