@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Character Canon — Bedrock</title>
+<style>
+  :root{
+    --navy:#0B1D34; --ink:#1a2230; --muted:#64748b; --line:#e3e8ef;
+    --paper:#eef1f5; --surface:#fff; --surface-2:#f7f9fb; --gold:#B8892B; --gold-bar:#D4AF37;
+    --good:#166b46; --good-bg:#e7f4ec; --warn:#9a5510; --warn-bg:#fbefe0;
+    --crit:#a5271d; --crit-bg:#fbe9e7; --accent:#1d4ed8; --info-bg:#e8eefc;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;line-height:1.5;}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 90px;}
+  .crumbs{font-size:13px;color:var(--muted);margin-bottom:2px;}
+  .crumbs a{color:var(--muted);text-decoration:none;} .crumbs a:hover{color:var(--navy);text-decoration:underline;}
+  .crumbs .sep{margin:0 7px;color:var(--line);} .crumbs .here{color:var(--navy);font-weight:700;}
+  h1{font-size:26px;font-weight:800;color:var(--navy);margin:6px 0 2px;letter-spacing:-.01em;}
+  h2{font-size:17px;font-weight:800;color:var(--navy);margin:22px 0 8px;}
+  h3{font-size:14px;font-weight:800;color:var(--navy);margin:0 0 6px;text-transform:capitalize;}
+  .sub{font-size:13.5px;color:var(--muted);margin:0 0 18px;max-width:78ch;}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:12px;}
+  .roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-bottom:8px;}
+  .who{display:flex;gap:12px;align-items:center;cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:left;font:inherit;color:inherit;}
+  .who:hover{border-color:var(--gold-bar);} .who.on{border-color:var(--navy);box-shadow:0 0 0 2px var(--navy) inset;}
+  .who img,.who .ph{width:56px;height:56px;border-radius:10px;object-fit:cover;background:var(--surface-2);flex:none;}
+  .who .nm{font-weight:800;color:var(--navy);} .who .mt{font-size:12px;color:var(--muted);}
+  .badge{display:inline-block;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap;}
+  .b-approved,.b-promoted,.b-restored,.b-active,.b-matches_current{background:var(--good-bg);color:var(--good);}
+  .b-proposed{background:var(--info-bg);color:var(--accent);}
+  .b-retired,.b-legacy{background:var(--surface-2);color:var(--muted);border:1px solid var(--line);}
+  .b-rejected,.b-unmapped{background:var(--crit-bg);color:var(--crit);}
+  .b-maps_to_other_version,.b-not_configured,.b-pending{background:var(--warn-bg);color:var(--warn);}
+  .b-no_current_release{background:var(--info-bg);color:var(--accent);}
+  .b-current{background:var(--navy);color:#fff;}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;}
+  .muted{color:var(--muted);} .small{font-size:12.5px;}
+  .head{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;}
+  .head img{width:150px;height:150px;object-fit:cover;border-radius:12px;border:1px solid var(--line);}
+  .head .meta{flex:1 1 320px;min-width:260px;}
+  .kv{display:grid;grid-template-columns:130px 1fr;gap:3px 12px;font-size:13px;}
+  .kv dt{color:var(--muted);} .kv dd{margin:0;}
+  .banner{border-radius:12px;padding:14px 16px;margin:12px 0;border:1px solid;}
+  .banner.pend{background:var(--info-bg);border-color:#c6d4f6;}
+  .banner.warn{background:var(--warn-bg);border-color:#efd3ad;}
+  .banner.bad{background:var(--crit-bg);border-color:#f2c4bf;}
+  .banner.ok{background:var(--good-bg);border-color:#b9dfc8;}
+  .btn{font:inherit;font-weight:700;font-size:13px;border-radius:8px;padding:7px 14px;cursor:pointer;border:1px solid var(--navy);background:var(--navy);color:#fff;}
+  .btn.ghost{background:#fff;color:var(--navy);} .btn:disabled{opacity:.55;cursor:default;}
+  input.reason{font:inherit;font-size:13px;width:min(520px,100%);padding:7px 10px;border:1px solid var(--line);border-radius:8px;margin:8px 0;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:700;}
+  td.chg{background:#fff7e0;font-weight:700;}
+  .scroll{overflow-x:auto;}
+  .comp{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px;}
+  .ver{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--surface-2);}
+  .ver .vh{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;}
+  .spec{font-size:12.5px;margin:6px 0 0;}
+  .spec div{margin:1px 0;} .spec b{color:var(--navy);font-weight:700;}
+  .assets{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
+  .asset{width:118px;font-size:11px;color:var(--muted);}
+  .asset img{width:118px;height:118px;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block;background:#fff;}
+  .asset .role{font-weight:700;color:var(--ink);}
+  details summary{cursor:pointer;font-weight:700;color:var(--navy);font-size:13px;}
+  #err{display:none;} .hide{display:none;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumbs"><a href="/admin/systems">Systems Admin</a><span class="sep">/</span><span class="here">Character Canon</span></div>
+  <h1>Character Canon</h1>
+  <p class="sub">The canonical identity of each AI teammate, owned by Trusted and versioned forever. Providers such as HeyGen and ElevenLabs are recorded as mappings, never as the character. Nothing here changes what production renders yet.</p>
+  <div id="err" class="banner bad"></div>
+  <div id="roster" class="roster"></div>
+  <div id="detail"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+let af = (u, o) => fetch(u, o);
+let CURRENT = null;
+const COMPONENTS = ['face','body','voice','wardrobe','persona','guardrails'];
+const $ = (id) => document.getElementById(id);
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function badge(s, label){ return s ? `<span class="badge b-${esc(s)}">${esc(label||s.replace(/_/g,' '))}</span>` : ''; }
+function showErr(m){ const e=$('err'); e.innerHTML=m; e.style.display=m?'block':'none'; }
+const short = (s, n=12) => s ? esc(String(s).slice(0,n)) : '';
+
+async function api(u, o){
+  const r = await af(u, o);
+  const j = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(j.detail || j.error || ('HTTP '+r.status));
+  return j;
+}
+
+async function loadRoster(){
+  const { characters } = await api('/api/characters');
+  if (!characters.length){ $('roster').innerHTML = '<div class="card muted">No characters in the registry yet. Run the Phase A ingest.</div>'; return; }
+  $('roster').innerHTML = characters.map((c)=>`
+    <button class="who${CURRENT===c.character_id?' on':''}" data-id="${esc(c.character_id)}">
+      ${c.thumb?`<img src="${esc(c.thumb)}" alt="">`:'<div class="ph"></div>'}
+      <div><div class="nm">${esc(c.display_name)}</div>
+      <div class="mt">${c.current_release_no?`Release ${c.current_release_no} current`:'No current release'}</div>
+      ${c.pending?badge('pending', c.pending+' awaiting approval'):''}</div>
+    </button>`).join('');
+  document.querySelectorAll('.who').forEach((b)=>b.onclick=()=>openCharacter(b.dataset.id));
+  if (!CURRENT) openCharacter(characters[0].character_id);
+}
+
+function specHtml(spec){
+  const fmt = (v) => Array.isArray(v) ? v.map((x)=>typeof x==='object'?Object.values(x).join(' → '):x).join(' · ')
+    : (v && typeof v==='object') ? Object.entries(v).map(([k,x])=>`${k.replace(/_/g,' ')}: ${Array.isArray(x)?x.join(', '):x}`).join('; ') : v;
+  return '<div class="spec">'+Object.entries(spec).map(([k,v])=>`<div><b>${esc(k.replace(/_/g,' '))}:</b> ${esc(fmt(v))}</div>`).join('')+'</div>';
+}
+
+function render(d){
+  const c = d.character, byId = new Map(d.versions.map((v)=>[v.id,v]));
+  const assetBy = new Map(d.assets.map((a)=>[a.sha256,a]));
+  const current = d.releases.find((r)=>r.is_current);
+  const proposedReleases = d.releases.filter((r)=>r.status==='proposed');
+  const faceCanon = (current||d.releases[d.releases.length-1]||{components:{}}).components.face;
+  const faceV = byId.get(faceCanon); const canonAsset = faceV && faceV.assets.find((a)=>a.role==='canonical');
+  const vlabel = (id) => { const v = byId.get(id); return v ? 'v'+v.version_no : ''; };
+
+  // Package approval: the latest proposed release becomes current, earlier proposed ones are legacy.
+  let pend = '';
+  if (proposedReleases.length){
+    const target = proposedReleases[proposedReleases.length-1];
+    const legacy = proposedReleases.slice(0,-1);
+    const cvs = new Set(); [...legacy, target].forEach((r)=>Object.values(r.components).forEach((id)=>{ if (byId.get(id).status==='proposed') cvs.add(id); }));
+    pend = `<div class="banner pend"><b>Awaiting your approval.</b> Approving this package will:
+      <ul class="small" style="margin:6px 0">
+        <li>approve ${cvs.size} component version${cvs.size===1?'':'s'}: ${[...cvs].map((id)=>{const v=byId.get(id);return esc(v.component+' v'+v.version_no);}).join(', ')}</li>
+        ${legacy.map((r)=>`<li>record release ${r.release_no} as <b>legacy</b> (preserved, not current)</li>`).join('')}
+        <li>make <b>release ${target.release_no}</b> the current ${esc(c.display_name)}</li>
+      </ul>
+      <div class="small muted">Nothing in production changes. HeyGen, voices and existing videos stay exactly as they are.</div>
+      <input class="reason" id="pkgReason" value="Approved canonical package (Phase A)">
+      <div><button class="btn" id="pkgBtn">Approve ${esc(c.display_name)}</button></div></div>`;
+    setTimeout(()=>{ $('pkgBtn').onclick = async ()=>{
+      const reason = $('pkgReason').value.trim(); if (!reason) return showErr('A reason is required.');
+      if (!confirm(`Approve ${c.display_name}'s canonical package?`)) return;
+      $('pkgBtn').disabled = true; $('pkgBtn').textContent = 'Approving…';
+      try { await api(`/api/characters/${c.character_id}/approve-package`, { method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ current_release_id: target.id, legacy_release_ids: legacy.map((r)=>r.id), reason }) });
+            showErr(''); await openCharacter(c.character_id); await loadRoster(); }
+      catch(e){ showErr('Approval failed: '+esc(e.message)); $('pkgBtn').disabled=false; $('pkgBtn').textContent='Approve '+c.display_name; }
+    }; }, 0);
+  }
+
+  const relRows = d.releases.map((r)=>{
+    const parent = d.releases.find((p)=>p.id===r.parent_release_id);
+    const cells = COMPONENTS.map((k)=>{ const id=r.components[k]; const changed = parent && parent.components[k]!==id;
+      return `<td class="${changed?'chg':''}">${id?esc(vlabel(id)):'<span class="muted">none</span>'}</td>`; }).join('');
+    const canPromote = !r.is_current && ['retired','restored','promoted'].includes(r.status);
+    return `<tr><td><b>${r.release_no}</b></td><td>${r.is_current?badge('current'):''} ${badge(r.status==='retired'&&!r.is_current?'legacy':r.status)}</td>${cells}
+      <td class="small">${esc(r.release_notes)}<div class="muted mono">sig ${short(r.release_sha256)} ${r.signature_ok?'✓':'✗ MISMATCH'}</div></td>
+      <td>${canPromote?`<button class="btn ghost" data-promote="${esc(r.id)}" data-no="${r.release_no}">Make current</button>`:''}</td></tr>`;
+  }).join('');
+
+  const comps = COMPONENTS.map((k)=>{
+    const vs = d.versions.filter((v)=>v.component===k);
+    if (!vs.length) return `<div class="card"><h3>${k}</h3><div class="muted small">No ${k} canon yet.${k==='body'?' Body reference images come in a later phase.':''}</div></div>`;
+    return `<div class="card"><h3>${k}</h3>${vs.slice().reverse().map((v)=>`
+      <div class="ver"><div class="vh"><b>v${v.version_no}</b> ${badge(v.status)} ${current&&current.components[k]===v.id?badge('current','in current release'):''}
+        <span class="mono muted">spec ${short(v.spec_sha256)} ${v.spec_hash_ok?'✓':'✗'}</span></div>
+        <div class="small muted">${esc(v.change_reason)}</div>
+        ${specHtml(v.spec)}
+        ${v.assets.length?`<div class="assets">${v.assets.map((a)=>{const x=assetBy.get(a.sha256)||{}; const u=d.asset_urls[a.sha256];
+          return `<div class="asset">${u?`<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="" loading="lazy"></a>`:''}
+            <div class="role">${esc(a.role.replace(/_/g,' '))}</div><div>${x.width?esc(x.width+'×'+x.height):''} ${esc(x.media_type||'')}</div>
+            <div class="mono">${short(a.sha256)}</div><div>${esc(x.origin||'')}</div></div>`;}).join('')}</div>`:''}
+      </div>`).join('')}</div>`;
+  }).join('');
+
+  const mapRows = d.mappings.map((m)=>`<tr><td><b>${esc(m.provider)}</b> ${esc(m.kind.replace(/_/g,' '))}</td>
+    <td class="mono">${short(m.external_id,16)}</td><td>${esc(m.license_class)}</td><td>${esc(m.channel||'')}</td>
+    <td class="small">${m.sources.map((s)=>{const v=byId.get(s.component_version_id);return esc(v?v.component+' v'+v.version_no:'?')+(s.asset_sha256?` <span class="mono muted">@${short(s.asset_sha256)}</span>`:'');}).join('<br>')}</td>
+    <td>${badge(m.status)}</td><td class="small muted">${esc(m.notes||'')}</td></tr>`).join('');
+
+  const div = d.divergence || { rows: [] };
+  const drift = div.rows.filter((r)=>!['matches_current','not_configured','no_current_release'].includes(r.state));
+  const divRows = div.rows.map((r)=>`<tr><td>${esc(r.label)}</td><td class="mono">${short(r.runtime_id,16)||'<span class="muted">—</span>'}</td>
+    <td>${badge(r.state, r.state==='not_configured'?'not set (uses shared default)':r.state==='no_current_release'?'no current release yet':null)}</td><td class="small">${esc((r.mapped_versions||[]).join(', '))}</td></tr>`).join('');
+
+  const events = d.events.slice().reverse().map((e)=>`<tr><td class="small mono">${esc(new Date(e.created_at).toLocaleString())}</td><td>${esc(e.subject_type.replace(/_/g,' '))}</td>
+    <td>${badge(e.event)}</td><td class="small">${esc(e.actor)}</td><td class="small">${esc(e.reason||'')}</td></tr>`).join('');
+
+  $('detail').innerHTML = `
+    <div class="card"><div class="head">
+      ${canonAsset&&d.asset_urls[canonAsset.sha256]?`<img src="${esc(d.asset_urls[canonAsset.sha256])}" alt="">`:''}
+      <div class="meta"><h1 style="margin-top:0">${esc(c.display_name)}</h1>
+        <dl class="kv"><dt>Character ID</dt><dd class="mono">${esc(c.character_id)}</dd>
+          <dt>Slug</dt><dd class="mono">${esc(c.character_slug)}</dd>
+          <dt>Roster persona</dt><dd class="mono">${esc(c.roster_persona||'—')}</dd>
+          <dt>Current release</dt><dd>${current?'Release '+current.release_no:'<span class="muted">none yet</span>'}</dd>
+          <dt>Files</dt><dd>${d.assets.length} stored by content hash (private)</dd></dl>
+        <div style="margin-top:10px"><button class="btn ghost" id="verifyBtn">Verify stored files</button> <span id="verifyOut" class="small"></span></div>
+      </div></div></div>
+    ${pend}
+    ${drift.length?`<div class="banner warn"><b>Production differs from canon.</b> ${drift.length} runtime setting${drift.length===1?'':'s'} below still point at an older version or at nothing in the registry. Expected in Phase A: production is not switched to the registry yet.</div>`:''}
+    <h2>Releases</h2>
+    <div class="card scroll"><table><thead><tr><th>#</th><th>Status</th>${COMPONENTS.map((k)=>`<th>${k}</th>`).join('')}<th>Notes</th><th></th></tr></thead><tbody>${relRows}</tbody></table>
+      <div class="small muted" style="margin-top:6px">Highlighted cells changed from the parent release. Making an earlier release current is the rollback; nothing is deleted.</div></div>
+    <h2>Components</h2><div class="comp">${comps}</div>
+    <h2>Concept &amp; scene references</h2>
+    <div class="card"><div class="small muted" style="margin-bottom:8px">Design direction for future body canon, wardrobe, scenes and video. <b>Not canonical.</b> These images are stored outside the identity model and can never become this character's face or body.</div>
+      ${(d.references||[]).length?`<div class="assets">${d.references.map((r)=>{const x=assetBy.get(r.sha256)||{}; const u=d.asset_urls[r.sha256];
+        return `<div class="asset" style="width:220px">${u?`<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="" loading="lazy" style="width:220px;height:165px"></a>`:''}
+          <div class="role">${esc(r.label)}</div><div>${badge('legacy', r.category.replace(/_/g,' '))} ${x.width?esc(x.width+'×'+x.height):''}</div>
+          <div class="mono">${short(r.sha256)}</div><div>${esc(r.notes||'')}</div></div>`;}).join('')}</div>`:'<div class="muted small">None yet.</div>'}</div>
+    <h2>Provider mappings</h2>
+    <div class="card scroll"><table><thead><tr><th>Provider</th><th>External ID</th><th>License</th><th>Channel</th><th>Built from</th><th>Status</th><th>Notes</th></tr></thead><tbody>${mapRows||'<tr><td colspan="7" class="muted">None</td></tr>'}</tbody></table></div>
+    <h2>Production vs canon</h2>
+    <div class="card scroll"><table><thead><tr><th>Runtime setting</th><th>Value in use</th><th>State</th><th>Registry version</th></tr></thead><tbody>${divRows}</tbody></table></div>
+    <h2>History</h2>
+    <div class="card"><details><summary>${d.events.length} events (append-only)</summary><div class="scroll"><table><thead><tr><th>When</th><th>Subject</th><th>Event</th><th>By</th><th>Reason</th></tr></thead><tbody>${events}</tbody></table></div></details></div>`;
+
+  $('verifyBtn').onclick = async ()=>{
+    $('verifyBtn').disabled = true; $('verifyOut').textContent = 'Downloading and re-hashing every file…';
+    try { const v = await api(`/api/characters/${c.character_id}/verify`);
+      const bad = v.assets.filter((a)=>!a.ok).length;
+      $('verifyOut').innerHTML = v.ok ? `<span class="badge b-approved">verified</span> ${v.assets.length} files, ${v.specs.length} specs, ${v.releases.length} releases match their hashes`
+        : `<span class="badge b-rejected">mismatch</span> ${bad} file(s) failed`; }
+    catch(e){ $('verifyOut').textContent = 'Verify failed: '+e.message; }
+    $('verifyBtn').disabled = false;
+  };
+  document.querySelectorAll('[data-promote]').forEach((b)=>b.onclick = async ()=>{
+    const reason = prompt(`Make release ${b.dataset.no} current again? This is a rollback; the current release is preserved.\n\nReason:`);
+    if (!reason || !reason.trim()) return;
+    try { await api(`/api/characters/${c.character_id}/releases/${b.dataset.promote}/promote`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ reason }) });
+          await openCharacter(c.character_id); await loadRoster(); }
+    catch(e){ showErr('Could not change the current release: '+esc(e.message)); }
+  });
+}
+
+async function openCharacter(id){
+  CURRENT = id;
+  document.querySelectorAll('.who').forEach((b)=>b.classList.toggle('on', b.dataset.id===id));
+  $('detail').innerHTML = '<div class="card muted">Loading…</div>';
+  try { render(await api('/api/characters/'+id)); showErr(''); }
+  catch(e){ $('detail').innerHTML = ''; showErr('Could not load character: '+esc(e.message)); }
+}
+
+(async function boot(){
+  try {
+    const cfg = await (await fetch('/api/auth/config')).json();
+    if (cfg && cfg.enabled && window.supabase && cfg.supabase_url && cfg.supabase_anon_key){
+      const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      af = async (u,o)=>{ o=o||{}; const h=Object.assign({}, o.headers||{});
+        try{ const s=(await supa.auth.getSession()).data.session; if(s&&s.access_token) h.Authorization='Bearer '+s.access_token; }catch(_){}
+        return fetch(u, Object.assign({}, o, { headers:h })); };
+    }
+  } catch(_){}
+  try { await loadRoster(); }
+  catch(e){ showErr(/owner/i.test(e.message) ? 'This page is limited to the account owner. Sign in to trustEd as the owner, then reload.' : 'Could not load the registry: '+esc(e.message)); }
+})();
+</script>
+</body>
+</html>

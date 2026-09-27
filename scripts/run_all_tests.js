@@ -163,6 +163,7 @@ const CHECKS = [
   'tests/test_lma_board_access.js',
   'tests/test_lma_asset_accounting.js',
   'scripts/check_mgmt_id.js',
+  'tests/test_character_registry.js',
 ];
 
 const args = process.argv.slice(2);

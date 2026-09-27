@@ -1133,6 +1133,11 @@ app.get('/admin/w9', (req, res) => {
 app.get('/admin/voices', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'voices.html'));
 });
+// Character canon review — owner-only. The page self-gates client-side; every
+// /api/characters route hard-gates to the owner server-side. (Ed 2026-09-26.)
+app.get('/admin/characters', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'characters-admin.html'));
+});
 // Video Links — record a mini video, upload it, send one private revocable link.
 app.get('/admin/video-share', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'video-share.html'));
@@ -1768,6 +1773,9 @@ app.use('/api/tessa', tessaRouter);
 
 const { router: voicesRouter, loadVoiceOverrides, loadTtsVoiceOverrides } = require('./api/voices');
 app.use('/api/voices', voicesRouter);
+// Canonical character registry (migration 467). Owner-only; additive (Phase A).
+const { router: charactersRouter } = require('./api/characters');
+app.use('/api/characters', charactersRouter);
 
 const { router: w9Router } = require('./api/w9');
 app.use('/api/w9', w9Router);

@@ -147,6 +147,10 @@ const FEATURES = [
     situation: 'How do I change an AI teammate’s voice, or the voice/accent of the live video avatar (Claire, Tessa, or anyone on the AI team)? A teammate has the wrong accent.',
     response: 'AI-team voices are set from the Voices picker at /admin/voices (owner-only; linked from the AI Team Scorecard). Each teammate is listed with their current voice and a play button to hear it; click "Change voice" to audition the available voices (press play on any of them) and "Use" to set one. Only voices that the live (interactive) video avatar can actually speak are shown, in English and Spanish. A choice takes effect immediately for the live avatar and any rendered video — no redeploy — because it is saved per teammate and overrides the environment default. This is the fix when a teammate has the wrong accent (for example a British-reading voice on someone who should sound American): open Voices, audition, and Use the right one.',
   },
+  {
+    situation: 'Where is the canonical identity of each AI teammate kept (their face, voice, wardrobe, persona)? How do I see which version of Amanda made a video, approve a new face, or roll a character back?',
+    response: 'The Character Canon page at /admin/characters (owner-only; also a tile on Systems Admin) is the registry of who each AI teammate is. Each character has a permanent ID and independently versioned components: face, body, voice, wardrobe, persona and guardrails. A release bundles one approved version of each; the current release is who the character is today, and older releases stay preserved as legacy. Proposed changes show an Approve button that says exactly what will be approved. To roll back, use Make current on an earlier release; nothing is ever deleted. Canonical images are stored privately by content hash and the Verify button re-checks every file. Provider IDs (HeyGen avatars, ElevenLabs voices) are listed as mappings, and the Production vs canon table shows where the live app still uses an older version. Production rendering does not read this registry yet.',
+  },
 ];
 
 (async () => {

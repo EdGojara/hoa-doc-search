@@ -1,0 +1,40 @@
+{
+  "_comment": "Reference imagery: design direction for future body canon, wardrobe, scenes and video. NOT identity. Stored in character_reference_assets, which no release can reference, so these can never override a canonical face or body.",
+  "references": [
+    {
+      "file": "concept_amanda_porsche_993_2026-09-26.png",
+      "category": "concept_scene",
+      "label": "Amanda with the air-cooled Porsche 993",
+      "origin": "chatgpt",
+      "origin_ref": "ChatGPT image supplied by Ed 2026-09-26 18:43 (byte-identical copy at 19:03:51 not stored twice)",
+      "characters": [
+        "amanda_albright"
+      ],
+      "notes": "Casual-life / Bedrock-branded wardrobe direction: black Bedrock tee, straight jeans, white sneakers. Drift note: face reads younger and slimmer than canonical face v2; use for wardrobe and setting only, never as a face or body reference. Contains a third-party car badge: review before any external use."
+    },
+    {
+      "file": "concept_amanda_phoebe_community_event_2026-09-26.png",
+      "category": "concept_scene",
+      "label": "Amanda and Phoebe at an HOA community event",
+      "origin": "chatgpt",
+      "origin_ref": "ChatGPT image supplied by Ed 2026-09-26 19:03",
+      "characters": [
+        "amanda_albright",
+        "phoebe_hart"
+      ],
+      "notes": "Community/field direction: Amanda in camel blazer, white shirt, dark jeans; Phoebe in white Bedrock polo and jeans. Shows relative presence (Amanda composed, Phoebe warm). Height relationship is not canon."
+    },
+    {
+      "file": "concept_amanda_paige_board_meeting_2026-09-26.png",
+      "category": "concept_scene",
+      "label": "Amanda and Paige at a board meeting",
+      "origin": "chatgpt",
+      "origin_ref": "ChatGPT image supplied by Ed 2026-09-26 21:12",
+      "characters": [
+        "amanda_albright",
+        "paige_chandler"
+      ],
+      "notes": "Boardroom direction: Amanda standing and leading in camel blazer; Paige seated in black tweed blazer with her relaxed bun. Fictional HOA name on screen. Presence hierarchy matches the Character Bible."
+    }
+  ]
+}
