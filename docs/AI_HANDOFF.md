@@ -4,6 +4,39 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
+## 2026-09-27 (later): Tool merged to main; waiting on MIGRATION_PLAN_SECRET
+
+**Task.** Ed approved merging `feat/single-migration-apply` to main. Then: set `MIGRATION_PLAN_SECRET` on Render (Ed), prepare the 469 file-only main commit, stop before applying 469.
+
+**Status.** Merged and pushed. Waiting for Ed to set `MIGRATION_PLAN_SECRET` on Render. 469 is NOT on main yet and NOT applied.
+
+**Branch.** `main`. Merge commit `a3aa3473` (merges `feat/single-migration-apply` at `236e056e`).
+
+**Latest commit.** This handoff update is the commit after `a3aa3473`.
+
+**Material files changed.** Same as the entry below: `lib/migrations/apply_one.js`, `server.js` (3 owner-only routes), `public/index.html` (Review / Approve & Apply panel), `scripts/check_migration_checks.js`, `scripts/check_migration_immutability.js`, `migrations/LEDGER_NOTES.md`, `tests/sql/apply_one_rehearsal.mjs`, `scripts/run_all_tests.js`, `.gitignore`, this file. No `.sql` file.
+
+**Tests / results.** On the merged tree: tool rehearsal 57/57; migration-checks and immutability checks pass; `server.js` syntax OK. Full-suite result from the branch still stands (117/122; the 5 failures predate this work; `test_community_boundary` not run).
+
+**Migrations involved.** None applied. Next: 469 (`5d10f2b485080dd459c020e7cbcf02b97fc17ded38d05728959d9d2ff2653130`) plus `migrations/checks/469_payments_safe_foundation.json` (`1d404af88a6d5cd9f6c6f92e67cd87f23ce463ef8cbfbdea076862f09ac429fe`), as a file-only commit on main once the secret is confirmed.
+
+**Production changes.** Code deploy of the tool (new owner-only routes and panel). No database change: the review step is read-only, and the tracker bootstrap runs only inside an approved apply. Without `MIGRATION_PLAN_SECRET`, review and apply refuse.
+
+**Risks / open issues.**
+- Until 469 is on main, there is no pending file to review, so the secret can only be proven by the "Review 469" step after the file-only commit.
+- Owner panel not yet exercised in a browser; the first real use is Review 469.
+- `feat/payments-safe-foundation` still carries the older tool merge; re-sync before that branch merges.
+- The 5 pre-existing test failures (Maggie roster, persona routing, signature logo, Amanda signature, `lib/presentations` require) are unrelated but open.
+
+**Decisions needed from Ed.**
+1. Set `MIGRATION_PLAN_SECRET` on Render and say "set" (never paste the value into chat).
+2. Then approve the 469 file-only commit to main (SQL file plus checks file; no payment code).
+3. Then review 469 in the panel and click Approve & Apply.
+
+**Recommended next action.** Ed sets the secret. Claude lands the 469 file-only commit, waits for the deploy, and confirms the panel shows "Review 469". Ed reviews and clicks Approve & Apply. Claude verifies read-only and reports.
+
+---
+
 ## 2026-09-27: Single-migration apply tool
 
 **Task.** Replace manual SQL-editor migrations with an owner-approved, single-file apply that records itself correctly. Final review items from ChatGPT: (1) dedicated plan-signing secret, (2) precise atomicity wording, (3) this handoff file.
