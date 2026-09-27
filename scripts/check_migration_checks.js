@@ -17,7 +17,7 @@ const FIRST = 469;
 const files = fs.readdirSync(DIR).filter((f) => /^\d{3}_[a-z0-9_]+\.sql$/.test(f) && Number(f.slice(0, 3)) >= FIRST).sort();
 const problems = [];
 for (const f of files) {
-  try { loadMigration(f, DIR); } catch (e) { problems.push(`${f}: ${e.message}`); }
+  try { loadMigration(f, DIR, { normalizeLineEndings: true }); } catch (e) { problems.push(`${f}: ${e.message}`); }
 }
 for (const j of fs.existsSync(path.join(DIR, 'checks')) ? fs.readdirSync(path.join(DIR, 'checks')) : []) {
   if (!fs.existsSync(path.join(DIR, j.replace(/\.json$/, '.sql')))) problems.push(`checks/${j}: no matching migration file`);
