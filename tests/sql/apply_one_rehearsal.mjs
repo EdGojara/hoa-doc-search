@@ -177,6 +177,42 @@ await db.query(`INSERT INTO migration_attempts (filename, sha256, plan_nonce, re
 const stale = await A.getAttempt(client, (await q1(`SELECT id FROM migration_attempts WHERE plan_nonce='n170'`)).id);
 check('attempt: a stale running attempt with no tracker row reads as abandoned (nothing applied)', /abandoned/.test(stale.reconciled));
 
+// ---- plan signing: dedicated MIGRATION_PLAN_SECRET only ----
+const savedEnv = { s: process.env.MIGRATION_PLAN_SECRET, d: process.env.DATABASE_URL };
+delete process.env.MIGRATION_PLAN_SECRET;
+process.env.DATABASE_URL = 'postgres://user:pw@db.example:5432/postgres';
+await expectRefusal('secret: plan refused when MIGRATION_PLAN_SECRET is missing (DATABASE_URL is never used as a key)', () => A.planMigration({ ...ctx, secret: undefined, filename: '160_edit_after_plan.sql' }), 'no_secret');
+await expectRefusal('secret: apply refused when MIGRATION_PLAN_SECRET is missing', () => A.applyMigration({ ...ctx, secret: undefined, planToken: p110.plan_token }), 'no_secret');
+process.env.MIGRATION_PLAN_SECRET = 'too-short';
+await expectRefusal('secret: a short MIGRATION_PLAN_SECRET is refused', () => A.planMigration({ ...ctx, secret: undefined, filename: '160_edit_after_plan.sql' }), 'weak_secret');
+process.env.MIGRATION_PLAN_SECRET = 'x'.repeat(40);
+write('180_env_secret.sql', `BEGIN;\nCREATE TABLE t180 (id int);\nCOMMIT;\n`, { objects: { added: ['table:t180', 'column:t180.id'], changed: [], removed: [] } });
+const p180 = await A.planMigration({ ...ctx, secret: undefined, filename: '180_env_secret.sql' });
+check('secret: with MIGRATION_PLAN_SECRET set, plan is ready', p180.status === 'ready' && p180.plan_token);
+await expectRefusal('secret: a token signed with a different secret is refused', () => A.applyMigration({ ...ctx, secret: 'another-secret', planToken: p180.plan_token }), 'bad_plan');
+if (savedEnv.s === undefined) delete process.env.MIGRATION_PLAN_SECRET; else process.env.MIGRATION_PLAN_SECRET = savedEnv.s;
+if (savedEnv.d === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = savedEnv.d;
+
+// ---- documented atomicity: bootstrap commits separately; migration + record are atomic ----
+const db2 = new PGlite();
+const client2 = { query: async (sql, params) => {
+  if (params) { const r = await db2.query(sql, params.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : v))); return { rows: r.rows, rowCount: r.affectedRows ?? r.rows.length }; }
+  const rs = await db2.exec(sql); const last = rs[rs.length - 1] || { rows: [] }; return { rows: last.rows, rowCount: last.affectedRows ?? 0 };
+} };
+await db2.exec(`CREATE TABLE schema_migrations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), filename text NOT NULL UNIQUE, sha256 text NOT NULL,
+  applied_at timestamptz NOT NULL DEFAULT now(), applied_by text, duration_ms integer, error text);
+  INSERT INTO schema_migrations (filename, sha256) VALUES ('100_base.sql', 'x');
+  CREATE TABLE ledger (id int PRIMARY KEY, amount int);`);
+const ctx2 = { ...ctx, client: client2 };
+const pf = await A.planMigration({ ...ctx2, filename: '120_fails_midway.sql' });
+const rf = await A.applyMigration({ ...ctx2, planToken: pf.plan_token, log: { error() {} } });
+const q2 = async (sql) => (await db2.query(sql)).rows[0];
+check('atomicity: first-ever apply fails -> migration changes rolled back, nothing recorded', rf.status === 'failed'
+  && !(await q2(`SELECT 1 x FROM information_schema.tables WHERE table_name = 'half'`)) && !(await q2(`SELECT 1 x FROM schema_migrations WHERE filename = '120_fails_midway.sql'`)));
+check('atomicity: the tracker bootstrap (bookkeeping) committed separately and stays in place', !!(await q2(`SELECT 1 x FROM information_schema.tables WHERE table_name = 'migration_attempts'`))
+  && !!(await q2(`SELECT 1 x FROM information_schema.columns WHERE table_name = 'schema_migrations' AND column_name = 'commit_sha'`))
+  && (await q2(`SELECT status FROM migration_attempts WHERE id = '${rf.attempt_id}'`)).status === 'failed');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 fs.rmSync(dir, { recursive: true, force: true });
 process.exitCode = fail ? 1 : 0;
