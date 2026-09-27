@@ -4,7 +4,44 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Migration 469 landed on main as files only; NOT applied
+## 2026-09-27 (latest): Migration 469 COMPLETE (applied by Ed; verified read-only)
+
+**Task.** Per the ChatGPT instruction in GitHub Issue #1: verify Ed's owner-panel apply of 469, read-only; no new production changes.
+
+**Status.** 469 is applied, recorded and verified. **Complete.** Waiting for ChatGPT review before any next feature or deploy step.
+
+**Apply.** Ed clicked Approve & Apply. Attempt `26b68552-1efe-4676-9129-b75f624a7201`. Applied 2026-09-27 17:30:51 UTC, 6.7 s. Applied by `egojara@bedrocktx.com`. Deployed commit recorded: `cdec7cda` (the deploy that carried 469; the file blob is identical to `33019547`).
+
+**Production verification (read-only, service-role selects; 27/27 OK).**
+- `schema_migrations`: exactly one row for `469_payments_safe_foundation.sql`. Clean (`error` NULL), `status` = applied, `sha256` = `5d10f2b4...3130` (approved), `checks_sha256` = `1d404af8...29fe` (approved), `applied_via` = owner_single_apply, `applied_by`, `commit_sha`, `applied_at`, `duration_ms` populated.
+- Stored verification: 8/8 checks OK; 14/14 protected tables and views unchanged; row changes `chart_of_accounts` +6, `community_account_roles` +18, `stripe_events` net 0; schema objects exactly 97 added / 2 changed / 0 removed. Rows were written only in `chart_of_accounts` (6 inserts), `community_account_roles` (18 inserts) and `stripe_events` (the self-test's rolled-back writes, net 0).
+- `migration_attempts`: the attempt row is finalized `applied` with the same hashes and `finished_at` set; it is the only attempt row. The post-commit API checks were recorded OK (roles 18, stripe_events 0).
+- Accounts: exactly 6 rows numbered 1090, one each for Waterview Estates, Lakes of Pine Forest, Canyon Gate at Cinco Ranch, Eaglewood, Quail Ridge and Still Creek Ranch. All named "Cash in Transit - Stripe Clearing", active, postable, debit asset, in the same fund as that community's 1000.
+- Roles: exactly 18 rows (6 communities x 3 roles). Each points at the expected account in its own community (operating_cash = 1000, stripe_clearing = 1090, homeowner_ar = 1300); all `updated_by` = migration 469.
+- Nothing else created:
+  - `stripe_events` = 0.
+  - `payments` still 10 rows, none with the new identity or settlement fields set.
+  - Homeowner ledger: no reversal rows, no reversal categories, no Stripe-sourced rows.
+  - No journal entries with a `stripe:` reference, and no journal entries at all since the apply.
+  - `assessment_autopay` = 0.
+  - No lot flagged `payment_sandbox`.
+
+**Owner panel.** Computed with the same rule the Migration status check uses: 0 of 473 migration files are pending, so 469 no longer appears. The banner should read "Every migration file is recorded as applied." Two files (227, 435) differ from their recorded hash; these are the documented historical exceptions in `migrations/LEDGER_NOTES.md`; the check skips them and never re-runs them. (Not visually confirmed in Ed's browser session.)
+
+**Production changes in this step.** None (verification only). This handoff update is a docs-only commit.
+
+**Risks / open issues.**
+- Payment application code is still unmerged on `feat/payments-safe-foundation`, which carries an older merge of the tool; re-sync it with main before review.
+- Payment posting is not live. Main's legacy payment path is unchanged; the new tables exist but nothing writes to them until the payment code merges.
+- The 5 pre-existing test failures (Maggie roster, persona routing, signature logo, Amanda signature, `lib/presentations` require) remain open.
+
+**Decisions needed from Ed.** None right now. Next: ChatGPT reviews this verification; then Ed decides on the payment-code merge (after a re-sync and review).
+
+**Recommended next action.** ChatGPT reviews this entry. Then Claude re-syncs `feat/payments-safe-foundation` with main (dropping its now-duplicate copy of the tool and keeping 469 byte-identical) and presents the payment-code merge for review. No deploy until approved.
+
+---
+
+## 2026-09-27: Migration 469 landed on main as files only; NOT applied
 
 **Task.** Per the ChatGPT instruction in GitHub Issue #1 (Ed confirmed `MIGRATION_PLAN_SECRET` is set on Render): bring only the 469 SQL file and its checks file onto main, verify hashes, run local checks, push, do not apply.
 
