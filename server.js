@@ -11150,6 +11150,87 @@ app.post('/api/admin/apply-migrations', express.json({ limit: '8kb' }), async (r
 });
 
 // ============================================================================
+// SINGLE-MIGRATION APPLY (owner only) — lib/migrations/apply_one.js
+//   POST /api/admin/migrations/plan      { filename }    read-only review + plan token
+//   POST /api/admin/migrations/apply     { plan_token }  "Approve & Apply"
+//   GET  /api/admin/migrations/attempts/:id              attempt outcome
+// One file per call, from the deployed commit only; the plan token binds the
+// file hash, checks hash, deployed commit and owner. There is deliberately no
+// list/bulk/acknowledge endpoint. DATABASE_URL never leaves the server.
+// ============================================================================
+let _migrationApplyRunning = false;
+async function _migrationClient() {
+  if (!process.env.DATABASE_URL) { const e = new Error('DATABASE_URL is not set on the server'); e.code = 'DATABASE_URL_MISSING'; throw e; }
+  const { Client } = require('pg');
+  const c = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  await c.connect();
+  return c;
+}
+function _migrationError(res, err, where) {
+  const { Refusal } = require('./lib/migrations/apply_one');
+  if (err instanceof Refusal) return res.status(409).json({ error: err.message, code: err.code });
+  console.error(`[migrations] ${where} failed:`, err.message);
+  return res.status(500).json({ error: safeErrorMessage(err), code: err.code || null });
+}
+app.post('/api/admin/migrations/plan', express.json({ limit: '4kb' }), async (req, res) => {
+  const { requireOwner } = require('./api/_require_admin');
+  const u = await requireOwner(req, res); if (!u) return;
+  let client;
+  try {
+    client = await _migrationClient();
+    const { planMigration } = require('./lib/migrations/apply_one');
+    const plan = await planMigration({ client, filename: String((req.body && req.body.filename) || ''), user: { id: u.user.id, email: u.email }, deployedCommit: _RUNNING_COMMIT });
+    res.json({ ok: true, plan });
+  } catch (err) { _migrationError(res, err, 'plan'); }
+  finally { if (client) client.end().catch(() => {}); }
+});
+app.post('/api/admin/migrations/apply', express.json({ limit: '8kb' }), async (req, res) => {
+  const { requireOwner } = require('./api/_require_admin');
+  const u = await requireOwner(req, res); if (!u) return;
+  if (_migrationApplyRunning) return res.status(409).json({ error: 'another migration apply is running on this server', code: 'busy' });
+  _migrationApplyRunning = true;
+  let client; let responded = false;
+  const respond = (code, body) => { if (!responded) { responded = true; res.status(code).json(body); } };
+  try {
+    client = await _migrationClient();
+    const { applyMigration } = require('./lib/migrations/apply_one');
+    const apiCheck = async ({ table, expect_count }) => {
+      let last = null;
+      for (let i = 0; i < 8; i++) {   // PostgREST reloads its schema cache asynchronously after NOTIFY
+        const { count, error } = await supabase.from(table).select('*', { count: 'exact', head: true });
+        last = { count, error: error ? error.message : null };
+        if (!error && count === expect_count) return { ok: true, count };
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      return { ok: false, count: last && last.count, error: last && (last.error || (last.count == null ? 'table not visible through the API yet' : null)) };
+    };
+    const run = applyMigration({ client, planToken: req.body && req.body.plan_token, user: { id: u.user.id, email: u.email }, deployedCommit: _RUNNING_COMMIT,
+      apiCheck, onAttempt: (id) => respond(202, { ok: true, attempt_id: id, status: 'running' }) });
+    run.then((r) => { console.log('[migrations] apply', r.filename, r.status, 'by', u.email); respond(200, { ok: r.status === 'applied' || r.status === 'already_applied', result: r }); })
+      .catch((err) => { if (!responded) { responded = true; _migrationError(res, err, 'apply'); } else console.error('[migrations] apply failed after start:', err.message); })
+      .finally(() => { _migrationApplyRunning = false; if (client) client.end().catch(() => {}); });
+  } catch (err) {
+    _migrationApplyRunning = false;
+    if (client) client.end().catch(() => {});
+    if (!responded) _migrationError(res, err, 'apply');
+  }
+});
+app.get('/api/admin/migrations/attempts/:id', async (req, res) => {
+  const { requireOwner } = require('./api/_require_admin');
+  const u = await requireOwner(req, res); if (!u) return;
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'bad attempt id' });
+  let client;
+  try {
+    client = await _migrationClient();
+    const { getAttempt } = require('./lib/migrations/apply_one');
+    const a = await getAttempt(client, req.params.id);
+    if (!a) return res.status(404).json({ error: 'attempt not found' });
+    res.json({ ok: true, attempt: a });
+  } catch (err) { _migrationError(res, err, 'attempt'); }
+  finally { if (client) client.end().catch(() => {}); }
+});
+
+// ============================================================================
 // POST /api/admin/acknowledge-migration-failures — admin-only
 // Flips schema_migrations rows from error-state to clean ("already_applied")
 // for historical migrations whose schema state is already past them. These
