@@ -4,7 +4,73 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Payment application code prepared for review (NOT merged, NOT deployed)
+## 2026-09-27 (latest): ChatGPT payment review fixes (NOT merged, NOT deployed, sandbox NOT provisioned)
+
+**Task.** Per ChatGPT's payment review in GitHub Issue #1: (1) dedicated payment-link secret, (2) test-mode containment for real homeowner checkout, (3) Stripe webhook subscription readiness, (4) rerun tests, (5) update this file.
+
+**Status.** Items 1, 2, 4 and 5 are done. Item 3 needs Ed (read-only check in the Stripe Dashboard; instructions below). Stopped for ChatGPT review.
+
+**Branch / commits.** `feat/payments-safe-foundation`: `c871f36b` (fixes), then this handoff commit. Main untouched (`003ffa76`).
+
+**Changes.**
+1. *Payment-link secret* (`lib/payments/payment_link.js`).
+   - Signs and verifies ONLY with `PAYMENT_LINK_SECRET`, at least 32 characters. The fallbacks to `STAFF_GATE_SECRET`, `STAFF_PASSWORD`, `STRIPE_WEBHOOK_SECRET` and `SUPABASE_KEY` are removed.
+   - If the secret is missing or short, minting returns 503 `payment_link_not_configured`, and `/pay/:token` shows "Online payment is temporarily unavailable" (503). It never tells the homeowner their link is invalid, and the refusal is logged server-side.
+2. *Test-mode containment* (`checkoutModeGate` in `lib/payments/assessment_checkout.js`). It runs before any payment row is written or any Stripe call is made, and covers every path (portal, pay link, staff test route) because they all go through the one checkout core.
+   - TEST key: only the single `payment_sandbox` lot in a demo community. Real homeowners get 403 `test_mode_sandbox_only`, with no rows and no session. The staff $1 route is also sandbox-only now.
+   - LIVE key: real communities only; a sandbox or demo lot gets 403 `sandbox_not_payable_live`.
+   - Unconfigured: 503.
+   - `payment_identity.js` now reads `properties.payment_sandbox` and `communities.is_demo`.
+   - `/pay/:token` shows the "not available yet" page for a test-mode refusal.
+3. *Preflight* (`scripts/stripe_preflight.js`, read-only): now checks all 8 platform events plus `account.updated` on a connected-accounts endpoint, and warns if two endpoints point at the server.
+
+**Tests / results** (local; mock Stripe; PGlite in-memory; no production writes):
+- `test_payment_foundation` 37/37 (+8 new): test key + real community refused with 0 rows and 0 sessions (portal, pay link, staff test route); test key + approved sandbox lot allowed; sandbox flag outside a demo community refused; live key + enabled real community allowed; live key + sandbox refused; unconfigured refused; no credential fallback; short or wrong secret refused.
+- Sabotage: disabling the gate fails 4 tests; restoring a credential fallback fails the secret test.
+- Existing related suites pass (dedup, ledger path, ownership transfer, gl_concept, operator actions, early prepay 23, checkout preview gate 8, bedrock_pay 11, autopay 20).
+- 469 rehearsal 79/79, 469 end-to-end 13/13, tool rehearsal 57/57; migration-checks, immutability, constraint and pagination checks pass; syntax OK.
+- `check_requires_tracked` still fails only on the pre-existing `lib/presentations` item (same on main).
+- 469 and its checks file are byte-identical to main. No production DB touched.
+
+**Webhook comparison (item 3).** Not inspected: the Stripe key exists only on Render, and I did not use any Stripe access. Ed checks in the Stripe Dashboard (read-only, change nothing):
+1. Switch the Dashboard to **Test mode** (toggle top right).
+2. Go to **Developers**, then **Webhooks** (sometimes shown as Workbench, then Webhooks).
+3. Open the endpoint whose URL ends in `/api/payments/webhook`. Note whether it is **Enabled**.
+4. Under **Listening to** (Events), check each of these 8 platform events is listed:
+   - `checkout.session.completed`
+   - `checkout.session.async_payment_succeeded`
+   - `checkout.session.async_payment_failed`
+   - `checkout.session.expired`
+   - `payment_intent.payment_failed`
+   - `charge.refunded`
+   - `charge.dispute.created`
+   - `charge.dispute.closed`
+5. Check whether there is a **second** endpoint to the same URL marked "Connected accounts" (or "Listening to events on Connected accounts") that lists `account.updated`.
+6. Report which of the 9 are present or missing, and how many endpoints point at `/api/payments/webhook`.
+
+Alternatively, run `node scripts/stripe_preflight.js` in the Render shell, where the key already lives, for the same comparison.
+
+**Finding (new blocker for `account.updated`).** The server verifies webhook signatures only with `STRIPE_WEBHOOK_SECRET`. Stripe delivers connected-account events such as `account.updated` from a separate connected-accounts endpoint with its own signing secret, so those deliveries would fail signature checks (400) today. Platform payment events are unaffected. Fix option for review: accept a second secret (for example `STRIPE_CONNECT_WEBHOOK_SECRET`) and verify against either. Not implemented (outside this bounded task). `account.updated` only refreshes onboarding status; it does not post money.
+
+**Production config still required before deploy.**
+- `PAYMENT_LINK_SECRET` set on Render (required now; without it, pay links are disabled, loudly).
+- The webhook events above, confirmed or added (by Ed, later).
+- The connected-account webhook secret decision (finding above).
+- `STRIPE_SECRET_KEY` stays `sk_test_` for this phase. With it, only the sandbox lot can pay, and real homeowners get "not available yet".
+
+**Remaining risks / blockers.** Payouts and bank reconciliation are not built (1090 accumulates). Stripe ACH and dispute fees are billed to the platform (policy). There's no staff UI for blocked or review payments. Previously emailed pay links stop working after deploy.
+
+**Decisions needed from Ed.**
+1. Do the Stripe Dashboard check above and report the result (or allow running the preflight in the Render shell).
+2. Set `PAYMENT_LINK_SECRET` on Render (48+ random characters).
+3. Decide on the connected-account webhook secret fix (implement second-secret support, or drop `account.updated` for now).
+4. After ChatGPT review: approve the merge (test mode only); sandbox provisioning stays a separate step.
+
+**Recommended next action.** ChatGPT reviews `c871f36b` and this entry. Ed does the read-only Stripe check. No merge, deploy or sandbox until approved.
+
+---
+
+## 2026-09-27: Payment application code prepared for review (NOT merged, NOT deployed)
 
 **Task.** Per the ChatGPT instruction in GitHub Issue #1: re-sync `feat/payments-safe-foundation` onto main, drop the stale tool copy, keep 469 byte-identical, run the focused tests, summarize the diff, and list the production config deployment would need. No merge, no deploy, no Stripe or production change.
 
