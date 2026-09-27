@@ -767,24 +767,27 @@ router.post('/webhook',
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     try {
-      if (!stripeLib.webhookReady()) {
-        // Webhook secret not set yet — can't verify. Don't 500 (Stripe retries).
-        return res.status(503).send('webhook secret not configured');
-      }
-
+      // Platform deliveries verify with STRIPE_WEBHOOK_SECRET; connected-account
+      // deliveries (top-level `account`) with STRIPE_CONNECT_WEBHOOK_SECRET.
+      // Exactly one secret per delivery, no fallback, no unsigned path
+      // (lib/payments/webhook_auth.js). A missing secret refuses only that
+      // source, with 503 so Stripe retries once it is set.
       const sigHeader = req.headers['stripe-signature'];
-      const verify = stripeLib.verifyWebhookSignature(req.body, sigHeader, process.env.STRIPE_WEBHOOK_SECRET);
+      const { verifyStripeWebhook } = require('../lib/payments/webhook_auth');
+      const verify = verifyStripeWebhook(req.body, sigHeader);
       if (!verify.ok) {
-        console.warn('[payments] webhook signature verify failed:', verify.error);
+        console.warn(`[payments] webhook refused (${verify.source || 'unknown'} source): ${verify.error}`);
+        if (verify.status === 503) return res.status(503).send(verify.error);
         // SANDBOX-ONLY diagnostic (visible in Stripe's delivery response view) to
         // pinpoint secret-vs-body. Never runs with a live key; leaks only prefixes.
-        if (/^sk_test_/.test(process.env.STRIPE_SECRET_KEY || '')) {
-          return res.status(400).json({ error: verify.error, diag: _webhookSigDiag(req.body, sigHeader, process.env.STRIPE_WEBHOOK_SECRET) });
+        if (/^sk_test_/.test(process.env.STRIPE_SECRET_KEY || '') && verify.source) {
+          const diagSecret = verify.source === 'connect' ? process.env.STRIPE_CONNECT_WEBHOOK_SECRET : process.env.STRIPE_WEBHOOK_SECRET;
+          return res.status(400).json({ error: verify.error, source: verify.source, diag: _webhookSigDiag(req.body, sigHeader, diagSecret) });
         }
         return res.status(400).send(`signature verify failed: ${verify.error}`);
       }
 
-      const event = JSON.parse(req.body.toString('utf8'));
+      const event = verify.event;
       console.log(`[payments] webhook event: ${event.type} (${event.id})`);
       const { processWebhookEvent } = require('../lib/payments/payment_lifecycle');
       const { createPaymentStore } = require('../lib/payments/payment_store');

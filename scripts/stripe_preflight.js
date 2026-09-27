@@ -26,6 +26,7 @@ const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const KEY = process.env.STRIPE_SECRET_KEY || '';
 const WH = process.env.STRIPE_WEBHOOK_SECRET || '';
+const WHC = process.env.STRIPE_CONNECT_WEBHOOK_SECRET || '';
 
 const ok = (s) => `\x1b[32m${s}\x1b[0m`;
 const bad = (s) => `\x1b[31m${s}\x1b[0m`;
@@ -57,8 +58,12 @@ async function stripe(path, params) {
   }
   console.log('   ' + ok('✓') + ` STRIPE_SECRET_KEY present  ${dim(KEY.slice(0, 8) + '…')}`);
   console.log(`   mode: ${mode === 'LIVE' ? bad('LIVE — real money') : ok('TEST — no real money')}`);
-  if (!WH) fail('STRIPE_WEBHOOK_SECRET is not set. Payments will be taken and never confirmed — the booking stays pending_payment forever.');
-  else console.log('   ' + ok('✓') + ` STRIPE_WEBHOOK_SECRET present  ${dim(WH.slice(0, 8) + '…')}`);
+  // Signing secrets: report presence only, never any part of the value.
+  if (!WH) fail('STRIPE_WEBHOOK_SECRET (platform endpoint) is not set. Payments will be taken and never confirmed.');
+  else console.log('   ' + ok('✓') + ' STRIPE_WEBHOOK_SECRET present (platform endpoint)');
+  if (!WHC) console.log('   ' + warn('!') + ' STRIPE_CONNECT_WEBHOOK_SECRET not set: connected-account events (account.updated) are refused with 503; platform payment events are unaffected.');
+  else console.log('   ' + ok('✓') + ' STRIPE_CONNECT_WEBHOOK_SECRET present (connected-accounts endpoint)');
+  if (WH && WHC && WH === WHC) fail('STRIPE_WEBHOOK_SECRET and STRIPE_CONNECT_WEBHOOK_SECRET are identical; each Stripe endpoint has its own signing secret.');
 
   // ---- does Stripe accept them ----------------------------------------
   console.log('\n2. Stripe accepts the key');
@@ -122,9 +127,13 @@ async function stripe(path, params) {
   console.log(`   platform events: ${platMissing.length ? bad('missing ' + platMissing.join(', ')) : ok('all ' + HANDLED_PLATFORM.length + ' subscribed')}`);
   console.log(`   connected-account events: ${connMissing.length ? warn('missing ' + connMissing.join(', ') + ' (needs a connected-accounts endpoint)') : ok('account.updated subscribed')}`);
   if (platMissing.length) fail('platform webhook not listening for: ' + platMissing.join(', '));
-  if (ours.some((e) => e.connect) && ours.some((e) => !e.connect)) {
-    console.log('   ' + warn('two endpoints point at us (platform + connected accounts); each has its own signing secret,'));
-    console.log('   ' + warn('but the server verifies only STRIPE_WEBHOOK_SECRET, so one of them will fail signature checks.'));
+  // Each endpoint has its own signing secret: platform -> STRIPE_WEBHOOK_SECRET,
+  // connected accounts -> STRIPE_CONNECT_WEBHOOK_SECRET (lib/payments/webhook_auth.js).
+  if (ours.some((e) => e.connect) && !WHC) {
+    fail('a connected-accounts endpoint points at us but STRIPE_CONNECT_WEBHOOK_SECRET is not set; its deliveries will be refused (503).');
+  }
+  if (ours.some((e) => !e.connect) && !WH) {
+    fail('a platform endpoint points at us but STRIPE_WEBHOOK_SECRET is not set; its deliveries will be refused (503).');
   }
   if (!ours.length) {
     fail('No webhook endpoint points at /api/payments/webhook.');

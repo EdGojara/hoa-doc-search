@@ -9,6 +9,7 @@ const { createAssessmentCheckout, checkoutModeGate } = require('../lib/payments/
 const { processWebhookEvent } = require('../lib/payments/payment_lifecycle');
 const { verifyPaymentToken, signPaymentToken } = require('../lib/payments/payment_link');
 const { sandboxException } = require('../lib/payments/payment_sandbox');
+const { verifyStripeWebhook } = require('../lib/payments/webhook_auth');
 
 // payment_store posts through lib/accounting/posting; stub it so this file stays offline.
 const journal = [];
@@ -475,6 +476,62 @@ t('an event from the wrong Stripe mode is ignored and credits nothing', async ()
   const st = fakeStore();
   await run(st, ev('evt_16', 'checkout.session.completed', sess('paid'), { livemode: true }));
   assert.strictEqual(st.credits.length, 0); assert.strictEqual(st.events.get('evt_16').status, 'ignored');
+});
+
+// ---------------------------------------------------------------- webhook signing: platform vs connected-account secret
+const PLATFORM_SECRET = 'whsec_platform_' + 'p'.repeat(24), CONNECT_SECRET = 'whsec_connect_' + 'c'.repeat(24);
+const signStripe = (body, secret) => {
+  const t = Math.floor(Date.now() / 1000);
+  return `t=${t},v1=${require('crypto').createHmac('sha256', secret).update(`${t}.${body}`).digest('hex')}`;
+};
+const platformEvt = Buffer.from(JSON.stringify({ id: 'evt_p1', type: 'checkout.session.completed', livemode: false, data: { object: { id: 'cs_1' } } }));
+const connectEvt = Buffer.from(JSON.stringify({ id: 'evt_c1', type: 'account.updated', account: 'acct_123', livemode: false, data: { object: { id: 'acct_123' } } }));
+const both = { platformSecret: PLATFORM_SECRET, connectSecret: CONNECT_SECRET };
+t('webhook: platform event + platform secret => accepted', () => {
+  const r = verifyStripeWebhook(platformEvt, signStripe(platformEvt, PLATFORM_SECRET), both);
+  assert.ok(r.ok, JSON.stringify(r)); assert.strictEqual(r.source, 'platform'); assert.strictEqual(r.event.id, 'evt_p1');
+});
+t('webhook: platform event signed with the connect secret => refused', () => {
+  const r = verifyStripeWebhook(platformEvt, signStripe(platformEvt, CONNECT_SECRET), both);
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.status, 400); assert.strictEqual(r.source, 'platform');
+});
+t('webhook: platform event with only the connect secret configured => refused', () => {
+  const r = verifyStripeWebhook(platformEvt, signStripe(platformEvt, CONNECT_SECRET), { platformSecret: undefined, connectSecret: CONNECT_SECRET });
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.status, 503); assert.strictEqual(r.error, 'platform_webhook_secret_not_configured');
+});
+t('webhook: connected-account account.updated + connect secret => accepted', () => {
+  const r = verifyStripeWebhook(connectEvt, signStripe(connectEvt, CONNECT_SECRET), both);
+  assert.ok(r.ok, JSON.stringify(r)); assert.strictEqual(r.source, 'connect'); assert.strictEqual(r.event.type, 'account.updated');
+});
+t('webhook: connected-account account.updated signed with the platform secret => refused', () => {
+  const r = verifyStripeWebhook(connectEvt, signStripe(connectEvt, PLATFORM_SECRET), both);
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.status, 400); assert.strictEqual(r.source, 'connect');
+});
+t('webhook: missing connect secret refuses connected-account events (503) while platform payment events keep working', () => {
+  const onlyPlatform = { platformSecret: PLATFORM_SECRET, connectSecret: undefined };
+  const c = verifyStripeWebhook(connectEvt, signStripe(connectEvt, PLATFORM_SECRET), onlyPlatform);
+  assert.strictEqual(c.ok, false); assert.strictEqual(c.status, 503); assert.strictEqual(c.error, 'connect_webhook_secret_not_configured');
+  assert.ok(verifyStripeWebhook(platformEvt, signStripe(platformEvt, PLATFORM_SECRET), onlyPlatform).ok);
+});
+t('webhook: no secrets at all => every delivery refused', () => {
+  const none = { platformSecret: undefined, connectSecret: undefined };
+  assert.strictEqual(verifyStripeWebhook(platformEvt, signStripe(platformEvt, PLATFORM_SECRET), none).ok, false);
+  assert.strictEqual(verifyStripeWebhook(connectEvt, signStripe(connectEvt, CONNECT_SECRET), none).ok, false);
+});
+t('webhook: unsigned, malformed, stale or tampered deliveries are refused', () => {
+  assert.strictEqual(verifyStripeWebhook(platformEvt, undefined, both).error, 'missing_signature');
+  assert.strictEqual(verifyStripeWebhook(Buffer.from('not json'), signStripe('not json', PLATFORM_SECRET), both).error, 'malformed_body');
+  const old = Math.floor(Date.now() / 1000) - 3600;
+  const staleSig = `t=${old},v1=${require('crypto').createHmac('sha256', PLATFORM_SECRET).update(`${old}.${platformEvt}`).digest('hex')}`;
+  assert.strictEqual(verifyStripeWebhook(platformEvt, staleSig, both).ok, false, 'replayed old delivery refused');
+  // Strip `account` from a genuine connect delivery: it now claims to be platform and fails the platform secret.
+  const sig = signStripe(connectEvt, CONNECT_SECRET);
+  const stripped = Buffer.from(JSON.stringify({ ...JSON.parse(connectEvt), account: undefined }));
+  const r = verifyStripeWebhook(stripped, sig, both);
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.source, 'platform');
+  // Add `account` to a genuine platform delivery: it now claims connect and fails the connect secret.
+  const added = Buffer.from(JSON.stringify({ ...JSON.parse(platformEvt), account: 'acct_evil' }));
+  assert.strictEqual(verifyStripeWebhook(added, signStripe(platformEvt, PLATFORM_SECRET), both).ok, false);
 });
 
 (async () => {
