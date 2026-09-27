@@ -41,6 +41,8 @@ The two values must be different. Save, redeploy, then Claude reruns this check.
 
 **Decisions needed from Ed.** Restore `STRIPE_WEBHOOK_SECRET` (platform) alongside the connect secret, redeploy, and tell Claude to re-verify.
 
+**Re-check 2026-09-27 22:27 UTC** (same instruction re-run; no new Render deploy since: production `0e4cc940`, booted 22:13 UTC, which was the handoff-commit deploy): unchanged. Connect: bad signature 400 (secret recognized), no signature 400. **Platform: bad signature 503 `platform_webhook_secret_not_configured`**; no signature 400. `stripe_events` 0 before and after, payments 10 before and after, no writes. Still **not cleared** for sandbox provisioning until `STRIPE_WEBHOOK_SECRET` is restored.
+
 ---
 
 ## 2026-09-27: Payment foundation MERGED and DEPLOYED (Stripe TEST mode only)
