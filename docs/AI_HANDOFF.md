@@ -4,7 +4,46 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Payment foundation MERGED and DEPLOYED (Stripe TEST mode only)
+## 2026-09-27 (latest): Webhook secrets re-check after Ed's Render change: connect FIXED, platform now MISSING
+
+**Task.** Per ChatGPT's instruction in GitHub Issue #1: focused read-only verification after Ed added `STRIPE_CONNECT_WEBHOOK_SECRET` and redeployed.
+
+**Status.** **Not cleared for sandbox provisioning yet.** The connect secret is now recognized, but the platform secret `STRIPE_WEBHOOK_SECRET` is no longer visible to production.
+
+**Production.** `/version` = `6dc709af` (current main; code identical to merge `6fdc7031` plus the handoff), booted 2026-09-27 22:06:43 UTC, healthy.
+
+**Probe results** (unsigned or invalid deliveries, refused at signature verification):
+
+| Probe | Result | Meaning |
+|---|---|---|
+| Connected-account `account.updated`, fresh timestamp, bad signature | 400 `signature mismatch`, source=connect, secret_present=true | Connect secret now RECOGNIZED; verification active |
+| Connected-account, stale timestamp, bad signature | 400 `signature timestamp too old` | Replay refused |
+| Connected-account, no signature | 400 `missing_signature` | Unsigned refused |
+| **Platform `checkout.session.completed`, fresh timestamp, bad signature** | **503 `platform_webhook_secret_not_configured`** | **Platform secret now MISSING** |
+| Platform, no signature | 400 `missing_signature` | Unsigned refused |
+
+`stripe_events` count 0 before and after, no smoke rows; `payments` 10 before and after. No production writes.
+
+**What changed.** At 22:04 UTC (the merge deploy) the platform probe returned 400 with secret_present=true, so `STRIPE_WEBHOOK_SECRET` was set. After Ed's Render change and redeploy, it is gone. Most likely the existing `STRIPE_WEBHOOK_SECRET` entry was edited or renamed to `STRIPE_CONNECT_WEBHOOK_SECRET` instead of a second variable being added.
+
+**Effect now.**
+- Platform payment webhooks (checkout, payment failed, refunds, disputes) are refused with 503; Stripe retries them. Nothing is lost while Stripe retries, but Stripe may disable an endpoint that keeps failing.
+- No payments can occur in TEST mode for real homeowners, and there is no sandbox yet, so there is no money impact.
+- Connected-account events now work.
+
+**Fix (Ed, Render, trustEd web service, Environment).** There must be TWO separate variables:
+1. `STRIPE_WEBHOOK_SECRET` = the signing secret of the **platform** endpoint (Stripe Dashboard, Test mode, Webhooks, the endpoint to `/api/payments/webhook` that is NOT marked Connected accounts, Signing secret).
+2. `STRIPE_CONNECT_WEBHOOK_SECRET` = the signing secret of the **Connected accounts** endpoint (keep as is).
+
+The two values must be different. Save, redeploy, then Claude reruns this check. Expected: both paths return 400 on a bad signature, neither returns 503.
+
+**Cleared for sandbox provisioning?** Not yet. The sandbox's $1 test payment needs the platform webhook to confirm and post it. Recommend clearing after the next check shows both secrets recognized (all smoke checks green).
+
+**Decisions needed from Ed.** Restore `STRIPE_WEBHOOK_SECRET` (platform) alongside the connect secret, redeploy, and tell Claude to re-verify.
+
+---
+
+## 2026-09-27: Payment foundation MERGED and DEPLOYED (Stripe TEST mode only)
 
 **Task.** Per ChatGPT's instruction in GitHub Issue #1 (Ed approved the merge): merge `feat/payments-safe-foundation`, push main, confirm the deploy, run read-only smoke checks. No live key, no sandbox data, no payments.
 
