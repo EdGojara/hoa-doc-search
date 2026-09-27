@@ -539,6 +539,7 @@ const _STAFF_GATE_PUBLIC = [
   // cancel it and quietly stop their assessments being paid.
   /^\/api\/portal\/autopay$/,                  // GET this owner's standing authorisation
   /^\/api\/portal\/autopay\/(begin|complete|cancel)$/, // enrol / finish / stop
+  /^\/api\/portal\/pay\/checkout$/,             // homeowner pays own balance (portal cookie; server derives lot/owner/amount)
   // Board portal API — every handler enforces requireBoardViewer (staff JWT OR
   // a board member's portal magic-link cookie whose email holds an active seat)
   // + canSeeCommunity per-community scope (lib/portal/board_access.js,
@@ -1463,9 +1464,17 @@ app.get('/pay/:token', async (req, res) => {
     const { verifyPaymentToken } = require('./lib/payments/payment_link');
     const v = verifyPaymentToken(req.params.token);
     if (!v.ok) return res.status(400).send(_payPage('Payment link', `<h1>This payment link isn't valid</h1><p>The link may have expired or been mistyped. Please contact management for a current link.</p>`));
+    // The link names the owner it was issued to. If the lot has changed hands (or the
+    // link predates owner-bound links), refuse rather than let it pay someone else's bill.
+    const { data: cur, error: curErr } = await supabase.from('ownership_tenures')
+      .select('id').eq('property_id', v.property_id).eq('kind', 'owner').is('end_date', null).limit(2);
+    if (curErr) throw curErr;
+    if (!cur || cur.length !== 1 || cur[0].id !== v.tenure_id) {
+      return res.status(410).send(_payPage('Payment link', `<h1>This payment link is no longer valid</h1><p>The account it was issued for has changed. Please sign in to the homeowner portal or contact management for a current link.</p>`));
+    }
     const base = (process.env.APP_BASE_URL || (req.protocol + '://' + req.get('host'))).replace(/\/+$/, '');
     const r = await createAssessmentCheckout({
-      community_id: v.community_id, property_id: v.property_id,
+      property_id: v.property_id,
       payment_method: (req.query.method === 'card' ? 'card' : 'ach'),
       success_url: base + '/pay/thanks',
       cancel_url: base + '/pay/' + encodeURIComponent(req.params.token),

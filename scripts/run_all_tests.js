@@ -164,6 +164,8 @@ const CHECKS = [
   'tests/test_lma_asset_accounting.js',
   'scripts/check_mgmt_id.js',
   'tests/test_character_registry.js',
+  'tests/test_payment_foundation.js',
+  'tests/sql/469_payment_rehearsal.mjs',
 ];
 
 const args = process.argv.slice(2);

@@ -694,9 +694,10 @@ async function payOnline(btn) {
   const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Starting secure checkout…';
   try {
     const origin = location.origin;
-    const r = await fetch('/api/payments/assessment/create-checkout', {
+    // Lot, owner and amount come from the signed-in session, not the page.
+    const r = await fetch('/api/portal/pay/checkout', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-      body: JSON.stringify({ community_id: cid, property_id: pid, payment_method: 'ach', success_url: origin + '/portal/balance?paid=1', cancel_url: location.href }),
+      body: JSON.stringify({ payment_method: 'ach', property_id: pid }),
     });
     const j = await r.json().catch(() => ({}));
     if (r.ok && j.checkout_url) { location.href = j.checkout_url; return; }

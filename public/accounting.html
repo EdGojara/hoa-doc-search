@@ -2739,8 +2739,10 @@
     </div>`).join('') || '<div class="muted" style="padding:6px 0;">No match.</div>';
   };
   window.opTestPay = async function(propertyId) {
-    const body = { community_id:CID, property_id:propertyId, amount_cents:100, payment_method:'card', payer:{name:'Test Payer',email:'test@bedrocktx.com'}, success_url:location.href, cancel_url:location.href };
-    const j = await fetch('/api/payments/assessment/create-checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then((r)=>r.json()).catch((e)=>({error:e.message}));
+    // Test-mode-only route: the server refuses unless Stripe is in test mode and
+    // fixes the amount at $1.00. (Ed 2026-09-27.)
+    const body = { property_id:propertyId, payment_method:'card' };
+    const j = await fetch('/api/payments/test/assessment-checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then((r)=>r.json()).catch((e)=>({error:e.message}));
     if (j.error) { alert('Couldn\'t start test payment: '+(j.hint||j.error)); return; }
     window.open(j.checkout_url, '_blank');
   };

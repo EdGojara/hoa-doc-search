@@ -396,112 +396,74 @@ router.post('/create-checkout-session', express.json({ limit: '128kb' }), async 
 });
 
 // ============================================================================
-// POST /api/payments/assessment/create-checkout
+// Assessment checkout (homeowner portal, signed pay link, staff test route)
 // ----------------------------------------------------------------------------
-// Homeowner pays their assessment balance. Same Connect rails as amenity
+// Homeowner pays their assessment balance on the same Connect rails as amenity
 // rentals: the FULL assessment routes to the community's connected account (HOA
-// bank), never pooled. Card adds a convenience fee (grossed up to cover Stripe's
-// 2.9% + 30c so the association nets the full assessment) routed as the platform
-// application fee; ACH (the cheap rail, $5-capped) carries no convenience fee.
-//
-// The management fee is NEVER skimmed here — it stays contractual/separate.
-//
-// Body: { community_id, property_id, amount_cents?, payment_method ('ach'|'card'),
-//         payer: {email,name}, success_url, cancel_url }
-// Inert until STRIPE keys land (503). Posting the completed payment to AR+GL is
-// handled in the webhook (handleCheckoutCompleted) and validated with test keys.
+// bank), never pooled. Card adds a grossed-up convenience fee routed as the
+// platform application fee; ACH carries none. The management fee is never
+// skimmed here. Crediting happens only in the webhook, after Stripe confirms the
+// money (lib/payments/payment_lifecycle.js).
 // ============================================================================
-// Shared assessment-checkout builder — used by the portal endpoint AND the
-// emailable payment link (/pay/:token). Resolves the current balance, applies
-// the card convenience-fee gross-up, mints the Connect Checkout Session, and
-// writes the pending payments-ledger rows. Returns a plain result object (never
-// throws for expected states) so both callers handle it the same way.
-//   -> { ok:true, checkout_url, session_id, amount_cents, convenience_fee_cents, method }
-//   -> { ok:false, status, error, hint }
-async function createAssessmentCheckout({ community_id, property_id, payment_method, amount_cents, payer, success_url, cancel_url, initiated_by = 'homeowner_portal' }) {
-  if (!stripeLib.isConfigured()) return { ok: false, status: 503, error: 'payment_not_configured', hint: 'Set STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET (test mode) to enable.' };
-  if (!community_id || !property_id) return { ok: false, status: 400, error: 'community_id_and_property_id_required' };
-  if (!success_url || !cancel_url) return { ok: false, status: 400, error: 'success_url_and_cancel_url_required' };
-  const method = payment_method === 'card' ? 'card' : 'ach'; // default to ACH (low cost)
-
-  const { data: community } = await supabase.from('communities')
-    .select('id, name, slug, hoa_legal_name, stripe_connected_account_id')
-    .eq('id', community_id).maybeSingle();
-  if (!community) return { ok: false, status: 404, error: 'community_not_found' };
-  if (!community.stripe_connected_account_id) {
-    return { ok: false, status: 503, error: 'community_stripe_not_onboarded', hint: `${community.hoa_legal_name || community.name} hasn't completed Stripe Connect onboarding.` };
-  }
-
-  // Amount = requested, else the homeowner's current balance.
-  let amt = Math.round(Number(amount_cents) || 0);
-  if (!amt) {
-    try {
-      const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
-      const ar = await resolveCurrentAR(supabase, { propertyId: property_id, communityId: community_id });
-      amt = ar && ar.balance_cents > 0 ? ar.balance_cents : 0;
-    } catch (_) { /* fall through to nothing_due */ }
-  }
-  if (amt <= 0) return { ok: false, status: 400, error: 'nothing_due', hint: 'Account balance is zero.' };
-
-  // Card convenience fee: gross-up so the HOA nets the full assessment.
-  // POLICY KNOB — Ed confirms the exact %/cap; this default covers card cost.
-  const convFeeCents = method === 'card' ? Math.max(0, Math.round((amt + 30) / (1 - 0.029)) - amt) : 0;
-
-  const fees = [{ label: `Assessment payment — ${community.name}`, amount_cents: amt, payee: 'community_association', fee_type: 'assessment' }];
-  if (convFeeCents > 0) fees.push({ label: 'Card convenience fee', amount_cents: convFeeCents, payee: 'management_company', fee_type: 'convenience_fee' });
-
-  const session = await stripeLib.createCheckoutSession({
-    fees,
-    connectedAccountId: community.stripe_connected_account_id,
-    customer: { email: (payer && payer.email) || undefined, name: (payer && payer.name) || undefined },
-    reference: `ASMT-${String(property_id).slice(0, 8)}`,
-    productType: 'assessment_payment',
-    productId: property_id,
-    successUrl: success_url,
-    cancelUrl: cancel_url,
-    communityName: community.name,
-    communityId: community.id,
-    statementDescriptor: (community.slug || community.name || 'BEDROCK').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 22),
-    paymentMethodTypes: method === 'card' ? ['card'] : ['us_bank_account'],
+// Callers pass ONLY a property they have already authorized (portal session,
+// signed pay link, test route). Owner, tenure, amount and identity are decided
+// server-side in lib/payments/assessment_checkout.js; nothing from the browser
+// is trusted beyond the payment-method choice.
+async function createAssessmentCheckout({ property_id, payment_method, initiated_by, success_url, cancel_url, payer, portal_user_id = null, test_amount_cents = null }) {
+  const core = require('../lib/payments/assessment_checkout');
+  return core.createAssessmentCheckout({ supabase, stripeLib }, {
+    propertyId: property_id, paymentMethod: payment_method, initiatedBy: initiated_by,
+    successUrl: success_url, cancelUrl: cancel_url, payer: payer || {}, portalUserId: portal_user_id,
+    testAmountCents: test_amount_cents,
   });
-  if (!session.ok) {
-    return { ok: false, status: session.skipped ? 503 : 500, error: session.error || 'checkout_failed', stripeCode: session.stripeCode };
-  }
-
-  const rows = fees.map((f) => ({
-    community_id: community.id, product_type: 'assessment_payment', product_id: property_id,
-    fee_type: f.fee_type, payee: f.payee,
-    // payee_display_name is NOT NULL — the HOA for the assessment, Bedrock for the card fee.
-    payee_display_name: f.payee === 'community_association'
-      ? (community.hoa_legal_name || community.name)
-      : 'Bedrock Association Management',
-    connected_account_id: f.payee === 'community_association' ? community.stripe_connected_account_id : null,
-    amount_cents: f.amount_cents, method: 'stripe_checkout', processor: 'stripe',
-    processor_session_id: session.session_id, status: 'pending', initiated_by,
-  }));
-  const { error: ledgerErr } = await supabase.from('payments').insert(rows);
-  if (ledgerErr) {
-    // Never swallow a ledger write — a silent failure here means money moves
-    // with no record and the webhook has nothing to mark paid or post to books.
-    console.error('[payments] assessment ledger insert failed:', ledgerErr.message);
-    return { ok: false, status: 500, error: 'payment_ledger_insert_failed', hint: safeErrorMessage(ledgerErr) };
-  }
-
-  return { ok: true, checkout_url: session.checkout_url, session_id: session.session_id, amount_cents: amt, convenience_fee_cents: convFeeCents, method };
 }
 
-router.post('/assessment/create-checkout', express.json({ limit: '32kb' }), async (req, res) => {
+// Retired 2026-09-27: it trusted community/property/amount from the request body.
+// Homeowners pay via POST /api/portal/pay/checkout (portal session); staff test
+// via POST /api/payments/test/assessment-checkout (test mode only).
+router.post('/assessment/create-checkout', (req, res) => {
+  res.status(410).json({ error: 'endpoint_retired', detail: 'Homeowners pay from the portal; staff tests use /api/payments/test/assessment-checkout.' });
+});
+
+// POST /api/payments/test/assessment-checkout  { property_id, payment_method }  (staff, TEST MODE ONLY)
+// A $1.00 sandbox checkout against a chosen lot. Refuses unless the server's
+// Stripe key is a test key, so it can never become a real charge.
+router.post('/test/assessment-checkout', express.json({ limit: '8kb' }), async (req, res) => {
+  const { requireTestMode } = require('../lib/payments/stripe_mode');
+  if (!requireTestMode(res)) return;
   try {
     const b = req.body || {};
+    if (!b.property_id) return res.status(400).json({ error: 'property_id_required' });
+    const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const r = await createAssessmentCheckout({
-      community_id: b.community_id, property_id: b.property_id,
-      payment_method: b.payment_method, amount_cents: b.amount_cents, payer: b.payer,
-      success_url: b.success_url, cancel_url: b.cancel_url, initiated_by: 'homeowner_portal',
+      property_id: String(b.property_id), payment_method: b.payment_method, initiated_by: 'staff_test',
+      success_url: `${origin}/accounting?test_payment=success`, cancel_url: `${origin}/accounting?test_payment=cancelled`,
+      test_amount_cents: 100,
     });
-    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, stripeCode: r.stripeCode });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
     res.json(r);
   } catch (err) {
-    console.error('[payments] assessment checkout failed:', err.message);
+    console.error('[payments] test checkout failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/payments/:id/retry-posting  (staff)
+// Re-runs posting for a SETTLED payment that was blocked (closed period, missing
+// account). Idempotent: it resumes where it stopped and can never post twice.
+router.post('/:id/retry-posting', async (req, res) => {
+  try {
+    const { createPaymentStore } = require('../lib/payments/payment_store');
+    const { centralDate } = require('../lib/payments/payment_lifecycle');
+    const { data: p, error } = await supabase.from('payments').select('id, settlement_state, posting_state, settled_at, fee_type').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!p || p.fee_type !== 'assessment') return res.status(404).json({ error: 'assessment_payment_not_found' });
+    if (p.settlement_state !== 'settled') return res.status(409).json({ error: 'not_settled', settlement_state: p.settlement_state });
+    const store = createPaymentStore({ supabase });
+    const date = centralDate(p.settled_at ? Math.floor(new Date(p.settled_at).getTime() / 1000) : null);
+    res.json({ ok: true, result: await store.postPayment(p.id, { paymentDate: date }) });
+  } catch (err) {
+    console.error('[payments] retry-posting failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -521,8 +483,11 @@ router.post('/payment-link', express.json({ limit: '8kb' }), async (req, res) =>
     if (pErr) throw pErr;
     if (!prop || prop.community_id !== b.community_id) return res.status(404).json({ error: 'property_not_in_community' });
 
+    const { resolvePaymentIdentity } = require('../lib/payments/payment_identity');
+    const idr = await resolvePaymentIdentity(supabase, b.property_id);
+    if (!idr.ok) return res.status(idr.status || 409).json({ error: idr.error, hint: idr.hint });
     const { signPaymentToken, paymentLinkUrl } = require('../lib/payments/payment_link');
-    const token = signPaymentToken({ community_id: b.community_id, property_id: b.property_id });
+    const token = signPaymentToken({ community_id: b.community_id, property_id: b.property_id, tenure_id: idr.identity.tenure.id });
     // An emailed link MUST be absolute — fall back to the request origin when
     // APP_BASE_URL isn't set (dev), so staff never copy a relative /pay/... URL.
     const base = process.env.APP_BASE_URL || (req.protocol + '://' + req.get('host'));
@@ -787,42 +752,21 @@ router.post('/webhook',
       }
 
       const event = JSON.parse(req.body.toString('utf8'));
-      const eventId = event.id;
-      const eventType = event.type;
-      const eventData = event.data?.object || {};
-
-      // Idempotency: skip if we've already processed this event
-      const { data: existingEvent } = await supabase
-        .from('payments')
-        .select('id')
-        .contains('processor_metadata', { last_event_id: eventId })
-        .limit(1)
-        .maybeSingle();
-      if (existingEvent) {
-        return res.status(200).send('already processed');
-      }
-
-      console.log(`[payments] webhook event: ${eventType} (${eventId})`);
-
-      switch (eventType) {
-        case 'checkout.session.completed':
-          await handleCheckoutCompleted(eventData, eventId);
-          break;
-        case 'payment_intent.payment_failed':
-          await handlePaymentFailed(eventData, eventId);
-          break;
-        case 'charge.refunded':
-          await handleChargeRefunded(eventData, eventId);
-          break;
-        case 'account.updated':
-          await handleAccountUpdated(eventData, eventId);
-          break;
-        default:
-          // Lots of events we don't care about — acknowledge to stop retries
-          break;
-      }
-
-      res.status(200).send('ok');
+      console.log(`[payments] webhook event: ${event.type} (${event.id})`);
+      const { processWebhookEvent } = require('../lib/payments/payment_lifecycle');
+      const { createPaymentStore } = require('../lib/payments/payment_store');
+      const { stripeMode } = require('../lib/payments/stripe_mode');
+      const store = createPaymentStore({
+        supabase,
+        legacy: {
+          checkoutCompleted: handleCheckoutCompleted,
+          paymentFailed: handlePaymentFailed,
+          chargeRefunded: handleChargeRefunded,
+          accountUpdated: (acct) => handleAccountUpdated(acct, event.id),
+        },
+      });
+      const out = await processWebhookEvent(event, { store, mode: stripeMode() });
+      return res.status(out.http).json(out.body);
     } catch (err) {
       // Return 500 so Stripe retries (rate-limited by Stripe itself)
       console.error('[payments] webhook handler failed:', err.message);
@@ -867,18 +811,8 @@ async function handleCheckoutCompleted(session, eventId) {
     // Fire confirmation email (best-effort; non-fatal on failure)
     try { await sendRentalConfirmationEmail(rentalId); }
     catch (e) { console.warn('[payments] confirmation email failed:', e.message); }
-  } else if (productType === 'assessment_payment') {
-    // Post the payment to the books (AR subledger + GL) for live-GL communities.
-    // Best-effort + idempotent: a failure here must never 500 the webhook (the
-    // money already moved); the module logs/flags for operator reconciliation.
-    try {
-      const { postAssessmentPaymentToBooks } = require('../lib/payments/assessment_posting');
-      const r = await postAssessmentPaymentToBooks(supabase, { sessionId, paymentIntentId });
-      console.log('[payments] assessment posted to books:', JSON.stringify(r));
-    } catch (e) {
-      console.error('[payments] assessment books posting failed:', e.message);
-    }
   }
+  // Assessment payments never reach here: lib/payments/payment_lifecycle.js owns them.
 }
 
 async function handlePaymentFailed(intent, eventId) {

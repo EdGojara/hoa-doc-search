@@ -4246,7 +4246,54 @@ router.get('/autopay', async (req, res) => {
   }
 });
 
+// POST /api/portal/pay/checkout  { payment_method: 'ach' | 'card', property_id? }
+// The homeowner pays their OWN current balance. The lot comes from the portal
+// session's scope (property_id may only pick among the owner's own lots); the
+// owner tenure, identity and amount are all decided server-side. (Ed 2026-09-27.)
+router.post('/pay/checkout', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const resolved = await resolveUserWithRole(req, res);
+    if (!resolved) return;
+    const scoped = await resolveScopedProperty({ query: {} }, supabase, resolved.user);
+    const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkout');
+    const auth = authorizeHomeownerPayment({
+      user: resolved.user, mimic: resolved.mimic, scoped,
+      requestedPropertyId: (req.body && req.body.property_id) || null,
+    });
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error, detail: auth.detail });
+
+    const { data: prop, error: pErr } = await supabase.from('properties').select('community_id').eq('id', auth.propertyId).maybeSingle();
+    if (pErr) throw pErr;
+    if (!prop) return res.status(404).json({ error: 'no_property' });
+    const { canDo } = require('../lib/community/lifecycle');
+    const gate = await canDo('payments', prop.community_id);
+    if (!gate.allowed) return res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason });
+
+    const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const { createAssessmentCheckout } = require('./payments');
+    const r = await createAssessmentCheckout({
+      property_id: auth.propertyId,
+      payment_method: (req.body && req.body.payment_method) === 'card' ? 'card' : 'ach',
+      initiated_by: 'homeowner_portal',
+      success_url: `${origin}/portal?paid=1`,
+      cancel_url: `${origin}/portal`,
+      payer: { email: resolved.user.email, name: resolved.user.full_name },
+      portal_user_id: resolved.user.id,
+    });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
+    res.json({ ok: true, checkout_url: r.checkout_url, amount_cents: r.amount_cents, convenience_fee_cents: r.convenience_fee_cents, method: r.method });
+  } catch (err) {
+    console.error('[portal] pay checkout failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/autopay/begin', express.json({ limit: '16kb' }), async (req, res) => {
+  // PAUSED (Ed 2026-09-27): autopay charges do not yet run through the payment
+  // webhook / tenure posting pipeline, so enrolling would promise payments that
+  // never credit the owner. Re-enabled only with the reviewed autopay design.
+  return res.status(503).json({ error: 'autopay_unavailable', detail: 'Automatic payments are not available yet. Please use Pay now.' });
+  // eslint-disable-next-line no-unreachable
   try {
     const roleCheck = await assertOwnerLikeRole(req, res);
     if (!roleCheck) return;
