@@ -11155,8 +11155,12 @@ app.post('/api/admin/apply-migrations', express.json({ limit: '8kb' }), async (r
 //   POST /api/admin/migrations/apply     { plan_token }  "Approve & Apply"
 //   GET  /api/admin/migrations/attempts/:id              attempt outcome
 // One file per call, from the deployed commit only; the plan token binds the
-// file hash, checks hash, deployed commit and owner. There is deliberately no
-// list/bulk/acknowledge endpoint. DATABASE_URL never leaves the server.
+// file hash, checks hash, deployed commit and owner, and is signed with the
+// dedicated MIGRATION_PLAN_SECRET (plan and apply refuse without it). The
+// migration changes and the successful schema_migrations record are atomic;
+// the one-time tracker bootstrap commits separately, before them. There is
+// deliberately no list/bulk/acknowledge endpoint. DATABASE_URL never leaves
+// the server.
 // ============================================================================
 let _migrationApplyRunning = false;
 async function _migrationClient() {

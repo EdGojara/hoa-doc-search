@@ -40656,11 +40656,11 @@ ${questionsPage}
         <div style="margin-top:8px; font-weight:700;">Checks</div>
         <ul style="margin:4px 0 0 18px; padding:0;">${pre || '<li>no preflight checks</li>'}</ul>
         <div style="margin-top:4px; color:#374151;">Requires: ${escapeHtml((p.requires || []).join(', ') || 'none')}</div>
-        ${p.tracker_bootstrap && p.tracker_bootstrap.length ? `<div style="margin-top:8px; padding:8px 10px; background:#eff6ff; border-radius:6px;">One-time tracker setup, done in its own step before this migration: ${escapeHtml(p.tracker_bootstrap.join('; '))}.</div>` : ''}
+        ${p.tracker_bootstrap && p.tracker_bootstrap.length ? `<div style="margin-top:8px; padding:8px 10px; background:#eff6ff; border-radius:6px;">One-time tracker setup (migration bookkeeping only): ${escapeHtml(p.tracker_bootstrap.join('; '))}. It runs in its own transaction and commits before the migration; it is not part of the migration's atomic change.</div>` : ''}
         ${p.prior_failed_record ? `<div style="margin-top:8px; color:#92400e;">An earlier failed attempt is on record (not applied): ${escapeHtml(p.prior_failed_record)}</div>` : ''}
         ${p.status === 'ready' ? `<div style="margin-top:12px; display:flex; gap:10px; align-items:center;">
             <button class="action-btn" id="docsMigApplyBtn" style="font-size:13px; padding:8px 18px;" onclick="docsMigApprove()">Approve &amp; Apply</button>
-            <span style="color:#6b7280; font-size:11.5px;">Runs this one file and records it in a single transaction. If any check fails, nothing is changed or recorded.</span></div>` : ''}
+            <span style="color:#6b7280; font-size:11.5px;">The migration changes and its successful schema_migrations record are atomic: both commit or neither does. If any check fails, the migration changes are rolled back and nothing is recorded as applied.</span></div>` : ''}
         <div id="docsMigResult" style="margin-top:10px;"></div>
       </div>`;
   }
@@ -40698,7 +40698,7 @@ ${questionsPage}
     out.innerHTML = `<div style="padding:10px 12px; border-radius:6px; background:${ok ? '#dcfce7' : '#fef2f2'}; color:${ok ? '#166534' : '#991b1b'};">
       <b>${escapeHtml(String(a.status).toUpperCase())}</b> (attempt ${escapeHtml(a.id || '')})${a.error ? '<br>' + escapeHtml(a.error) : ''}
       ${ver ? '<div style="margin-top:6px;">' + ver + '</div>' : ''}${prot ? '<div style="margin-top:6px;">' + prot + '</div>' : ''}${api ? '<div style="margin-top:6px;">' + api + '</div>' : ''}
-      ${ok ? '' : '<div style="margin-top:6px;">Nothing was changed and nothing was recorded.</div>'}</div>`;
+      ${ok ? '' : '<div style="margin-top:6px;">The migration changes were rolled back and nothing was recorded as applied. (One-time tracker bookkeeping, if it ran, stays in place.)</div>'}</div>`;
     if (ok) docsCheckPendingMigrations(true);
   }
 
