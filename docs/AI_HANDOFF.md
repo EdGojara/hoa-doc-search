@@ -4,7 +4,65 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): ChatGPT payment review fixes (NOT merged, NOT deployed, sandbox NOT provisioned)
+## 2026-09-27 (latest): Connected-account webhook signing secret (NOT merged, NOT deployed, sandbox NOT provisioned)
+
+**Task.** Per ChatGPT's instruction in GitHub Issue #1 (after approving `c871f36b`): one bounded fix, a dedicated `STRIPE_CONNECT_WEBHOOK_SECRET` for connected-account webhook deliveries, plus tests, preflight reporting and this update.
+
+**Status.** Done. Stopped for ChatGPT review. The merge is still blocked on Ed's read-only Stripe endpoint check (see the previous entry for steps) and `PAYMENT_LINK_SECRET`.
+
+**Branch / commits.** `feat/payments-safe-foundation`: `b4354b8d` (fix), then this handoff commit. Main untouched (`003ffa76`).
+
+**Change.**
+- New `lib/payments/webhook_auth.js` (`verifyStripeWebhook`), used by `POST /api/payments/webhook`. Each delivery is verified with exactly ONE secret, chosen by its source:
+  - A top-level `account` field means the connected-accounts endpoint, verified with `STRIPE_CONNECT_WEBHOOK_SECRET`.
+  - Otherwise it's the platform endpoint, verified with `STRIPE_WEBHOOK_SECRET`.
+- There's no fallback to the other secret and no unsigned path. Choosing by the unverified `account` field is safe, because the field is inside the signed body: adding or removing it breaks the signature (tested).
+- A missing secret refuses only that source, with 503 so Stripe retries once it's set. Platform payment events keep working without the connect secret.
+- The 5-minute timestamp tolerance is unchanged. The function never returns or logs a secret value. The test-mode delivery diagnostic now uses the source's own secret.
+
+**Tests / results** (local; no production writes):
+- `test_payment_foundation` 45/45 (+8 webhook tests):
+  - platform event + platform secret accepted;
+  - platform event + connect secret refused;
+  - platform event with only the connect secret configured refused (503);
+  - connected `account.updated` + connect secret accepted;
+  - connected `account.updated` + platform secret refused;
+  - missing connect secret refuses connected-account events but platform events still pass;
+  - no secrets refuses everything;
+  - unsigned, malformed, stale (replayed) and tampered deliveries refused (`account` stripped or added).
+- Sabotage: adding a fallback to the other secret fails 2 tests.
+- Existing related suites all pass (dedup, ledger path, ownership transfer, gl_concept, operator actions, early prepay 23, checkout preview gate 8, bedrock_pay 11, autopay 20).
+- 469 rehearsal 79/79, 469 end-to-end 13/13, tool rehearsal 57/57; migration-checks, immutability, constraint and pagination checks pass; syntax OK.
+- `check_requires_tracked` fails only on the pre-existing `lib/presentations` item.
+- 469 and its checks file are byte-identical to main.
+
+**Preflight (`scripts/stripe_preflight.js`).**
+- Reports whether `STRIPE_WEBHOOK_SECRET` and `STRIPE_CONNECT_WEBHOOK_SECRET` are present, printing no part of either value (the old 8-character webhook-secret prefix print is removed).
+- Flags identical secrets, and flags an endpoint that points at the server while its secret is missing.
+- The only prefix still printed is the API key's type prefix (`sk_test_` / `sk_live_`), which contains no secret characters.
+
+**Production config for deploy (updated).**
+- `STRIPE_WEBHOOK_SECRET`: existing; the platform endpoint's signing secret.
+- `STRIPE_CONNECT_WEBHOOK_SECRET`: NEW. The signing secret of the connected-accounts endpoint (Stripe Dashboard, Test mode, Webhooks, that endpoint, "Signing secret"). Only needed if such an endpoint exists or is added for `account.updated`. Without it, those deliveries get 503 and nothing else is affected.
+- `PAYMENT_LINK_SECRET`: required (previous entry).
+- `STRIPE_SECRET_KEY` stays `sk_test_`.
+
+**Risks / open issues.**
+- Pre-existing (not changed here): the test-mode-only webhook signature diagnostic returns the secret's first 8 characters (the `whsec_` prefix plus 2 real characters) and expected-signature heads to any caller whose signature fails. It never runs with a live key. Recommend removing it before live.
+- Stripe's signature header can carry several `v1` values while a secret is being rotated; the verifier checks the last one only. Pre-existing; relevant only during rotation.
+- Unchanged from before: payouts and bank reconciliation not built; fee policy; no staff UI for review or blocked payments; old pay links stop working at deploy.
+
+**Decisions needed from Ed.**
+1. Read-only Stripe check of the TEST webhook endpoints: the 8 platform events, plus whether a connected-accounts endpoint exists with `account.updated`. Or allow `node scripts/stripe_preflight.js` in the Render shell.
+2. Set `PAYMENT_LINK_SECRET` on Render.
+3. If a connected-accounts endpoint exists (or is added later), set `STRIPE_CONNECT_WEBHOOK_SECRET` to its signing secret.
+4. After ChatGPT review: approve the merge (test mode only). Sandbox stays a separate step.
+
+**Recommended next action.** ChatGPT reviews `b4354b8d`. Ed does items 1 and 2. No merge, deploy, Stripe change or sandbox until approved.
+
+---
+
+## 2026-09-27: ChatGPT payment review fixes (NOT merged, NOT deployed, sandbox NOT provisioned)
 
 **Task.** Per ChatGPT's payment review in GitHub Issue #1: (1) dedicated payment-link secret, (2) test-mode containment for real homeowner checkout, (3) Stripe webhook subscription readiness, (4) rerun tests, (5) update this file.
 
