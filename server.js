@@ -11119,6 +11119,11 @@ app.post('/api/admin/apply-migrations', express.json({ limit: '8kb' }), async (r
     }
     const { applyMigrations } = require('./lib/migrations_runner');
     const dryRun = !!(req.body && req.body.dry_run);
+    // Status check only. Bulk apply is disabled in lib/migrations_runner.js
+    // (it would re-run already-applied migrations); refuse it here too.
+    if (!dryRun) {
+      return res.status(410).json({ error: 'Bulk migration apply is disabled. Apply one migration at a time in the Supabase SQL editor, then record it.', code: 'RUNNER_APPLY_DISABLED' });
+    }
     const summary = await applyMigrations({
       appliedByEmail: ctx.user && ctx.user.email,
       dryRun,
@@ -11158,47 +11163,17 @@ app.post('/api/admin/acknowledge-migration-failures', express.json({ limit: '32k
     if (!ctx.supabaseUserId || ctx.role !== 'admin') {
       return res.status(403).json({ error: 'admin role required' });
     }
-    if (!process.env.DATABASE_URL) {
-      return res.status(400).json({ error: 'DATABASE_URL env var not set', code: 'DATABASE_URL_MISSING' });
-    }
-    const { Client } = require('pg');
-    const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-    await client.connect();
-    try {
-      const filenames = Array.isArray(req.body?.filenames) ? req.body.filenames : [];
-      let result;
-      if (filenames.length === 0) {
-        // No filenames specified — acknowledge ALL currently-failing rows
-        result = await client.query(
-          `UPDATE schema_migrations
-           SET error = NULL,
-               applied_by = COALESCE($1, applied_by)
-           WHERE error IS NOT NULL
-           RETURNING filename`,
-          [`acknowledged by ${ctx.user && ctx.user.email || 'unknown'}`]
-        );
-      } else {
-        result = await client.query(
-          `UPDATE schema_migrations
-           SET error = NULL,
-               applied_by = COALESCE($1, applied_by)
-           WHERE filename = ANY($2::text[])
-             AND error IS NOT NULL
-           RETURNING filename`,
-          [`acknowledged by ${ctx.user && ctx.user.email || 'unknown'}`, filenames]
-        );
-      }
-      const acknowledged = result.rows.map((r) => r.filename);
-      console.log('[ack-migrations] by', ctx.user && ctx.user.email, 'count:', acknowledged.length);
-      res.json({ ok: true, acknowledged_count: acknowledged.length, filenames: acknowledged });
-    } finally {
-      await client.end();
-    }
+    // DISABLED (Ed 2026-09-26): this marked failed migrations as applied in bulk
+    // WITHOUT checking production ("acknowledge ALL"). A migration may only be
+    // recorded as applied after its objects are verified live; that is done per
+    // file by scripts/record_applied_migration.js, never in bulk.
+    return res.status(410).json({ error: 'Bulk acknowledge is disabled. Record verified migrations one at a time.', code: 'ACK_DISABLED' });
   } catch (err) {
     console.error('[ack-migrations]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // Create the HTTP server explicitly so we can attach a WebSocket upgrade
 // handler for the Twilio Media Streams path.
