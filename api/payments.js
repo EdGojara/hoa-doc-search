@@ -448,6 +448,36 @@ router.post('/test/assessment-checkout', express.json({ limit: '8kb' }), async (
   }
 });
 
+// POST /api/payments/test/payment-sandbox  { action: plan | apply | plan_remove | remove }
+// (admin, TEST MODE ONLY). Provisions or removes the Drama Creek payment-sandbox
+// lot, in one transaction; the plan actions run everything and roll back.
+// See lib/payments/payment_sandbox_provision.js for every row it touches.
+router.post('/test/payment-sandbox', express.json({ limit: '4kb' }), async (req, res) => {
+  const { requireTestMode } = require('../lib/payments/stripe_mode');
+  if (!requireTestMode(res)) return;
+  let client = null;
+  try {
+    const { resolveUserRole } = require('./users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx.supabaseUserId || ctx.role !== 'admin') return res.status(403).json({ error: 'admin role required' });
+    const action = String((req.body && req.body.action) || 'plan');
+    if (!['plan', 'apply', 'plan_remove', 'remove'].includes(action)) return res.status(400).json({ error: 'action must be plan, apply, plan_remove or remove' });
+    if (!process.env.DATABASE_URL) return res.status(503).json({ error: 'DATABASE_URL not set on the server' });
+    const { Client } = require('pg');
+    client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    await client.connect();
+    const { runPaymentSandbox } = require('../lib/payments/payment_sandbox_provision');
+    const r = await runPaymentSandbox(client, { action });
+    console.log('[payments] payment sandbox', action, 'by', ctx.user && ctx.user.email, 'committed:', r.committed);
+    res.json({ ok: true, ...r });
+  } catch (err) {
+    console.error('[payments] payment sandbox failed:', err.message);
+    res.status(/^refused/.test(err.message) ? 409 : 500).json({ error: /^refused|migration 469/.test(err.message) ? err.message : safeErrorMessage(err) });
+  } finally {
+    if (client) client.end().catch(() => {});
+  }
+});
+
 // POST /api/payments/:id/retry-posting  (staff)
 // Re-runs posting for a SETTLED payment that was blocked (closed period, missing
 // account). Idempotent: it resumes where it stopped and can never post twice.

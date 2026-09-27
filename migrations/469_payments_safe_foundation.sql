@@ -32,12 +32,10 @@
 --   * GL account 1090 "Cash in Transit - Stripe Clearing" (Cash section of the
 --     balance sheet; NOT cash on hand): settled payments held at Stripe before
 --     payout. Payment Dr clearing / Cr AR; payout (later) Dr cash / Cr clearing.
---   * Payment sandbox: exactly one lot may be flagged payment_sandbox, and only in
---     a demo community. Seeds Drama Creek lot DC-45-060 as that lot, with a
---     Trusted #, minimal GL (fund, 1000/1090/1300, open periods, GL cutover), a
---     test owner contact on its current tenure, and a portal login (link copied
---     by staff; demo email stays suppressed). The Stripe test connected account
---     is created after deploy by the test-mode-only onboarding endpoint.
+--   * Payment sandbox capability: properties.payment_sandbox, at most one lot,
+--     only in a demo community. This migration flags NO lot and creates NO demo
+--     data; the sandbox lot is provisioned separately (test mode only) by
+--     lib/payments/payment_sandbox_provision.js.
 --   * Autopay: tenure_id on enrollments; a sale cancels the seller's enrollment.
 -- No existing payment, ledger or journal row is changed; balances are guarded.
 -- ============================================================================
@@ -700,66 +698,6 @@ END $$;
 DROP TRIGGER IF EXISTS trg_properties_payment_sandbox_guard ON properties;
 CREATE TRIGGER trg_properties_payment_sandbox_guard BEFORE INSERT OR UPDATE OF payment_sandbox, community_id ON properties
   FOR EACH ROW EXECUTE FUNCTION properties_payment_sandbox_guard();
-
--- Seed Drama Creek lot DC-45-060 as the sandbox (skipped where Drama Creek does not exist).
-DO $$
-DECLARE
-  dc   uuid := 'dc100000-0000-4000-a000-000000000000';
-  lot  uuid := 'e09d3deb-57c7-4028-b366-4f79c9379708';
-  cid  uuid := '5a0d0469-0000-4000-a000-00000000c0de';   -- sandbox owner contact
-  own  uuid := '5a0d0469-0000-4000-a000-0000000000a1';   -- sandbox ownership row
-  pu   uuid := '5a0d0469-0000-4000-a000-0000000000b1';   -- sandbox portal user
-  mc uuid; fund uuid; d date; m int;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM communities WHERE id = dc AND is_demo)
-     OR NOT EXISTS (SELECT 1 FROM properties WHERE id = lot AND community_id = dc) THEN
-    RAISE NOTICE 'payment sandbox seed skipped (Drama Creek demo lot not present)';
-    RETURN;
-  END IF;
-  SELECT management_company_id INTO mc FROM communities WHERE id = dc;
-
-  SELECT id INTO fund FROM account_funds WHERE community_id = dc AND fund_code = 'OPR';
-  IF fund IS NULL THEN
-    INSERT INTO account_funds (community_id, fund_code, fund_name, fund_type, display_order, is_active, notes)
-    VALUES (dc, 'OPR', 'Operating', 'operating', 1, true, 'Payment sandbox (migration 469)') RETURNING id INTO fund;
-  END IF;
-  INSERT INTO chart_of_accounts (community_id, fund_id, account_number, account_name, account_type, account_subtype, normal_balance, is_summary, is_active, description)
-  SELECT dc, fund, v.num, v.name, 'asset', 'current_asset', 'debit', false, true, v.descr
-    FROM (VALUES ('1000', 'Operating Cash Account', 'Payment sandbox operating cash (Drama Creek demo).'),
-                 ('1090', 'Cash in Transit - Stripe Clearing', 'Settled sandbox payments held at Stripe before payout. Not cash on hand.'),
-                 ('1300', 'Accounts Receivable', 'Payment sandbox receivable (Drama Creek demo).')) AS v(num, name, descr)
-   WHERE NOT EXISTS (SELECT 1 FROM chart_of_accounts x WHERE x.community_id = dc AND x.account_number = v.num);
-  FOR m IN 0..15 LOOP
-    d := (date '2026-09-01' + make_interval(months => m))::date;
-    INSERT INTO accounting_periods (community_id, fiscal_year, period_number, period_type, period_start, period_end, status, notes)
-    SELECT dc, extract(year FROM d)::int, extract(month FROM d)::int, 'monthly', d, (d + interval '1 month' - interval '1 day')::date, 'open', 'Payment sandbox (migration 469)'
-     WHERE NOT EXISTS (SELECT 1 FROM accounting_periods WHERE community_id = dc AND period_start = d);
-  END LOOP;
-  UPDATE communities SET gl_cutover_date = '2026-09-01' WHERE id = dc AND gl_cutover_date IS NULL;
-
-  UPDATE properties SET payment_sandbox = true, trusted_account_number = coalesce(trusted_account_number, '1002900060')
-   WHERE id = lot AND (NOT payment_sandbox OR trusted_account_number IS NULL);
-
-  INSERT INTO contacts (id, full_name, primary_email) VALUES (cid, 'Payments Sandbox Owner', 'payments-sandbox@bedrock.test')
-  ON CONFLICT (id) DO NOTHING;
-  INSERT INTO property_ownerships (id, property_id, contact_id, start_date, is_primary, source, notes)
-  SELECT own, lot, cid, date '2026-09-27', true, 'manual', 'Payment sandbox owner (migration 469)'
-   WHERE NOT EXISTS (SELECT 1 FROM property_ownerships WHERE id = own);
-  INSERT INTO portal_users (id, management_company_id, email, full_name, role, status, contact_id, notes)
-  VALUES (pu, mc, 'payments-sandbox@bedrock.test', 'Payments Sandbox Owner', 'homeowner', 'active', cid,
-          'Payment sandbox login. Email is demo-suppressed; staff copy a magic link from portal admin.')
-  ON CONFLICT DO NOTHING;
-  INSERT INTO portal_user_properties (portal_user_id, property_id, granted_by, notes)
-  SELECT pu, lot, 'migration 469', 'Payment sandbox'
-   WHERE EXISTS (SELECT 1 FROM portal_users WHERE id = pu)
-     AND NOT EXISTS (SELECT 1 FROM portal_user_properties WHERE portal_user_id = pu AND property_id = lot);
-
-  INSERT INTO community_account_roles (community_id, role, account_id, updated_by)
-  SELECT dc, r.role, a.id, 'migration 469'
-    FROM (VALUES ('operating_cash', '1000'), ('stripe_clearing', '1090'), ('homeowner_ar', '1300')) AS r(role, num)
-    JOIN chart_of_accounts a ON a.community_id = dc AND a.account_number = r.num
-  ON CONFLICT (community_id, role) DO NOTHING;
-END $$;
 
 -- ---------------------------------------------------------------------------
 -- 7) Autopay containment

@@ -1,12 +1,14 @@
 // tests/sql/469_payment_rehearsal.mjs — SQL rehearsal for migration 469 against an
 // in-memory Postgres (PGlite) with stub tables mirroring the production columns it
 // touches, plus migration 461's REAL applications trigger and 459's REAL ownership
-// guard (so the sandbox owner lands on the lot's current tenure). Skips (exit 0)
+// guard (so the sandbox owner lands on the lot's current tenure). Also exercises the
+// separate sandbox provisioning (lib/payments/payment_sandbox_provision.js). Skips (exit 0)
 // when @electric-sql/pglite is not installed; install it as a dev dependency to run
 // it in npm test. Run: node tests/sql/469_payment_rehearsal.mjs
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 let PGlite;
 try { ({ PGlite } = await import(process.env.PGLITE_MODULE || '@electric-sql/pglite')); }
@@ -18,10 +20,10 @@ const between = (s, a, b) => { const i = s.indexOf(a); const j = s.indexOf(b, i)
 
 const stub = `
 CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
-CREATE TABLE communities (id uuid primary key, management_company_id uuid, gl_cutover_date date, is_demo boolean NOT NULL DEFAULT false);
+CREATE TABLE communities (id uuid primary key, management_company_id uuid, gl_cutover_date date, is_demo boolean NOT NULL DEFAULT false, stripe_connected_account_id text);
 CREATE TABLE properties (id uuid primary key, community_id uuid, vantaca_account_id text, trusted_account_number text);
 CREATE UNIQUE INDEX uq_properties_trusted_account_number ON properties (trusted_account_number) WHERE trusted_account_number IS NOT NULL;
-CREATE TABLE contacts (id uuid primary key, full_name text NOT NULL, primary_email text);
+CREATE TABLE contacts (id uuid primary key, full_name text NOT NULL, primary_email text, notes text);
 CREATE TABLE portal_users (id uuid primary key default gen_random_uuid(), management_company_id uuid NOT NULL, email text NOT NULL, full_name text,
   role text NOT NULL CHECK (role IN ('board_member','homeowner','staff','admin','franchisee')),
   status text NOT NULL DEFAULT 'invited' CHECK (status IN ('invited','active','revoked')),
@@ -91,7 +93,7 @@ const C = '00000000-0000-0000-0000-00000000000c', C2 = '00000000-0000-0000-0000-
 const P = '00000000-0000-0000-0000-0000000000a1', S = '00000000-0000-0000-0000-0000000000f1', B = '00000000-0000-0000-0000-0000000000f2';
 const SK = '00000000-0000-0000-0000-00000000c0c1', BK = '00000000-0000-0000-0000-00000000c0c2', B0 = '00000000-0000-0000-0000-0000000b0001';
 await db.exec(`
-INSERT INTO communities VALUES ('${C}', gen_random_uuid(), '2026-07-01', false), ('${C2}', gen_random_uuid(), NULL, false);
+INSERT INTO communities VALUES ('${C}', gen_random_uuid(), '2026-07-01', false, NULL), ('${C2}', gen_random_uuid(), NULL, false, NULL);
 INSERT INTO properties VALUES ('${P}', '${C}', '2013059', '1004384184');
 INSERT INTO contacts VALUES ('${SK}', 'Seller'), ('${BK}', 'Buyer');
 INSERT INTO ownership_tenures VALUES ('${S}', '${C}', '${P}', 'owner', '2026-05-19', NULL, '2013059');
@@ -238,33 +240,69 @@ check('chargeback: category chargeback, zero applications to reverse, reversal r
 r = (await one(`SELECT reverse_stripe_tenure_payment(payment_group_anchor($1, NULL), 'refund', 'refund re_9', '2026-10-03') r`, [g3])).r;
 check('reversal of a never-posted payment is held for review, nothing written', r.action === 'review');
 
-// ---- Payment sandbox ----
+// ---- Payment sandbox: 469 provides only the capability; provisioning is separate ----
 await expectErr('sandbox: a lot in a real (non-demo) community cannot be the sandbox', () => db.query(`UPDATE properties SET payment_sandbox=true WHERE id=$1`, [P]), /demo community/);
 const DC = 'dc100000-0000-4000-a000-000000000000', LOT = 'e09d3deb-57c7-4028-b366-4f79c9379708', DT = '23e196cd-dc21-4021-a479-74a876aab6f8', DMC = 'd0000000-0000-4000-a000-000000000000';
 const LOT2 = '00000000-0000-0000-0000-0000000000d2';
-await db.exec(`INSERT INTO communities VALUES ('${DC}', '${DMC}', NULL, true);
+await db.exec(`INSERT INTO communities VALUES ('${DC}', '${DMC}', NULL, true, NULL);
   INSERT INTO properties VALUES ('${LOT}', '${DC}', NULL, NULL), ('${LOT2}', '${DC}', NULL, NULL);
   INSERT INTO ownership_tenures VALUES ('${DT}', '${DC}', '${LOT}', 'owner', NULL, NULL, NULL);`);
-await db.exec(m469); await db.exec(m469);
-const dcLot = await one(`SELECT payment_sandbox, trusted_account_number FROM properties WHERE id=$1`, [LOT]);
-check('sandbox seed: DC-45-060 flagged payment_sandbox with Trusted # 1002900060', dcLot.payment_sandbox === true && dcLot.trusted_account_number === '1002900060');
-check('sandbox seed: exactly one sandbox lot anywhere', (await one(`SELECT count(*)::int n FROM properties WHERE payment_sandbox`)).n === 1);
-check('sandbox seed: DC GL has 1000 / 1090 / 1300 once each', (await q(`SELECT account_number FROM chart_of_accounts WHERE community_id=$1 ORDER BY 1`, [DC])).map((x) => x.account_number).join(',') === '1000,1090,1300');
-const per = await one(`SELECT count(*)::int n, min(period_start)::text a, max(period_end)::text b FROM accounting_periods WHERE community_id=$1 AND status='open'`, [DC]);
-check('sandbox seed: 16 open monthly periods 2026-09-01 .. 2027-12-31', per.n === 16 && per.a === '2026-09-01' && per.b === '2027-12-31', JSON.stringify(per));
-check('sandbox seed: GL cutover 2026-09-01', (await one(`SELECT gl_cutover_date::text d FROM communities WHERE id=$1`, [DC])).d === '2026-09-01');
-const own = await one(`SELECT tenure_id, contact_id FROM property_ownerships WHERE property_id=$1`, [LOT]);
-check('sandbox seed: test owner is on the lot\'s CURRENT tenure (459 guard assigned it)', own && own.tenure_id === DT && own.contact_id === '5a0d0469-0000-4000-a000-00000000c0de');
-const pu = await one(`SELECT u.role, u.status, u.management_company_id, u.email, (SELECT count(*)::int FROM portal_user_properties x WHERE x.portal_user_id=u.id AND x.property_id=$1) n FROM portal_users u WHERE u.id='5a0d0469-0000-4000-a000-0000000000b1'`, [LOT]);
-check('sandbox seed: active homeowner portal login on the demo company, scoped to the lot', pu && pu.role === 'homeowner' && pu.status === 'active' && pu.management_company_id === DMC && pu.n === 1 && /@bedrock\.test$/.test(pu.email));
-check('sandbox seed: DC account roles homeowner_ar/operating_cash/stripe_clearing = 1300/1000/1090',
-  (await q(`SELECT a.account_number FROM community_account_roles r JOIN chart_of_accounts a ON a.id=r.account_id WHERE r.community_id=$1 ORDER BY r.role`, [DC])).map((x) => x.account_number).join(',') === '1300,1000,1090');
-const cnt = await one(`SELECT (SELECT count(*) FROM account_funds WHERE community_id=$1)::int f, (SELECT count(*) FROM property_ownerships WHERE property_id=$2)::int o,
-  (SELECT count(*) FROM portal_users)::int u, (SELECT count(*) FROM contacts WHERE id='5a0d0469-0000-4000-a000-00000000c0de')::int c`, [DC, LOT]);
-check('sandbox seed: re-running adds nothing (1 fund, 1 ownership, 1 portal user, 1 contact)', cnt.f === 1 && cnt.o === 1 && cnt.u === 1 && cnt.c === 1, JSON.stringify(cnt));
-check('sandbox seed: the other Drama Creek lot is untouched', (await one(`SELECT payment_sandbox, trusted_account_number FROM properties WHERE id=$1`, [LOT2])).trusted_account_number === null);
+await db.exec(m469);
+const dcFootprint = async () => one(`SELECT (SELECT count(*) FROM properties WHERE payment_sandbox)::int flagged,
+  (SELECT count(*) FROM chart_of_accounts WHERE community_id=$1)::int coa, (SELECT count(*) FROM community_account_roles WHERE community_id=$1)::int roles,
+  (SELECT count(*) FROM account_funds WHERE community_id=$1)::int funds, (SELECT count(*) FROM accounting_periods WHERE community_id=$1)::int periods,
+  (SELECT count(*) FROM property_ownerships WHERE property_id=$2)::int owners, (SELECT count(*) FROM portal_users)::int portal,
+  (SELECT count(*) FROM contacts WHERE id::text LIKE '5a0d0469%')::int contacts,
+  (SELECT gl_cutover_date::text FROM communities WHERE id=$1) cutover, (SELECT trusted_account_number FROM properties WHERE id=$2) trusted`, [DC, LOT]);
+const EMPTY = JSON.stringify({ flagged: 0, coa: 0, roles: 0, funds: 0, periods: 0, owners: 0, portal: 0, contacts: 0, cutover: null, trusted: null });
+check('469 creates NO Drama Creek data (no flag, GL, periods, cutover, owner, portal login or Trusted #)', JSON.stringify(await dcFootprint()) === EMPTY, JSON.stringify(await dcFootprint()));
+
+const require = createRequire(import.meta.url);
+const { runPaymentSandbox, sandboxRows, SANDBOX, _sql } = require(`${REPO}/lib/payments/payment_sandbox_provision.js`);
+// pg-style client over PGlite: parameterized -> one statement; plain -> multi-statement script.
+const client = { query: async (sql, params) => (params ? db.query(sql, params) : (await db.exec(sql)).slice(-1)[0] || { rows: [] }) };
+const TEST = 'sk_test_x';
+await expectErr('provision: refused when Stripe is LIVE (nothing written)', () => runPaymentSandbox(client, { action: 'apply', key: 'sk_live_x' }), /Stripe is live/);
+await expectErr('provision: refused when Stripe is unconfigured', () => runPaymentSandbox(client, { action: 'apply', key: '' }), /Stripe is unconfigured/);
+await expectErr('provision: the SQL refuses when pasted outside the runner (no test-mode flag)', () => db.exec(_sql.preflightSql()), /runs only through payment_sandbox_provision/);
+check('provision: refusals left nothing behind', JSON.stringify(await dcFootprint()) === EMPTY);
+await db.exec(`UPDATE communities SET is_demo=false WHERE id='${DC}'`);
+await expectErr('provision: refused against a non-demo community', () => runPaymentSandbox(client, { action: 'apply', key: TEST }), /not a demo community/);
+await db.exec(`UPDATE communities SET is_demo=true WHERE id='${DC}'`);
+
+const plan = await runPaymentSandbox(client, { action: 'plan', key: TEST });
+check('provision plan: shows the full result, then rolls back', plan.committed === false && plan.after.periods === 16 && plan.after.portal_access === true && JSON.stringify(await dcFootprint()) === EMPTY);
+check('provision: every row it can touch is listed with a fixed id (29 entries)', sandboxRows().length === 29 && sandboxRows().every((r) => r.key));
+
+const ap = await runPaymentSandbox(client, { action: 'apply', key: TEST });
+const fp = await dcFootprint();
+check('provision apply: lot flagged, Trusted # 1002900060, cutover 2026-09-01', ap.committed && fp.flagged === 1 && fp.trusted === '1002900060' && fp.cutover === '2026-09-01', JSON.stringify(fp));
+check('provision apply: OPR fund, 1000/1090/1300, 16 open periods, 3 roles', fp.funds === 1 && fp.coa === 3 && fp.periods === 16 && fp.roles === 3);
+check('provision apply: test owner on the lot\'s CURRENT tenure (459 guard), portal login scoped to the lot', ap.after.ownership && ap.after.ownership.tenure_id === DT && ap.after.portal_user && ap.after.portal_access);
+const pu = await one(`SELECT role, status, management_company_id, email FROM portal_users WHERE id=$1`, [SANDBOX.ids.portalUser]);
+check('provision apply: portal login is an active homeowner on the demo company, demo-suppressed email', pu.role === 'homeowner' && pu.status === 'active' && pu.management_company_id === DMC && /@bedrock\.test$/.test(pu.email));
+check('provision apply: created rows carry the fixed ids', (await one(`SELECT count(*)::int n FROM chart_of_accounts WHERE id = ANY($1::uuid[])`, [Object.values(SANDBOX.ids.coa)])).n === 3);
+await runPaymentSandbox(client, { action: 'apply', key: TEST });
+check('provision: re-running apply adds nothing', JSON.stringify(await dcFootprint()) === JSON.stringify(fp));
+check('provision: the other Drama Creek lot is untouched', (await one(`SELECT payment_sandbox, trusted_account_number FROM properties WHERE id=$1`, [LOT2])).trusted_account_number === null);
 await expectErr('sandbox: a second sandbox lot (even in the demo) is refused', () => db.query(`UPDATE properties SET payment_sandbox=true WHERE id=$1`, [LOT2]), /uq_properties_one_payment_sandbox|duplicate/);
 await expectErr('sandbox: the sandbox lot cannot be moved into a real community', () => db.query(`UPDATE properties SET community_id=$1 WHERE id=$2`, [C, LOT]), /demo community/);
+await db.exec(m469);
+check('469 re-applied after provisioning: sandbox data unchanged (independent)', JSON.stringify(await dcFootprint()) === JSON.stringify(fp));
+
+// Removal: refused while test activity exists; clean removal restores the empty state; recreate works.
+const act = (await one(`INSERT INTO journal_entries (community_id, source_module, source_reference) VALUES ($1,'payment_intake','stripe:pay:test') RETURNING id`, [DC])).id;
+await expectErr('remove: refused while the sandbox has test activity (kept, not deleted)', () => runPaymentSandbox(client, { action: 'remove', key: TEST }), /test activity/);
+await db.query(`DELETE FROM journal_entries WHERE id=$1`, [act]);   // rehearsal-only cleanup
+await expectErr('remove: refused when Stripe is live', () => runPaymentSandbox(client, { action: 'remove', key: 'sk_live_x' }), /Stripe is live/);
+const prm = await runPaymentSandbox(client, { action: 'plan_remove', key: TEST });
+check('remove plan: shows the empty result, then rolls back', prm.committed === false && prm.after.periods === 0 && !prm.after.portal_user && JSON.stringify(await dcFootprint()) === JSON.stringify(fp));
+await runPaymentSandbox(client, { action: 'remove', key: TEST });
+check('remove: every sandbox row gone; lot unflagged, Trusted # and cutover cleared', JSON.stringify(await dcFootprint()) === EMPTY, JSON.stringify(await dcFootprint()));
+check('remove: payment schema untouched (roles table, sandbox column, guard still there)', (await one(`SELECT count(*)::int n FROM information_schema.columns WHERE table_name='properties' AND column_name='payment_sandbox'`)).n === 1
+  && (await one(`SELECT count(*)::int n FROM community_account_roles WHERE community_id=$1`, [C])).n === 3);
+await runPaymentSandbox(client, { action: 'apply', key: TEST });
+check('recreate: apply after remove rebuilds the identical sandbox', JSON.stringify(await dcFootprint()) === JSON.stringify(fp));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;
