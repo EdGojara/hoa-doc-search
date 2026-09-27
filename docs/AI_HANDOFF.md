@@ -4,7 +4,97 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Migration 469 COMPLETE (applied by Ed; verified read-only)
+## 2026-09-27 (latest): Payment application code prepared for review (NOT merged, NOT deployed)
+
+**Task.** Per the ChatGPT instruction in GitHub Issue #1: re-sync `feat/payments-safe-foundation` onto main, drop the stale tool copy, keep 469 byte-identical, run the focused tests, summarize the diff, and list the production config deployment would need. No merge, no deploy, no Stripe or production change.
+
+**Status.** Ready for ChatGPT review. This entry exists on the branch only; main's copy of this file stops at the "469 COMPLETE" entry.
+
+**Branch.** `feat/payments-safe-foundation`. The re-sync merge commit is `19d57a5f` (main `003ffa76` merged in cleanly, no conflicts). This handoff update is the commit after it.
+
+**Re-sync verification.**
+- The migration tool is now exactly main's final version, so no stale copy remains: `lib/migrations/*`, the tool scripts and rehearsal, and the tool sections of `server.js` and `public/index.html` are all identical to main.
+- 469 and its checks file are byte-identical to main (`5d10f2b4...3130`, `1d404af8...29fe`); neither was edited.
+- The branch vs main diff is now payment code and its tests only: 25 files, +1911 / -170.
+
+**Tests / results** (local; PGlite in-memory; no production writes):
+- `test_payment_foundation` 29/29.
+- Existing related suites all pass: `test_payment_dedup`, `test_homeowner_ledger_path`, `test_ownership_transfer_single_path`, `test_gl_concept`, `test_operator_actions`, `test_early_prepay` (23), `test_checkout_preview_gate` (8), `test_bedrock_pay` (11), `test_autopay` (20).
+- 469 rehearsal 79/79 (includes sandbox provision / remove / recreate); 469 end-to-end through the tool 13/13; tool rehearsal 57/57.
+- `check_migration_checks`, `check_migration_immutability`, `check_constraint_values`, `check_pagination` pass; node syntax OK on every changed server file.
+- `check_requires_tracked` fails only on the pre-existing `tests/test_proposal_boundary.js -> ../lib/presentations` (same on main; unrelated).
+- Not run: `test_demo_isolation` (writes suppressed-action rows to production).
+
+**Diff summary.**
+- *Checkout / auth.*
+  - New `POST /api/portal/pay/checkout`: signed-in homeowner or board member, own lot only. Staff view-as and managers are refused, and more than one lot requires an explicit choice (`lib/payments/homeowner_checkout.js`).
+  - One checkout core (`lib/payments/assessment_checkout.js`): the server decides the lot, the owner (current tenure) and the amount (the tenure balance). The client can't set an amount; only the test route can use a fixed $1, and only with a test key.
+  - The old unauthenticated `POST /api/payments/assessment/create-checkout` now returns 410.
+  - New staff `POST /api/payments/test/assessment-checkout` (test key only).
+  - Portal pages call the new route.
+  - Pay links (`payment_link.js`) are bound to the owner tenure: after a sale a link returns 410 instead of paying the buyer. Links issued before this change are refused (`pre_tenure_link`). The hard-coded signing fallback is removed.
+- *Stripe webhook / idempotency.*
+  - Every event is claimed once in `stripe_events`: already processed returns 200 duplicate, in progress returns 409 (Stripe retries), and a handler error returns 500 (Stripe retries).
+  - A livemode mismatch is ignored loudly.
+  - Payment rows carry a `payment_group_id` created before the Stripe session and sent in its metadata.
+  - Non-assessment (amenity) events still go to the legacy handlers.
+- *Tenure / property identity* (`payment_identity.js`). Every assessment payment records the property, the owner tenure, the contact and the Trusted account number captured at checkout. It refuses if there's no owner, more than one owner, or no Trusted number. It credits the captured tenure even if the lot sells before settlement. The Vantaca number comes from the tenure, not the lot.
+- *Ledger posting + GL* (`payment_store.js`, 469 functions).
+  - Card: credited only when Stripe reports "paid". ACH: "processing" until `async_payment_succeeded`, so nothing is credited before settlement; failure never credits.
+  - Posting order:
+    1. a tenure-stamped AR row in a DRAFT batch;
+    2. the GL entry `stripe:pay:<id>`, Dr stripe_clearing role (1090) / Cr homeowner_ar role (1300);
+    3. commit, and only then is the credit visible.
+  - Accounts come from `community_account_roles`, never from numbers in code.
+  - A community that isn't on the live GL is marked `not_applicable`. A missing role or closed period is marked `blocked`, and staff can re-run it with `POST /api/payments/:id/retry-posting`.
+  - Payments apply per Tex. Prop. Code 209.0063; unapplied remainders are allowed.
+  - `operator_core` cash on hand excludes stripe_clearing, which is shown separately as cash in transit.
+- *Refund / chargeback reversal.*
+  - A full refund or full-amount dispute drafts a separate dated +amount row (`payment_reversal` / `chargeback`, `reverses_txn_id` pointing at the payment). It then posts GL `stripe:rev:<id>` (Dr AR / Cr clearing) and commits, reopening the paid charges with exact-negative applications. The original payment always stays on the ledger.
+  - Partial refunds, partial disputes and won disputes are flagged `needs_review`, never automatic.
+  - A reversal that can't post (missing role or closed period) stays a draft and is flagged.
+- *Autopay containment.* `/api/portal/autopay/begin` returns 503 and `chargeDue` is disabled. New enrollments store `tenure_id`, and the 469 trigger cancels an enrollment when its tenure ends at a sale. Production has 0 enrollments.
+- *Sandbox / test-only.*
+  - `payment_sandbox.js`: a narrow demo-guard exception for Stripe checkout and connected-account creation, for the single `payment_sandbox` lot, and only with a test key. Refunds and off-session charges stay blocked.
+  - `payment_sandbox_provision.js` plus admin `POST /api/payments/test/payment-sandbox` (plan / apply / plan_remove / remove; test key only; one transaction; 29 fixed-id rows for Drama Creek lot DC-45-060; removal refuses while test activity exists).
+- *Still NOT built.*
+  - Payouts and bank reconciliation: nothing moves 1090 to operating cash (Dr 1000 / Cr 1090 on a Stripe payout), so 1090 would accumulate until this is built.
+  - Stripe fee accounting: processing and dispute fees are not recorded.
+  - No staff screen for payment settlement or posting state, the `needs_review` queue, or retry-posting (API only).
+  - No retry path for a blocked reversal (manual).
+  - Partial refund and dispute resolution, and re-crediting a won dispute, are manual.
+  - Autopay charging stays off.
+  - Homeowner receipt or notification on settle, fail or reverse is not reviewed in this branch.
+  - The existing staff refund route (`POST /api/payments/:id/refund`) only reverses the transfer to the association if `reverse_transfer` is passed; its default was not changed or re-reviewed.
+
+**Production config needed before deploying this code.**
+1. *Stripe webhook (test mode, platform endpoint `/api/payments/webhook`)* must deliver: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed`, plus `account.updated` from connected accounts. The current subscription list was not checked (no Stripe access used); Ed or ChatGPT should compare it read-only.
+2. *Env vars.* Existing and unchanged: `STRIPE_SECRET_KEY` (must stay `sk_test_` for this phase), `STRIPE_WEBHOOK_SECRET`, `DATABASE_URL` (used by the sandbox route), `APP_BASE_URL`. Recommended new: a dedicated `PAYMENT_LINK_SECRET`. Without it, pay links are signed with `SUPABASE_KEY`, the same credential-reuse concern that was fixed for migration plans.
+3. *Connected accounts.* None change for real communities. The sandbox needs a Drama Creek test connected account, created after provisioning through the existing test-only `POST /api/payments/connect/test-onboard`.
+4. *Database.* No new migration: 469 is applied and verified. Sandbox data is created only by the separate provisioning route, on approval.
+5. *Behaviour visible at deploy.*
+   - Previously emailed pay links stop working; they must be re-sent.
+   - Portal autopay setup shows "unavailable".
+   - The old public create-checkout returns 410.
+
+**Risks / open issues.**
+- With destination charges, Stripe bills processing and dispute fees to the platform (Bedrock). The card convenience fee covers card processing, but nothing covers ACH or dispute fees. This is a policy question; confirm against the Stripe account settings.
+- 1090 grows without payouts; don't go live beyond the sandbox until payout reconciliation exists.
+- No UI for blocked or review payments; staff would need the API or Claude.
+- The legacy amenity webhook path now returns 500 on a handler error (Stripe retries), where before an error could be swallowed.
+
+**Decisions needed from Ed.**
+1. After ChatGPT's review: approve merging `feat/payments-safe-foundation` to main (test mode only).
+2. Set a dedicated `PAYMENT_LINK_SECRET` on Render before that merge (recommended).
+3. Confirm the Stripe test webhook subscribes to the events above (read-only comparison first).
+4. Approve sandbox provisioning and the Drama Creek test connected account as a separate step after the merge.
+5. Policy: who bears Stripe ACH and dispute fees.
+
+**Recommended next action.** ChatGPT reviews the branch and this entry. No merge, deploy or Stripe change until Ed approves item 1.
+
+---
+
+## 2026-09-27: Migration 469 COMPLETE (applied by Ed; verified read-only)
 
 **Task.** Per the ChatGPT instruction in GitHub Issue #1: verify Ed's owner-panel apply of 469, read-only; no new production changes.
 
