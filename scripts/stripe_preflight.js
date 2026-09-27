@@ -104,10 +104,28 @@ async function stripe(path, params) {
 
   // ---- webhook --------------------------------------------------------
   console.log('\n4. Webhook');
-  const HANDLED = ['checkout.session.completed', 'payment_intent.payment_failed', 'charge.refunded', 'account.updated'];
+  // What lib/payments/payment_lifecycle.js handles (Ed 2026-09-27). Platform
+  // events arrive on a normal endpoint; account.updated for CONNECTED accounts
+  // only arrives on an endpoint created to listen to connected accounts
+  // (connect: true), which has its own signing secret.
+  const HANDLED_PLATFORM = ['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'checkout.session.async_payment_failed',
+    'checkout.session.expired', 'payment_intent.payment_failed', 'charge.refunded', 'charge.dispute.created', 'charge.dispute.closed'];
+  const HANDLED_CONNECT = ['account.updated'];
   const hooks = await stripe('webhook_endpoints', 'limit=20');
   const eps = (hooks.body && hooks.body.data) || [];
   const ours = eps.filter((e) => /\/api\/payments\/webhook$/.test(e.url || ''));
+  const covered = (list, wantConnect) => new Set(ours.filter((e) => !!e.connect === wantConnect && e.status === 'enabled')
+    .flatMap((e) => ((e.enabled_events || []).includes('*') ? list : (e.enabled_events || []))));
+  const platSet = covered(HANDLED_PLATFORM, false), connSet = covered(HANDLED_CONNECT, true);
+  const platMissing = HANDLED_PLATFORM.filter((h) => !platSet.has(h));
+  const connMissing = HANDLED_CONNECT.filter((h) => !connSet.has(h));
+  console.log(`   platform events: ${platMissing.length ? bad('missing ' + platMissing.join(', ')) : ok('all ' + HANDLED_PLATFORM.length + ' subscribed')}`);
+  console.log(`   connected-account events: ${connMissing.length ? warn('missing ' + connMissing.join(', ') + ' (needs a connected-accounts endpoint)') : ok('account.updated subscribed')}`);
+  if (platMissing.length) fail('platform webhook not listening for: ' + platMissing.join(', '));
+  if (ours.some((e) => e.connect) && ours.some((e) => !e.connect)) {
+    console.log('   ' + warn('two endpoints point at us (platform + connected accounts); each has its own signing secret,'));
+    console.log('   ' + warn('but the server verifies only STRIPE_WEBHOOK_SECRET, so one of them will fail signature checks.'));
+  }
   if (!ours.length) {
     fail('No webhook endpoint points at /api/payments/webhook.');
     console.log('   ' + dim('Without it Stripe takes the money and we never hear about it: the'));
@@ -120,14 +138,7 @@ async function stripe(path, params) {
   for (const e of ours) {
     console.log(`   ${e.status === 'enabled' ? ok('✓') : bad('✗')} ${e.url}  ${dim(e.status)}`);
     const listening = e.enabled_events || [];
-    const all = listening.includes('*');
-    const missing = HANDLED.filter((h) => !all && !listening.includes(h));
-    if (missing.length) {
-      fail('not listening for: ' + missing.join(', '));
-      console.log('     ' + dim('checkout.session.completed is the one that confirms a booking.'));
-    } else {
-      console.log('     ' + ok('listening for everything we handle'));
-    }
+    console.log(`     ${dim((e.connect ? 'connected accounts' : 'platform') + ': ' + (listening.includes('*') ? 'all events' : listening.join(', ')))}`);
   }
 
   // ---- fees -----------------------------------------------------------

@@ -5,7 +5,7 @@
 const assert = require('assert');
 const { stripeMode, requireTestMode } = require('../lib/payments/stripe_mode');
 const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkout');
-const { createAssessmentCheckout } = require('../lib/payments/assessment_checkout');
+const { createAssessmentCheckout, checkoutModeGate } = require('../lib/payments/assessment_checkout');
 const { processWebhookEvent } = require('../lib/payments/payment_lifecycle');
 const { verifyPaymentToken, signPaymentToken } = require('../lib/payments/payment_link');
 const { sandboxException } = require('../lib/payments/payment_sandbox');
@@ -63,10 +63,11 @@ function fakeSupabase(tables) {
 }
 
 const P1 = 'prop-1', P2 = 'prop-2', C = 'comm-1', SELLER = 'ten-seller', BUYER = 'ten-buyer';
-function world({ tenureId = SELLER, balance = 25000, trusted = '1004384184' } = {}) {
+// sandbox: true -> the lot is THE payment-sandbox lot in a demo community.
+function world({ tenureId = SELLER, balance = 25000, trusted = '1004384184', sandbox = false, demo = sandbox } = {}) {
   return fakeSupabase({
-    properties: [{ id: P1, community_id: C, street_address: '4707 Lakes of Pine Forest Ct', trusted_account_number: trusted, vantaca_account_id: '2013059' }],
-    communities: [{ id: C, name: 'Lakes of Pine Forest', slug: 'lopf', stripe_connected_account_id: 'acct_test_1', gl_cutover_date: '2026-08-01' }],
+    properties: [{ id: P1, community_id: C, street_address: sandbox ? 'DC-45-060' : '4707 Lakes of Pine Forest Ct', trusted_account_number: trusted, vantaca_account_id: '2013059', payment_sandbox: sandbox }],
+    communities: [{ id: C, name: demo ? 'Drama Creek Estates' : 'Lakes of Pine Forest', slug: demo ? 'drama-creek' : 'lopf', stripe_connected_account_id: 'acct_test_1', gl_cutover_date: '2026-08-01', is_demo: demo }],
     ownership_tenures: [{ id: tenureId, community_id: C, property_id: P1, kind: 'owner', end_date: null, start_date: '2026-08-27' }],
     property_ownerships: [{ tenure_id: tenureId, contact_id: 'contact-owner', is_primary: true, start_date: '2026-08-27' }],
     v_current_owner_balance: [{ tenure_id: tenureId, balance_cents: balance }],
@@ -102,7 +103,7 @@ t('staff view-as, managers and renters cannot start a homeowner payment', () => 
 // ---------------------------------------------------------------- 2. amount cannot be altered client-side
 t('amount is the owner tenure balance; a caller-supplied amount is ignored', async () => {
   const sb = world({ balance: 25000 }); const st = fakeStripe();
-  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: TEST_KEY },
+  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: LIVE_KEY },
     { propertyId: P1, paymentMethod: 'ach', initiatedBy: 'homeowner_portal', ...urls, amount_cents: 1, amountCents: 1 });
   assert.ok(r.ok, JSON.stringify(r));
   assert.strictEqual(r.amount_cents, 25000);
@@ -114,15 +115,15 @@ t('a fixed test amount is allowed only while Stripe is in test mode', async () =
   const live = await createAssessmentCheckout({ supabase: world(), stripeLib: fakeStripe(), key: LIVE_KEY },
     { propertyId: P1, paymentMethod: 'card', initiatedBy: 'staff_test', ...urls, testAmountCents: 100 });
   assert.strictEqual(live.error, 'test_amount_requires_test_mode');
-  const test = await createAssessmentCheckout({ supabase: world(), stripeLib: fakeStripe(), key: TEST_KEY },
+  const test = await createAssessmentCheckout({ supabase: world({ sandbox: true }), stripeLib: fakeStripe(), key: TEST_KEY },
     { propertyId: P1, paymentMethod: 'card', initiatedBy: 'staff_test', ...urls, testAmountCents: 100 });
-  assert.ok(test.ok && test.amount_cents === 100);
+  assert.ok(test.ok && test.amount_cents === 100, JSON.stringify(test));
 });
 
 // ---------------------------------------------------------------- identity captured server-side
 t('checkout records tenure, property, Trusted #, contact and group, and sends them to Stripe', async () => {
   const sb = world(); const st = fakeStripe();
-  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', ...urls });
+  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: LIVE_KEY }, { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', ...urls });
   const rows = sb._db.payments;
   assert.strictEqual(rows.length, 2, 'assessment + card convenience fee');
   for (const p of rows) {
@@ -138,8 +139,54 @@ t('checkout records tenure, property, Trusted #, contact and group, and sends th
 });
 t('checkout refuses a lot with no current owner or no Trusted account number', async () => {
   const noOwner = world(); noOwner._db.ownership_tenures[0].end_date = '2026-09-01';
-  assert.strictEqual((await createAssessmentCheckout({ supabase: noOwner, stripeLib: fakeStripe(), key: TEST_KEY }, { propertyId: P1, ...urls })).error, 'no_current_owner');
-  assert.strictEqual((await createAssessmentCheckout({ supabase: world({ trusted: null }), stripeLib: fakeStripe(), key: TEST_KEY }, { propertyId: P1, ...urls })).error, 'no_trusted_account_number');
+  assert.strictEqual((await createAssessmentCheckout({ supabase: noOwner, stripeLib: fakeStripe(), key: LIVE_KEY }, { propertyId: P1, ...urls })).error, 'no_current_owner');
+  assert.strictEqual((await createAssessmentCheckout({ supabase: world({ trusted: null }), stripeLib: fakeStripe(), key: LIVE_KEY }, { propertyId: P1, ...urls })).error, 'no_trusted_account_number');
+});
+
+// ---------------------------------------------------------------- test-mode containment (mode gate)
+t('TEST key + real community: homeowner portal checkout refused, no payment rows, no Stripe session', async () => {
+  const sb = world(); const st = fakeStripe();
+  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, paymentMethod: 'ach', initiatedBy: 'homeowner_portal', ...urls });
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.error, 'test_mode_sandbox_only'); assert.strictEqual(r.status, 403);
+  assert.strictEqual(sb._db.payments.length, 0, 'no payment rows'); assert.strictEqual(st.sessions.length, 0, 'no Stripe session');
+});
+t('TEST key + real community: pay link and staff $1 test route are refused too', async () => {
+  for (const [initiatedBy, extra] of [['payment_link', {}], ['staff_test', { testAmountCents: 100 }]]) {
+    const sb = world(); const st = fakeStripe();
+    const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, paymentMethod: 'card', initiatedBy, ...urls, ...extra });
+    assert.strictEqual(r.error, 'test_mode_sandbox_only', initiatedBy);
+    assert.strictEqual(sb._db.payments.length + st.sessions.length, 0, `${initiatedBy}: nothing written, no session`);
+  }
+});
+t('TEST key + the approved sandbox lot (demo community): portal and staff test route allowed', async () => {
+  for (const [initiatedBy, extra] of [['homeowner_portal', {}], ['staff_test', { testAmountCents: 100 }]]) {
+    const sb = world({ sandbox: true }); const st = fakeStripe();
+    const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, paymentMethod: 'card', initiatedBy, ...urls, ...extra });
+    assert.ok(r.ok, `${initiatedBy}: ${JSON.stringify(r)}`); assert.strictEqual(st.sessions.length, 1); assert.ok(sb._db.payments.length >= 1);
+  }
+});
+t('TEST key: a sandbox-flagged lot outside a demo community is still refused', async () => {
+  const sb = world({ sandbox: true, demo: false }); const st = fakeStripe();
+  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, ...urls });
+  assert.strictEqual(r.error, 'test_mode_sandbox_only'); assert.strictEqual(st.sessions.length, 0);
+});
+t('LIVE key + properly enabled real community: allowed by the mode gate (mock Stripe)', async () => {
+  const sb = world(); const st = fakeStripe();
+  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: LIVE_KEY }, { propertyId: P1, paymentMethod: 'ach', initiatedBy: 'homeowner_portal', ...urls });
+  assert.ok(r.ok, JSON.stringify(r)); assert.strictEqual(st.sessions.length, 1);
+  assert.ok(sb._db.payments.every((p) => p.livemode === true), 'rows record livemode');
+});
+t('LIVE key + the sandbox lot / a demo community: refused, nothing written', async () => {
+  const sb = world({ sandbox: true }); const st = fakeStripe();
+  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: LIVE_KEY }, { propertyId: P1, ...urls });
+  assert.strictEqual(r.error, 'sandbox_not_payable_live'); assert.strictEqual(sb._db.payments.length + st.sessions.length, 0);
+});
+t('mode gate: unconfigured key never opens a session', () => {
+  const idn = { property: { payment_sandbox: false }, community: { is_demo: false } };
+  assert.strictEqual(checkoutModeGate('unconfigured', idn).error, 'payment_not_configured');
+  assert.strictEqual(checkoutModeGate('live', idn).ok, true);
+  assert.strictEqual(checkoutModeGate('test', idn).error, 'test_mode_sandbox_only');
+  assert.strictEqual(checkoutModeGate('test', { property: { payment_sandbox: true }, community: { is_demo: true } }).ok, true);
 });
 
 // ---------------------------------------------------------------- 9. test-payment route refuses in live mode
@@ -255,7 +302,7 @@ t('ACH failure never leaves a credit, and a late "paid" goes to review instead o
 
 // ---------------------------------------------------------------- 3. seller cannot receive buyer payment after transfer
 t('after a transfer, a payment credits the tenure captured at checkout, never whoever owns the lot now', async () => {
-  const sb = world({ tenureId: BUYER }); const r = await createAssessmentCheckout({ supabase: sb, stripeLib: fakeStripe(), key: TEST_KEY }, { propertyId: P1, ...urls });
+  const sb = world({ tenureId: BUYER }); const r = await createAssessmentCheckout({ supabase: sb, stripeLib: fakeStripe(), key: LIVE_KEY }, { propertyId: P1, ...urls });
   assert.strictEqual(sb._db.payments[0].tenure_id, BUYER, 'a checkout after the sale belongs to the buyer');
   const st = fakeStore({ tenureId: SELLER }); // a checkout the SELLER started before the sale
   await run(st, ev('evt_10', 'checkout.session.completed', sess('unpaid')));
@@ -264,16 +311,37 @@ t('after a transfer, a payment credits the tenure captured at checkout, never wh
   assert.ok(r.ok);
 });
 t('a pay link is bound to the owner it was issued for; old unbound links are refused', () => {
-  const prev = process.env.PAYMENT_LINK_SECRET; process.env.PAYMENT_LINK_SECRET = 'test-secret';
+  const prev = process.env.PAYMENT_LINK_SECRET; process.env.PAYMENT_LINK_SECRET = 'x'.repeat(40);
   const tok = signPaymentToken({ community_id: C, property_id: P1, tenure_id: SELLER });
   assert.strictEqual(verifyPaymentToken(tok).tenure_id, SELLER);
   assert.throws(() => signPaymentToken({ community_id: C, property_id: P1 }));
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const crypto = require('crypto');
   const body = b64({ c: C, p: P1, iat: 1, exp: 9999999999 });
-  const sig = crypto.createHmac('sha256', 'test-secret').update(body).digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const sig = crypto.createHmac('sha256', 'x'.repeat(40)).update(body).digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   assert.strictEqual(verifyPaymentToken(`${body}.${sig}`).reason, 'pre_tenure_link');
   if (prev === undefined) delete process.env.PAYMENT_LINK_SECRET; else process.env.PAYMENT_LINK_SECRET = prev;
+});
+t('pay links require a dedicated PAYMENT_LINK_SECRET: no fallback to other credentials', () => {
+  const keys = ['PAYMENT_LINK_SECRET', 'STAFF_GATE_SECRET', 'STAFF_PASSWORD', 'STRIPE_WEBHOOK_SECRET', 'SUPABASE_KEY'];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  try {
+    delete process.env.PAYMENT_LINK_SECRET;
+    process.env.STAFF_GATE_SECRET = 'a'.repeat(40); process.env.STAFF_PASSWORD = 'b'.repeat(40);
+    process.env.STRIPE_WEBHOOK_SECRET = 'whsec_' + 'c'.repeat(40); process.env.SUPABASE_KEY = 'd'.repeat(80);
+    let err = null; try { signPaymentToken({ community_id: C, property_id: P1, tenure_id: SELLER }); } catch (e) { err = e; }
+    assert.ok(err && err.code === 'payment_link_not_configured', 'minting refused even though other credentials exist');
+    assert.strictEqual(verifyPaymentToken('abc.def').reason, 'not_configured', 'verification refused loudly, not reported as a bad link');
+    process.env.PAYMENT_LINK_SECRET = 'short-secret';
+    err = null; try { signPaymentToken({ community_id: C, property_id: P1, tenure_id: SELLER }); } catch (e) { err = e; }
+    assert.ok(err && err.code === 'payment_link_not_configured', 'a short secret is refused');
+    process.env.PAYMENT_LINK_SECRET = 'e'.repeat(40);
+    const tok = signPaymentToken({ community_id: C, property_id: P1, tenure_id: SELLER });
+    process.env.PAYMENT_LINK_SECRET = 'f'.repeat(40);
+    assert.strictEqual(verifyPaymentToken(tok).reason, 'bad_signature', 'a link signed with a different secret is refused');
+  } finally {
+    for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
 });
 
 // ---------------------------------------------------------------- reversals + mode safety

@@ -530,6 +530,9 @@ router.post('/payment-link', express.json({ limit: '8kb' }), async (req, res) =>
     });
   } catch (err) {
     console.error('[payments] payment-link mint failed:', err.message);
+    if (err.code === 'payment_link_not_configured') {
+      return res.status(503).json({ error: 'payment_link_not_configured', hint: 'Payment links are disabled until PAYMENT_LINK_SECRET is set on the server.' });
+    }
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
