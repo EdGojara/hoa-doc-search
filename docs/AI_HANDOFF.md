@@ -4,7 +4,42 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Webhook secrets re-check after Ed's Render change: connect FIXED, platform now MISSING
+## 2026-09-27 (latest): Both webhook secrets verified: CLEARED for sandbox provisioning
+
+**Task.** Per ChatGPT's instruction in GitHub Issue #1: focused read-only verification after Ed restored `STRIPE_WEBHOOK_SECRET` (platform endpoint "inspiring-victory") alongside `STRIPE_CONNECT_WEBHOOK_SECRET` (connected-account-updates endpoint) and redeployed.
+
+**Status.** **CLEARED for sandbox provisioning.** Sandbox NOT provisioned; no payment created (waiting for ChatGPT review and Ed's approval).
+
+**Production.** `/version` = `9a0b1d55` (current main; payment code as merged in `6fdc7031`), booted 2026-09-27 22:32:36 UTC, healthy.
+
+**Probe results** (deliberately bad or missing signatures; refused at verification):
+
+| Probe | Result |
+|---|---|
+| Platform `checkout.session.completed`, fresh timestamp, bad signature | **400 `signature mismatch`**, source=platform, secret_present=true (no 503) |
+| Connected-account `account.updated`, fresh timestamp, bad signature | **400 `signature mismatch`**, source=connect, secret_present=true (no 503) |
+| Platform, unsigned | 400 `missing_signature` |
+| Connected-account, unsigned | 400 `missing_signature` |
+
+**No production writes.** Counts before and after the probes are identical: `stripe_events` 0/0, `payments` 10/10, `homeowner_transactions` 29,117/29,117, `journal_entries` 1,790/1,790. There are no `evt_smoke*` rows.
+
+**Now true in production (Stripe TEST mode):**
+- All three secrets are recognized (`PAYMENT_LINK_SECRET` confirmed earlier; both webhook secrets now).
+- Each webhook path verifies with its own secret.
+- Real-homeowner checkout is blocked by the test-mode gate.
+- Autopay is off. 469 is applied. Migration status is clean.
+
+**Next (each needs Ed's explicit approval):**
+1. Provision the sandbox (plan, review the 29 rows, then apply).
+2. Create the Drama Creek test connected account.
+3. Run the $1 staff test checkout on DC-45-060 with the Stripe test card.
+4. Verify posting read-only.
+
+See the entry below "Payment foundation MERGED and DEPLOYED" for step detail.
+
+---
+
+## 2026-09-27: Webhook secrets re-check after Ed's Render change: connect FIXED, platform now MISSING
 
 **Task.** Per ChatGPT's instruction in GitHub Issue #1: focused read-only verification after Ed added `STRIPE_CONNECT_WEBHOOK_SECRET` and redeployed.
 
