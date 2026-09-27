@@ -4,7 +4,77 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Connected-account webhook signing secret (NOT merged, NOT deployed, sandbox NOT provisioned)
+## 2026-09-27 (latest): FINAL PRE-MERGE VERIFICATION, payment foundation (NOT merged, NOT deployed, sandbox NOT provisioned)
+
+**Task.** Per ChatGPT's instruction in GitHub Issue #1: final pre-merge verification only. No code changes in this step.
+
+**Status.** Verification complete. **Recommendation: READY to merge to main for TEST-MODE-ONLY deployment** (details below). Stopped for ChatGPT review and Ed's merge approval.
+
+**Final branch commit.** `feat/payments-safe-foundation` at `39f25517` (code at `b4354b8d`); this handoff update is the commit after it. Local and remote identical.
+
+**1. Drift.** None. `origin/main` is still `003ffa76`; the branch contains it; 0 main commits missing. Branch vs main: 28 files, payment code, tests, the preflight script and this file only.
+
+**2. Final test results** (local; mock Stripe; PGlite in-memory; no production writes):
+- `test_payment_foundation` 45/45.
+- Related suites all pass: dedup, ledger path, ownership transfer, gl_concept (12), operator actions, early prepay (23), checkout preview gate (8), bedrock_pay (11), autopay (20).
+- 469 rehearsal 79/79; 469 end-to-end through the tool 13/13; tool rehearsal 57/57.
+- `check_migration_checks`, `check_migration_immutability` (473 files; 27 pinned exceptions), `check_constraint_values` and `check_pagination` pass; node syntax OK on every changed server file.
+- `check_requires_tracked` fails only on the pre-existing `tests/test_proposal_boundary.js -> ../lib/presentations` (identical on main; unrelated).
+
+**3. Migration 469.** SQL (`5d10f2b4...3130`) and checks file (`1d404af8...29fe`) are byte-identical between the branch and main. 469 is already applied and verified in production; no new migration.
+
+**4. Secrets are expected and fail closed** (verified by tracing every read and by running the real functions with the secrets unset):
+- `PAYMENT_LINK_SECRET` (min 32 chars, no fallback), read only in `lib/payments/payment_link.js`. Missing: minting returns 503 `payment_link_not_configured`; `/pay/:token` shows "temporarily unavailable" (503).
+- `STRIPE_WEBHOOK_SECRET`: platform deliveries only (`lib/payments/webhook_auth.js`). Missing: platform deliveries get 503 `platform_webhook_secret_not_configured`.
+- `STRIPE_CONNECT_WEBHOOK_SECRET`: connected-account deliveries only. Missing: those deliveries get 503 `connect_webhook_secret_not_configured`, and platform deliveries are unaffected. A delivery is never verified with the other source's secret.
+
+**5. Test-mode containment** (tests pass this run):
+- TEST key + real community: portal, pay link and staff $1 route are all refused (`test_mode_sandbox_only`), with no payment rows and no Stripe session.
+- TEST key + the designated sandbox lot (demo community): portal and staff test route allowed. A sandbox flag outside a demo community is refused.
+- LIVE key: real communities allowed by the gate; sandbox or demo refused. Unconfigured key: refused.
+- The demo-guard exception is still test-key-only, sandbox-lot-only, and checkout/account only.
+
+**Stripe TEST webhook configuration (as reported by Ed; not independently inspected; Stripe was not accessed).**
+- Platform endpoint `https://my.bedrocktxai.com/api/payments/webhook` listens to all 8 required events: `charge.dispute.closed`, `charge.dispute.created`, `charge.refunded`, `checkout.session.async_payment_failed`, `checkout.session.async_payment_succeeded`, `checkout.session.completed`, `checkout.session.expired`, `payment_intent.payment_failed`.
+- A separate Connected accounts endpoint to the same URL is active and listens to `account.updated`.
+
+**Production env prerequisites (as reported by Ed).** `PAYMENT_LINK_SECRET` set; `STRIPE_CONNECT_WEBHOOK_SECRET` set. Existing: `STRIPE_SECRET_KEY` (test), `STRIPE_WEBHOOK_SECRET`, `DATABASE_URL`, `MIGRATION_PLAN_SECRET`. The secrets were not read, and presence was not independently verified. After deploy, `node scripts/stripe_preflight.js` in the Render shell confirms presence without printing values.
+
+**Timing note (why merge sooner rather than later).** Production is running main, whose webhook verifies every delivery with `STRIPE_WEBHOOK_SECRET` only. The new Connected accounts endpoint's deliveries are therefore failing signature checks (400) on production right now. Stripe retries, and may disable an endpoint that keeps failing. The platform endpoint works; main ignores the new event types with 200. Merging this branch fixes the connected-account deliveries.
+
+**Remaining known limitations (by design for test mode; not blockers for a test-mode merge).**
+- Payouts and bank reconciliation not built: nothing moves 1090 (cash in transit) to operating cash. **Must be built before any live payments.**
+- Stripe fee accounting and policy: ACH and dispute fees are billed to the platform and not recorded. Needs Ed's policy decision before live.
+- No staff review UI for blocked or review payments, or retry-posting (API only).
+- Autopay off (enrollment 503; charging disabled).
+- Old pay links invalid: links issued before owner binding are refused; staff must re-send.
+- Minor, not blockers:
+  - `api/system.js` env status page lists only `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` (the two new secrets are not shown there).
+  - The pre-existing test-mode webhook diagnostic returns an 8-character secret prefix on a failed signature (remove before live).
+  - The signature verifier checks only the last `v1` during secret rotation.
+
+**What a test-mode merge changes in production.**
+- Real homeowners cannot open a Stripe session (they get "not available yet"); only the sandbox lot can, and it doesn't exist until provisioning is approved.
+- Autopay setup shows unavailable.
+- Webhook deliveries are processed idempotently through `stripe_events`.
+- No database migration, and no data changes on deploy.
+
+**Recommendation.** **Ready to merge `feat/payments-safe-foundation` to main for TEST-MODE-ONLY deployment**, on these conditions:
+1. `STRIPE_SECRET_KEY` remains `sk_test_`.
+2. The sandbox is provisioned only as a separate approved step.
+3. After deploy: confirm `/version` shows the merge commit, then run `node scripts/stripe_preflight.js` in the Render shell (read-only) to confirm the secrets and webhook events.
+4. No live mode until payout/bank reconciliation, fee policy and a staff review UI exist.
+
+**Decisions needed from Ed.**
+1. Approve the merge to main (test mode only). Merging soon also stops the connected-account webhook 400s.
+2. After deploy, a separate approval for sandbox provisioning plus the Drama Creek test connected account.
+3. Later (before live): fee policy, and prioritizing payout/bank reconciliation plus the staff review UI.
+
+**Recommended next action.** ChatGPT reviews this verification. Ed approves the test-mode merge. Claude merges, waits for the deploy, and verifies read-only (version, route smoke check, preflight if Ed runs it in the Render shell). No sandbox, Stripe change or live mode.
+
+---
+
+## 2026-09-27: Connected-account webhook signing secret (NOT merged, NOT deployed, sandbox NOT provisioned)
 
 **Task.** Per ChatGPT's instruction in GitHub Issue #1 (after approving `c871f36b`): one bounded fix, a dedicated `STRIPE_CONNECT_WEBHOOK_SECRET` for connected-account webhook deliveries, plus tests, preflight reporting and this update.
 
