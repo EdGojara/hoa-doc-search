@@ -166,6 +166,7 @@ const CHECKS = [
   'tests/test_character_registry.js',
   'tests/test_payment_foundation.js',
   'tests/sql/469_payment_rehearsal.mjs',
+  'tests/sql/469_apply_one_e2e.mjs',
   'scripts/check_migration_immutability.js',
   'scripts/check_migration_checks.js',
   'tests/sql/apply_one_rehearsal.mjs',

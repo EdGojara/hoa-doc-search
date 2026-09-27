@@ -1,0 +1,333 @@
+{
+  "migration": "469_payments_safe_foundation.sql",
+  "summary": "Safe Stripe payment foundation: payment identity and settlement state, Stripe event idempotency, account roles, Stripe clearing (cash in transit) accounts, explicit refund/chargeback reversals, autopay containment. No payment, ledger, journal, Stripe event, autopay or sandbox data is created.",
+  "requires": [
+    "455_homeowner_txn_conversion_categories.sql",
+    "456_ownership_tenures.sql",
+    "457_current_tenure_reader_views.sql",
+    "458_ap_pre_cutover_review.sql",
+    "459_ownership_transfer_single_path.sql",
+    "460_same_day_sequential_resale.sql",
+    "461_homeowner_payment_applications.sql",
+    "462_budget_approved_lock.sql",
+    "463_report_categories.sql",
+    "464_budget_monthly_plan.sql",
+    "465_forecasts_and_assessment_authority.sql",
+    "466_recognition_schedules_controls.sql",
+    "467_character_registry.sql",
+    "468_schema_migrations_service_role_access.sql"
+  ],
+  "preflight": [
+    {
+      "name": "new tables do not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('stripe_events', 'community_account_roles')",
+      "expect": 0
+    },
+    {
+      "name": "none of the new columns exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND (table_name, column_name) IN (('assessment_autopay', 'tenure_id'), ('homeowner_transactions', 'reverses_txn_id'), ('payments', 'contact_id'), ('payments', 'homeowner_txn_id'), ('payments', 'journal_entry_id'), ('payments', 'livemode'), ('payments', 'needs_review'), ('payments', 'payment_group_id'), ('payments', 'payment_method_type'), ('payments', 'portal_user_id'), ('payments', 'posted_at'), ('payments', 'posting_note'), ('payments', 'posting_state'), ('payments', 'property_id'), ('payments', 'reversal_journal_entry_id'), ('payments', 'reversal_txn_id'), ('payments', 'review_reason'), ('payments', 'settled_at'), ('payments', 'settlement_state'), ('payments', 'stripe_charge_id'), ('payments', 'tenure_id'), ('payments', 'trusted_account_number'), ('properties', 'payment_sandbox'))",
+      "expect": 0
+    },
+    {
+      "name": "none of the new functions exist yet",
+      "sql": "SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname IN ('autopay_cancel_on_tenure_end', 'community_account_roles_guard', 'payment_application_step', 'payment_commit_posting', 'payment_commit_reversal', 'payment_flag_review', 'payment_group_anchor', 'payment_mark_failed', 'payment_mark_posting', 'payment_mark_processing', 'payment_settle', 'post_stripe_tenure_payment', 'properties_payment_sandbox_guard', 'reverse_stripe_tenure_payment', 'stripe_event_claim', 'stripe_event_finish')",
+      "expect": 0
+    },
+    {
+      "name": "461 closing-payoff function exists (469 redefines it)",
+      "sql": "SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = 'post_homeowner_tenure_payment'",
+      "expect": 1
+    },
+    {
+      "name": "none of the new index names exist yet",
+      "sql": "SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname IN ('community_account_roles_pkey', 'idx_payments_group', 'idx_payments_needs_review', 'idx_payments_property', 'idx_payments_tenure', 'idx_stripe_events_status', 'stripe_events_pkey', 'uq_homeowner_txn_reverses', 'uq_homeowner_txn_stripe_payment', 'uq_journal_entries_stripe_ref', 'uq_payments_group_fee', 'uq_payments_session_fee', 'uq_properties_one_payment_sandbox')",
+      "expect": 0
+    },
+    {
+      "name": "none of the new constraint names exist yet",
+      "sql": "SELECT count(*)::int FROM pg_constraint k JOIN pg_namespace n ON n.oid = k.connamespace WHERE n.nspname = 'public' AND k.conname IN ('assessment_autopay_tenure_id_fkey', 'community_account_roles_account_id_fkey', 'community_account_roles_community_id_fkey', 'community_account_roles_pkey', 'community_account_roles_role_check', 'homeowner_transactions_reversal_shape_check', 'homeowner_transactions_reverses_txn_id_fkey', 'payments_assessment_identity_check', 'payments_contact_id_fkey', 'payments_homeowner_txn_id_fkey', 'payments_journal_entry_id_fkey', 'payments_payment_method_type_check', 'payments_portal_user_id_fkey', 'payments_posting_state_check', 'payments_property_id_fkey', 'payments_reversal_journal_entry_id_fkey', 'payments_reversal_txn_id_fkey', 'payments_settlement_state_check', 'payments_tenure_id_fkey', 'stripe_events_pkey', 'stripe_events_status_check')",
+      "expect": 0
+    },
+    {
+      "name": "none of the new triggers exist yet",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ('trg_community_account_roles_guard', 'trg_autopay_cancel_on_tenure_end', 'trg_properties_payment_sandbox_guard')",
+      "expect": 0
+    },
+    {
+      "name": "the 455 category check exists by name (469 replaces it)",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'public.homeowner_transactions'::regclass AND contype = 'c' AND conname = 'homeowner_transactions_charge_category_check'",
+      "expect": 1
+    },
+    {
+      "name": "no other check on homeowner_transactions mentions charge_category",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'public.homeowner_transactions'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) ILIKE '%charge_category%'",
+      "expect": 1
+    },
+    {
+      "name": "no 1090 account exists yet",
+      "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE account_number = '1090'",
+      "expect": 0
+    },
+    {
+      "name": "exactly 6 accounts numbered 1000 (so exactly 6 new 1090s)",
+      "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE account_number = '1000'",
+      "expect": 6
+    },
+    {
+      "name": "those communities each have an active, postable, debit-asset 1000 and 1300 (so exactly 18 roles)",
+      "sql": "SELECT count(*)::int FROM chart_of_accounts a WHERE a.account_number IN ('1000', '1300') AND a.is_active AND NOT a.is_summary AND a.account_type = 'asset' AND a.normal_balance = 'debit' AND EXISTS (SELECT 1 FROM chart_of_accounts k WHERE k.community_id = a.community_id AND k.account_number = '1000')",
+      "expect": 12
+    },
+    {
+      "name": "no ledger row uses a category outside the new list",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE charge_category IS NOT NULL AND charge_category NOT IN ('assessment', 'late_fee', 'interest', 'fine', 'attorney_fee', 'admin_fee', 'payment', 'credit', 'refund', 'adjustment', 'prior_balance', 'other', 'certified_letter', 'attorney_fee_other', 'nsf_fee', 'payment_reversal', 'chargeback')",
+      "expect": 0
+    },
+    {
+      "name": "no journal entry already uses a 'stripe:' reference (new unique index)",
+      "sql": "SELECT count(*)::int FROM journal_entries WHERE source_reference LIKE 'stripe:%'",
+      "expect": 0
+    },
+    {
+      "name": "no ledger row already has source 'stripe_payment' (new unique index)",
+      "sql": "SELECT count(*)::int FROM homeowner_transactions WHERE raw_row_jsonb->>'source' = 'stripe_payment'",
+      "expect": 0
+    },
+    {
+      "name": "owner balance view exists (469 guards read it)",
+      "sql": "SELECT count(*)::int FROM information_schema.views WHERE table_schema = 'public' AND table_name = 'v_current_owner_balance'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "Adds 6 GL accounts \"1090 Cash in Transit - Stripe Clearing\", one each for Waterview, Lakes of Pine Forest, Canyon Gate, Eaglewood, Quail Ridge and Still Creek (same fund as each 1000).",
+    "Adds 18 account-role rows for those six: operating_cash = 1000, stripe_clearing = 1090, homeowner_ar = 1300.",
+    "Creates tables stripe_events (empty) and community_account_roles (the 18 roles).",
+    "Adds nullable payment identity / settlement / posting columns to payments (the existing 10 rows keep NULLs), reverses_txn_id to homeowner_transactions, tenure_id to assessment_autopay, payment_sandbox (default false) to properties.",
+    "Adds payment_reversal and chargeback to the ledger category list (superset); redefines the 461 closing payoff to skip reversal rows (otherwise identical).",
+    "Adds 16 functions, 3 triggers (account-role guard, sandbox guard, autopay cancel on sale), 11 indexes plus 2 primary keys.",
+    "Creates NO payment, homeowner ledger row, journal entry, Stripe event, autopay enrollment or sandbox data."
+  ],
+  "objects": {
+    "added": [
+      "column:assessment_autopay.tenure_id",
+      "column:community_account_roles.account_id",
+      "column:community_account_roles.community_id",
+      "column:community_account_roles.created_at",
+      "column:community_account_roles.role",
+      "column:community_account_roles.updated_at",
+      "column:community_account_roles.updated_by",
+      "column:homeowner_transactions.reverses_txn_id",
+      "column:payments.contact_id",
+      "column:payments.homeowner_txn_id",
+      "column:payments.journal_entry_id",
+      "column:payments.livemode",
+      "column:payments.needs_review",
+      "column:payments.payment_group_id",
+      "column:payments.payment_method_type",
+      "column:payments.portal_user_id",
+      "column:payments.posted_at",
+      "column:payments.posting_note",
+      "column:payments.posting_state",
+      "column:payments.property_id",
+      "column:payments.reversal_journal_entry_id",
+      "column:payments.reversal_txn_id",
+      "column:payments.review_reason",
+      "column:payments.settled_at",
+      "column:payments.settlement_state",
+      "column:payments.stripe_charge_id",
+      "column:payments.tenure_id",
+      "column:payments.trusted_account_number",
+      "column:properties.payment_sandbox",
+      "column:stripe_events.account_id",
+      "column:stripe_events.attempts",
+      "column:stripe_events.event_id",
+      "column:stripe_events.event_type",
+      "column:stripe_events.first_received_at",
+      "column:stripe_events.last_attempt_at",
+      "column:stripe_events.last_error",
+      "column:stripe_events.livemode",
+      "column:stripe_events.object_id",
+      "column:stripe_events.outcome",
+      "column:stripe_events.payload",
+      "column:stripe_events.processed_at",
+      "column:stripe_events.status",
+      "constraint:assessment_autopay.assessment_autopay_tenure_id_fkey",
+      "constraint:community_account_roles.community_account_roles_account_id_fkey",
+      "constraint:community_account_roles.community_account_roles_community_id_fkey",
+      "constraint:community_account_roles.community_account_roles_pkey",
+      "constraint:community_account_roles.community_account_roles_role_check",
+      "constraint:homeowner_transactions.homeowner_transactions_reversal_shape_check",
+      "constraint:homeowner_transactions.homeowner_transactions_reverses_txn_id_fkey",
+      "constraint:payments.payments_assessment_identity_check",
+      "constraint:payments.payments_contact_id_fkey",
+      "constraint:payments.payments_homeowner_txn_id_fkey",
+      "constraint:payments.payments_journal_entry_id_fkey",
+      "constraint:payments.payments_payment_method_type_check",
+      "constraint:payments.payments_portal_user_id_fkey",
+      "constraint:payments.payments_posting_state_check",
+      "constraint:payments.payments_property_id_fkey",
+      "constraint:payments.payments_reversal_journal_entry_id_fkey",
+      "constraint:payments.payments_reversal_txn_id_fkey",
+      "constraint:payments.payments_settlement_state_check",
+      "constraint:payments.payments_tenure_id_fkey",
+      "constraint:stripe_events.stripe_events_pkey",
+      "constraint:stripe_events.stripe_events_status_check",
+      "function:autopay_cancel_on_tenure_end",
+      "function:community_account_roles_guard",
+      "function:payment_application_step",
+      "function:payment_commit_posting",
+      "function:payment_commit_reversal",
+      "function:payment_flag_review",
+      "function:payment_group_anchor",
+      "function:payment_mark_failed",
+      "function:payment_mark_posting",
+      "function:payment_mark_processing",
+      "function:payment_settle",
+      "function:post_stripe_tenure_payment",
+      "function:properties_payment_sandbox_guard",
+      "function:reverse_stripe_tenure_payment",
+      "function:stripe_event_claim",
+      "function:stripe_event_finish",
+      "index:community_account_roles_pkey",
+      "index:idx_payments_group",
+      "index:idx_payments_needs_review",
+      "index:idx_payments_property",
+      "index:idx_payments_tenure",
+      "index:idx_stripe_events_status",
+      "index:stripe_events_pkey",
+      "index:uq_homeowner_txn_reverses",
+      "index:uq_homeowner_txn_stripe_payment",
+      "index:uq_journal_entries_stripe_ref",
+      "index:uq_payments_group_fee",
+      "index:uq_payments_session_fee",
+      "index:uq_properties_one_payment_sandbox",
+      "table:community_account_roles",
+      "table:stripe_events",
+      "trigger:community_account_roles.trg_community_account_roles_guard",
+      "trigger:ownership_tenures.trg_autopay_cancel_on_tenure_end",
+      "trigger:properties.trg_properties_payment_sandbox_guard"
+    ],
+    "changed": [
+      "constraint:homeowner_transactions.homeowner_transactions_charge_category_check",
+      "function:post_homeowner_tenure_payment"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "chart_of_accounts": 6,
+    "community_account_roles": 18,
+    "stripe_events": 0
+  },
+  "protected": [
+    {
+      "table": "payments",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_txn_applications",
+      "order_by": "id"
+    },
+    {
+      "table": "transaction_upload_batches",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "assessment_autopay",
+      "order_by": "id"
+    },
+    {
+      "table": "ownership_tenures",
+      "order_by": "id"
+    },
+    {
+      "table": "property_ownerships",
+      "order_by": "id"
+    },
+    {
+      "table": "properties",
+      "order_by": "id"
+    },
+    {
+      "table": "communities",
+      "order_by": "id"
+    },
+    {
+      "table": "contacts",
+      "order_by": "id"
+    },
+    {
+      "table": "portal_users",
+      "order_by": "id"
+    },
+    {
+      "table": "v_current_owner_balance",
+      "order_by": "tenure_id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "6 accounts named Cash in Transit - Stripe Clearing",
+      "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE account_number = '1090' AND account_name = 'Cash in Transit - Stripe Clearing'",
+      "expect": 6
+    },
+    {
+      "name": "every 1090 is an active, postable, debit asset",
+      "sql": "SELECT count(*)::int FROM chart_of_accounts WHERE account_number = '1090' AND account_type = 'asset' AND normal_balance = 'debit' AND is_active AND NOT is_summary",
+      "expect": 6
+    },
+    {
+      "name": "18 account roles, each on the right account number in its own community",
+      "sql": "SELECT count(*)::int FROM community_account_roles r JOIN chart_of_accounts a ON a.id = r.account_id AND a.community_id = r.community_id WHERE (r.role, a.account_number) IN (('operating_cash', '1000'), ('stripe_clearing', '1090'), ('homeowner_ar', '1300'))",
+      "expect": 18
+    },
+    {
+      "name": "all 6 communities have all 3 roles",
+      "sql": "SELECT count(*)::int FROM (SELECT community_id FROM community_account_roles GROUP BY community_id HAVING count(*) = 3) x",
+      "expect": 6
+    },
+    {
+      "name": "no Stripe event rows (self-test rolled back)",
+      "sql": "SELECT count(*)::int FROM stripe_events",
+      "expect": 0
+    },
+    {
+      "name": "no sandbox lot flagged",
+      "sql": "SELECT count(*)::int FROM properties WHERE payment_sandbox",
+      "expect": 0
+    },
+    {
+      "name": "category list includes payment_reversal and chargeback",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'homeowner_transactions_charge_category_check' AND pg_get_constraintdef(oid) ILIKE '%payment_reversal%' AND pg_get_constraintdef(oid) ILIKE '%chargeback%'",
+      "expect": 1
+    },
+    {
+      "name": "461 closing payoff now skips reversal rows",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'post_homeowner_tenure_payment' AND prosrc LIKE '%reverses_txn_id IS NULL%'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [
+    {
+      "table": "community_account_roles",
+      "expect_count": 18
+    },
+    {
+      "table": "stripe_events",
+      "expect_count": 0
+    }
+  ],
+  "reload_schema": true
+}
