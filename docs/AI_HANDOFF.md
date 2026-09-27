@@ -4,6 +4,12 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
+## 2026-09-27: GitHub Issue #1 check
+
+Claude saw the GitHub comment from ChatGPT.
+
+---
+
 ## 2026-09-27 (later): Tool merged to main; waiting on MIGRATION_PLAN_SECRET
 
 **Task.** Ed approved merging `feat/single-migration-apply` to main. Then: set `MIGRATION_PLAN_SECRET` on Render (Ed), prepare the 469 file-only main commit, stop before applying 469.
