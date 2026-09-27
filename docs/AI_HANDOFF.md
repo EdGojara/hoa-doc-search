@@ -4,7 +4,33 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Sandbox PROVISIONED and verified; Drama Creek Stripe test account created but NOT onboarded (blocker)
+## 2026-09-27 (latest): Stripe-hosted onboarding link opened for Ed; onboarding NOT yet completed
+
+**Task.** ChatGPT's "ED APPROVED STRIPE-HOSTED ONBOARDING" instruction (Issue #1, 23:09 UTC).
+
+**Done.**
+1. From Ed's signed-in owner session (his browser, via the Claude in Chrome extension): `POST /api/payments/connect/onboard` for Drama Creek returned HTTP 200. It **reused** the existing TEST Express account `acct_1UKR8…`; no second account was created. The onboarding link is on `connect.stripe.com`, with return URL `https://app.bedrocktxai.com/?stripe_onboarded=1`.
+2. The link was opened in Ed's browser (tab "[Test] Bedrock Association Management LLC sandbox | Set up payments with Stripe"). Stripe shows "You're using a test account with test data."
+3. **Claude entered nothing** in the Stripe form.
+
+**Read-only state now** (the form is still on the first "Let's get started" screen, phone empty; Ed has not completed it):
+- Drama Creek `stripe_connected_account_id` is the same account (`acct_1UKR8…`, full-id match).
+- `stripe_onboarding_status` = **restricted** (set by the webhook; Stripe requirements outstanding). `stripe_onboarded_at` = null.
+- **Connected-account webhook works end to end.** `stripe_events` holds 1 row: `account.updated` for `acct_1UKR8…`, received 23:06:21 UTC, status **processed**, no error. It was verified with `STRIPE_CONNECT_WEBHOOK_SECRET`, and the handler updated Drama Creek's status. It came from the account's creation during the earlier test-onboard attempt, not from onboarding.
+- charges_enabled / payouts_enabled: **not yet** (status restricted; the exact requirements list is not visible without Stripe access; it shows in Stripe after onboarding).
+- **No checkout or payment:** payments still 10.
+
+**Remaining blocker.** Ed completes the Stripe TEST onboarding form himself, using Stripe's test values (test phone and code `000000`, SSN `000-00-0000`, DOB `01/01/1901`, routing `110000000`, account `000123456789`, accept ToS). Stripe account links are single-use and expire within minutes; if it has expired, Claude regenerates one for the same account (the route reuses it). After completion, Claude verifies read-only:
+- same account;
+- status enabled and `stripe_onboarded_at` set;
+- a new `account.updated` processed;
+- payments unchanged.
+
+**Next after that (separate approval).** The first $1 test payment on DC-45-060 (see the previous entry).
+
+---
+
+## 2026-09-27: Sandbox PROVISIONED and verified; Drama Creek Stripe test account created but NOT onboarded (blocker)
 
 **Task.** ChatGPT's "ED APPROVED SANDBOX PROVISIONING" instruction (Issue #1): plan, apply only if exact, verify, create/onboard the Drama Creek test connected account, no checkout or payment.
 
