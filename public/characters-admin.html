@@ -34,6 +34,7 @@
   .b-retired,.b-legacy{background:var(--surface-2);color:var(--muted);border:1px solid var(--line);}
   .b-rejected,.b-unmapped{background:var(--crit-bg);color:var(--crit);}
   .b-maps_to_other_version,.b-not_configured,.b-pending{background:var(--warn-bg);color:var(--warn);}
+  .b-no_current_release{background:var(--info-bg);color:var(--accent);}
   .b-current{background:var(--navy);color:#fff;}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;}
   .muted{color:var(--muted);} .small{font-size:12.5px;}
@@ -181,9 +182,9 @@ function render(d){
     <td>${badge(m.status)}</td><td class="small muted">${esc(m.notes||'')}</td></tr>`).join('');
 
   const div = d.divergence || { rows: [] };
-  const drift = div.rows.filter((r)=>r.state!=='matches_current' && r.state!=='not_configured');
+  const drift = div.rows.filter((r)=>!['matches_current','not_configured','no_current_release'].includes(r.state));
   const divRows = div.rows.map((r)=>`<tr><td>${esc(r.label)}</td><td class="mono">${short(r.runtime_id,16)||'<span class="muted">—</span>'}</td>
-    <td>${badge(r.state, r.state==='not_configured'?'not set (uses shared default)':null)}</td><td class="small">${esc((r.mapped_versions||[]).join(', '))}</td></tr>`).join('');
+    <td>${badge(r.state, r.state==='not_configured'?'not set (uses shared default)':r.state==='no_current_release'?'no current release yet':null)}</td><td class="small">${esc((r.mapped_versions||[]).join(', '))}</td></tr>`).join('');
 
   const events = d.events.slice().reverse().map((e)=>`<tr><td class="small mono">${esc(new Date(e.created_at).toLocaleString())}</td><td>${esc(e.subject_type.replace(/_/g,' '))}</td>
     <td>${badge(e.event)}</td><td class="small">${esc(e.actor)}</td><td class="small">${esc(e.reason||'')}</td></tr>`).join('');

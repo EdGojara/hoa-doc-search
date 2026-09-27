@@ -176,6 +176,14 @@ t('divergence: runtime ids are classified against the current release', () => {
   assert.strictEqual(by['HeyGen voice (video)'].state, 'matches_current');
   assert.strictEqual(by['ElevenLabs voice (portal TTS)'].state, 'unmapped');
 });
+t('divergence before any promotion reports "no current release", not drift', () => {
+  const { runtimeDivergence } = require('../lib/characters/registry');
+  const detail = { versions: [{ id: 'f1', component: 'face', version_no: 1 }], releases: [{ is_current: false, release_no: 1, components: { face: 'f1' } }],
+    mappings: [{ status: 'active', provider: 'heygen', kind: 'look', external_id: 'L', channel: 'video', sources: [{ component_version_id: 'f1' }] }] };
+  const r = runtimeDivergence(detail, { avatar_id: 'L', video_voice_id: 'X' });
+  assert.strictEqual(r.rows[0].state, 'no_current_release');
+  assert.strictEqual(r.rows[1].state, 'unmapped');
+});
 
 // ---- live registry -----------------------------------------------------------------
 async function live() {
