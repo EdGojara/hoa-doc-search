@@ -11,6 +11,8 @@
 //      register assets, then create characters / component versions / releases /
 //      provider mappings through the registry functions
 //   6. --backup <dir>: copy every ingested file to <dir>/sha256/<aa>/<sha>.<ext>
+//   7. _references.json: concept / scene imagery linked to characters as design
+//      reference (character_reference_assets). Never identity.
 //
 // Everything is created as PROPOSED. Approval happens on /admin/characters.
 // Re-runnable: existing rows are matched and verified (spec hash, components,
@@ -200,6 +202,42 @@ async function applyPackage(plan) {
   return character.character_id;
 }
 
+// Reference imagery (never identity): one stored file, linked to each character it shows.
+function planReferences(plans) {
+  const file = path.join(SEED_DIR, '_references.json');
+  if (!fs.existsSync(file)) return [];
+  const slugs = new Set(plans.map((p) => p.seed.character.slug));
+  const canonical = new Set(plans.flatMap((p) => p.components.flatMap((c) => c.assetLinks.filter((l) => l.role === 'canonical').map((l) => l.sha256))));
+  const out = [];
+  for (const r of JSON.parse(fs.readFileSync(file, 'utf8')).references) {
+    const chars = r.characters.filter((s) => slugs.has(s));
+    if (!chars.length) continue; // an --only run that excludes everyone in this image
+    const buf = fs.readFileSync(path.join(SOURCE, r.file));
+    const plan = planAsset(buf, { origin: r.origin, originRef: r.origin_ref });
+    if (canonical.has(plan.sha256)) throw new Error(`${r.file} is a canonical identity asset; it cannot be a reference`);
+    out.push({ ...r, characters: chars, buf, plan });
+  }
+  if (out.length) {
+    console.log('\n=== Reference imagery (design direction only; never identity) ===');
+    for (const r of out) console.log(`    ${r.plan.sha256.slice(0, 12)}  ${r.plan.width}x${r.plan.height}  ${r.category.padEnd(15)} ${r.label}  -> ${r.characters.join(', ')}`);
+  }
+  return out;
+}
+
+async function applyReferences(refs) {
+  for (const r of refs) {
+    await ingestAsset(r.buf, { origin: r.origin, originRef: r.origin_ref }, { actor: ACTOR, apply: true });
+    for (const slug of r.characters) {
+      const c = await registry.findCharacter(slug);
+      const d = await registry.getCharacterDetail(c.character_id);
+      if (d.references.some((x) => x.sha256 === r.plan.sha256 && x.category === r.category)) continue;
+      await registry.addReferenceAsset({ characterId: c.character_id, sha256: r.plan.sha256, category: r.category,
+        label: r.label, notes: r.notes, actor: ACTOR });
+    }
+    console.log(`applied reference ${r.label}`);
+  }
+}
+
 function backup(plan, dir) {
   let n = 0;
   for (const a of plan.assets.values()) {
@@ -214,12 +252,13 @@ function backup(plan, dir) {
 }
 
 (async () => {
-  const files = fs.readdirSync(SEED_DIR).filter((f) => f.endsWith('.json') && (!ONLY || f === `${ONLY}.json`)).sort();
+  const files = fs.readdirSync(SEED_DIR).filter((f) => f.endsWith('.json') && !f.startsWith('_') && (!ONLY || f === `${ONLY}.json`)).sort();
   if (!files.length) throw new Error('no seed files matched');
   const plans = [];
   for (const f of files) plans.push(await planPackage(JSON.parse(fs.readFileSync(path.join(SEED_DIR, f), 'utf8'))));
   plans.forEach(printPlan);
-  const total = new Set(plans.flatMap((p) => [...p.assets.keys()])).size;
+  const refs = planReferences(plans);
+  const total = new Set([...plans.flatMap((p) => [...p.assets.keys()]), ...refs.map((r) => r.plan.sha256)]).size;
   console.log(`\n${plans.length} characters, ${total} unique files, ${plans.reduce((s, p) => s + p.components.length, 0)} component versions.`);
   if (!APPLY) { console.log('DRY RUN: nothing was uploaded or written. Re-run with --apply.'); return; }
   for (const p of plans) {
@@ -227,4 +266,6 @@ function backup(plan, dir) {
     console.log(`applied ${p.seed.character.slug} -> ${id}`);
     if (BACKUP) console.log(`  backup: ${backup(p, BACKUP)} new file(s) in ${BACKUP}`);
   }
+  await applyReferences(refs);
+  if (BACKUP) console.log(`  backup: ${backup({ assets: new Map(refs.map((r) => [r.plan.sha256, { ...r.plan, buf: r.buf }])) }, BACKUP)} new reference file(s)`);
 })().catch((e) => { console.error('FAILED:', e.message); process.exit(1); });

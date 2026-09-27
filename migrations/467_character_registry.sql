@@ -14,6 +14,8 @@
 --   character_events                append-only status history (approve/promote/retire/...)
 --   provider_mappings               HeyGen/ElevenLabs/Runway/Veo/... objects: MAPPINGS, not identity
 --   provider_mapping_sources        exact component version + exact source bytes behind each mapping
+--   character_reference_assets      concept / scene / wardrobe / drift imagery linked to characters:
+--                                   design direction only, NEVER identity (no release can reference it)
 --   render_log / render_participants / render_participant_components /
 --   render_participant_component_assets / render_reviews
 --                                   full provenance of every generated output
@@ -182,7 +184,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS character_events (
   id            bigserial PRIMARY KEY,
   character_id  uuid NOT NULL REFERENCES characters(character_id) ON DELETE RESTRICT,
-  subject_type  text NOT NULL CHECK (subject_type IN ('character','release','component_version','provider_mapping')),
+  subject_type  text NOT NULL CHECK (subject_type IN ('character','release','component_version','provider_mapping','reference_asset')),
   subject_id    uuid NOT NULL,
   event         text NOT NULL CHECK (event IN ('created','proposed','approved','rejected','promoted','retired','restored','renamed')),
   actor         text NOT NULL,
@@ -248,6 +250,25 @@ CREATE TABLE IF NOT EXISTS provider_mapping_sources (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_mapping_sources
   ON provider_mapping_sources (mapping_id, component_version_id, coalesce(asset_sha256, ''), role);
 CREATE INDEX IF NOT EXISTS idx_provider_mapping_sources_asset ON provider_mapping_sources (asset_sha256);
+
+-- ---------------------------------------------------------------------------
+-- Reference imagery: concept scenes, wardrobe concepts, drift examples.
+-- Deliberately OUTSIDE the identity model: releases reference component
+-- versions only, so nothing here can ever become a character's face or body.
+-- One row per (character, image): a two-person scene links to both people.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS character_reference_assets (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  character_id  uuid NOT NULL REFERENCES characters(character_id) ON DELETE RESTRICT,
+  sha256        text NOT NULL REFERENCES character_assets(sha256) ON DELETE RESTRICT,
+  category      text NOT NULL CHECK (category IN ('concept_scene','wardrobe_concept','drift_reference')),
+  label         text NOT NULL,
+  notes         text,
+  created_by    text NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (character_id, sha256, category)
+);
+CREATE INDEX IF NOT EXISTS idx_character_reference_assets_sha ON character_reference_assets (sha256);
 
 -- ---------------------------------------------------------------------------
 -- Render provenance
@@ -328,8 +349,8 @@ DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['character_assets','component_versions','component_assets','character_releases',
-                           'release_components','character_events','provider_mapping_sources','render_log',
-                           'render_participants','render_participant_components',
+                           'release_components','character_events','provider_mapping_sources','character_reference_assets',
+                           'render_log','render_participants','render_participant_components',
                            'render_participant_component_assets','render_reviews'] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS trg_%1$s_frozen ON %1$I', t);
     EXECUTE format('CREATE TRIGGER trg_%1$s_frozen BEFORE INSERT OR UPDATE OR DELETE ON %1$I
@@ -337,7 +358,7 @@ BEGIN
   END LOOP;
   FOREACH t IN ARRAY ARRAY['characters','character_assets','component_versions','component_assets','character_releases',
                            'release_components','character_events','provider_mappings','provider_mapping_sources',
-                           'render_log','render_participants','render_participant_components',
+                           'character_reference_assets','render_log','render_participants','render_participant_components',
                            'render_participant_component_assets','render_reviews'] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS trg_%1$s_no_truncate ON %1$I', t);
     EXECUTE format('CREATE TRIGGER trg_%1$s_no_truncate BEFORE TRUNCATE ON %1$I
@@ -454,6 +475,9 @@ BEGIN
           encode(sha256(convert_to(p_spec::text, 'UTF8')), 'hex'), p_change_reason, p_actor)
   RETURNING id INTO v_id;
   FOR a IN SELECT * FROM jsonb_array_elements(coalesce(p_assets, '[]'::jsonb)) LOOP
+    IF a->>'role' = 'canonical' AND EXISTS (SELECT 1 FROM character_reference_assets WHERE sha256 = a->>'sha256') THEN
+      RAISE EXCEPTION 'character_registry: % is a reference image and cannot be a canonical identity asset', a->>'sha256';
+    END IF;
     INSERT INTO component_assets (component_version_id, sha256, role, notes)
     VALUES (v_id, a->>'sha256', a->>'role', a->>'notes');
   END LOOP;
@@ -616,6 +640,27 @@ BEGIN
   PERFORM character_promote_release(p_current_release, p_actor, p_reason);
 END $$;
 
+-- Link a stored image to a character as design reference (never identity). Refuses
+-- an image that is already that character's canonical identity asset.
+CREATE OR REPLACE FUNCTION character_add_reference_asset(p_character uuid, p_sha256 text, p_category text, p_label text,
+                                                         p_notes text, p_actor text) RETURNS uuid
+LANGUAGE plpgsql AS $$
+DECLARE v_id uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM component_assets ca JOIN component_versions cv ON cv.id = ca.component_version_id
+              WHERE cv.character_id = p_character AND ca.sha256 = p_sha256 AND ca.role = 'canonical') THEN
+    RAISE EXCEPTION 'character_registry: % is a canonical identity asset; it cannot also be a reference image', p_sha256;
+  END IF;
+  PERFORM character_registry_write_on();
+  INSERT INTO character_reference_assets (character_id, sha256, category, label, notes, created_by)
+  VALUES (p_character, p_sha256, p_category, p_label, p_notes, p_actor)
+  RETURNING id INTO v_id;
+  PERFORM character_log_event(p_character, 'reference_asset', v_id, 'created', p_actor, p_label,
+                              jsonb_build_object('sha256', p_sha256, 'category', p_category));
+  PERFORM character_registry_write_off();
+  RETURN v_id;
+END $$;
+
 -- p_sources: [{ "component_version_id": "...", "asset_sha256": "..." | null, "role": "source" }, ...]
 CREATE OR REPLACE FUNCTION character_create_provider_mapping(
   p_character uuid, p_provider text, p_kind text, p_external_id text, p_license_class text, p_channel text,
@@ -732,7 +777,7 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['characters','character_assets','component_versions','component_assets','character_releases',
                            'release_components','character_events','provider_mappings','provider_mapping_sources',
-                           'render_log','render_participants','render_participant_components',
+                           'character_reference_assets','render_log','render_participants','render_participant_components',
                            'render_participant_component_assets','render_reviews'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('REVOKE ALL ON %I FROM PUBLIC', t);
@@ -757,6 +802,7 @@ BEGIN
     'character_create_release(uuid,jsonb,text,text,uuid)', 'character_derive_release(uuid,jsonb,text,text)',
     'character_promote_release(uuid,text,text)', 'character_mark_release_legacy(uuid,text,text)',
     'character_approve_package(uuid,uuid,uuid[],text,text)',
+    'character_add_reference_asset(uuid,text,text,text,text,text)',
     'character_create_provider_mapping(uuid,text,text,text,text,text,text,text,jsonb)',
     'character_retire_provider_mapping(uuid,text,text)', 'character_record_render(jsonb,text)',
     'character_review_render(uuid,text,text,text,jsonb)'] LOOP
@@ -859,7 +905,25 @@ BEGIN
       END IF;
     END;
 
-    -- 9. render deviation is detected
+    -- 9. reference imagery can never be identity, and identity can never be reference
+    DECLARE c4 uuid; s1 text := repeat('a', 64); s2 text := repeat('b', 64);
+    BEGIN
+      c4 := character_create('zz_selftest_d', 'Selftest D', NULL, 'selftest', 'reference test');
+      PERFORM character_register_asset(s1, 'image/png', 'image', 1, 1, 1, NULL, 'selftest/' || s1 || '.png', NULL, 'selftest', NULL, NULL, 'selftest');
+      PERFORM character_register_asset(s2, 'image/png', 'image', 1, 1, 1, NULL, 'selftest/' || s2 || '.png', NULL, 'selftest', NULL, NULL, 'selftest');
+      PERFORM character_add_reference_asset(c4, s1, 'concept_scene', 'scene', NULL, 'selftest');
+      ok := false; BEGIN PERFORM character_create_component_version(c4, 'face', '{"n":1}', 1, NULL, 'bad', 'selftest',
+                     jsonb_build_array(jsonb_build_object('sha256', s1, 'role', 'canonical'))); EXCEPTION WHEN raise_exception THEN ok := true; END;
+      IF NOT ok THEN RAISE EXCEPTION 'SELFTEST FAIL: a reference image became a canonical asset'; END IF;
+      PERFORM character_create_component_version(c4, 'face', '{"n":1}', 1, NULL, 'ok', 'selftest',
+                jsonb_build_array(jsonb_build_object('sha256', s2, 'role', 'canonical')));
+      ok := false; BEGIN PERFORM character_add_reference_asset(c4, s2, 'concept_scene', 'bad', NULL, 'selftest'); EXCEPTION WHEN raise_exception THEN ok := true; END;
+      IF NOT ok THEN RAISE EXCEPTION 'SELFTEST FAIL: a canonical asset was filed as a reference image'; END IF;
+      ok := false; BEGIN UPDATE character_reference_assets SET label = 'x'; EXCEPTION WHEN raise_exception THEN ok := true; END;
+      IF NOT ok THEN RAISE EXCEPTION 'SELFTEST FAIL: character_reference_assets UPDATE was allowed'; END IF;
+    END;
+
+    -- 10. render deviation is detected
     rid := character_record_render(jsonb_build_object('renderer', 'selftest', 'provenance_quality', 'recorded',
              'participants', jsonb_build_array(jsonb_build_object('character_id', c1, 'release_id', r1,
                'components', jsonb_build_array(jsonb_build_object('component', 'face', 'component_version_id', f2))))), 'selftest');

@@ -205,6 +205,12 @@ function render(d){
     <div class="card scroll"><table><thead><tr><th>#</th><th>Status</th>${COMPONENTS.map((k)=>`<th>${k}</th>`).join('')}<th>Notes</th><th></th></tr></thead><tbody>${relRows}</tbody></table>
       <div class="small muted" style="margin-top:6px">Highlighted cells changed from the parent release. Making an earlier release current is the rollback; nothing is deleted.</div></div>
     <h2>Components</h2><div class="comp">${comps}</div>
+    <h2>Concept &amp; scene references</h2>
+    <div class="card"><div class="small muted" style="margin-bottom:8px">Design direction for future body canon, wardrobe, scenes and video. <b>Not canonical.</b> These images are stored outside the identity model and can never become this character's face or body.</div>
+      ${(d.references||[]).length?`<div class="assets">${d.references.map((r)=>{const x=assetBy.get(r.sha256)||{}; const u=d.asset_urls[r.sha256];
+        return `<div class="asset" style="width:220px">${u?`<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="" loading="lazy" style="width:220px;height:165px"></a>`:''}
+          <div class="role">${esc(r.label)}</div><div>${badge('legacy', r.category.replace(/_/g,' '))} ${x.width?esc(x.width+'×'+x.height):''}</div>
+          <div class="mono">${short(r.sha256)}</div><div>${esc(r.notes||'')}</div></div>`;}).join('')}</div>`:'<div class="muted small">None yet.</div>'}</div>
     <h2>Provider mappings</h2>
     <div class="card scroll"><table><thead><tr><th>Provider</th><th>External ID</th><th>License</th><th>Channel</th><th>Built from</th><th>Status</th><th>Notes</th></tr></thead><tbody>${mapRows||'<tr><td colspan="7" class="muted">None</td></tr>'}</tbody></table></div>
     <h2>Production vs canon</h2>

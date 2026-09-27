@@ -13,7 +13,8 @@ const { planAsset, uploadVerified } = require('../lib/characters/ingest');
 
 const ROOT = path.join(__dirname, '..');
 const SEED_DIR = path.join(ROOT, 'scripts', 'character_seed');
-const seeds = fs.readdirSync(SEED_DIR).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(fs.readFileSync(path.join(SEED_DIR, f), 'utf8')));
+const refsSeed = JSON.parse(fs.readFileSync(path.join(SEED_DIR, '_references.json'), 'utf8'));
+const seeds = fs.readdirSync(SEED_DIR).filter((f) => f.endsWith('.json') && !f.startsWith('_')).map((f) => JSON.parse(fs.readFileSync(path.join(SEED_DIR, f), 'utf8')));
 
 let failed = 0;
 const results = [];
@@ -102,6 +103,24 @@ t('seed packages: one current release, legacy before current, references resolve
     }
     assert.ok(/^[a-z][a-z0-9_]{1,62}$/.test(s.character.slug));
   }
+});
+
+t('reference imagery: known characters and categories, and never a canonical identity file', () => {
+  const slugs = new Set(seeds.map((s) => s.character.slug));
+  const canonicalFiles = new Set(seeds.flatMap((s) => s.components.flatMap((c) => c.assets.filter((a) => a.role === 'canonical').map((a) => a.file))));
+  assert.ok(refsSeed.references.length > 0);
+  for (const r of refsSeed.references) {
+    assert.ok(['concept_scene', 'wardrobe_concept', 'drift_reference'].includes(r.category), `${r.file}: bad category`);
+    assert.ok(r.characters.length && r.characters.every((c) => slugs.has(c)), `${r.file}: unknown character`);
+    assert.ok(!canonicalFiles.has(r.file), `${r.file} is also a canonical identity file`);
+    assert.ok(r.label && r.origin, `${r.file}: label and origin required`);
+  }
+});
+t('releases can only reference component versions (reference imagery is structurally outside identity)', () => {
+  const sql = fs.readFileSync(path.join(ROOT, 'migrations/467_character_registry.sql'), 'utf8');
+  const rc = sql.match(/CREATE TABLE IF NOT EXISTS release_components \(([\s\S]*?)\n\);/)[1];
+  assert.ok(/component_version_id\s+uuid NOT NULL REFERENCES component_versions\(id\)/.test(rc));
+  assert.ok(!/character_reference_assets|reference_asset/i.test(rc), 'release_components can point at reference imagery');
 });
 
 // ---- releases ----------------------------------------------------------------
