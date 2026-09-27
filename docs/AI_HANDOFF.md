@@ -4,7 +4,51 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Sandbox provisioning NOT yet started: blocked on Ed's signed-in owner session
+## 2026-09-27 (latest): Sandbox PROVISIONED and verified; Drama Creek Stripe test account created but NOT onboarded (blocker)
+
+**Task.** ChatGPT's "ED APPROVED SANDBOX PROVISIONING" instruction (Issue #1): plan, apply only if exact, verify, create/onboard the Drama Creek test connected account, no checkout or payment.
+
+**How it was run.** From Ed's own signed-in trustEd session (ADMIN) in his browser, via the Claude in Chrome extension. Claude made same-origin calls from the page; no credentials were entered by Claude and no token left the page. Stripe TEST mode throughout.
+
+**1. Plan** (`POST /api/payments/test/payment-sandbox`, action `plan`; runs and rolls back): HTTP 200, `committed:false`, `stripe_mode:"test"`, **29 rows**:
+- `properties` 1 (DC-45-060 `e09d3deb-57c7-4028-b366-4f79c9379708`: payment_sandbox=true, Trusted # 1002900060, only if null);
+- `communities` 1 (Drama Creek GL cutover 2026-09-01, only if null);
+- `account_funds` 1 (OPR); `chart_of_accounts` 3 (1000/1090/1300);
+- `accounting_periods` 16 (2026-09-01 to 2027-12 open monthly);
+- `community_account_roles` 3;
+- `contacts` 1; `property_ownerships` 1 (current tenure `23e196cd-dc21-4021-a479-74a876aab6f8`); `portal_users` 1; `portal_user_properties` 1.
+
+The before-state was completely empty (no conflicts), and the preflight (demo community, lot in it, no other sandbox lot, test key) passed. The plan matched the reviewed design exactly.
+
+**2. Apply** (action `apply`): HTTP 200, `committed:true`, `stripe_mode:"test"`; after-state identical to the plan.
+
+**3. Read-only verification** (independent, service-role selects; 20/20):
+- Exactly one `payment_sandbox` property: DC-45-060 in Drama Creek (demo). Trusted # 1002900060, unique.
+- Drama Creek GL cutover 2026-09-01. OPR fund and COA 1000 / 1090 "Cash in Transit - Stripe Clearing" / 1300, all with fixed ids. 16 open monthly periods 2026-09 to 2027-12.
+- 3 roles: homeowner_ar=1300, operating_cash=1000, stripe_clearing=1090 (updated_by payment-sandbox).
+- Test owner on the lot's current tenure. Portal login `payments-sandbox@bedrock.test`: active homeowner, scoped to DC-45-060 only (1 portal user, 1 contact).
+- **Nothing else changed:** payments 10; `stripe_events` 0; `homeowner_transactions` 29,117; `journal_entries` 1,790; `assessment_autopay` 0; no refunded payments; real-community roles still 18; 1090 accounts = 6 real + 1 Drama Creek.
+- (One probe line first showed a false FAIL: a `LIKE` on a uuid column returns count null with no error, the known PostgREST false-read. Re-checked by exact id: correct.)
+
+**4. Stripe test connected account** (`POST /api/payments/connect/test-onboard`, community Drama Creek): **HTTP 500 `company_update_failed`**. Stripe: "You cannot accept the Terms of Service on behalf of accounts where `controller[requirement_collection]=stripe`, which includes Standard and Express accounts."
+- The route created the Express test account and stored it before the failing step. Drama Creek now has `stripe_connected_account_id` = `acct_1UKR8…`, `stripe_onboarding_status` = `in_progress`, `stripe_onboarded_at` = null.
+- The API-prefill shortcut cannot onboard Express accounts: Stripe collects their requirements itself. This is a pre-existing limitation of that route.
+
+**5. Connected-account status.** Not charges-enabled or payouts-enabled (onboarding incomplete). Exact `still_needed` not returned (the route failed before it asked Stripe for requirements).
+
+**Checkout or payment created.** **No.** Payments 10, `stripe_events` 0.
+
+**Blocker.** Drama Creek's Express test account must finish **Stripe-hosted onboarding** before the $1 test payment. Options:
+- **(a) Recommended, no code change.** Claude calls the existing `POST /api/payments/connect/onboard` for Drama Creek (reuses `acct_1UKR8…`) to get a Stripe-hosted onboarding link. Ed opens it and completes it in TEST mode using Stripe's test values (Stripe shows test-data helpers; for example SSN 000-00-0000, routing 110000000, account 000123456789). Claude does not type identity or bank values into Stripe's form. When finished, Stripe sends `account.updated` to the connected-accounts endpoint, which also exercises the connect webhook path, and Drama Creek becomes enabled.
+- **(b)** Change `test-onboard` to create a Custom test account instead (the platform may accept ToS for Custom). This is a code change plus a different account type from production communities; not recommended.
+
+**Exact next step for the first $1 test payment (after onboarding shows charges_enabled).** From Ed's session: `POST /api/payments/test/assessment-checkout` with `{ property_id: "e09d3deb-57c7-4028-b366-4f79c9379708", payment_method: "card" }`. It returns a Stripe TEST checkout URL (fixed $1). Ed pays with 4242 4242 4242 4242. Claude verifies read-only: the `stripe_events` row; payment settled and posted; ledger row on tenure `23e196cd…`; JE `stripe:pay:<id>` Dr 1090 / Cr 1300 for $1.00.
+
+**Decisions needed from Ed.** Approve option (a) (Claude generates the hosted onboarding link; Ed completes it in test mode). The $1 payment stays a separate approval.
+
+---
+
+## 2026-09-27: Sandbox provisioning NOT yet started: blocked on Ed's signed-in owner session
 
 **Task.** ChatGPT's "ED APPROVED SANDBOX PROVISIONING" instruction (Issue #1, 22:34:49 UTC), followed by the 22:55 review check.
 
