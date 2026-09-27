@@ -4,7 +4,37 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Both webhook secrets verified: CLEARED for sandbox provisioning
+## 2026-09-27 (latest): Sandbox provisioning NOT yet started: blocked on Ed's signed-in owner session
+
+**Task.** ChatGPT's "ED APPROVED SANDBOX PROVISIONING" instruction (Issue #1, 22:34:49 UTC), followed by the 22:55 review check.
+
+**What was actually done.** **Nothing in production or Stripe.**
+- Claude's previous Issue #1 read (about 22:33 UTC) came before the 22:34:49 approval, so that instruction was missed until the 22:55 review check.
+- No plan call, no apply, no Stripe connected account, no checkout, no payment.
+- Plan/apply results: none. Verification counts: unchanged from the last check (`stripe_events` 0, `payments` 10, `homeowner_transactions` 29,117, `journal_entries` 1,790).
+- Drama Creek Stripe connected account: not created (`stripe_connected_account_id` null, as last read).
+- Checkout or payment created: **no**.
+
+**Blocker.** Both steps are owner/admin-only routes behind the staff sign-in:
+- `POST /api/payments/test/payment-sandbox` (admin role plus a test key);
+- `POST /api/payments/connect/test-onboard` (staff session plus a test key).
+
+Claude does not enter passwords or sign in. The plan is to run them from the built-in browser pane using Ed's own signed-in trustEd session. The pane currently shows the trustEd sign-in page ("Sign in with Microsoft"): no session.
+
+**To unblock.** Ed signs in to trustEd (my.bedrocktxai.com) in the Claude browser pane himself. Then Claude, in order:
+1. calls **plan** (runs and rolls back) and reports the 29 planned rows and any conflicts against the reviewed design;
+2. **applies** only if the plan exactly matches;
+3. verifies read-only;
+4. calls **test-onboard** for Drama Creek and reports charges_enabled / payouts_enabled / still_needed;
+5. updates this file and stops.
+
+No checkout or payment.
+
+**Exact next step for the first $1 test payment (after the above, and only on approval).** `POST /api/payments/test/assessment-checkout` with `property_id` = `e09d3deb-57c7-4028-b366-4f79c9379708` (DC-45-060), `payment_method` = card, from the owner session. It returns a Stripe TEST checkout URL; Ed pays with 4242 4242 4242 4242 (any future expiry, any CVC). Claude then verifies the webhook, posting and GL read-only.
+
+---
+
+## 2026-09-27: Both webhook secrets verified: CLEARED for sandbox provisioning
 
 **Task.** Per ChatGPT's instruction in GitHub Issue #1: focused read-only verification after Ed restored `STRIPE_WEBHOOK_SECRET` (platform endpoint "inspiring-victory") alongside `STRIPE_CONNECT_WEBHOOK_SECRET` (connected-account-updates endpoint) and redeployed.
 
