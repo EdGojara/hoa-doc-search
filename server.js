@@ -539,6 +539,7 @@ const _STAFF_GATE_PUBLIC = [
   // cancel it and quietly stop their assessments being paid.
   /^\/api\/portal\/autopay$/,                  // GET this owner's standing authorisation
   /^\/api\/portal\/autopay\/(begin|complete|cancel)$/, // enrol / finish / stop
+  /^\/api\/portal\/pay\/checkout$/,             // homeowner pays own balance (portal cookie; server derives lot/owner/amount)
   // Board portal API — every handler enforces requireBoardViewer (staff JWT OR
   // a board member's portal magic-link cookie whose email holds an active seat)
   // + canSeeCommunity per-community scope (lib/portal/board_access.js,
@@ -1462,10 +1463,22 @@ app.get('/pay/:token', async (req, res) => {
   try {
     const { verifyPaymentToken } = require('./lib/payments/payment_link');
     const v = verifyPaymentToken(req.params.token);
+    if (!v.ok && v.reason === 'not_configured') {
+      // Server config problem, not the homeowner's link: say so, never "invalid link".
+      return res.status(503).send(_payPage('Online payment unavailable', `<h1>Online payment is temporarily unavailable</h1><p>Your link is fine. Please try again later, or contact management to pay another way.</p>`));
+    }
     if (!v.ok) return res.status(400).send(_payPage('Payment link', `<h1>This payment link isn't valid</h1><p>The link may have expired or been mistyped. Please contact management for a current link.</p>`));
+    // The link names the owner it was issued to. If the lot has changed hands (or the
+    // link predates owner-bound links), refuse rather than let it pay someone else's bill.
+    const { data: cur, error: curErr } = await supabase.from('ownership_tenures')
+      .select('id').eq('property_id', v.property_id).eq('kind', 'owner').is('end_date', null).limit(2);
+    if (curErr) throw curErr;
+    if (!cur || cur.length !== 1 || cur[0].id !== v.tenure_id) {
+      return res.status(410).send(_payPage('Payment link', `<h1>This payment link is no longer valid</h1><p>The account it was issued for has changed. Please sign in to the homeowner portal or contact management for a current link.</p>`));
+    }
     const base = (process.env.APP_BASE_URL || (req.protocol + '://' + req.get('host'))).replace(/\/+$/, '');
     const r = await createAssessmentCheckout({
-      community_id: v.community_id, property_id: v.property_id,
+      property_id: v.property_id,
       payment_method: (req.query.method === 'card' ? 'card' : 'ach'),
       success_url: base + '/pay/thanks',
       cancel_url: base + '/pay/' + encodeURIComponent(req.params.token),
@@ -1473,7 +1486,7 @@ app.get('/pay/:token', async (req, res) => {
     });
     if (r.ok && r.checkout_url) return res.redirect(302, r.checkout_url);
     if (r.error === 'nothing_due') return res.send(_payPage('Nothing due', `<h1>Your balance is $0</h1><p>There's nothing due right now. Thank you.</p>`));
-    if (r.error === 'payment_not_configured' || r.error === 'community_stripe_not_onboarded') {
+    if (r.error === 'payment_not_configured' || r.error === 'community_stripe_not_onboarded' || r.error === 'test_mode_sandbox_only') {
       return res.send(_payPage('Online payment coming soon', `<h1>Online payment isn't available yet</h1><p>This community hasn't finished setting up online payments. Please contact management to pay by check or ACH in the meantime.</p>`));
     }
     return res.status(r.status || 500).send(_payPage('Payment link', `<h1>We couldn't start your payment</h1><p>Please try again shortly, or contact management.</p>`));

@@ -1109,14 +1109,11 @@ window.openPayModal = function () {
         location.href = aj.setup_url;
         return;
       }
-      const r = await fetch('/api/payments/assessment/create-checkout', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          community_id: c.community_id, property_id: c.property_id, payment_method: method,
-          payer: { name: c.payer_name, email: c.payer_email },
-          success_url: location.origin + '/portal?paid=1',
-          cancel_url: location.href,
-        }),
+      // The server decides the lot, owner and amount from your signed-in session;
+      // the browser only chooses bank transfer or card.
+      const r = await fetch('/api/portal/pay/checkout', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ payment_method: method, property_id: c.property_id }),
       });
       const j = await r.json();
       if (!r.ok || j.error) throw new Error(j.hint || j.error || 'Could not start payment');
