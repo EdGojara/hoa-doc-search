@@ -23,7 +23,7 @@ const money = (c) => '$' + (Number(c || 0) / 100).toLocaleString('en-US', { mini
   const probe = await supabase.from('ap_invoices').select('id, approval_path').limit(1);
   if (probe.error) {
     console.error('\n✗ Cannot read approval_path — migration 301 is not applied yet.');
-    console.error('  Apply it via POST /api/admin/apply-migrations, then re-run this.\n  (' + probe.error.message + ')\n');
+    console.error('  Apply it in the Supabase SQL editor, record it (scripts/record_applied_migration.js), then re-run this.\n  (' + probe.error.message + ')\n');
     process.exitCode = 1;
     return;
   }
