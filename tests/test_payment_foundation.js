@@ -8,6 +8,14 @@ const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkou
 const { createAssessmentCheckout } = require('../lib/payments/assessment_checkout');
 const { processWebhookEvent } = require('../lib/payments/payment_lifecycle');
 const { verifyPaymentToken, signPaymentToken } = require('../lib/payments/payment_link');
+const { sandboxException } = require('../lib/payments/payment_sandbox');
+
+// payment_store posts through lib/accounting/posting; stub it so this file stays offline.
+const journal = [];
+require.cache[require.resolve('../lib/accounting/posting')] = { id: 'posting-stub', loaded: true, exports: {
+  async postJournalEntry(e) { journal.push(e); return { entry: { id: `je-${journal.length}` } }; },
+} };
+const { createPaymentStore } = require('../lib/payments/payment_store');
 
 let failed = 0;
 const results = [];
@@ -180,10 +188,10 @@ function fakeStore({ tenureId = SELLER } = {}) {
       return { posting: 'posted' };
     },
     async findAssessmentByIntent(pi) { return pi === 'pi_1' ? { id: pay.id, group_total_cents: pay.amount } : null; },
-    async reversePayment(id, reason) {
+    async reversePayment(id, { kind, reason }) {
       if (pay.posting === 'reversed') return { action: 'already_reversed' };
       if (pay.posting !== 'posted') { pay.needs_review = true; return { action: 'review' }; }
-      pay.posting = 'reversed'; reversals.push({ id, reason }); return { action: 'reversed' };
+      pay.posting = 'reversed'; reversals.push({ id, kind, reason }); return { action: 'reversed' };
     },
     async flagReview() { pay.needs_review = true; },
     async legacyCheckoutCompleted() {}, async legacyPaymentFailed() {}, async legacyChargeRefunded() {}, async accountUpdated() {},
@@ -277,6 +285,123 @@ t('full refund reverses through the controlled path once; partial refund is flag
   await run(st, ev('evt_14', 'charge.refunded', { id: 'ch_1', payment_intent: 'pi_1', refunded: true, amount_refunded: 20000, amount: 20000 }));
   await run(st, ev('evt_15', 'charge.refunded', { id: 'ch_1', payment_intent: 'pi_1', refunded: true, amount_refunded: 20000, amount: 20000 }));
   assert.strictEqual(st.reversals.length, 1);
+  assert.strictEqual(st.reversals[0].kind, 'refund');
+});
+t('a full-amount dispute reverses as a chargeback; a partial dispute is flagged', async () => {
+  const st = fakeStore();
+  await run(st, ev('evt_20', 'checkout.session.completed', sess('paid')));
+  await run(st, ev('evt_21', 'charge.dispute.created', { id: 'dp_1', payment_intent: 'pi_1', amount: 5000 }));
+  assert.strictEqual(st.reversals.length, 0); assert.strictEqual(st.pay.needs_review, true);
+  await run(st, ev('evt_22', 'charge.dispute.created', { id: 'dp_2', payment_intent: 'pi_1', amount: st.pay.amount }));
+  assert.deepStrictEqual(st.reversals.map((r) => r.kind), ['chargeback']);
+});
+
+// ---------------------------------------------------------------- GL accounts come from account roles
+let worldSeq = 0;
+function storeWorld({ roles = true } = {}) {
+  // Own community per test: the tests run concurrently and share the journal stub.
+  const C = `comm-store-${++worldSeq}`;
+  const sb = fakeSupabase({
+    payments: [{ id: 'pay-1', community_id: C, property_id: P1, amount_cents: 20000, settlement_state: 'settled', posting_state: 'not_posted' }],
+    communities: [{ id: C, gl_cutover_date: '2026-08-01' }],
+    // Deliberately NOT 1090/1300: code must follow the role, not a number.
+    chart_of_accounts: [
+      { id: 'acct-clear', community_id: C, account_number: '1095', is_active: true, is_summary: false },
+      { id: 'acct-ar', community_id: C, account_number: '1310', is_active: true, is_summary: false },
+      { id: 'acct-1090', community_id: C, account_number: '1090', is_active: true, is_summary: false },
+      { id: 'acct-1300', community_id: C, account_number: '1300', is_active: true, is_summary: false },
+    ],
+    community_account_roles: roles ? [
+      { community_id: C, role: 'stripe_clearing', account_id: 'acct-clear' },
+      { community_id: C, role: 'homeowner_ar', account_id: 'acct-ar' },
+    ] : [],
+    journal_entries: [],
+  });
+  const calls = [];
+  sb.rpc = async (fn, args) => {
+    calls.push({ fn, args });
+    if (fn === 'post_stripe_tenure_payment') return { data: { payment_txn_id: 'txn-1', applied_cents: 20000, unapplied_cents: 0 }, error: null };
+    if (fn === 'payment_commit_posting') return { data: { homeowner_txn_id: 'txn-1' }, error: null };
+    if (fn === 'reverse_stripe_tenure_payment') return { data: { already_drafted: false, reversal_txn_id: 'rev-1', batch_status: 'draft' }, error: null };
+    if (fn === 'payment_commit_reversal') return { data: { reversal_txn_id: 'rev-1', applications_reversed: 1, reopened_cents: 20000 }, error: null };
+    return { data: null, error: null };
+  };
+  const mine = () => journal.filter((e) => e.community_id === C);
+  return { sb, calls, mine, store: createPaymentStore({ supabase: sb, log: quiet }) };
+}
+t('posting uses the community\'s stripe_clearing / homeowner_ar ROLE accounts, never 1090/1300 by number', async () => {
+  const { store, calls, mine } = storeWorld();
+  const r = await store.postPayment('pay-1', { paymentDate: '2026-09-27' });
+  assert.strictEqual(r.posting, 'posted');
+  const lines = mine()[0].lines;
+  assert.deepStrictEqual(lines.map((l) => [l.account_id, l.debit_cents, l.credit_cents]), [['acct-clear', 20000, 0], ['acct-ar', 0, 20000]]);
+  assert.strictEqual(mine()[0].source_reference, 'stripe:pay:pay-1');
+  assert.ok(calls.some((c) => c.fn === 'payment_commit_posting'));
+});
+t('a community with no account roles is BLOCKED for an operator; nothing is credited', async () => {
+  const { store, calls, mine } = storeWorld({ roles: false });
+  const r = await store.postPayment('pay-1', { paymentDate: '2026-09-27' });
+  assert.strictEqual(r.posting, 'blocked'); assert.strictEqual(r.reason, 'missing_account_role');
+  assert.strictEqual(mine().length, 0);
+  assert.ok(!calls.some((c) => c.fn === 'post_stripe_tenure_payment'), 'no AR row drafted');
+  assert.ok(calls.some((c) => c.fn === 'payment_mark_posting' && c.args.p_state === 'blocked'));
+});
+t('reversal drafts the reversal row, posts Dr AR / Cr clearing by role, then commits (original kept)', async () => {
+  const { store, calls, mine } = storeWorld();
+  const r = await store.reversePayment('pay-1', { kind: 'refund', reason: 'refund re_1', reversalDate: '2026-10-02' });
+  assert.strictEqual(r.action, 'reversed');
+  const draft = calls.find((c) => c.fn === 'reverse_stripe_tenure_payment');
+  assert.deepStrictEqual(draft.args, { p_payment_id: 'pay-1', p_kind: 'refund', p_reason: 'refund re_1', p_reversal_date: '2026-10-02' });
+  assert.deepStrictEqual(mine()[0].lines.map((l) => [l.account_id, l.debit_cents, l.credit_cents]), [['acct-ar', 20000, 0], ['acct-clear', 0, 20000]]);
+  assert.strictEqual(mine()[0].source_reference, 'stripe:rev:pay-1');
+  assert.ok(calls.findIndex((c) => c.fn === 'payment_commit_reversal') > calls.findIndex((c) => c.fn === 'reverse_stripe_tenure_payment'));
+});
+t('reversal with no account roles stays a draft and is flagged; the ledger still shows the payment', async () => {
+  const { store, calls, mine } = storeWorld({ roles: false });
+  const r = await store.reversePayment('pay-1', { kind: 'chargeback', reason: 'dispute dp_1', reversalDate: '2026-10-02' });
+  assert.strictEqual(r.action, 'reversal_blocked');
+  assert.strictEqual(mine().length, 0);
+  assert.ok(!calls.some((c) => c.fn === 'payment_commit_reversal'));
+  assert.ok(calls.some((c) => c.fn === 'payment_flag_review'));
+});
+
+// ---------------------------------------------------------------- payment sandbox: the one demo exception
+const DCX = 'dc-comm', LOTX = 'dc-lot-sandbox', OTHER = 'dc-lot-other';
+function sandboxDb({ fail = false } = {}) {
+  const sb = fakeSupabase({ properties: [
+    { id: LOTX, community_id: DCX, payment_sandbox: true, communities: { is_demo: true } },
+    { id: OTHER, community_id: DCX, payment_sandbox: false, communities: { is_demo: true } },
+  ] });
+  if (fail) sb.from = () => { throw new Error('column properties.payment_sandbox does not exist'); };
+  return sb;
+}
+const sbx = (o) => sandboxException({ channel: 'stripe:checkout', communityId: DCX, sandboxPropertyId: LOTX, reasons: ['demo_community', 'demo_recipient'], key: TEST_KEY, supabase: sandboxDb(), ...o });
+t('sandbox: test key + the sandbox lot may reach Stripe checkout', async () => {
+  assert.strictEqual((await sbx({})).allowed, true);
+});
+t('sandbox: a LIVE key is always blocked, even for the sandbox lot', async () => {
+  assert.strictEqual((await sbx({ key: LIVE_KEY })).allowed, false);
+  assert.strictEqual((await sbx({ key: '' })).allowed, false);
+});
+t('sandbox: any other Drama Creek lot stays blocked', async () => {
+  assert.strictEqual((await sbx({ sandboxPropertyId: OTHER })).allowed, false);
+  assert.strictEqual((await sbx({ sandboxPropertyId: null })).allowed, false);
+});
+t('sandbox: the lot must be in the community being charged', async () => {
+  assert.strictEqual((await sbx({ communityId: 'real-community' })).allowed, false);
+});
+t('sandbox: refunds, off-session charges and running demo workflows stay blocked', async () => {
+  assert.strictEqual((await sbx({ channel: 'stripe:refund' })).allowed, false);
+  assert.strictEqual((await sbx({ channel: 'stripe:charge' })).allowed, false);
+  assert.strictEqual((await sbx({ reasons: ['demo_community', 'demo_context'] })).allowed, false);
+});
+t('sandbox: connected-account onboarding allowed only for the community holding the sandbox lot (test key)', async () => {
+  assert.strictEqual((await sbx({ channel: 'stripe:account', sandboxPropertyId: null })).allowed, true);
+  assert.strictEqual((await sbx({ channel: 'stripe:account', sandboxPropertyId: null, communityId: 'other-demo' })).allowed, false);
+  assert.strictEqual((await sbx({ channel: 'stripe:account', sandboxPropertyId: null, key: LIVE_KEY })).allowed, false);
+});
+t('sandbox: a lookup failure (e.g. migration 469 not applied) fails closed', async () => {
+  assert.strictEqual((await sbx({ supabase: sandboxDb({ fail: true }) })).allowed, false);
 });
 t('an event from the wrong Stripe mode is ignored and credits nothing', async () => {
   const st = fakeStore();

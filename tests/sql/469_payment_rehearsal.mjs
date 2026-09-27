@@ -1,10 +1,9 @@
-// SQL rehearsal for migration 469 against stub tables that mirror the production
-// columns/constraints it touches (including 461's real applications trigger).
 // tests/sql/469_payment_rehearsal.mjs — SQL rehearsal for migration 469 against an
 // in-memory Postgres (PGlite) with stub tables mirroring the production columns it
-// touches, plus migration 461's REAL applications trigger. Skips (exit 0) when
-// @electric-sql/pglite is not installed; install it as a dev dependency to run it
-// in npm test. Run: node tests/sql/469_payment_rehearsal.mjs
+// touches, plus migration 461's REAL applications trigger and 459's REAL ownership
+// guard (so the sandbox owner lands on the lot's current tenure). Skips (exit 0)
+// when @electric-sql/pglite is not installed; install it as a dev dependency to run
+// it in npm test. Run: node tests/sql/469_payment_rehearsal.mjs
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -12,18 +11,33 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 let PGlite;
 try { ({ PGlite } = await import(process.env.PGLITE_MODULE || '@electric-sql/pglite')); }
 catch (_) { console.log('SKIP  migration 469 SQL rehearsal (@electric-sql/pglite not installed; set PGLITE_MODULE or add the dev dependency)'); process.exit(0); }
+const m459 = fs.readFileSync(`${REPO}/migrations/459_ownership_transfer_single_path.sql`, 'utf8');
 const m461 = fs.readFileSync(`${REPO}/migrations/461_homeowner_payment_applications.sql`, 'utf8');
 const m469 = fs.readFileSync(`${REPO}/migrations/469_payments_safe_foundation.sql`, 'utf8');
 const between = (s, a, b) => { const i = s.indexOf(a); const j = s.indexOf(b, i); if (i < 0 || j < 0) throw new Error('extract ' + a); return s.slice(i, j + b.length); };
 
 const stub = `
 CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
-CREATE TABLE communities (id uuid primary key, management_company_id uuid, gl_cutover_date date);
+CREATE TABLE communities (id uuid primary key, management_company_id uuid, gl_cutover_date date, is_demo boolean NOT NULL DEFAULT false);
 CREATE TABLE properties (id uuid primary key, community_id uuid, vantaca_account_id text, trusted_account_number text);
-CREATE TABLE contacts (id uuid primary key);
-CREATE TABLE portal_users (id uuid primary key);
+CREATE UNIQUE INDEX uq_properties_trusted_account_number ON properties (trusted_account_number) WHERE trusted_account_number IS NOT NULL;
+CREATE TABLE contacts (id uuid primary key, full_name text NOT NULL, primary_email text);
+CREATE TABLE portal_users (id uuid primary key default gen_random_uuid(), management_company_id uuid NOT NULL, email text NOT NULL, full_name text,
+  role text NOT NULL CHECK (role IN ('board_member','homeowner','staff','admin','franchisee')),
+  status text NOT NULL DEFAULT 'invited' CHECK (status IN ('invited','active','revoked')),
+  contact_id uuid, notes text, UNIQUE (management_company_id, email));
+CREATE TABLE portal_user_properties (portal_user_id uuid NOT NULL, property_id uuid NOT NULL, granted_at timestamptz NOT NULL DEFAULT now(), granted_by text,
+  revoked_at timestamptz, revoked_by text, notes text, PRIMARY KEY (portal_user_id, property_id));
+CREATE TABLE account_funds (id uuid primary key default gen_random_uuid(), community_id uuid NOT NULL, fund_code text NOT NULL, fund_name text NOT NULL,
+  fund_type text NOT NULL CHECK (fund_type IN ('operating','reserve','special_assessment','capital_improvement','escrow','other')),
+  display_order int NOT NULL DEFAULT 0, is_active boolean NOT NULL DEFAULT true, notes text, UNIQUE (community_id, fund_code));
+CREATE TABLE accounting_periods (id uuid primary key default gen_random_uuid(), community_id uuid NOT NULL, fiscal_year int NOT NULL, period_number int NOT NULL,
+  period_type text NOT NULL DEFAULT 'monthly' CHECK (period_type IN ('monthly','quarterly','annual','adjustment')), period_start date NOT NULL, period_end date NOT NULL,
+  status text NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed','locked','reopened')), notes text,
+  UNIQUE (community_id, fiscal_year, period_number), CHECK (period_end >= period_start));
 CREATE TABLE ownership_tenures (id uuid primary key, community_id uuid, property_id uuid, kind text, start_date date, end_date date, vantaca_account_id text);
-CREATE TABLE property_ownerships (id uuid primary key default gen_random_uuid(), tenure_id uuid, contact_id uuid, is_primary bool, start_date date);
+CREATE TABLE property_ownerships (id uuid primary key default gen_random_uuid(), property_id uuid, tenure_id uuid, contact_id uuid NOT NULL,
+  is_primary bool NOT NULL DEFAULT false, start_date date NOT NULL, end_date date, source text, notes text);
 CREATE TABLE transaction_upload_batches (id uuid primary key default gen_random_uuid(), management_company_id uuid, community_id uuid, period_label text, as_of_date date,
   source_format text CHECK (source_format IN ('csv','pdf','manual')), status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','committed','reverted')),
   row_count int, account_count int, total_charges_cents bigint, total_payments_cents bigint, min_transaction_date date, max_transaction_date date, uploaded_by text, notes text);
@@ -31,10 +45,13 @@ CREATE TABLE homeowner_transactions (id uuid primary key default gen_random_uuid
   community_id uuid, vantaca_account_id text, trusted_account_number text, property_id uuid, contact_id uuid, tenure_id uuid, transaction_date date, description text,
   txn_type text CHECK (txn_type IN ('charge','payment','credit','adjustment','balance_brought_forward')), charge_category text, amount_cents bigint, running_balance_cents bigint,
   reduction_source text CHECK (reduction_source IS NULL OR (reduction_source IN ('cash_payment','prepaid_credit','credit_waiver','correcting_adjustment') AND amount_cents < 0)),
-  raw_row_jsonb jsonb);
+  raw_row_jsonb jsonb,
+  CONSTRAINT homeowner_transactions_charge_category_check CHECK (charge_category IS NULL OR charge_category IN ('assessment','late_fee','interest','fine','attorney_fee',
+    'admin_fee','payment','credit','refund','adjustment','prior_balance','other','certified_letter','attorney_fee_other','nsf_fee')));
 CREATE TABLE journal_entries (id uuid primary key default gen_random_uuid(), community_id uuid, source_module text, source_reference text, status text default 'posted', total_debits_cents bigint default 0);
-CREATE TABLE chart_of_accounts (id uuid primary key default gen_random_uuid(), community_id uuid, fund_id uuid, account_number text, account_name text, account_type text,
-  account_subtype text, normal_balance text, is_summary bool, is_active bool, description text);
+CREATE TABLE chart_of_accounts (id uuid primary key default gen_random_uuid(), community_id uuid, fund_id uuid, account_number text, account_name text,
+  account_type text NOT NULL DEFAULT 'asset', account_subtype text, normal_balance text NOT NULL DEFAULT 'debit', is_summary bool NOT NULL DEFAULT false,
+  is_active bool NOT NULL DEFAULT true, description text);
 CREATE TABLE payments (id uuid primary key default gen_random_uuid(), community_id uuid, product_type text, product_id uuid, fee_type text, payee text, payee_display_name text,
   connected_account_id text, amount_cents int, method text, processor text, processor_payment_id text, processor_session_id text, processor_metadata jsonb,
   status text CHECK (status IN ('pending','succeeded','failed','refunded','partially_refunded','cancelled')), paid_at timestamptz, failure_reason text,
@@ -46,15 +63,20 @@ CREATE VIEW v_current_owner_balance AS
     LEFT JOIN transaction_upload_batches b ON b.id = h.source_batch_id
    WHERE t.end_date IS NULL AND (b.status = 'committed' OR h.id IS NULL) GROUP BY 1,2,3;
 `;
-const appsTable = between(m461, 'CREATE TABLE IF NOT EXISTS homeowner_txn_applications', ');');
-const appsTrigger = between(m461, 'CREATE OR REPLACE FUNCTION homeowner_txn_applications_guard()', '$fn$;');
-const appsTrg = between(m461, 'DROP TRIGGER IF EXISTS trg_homeowner_txn_applications_guard', 'homeowner_txn_applications_guard();');
+const real = [
+  between(m461, 'CREATE TABLE IF NOT EXISTS homeowner_txn_applications', ');'),
+  between(m461, 'CREATE OR REPLACE FUNCTION homeowner_txn_applications_guard()', '$fn$;'),
+  between(m461, 'DROP TRIGGER IF EXISTS trg_homeowner_txn_applications_guard', 'homeowner_txn_applications_guard();'),
+  between(m459, 'CREATE OR REPLACE FUNCTION ownership_transfer_in_progress()', '$fn$;'),
+  between(m459, 'CREATE OR REPLACE FUNCTION property_ownerships_transfer_guard()', '$fn$;'),
+  between(m459, 'DROP TRIGGER IF EXISTS trg_property_ownerships_transfer_guard', 'property_ownerships_transfer_guard();'),
+].join('\n');
 
 const db = new PGlite();
 await db.exec(stub);
-await db.exec(appsTable + '\n' + appsTrigger + '\n' + appsTrg);
+await db.exec(real);
 await db.exec(m469);
-console.log('migration 469 applied (incl. self-test)');
+console.log('migration 469 applied to an empty world (incl. self-test)');
 await db.exec(m469);
 console.log('migration 469 re-applied (idempotent)');
 
@@ -65,23 +87,38 @@ const check = (name, cond, extra = '') => { if (cond) { pass++; console.log('PAS
 const expectErr = async (name, fn, re) => { try { await fn(); fail++; console.log('FAIL ', name, '(no error)'); } catch (e) { const ok = !re || re.test(e.message); ok ? pass++ : fail++; console.log(ok ? 'PASS ' : 'FAIL ', name, ok ? '' : e.message); } };
 
 // World: one lot, seller tenure (current), charges on the seller tenure.
-const C = '00000000-0000-0000-0000-00000000000c', P = '00000000-0000-0000-0000-0000000000a1', S = '00000000-0000-0000-0000-0000000000f1', B = '00000000-0000-0000-0000-0000000000f2';
-const SK = '00000000-0000-0000-0000-00000000c0c1', BK = '00000000-0000-0000-0000-00000000c0c2';
+const C = '00000000-0000-0000-0000-00000000000c', C2 = '00000000-0000-0000-0000-0000000000c2';
+const P = '00000000-0000-0000-0000-0000000000a1', S = '00000000-0000-0000-0000-0000000000f1', B = '00000000-0000-0000-0000-0000000000f2';
+const SK = '00000000-0000-0000-0000-00000000c0c1', BK = '00000000-0000-0000-0000-00000000c0c2', B0 = '00000000-0000-0000-0000-0000000b0001';
 await db.exec(`
-INSERT INTO communities VALUES ('${C}', gen_random_uuid(), '2026-07-01');
+INSERT INTO communities VALUES ('${C}', gen_random_uuid(), '2026-07-01', false), ('${C2}', gen_random_uuid(), NULL, false);
 INSERT INTO properties VALUES ('${P}', '${C}', '2013059', '1004384184');
-INSERT INTO contacts VALUES ('${SK}'), ('${BK}');
+INSERT INTO contacts VALUES ('${SK}', 'Seller'), ('${BK}', 'Buyer');
 INSERT INTO ownership_tenures VALUES ('${S}', '${C}', '${P}', 'owner', '2026-05-19', NULL, '2013059');
-INSERT INTO property_ownerships (tenure_id, contact_id, is_primary, start_date) VALUES ('${S}', '${SK}', true, '2026-05-19');
-INSERT INTO chart_of_accounts (community_id, account_number, account_name, account_subtype) VALUES ('${C}', '1000', 'Operating Cash', 'current_asset'), ('${C}', '1300', 'AR', 'current_asset');
-INSERT INTO transaction_upload_batches (id, community_id, source_format, status) VALUES ('00000000-0000-0000-0000-0000000b0001', '${C}', 'manual', 'committed');
+INSERT INTO property_ownerships (property_id, contact_id, is_primary, start_date) VALUES ('${P}', '${SK}', true, '2026-05-19');
+INSERT INTO chart_of_accounts (community_id, account_number, account_name, account_subtype) VALUES ('${C}', '1000', 'Operating Cash', 'current_asset'), ('${C}', '1300', 'AR', 'current_asset'),
+  ('${C2}', '1500', 'Other asset', 'current_asset');
+INSERT INTO chart_of_accounts (community_id, account_number, account_name, account_type, normal_balance) VALUES ('${C}', '2100', 'Prepaid Assessments', 'liability', 'credit');
+INSERT INTO transaction_upload_batches (id, community_id, source_format, status) VALUES ('${B0}', '${C}', 'manual', 'committed');
 INSERT INTO homeowner_transactions (source_batch_id, community_id, property_id, tenure_id, transaction_date, description, txn_type, charge_category, amount_cents)
-VALUES ('00000000-0000-0000-0000-0000000b0001', '${C}', '${P}', '${S}', '2026-07-01', 'Q3 assessment', 'charge', 'assessment', 20000),
-       ('00000000-0000-0000-0000-0000000b0001', '${C}', '${P}', '${S}', '2026-06-01', 'Prior balance', 'charge', 'prior_balance', 5000);
+VALUES ('${B0}', '${C}', '${P}', '${S}', '2026-07-01', 'Q3 assessment', 'charge', 'assessment', 20000),
+       ('${B0}', '${C}', '${P}', '${S}', '2026-06-01', 'Prior balance', 'charge', 'prior_balance', 5000);
 INSERT INTO assessment_autopay (property_id, status) VALUES ('${P}', 'active');
 `);
 await db.exec(m469); await db.exec(m469);
-check('COA seeded 1090 Stripe Clearing beside 1000 (once, even after re-run)', (await one(`SELECT count(*)::int n FROM chart_of_accounts WHERE account_number='1090'`)).n === 1);
+
+// ---- Account roles + 1090 ----
+check('COA seeded 1090 beside 1000 (once, even after re-run)', (await one(`SELECT count(*)::int n FROM chart_of_accounts WHERE account_number='1090'`)).n === 1);
+check('1090 is named cash in transit (balance sheet Cash group; not cash on hand)', /^Cash in Transit/.test((await one(`SELECT account_name n FROM chart_of_accounts WHERE account_number='1090'`)).n));
+const roles = await q(`SELECT r.role, a.account_number FROM community_account_roles r JOIN chart_of_accounts a ON a.id=r.account_id WHERE r.community_id=$1 ORDER BY r.role`, [C]);
+check('roles seeded: homeowner_ar=1300, operating_cash=1000, stripe_clearing=1090',
+  roles.map((x) => x.role + '=' + x.account_number).join(',') === 'homeowner_ar=1300,operating_cash=1000,stripe_clearing=1090', JSON.stringify(roles));
+check('roles: a community without 1000 gets no seeded roles (posting will block, not guess)', (await one(`SELECT count(*)::int n FROM community_account_roles WHERE community_id=$1`, [C2])).n === 0);
+await expectErr('role: a liability account cannot be stripe_clearing', () => db.query(`UPDATE community_account_roles SET account_id=(SELECT id FROM chart_of_accounts WHERE community_id=$1 AND account_number='2100') WHERE community_id=$1 AND role='stripe_clearing'`, [C]), /debit-normal asset/);
+await expectErr('role: an account from another community is refused', () => db.query(`INSERT INTO community_account_roles (community_id, role, account_id, updated_by) VALUES ($2, 'stripe_clearing', (SELECT id FROM chart_of_accounts WHERE community_id=$1 AND account_number='1090'), 't')`, [C, C2]), /not in community/);
+await expectErr('role: an unknown role is refused', () => db.query(`INSERT INTO community_account_roles (community_id, role, account_id, updated_by) VALUES ($1, 'petty_cash', (SELECT id FROM chart_of_accounts WHERE community_id=$1 AND account_number='1500'), 't')`, [C2]), /check/i);
+await expectErr('category: an invented category is still refused', () => db.query(`INSERT INTO homeowner_transactions (source_batch_id, community_id, tenure_id, transaction_date, txn_type, charge_category, amount_cents) VALUES ($1, $2, $3, '2026-09-01', 'charge', 'made_up', 1)`, [B0, C, S]), /charge_category_check/);
+
 const bal = async (t) => Number((await one(`SELECT coalesce(sum(h.amount_cents),0)::bigint b FROM homeowner_transactions h JOIN transaction_upload_batches x ON x.id=h.source_batch_id AND x.status='committed' WHERE h.tenure_id=$1`, [t])).b);
 check('seller balance starts at $250.00', await bal(S) === 25000);
 
@@ -115,7 +152,7 @@ check('card: after commit the seller is credited exactly once ($250 -> $50)', aw
 r = (await one(`SELECT payment_settle($1, NULL, 'pi_1', 'ch_1') r`, [g1])).r;
 check('card: a duplicate settle event is a no-op (done)', r.action === 'done');
 await expectErr('card: a second ledger row for the same payment is refused by the unique key', () => db.query(`INSERT INTO homeowner_transactions (source_batch_id, community_id, tenure_id, transaction_date, description, txn_type, amount_cents, reduction_source, raw_row_jsonb)
-  VALUES ('00000000-0000-0000-0000-0000000b0001', $1, $2, '2026-09-27', 'dup', 'payment', -1, 'cash_payment', jsonb_build_object('source','stripe_payment','payment_id',$3::text))`, [C, S, pid1]), /uq_homeowner_txn_stripe_payment|duplicate/);
+  VALUES ($4, $1, $2, '2026-09-27', 'dup', 'payment', -1, 'cash_payment', jsonb_build_object('source','stripe_payment','payment_id',$3::text))`, [C, S, pid1, B0]), /uq_homeowner_txn_stripe_payment|duplicate/);
 
 // ---- ACH: processing never credits; success credits once; failure never credits ----
 const g2 = await newGroup('us_bank_account', 3000);
@@ -144,16 +181,90 @@ check('transfer: seller has no open charge left for it, so it sits as unapplied 
 const je2 = (await one(`INSERT INTO journal_entries (community_id, source_module, source_reference) VALUES ($1,'payment_intake','stripe:pay:'||$2) RETURNING id`, [C, pid2])).id;
 await db.query(`SELECT payment_commit_posting($1, $2)`, [pid2, je2]);
 check('transfer: the buyer is not credited', await bal(B) === 0);
-check('transfer: the payment row carries the lot Vantaca # from the TENURE, not the lot', (await one(`SELECT vantaca_account_id v FROM homeowner_transactions WHERE raw_row_jsonb->>'payment_id'=$1`, [pid2])).v === '2013059');
+check('transfer: the payment row carries the Vantaca # from the TENURE, not the lot', (await one(`SELECT vantaca_account_id v FROM homeowner_transactions WHERE raw_row_jsonb->>'payment_id'=$1`, [pid2])).v === '2013059');
 
-// ---- Reversal ----
+// ---- Explicit reversal (refund): the original payment stays; a reversal row reopens the charges ----
+const openOf = async (chargeId) => Number((await one(`SELECT h.amount_cents - coalesce((SELECT sum(ap.applied_cents) FROM homeowner_txn_applications ap JOIN homeowner_transactions p ON p.id=ap.payment_txn_id JOIN transaction_upload_batches pb ON pb.id=p.source_batch_id AND pb.status<>'reverted' WHERE ap.charge_txn_id=h.id),0) o FROM homeowner_transactions h WHERE h.id=$1`, [chargeId])).o);
+const asmt = (await one(`SELECT id FROM homeowner_transactions WHERE description='Q3 assessment'`)).id;
+check('before reversal: the Q3 assessment is fully paid', await openOf(asmt) === 0);
 const before = await bal(S);
-r = (await one(`SELECT reverse_stripe_tenure_payment($1, 'refund re_1') r`, [pid1])).r;
-check('reversal: full refund reverts the credit (seller balance +$200)', r.already_reversed === false && await bal(S) === before + 20000);
-r = (await one(`SELECT reverse_stripe_tenure_payment($1, 'refund re_1') r`, [pid1])).r;
-check('reversal: repeating it is a no-op', r.already_reversed === true && await bal(S) === before + 20000);
-const open = await one(`SELECT coalesce(sum(ap.applied_cents),0)::bigint n FROM homeowner_txn_applications ap JOIN homeowner_transactions p ON p.id=ap.payment_txn_id JOIN transaction_upload_batches b ON b.id=p.source_batch_id AND b.status<>'reverted' WHERE ap.payment_txn_id=$1`, [pid1 && r.homeowner_txn_id || (await one(`SELECT homeowner_txn_id h FROM payments WHERE id=$1`, [pid1])).h]);
-check('reversal: the reversed payment no longer counts as paying the assessment', Number(open.n) === 0);
+const payTxn1 = (await one(`SELECT homeowner_txn_id h FROM payments WHERE id=$1`, [pid1])).h;
+await expectErr('reversal: kind must be refund or chargeback', () => db.query(`SELECT reverse_stripe_tenure_payment($1, 'oops', 'x', '2026-10-02')`, [pid1]), /refund or chargeback/);
+r = (await one(`SELECT reverse_stripe_tenure_payment($1, 'refund', 'refund re_1', '2026-10-02') r`, [pid1])).r;
+check('reversal: drafted as its own row; balance unchanged until the GL reversal posts', r.already_drafted === false && r.batch_status === 'draft' && await bal(S) === before);
+const r1b = (await one(`SELECT reverse_stripe_tenure_payment($1, 'refund', 'refund re_1', '2026-10-02') r`, [pid1])).r;
+check('reversal: re-drafting returns the same row (no second reversal)', r1b.already_drafted === true && r1b.reversal_txn_id === r.reversal_txn_id);
+const revJe = (await one(`INSERT INTO journal_entries (community_id, source_module, source_reference) VALUES ($1,'payment_intake','stripe:rev:'||$2) RETURNING id`, [C, pid1])).id;
+const c1 = (await one(`SELECT payment_commit_reversal($1, $2) c`, [pid1, revJe])).c;
+check('reversal: commit reverses the 1 application and reopens $200', c1.applications_reversed === 1 && Number(c1.reopened_cents) === 20000, JSON.stringify(c1));
+check('reversal: seller balance goes back up by exactly $200', await bal(S) === before + 20000);
+const orig1 = await one(`SELECT h.amount_cents, b.status FROM homeowner_transactions h JOIN transaction_upload_batches b ON b.id=h.source_batch_id WHERE h.id=$1`, [payTxn1]);
+check('reversal: the ORIGINAL payment row is still on the ledger, committed, -$200', Number(orig1.amount_cents) === -20000 && orig1.status === 'committed');
+const rev1 = await one(`SELECT h.amount_cents, h.charge_category, h.txn_type, h.transaction_date::text d FROM homeowner_transactions h WHERE h.reverses_txn_id=$1`, [payTxn1]);
+check('reversal: a separate +$200 payment_reversal row, dated the refund date, points at the payment',
+  Number(rev1.amount_cents) === 20000 && rev1.charge_category === 'payment_reversal' && rev1.txn_type === 'adjustment' && rev1.d === '2026-10-02', JSON.stringify(rev1));
+check('reversal: the Q3 assessment is open again', await openOf(asmt) === 20000);
+const apps1 = await one(`SELECT coalesce(sum(applied_cents),0)::bigint net, count(*)::int n FROM homeowner_txn_applications WHERE payment_txn_id=$1`, [payTxn1]);
+check('reversal: original application kept, offset by an exact-negative reversal (net 0, 2 rows)', Number(apps1.net) === 0 && apps1.n === 2);
+const pr = await one(`SELECT posting_state, reversal_txn_id, reversal_journal_entry_id, journal_entry_id FROM payments WHERE id=$1`, [pid1]);
+check('reversal: payment shows reversed, linked to both journal entries and the reversal row',
+  pr.posting_state === 'reversed' && pr.reversal_txn_id === r.reversal_txn_id && pr.reversal_journal_entry_id === revJe && pr.journal_entry_id === je);
+r = (await one(`SELECT reverse_stripe_tenure_payment($1, 'refund', 'refund re_1', '2026-10-02') r`, [pid1])).r;
+const c1b = (await one(`SELECT payment_commit_reversal($1, $2) c`, [pid1, revJe])).c;
+check('reversal: repeating draft + commit is a no-op', r.already_reversed === true && c1b.already_committed === true && await bal(S) === before + 20000);
+await expectErr('reversal: a second GL reversal entry for the same payment is refused', () => db.query(`INSERT INTO journal_entries (community_id, source_module, source_reference) VALUES ($1,'payment_intake','stripe:rev:'||$2)`, [C, pid1]), /uq_journal_entries_stripe_ref|duplicate/);
+await expectErr('reversal: a second reversal row for the same payment is refused', () => db.query(`INSERT INTO homeowner_transactions (source_batch_id, community_id, tenure_id, transaction_date, txn_type, charge_category, amount_cents, reverses_txn_id)
+  VALUES ($4, $1, $2, '2026-10-02', 'adjustment', 'payment_reversal', 20000, $3)`, [C, S, payTxn1, B0]), /uq_homeowner_txn_reverses|duplicate/);
+await expectErr('reversal: a reversal row must be positive and a reversal category', () => db.query(`INSERT INTO homeowner_transactions (source_batch_id, community_id, tenure_id, transaction_date, txn_type, charge_category, amount_cents, reverses_txn_id)
+  VALUES ($3, $1, $2, '2026-10-02', 'adjustment', 'assessment', 20000, (SELECT id FROM homeowner_transactions WHERE description='Prior balance'))`, [C, S, B0]), /reversal_shape_check/);
+
+// Planner exclusions: the reversal row is never treated as a charge.
+const plan461 = (await one(`SELECT post_homeowner_tenure_payment($1,$2,$3,20000,'2026-10-05','1001','Title Co','{}'::jsonb,'test',true) r`, [C, P, S])).r;
+check('461 planner: sees $250 open (assessment $200 + prior balance $50), NOT the +$200 reversal row',
+  Number(plan461.open_before_cents) === 25000 && !JSON.stringify(plan461).includes(r1b.reversal_txn_id), JSON.stringify({ open: plan461.open_before_cents }));
+check('461 planner: applies the payoff to the reopened assessment', plan461.applications.length === 1 && plan461.applications[0].charge_txn_id === asmt);
+const g4 = await newGroup('card', 20000);
+const pid4 = (await one(`SELECT payment_settle($1, NULL, 'pi_4', 'ch_4') r`, [g4])).r.payment_id;
+const p4 = (await one(`SELECT post_stripe_tenure_payment($1, '2026-10-06') r`, [pid4])).r;
+const p4apps = await q(`SELECT charge_txn_id FROM homeowner_txn_applications WHERE payment_txn_id=$1`, [p4.payment_txn_id]);
+check('469 planner: a new online payment pays the reopened assessment, never the reversal row', p4.applied_cents === 20000 && p4apps.length === 1 && p4apps[0].charge_txn_id === asmt);
+
+// Chargeback on a payment with no applications (unapplied credit).
+r = (await one(`SELECT reverse_stripe_tenure_payment($1, 'chargeback', 'dispute dp_1', '2026-10-03') r`, [pid2])).r;
+const cbJe = (await one(`INSERT INTO journal_entries (community_id, source_module, source_reference) VALUES ($1,'payment_intake','stripe:rev:'||$2) RETURNING id`, [C, pid2])).id;
+const c2 = (await one(`SELECT payment_commit_reversal($1, $2) c`, [pid2, cbJe])).c;
+check('chargeback: category chargeback, zero applications to reverse, reversal row visible', c2.applications_reversed === 0 &&
+  (await one(`SELECT charge_category c FROM homeowner_transactions WHERE id=$1`, [r.reversal_txn_id])).c === 'chargeback');
+r = (await one(`SELECT reverse_stripe_tenure_payment(payment_group_anchor($1, NULL), 'refund', 'refund re_9', '2026-10-03') r`, [g3])).r;
+check('reversal of a never-posted payment is held for review, nothing written', r.action === 'review');
+
+// ---- Payment sandbox ----
+await expectErr('sandbox: a lot in a real (non-demo) community cannot be the sandbox', () => db.query(`UPDATE properties SET payment_sandbox=true WHERE id=$1`, [P]), /demo community/);
+const DC = 'dc100000-0000-4000-a000-000000000000', LOT = 'e09d3deb-57c7-4028-b366-4f79c9379708', DT = '23e196cd-dc21-4021-a479-74a876aab6f8', DMC = 'd0000000-0000-4000-a000-000000000000';
+const LOT2 = '00000000-0000-0000-0000-0000000000d2';
+await db.exec(`INSERT INTO communities VALUES ('${DC}', '${DMC}', NULL, true);
+  INSERT INTO properties VALUES ('${LOT}', '${DC}', NULL, NULL), ('${LOT2}', '${DC}', NULL, NULL);
+  INSERT INTO ownership_tenures VALUES ('${DT}', '${DC}', '${LOT}', 'owner', NULL, NULL, NULL);`);
+await db.exec(m469); await db.exec(m469);
+const dcLot = await one(`SELECT payment_sandbox, trusted_account_number FROM properties WHERE id=$1`, [LOT]);
+check('sandbox seed: DC-45-060 flagged payment_sandbox with Trusted # 1002900060', dcLot.payment_sandbox === true && dcLot.trusted_account_number === '1002900060');
+check('sandbox seed: exactly one sandbox lot anywhere', (await one(`SELECT count(*)::int n FROM properties WHERE payment_sandbox`)).n === 1);
+check('sandbox seed: DC GL has 1000 / 1090 / 1300 once each', (await q(`SELECT account_number FROM chart_of_accounts WHERE community_id=$1 ORDER BY 1`, [DC])).map((x) => x.account_number).join(',') === '1000,1090,1300');
+const per = await one(`SELECT count(*)::int n, min(period_start)::text a, max(period_end)::text b FROM accounting_periods WHERE community_id=$1 AND status='open'`, [DC]);
+check('sandbox seed: 16 open monthly periods 2026-09-01 .. 2027-12-31', per.n === 16 && per.a === '2026-09-01' && per.b === '2027-12-31', JSON.stringify(per));
+check('sandbox seed: GL cutover 2026-09-01', (await one(`SELECT gl_cutover_date::text d FROM communities WHERE id=$1`, [DC])).d === '2026-09-01');
+const own = await one(`SELECT tenure_id, contact_id FROM property_ownerships WHERE property_id=$1`, [LOT]);
+check('sandbox seed: test owner is on the lot\'s CURRENT tenure (459 guard assigned it)', own && own.tenure_id === DT && own.contact_id === '5a0d0469-0000-4000-a000-00000000c0de');
+const pu = await one(`SELECT u.role, u.status, u.management_company_id, u.email, (SELECT count(*)::int FROM portal_user_properties x WHERE x.portal_user_id=u.id AND x.property_id=$1) n FROM portal_users u WHERE u.id='5a0d0469-0000-4000-a000-0000000000b1'`, [LOT]);
+check('sandbox seed: active homeowner portal login on the demo company, scoped to the lot', pu && pu.role === 'homeowner' && pu.status === 'active' && pu.management_company_id === DMC && pu.n === 1 && /@bedrock\.test$/.test(pu.email));
+check('sandbox seed: DC account roles homeowner_ar/operating_cash/stripe_clearing = 1300/1000/1090',
+  (await q(`SELECT a.account_number FROM community_account_roles r JOIN chart_of_accounts a ON a.id=r.account_id WHERE r.community_id=$1 ORDER BY r.role`, [DC])).map((x) => x.account_number).join(',') === '1300,1000,1090');
+const cnt = await one(`SELECT (SELECT count(*) FROM account_funds WHERE community_id=$1)::int f, (SELECT count(*) FROM property_ownerships WHERE property_id=$2)::int o,
+  (SELECT count(*) FROM portal_users)::int u, (SELECT count(*) FROM contacts WHERE id='5a0d0469-0000-4000-a000-00000000c0de')::int c`, [DC, LOT]);
+check('sandbox seed: re-running adds nothing (1 fund, 1 ownership, 1 portal user, 1 contact)', cnt.f === 1 && cnt.o === 1 && cnt.u === 1 && cnt.c === 1, JSON.stringify(cnt));
+check('sandbox seed: the other Drama Creek lot is untouched', (await one(`SELECT payment_sandbox, trusted_account_number FROM properties WHERE id=$1`, [LOT2])).trusted_account_number === null);
+await expectErr('sandbox: a second sandbox lot (even in the demo) is refused', () => db.query(`UPDATE properties SET payment_sandbox=true WHERE id=$1`, [LOT2]), /uq_properties_one_payment_sandbox|duplicate/);
+await expectErr('sandbox: the sandbox lot cannot be moved into a real community', () => db.query(`UPDATE properties SET community_id=$1 WHERE id=$2`, [C, LOT]), /demo community/);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;
