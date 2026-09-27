@@ -107,7 +107,15 @@ VALUES ('${B0}', '${C}', '${P}', '${S}', '2026-07-01', 'Q3 assessment', 'charge'
        ('${B0}', '${C}', '${P}', '${S}', '2026-06-01', 'Prior balance', 'charge', 'prior_balance', 5000);
 INSERT INTO assessment_autopay (property_id, status) VALUES ('${P}', 'active');
 `);
+const wBefore = await one(`SELECT (SELECT count(*) FROM homeowner_transactions)::int ht, (SELECT count(*) FROM payments)::int pay, (SELECT count(*) FROM journal_entries)::int je,
+  (SELECT string_agg(status, ',') FROM assessment_autopay) autopay, (SELECT count(*) FROM transaction_upload_batches)::int batches`);
 await db.exec(m469); await db.exec(m469);
+const wAfter = await one(`SELECT (SELECT count(*) FROM homeowner_transactions)::int ht, (SELECT count(*) FROM payments)::int pay, (SELECT count(*) FROM journal_entries)::int je,
+  (SELECT string_agg(status, ',') FROM assessment_autopay) autopay, (SELECT count(*) FROM transaction_upload_batches)::int batches`);
+check('469 writes no payment, ledger row, batch, journal entry or autopay change', JSON.stringify(wBefore) === JSON.stringify(wAfter), JSON.stringify({ wBefore, wAfter }));
+check('469 self-test leaves no stripe_events row and no self-test role behind', (await one(`SELECT count(*)::int n FROM stripe_events`)).n === 0
+  && (await one(`SELECT count(*)::int n FROM community_account_roles WHERE updated_by <> 'migration 469'`)).n === 0);
+check('469 flags no sandbox lot', (await one(`SELECT count(*)::int n FROM properties WHERE payment_sandbox`)).n === 0);
 
 // ---- Account roles + 1090 ----
 check('COA seeded 1090 beside 1000 (once, even after re-run)', (await one(`SELECT count(*)::int n FROM chart_of_accounts WHERE account_number='1090'`)).n === 1);
