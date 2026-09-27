@@ -4,6 +4,53 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
+## 2026-09-27 (latest): Migration 469 landed on main as files only; NOT applied
+
+**Task.** Per the ChatGPT instruction in GitHub Issue #1 (Ed confirmed `MIGRATION_PLAN_SECRET` is set on Render): bring only the 469 SQL file and its checks file onto main, verify hashes, run local checks, push, do not apply.
+
+**Status.** Done. Waiting for Ed to review and apply 469 in the owner panel.
+
+**Commit.** `33019547` on `main` (file-only). Deployed: production `/version` reports `33019547`, booted 2026-09-27 17:25:27 UTC.
+
+**Exact files landed** (byte-for-byte from `feat/payments-safe-foundation`; nothing else):
+- `migrations/469_payments_safe_foundation.sql`
+- `migrations/checks/469_payments_safe_foundation.json`
+
+**Hash verification** (source branch blob, staged blob, and `origin/main` blob all identical):
+- SQL: `5d10f2b485080dd459c020e7cbcf02b97fc17ded38d05728959d9d2ff2653130`
+- Checks: `1d404af88a6d5cd9f6c6f92e67cd87f23ce463ef8cbfbdea076862f09ac429fe`
+
+**Checks / results** (all local; PGlite in-memory; no production writes):
+- `check_migration_checks`: 1 migration from 469 on has a valid checks file and runs as one transaction.
+- `check_migration_immutability`: pass (472 migrations unchanged; 27 pinned historical exceptions).
+- `check_constraint_values`: pass.
+- Tool rehearsal (`apply_one_rehearsal`): 57/57.
+- 469 end-to-end through main's current tool, with the real checks file: 13/13 (plan ready with all 16 preflights passing, applied, +6 accounts / +18 roles / stripe_events net 0, 14 protected tables unchanged, 8 verifications, recorded with the approved hash; drift blocks the plan).
+- 469 migration rehearsal: 56/56 migration assertions pass on main. It then stops at the Drama Creek sandbox-provisioning section because that needs `lib/payments/payment_sandbox_provision.js`, which is payment application code deliberately NOT on main (it passes 79/79 on the payments branch). The rehearsal test files were used temporarily and not committed.
+
+**Production changes.** Code deploy containing only the two new files. No database change. Read-only checks after deploy:
+- `schema_migrations` has 0 rows for 469.
+- `stripe_events`, `community_account_roles`, `migration_attempts`: absent.
+- `payments.payment_group_id`: absent. 1090 accounts: 0.
+- **469 is NOT applied.** No Stripe change.
+
+**Risks / open issues.**
+- `MIGRATION_PLAN_SECRET` is reported set but not yet proven; the Review step proves it (it refuses with "MIGRATION_PLAN_SECRET is not set" otherwise).
+- First real use of the owner panel. If the Review screen shows BLOCKED, do not work around it; send the reason.
+- Payment application code remains unmerged on `feat/payments-safe-foundation` (still carries the older tool merge; re-sync before merging).
+
+**Decisions needed from Ed.** Review 469 in the panel and decide whether to click Approve & Apply.
+
+**Exact next action for Ed.**
+1. Open trustEd (my.bedrocktxai.com), signed in as the owner.
+2. Go to **Documents**, then click **Migration status**.
+3. In the yellow banner, click **Review 469**.
+4. Confirm the screen shows: status **READY**; SHA-256 `5d10f2b485080dd459c020e7cbcf02b97fc17ded38d05728959d9d2ff2653130`; checks file `1d404af88a6d5cd9f6c6f92e67cd87f23ce463ef8cbfbdea076862f09ac429fe`; deployed commit `33019547...`; data rows `chart_of_accounts +6`, `community_account_roles +18`, `stripe_events 0`; all preflight checks green; the one-time tracker setup notice.
+5. If all of that matches, click **Approve & Apply** once, and wait for the result box (APPLIED or NOT APPLIED).
+6. Tell Claude the result. Claude then verifies read-only (tracker row, attempt log, 6 accounts, 18 roles) and updates this file.
+
+---
+
 ## 2026-09-27: GitHub Issue #1 check
 
 Claude saw the GitHub comment from ChatGPT.
