@@ -4,7 +4,65 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Stripe-hosted onboarding link opened for Ed; onboarding NOT yet completed
+## 2026-09-27 (latest): Trusted Pay terms + checkout disclosure built on a branch (migration 470 PROPOSED; NOT merged/deployed)
+
+**Task.** ChatGPT's "BUILD TRUSTED PAY TERMS + CHECKOUT DISCLOSURE" instruction (Issue #1, 23:33 UTC). The 23:22 "regenerate hosted onboarding link" instruction is still pending (see Open items).
+
+**Status.** Built and tested on `feat/trusted-pay-terms` at `da941ff7` (this handoff is the next commit). **Blocker: proposed migration 470 needs Ed's approval before it can be applied**, and it must be applied before this code merges (without the table, checkout fails closed with `terms_record_failed` and no Stripe session). Not merged, not deployed, no Stripe or production change.
+
+**Terms.** "Trusted Pay Payment Terms and Conditions", version **`2026-09-27.1`**, rendered sha256 **`e32f452f7b15c2d2656f3ab45ca070204494cf11448478ce6aeb5529048c58e0`** (with the default support contact).
+- Source: `templates/trusted-pay-terms.html`. Original wording, **"Draft for legal review before live-money launch."** No processor named; no Vantaca text.
+- 14 sections: acceptance; one-time authorization; ACH authorization; recurring/AutoPay framework (stated as **not currently available**); methods, limits and right to decline; Payment Processing Fee; returned or failed payments; errors and unauthorized payments; third-party processing; privacy; suspension and decline; amendments and versioning; limitation of liability (preserves non-waivable rights); Texas governing law, with venue reserved for counsel.
+- Served publicly at **`/pay/terms`**. Support contact is configurable via `PAY_SUPPORT_EMAIL` / `PAY_SUPPORT_PHONE` / `PAY_SUPPORT_ADDRESS`; defaults are `info@bedrocktx.com`, "the phone number shown in your homeowner portal" and the Sugar Land office. A contact change changes the hash; bump `TERMS_VERSION` whenever the wording changes.
+
+**Flow.**
+1. **Quote** (read-only): `POST /api/portal/pay/quote` returns, for ACH and card: Assessment/Payment Amount, **Payment Processing Fee**, Total Payment, and a 15-minute signed quote token. The token binds payer, lot, owner tenure, method, the exact amounts, and the terms version and hash. The fee policy is unchanged (card gross-up to cover 2.9% + 30c; ACH $0) and now lives only on the server; the browser's own fee math is removed.
+2. **Review** (shared `public/trusted-pay-review.js`, used by `portal.html` and `portal-balance.html`): the three lines per method, an **unchecked** box reading "I have reviewed the payment amount, Payment Processing Fee, and Trusted Pay Payment Terms and Conditions, and I authorize this payment.", with the terms linked. "Continue" stays disabled until the box is ticked.
+3. **Checkout**: `POST /api/portal/pay/checkout` requires `accept_terms: true` and the quote token.
+   - The server re-derives the amounts and refuses any material change (payer, lot, owner, method, amount, fee, total, terms version or hash, expiry) with a request to review again.
+   - It writes the payments rows, then **records the acceptance before any Stripe session**. If the record fails, there is no session and the rows are voided.
+   - The Stripe line is labeled "Payment Processing Fee", and the response returns only amount / fee / total.
+- **Pay link** `/pay/:token`: now a server-rendered review page (same lines, checkbox, terms link). `POST /pay/:token/confirm` enforces acceptance server-side; it's added to the public allowlist.
+- **Staff $1 test route**: now two-step (quote, then `quote_token` + `accept_terms`); the `accounting.html` button shows the review in a confirm dialog.
+
+**Internal accounting.** The fee remains its own payments line (payee = management company), and `payments.processor_fee_cents` (existing column) holds processor cost. Margin = fee line minus processor cost. None of this reaches any homeowner payload (tested). Populating `processor_fee_cents` from Stripe on settlement is a follow-up, not built here.
+
+**Proposed migration 470** (`migrations/470_payment_terms_acceptances.sql`, sha256 `83f46eca362d81424e4b94d0185b790b92c9a504ecc8d88d80ecd0402d95e5f9`; checks file `7d692cf1cb1b9919becf882ebb029895e5f880e843621f5d897fca2a95ba1c8d`).
+- One new table `payment_terms_acceptances` (association_record), append-only, one row per checkout (unique `payment_group_id`).
+- Columns: community, property, tenure, portal user, actor type/label, source, method, amount / fee / total (DB check: total = amount + fee), terms version + sha256, quote_issued_at, accepted_at.
+- The insert guard requires the checkout's payments rows to exist and match property, tenure, community, method, amount and fee exactly. Updates and deletes are blocked.
+- **No IP or user agent**: the server doesn't trust Render's proxy, so `req.ip` would be the proxy's address, and it isn't needed.
+- Service role SELECT/INSERT only. Creates no data. Expected schema delta: 39 added, 0 changed, 0 removed. Requires 468 and 469.
+- Why a migration: payments rows are updated by webhooks, so they can't hold an immutable record, and no existing table fits.
+
+**Tests** (local; mock Stripe; PGlite in-memory):
+- `test_payment_foundation` **55/55** (+10 terms tests):
+  - checkout cannot submit without acceptance (no rows, no session);
+  - the quote returns the exact fee and total per method before authorization;
+  - Stripe is charged exactly the reviewed amounts under "Payment Processing Fee";
+  - the acceptance records terms version + hash, exact amounts, method, payer and group, with no IP or UA;
+  - client-supplied amounts are ignored and a tampered quote is refused;
+  - no processor or markup fields or words in homeowner payloads (key whitelist plus a text scan);
+  - an acceptance is bound to method, payer, amount, terms and expiry;
+  - if the acceptance can't be recorded, there is no session and the rows are voided;
+  - test-mode containment refuses real homeowners at quote and checkout;
+  - the terms page is complete, versioned, has no placeholders, no "Stripe" or "Vantaca", and no em-dashes.
+- `470_terms_rehearsal` **17/17**: idempotent apply; exact-match guard (wrong amount, fee, method, total, missing rows, duplicate checkout, missing portal user, bad hash all refused); immutability; and an end-to-end apply through `apply_one` with the real checks file (applied, verified, no rows written, 39/0/0 objects).
+- Unchanged and passing: 469 rehearsal 79/79, 469 end-to-end 13/13, tool rehearsal 57/57, dedup, ledger path, ownership transfer, gl_concept, operator actions, early prepay, checkout preview gate, bedrock_pay, autopay; migration-checks, immutability, constraint and pagination checks. `check_requires_tracked`: only the pre-existing `lib/presentations` item.
+- Sabotage: removing the acceptance requirement, or the amount binding, each fails the new tests.
+- The rendered terms page was viewed locally.
+
+**Open items / blockers.**
+1. **Approve migration 470** (then: file-only commit to main, and Ed applies it via Documents > Migration status > Review 470 > Approve & Apply). Only after that, merge this branch.
+2. **Legal review** of the terms before any live money, especially sections 3, 6, 7, 13 and 14, and the refund language.
+3. Confirm the support phone number to show (currently "the phone number shown in your homeowner portal").
+4. **Pending from 23:22:** regenerate the Drama Creek Stripe-hosted onboarding link when Ed is ready to fill in the form (the earlier link expired unused; the account is still `acct_1UKR8…`, status restricted).
+
+**Recommended next action.** ChatGPT reviews `da941ff7`. Ed decides on 470. No merge, deploy or migration until approved.
+
+---
+
+## 2026-09-27: Stripe-hosted onboarding link opened for Ed; onboarding NOT yet completed
 
 **Task.** ChatGPT's "ED APPROVED STRIPE-HOSTED ONBOARDING" instruction (Issue #1, 23:09 UTC).
 
