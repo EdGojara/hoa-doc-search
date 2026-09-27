@@ -409,13 +409,20 @@ router.post('/create-checkout-session', express.json({ limit: '128kb' }), async 
 // signed pay link, test route). Owner, tenure, amount and identity are decided
 // server-side in lib/payments/assessment_checkout.js; nothing from the browser
 // is trusted beyond the payment-method choice.
-async function createAssessmentCheckout({ property_id, payment_method, initiated_by, success_url, cancel_url, payer, portal_user_id = null, test_amount_cents = null }) {
+// Checkout requires an explicit acceptance of the current Trusted Pay terms plus
+// the signed quote the payer reviewed (lib/payments/assessment_checkout.js).
+async function createAssessmentCheckout({ property_id, payment_method, initiated_by, success_url, cancel_url, payer, portal_user_id = null, test_amount_cents = null, acceptance = null }) {
   const core = require('../lib/payments/assessment_checkout');
   return core.createAssessmentCheckout({ supabase, stripeLib }, {
     propertyId: property_id, paymentMethod: payment_method, initiatedBy: initiated_by,
     successUrl: success_url, cancelUrl: cancel_url, payer: payer || {}, portalUserId: portal_user_id,
-    testAmountCents: test_amount_cents,
+    testAmountCents: test_amount_cents, acceptance,
   });
+}
+// Read-only review quote (Amount, Payment Processing Fee, Total) for both methods.
+async function quoteAssessmentPayment({ property_id, actor, initiated_by, test_amount_cents = null }) {
+  const core = require('../lib/payments/assessment_checkout');
+  return core.quoteAssessmentPayment({ supabase, stripeLib }, { propertyId: property_id, actor, initiatedBy: initiated_by, testAmountCents: test_amount_cents });
 }
 
 // Retired 2026-09-27: it trusted community/property/amount from the request body.
@@ -425,22 +432,32 @@ router.post('/assessment/create-checkout', (req, res) => {
   res.status(410).json({ error: 'endpoint_retired', detail: 'Homeowners pay from the portal; staff tests use /api/payments/test/assessment-checkout.' });
 });
 
-// POST /api/payments/test/assessment-checkout  { property_id, payment_method }  (staff, TEST MODE ONLY)
-// A $1.00 sandbox checkout against a chosen lot. Refuses unless the server's
-// Stripe key is a test key, so it can never become a real charge.
+// POST /api/payments/test/assessment-checkout  (staff, TEST MODE ONLY)
+// A $1.00 sandbox checkout, with the same review + terms step homeowners get:
+//   1. { property_id }                                    -> quote (Amount, Payment Processing Fee, Total) + quote tokens
+//   2. { property_id, payment_method, quote_token, accept_terms: true } -> checkout
+// Refuses unless the server's Stripe key is a test key, so it can never become a
+// real charge (and the mode gate limits it to the payment-sandbox lot).
 router.post('/test/assessment-checkout', express.json({ limit: '8kb' }), async (req, res) => {
   const { requireTestMode } = require('../lib/payments/stripe_mode');
   if (!requireTestMode(res)) return;
   try {
     const b = req.body || {};
     if (!b.property_id) return res.status(400).json({ error: 'property_id_required' });
+    const actor = 'staff:test-route';
+    if (!b.quote_token) {
+      const q = await quoteAssessmentPayment({ property_id: String(b.property_id), actor, initiated_by: 'staff_test', test_amount_cents: 100 });
+      if (!q.ok) return res.status(q.status || 500).json({ error: q.error, hint: q.hint });
+      return res.json({ ok: true, step: 'review', ...q });
+    }
     const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const r = await createAssessmentCheckout({
       property_id: String(b.property_id), payment_method: b.payment_method, initiated_by: 'staff_test',
       success_url: `${origin}/accounting?test_payment=success`, cancel_url: `${origin}/accounting?test_payment=cancelled`,
       test_amount_cents: 100,
+      acceptance: { accepted: b.accept_terms === true, quoteToken: String(b.quote_token), actor, actorLabel: 'staff test route', source: 'staff_test' },
     });
-    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, detail: r.detail });
     res.json(r);
   } catch (err) {
     console.error('[payments] test checkout failed:', err.message);
@@ -1187,4 +1204,4 @@ function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-module.exports = { router, createAssessmentCheckout };
+module.exports = { router, createAssessmentCheckout, quoteAssessmentPayment };

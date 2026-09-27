@@ -1,0 +1,138 @@
+{
+  "migration": "470_payment_terms_acceptances.sql",
+  "summary": "Trusted Pay terms acceptance record: one append-only row per checkout capturing the payer, the exact Assessment/Payment Amount, Payment Processing Fee and Total shown, and the terms version and hash. Creates no data.",
+  "requires": [
+    "468_schema_migrations_service_role_access.sql",
+    "469_payments_safe_foundation.sql"
+  ],
+  "preflight": [
+    {
+      "name": "acceptance table does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'payment_terms_acceptances'",
+      "expect": 0
+    },
+    {
+      "name": "guard function does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = 'payment_terms_acceptances_guard'",
+      "expect": 0
+    },
+    {
+      "name": "469 payment identity columns present (payment_group_id, payment_method_type, tenure_id)",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'payments' AND column_name IN ('payment_group_id', 'payment_method_type', 'tenure_id', 'property_id')",
+      "expect": 4
+    }
+  ],
+  "expected_changes": [
+    "Creates table payment_terms_acceptances (empty): one append-only row per checkout, recording payer, property, owner tenure, payment method, the exact amount, Payment Processing Fee and total shown, and the Trusted Pay terms version and hash.",
+    "Adds an insert guard that requires the checkout payments rows to exist and match exactly, and blocks any update or delete.",
+    "Service role may SELECT and INSERT only. No existing row is changed; no data is created."
+  ],
+  "objects": {
+    "added": [
+      "column:payment_terms_acceptances.accepted_at",
+      "column:payment_terms_acceptances.actor_label",
+      "column:payment_terms_acceptances.actor_type",
+      "column:payment_terms_acceptances.amount_cents",
+      "column:payment_terms_acceptances.community_id",
+      "column:payment_terms_acceptances.fee_cents",
+      "column:payment_terms_acceptances.id",
+      "column:payment_terms_acceptances.payment_group_id",
+      "column:payment_terms_acceptances.payment_method",
+      "column:payment_terms_acceptances.portal_user_id",
+      "column:payment_terms_acceptances.property_id",
+      "column:payment_terms_acceptances.quote_issued_at",
+      "column:payment_terms_acceptances.source",
+      "column:payment_terms_acceptances.tenure_id",
+      "column:payment_terms_acceptances.terms_sha256",
+      "column:payment_terms_acceptances.terms_version",
+      "column:payment_terms_acceptances.total_cents",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_actor_type_check",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_amount_cents_check",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_community_id_fkey",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_fee_cents_check",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_payment_group_id_key",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_payment_method_check",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_pkey",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_portal_actor_check",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_portal_user_id_fkey",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_property_id_fkey",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_source_check",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_tenure_id_fkey",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_terms_sha256_check",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_terms_version_check",
+      "constraint:payment_terms_acceptances.payment_terms_acceptances_total_check",
+      "function:payment_terms_acceptances_guard",
+      "index:idx_payment_terms_acceptances_property",
+      "index:idx_payment_terms_acceptances_tenure",
+      "index:payment_terms_acceptances_payment_group_id_key",
+      "index:payment_terms_acceptances_pkey",
+      "table:payment_terms_acceptances",
+      "trigger:payment_terms_acceptances.trg_payment_terms_acceptances_guard"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {},
+  "protected": [
+    {
+      "table": "payments",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_txn_applications",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "assessment_autopay",
+      "order_by": "id"
+    },
+    {
+      "table": "portal_users",
+      "order_by": "id"
+    },
+    {
+      "table": "chart_of_accounts",
+      "order_by": "id"
+    },
+    {
+      "table": "stripe_events",
+      "order_by": "event_id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "acceptance table exists and is empty",
+      "sql": "SELECT count(*)::int FROM payment_terms_acceptances",
+      "expect": 0
+    },
+    {
+      "name": "insert/update/delete guard trigger present",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_payment_terms_acceptances_guard' AND NOT tgisinternal",
+      "expect": 1
+    },
+    {
+      "name": "total = amount + fee enforced",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'payment_terms_acceptances_total_check'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [
+    {
+      "table": "payment_terms_acceptances",
+      "expect_count": 0
+    }
+  ],
+  "reload_schema": true
+}

@@ -469,7 +469,8 @@ const _STAFF_GATE_PUBLIC = [
   /^\/apply\/[^/]+$/,                       // /apply/:slug — ARC application form
   /^\/apply\/status\/[^/]+$/,               // /apply/status/:reference — ARC status lookup
   /^\/c\/[^/]+$/,                           // /c/:slug — community landing page
-  /^\/pay\/[^/]+$/,                          // /pay/:token — emailable homeowner payment link (token-signed; charges nothing until Stripe is live)
+  /^\/pay\/[^/]+$/,                          // /pay/:token — emailable homeowner payment link (token-signed; charges nothing until Stripe is live); also /pay/terms
+  /^\/pay\/[^/]+\/confirm$/,                 // POST /pay/:token/confirm — submits the reviewed payment (terms acceptance enforced server-side)
   /^\/fob\/[^/]+$/,                         // /fob/:slug — pool/key-fob request
   /^\/event\/[^/]+$/,                       // /event/:slug — public event page
   /^\/event\/[^/]+\/checkin$/,              // /event/:slug/checkin — event checkin (6-digit code gated on the page itself)
@@ -506,6 +507,7 @@ const _STAFF_GATE_PUBLIC = [
   // be opened deliberately, not inherit the exemption.
   /^\/card\/[^/]+$/,                        // /card/:slug — the card page itself
   /^\/brand\.css$/,                         // card page stylesheet (tokens only, no data)
+  /^\/trusted-pay-review\.js$/,              // homeowner portal payment review modal (UI only, no data)
   /^\/api\/bd\/people$/,                    // roster for the BD tab
   /^\/api\/bd\/[a-z0-9_-]+$/,               // one card, public-safe JSON
   /^\/api\/bd\/[a-z0-9_-]+\/card\.vcf$/,    // the vCard download
@@ -1459,39 +1461,110 @@ function _payPage(title, body) {
 app.get('/pay/thanks', (req, res) => {
   res.send(_payPage('Thank you', `<h1>Thank you</h1><p>Your payment is processing. You will receive a receipt by email. It may take a few minutes to reflect on your account.</p>`));
 });
+// Trusted Pay Payment Terms and Conditions (rendered from templates/, versioned + hashed).
+app.get('/pay/terms', (req, res) => {
+  try {
+    const { getTerms } = require('./lib/payments/pay_terms');
+    res.set('Cache-Control', 'no-store').type('html').send(getTerms().html);
+  } catch (err) {
+    console.error('[pay-terms] render failed:', err.message);
+    res.status(500).send(_payPage('Payment terms', `<h1>Payment terms are temporarily unavailable</h1><p>Please try again shortly.</p>`));
+  }
+});
+
+// Emailable pay link. Resolves the owner the link was issued to, then shows a
+// REVIEW page (exact Amount, Payment Processing Fee, Total per method, the
+// terms, an unchecked acceptance box). Nothing is charged until the payer
+// accepts and submits; POST /pay/:token/confirm enforces that server-side.
+async function _payLinkContext(token, res) {
+  const { verifyPaymentToken } = require('./lib/payments/payment_link');
+  const v = verifyPaymentToken(token);
+  if (!v.ok && v.reason === 'not_configured') {
+    // Server config problem, not the homeowner's link: say so, never "invalid link".
+    res.status(503).send(_payPage('Online payment unavailable', `<h1>Online payment is temporarily unavailable</h1><p>Your link is fine. Please try again later, or contact management to pay another way.</p>`));
+    return null;
+  }
+  if (!v.ok) { res.status(400).send(_payPage('Payment link', `<h1>This payment link isn't valid</h1><p>The link may have expired or been mistyped. Please contact management for a current link.</p>`)); return null; }
+  // The link names the owner it was issued to. If the lot has changed hands (or the
+  // link predates owner-bound links), refuse rather than let it pay someone else's bill.
+  const { data: cur, error: curErr } = await supabase.from('ownership_tenures')
+    .select('id').eq('property_id', v.property_id).eq('kind', 'owner').is('end_date', null).limit(2);
+  if (curErr) throw curErr;
+  if (!cur || cur.length !== 1 || cur[0].id !== v.tenure_id) {
+    res.status(410).send(_payPage('Payment link', `<h1>This payment link is no longer valid</h1><p>The account it was issued for has changed. Please sign in to the homeowner portal or contact management for a current link.</p>`));
+    return null;
+  }
+  return { v, actor: `link:${v.tenure_id}` };
+}
+function _payRefusalPage(res, r) {
+  if (r.error === 'nothing_due') return res.send(_payPage('Nothing due', `<h1>Your balance is $0</h1><p>There's nothing due right now. Thank you.</p>`));
+  if (r.error === 'payment_not_configured' || r.error === 'community_stripe_not_onboarded' || r.error === 'test_mode_sandbox_only') {
+    return res.send(_payPage('Online payment coming soon', `<h1>Online payment isn't available yet</h1><p>This community hasn't finished setting up online payments. Please contact management to pay by check or ACH in the meantime.</p>`));
+  }
+  return res.status(r.status || 500).send(_payPage('Payment link', `<h1>We couldn't start your payment</h1><p>Please try again shortly, or contact management.</p>`));
+}
+const _usd = (c) => '$' + (Number(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const _esc = (x) => String(x == null ? '' : x).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 app.get('/pay/:token', async (req, res) => {
   try {
-    const { verifyPaymentToken } = require('./lib/payments/payment_link');
-    const v = verifyPaymentToken(req.params.token);
-    if (!v.ok && v.reason === 'not_configured') {
-      // Server config problem, not the homeowner's link: say so, never "invalid link".
-      return res.status(503).send(_payPage('Online payment unavailable', `<h1>Online payment is temporarily unavailable</h1><p>Your link is fine. Please try again later, or contact management to pay another way.</p>`));
-    }
-    if (!v.ok) return res.status(400).send(_payPage('Payment link', `<h1>This payment link isn't valid</h1><p>The link may have expired or been mistyped. Please contact management for a current link.</p>`));
-    // The link names the owner it was issued to. If the lot has changed hands (or the
-    // link predates owner-bound links), refuse rather than let it pay someone else's bill.
-    const { data: cur, error: curErr } = await supabase.from('ownership_tenures')
-      .select('id').eq('property_id', v.property_id).eq('kind', 'owner').is('end_date', null).limit(2);
-    if (curErr) throw curErr;
-    if (!cur || cur.length !== 1 || cur[0].id !== v.tenure_id) {
-      return res.status(410).send(_payPage('Payment link', `<h1>This payment link is no longer valid</h1><p>The account it was issued for has changed. Please sign in to the homeowner portal or contact management for a current link.</p>`));
+    const ctx = await _payLinkContext(req.params.token, res);
+    if (!ctx) return;
+    const { quoteAssessmentPayment } = require('./api/payments');
+    const q = await quoteAssessmentPayment({ property_id: ctx.v.property_id, actor: ctx.actor, initiated_by: 'payment_link' });
+    if (!q.ok) return _payRefusalPage(res, q);
+    const label = { us_bank_account: 'Bank transfer (ACH)', card: 'Credit or debit card' };
+    const opts = q.options.map((o, i) => `
+      <label style="display:block;text-align:left;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin:10px 0;cursor:pointer;">
+        <input type="radio" name="method" value="${o.method === 'card' ? 'card' : 'ach'}" ${i === 0 ? 'checked' : ''}> <b>${label[o.method]}</b>
+        <table style="width:100%;margin-top:6px;font-size:13.5px;color:#334155;">
+          <tr><td>Assessment/Payment Amount</td><td style="text-align:right;">${_usd(o.amount_cents)}</td></tr>
+          <tr><td>Payment Processing Fee</td><td style="text-align:right;">${_usd(o.payment_processing_fee_cents)}</td></tr>
+          <tr><td><b>Total Payment</b></td><td style="text-align:right;"><b>${_usd(o.total_cents)}</b></td></tr>
+        </table>
+        <input type="hidden" name="quote_${o.method === 'card' ? 'card' : 'ach'}" value="${_esc(o.quote_token)}">
+      </label>`).join('');
+    res.set('Cache-Control', 'no-store').send(_payPage('Review your payment', `
+      <h1>Review your payment</h1>
+      <p>${_esc(q.property_label || '')}${q.community_name ? ' &middot; ' + _esc(q.community_name) : ''}</p>
+      <form method="POST" action="/pay/${encodeURIComponent(req.params.token)}/confirm">
+        ${opts}
+        <label style="display:flex;gap:8px;align-items:flex-start;text-align:left;font-size:13.5px;color:#1e293b;margin:14px 0;">
+          <input type="checkbox" name="accept_terms" value="yes" id="acc" style="margin-top:3px;" onchange="document.getElementById('go').disabled=!this.checked">
+          <span>I have reviewed the payment amount, Payment Processing Fee, and <a href="/pay/terms" target="_blank" rel="noopener">Trusted Pay Payment Terms and Conditions</a>, and I authorize this payment.</span>
+        </label>
+        <button id="go" type="submit" disabled style="width:100%;padding:12px;border:none;border-radius:9px;background:#0B1D34;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Continue to secure payment</button>
+        <p style="font-size:12px;color:#64748b;margin-top:10px;">You can cancel any time before submitting. Nothing is charged until you continue.</p>
+      </form>`));
+  } catch (err) {
+    console.error('[pay-link] review failed:', err.message);
+    res.status(500).send(_payPage('Payment link', `<h1>Something went wrong</h1><p>Please try again shortly, or contact management.</p>`));
+  }
+});
+app.post('/pay/:token/confirm', express.urlencoded({ extended: false, limit: '8kb' }), async (req, res) => {
+  try {
+    const ctx = await _payLinkContext(req.params.token, res);
+    if (!ctx) return;
+    const b = req.body || {};
+    const method = b.method === 'card' ? 'card' : 'ach';
+    if (b.accept_terms !== 'yes') {
+      return res.status(400).send(_payPage('Review your payment', `<h1>Please accept the payment terms</h1><p>To continue, check the box confirming you reviewed the payment amount, Payment Processing Fee and the <a href="/pay/terms" target="_blank" rel="noopener">Trusted Pay Payment Terms and Conditions</a>.</p><p><a href="/pay/${encodeURIComponent(req.params.token)}">Back to review</a></p>`));
     }
     const base = (process.env.APP_BASE_URL || (req.protocol + '://' + req.get('host'))).replace(/\/+$/, '');
     const r = await createAssessmentCheckout({
-      property_id: v.property_id,
-      payment_method: (req.query.method === 'card' ? 'card' : 'ach'),
+      property_id: ctx.v.property_id,
+      payment_method: method,
       success_url: base + '/pay/thanks',
       cancel_url: base + '/pay/' + encodeURIComponent(req.params.token),
       initiated_by: 'payment_link',
+      acceptance: { accepted: true, quoteToken: String((method === 'card' ? b.quote_card : b.quote_ach) || ''), actor: ctx.actor, source: 'pay_link' },
     });
-    if (r.ok && r.checkout_url) return res.redirect(302, r.checkout_url);
-    if (r.error === 'nothing_due') return res.send(_payPage('Nothing due', `<h1>Your balance is $0</h1><p>There's nothing due right now. Thank you.</p>`));
-    if (r.error === 'payment_not_configured' || r.error === 'community_stripe_not_onboarded' || r.error === 'test_mode_sandbox_only') {
-      return res.send(_payPage('Online payment coming soon', `<h1>Online payment isn't available yet</h1><p>This community hasn't finished setting up online payments. Please contact management to pay by check or ACH in the meantime.</p>`));
+    if (r.ok && r.checkout_url) return res.redirect(303, r.checkout_url);
+    if (['quote_mismatch', 'terms_changed', 'quote_expired', 'quote_invalid', 'quote_missing'].includes(r.error)) {
+      return res.status(409).send(_payPage('Review your payment', `<h1>Please review your payment again</h1><p>Something changed since you reviewed it (or the review expired). Nothing was charged.</p><p><a href="/pay/${encodeURIComponent(req.params.token)}">Review again</a></p>`));
     }
-    return res.status(r.status || 500).send(_payPage('Payment link', `<h1>We couldn't start your payment</h1><p>Please try again shortly, or contact management.</p>`));
+    return _payRefusalPage(res, r);
   } catch (err) {
-    console.error('[pay-link] failed:', err.message);
+    console.error('[pay-link] confirm failed:', err.message);
     res.status(500).send(_payPage('Payment link', `<h1>Something went wrong</h1><p>Please try again shortly, or contact management.</p>`));
   }
 });

@@ -9,6 +9,7 @@
      wordmark/lockup/card components. Linked BEFORE the page's own :root so the
      portal's intentional overrides (--ink dark-on-light, --cream) still win. -->
 <link rel="stylesheet" href="/brand.css">
+<script src="/trusted-pay-review.js" defer></script>
 <style>
   /* =============================================================================
      Homeowner Portal — Bedrock Association Management
@@ -1016,113 +1017,19 @@ function fmtAsOf(bal) {
   return 'As of ' + fmt(bal.as_of);
 }
 
-// Pay-your-balance flow → Stripe Checkout. ACH (no fee) or card (+ fee). The
-// full assessment routes to the HOA's connected account; nothing is recorded
-// to the books until Stripe confirms the payment via webhook.
+// Pay-your-balance flow (Trusted Pay). The review screen, fee and total come
+// from the server (/api/portal/pay/quote); the homeowner must accept the Trusted
+// Pay Payment Terms and Conditions before checkout. Shared with the balance page:
+// public/trusted-pay-review.js. Nothing is recorded to the books until Stripe
+// confirms the payment via webhook. Automatic payments are not offered (paused).
 window.openPayModal = function () {
   const c = window._payCtx || {};
   if (!c.property_id || !(c.amount_cents > 0)) return;
   // Guard the ACTION, not just the button's visibility — a stale render or a
   // direct call must not open a modal the server will refuse.
   if (!c.payments_enabled) return;
-  const amt = c.amount_cents;
-  const cardFee = Math.max(0, Math.round((amt + 30) / (1 - 0.029)) - amt);
-  const usd = (cents) => '$' + (cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const modal = document.createElement('div');
-  modal.id = '_payModal';
-  modal.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:3000; display:flex; align-items:center; justify-content:center; padding:20px;';
-  modal.innerHTML = `<div style="background:#fff; border-radius:14px; max-width:440px; width:100%; padding:24px; box-shadow:0 16px 50px rgba(0,0,0,0.3);">
-    <h3 style="margin:0 0 4px; color:#0B1D34; font-size:19px;">Pay your balance</h3>
-    <p style="margin:0 0 4px; color:#475569; font-size:13.5px;">Amount due: <b>${usd(amt)}</b></p>
-    <p style="margin:0 0 16px; color:#64748b; font-size:12px;">${c.as_of_label || ''}${/through/.test(c.as_of_label || '') ? '. Anything posted since then is not included.' : ''}</p>
-    <label style="display:block; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:10px; cursor:pointer;">
-      <input type="radio" name="_payMethod" value="ach" checked> <b>Bank transfer (ACH)</b>
-      <div style="color:#15803d; font-size:12.5px; margin-left:22px;">No processing fee · ${usd(amt)}</div>
-    </label>
-    <label style="display:block; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:16px; cursor:pointer;">
-      <input type="radio" name="_payMethod" value="card"> <b>Credit / debit card</b>
-      <div style="color:#64748b; font-size:12.5px; margin-left:22px;">Includes a ${usd(cardFee)} card fee · ${usd(amt + cardFee)} total</div>
-    </label>
-
-    <!-- Autopay, offered at the moment somebody is already paying.
-         This is the highest-value thing a homeowner can switch on and the only
-         moment they are thinking about it. Buried on a settings screen it never
-         gets found; here it is one checkbox at the point of intent.
-         (Ed 2026-08-22, on Vantaca's recurring tab.) -->
-    <label id="_autoWrap" style="display:${c.autopay_available ? 'block' : 'none'}; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:12px; cursor:pointer; background:#f8fafc;">
-      <input type="checkbox" id="_autoOn"> <b>Also pay automatically from now on</b>
-      <div style="color:#64748b; font-size:12.5px; margin-left:22px; line-height:1.45;">
-        We take whatever is owed on the due date, and email you the exact amount
-        at least 10 days before. Cancel any time.
-      </div>
-    </label>
-    <div id="_autoCap" style="display:none; margin:-4px 0 16px 36px;">
-      <label style="font-size:12px; color:#475569;">Never take more than (optional)</label>
-      <input id="_autoMax" type="text" inputmode="decimal" placeholder="e.g. 1000"
-             style="display:block; margin-top:4px; width:150px; padding:7px 10px; border:1px solid #cbd5e1; border-radius:7px; font-size:14px;">
-      <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">If a balance is ever above this, we stop and ask instead of taking it.</div>
-    </div>
-
-    <div style="display:flex; gap:8px; justify-content:flex-end;">
-      <button id="_payCancel" style="padding:9px 16px; border:1px solid #cbd5e1; background:#fff; border-radius:8px; cursor:pointer; font-weight:600;">Cancel</button>
-      <button id="_payGo" style="padding:9px 18px; border:none; background:#0B1D34; color:#fff; font-weight:700; border-radius:8px; cursor:pointer;">Continue to payment</button>
-    </div>
-    <div id="_payErr" style="color:#b91c1c; font-size:12.5px; margin-top:10px;"></div>
-  </div>`;
-  document.body.appendChild(modal);
-  const close = () => modal.remove();
-  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-  modal.querySelector('#_payCancel').onclick = close;
-
-  // The cap only makes sense once autopay is on, and only for a variable
-  // amount — which is the only kind we offer.
-  const autoOn = modal.querySelector('#_autoOn');
-  if (autoOn) {
-    autoOn.onchange = () => {
-      modal.querySelector('#_autoCap').style.display = autoOn.checked ? 'block' : 'none';
-    };
-  }
-
-  modal.querySelector('#_payGo').onclick = async function () {
-    const method = modal.querySelector('input[name="_payMethod"]:checked').value;
-    const wantsAuto = !!(autoOn && autoOn.checked);
-    this.disabled = true; this.textContent = 'Redirecting…';
-    try {
-      // Autopay first, because it is a SETUP session — the homeowner authorises
-      // future debits and no money moves. Doing it after the payment would mean
-      // two Stripe redirects in a row and most people would abandon the second.
-      if (wantsAuto) {
-        const rawCap = (modal.querySelector('#_autoMax').value || '').replace(/[^0-9.]/g, '');
-        const capCents = rawCap ? Math.round(parseFloat(rawCap) * 100) : null;
-        const ar = await fetch('/api/portal/autopay/begin', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            method_kind: method === 'card' ? 'card' : 'us_bank_account',
-            max_amount_cents: capCents && capCents > 0 ? capCents : null,
-            amount_mode: 'full_balance',
-            success_url: location.origin + '/portal?autopay=1',
-            cancel_url: location.href,
-          }),
-        });
-        const aj = await ar.json();
-        if (!ar.ok || aj.error) throw new Error(aj.hint || aj.error || 'Could not set up automatic payments');
-        location.href = aj.setup_url;
-        return;
-      }
-      // The server decides the lot, owner and amount from your signed-in session;
-      // the browser only chooses bank transfer or card.
-      const r = await fetch('/api/portal/pay/checkout', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ payment_method: method, property_id: c.property_id }),
-      });
-      const j = await r.json();
-      if (!r.ok || j.error) throw new Error(j.hint || j.error || 'Could not start payment');
-      location.href = j.checkout_url;
-    } catch (e) {
-      modal.querySelector('#_payErr').textContent = e.message;
-      this.disabled = false; this.textContent = 'Continue to payment';
-    }
-  };
+  if (!window.TrustedPayReview) return;
+  window.TrustedPayReview.open({ propertyId: c.property_id, asOfLabel: c.as_of_label || '' });
 };
 
 function getQueryParams() {

@@ -4250,38 +4250,65 @@ router.get('/autopay', async (req, res) => {
 // The homeowner pays their OWN current balance. The lot comes from the portal
 // session's scope (property_id may only pick among the owner's own lots); the
 // owner tenure, identity and amount are all decided server-side. (Ed 2026-09-27.)
+// Shared by /pay/quote and /pay/checkout: signed-in homeowner/board member, own
+// lot only (lib/payments/homeowner_checkout.js), community taking payments.
+async function _authorizePortalPayment(req, res) {
+  const resolved = await resolveUserWithRole(req, res);
+  if (!resolved) return null;
+  const scoped = await resolveScopedProperty({ query: {} }, supabase, resolved.user);
+  const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkout');
+  const auth = authorizeHomeownerPayment({
+    user: resolved.user, mimic: resolved.mimic, scoped,
+    requestedPropertyId: (req.body && req.body.property_id) || null,
+  });
+  if (!auth.ok) { res.status(auth.status).json({ error: auth.error, detail: auth.detail }); return null; }
+  const { data: prop, error: pErr } = await supabase.from('properties').select('community_id').eq('id', auth.propertyId).maybeSingle();
+  if (pErr) throw pErr;
+  if (!prop) { res.status(404).json({ error: 'no_property' }); return null; }
+  const { canDo } = require('../lib/community/lifecycle');
+  const gate = await canDo('payments', prop.community_id);
+  if (!gate.allowed) { res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason }); return null; }
+  return { resolved, propertyId: auth.propertyId, actor: `portal:${resolved.user.id}` };
+}
+
+// POST /api/portal/pay/quote { property_id? } -> the review screen: exact Amount,
+// Payment Processing Fee and Total for each method, a signed quote token each,
+// and the current Trusted Pay terms version/link. Read-only.
+router.post('/pay/quote', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const a = await _authorizePortalPayment(req, res);
+    if (!a) return;
+    const { quoteAssessmentPayment } = require('./payments');
+    const q = await quoteAssessmentPayment({ property_id: a.propertyId, actor: a.actor, initiated_by: 'homeowner_portal' });
+    if (!q.ok) return res.status(q.status || 500).json({ error: q.error, hint: q.hint });
+    res.json({ ok: true, ...q });
+  } catch (err) {
+    console.error('[portal] pay quote failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/portal/pay/checkout { property_id?, payment_method, quote_token, accept_terms: true }
 router.post('/pay/checkout', express.json({ limit: '4kb' }), async (req, res) => {
   try {
-    const resolved = await resolveUserWithRole(req, res);
-    if (!resolved) return;
-    const scoped = await resolveScopedProperty({ query: {} }, supabase, resolved.user);
-    const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkout');
-    const auth = authorizeHomeownerPayment({
-      user: resolved.user, mimic: resolved.mimic, scoped,
-      requestedPropertyId: (req.body && req.body.property_id) || null,
-    });
-    if (!auth.ok) return res.status(auth.status).json({ error: auth.error, detail: auth.detail });
-
-    const { data: prop, error: pErr } = await supabase.from('properties').select('community_id').eq('id', auth.propertyId).maybeSingle();
-    if (pErr) throw pErr;
-    if (!prop) return res.status(404).json({ error: 'no_property' });
-    const { canDo } = require('../lib/community/lifecycle');
-    const gate = await canDo('payments', prop.community_id);
-    if (!gate.allowed) return res.status(409).json({ error: 'community_not_taking_payments', detail: gate.reason });
-
+    const a = await _authorizePortalPayment(req, res);
+    if (!a) return;
+    const { resolved } = a;
+    const b = req.body || {};
     const origin = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const { createAssessmentCheckout } = require('./payments');
     const r = await createAssessmentCheckout({
-      property_id: auth.propertyId,
-      payment_method: (req.body && req.body.payment_method) === 'card' ? 'card' : 'ach',
+      property_id: a.propertyId,
+      payment_method: b.payment_method === 'card' ? 'card' : 'ach',
       initiated_by: 'homeowner_portal',
       success_url: `${origin}/portal?paid=1`,
       cancel_url: `${origin}/portal`,
       payer: { email: resolved.user.email, name: resolved.user.full_name },
       portal_user_id: resolved.user.id,
+      acceptance: { accepted: b.accept_terms === true, quoteToken: b.quote_token ? String(b.quote_token) : '', actor: a.actor, source: 'portal' },
     });
-    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint });
-    res.json({ ok: true, checkout_url: r.checkout_url, amount_cents: r.amount_cents, convenience_fee_cents: r.convenience_fee_cents, method: r.method });
+    if (!r.ok) return res.status(r.status || 500).json({ error: r.error, hint: r.hint, detail: r.detail });
+    res.json({ ok: true, checkout_url: r.checkout_url, amount_cents: r.amount_cents, payment_processing_fee_cents: r.payment_processing_fee_cents, total_cents: r.total_cents, method: r.method });
   } catch (err) {
     console.error('[portal] pay checkout failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });

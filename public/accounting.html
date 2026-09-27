@@ -2741,8 +2741,18 @@
   window.opTestPay = async function(propertyId) {
     // Test-mode-only route: the server refuses unless Stripe is in test mode and
     // fixes the amount at $1.00. (Ed 2026-09-27.)
-    const body = { property_id:propertyId, payment_method:'card' };
-    const j = await fetch('/api/payments/test/assessment-checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then((r)=>r.json()).catch((e)=>({error:e.message}));
+    // Same review + Trusted Pay terms step as homeowners: quote first, then an
+    // explicit acceptance of the exact Amount, Payment Processing Fee and Total.
+    const post = (b) => fetch('/api/payments/test/assessment-checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)}).then((r)=>r.json()).catch((e)=>({error:e.message}));
+    const q = await post({ property_id:propertyId });
+    if (q.error) { alert('Couldn\'t start test payment: '+(q.hint||q.error)); return; }
+    const o = (q.options||[]).find((x)=>x.method==='card');
+    if (!o) { alert('No card quote returned.'); return; }
+    const d = (c) => '$'+(Number(c)/100).toFixed(2);
+    const ok = confirm('TEST payment review ('+(q.property_label||'')+')\n\nAssessment/Payment Amount: '+d(o.amount_cents)+'\nPayment Processing Fee: '+d(o.payment_processing_fee_cents)+'\nTotal Payment: '+d(o.total_cents)
+      +'\n\nI have reviewed the payment amount, Payment Processing Fee, and Trusted Pay Payment Terms and Conditions ('+location.origin+(q.terms&&q.terms.url||'/pay/terms')+'), and I authorize this payment.\n\nOK = accept and continue. Cancel = stop.');
+    if (!ok) return;
+    const j = await post({ property_id:propertyId, payment_method:'card', quote_token:o.quote_token, accept_terms:true });
     if (j.error) { alert('Couldn\'t start test payment: '+(j.hint||j.error)); return; }
     window.open(j.checkout_url, '_blank');
   };

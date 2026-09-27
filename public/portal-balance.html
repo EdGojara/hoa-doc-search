@@ -345,6 +345,7 @@
     color: var(--ink-soft);
   }
 </style>
+<script src="/trusted-pay-review.js" defer></script>
 </head>
 <body>
 
@@ -691,24 +692,11 @@ async function payOnline(btn) {
   const msg = document.getElementById('payMsg');
   const show = (t) => { if (msg) { msg.textContent = t; msg.style.display = 'block'; } };
   if (!cid || !pid) { show('Online payment isn’t available for this account yet. Please mail a check below.'); btn.style.display = 'none'; return; }
-  const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Starting secure checkout…';
-  try {
-    const origin = location.origin;
-    // Lot, owner and amount come from the signed-in session, not the page.
-    const r = await fetch('/api/portal/pay/checkout', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-      body: JSON.stringify({ payment_method: 'ach', property_id: pid }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (r.ok && j.checkout_url) { location.href = j.checkout_url; return; }
-    btn.style.display = 'none';
-    show(j.error === 'nothing_due'
-      ? 'Your balance is $0 — nothing to pay online.'
-      : 'Online payment isn’t available yet for your community. Please mail a check below.');
-  } catch (e) {
-    btn.disabled = false; btn.textContent = orig;
-    show('We couldn’t start checkout just now. Please try again, or mail a check below.');
-  }
+  // Trusted Pay review: exact Amount, Payment Processing Fee and Total from the
+  // server, plus acceptance of the payment terms, before any checkout
+  // (public/trusted-pay-review.js). Lot, owner and amount come from the session.
+  if (!window.TrustedPayReview) { show('We couldn’t start checkout just now. Please try again, or mail a check below.'); return; }
+  window.TrustedPayReview.open({ propertyId: pid });
 }
 
 function bucketHtml(label, value, agedFlag) {

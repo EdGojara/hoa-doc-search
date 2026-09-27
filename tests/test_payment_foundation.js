@@ -5,7 +5,11 @@
 const assert = require('assert');
 const { stripeMode, requireTestMode } = require('../lib/payments/stripe_mode');
 const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkout');
-const { createAssessmentCheckout, checkoutModeGate } = require('../lib/payments/assessment_checkout');
+// Quote tokens are keyed off the dedicated PAYMENT_LINK_SECRET.
+if (!process.env.PAYMENT_LINK_SECRET || process.env.PAYMENT_LINK_SECRET.length < 32) process.env.PAYMENT_LINK_SECRET = 'q'.repeat(48);
+const { createAssessmentCheckout, quoteAssessmentPayment, checkoutModeGate } = require('../lib/payments/assessment_checkout');
+const { paymentProcessingFee, signQuote, verifyQuote } = require('../lib/payments/pay_quote');
+const { getTerms } = require('../lib/payments/pay_terms');
 const { processWebhookEvent } = require('../lib/payments/payment_lifecycle');
 const { verifyPaymentToken, signPaymentToken } = require('../lib/payments/payment_link');
 const { sandboxException } = require('../lib/payments/payment_sandbox');
@@ -83,6 +87,16 @@ function fakeStripe() {
   };
 }
 const TEST_KEY = 'sk_test_x', LIVE_KEY = 'sk_live_x';
+// The real flow: quote (review) -> explicit acceptance of that quote -> checkout.
+// A refused quote returns the same refusal checkout would (nothing is written).
+async function payWithTerms(deps, opts) {
+  const actor = opts.actor || 'portal:u1';
+  const q = await quoteAssessmentPayment(deps, { propertyId: opts.propertyId, actor, testAmountCents: opts.testAmountCents == null ? null : opts.testAmountCents, initiatedBy: opts.initiatedBy });
+  if (!q.ok) return q;
+  const m = opts.paymentMethod === 'card' ? 'card' : 'us_bank_account';
+  const o = q.options.find((x) => x.method === m);
+  return createAssessmentCheckout(deps, { ...opts, acceptance: { accepted: true, quoteToken: o.quote_token, actor, source: 'portal' } });
+}
 const urls = { successUrl: 'https://app/portal?paid=1', cancelUrl: 'https://app/portal' };
 
 // ---------------------------------------------------------------- 1. homeowner cannot pay another property
@@ -104,7 +118,7 @@ t('staff view-as, managers and renters cannot start a homeowner payment', () => 
 // ---------------------------------------------------------------- 2. amount cannot be altered client-side
 t('amount is the owner tenure balance; a caller-supplied amount is ignored', async () => {
   const sb = world({ balance: 25000 }); const st = fakeStripe();
-  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: LIVE_KEY },
+  const r = await payWithTerms({ supabase: sb, stripeLib: st, key: LIVE_KEY },
     { propertyId: P1, paymentMethod: 'ach', initiatedBy: 'homeowner_portal', ...urls, amount_cents: 1, amountCents: 1 });
   assert.ok(r.ok, JSON.stringify(r));
   assert.strictEqual(r.amount_cents, 25000);
@@ -113,10 +127,10 @@ t('amount is the owner tenure balance; a caller-supplied amount is ignored', asy
   assert.strictEqual(st.sessions[0].fees[0].amount_cents, 25000);
 });
 t('a fixed test amount is allowed only while Stripe is in test mode', async () => {
-  const live = await createAssessmentCheckout({ supabase: world(), stripeLib: fakeStripe(), key: LIVE_KEY },
+  const live = await payWithTerms({ supabase: world(), stripeLib: fakeStripe(), key: LIVE_KEY },
     { propertyId: P1, paymentMethod: 'card', initiatedBy: 'staff_test', ...urls, testAmountCents: 100 });
   assert.strictEqual(live.error, 'test_amount_requires_test_mode');
-  const test = await createAssessmentCheckout({ supabase: world({ sandbox: true }), stripeLib: fakeStripe(), key: TEST_KEY },
+  const test = await payWithTerms({ supabase: world({ sandbox: true }), stripeLib: fakeStripe(), key: TEST_KEY },
     { propertyId: P1, paymentMethod: 'card', initiatedBy: 'staff_test', ...urls, testAmountCents: 100 });
   assert.ok(test.ok && test.amount_cents === 100, JSON.stringify(test));
 });
@@ -124,7 +138,7 @@ t('a fixed test amount is allowed only while Stripe is in test mode', async () =
 // ---------------------------------------------------------------- identity captured server-side
 t('checkout records tenure, property, Trusted #, contact and group, and sends them to Stripe', async () => {
   const sb = world(); const st = fakeStripe();
-  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: LIVE_KEY }, { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', ...urls });
+  const r = await payWithTerms({ supabase: sb, stripeLib: st, key: LIVE_KEY }, { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', ...urls });
   const rows = sb._db.payments;
   assert.strictEqual(rows.length, 2, 'assessment + card convenience fee');
   for (const p of rows) {
@@ -140,21 +154,21 @@ t('checkout records tenure, property, Trusted #, contact and group, and sends th
 });
 t('checkout refuses a lot with no current owner or no Trusted account number', async () => {
   const noOwner = world(); noOwner._db.ownership_tenures[0].end_date = '2026-09-01';
-  assert.strictEqual((await createAssessmentCheckout({ supabase: noOwner, stripeLib: fakeStripe(), key: LIVE_KEY }, { propertyId: P1, ...urls })).error, 'no_current_owner');
-  assert.strictEqual((await createAssessmentCheckout({ supabase: world({ trusted: null }), stripeLib: fakeStripe(), key: LIVE_KEY }, { propertyId: P1, ...urls })).error, 'no_trusted_account_number');
+  assert.strictEqual((await payWithTerms({ supabase: noOwner, stripeLib: fakeStripe(), key: LIVE_KEY }, { propertyId: P1, ...urls })).error, 'no_current_owner');
+  assert.strictEqual((await payWithTerms({ supabase: world({ trusted: null }), stripeLib: fakeStripe(), key: LIVE_KEY }, { propertyId: P1, ...urls })).error, 'no_trusted_account_number');
 });
 
 // ---------------------------------------------------------------- test-mode containment (mode gate)
 t('TEST key + real community: homeowner portal checkout refused, no payment rows, no Stripe session', async () => {
   const sb = world(); const st = fakeStripe();
-  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, paymentMethod: 'ach', initiatedBy: 'homeowner_portal', ...urls });
+  const r = await payWithTerms({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, paymentMethod: 'ach', initiatedBy: 'homeowner_portal', ...urls });
   assert.strictEqual(r.ok, false); assert.strictEqual(r.error, 'test_mode_sandbox_only'); assert.strictEqual(r.status, 403);
   assert.strictEqual(sb._db.payments.length, 0, 'no payment rows'); assert.strictEqual(st.sessions.length, 0, 'no Stripe session');
 });
 t('TEST key + real community: pay link and staff $1 test route are refused too', async () => {
   for (const [initiatedBy, extra] of [['payment_link', {}], ['staff_test', { testAmountCents: 100 }]]) {
     const sb = world(); const st = fakeStripe();
-    const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, paymentMethod: 'card', initiatedBy, ...urls, ...extra });
+    const r = await payWithTerms({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, paymentMethod: 'card', initiatedBy, ...urls, ...extra });
     assert.strictEqual(r.error, 'test_mode_sandbox_only', initiatedBy);
     assert.strictEqual(sb._db.payments.length + st.sessions.length, 0, `${initiatedBy}: nothing written, no session`);
   }
@@ -162,24 +176,24 @@ t('TEST key + real community: pay link and staff $1 test route are refused too',
 t('TEST key + the approved sandbox lot (demo community): portal and staff test route allowed', async () => {
   for (const [initiatedBy, extra] of [['homeowner_portal', {}], ['staff_test', { testAmountCents: 100 }]]) {
     const sb = world({ sandbox: true }); const st = fakeStripe();
-    const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, paymentMethod: 'card', initiatedBy, ...urls, ...extra });
+    const r = await payWithTerms({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, paymentMethod: 'card', initiatedBy, ...urls, ...extra });
     assert.ok(r.ok, `${initiatedBy}: ${JSON.stringify(r)}`); assert.strictEqual(st.sessions.length, 1); assert.ok(sb._db.payments.length >= 1);
   }
 });
 t('TEST key: a sandbox-flagged lot outside a demo community is still refused', async () => {
   const sb = world({ sandbox: true, demo: false }); const st = fakeStripe();
-  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, ...urls });
+  const r = await payWithTerms({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, ...urls });
   assert.strictEqual(r.error, 'test_mode_sandbox_only'); assert.strictEqual(st.sessions.length, 0);
 });
 t('LIVE key + properly enabled real community: allowed by the mode gate (mock Stripe)', async () => {
   const sb = world(); const st = fakeStripe();
-  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: LIVE_KEY }, { propertyId: P1, paymentMethod: 'ach', initiatedBy: 'homeowner_portal', ...urls });
+  const r = await payWithTerms({ supabase: sb, stripeLib: st, key: LIVE_KEY }, { propertyId: P1, paymentMethod: 'ach', initiatedBy: 'homeowner_portal', ...urls });
   assert.ok(r.ok, JSON.stringify(r)); assert.strictEqual(st.sessions.length, 1);
   assert.ok(sb._db.payments.every((p) => p.livemode === true), 'rows record livemode');
 });
 t('LIVE key + the sandbox lot / a demo community: refused, nothing written', async () => {
   const sb = world({ sandbox: true }); const st = fakeStripe();
-  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: LIVE_KEY }, { propertyId: P1, ...urls });
+  const r = await payWithTerms({ supabase: sb, stripeLib: st, key: LIVE_KEY }, { propertyId: P1, ...urls });
   assert.strictEqual(r.error, 'sandbox_not_payable_live'); assert.strictEqual(sb._db.payments.length + st.sessions.length, 0);
 });
 t('mode gate: unconfigured key never opens a session', () => {
@@ -303,7 +317,7 @@ t('ACH failure never leaves a credit, and a late "paid" goes to review instead o
 
 // ---------------------------------------------------------------- 3. seller cannot receive buyer payment after transfer
 t('after a transfer, a payment credits the tenure captured at checkout, never whoever owns the lot now', async () => {
-  const sb = world({ tenureId: BUYER }); const r = await createAssessmentCheckout({ supabase: sb, stripeLib: fakeStripe(), key: LIVE_KEY }, { propertyId: P1, ...urls });
+  const sb = world({ tenureId: BUYER }); const r = await payWithTerms({ supabase: sb, stripeLib: fakeStripe(), key: LIVE_KEY }, { propertyId: P1, ...urls });
   assert.strictEqual(sb._db.payments[0].tenure_id, BUYER, 'a checkout after the sale belongs to the buyer');
   const st = fakeStore({ tenureId: SELLER }); // a checkout the SELLER started before the sale
   await run(st, ev('evt_10', 'checkout.session.completed', sess('unpaid')));
@@ -532,6 +546,120 @@ t('webhook: unsigned, malformed, stale or tampered deliveries are refused', () =
   // Add `account` to a genuine platform delivery: it now claims connect and fails the connect secret.
   const added = Buffer.from(JSON.stringify({ ...JSON.parse(platformEvt), account: 'acct_evil' }));
   assert.strictEqual(verifyStripeWebhook(added, signStripe(platformEvt, PLATFORM_SECRET), both).ok, false);
+});
+
+// ---------------------------------------------------------------- Trusted Pay terms + checkout disclosure
+const liveDeps = (sb, st) => ({ supabase: sb, stripeLib: st, key: LIVE_KEY });
+const quoteOf = async (sb, method = 'card', actor = 'portal:u1') => {
+  const q = await quoteAssessmentPayment(liveDeps(sb, fakeStripe()), { propertyId: P1, actor, initiatedBy: 'homeowner_portal' });
+  return { q, o: q.options && q.options.find((x) => x.method === method) };
+};
+const accept = (o, extra = {}) => ({ accepted: true, quoteToken: o.quote_token, actor: 'portal:u1', source: 'portal', ...extra });
+t('terms: checkout cannot submit without an explicit acceptance (no rows, no Stripe session)', async () => {
+  for (const acceptance of [null, { accepted: false }, { quoteToken: 'x' }, { accepted: 'yes' }]) {
+    const sb = world(); const st = fakeStripe();
+    const r = await createAssessmentCheckout(liveDeps(sb, st), { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', portalUserId: 'u1', ...urls, acceptance });
+    assert.strictEqual(r.error, 'terms_not_accepted', JSON.stringify(acceptance));
+    assert.strictEqual(sb._db.payments.length + st.sessions.length, 0);
+  }
+});
+t('terms: the quote returns the exact Amount, Payment Processing Fee and Total for each method, before authorization', async () => {
+  const { q } = await quoteOf(world({ balance: 25000 }));
+  assert.ok(q.ok, JSON.stringify(q));
+  const card = q.options.find((o) => o.method === 'card'), ach = q.options.find((o) => o.method === 'us_bank_account');
+  assert.deepStrictEqual([card.amount_cents, card.payment_processing_fee_cents, card.total_cents], [25000, paymentProcessingFee('card', 25000), 25000 + paymentProcessingFee('card', 25000)]);
+  assert.deepStrictEqual([ach.amount_cents, ach.payment_processing_fee_cents, ach.total_cents], [25000, 0, 25000]);
+  assert.strictEqual(card.fee_label, 'Payment Processing Fee');
+  assert.strictEqual(q.terms.version, getTerms().version); assert.strictEqual(q.terms.url, '/pay/terms');
+});
+t('terms: Stripe is charged exactly the reviewed amounts, labeled "Payment Processing Fee"', async () => {
+  const sb = world({ balance: 25000 }); const st = fakeStripe(); const { o } = await quoteOf(sb);
+  const r = await createAssessmentCheckout(liveDeps(sb, st), { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', portalUserId: 'u1', ...urls, acceptance: accept(o) });
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.deepStrictEqual(st.sessions[0].fees.map((f) => [f.label.startsWith('Assessment') ? 'assessment' : f.label, f.amount_cents]), [['assessment', o.amount_cents], ['Payment Processing Fee', o.payment_processing_fee_cents]]);
+  assert.deepStrictEqual([r.amount_cents, r.payment_processing_fee_cents, r.total_cents], [o.amount_cents, o.payment_processing_fee_cents, o.total_cents]);
+  assert.strictEqual(st.sessions[0].extraMetadata.terms_version, getTerms().version);
+});
+t('terms: acceptance is recorded with terms version + hash, exact displayed amounts, method, payer and checkout group', async () => {
+  const sb = world({ balance: 25000 }); const st = fakeStripe(); const { o } = await quoteOf(sb);
+  const r = await createAssessmentCheckout(liveDeps(sb, st), { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', portalUserId: 'u1', ...urls, acceptance: accept(o) });
+  const acc = sb._db.payment_terms_acceptances || [];
+  assert.strictEqual(acc.length, 1);
+  const a = acc[0], terms = getTerms();
+  assert.strictEqual(a.payment_group_id, r.payment_group_id); assert.strictEqual(a.property_id, P1); assert.strictEqual(a.tenure_id, SELLER);
+  assert.strictEqual(a.portal_user_id, 'u1'); assert.strictEqual(a.actor_type, 'homeowner'); assert.strictEqual(a.source, 'portal'); assert.strictEqual(a.payment_method, 'card');
+  assert.deepStrictEqual([a.amount_cents, a.fee_cents, a.total_cents], [o.amount_cents, o.payment_processing_fee_cents, o.total_cents]);
+  assert.strictEqual(a.terms_version, terms.version); assert.strictEqual(a.terms_sha256, terms.sha256); assert.ok(a.quote_issued_at);
+  assert.ok(!('ip' in a) && !('user_agent' in a), 'no IP or user agent recorded');
+});
+t('terms: client-side amounts cannot change server-calculated amounts (extra fields ignored; tampered quote refused)', async () => {
+  const sb = world({ balance: 25000 }); const st = fakeStripe(); const { o } = await quoteOf(sb);
+  const r = await createAssessmentCheckout(liveDeps(sb, st), { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', portalUserId: 'u1', ...urls,
+    amount_cents: 1, amountCents: 1, fee_cents: 0, total_cents: 1, acceptance: accept(o, { amount_cents: 1 }) });
+  assert.ok(r.ok); assert.strictEqual(r.total_cents, o.total_cents);
+  const [body, sig] = o.quote_token.split('.');
+  const p = JSON.parse(Buffer.from(body, 'base64url').toString()); p.amt = 1; p.fee = 0; p.tot = 1;
+  const forged = Buffer.from(JSON.stringify(p)).toString('base64url') + '.' + sig;
+  const sb2 = world({ balance: 25000 }); const st2 = fakeStripe();
+  const f = await createAssessmentCheckout(liveDeps(sb2, st2), { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', portalUserId: 'u1', ...urls, acceptance: accept({ quote_token: forged }) });
+  assert.strictEqual(f.error, 'quote_invalid'); assert.strictEqual(sb2._db.payments.length + st2.sessions.length, 0);
+});
+t('terms: no processor or Bedrock markup breakdown in the homeowner-facing quote or checkout response', async () => {
+  const sb = world({ balance: 25000 }); const st = fakeStripe(); const { q, o } = await quoteOf(sb);
+  const allowedOpt = ['method', 'amount_cents', 'payment_processing_fee_cents', 'total_cents', 'fee_label', 'quote_token', 'expires_at'];
+  for (const opt of q.options) assert.deepStrictEqual(Object.keys(opt).sort(), [...allowedOpt].sort());
+  assert.deepStrictEqual(Object.keys(q).sort(), ['community_name', 'ok', 'options', 'property_label', 'terms']);
+  const r = await createAssessmentCheckout(liveDeps(sb, st), { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', portalUserId: 'u1', ...urls, acceptance: accept(o) });
+  const visible = JSON.stringify({ q: { ...q, options: q.options.map(({ quote_token, ...x }) => x) }, r: { ...r, checkout_url: '', session_id: '' } });
+  assert.ok(!/stripe|processor|markup|margin|cost|convenience/i.test(visible), 'homeowner payload mentions processor economics: ' + visible);
+  assert.deepStrictEqual(Object.keys(r).sort(), ['amount_cents', 'checkout_url', 'method', 'ok', 'payment_group_id', 'payment_processing_fee_cents', 'session_id', 'total_cents']);
+});
+t('terms: an acceptance is bound to its checkout context (method, payer, amount, terms, expiry)', async () => {
+  const run = async (sb, acceptance, method = 'card') => createAssessmentCheckout(liveDeps(sb, fakeStripe()), { propertyId: P1, paymentMethod: method, initiatedBy: 'homeowner_portal', portalUserId: 'u1', ...urls, acceptance });
+  let sb = world({ balance: 25000 }); let { o } = await quoteOf(sb, 'card');
+  assert.strictEqual((await run(sb, accept(o), 'ach')).error, 'quote_mismatch', 'card quote reused for ACH');
+  assert.strictEqual((await run(sb, accept(o, { actor: 'portal:someone-else' }))).error, 'quote_mismatch', 'another payer');
+  sb = world({ balance: 25000 }); ({ o } = await quoteOf(sb, 'card'));
+  sb._db.v_current_owner_balance[0].balance_cents = 30000; // balance changed after review
+  const changed = await run(sb, accept(o));
+  assert.strictEqual(changed.error, 'quote_mismatch'); assert.ok(/amount/.test(changed.detail)); assert.strictEqual(sb._db.payments.length, 0);
+  sb = world({ balance: 25000 });
+  const idq = { method: 'card', amount_cents: 25000, payment_processing_fee_cents: paymentProcessingFee('card', 25000), total_cents: 25000 + paymentProcessingFee('card', 25000) };
+  const oldTerms = signQuote({ actor: 'portal:u1', propertyId: P1, tenureId: SELLER, quote: idq, terms: { version: '2025-01-01.0', sha256: '0'.repeat(64) } });
+  assert.strictEqual((await run(sb, accept({ quote_token: oldTerms.token }))).error, 'terms_changed', 'acceptance of older terms');
+  const expired = signQuote({ actor: 'portal:u1', propertyId: P1, tenureId: SELLER, quote: idq, terms: getTerms(), now: Date.now() - 16 * 60 * 1000 });
+  assert.strictEqual((await run(sb, accept({ quote_token: expired.token }))).error, 'quote_expired');
+  assert.strictEqual(verifyQuote('garbage').error, 'quote_missing');
+});
+t('terms: if the acceptance cannot be recorded, no Stripe session is created and the checkout rows are voided', async () => {
+  const sb = world({ balance: 25000 }); const st = fakeStripe(); const { o } = await quoteOf(sb);
+  const realFrom = sb.from;
+  sb.from = (tbl) => { const b = realFrom(tbl); if (tbl !== 'payment_terms_acceptances') return b; return { insert: () => Promise.resolve({ error: { message: 'table missing' } }) }; };
+  const r = await createAssessmentCheckout(liveDeps(sb, st), { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', portalUserId: 'u1', ...urls, acceptance: accept(o) });
+  assert.strictEqual(r.error, 'terms_record_failed'); assert.strictEqual(st.sessions.length, 0);
+  assert.ok(sb._db.payments.length > 0 && sb._db.payments.every((p) => p.settlement_state === 'checkout_failed'));
+});
+t('terms: test-mode containment still refuses real homeowners at the quote and at checkout', async () => {
+  const sb = world({ balance: 25000 }); const st = fakeStripe();
+  const q = await quoteAssessmentPayment({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, actor: 'portal:u1', initiatedBy: 'homeowner_portal' });
+  assert.strictEqual(q.error, 'test_mode_sandbox_only');
+  const idq = { method: 'card', amount_cents: 25000, payment_processing_fee_cents: paymentProcessingFee('card', 25000), total_cents: 25000 + paymentProcessingFee('card', 25000) };
+  const tok = signQuote({ actor: 'portal:u1', propertyId: P1, tenureId: SELLER, quote: idq, terms: getTerms() });
+  const r = await createAssessmentCheckout({ supabase: sb, stripeLib: st, key: TEST_KEY }, { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', portalUserId: 'u1', ...urls, acceptance: accept({ quote_token: tok.token }) });
+  assert.strictEqual(r.error, 'test_mode_sandbox_only'); assert.strictEqual(sb._db.payments.length + st.sessions.length, 0);
+});
+t('terms: the page is original, versioned, complete, and never names the processor', () => {
+  const tm = getTerms();
+  assert.strictEqual(tm.version, '2026-09-27.1'); assert.ok(/^[0-9a-f]{64}$/.test(tm.sha256));
+  assert.ok(tm.html.includes('<title>Trusted Pay Payment Terms and Conditions</title>'));
+  assert.ok(tm.html.includes('Draft for legal review before live-money launch'));
+  assert.ok(!/\{\{[A-Z_]+\}\}/.test(tm.html), 'unfilled placeholder');
+  assert.ok(!/stripe|vantaca/i.test(tm.html), 'names a processor or copies a competitor');
+  const sections = (tm.html.match(/<h2>\d+\./g) || []).length; assert.strictEqual(sections, 14);
+  for (const must of ['Payment Processing Fee', 'Assessment/Payment Amount', 'Total Payment', 'ACH', 'not currently available', 'third-party payment processors', 'not refundable', 'State of Texas'])
+    assert.ok(tm.html.includes(must), 'missing: ' + must);
+  assert.ok(!tm.html.includes('\u2014'), 'no em-dashes in customer copy');
+  assert.strictEqual(getTerms().sha256, tm.sha256, 'hash is stable');
 });
 
 (async () => {
