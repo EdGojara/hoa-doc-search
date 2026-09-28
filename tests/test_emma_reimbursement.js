@@ -288,6 +288,24 @@ t('the receipt stays linked: the payable and a promoted exception carry the orig
   assert.strictEqual(noAcct.error, 'need_account');
 });
 
+t('a single-account staff directive codes every line to that account (cents or dollars); never re-coded per line', () => {
+  const { staffDirectedLines } = require('../lib/ap/intake');
+  const gl = { account_id: 'a5900', account_number: '5900', account_name: 'Community Events' };
+  // The Issue #3 reimbursement line (cents) used to be dropped: the payable landed with no line.
+  const r = staffDirectedLines([{ description: 'Walmart: reimbursed purchase', quantity: 1, unit_price_cents: 3572, amount_cents: 3572 }], gl);
+  assert.deepStrictEqual(r.map((l) => [l.line_number, l.amount_cents, l.gl_account_id]), [[1, 3572, 'a5900']]);
+  assert.match(r[0].reason, /Staff-directed: code 5900 Community Events/);
+  // Extractor lines (dollars) all land on the directed account; zero lines skipped.
+  const e = staffDirectedLines([{ description: 'Irrigation repair', amount: 120.5 }, { description: 'Note', amount: 0 }, { description: 'Parts', amount: 30 }], gl);
+  assert.deepStrictEqual(e.map((l) => [l.line_number, l.amount_cents, l.gl_account_id]), [[1, 12050, 'a5900'], [2, 3000, 'a5900']]);
+  assert.deepStrictEqual(staffDirectedLines([{ description: 'x', amount: 1 }], null), []);
+  // Branch order: the staff-directed branch runs BEFORE the per-line classifier.
+  const src = require('fs').readFileSync(require.resolve('../lib/ap/intake'), 'utf8');
+  const iStaff = src.indexOf('codedLines = staffDirectedLines(extracted.line_items, staffGl)');
+  const iClassifier = src.indexOf("const { codeInvoiceLines } = require('./code_lines')");
+  assert.ok(iStaff > 0 && iClassifier > iStaff);
+});
+
 t('check workflow stays behind approval: a reimbursement is never auto-paid (commit path unchanged: awaiting_approval + needs_review)', () => {
   const src = require('fs').readFileSync(require.resolve('../lib/ap/intake'), 'utf8');
   assert.ok(/status: suspected \? 'on_hold' : 'awaiting_approval'/.test(src));
