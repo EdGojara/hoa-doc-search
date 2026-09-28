@@ -4,7 +4,68 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Stripe-hosted onboarding link opened for Ed; onboarding NOT yet completed
+## 2026-09-28 (latest): Employee portal / timekeeping architecture assessment (docs only)
+
+**Task.** ChatGPT's "EMPLOYEE PORTAL / TIMEKEEPING ARCHITECTURE ASSESSMENT" (Issue #1, 11:53 UTC). Assessment only: no code, no migration, no deploy, no change to employee pay or status.
+
+**Where.**
+- Full assessment: [`docs/employee_timekeeping_assessment.md`](employee_timekeeping_assessment.md), on docs-only branch `docs/employee-timekeeping-assessment`, cut from `main`.
+- `.gitignore` gets one exception so the doc is tracked.
+- Kept separate from `feat/trusted-pay-terms`. That branch's entries (fee split `009bc119`, pending margin pricing, migration 470 approval, Stripe settlement follow-up, legal review) live on that branch's copy of this file and are unchanged.
+
+**Key verified findings.**
+- **No time measurement exists today.** There is no timesheet, punch, payroll, overtime or meal model.
+- **Logins can't serve as time evidence.** The staff gate cookie is identity-less with a 30-day fixed lifetime, and the Supabase session persists and auto-refreshes, with no idle timeout.
+- **`user_profiles` is the only staff identity**, with role `admin`/`staff`/`assistant`. There are no employee, department, manager or FLSA fields.
+- **Security gap (repo):** `migrations/039_user_profiles.sql:33` grants the authenticated role full CRUD with no RLS, so staff could likely edit their own role through the REST API. Production needs a read-only check. Proposed as a separate task.
+- **Violations drives have start, end and pauses, but no per-person attribution:**
+  - one `operator_id` plus a text label;
+  - no photo capturer;
+  - confirm and reject send an empty body, so `reviewer_user_id` is always null.
+- **Drive timing bugs (likely):**
+  - Inspect-tab drives never update `last_ping_at`, so the stale-drive job can close them at start + 4 h with a made-up end time.
+  - Resume keeps the old `ended_at`.
+  - Coverage reads pings unpaginated.
+  - add-violation writes columns no migration defines.
+  - Proposed as a separate task.
+
+**Recommendation (proposal).**
+- An append-only, Bedrock-scoped punch ledger (clock in/out, meal start/end), where only explicit punches count as time. No auto-clock-out, no auto-deduction.
+- Corrections through a reasoned, approved, superseding record.
+- Advisory overtime pre-approval: all hours are recorded and paid.
+- Meal attestations.
+- Pay-period lock with a reasoned reopen, copying the `462` budget pattern.
+- A locked-period CSV export for the payroll provider. Hours only; no pay rates stored.
+- Stage 5: `inspection_participants`, so per-person drive labor comes from punched time, never GPS or login.
+- Staged plan: counsel and Ed decisions first; fix prerequisites; a shadow pilot parallel to current pay; go live at a workweek boundary.
+
+**Needs Ed.**
+- workweek start;
+- pay-period cadence;
+- payroll provider;
+- which roles convert, and the effective date;
+- meal-rule basis (the recommendation is worked time excluding meals, attributed to the shift's start date);
+- approvers;
+- pilot length.
+
+**Needs counsel** (flagged VERIFY throughout; no legal conclusions made):
+- classification and conversion;
+- workweek designation;
+- overtime and regular rate;
+- unauthorized overtime;
+- meal compensability, and whether the 5 h/7 h policy is advisable;
+- off-the-clock work;
+- recordkeeping and retention;
+- reducing corrections;
+- attestation wording;
+- location and metrics use;
+- existing agreements.
+
+**Recommended next action.** Ed and ChatGPT review the assessment. No implementation until approved.
+
+---
+
+## 2026-09-27: Stripe-hosted onboarding link opened for Ed; onboarding NOT yet completed
 
 **Task.** ChatGPT's "ED APPROVED STRIPE-HOSTED ONBOARDING" instruction (Issue #1, 23:09 UTC).
 
