@@ -12,9 +12,10 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
   - new reimbursement payee Gloria Allen (no address yet);
   - receipt PDF + sha kept; cutover_review PENDING (no JE);
   - email handled; draft now says "entered in Payables for review". Stopped before approval.
-- **Defect found:** the payable has NO ap_invoice_lines row. The reimbursement line uses amount_cents, but code_lines reads amount (dollars). Also latent: a single-account staff directive gets overridden by per-line classifier coding.
+- **Defect found by the replay (RESOLVED):** the payable was created with no ap_invoice_lines row (the reimbursement line used amount_cents, but code_lines reads amount in dollars). A latent issue was also found: a single-account staff directive could be overridden by per-line classifier coding. Both were fixed in main 329a8045, and Gloria's line was added (line bae57751, $35.72 → 5900; header unchanged).
   - Fix: fix/ap-staff-directed-lines @ 6e5baf5a (sticky header needs_review; returned = persisted; staff-directed provenance). ChatGPT cleared; Ed approved in chat; merged to main.
-  - Gloria's line patch approved by Ed in chat (one line $35.72 → 5900; needs_review and cutover hold kept).
+  - Gloria's line patch DONE (approved by Ed in chat): one line $35.72 → 5900; still awaiting_approval, needs_review=true, cutover_review=PENDING, no JE. ChatGPT post-merge review: no blocker.
+- **Remaining for Gloria (operational):** confirm the mailing address on the payee, decide the pre-cutover treatment, then approve.
 - **Star Protection (vendor a3dea309):** contact_email = a Bedrock staff address, contact_name = a staff member. Proposed: NULL both (or move the staff address to account_manager_email); split remit_address_line1. NOT changed.
 - **Mailbox lag → Issue #4:** ingest is manual-only since 2026-07-07 (EMAIL_INGEST_AUTO gate); every mailbox lags between Pull inbox presses. Decision needed.
 
