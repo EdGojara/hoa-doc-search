@@ -1,7 +1,8 @@
-# Violations Drive Capture and Post-Drive Escalation: Assessment
+# Violations Drive Capture and Post-Drive Escalation: Assessment (rev 2)
 
 **Status:** assessment only. No code, migration, deploy, letter sent, violation status changed, or production write. The production checks below were read-only (aggregate counts only; no PII).
 **Requested by:** Ed via ChatGPT "PRIORITY SHIFT" instruction, GitHub Issue #1 (2026-09-28 14:34 UTC).
+**Revision 2:** applies Ed's operating rule (Issue #1, 2026-09-28 14:35 UTC) per ChatGPT's review of `1a4e5bf9`. The change log is at the end.
 **Kept separate from:** employee timekeeping (paused, branch untouched) and payment work.
 **Branch:** `docs/drv-capture-escalation-assessment` (docs only, cut from `main`).
 
@@ -20,37 +21,32 @@
 The document keeps four kinds of statement apart:
 - **Section 2: CONFIRMED.** Read in code (path cited), or seen in production with read-only aggregate queries (marked **[prod]**).
 - **Section 3: DEFECTS.** Each is labeled **confirmed** (code plus production evidence) or **likely** (code only).
-- **Sections 4 to 9: PROPOSALS.** Nothing in them is built.
+- **Sections 4 to 10: PROPOSALS.** Nothing in them is built.
 
 ---
 
 ## 1. Summary
 
-1. **Ed's desired field workflow is already mostly true for new issues.**
-   - The inspector selects a house, takes a photo, and moves on.
-   - The inspector picks no category or notice stage; AI proposes the category (`lib/enforcement/ai_vision.js`).
+1. **Ed's field workflow is already mostly true.**
+   - The inspector selects a house, photographs conditions, and moves on.
+   - The inspector picks no category or stage; AI proposes the category.
    - Nothing becomes a violation until an office user confirms it: `AUTO_OPEN_VIOLATIONS_ON_INSPECTION=false` and `AUTO_DRAFT_LETTERS_ON_INSPECTION=false` (`api/inspections.js:36, 46`).
-2. **Escalation is decided in many places, not one end-of-drive step.** There are five paths:
-   - office confirm (auto courtesy_1 → courtesy_2 on re-observation);
-   - a daily cure-lapse job (which can auto-advance to certified and to fine);
-   - staff "Advance stage" buttons, reachable from the field property panel;
-   - bulk reconcile;
-   - manual resolve.
-   There is no single reconciliation pass, no drive-level review, and no per-drive letter batch.
-3. **"No new photo" must not mean "resolved" today, and the data shows why.**
-   - "Nothing found at this house" is kept only in browser memory (`inspPDMarkClean`, `public/index.html:19986-20006`) and lost on refresh.
-   - Coverage is computed three different ways.
-   - Drive end times can be fabricated by the stale-close job, which is **running in production** [prod].
-   - GPS coverage reads are capped at 1,000 pings, and 15 of the last 60 drives exceeded that [prod].
-4. **Letters:**
-   - The notice stage comes from the violation's `current_stage`, not staff choice (`api/enforcement.js:1446-1455`).
-   - **One approval covers every stage.** Certified §209 notices have no second gate: `supervisor_approved_*` columns exist but are unused.
-   - The §209 wording in the standard letter is **hard-coded** (`lib/enforcement/violation_letter.js`), not injected from GLOBAL_RULES as CLAUDE.md requires.
-5. **Recommendation.** Keep capture as it is, and add three things:
-   - a persisted **property visit** record: covered, photographed, or explicitly checked, with per-prior-issue outcomes;
-   - a single **end-of-drive reconciliation** that proposes CONTINUE/ESCALATE, NEW, RESOLVE or NEEDS_REVIEW for every open case on every visited property, with UNCERTAIN as the default when evidence is thin;
-   - a **reviewed draft batch** with a separate approval gate for certified/formal notices. State changes and letters happen only after approval.
-6. **Fix the confirmed data defects first** (section 3). Several directly affect escalation correctness.
+2. **Escalation and resolution are scattered across five paths**, with no single end-of-drive step (section 2.6).
+   - An existing read-only reconcile preview already approximates Ed's rule for courtesy cases (section 2.12).
+   - But it counts a property as "re-inspected" only if some observation exists there, so a clean house with no photo never qualifies.
+3. **Ed's rule, adopted** (section 4): at the end of a **completed** drive, every open **non-certified** case at an **in-scope** property with **no new matching photo** is proposed RESOLVED automatically.
+   - No field taps.
+   - Safety comes from drive eligibility, declared scope, and property-level exceptions, not from per-issue checks.
+   - Every resolution is an auditable, reversible event.
+4. **Certified cases never resolve from a missing photo.**
+   - The certified 180-day clock exists but is **inconsistent**: three different start dates (section 2.11).
+   - **70 of 208 open certified cases have no certified date, and 64 are past 180 days** [prod].
+   - Expiry has no mechanics today.
+5. **Letters:**
+   - The notice stage comes from `current_stage`.
+   - **One approval covers every stage** (the `supervisor_approved_*` columns are unused).
+   - The §209 wording in the standard letter is **hard-coded**, not from GLOBAL_RULES.
+6. **Fix the confirmed data defects first** (section 3), especially drive completion and time (D1) and coverage paging (D2). Ed's rule depends on knowing a drive really completed its scope.
 
 ---
 
@@ -200,13 +196,40 @@ Miranda Pierce is the AI "Compliance / DRV" email persona:
 
 ---
 
+### 2.11 Certified status and the six-month clock (as the code has it today)
+- **Stage:** `certified_209` (`050:287`). Advancing to it is manual (advance-stage), or through the cure-lapse job (not running), or a recurrence opens there directly (`api/inspections.js:3834-3857`).
+- **The window:** 180 days (`CERT_VALID_DAYS`, `lib/enforcement/vantaca_reconcile.js:66`). The origin is Ed's statement: "The certified letters are good for 180 days." (header, lines 4-6). The code doesn't say whether that is statutory or operating practice [VERIFY].
+- **The start date is computed three different ways** (inconsistent):
+  1. The cert re-inspection tool (`api/enforcement.js:11505-11591`) uses **`violations.certified_notice_date`** (`migration 323`: "Date the certified §209 notice was mailed (postmark)").
+     - It was backfilled once from sent `letter_209` postmarks.
+     - Staff enter it by hand for Vantaca carryovers (`POST /cert-reinspect/:id/certified-date`, 11605).
+     - Null means "needs dating".
+  2. The field property panel's cert clock (`api/inspections.js:2535-2555`) uses **`current_stage_started_at || opened_at`**. It never reads `certified_notice_date`.
+  3. The Vantaca reconcile (`vantaca_reconcile.js:103-106, 156-162, 210-211`) uses **`current_stage_started_at || opened_at`**, for any status, open or closed.
+- **Setting the date:** lock-and-batch and record-mailing **don't** set `certified_notice_date` (section 2.8). New certified notices mailed by trustEd get no date unless staff enter one.
+- **Expiry:** display only. The tool shows `days_remaining`, `expires_on` and `expired` (11547-11577); the code comment says "observe until then, else recertify / refer". **No code** recertifies, refers, restarts, closes or alerts at expiry (searched enforcement for cert expiry actions).
+- **While live:** the window blocks regression. No courtesy notice can be opened for a pair with a live cert (`vantaca_reconcile.js:227-235`). The reconcile preview and the stale-close tool treat certified as protected (never auto-touched).
+- **Field re-checks:** `violation_field_checks` (`322`) records `not_cured` or `cured` per check. A `cured` result does **not** close the case. There are **0 rows** in production [prod].
+- **Production:** 208 open certified; 138 with `certified_notice_date`; 70 undated; **64 dated more than 180 days ago and still open** [prod].
+- **Separate six-month rule:** `detectRecurrence` (`find_or_continue_violation.js:47, 63-100`) uses a **183-day** look-back for a *new occurrence after a cure* (the §209.006(d) note in code). This is a different clock from the certified window [VERIFY].
+
+### 2.12 Existing reconcile preview (closest current approximation of Ed's rule)
+`GET /api/enforcement/reconcile` (`api/enforcement.js:5103-5222`) is read-only. `POST /reconcile/apply` (5245) applies it.
+- **Candidates:** only open courtesy_1/2 cases with `source` `trustEd_native`, excluding certified, fine and self-help (`_SELF_HELP_SLUGS`, 5116).
+- **Its CURE rule:** the property was "re-inspected" (**any observation at the property** after `opened_at` + 2 days, within `window_days`, default 60), and the category was not re-flagged.
+- **Its ESCALATE rule:** re-flagged in a later drive, and 10 days or more at the current stage (Ed 2026-09-15).
+- **What it lacks for Ed's rule:**
+  - No drive completion or scope: "inspected" means *an observation exists*, so a house photographed only for a clean pass has no observation (clean AI results are rejected) and never counts. A house with no photo at all never counts either.
+  - No per-drive audit event, and no reversal.
+  - Windows are by days, not by drive.
+
 ## 3. Defects
 
 | # | Defect | Status | Evidence | Why it matters here |
 |---|---|---|---|---|
 | D1 | Stale-drive job may set `ended_at = started_at + 4h` mid-drive | **confirmed** | Job runs in prod (last run today). 20 drives carry its auto-close note; 6 end exactly at start + 4 h; 137 of 149 drives have null `last_ping_at`; 23 of 60 sampled null-ping drives do have GPS traces [prod]. The Inspect tab never updates `last_ping_at` (`api/inspections.js:2170` vs 4946) | Drive windows (and "was this house in scope?") are unreliable |
 | D2 | GPS coverage reads capped at 1,000 pings | **confirmed** | 15 of the last 60 drives exceed 1,000 pings (max 5,149) [prod]; `/:id/coverage` and `/live` are unpaged | Undercounts coverage, so "not covered" becomes wrong |
-| D3 | "Mark clean" isn't persisted | **confirmed (code)** | Client memory only (19986-20006) | No durable negative observation exists |
+| D3 | "Mark clean" isn't persisted | **confirmed (code)** | Client memory only (19986-20006) | Superseded by the automatic property-visit record (5.2); no field tap needed |
 | D4 | add-violation writes columns that don't exist | **confirmed** | `opened_by_observation_id` / `opened_by_email` missing in prod [prod] (`api/inspections.js:4766-4767`) | A field add-violation path fails silently |
 | D5 | Confirm reads nonexistent priority columns and ignores the error | **confirmed** | `community_enforcement_priorities.fines_enabled` / `fine_amount_cents` missing in prod [prod]; query at `api/inspections.js:3790-3795` doesn't destructure `error` | Priority always falls back to "standard"; board priority is ignored |
 | D6 | advance-stage ladder goes past `fine_assessed` to values the CHECK forbids | **likely** | `conventionalNext` (enforcement 8012-8018) vs `050:287` | Advancing a fined case fails at the DB |
@@ -222,222 +245,318 @@ Miranda Pierce is the AI "Compliance / DRV" email persona:
 
 ---
 
-## 4. Why absence is not resolution (safeguard)
+## 4. Ed's operating rule, and how it is made safe
 
-- **A missing photo can mean any of these:**
-  - the house was cured;
-  - it was skipped;
-  - it was out of scope;
-  - it was blocked (car or trash truck);
-  - the condition is seasonal or intermittent (trash cans on non-trash days);
-  - the inspector missed it;
-  - the upload is still queued offline;
-  - the photo linked to the wrong house;
-  - the photo was wide-only (no observation).
-- **Today the system has no durable record** that separates "looked and it's gone" from "didn't look" (D3). Its coverage signals are inconsistent (2.4) and partly broken (D1, D2).
-- **Rule for the proposal:** a RESOLVE proposal requires **positive evidence of absence**:
-  - an explicit per-issue "not present" check by a person at the property (with an optional photo), or
-  - a full-property pass that the reviewer accepts, per section 5.3.
-- **Everything else is UNCERTAIN.** It never closes and never escalates by itself.
+**The rule (Ed, Issue #1, 2026-09-28 14:35 UTC; it supersedes rev 1's UNCERTAIN default):**
+- At the end of a **completed** violations drive, a prior **open, non-certified** case that got **no new matching photo** in that drive is resolved.
+- The field team does not mark negative observations, tap "Not present", or resolve ordinary cases by hand.
+- The field action stays: **select the property, photograph conditions that are still present, move on.**
+- **Certified cases never resolve from a missing photo.** They need a manual resolution and follow their own six-month clock (sections 2.11 and 5.8).
+
+**What makes the rule safe is not per-issue taps.** It is four drive-level and property-level conditions, all derived automatically:
+1. **The drive is completed and eligible:**
+   - ended by a user, not auto-closed by the stale job;
+   - upload queue drained;
+   - every photo linked and AI-analyzed;
+   - every observation at in-scope properties reviewed.
+2. **The property was in the drive's declared scope** (section 5.3).
+3. **There is no unresolved exception at that property** (section 5.5). Exceptions block only the affected property, never the whole community, and are never the default for an ordinary no-photo case.
+4. **The case is eligible:** open, non-certified, opened before this drive started, and not in an excluded class (section 5.4).
+
+When all four hold, the case gets a **RESOLVE** proposal automatically. Whether it is applied at drive completion or at batch approval is Ed's decision (section 5.6).
 
 ---
 
 ## 5. Proposed design
 
 ### 5.1 Principles
-1. **Capture stays minimal.** Select the house, take photos, move on. No stage, category or escalation decisions in the field.
+1. **Field = photos of conditions that are present.** No stage, category, escalation, negative-observation or per-issue decisions in the field.
 2. **One reconciliation, after the drive,** against the full history and the community policy version.
-3. **Every proposal carries evidence and a reason.** Ambiguity goes to NEEDS_REVIEW, never a guess.
-4. **Human approval before any state change or letter.** A certified or formal notice needs a second, distinct approval.
-5. **Immutable decision trail.** Proposals, decisions and state changes are events.
-6. **Statutory wording from GLOBAL_RULES only** (fixes D11). [VERIFY] content with counsel.
+3. **Ordinary no-photo cases resolve** (Ed's rule). Exceptions are specific and property-scoped.
+4. **Certified and later stages never resolve without a person.**
+5. **Every automated resolution is an auditable, reversible event.**
+6. **Escalations and letters still need human approval.** Certified, fine and self-help notices need a second, distinct approver.
+7. **Statutory wording comes from GLOBAL_RULES only** (fixes D11). [VERIFY] content with counsel.
 
-### 5.2 Field capture additions (minimal taps, offline-safe)
-- **Property visit** (new, persisted): created automatically the first time a property is photographed or selected during a drive.
-  - It has `inspection_id`, `property_id`, `first_seen_at`, `visited_by_user_id`, and a `visit_state`: `photographed`, `checked_clean`, `checked_with_issues`, or `skipped` (reason: blocked, no access, out of scope).
-  - It is queued in IndexedDB like photos, and idempotent through a client-generated id.
-- **Prior-issue quick check.** When the inspector selects a house that has open violations, a compact strip lists them, e.g. "Trash cans (courtesy 2)".
-  - Each item has two optional buttons: **"Still there"** (prompts a photo) and **"Not present"** (a photo is optional, but encouraged for certified cases).
-  - The default is untouched, meaning not checked. **The inspector never escalates anything.**
-  - This replaces in-drive use of Advance, Reduce and Mark cured, which become office-only (they move out of the field modal).
-- **"Done with house"** turns into `checked_clean` or `checked_with_issues` automatically, based on whether photos exist.
-- **Ambiguous property** (no house selected): the photo stays unlinked and goes to review, as it does today.
+### 5.2 Field capture (unchanged workflow, small reliability additions)
+- **Unchanged:** select the house, take photos (single or wide-plus-close), move on. There are no new taps per house or per issue.
+- **Removed from the field modal:** Advance stage, Reduce stage, Add prior violation, and Mark cured become office-only. The field panel can still *show* prior cases and the certified clock (read-only), so the inspector knows to photograph a condition that is still there.
+- **Automatic property-visit record:** when a photo is taken for a house, the system records that the house was photographed on this drive. This needs no tap, and it replaces the in-memory "Mark clean".
 - **Offline:**
-  - add a service-worker app shell for the Inspect tab, so a restart without signal still opens the queue;
-  - visits and checks queue alongside photos.
-- **Duplicates:** a perceptual hash (plus exact sha256) on upload. Near-duplicates within the same property and drive are flagged, never auto-dropped.
+  - a service-worker app shell for the Inspect tab;
+  - the queue already persists photos;
+  - **End drive** reports the device's queue count, and a drive can't complete while its queue is non-empty.
+- **Duplicates:** a perceptual hash plus an exact sha256 on upload. Duplicates within the same property and drive are flagged for review, never dropped.
 
-### 5.3 Drive completion and coverage validation
-- **End drive** runs a completeness check before reconciliation:
-  - uploads fully drained (the device reports an empty queue);
-  - visits list complete;
-  - unlinked photos resolved or explicitly deferred;
-  - AI analysis complete for every close-up and single photo.
-- **Coverage is one definition.** Stored per property per drive (`drive_property_coverage`, derived):
-  - `visited`: a visit record exists;
-  - `passed`: within X m of paged GPS pings, with no visit;
-  - `not_passed`.
-  "Passed" is recorded as context only. **It never supports RESOLVE by itself.**
-- **Drive scope:** the drive declares a scope (full community, a section or polygon, or a spot list). Properties outside the scope are never considered "missed".
-- **Drive time quality:** `ended_at_quality` (`user`, `auto_stale`, `legacy_unverified`), per the timekeeping assessment. Drives with `auto_stale` or `legacy_unverified` end times can't support a RESOLVE based on scope.
+### 5.3 Drive scope: knowing which properties were inspected
+The inspector picks a scope when starting the drive. Default: **full community**.
 
-### 5.4 Reconciliation (per property in scope)
-For each property, the drive's evidence is compared with the full history:
-- the drive's observations (AI category, confidence, reviewer corrections);
-- visit state and per-issue checks;
-- all open cases (alias-expanded, furthest stage);
-- closed cases in the look-back window;
-- letters and mailing proof;
-- cure deadlines;
-- the community policy version.
-
-Each open case and each new observation gets exactly one proposal:
-
-| Proposal | When | Evidence required |
+| Scope type | How it's declared | Properties in scope |
 |---|---|---|
-| **CONTINUE** | Same condition observed; cure period not yet lapsed, or prior notice not yet mailed | Photo matched to the case (5.5) |
-| **ESCALATE** to stage N | Same condition observed after the cure deadline, prior notice **mailed with proof**, and policy allows stage N | Match, `mailed_at` / postmark, `cure_period_ends_at` < observation time, policy version |
-| **NEW** | Condition with no open case for the canonical category | Observation plus confidence; check for a recurrence within the look-back window [VERIFY the six-month rule] |
-| **RESOLVE** | Positive evidence of absence: an explicit "Not present" check, or a reviewer-accepted full pass | Check record (and photo if required); coverage state `visited` |
-| **NEEDS_REVIEW** | Ambiguous match, low confidence, a mail proof gap, drive time unreliable, self-help or 10-day category, certified or fine target, legal flag, attorney referral, owner changed since the notice | Reason codes |
-| **UNCERTAIN** | Open case, property not visited or not explicitly checked | None: an explicit no-action state |
+| **Full community** | Default at start | All properties of the community |
+| **Section** | Pick saved sections (street list or drawn polygon, stored per community) | Properties in those sections |
+| **Spot list** | A list (e.g. certified re-checks, a complaint list) | Exactly those properties |
 
-**Guards:**
-- **Owner change since the last notice** (tenure changed): never escalate; propose NEEDS_REVIEW, and restarting at courtesy_1 is a policy decision [VERIFY].
-- **Self-help or 10-day categories and anything already certified or later:** NEEDS_REVIEW always. This matches the rule "never auto-touch certified §209 or 10-day".
-- **Mailing proof missing** (no `mailed_at`, or tracking missing for certified): no escalation; NEEDS_REVIEW.
-- **Recurrence** opens at the policy stage only with the correct cure period (fixes D7), and always goes through review.
+**Route check** (a configurable safety net, for Ed to decide on):
+- For full-community and section scopes, a property in scope that the **paged** GPS track never came within X m of is flagged **route did not pass**. That is an exception for that property only.
+- This catches a street that was skipped without anyone tapping anything.
+- It depends on fixing D1 and D2.
+- If Ed prefers pure declared scope, the check can be turned off per community.
 
-### 5.5 Matching a photo to the SAME condition
-- **Candidate match:** same property, **and** a canonical category (alias-expanded) equal to the case's canonical category, **and** the case's category rule is unchanged.
-  - Don't trust the label alone. If the case's category was re-aliased or its governing provision changed (`community_enforcement_priorities` effective dates), propose NEEDS_REVIEW.
-- **Confidence tiers:**
-  - AI high confidence with the same canonical category: *proposed match*;
-  - medium: *proposed match, flagged*;
-  - low, or a different category at the same location: **NEEDS_REVIEW**.
-  - Two open cases that could match the same photo: NEEDS_REVIEW.
-- **Different issue at the same property:** a NEW proposal that is independent of the existing case, and never merged silently.
-- **Store the match decision** (`observation_case_links`: observation, case, method (`ai_proposed`, `reviewer_confirmed`), confidence, decided_by). `violation_continuations` remains the confirmed-continuation record.
-- **Store the governing-doc citation used on the case** when it opens (a column or link), so later letters cite the same provision unless a reviewer changes it.
+**A property outside the declared scope** is simply not part of the drive. Its cases aren't resolved and aren't flagged; they wait for a drive whose scope includes them.
 
-### 5.6 Review and batch
-**The reviewer screen, per drive:**
-- a summary (for example: covered 312, visited 188, new 14, continue 22, escalate 9, resolve 6, needs review 11, uncertain 87);
-- property cards, each showing photos next to the prior case photo, the proposal, the reason codes, and the evidence;
-- **Approve classification** per item or in bulk, but bulk is **allowed only for CONTINUE, NEW-at-courtesy and RESOLVE-with-check**. ESCALATE and NEEDS_REVIEW items need an individual decision.
+**Stored as `drive_scopes`** (inspection, scope type, section or list reference, property snapshot at drive start), so the audit shows exactly which properties the drive covered.
 
-**Approval gates:**
-- **Stage 1 (classification):** a staff reviewer.
-- **Stage 2 (notice):** after classification approval, draft letters are generated into a **drive batch** (reusing `/drafts`, auto-bundle, and the Mail Queue).
-  - Courtesy notices: one approval, as today.
-  - **Certified/formal §209 notices, fines, and self-help:** a **second approval by a different, designated approver.** This would put the unused `supervisor_approved_*` columns (D10) to use.
-  - Board approval where community policy requires it: a board motion link [VERIFY which actions need a board vote per community documents].
+### 5.4 Reconciliation matrix (per in-scope property, completed eligible drive)
+First, all observations at the property must be reviewed (confirmed, relabeled or rejected). Then each case and observation gets exactly one proposal:
 
-**After approval, in order:**
-1. state changes (stage, dates) are applied as events;
-2. letters are locked and queued;
-3. mailing proof updates the cure dates (existing lock-and-batch / record-mailing).
+| Case or observation | Condition | Proposal |
+|---|---|---|
+| Open non-certified case (courtesy_1/2) | **No matching photo** this drive, no exception at the property | **RESOLVE** (auto-proposed; section 5.6 for apply timing) |
+| Open non-certified case | Matching photo, cure deadline not passed or prior notice not yet mailed | **CONTINUE** (continuation evidence) |
+| Open non-certified case | Matching photo, cure deadline passed, prior notice **mailed with proof** | **ESCALATE** to the policy's next stage (courtesy_1→2 is routine; courtesy_2→certified needs the section 5.6 second approval) |
+| Open **certified or fine** case | Matching photo | **CERTIFIED_STILL_PRESENT**: continuation plus a "not cured as of" evidence record; no letter; the clock is unchanged (section 5.8) |
+| Open **certified or fine** case | No matching photo | **NO CHANGE.** Stays open. Shown in the certified work list as "not photographed this drive" for information; **never resolved** |
+| New confirmed observation | No open case for its canonical category | **NEW** at the policy's opening stage (a recurrence within the look-back gets the recurrence path; [VERIFY] the six-month rule) |
+| Any | Ambiguous match (section 5.5) | **NEEDS_REVIEW** for that case only |
 
-**No stage changes on mailing, as today.** Escalation happens only through an approved proposal.
+**What counts as a "matching photo":**
+- a reviewed, confirmed observation at the property on this drive;
+- whose canonical category (alias-expanded, confirmed aliases only) equals the case's canonical category;
+- and whose case category rule hasn't changed since the case opened.
+A photo of a *different* issue at the same property doesn't block RESOLVE for the prior case.
 
-**Rejected proposals** keep their reasons, and they feed AI learning, as reviewer corrections already do.
+**Cases excluded from auto-RESOLVE:**
+- **Opened on this same drive,** or within the existing 2-day re-inspection gap (`api/enforcement.js` reconcile, `REINSPECT_GAP_MS`), so a new case isn't treated as prior.
+- **Self-help / 10-day categories** (`_SELF_HELP_SLUGS`). The current reconcile protects these. **Ed's decision:** treat them like ordinary non-certified cases, or like certified. Until Ed decides, they are proposed excluded.
+- **Vantaca-carryover courtesy cases** (`source` is not `trustEd_native`). The current reconcile excludes these. **Ed's decision** whether his rule covers them.
+- **Cases at the attorney** (`sent_to_attorney_at`), or with a legal flag. These are always manual.
 
-### 5.7 Data model (minimal, all new)
-- **`drive_property_visits`**: visit state, skip reason, actor, client id. Append-only; state changes are new rows.
-- **`drive_issue_checks`**: a per-prior-case `still_present` / `not_present` result, with optional photo, actor and time. Append-only.
-- **`drive_reconciliations`**: one per drive run: `policy_version`, inputs watermark, `status` projection.
-- **`reconciliation_proposals`**: property, case or observation, proposal type, proposed stage, reason codes, evidence JSON. Immutable.
-- **`reconciliation_decisions`**: approve, reject or modify, decided_by, note, one per proposal (a unique constraint). A second-approval row for gated stages.
-- **`violation_stage_events`**: an immutable stage history with actor, source (proposal, decision, manual, correction), from and to, and dates. It fixes the missing audit trail. All five stage paths should write to it.
-- **`observation_case_links`** (5.5), and a governing-provision reference on violations.
-- **Policy versioning:** `community_enforcement_policy_versions` (the ladder, cure days per stage, the board gate per stage, the recurrence rule, fines). It replaces the hard-coded ladder in `escalation.js` and `conventionalNext`. Every proposal records its version.
+**Unmailed drafts:** if a resolved case has an unsent draft letter, that draft is dropped. This reuses the existing stale-letter guard; nothing is mailed for a resolved case.
 
-All tables above are `association_record`, because enforcement evidence and decisions are handed over with the association's records. Exception: AI proposal internals are workpaper, per the CLAUDE.md mixed rule [confirm with Ed].
+### 5.5 Exceptions (block resolution for the affected property only)
+- **Unlinked photo** from this drive:
+  - with GPS: block the properties within the match radius;
+  - without GPS: block the drive's RESOLVE batch until the photo is linked.
+- **Upload queue not drained, or AI analysis pending,** on photos from this drive: the drive isn't complete.
+- **Observation not yet reviewed** at the property.
+- **Ambiguous match:**
+  - AI confidence low;
+  - category in an *unconfirmed* (AI-suggested) alias relation to the case's category;
+  - two open cases that could match one photo;
+  - duplicate-photo flag;
+  - photo linked to a different house by the reviewer.
+- **Route did not pass** the property (if enabled; section 5.3).
+- **Drive auto-closed** (`ended_at_quality = auto_stale`) or otherwise not ended by a user: the drive is **not eligible** for auto-RESOLVE until a person confirms it was completed.
+
+Each exception names its reason. Clearing it (linking the photo, reviewing the observation, confirming the drive) re-runs reconciliation for that property.
+
+### 5.6 Review screen, apply timing, approvals
+**The drive review screen:**
+- **Summary line,** for example: "Full community, 1,171 properties, completed 3:42 PM. RESOLVE 41, CONTINUE 22, ESCALATE 9, NEW 14, certified still present 6, certified not photographed 12, exceptions 3".
+- **RESOLVE list:** grouped by street, each row showing the prior case, its last photo, and the stage. **One action approves them all.** Individual rows can be excluded with a reason.
+- **Exceptions list** with the fix action for each.
+- **ESCALATE and NEW** items, with photos next to the prior case photo.
+
+**Apply timing for ordinary RESOLVEs** is **Ed's decision.** It isn't assumed:
+- **(A) At drive completion.** Resolutions apply automatically as soon as the drive is complete and has no exceptions. The review screen then shows them as already applied, with Reverse.
+- **(B) At batch approval.** Applied when the reviewer clicks "Approve all resolutions", the same moment the letter batch is approved.
+
+Recommendation: (B) initially, then (A) once the shadow period (Phase 3) shows proposals matching what staff would do.
+
+**Letters and escalation gates:**
+- Courtesy notices: one approval.
+- Certified, fine and self-help notices: a **second approval by a different designated approver** (putting the unused `supervisor_approved_*` to use; fixes D10).
+- Board approval where the community's documents require it [VERIFY].
+
+**Order after approval:**
+1. state-change events;
+2. letters locked and queued;
+3. mailing proof sets the cure dates (existing lock-and-batch / record-mailing).
+Mailing still never changes the stage.
+
+### 5.7 Audit and reversibility
+**`violation_resolution_events`** (immutable), written for every automatic or approved resolution:
+- `violation_id`, `inspection_id` (the completed drive), `drive_scope_id`, `property_id`;
+- `evidence`: `{no_matching_photo: true, photos_at_property: N, property_in_scope: true, route_passed: true|null, exceptions: []}`;
+- `policy_version`, `rule` (`completed_drive_no_photo`);
+- `prior_stage`, `prior_stage_started_at`, `prior_cure_period_ends_at`;
+- `actor` (`system` + the approving user for option B, or `system` for option A).
+
+**`violation_stage_events`** (immutable) records every stage change from every path, with actor and source. This fixes the missing history.
+
+**Reverse a mistaken closure:** `reverse_resolution(resolution_event_id, reason, by)`.
+- It restores the case to open at its prior stage and dates, and writes a reversal event.
+- It never deletes the original event.
+- The UI offers it from the case, the drive review screen, and any later drive where the same condition is photographed.
+
+**A condition photographed again after an auto-resolution**, on a later drive:
+- The reviewer sees "resolved by drive X on date, no photo".
+- The reviewer chooses either **reverse** (the condition was missed, so the case continues at its prior stage) or **NEW** (a genuinely new occurrence).
+- The default suggestion depends on elapsed time and is **Ed's policy decision**. [VERIFY] the §209 six-month repeat-violation treatment, and whether a reversed case's cure period needs a fresh notice.
+
+### 5.8 Certified lifecycle (separate from ordinary cases)
+**What exists today** (section 2.11):
+- a 180-day window, `CERT_VALID_DAYS`;
+- **three different start dates** in three places;
+- display-only expiry, with no recertify, refer or restart mechanics;
+- 70 of 208 open certified cases undated;
+- 64 of them already past 180 days while still open [prod].
+
+**Proposed lifecycle** (mechanics marked as open questions; nothing is assumed):
+1. **Enter certified:** when the certified notice is mailed, `certified_notice_date` is set from the postmark by lock-and-batch and record-mailing. Today only the cert-reinspect tool sets it (fixes the gap).
+2. **One clock source:** everything reads `certified_notice_date`: the cert-reinspect page, the field panel (`api/inspections.js:2535-2555`), and the Vantaca reconcile (`lib/enforcement/vantaca_reconcile.js`).
+   - A case without a date shows **"needs dating"**. It is never computed from `current_stage_started_at`.
+3. **On each drive:**
+   - Matching photo: continuation plus a `violation_field_checks` `not_cured` record written automatically from the photo, as evidence for the board-only "not cured as of" report.
+   - No photo: no change.
+4. **Resolution:** **manual only**, by an office user with a reason (and a photo if Ed requires one). It uses the one unified resolve endpoint (fixes D12).
+5. **Window expiry** (day 180 from `certified_notice_date`): **open questions for Ed and counsel; the code has no behavior today:**
+   - What happens at expiry? The options noted in code comments are "recertify / refer", i.e. send a new certified notice, refer to the attorney, or board review. Who decides, and is there a deadline?
+   - Does the clock ever restart without a new certified notice, for example after a hearing or a board action?
+   - What does the "six-month clock" govern legally, versus Bedrock's operating practice (Ed: "certified letters are good for 180 days", `vantaca_reconcile.js:4-6`)? [VERIFY]
+   - How are certified cases handled after an ownership change? [VERIFY]
+6. **Work list:** the existing "Certified §209 cases" view (enforcement around 11256, 11505-11591) becomes the single certified queue, sorted by days remaining, with expired and undated cases at the top.
+
+### 5.9 Data model (minimal, all new, immutable where marked)
+- `drive_scopes` (with a property snapshot).
+- `drive_property_visits` (automatic, from photos).
+- `drive_reconciliations` (one per drive: `policy_version`, inputs watermark).
+- `reconciliation_proposals` (immutable).
+- `reconciliation_decisions` (immutable; one per proposal; a second approval row for gated stages).
+- `violation_resolution_events` and `violation_stage_events` (immutable).
+- `observation_case_links`.
+- `community_enforcement_policy_versions`: the ladder, cure days per stage, gates, the recurrence rule, the auto-resolve settings (apply timing A or B, route check on or off, self-help and carryover inclusion), and the certified window.
+- **Record ownership:** `association_record` for enforcement evidence, decisions and events. AI proposal internals are workpaper [confirm with Ed].
 
 ---
 
-## 6. Edge cases
-- **Inspector forgets to select a house:** the photo is unlinked and goes to review. There is no GPS fallback until D15 is fixed.
-- **Photo of a neighbor's lot,** or a condition visible from one house but belonging to another: the reviewer relinks; proposals are keyed on the confirmed property.
-- **Same condition, different AI label** (trash vs. recycling containers): the alias-expanded canonical category matches it. If the alias isn't confirmed, NEEDS_REVIEW.
-- **Two conditions in one photo:** the AI returns one finding today. The reviewer can add a second observation; propose a later AI change to return several findings.
-- **A cure deadline falls mid-drive, or the drive spans midnight:** compare against the observation's `captured_at`, not the drive time.
-- **Letter drafted but not mailed:** CONTINUE only (the existing `awaiting_first_mail`).
-- **Mailed but no proof on a certified case:** NEEDS_REVIEW.
-- **Owner changed:** NEEDS_REVIEW [VERIFY].
-- **Case at the attorney** (`sent_to_attorney_at`): NEEDS_REVIEW, never auto.
-- **Duplicate photos across drives on the same day:** hash flag. One observation per case per day, keeping the existing same-day guard.
-- **Offline queue not drained at end of drive:** reconciliation is blocked (5.3).
-- **`auto_stale` drive:** no scope-based RESOLVE; explicit checks still count.
-- **Seasonal or intermittent conditions** (trash day): category policy may require two observations or a specific time window [policy decision].
-- **Demo communities:** they stay excluded, as in the cure-lapse job.
+## 6. Separate lifecycles
+
+**Regular (courtesy) case:**
+```
+NEW (confirmed observation) -> courtesy_1 --(mailed, cure lapses, matching photo on later drive)--> ESCALATE -> courtesy_2
+   any open courtesy case on a completed in-scope drive with NO matching photo -> RESOLVE (auto-proposed; applied per 5.6 A/B)
+   courtesy_2 + matching photo after cure lapse -> ESCALATE proposal to certified (second approver) 
+   RESOLVED --(missed? condition photographed later)--> reviewer: REVERSE (reopen at prior stage) or NEW occurrence
+```
+
+**Certified (or fine) case:**
+```
+certified_209 (certified_notice_date = postmark) 
+   each drive: matching photo -> continuation + not_cured field check (evidence); no photo -> no change
+   resolution: MANUAL ONLY (reason; photo if required)
+   day 180: expiry handling = OPEN QUESTION (recertify / refer / board) - no current mechanics
+   fine_assessed: board/fine rules; never auto
+```
 
 ---
 
-## 7. Phased plan
+## 7. Edge cases
+- **Inspector forgets to select a house:** the photo is unlinked, which is an exception for the nearby properties until it's linked. There is no GPS fallback until D15 is fixed.
+- **The condition was present but the inspector didn't photograph it:** the case auto-resolves under Ed's rule. The reversal path (5.7) covers it when a later drive finds it. The route check narrows the "street skipped" variant.
+- **Photo of a different issue at the same house:** it doesn't block RESOLVE of the prior case. It becomes a NEW proposal.
+- **AI labels the same condition differently:** a confirmed alias counts as a match. An unconfirmed alias or low confidence is an exception for that case.
+- **A case opened on this drive:** excluded (the 2-day gap).
+- **A drive started, then the tablet died, and the stale job closed it:** not eligible for auto-RESOLVE until a person confirms the drive was completed.
+- **Offline photos uploaded after "End drive":** the drive can't complete until the queue is drained, which the device reports. Late photos re-run reconciliation for their property.
+- **Two drives in one community on the same day,** with different sections: each reconciles its own scope. Overlapping scopes: a matching photo from either drive counts, so RESOLVE waits until both are complete.
+- **Owner changed since the notice:** the case still resolves on no photo under Ed's rule. Escalation on a new owner goes to NEEDS_REVIEW [VERIFY].
+- **Resolved case with an unmailed draft:** the draft is dropped. A resolved case with a letter mailed earlier keeps it in its history.
+- **Demo communities:** excluded, as the cure-lapse job already does.
+
+---
+
+## 8. Phased plan
 
 | Phase | Scope | Gate |
 |---|---|---|
-| **0. Stop the bleeding** | Fix D1 (route-trace updates `last_ping_at`; stale close uses pings; `ended_at_quality`), D2 (paged coverage), D4, D5, D6, D7, D13 (actor on confirm and reject); keep the cure-lapse job **off** (D9) | Separate small approvals; migrations via the owner panel |
-| **1. Persisted visits and checks** | `drive_property_visits`, `drive_issue_checks`, the field strip (Still there / Not present), persisted "Done with house", move Advance/Reduce/Mark cured to office-only, a service-worker shell | Ed approves the field UX |
-| **2. Stage history and policy versions** | `violation_stage_events` written by all paths; `community_enforcement_policy_versions` seeded from the current hard-coded ladder, with no behavior change; alias-aware index and counts (D8) | Rehearsal plus a production read-only diff |
-| **3. Reconciliation (shadow)** | The proposal engine runs after each drive and **only displays** proposals next to the current workflow | Compare proposals with what staff actually did for 2 to 4 weeks |
-| **4. Reviewed batch** | Review screen, decisions, two-level approval for certified, fine and self-help; drafts from approved proposals only; GLOBAL_RULES §209 injection (D11) | Counsel review of notice content and gates |
-| **5. Retire the old paths** | Remove auto-advance on confirm, the reconcile auto-advance, and the cure-lapse escalation; every change goes through proposals | After phase 4 has been stable |
+| **0. Fix confirmed defects** | Fix these first: D1 (route-trace updates `last_ping_at`; `ended_at_quality`); D2 (paged coverage); D4; D5; D6; D7; D13 (reviewer and actor on confirm and reject). Keep the cure-lapse job **off** (D9). Set `certified_notice_date` at mailing, and one certified clock source | Small separate approvals; migrations via the owner panel |
+| **1. Scope and visits** | `drive_scopes` (full, section, spot), automatic property visits, End-drive queue check, service-worker shell; remove Advance, Reduce, Add prior and Mark cured from the field modal (office-only) | Ed approves |
+| **2. History and policy** | `violation_stage_events` from all paths; resolution events plus reversal; `community_enforcement_policy_versions` seeded from the current hard-coded ladder, with no behavior change; alias-aware index and counts (D8) | Rehearsal plus a production read-only diff |
+| **3. Reconciliation (shadow)** | The engine runs after each drive and **only displays** proposals, including RESOLVE, next to what staff actually do | 2 to 4 weeks comparing proposals with actual staff actions |
+| **4. Apply** | RESOLVE applied per Ed's choice (A or B), with reversal; ESCALATE and NEW through review; second approver for certified, fine and self-help; drafts from approved proposals; GLOBAL_RULES §209 injection (D11) | Counsel review of notice content and gates |
+| **5. Certified workflow** | Single certified queue; automatic `not_cured` checks from matched photos; expiry handling once Ed and counsel define it | Ed and counsel answers (5.8 item 5) |
+| **6. Retire the old paths** | Remove auto-advance on confirm, reconcile auto-advance, the cure-lapse escalation, and the duplicate resolve endpoint | After phase 4 has been stable |
 
 ---
 
-## 8. Test strategy
-- **Pure proposal engine, table-driven:**
-  - every row of the 5.4 table and every guard;
-  - absence without a check gives UNCERTAIN, never RESOLVE;
-  - mailed-proof gaps block ESCALATE;
-  - owner change, attorney, self-help and certified cases give NEEDS_REVIEW;
-  - alias matching;
-  - a changed category rule gives NEEDS_REVIEW;
-  - recurrence cure days meet the certified floor;
-  - the policy version is recorded.
-- **Coverage:**
-  - paged pings beyond 1,000 (a fixture with 5,000 pings);
-  - an out-of-scope property is never "missed";
-  - an `auto_stale` drive can't give a scope-based RESOLVE.
+## 9. Test strategy
+- **Pure reconciliation engine, table-driven:**
+  - completed in-scope drive plus a non-certified case with no matching photo gives **RESOLVE**, with no tap required;
+  - a certified or fine case with no photo gives **no change**, never resolve;
+  - a matching photo gives CONTINUE or ESCALATE by cure and mailing proof;
+  - a different-issue photo doesn't block RESOLVE;
+  - a case opened on this drive is excluded;
+  - self-help and carryover cases follow the configured inclusion;
+  - an unlinked photo, pending AI, an unreviewed observation, an ambiguous alias, a duplicate flag, or the route not passing each block **only that property**;
+  - an out-of-scope property is untouched;
+  - an `auto_stale` drive is ineligible;
+  - the policy version is recorded;
+  - there is **no default UNCERTAIN** for ordinary no-photo cases.
+- **Reversal:**
+  - a reversed resolution restores the prior stage, stage start and cure dates;
+  - the original event is kept;
+  - a later matching photo offers REVERSE or NEW.
+- **Scope and coverage:**
+  - property snapshot at drive start;
+  - section and spot scopes;
+  - the route check with a 5,000-ping fixture (paged).
+- **Certified clock:**
+  - every surface reads `certified_notice_date`;
+  - undated shows "needs dating";
+  - the date is set at mailing;
+  - expiry is displayed without automatic action.
 - **Ledger rehearsal (PGlite):**
-  - proposals, decisions and stage events are append-only;
+  - proposals, decisions, resolution and stage events are append-only;
   - one decision per proposal;
-  - a certified approval requires a second approver distinct from the first;
-  - the stage CHECK accepts every value the code can emit (fixes the D6 class of bug, following the CLAUDE.md "output accepted by constraint" rule).
+  - a distinct second approver for certified, fine and self-help;
+  - the stage CHECK accepts every value the code can emit (D6 class).
 - **Letters:**
-  - §209 text rendered from GLOBAL_RULES, matched against the gold-standard fixture;
-  - the stage-to-template mapping;
-  - no letter from an unapproved proposal.
-- **Field:**
-  - the offline queue for visits and checks;
-  - idempotent retries;
-  - "Not present" never closes anything without office approval.
-- **Health:** extend `lib/enforcement/health.js` with an "open case with no stage event" check and a "proposal older than N days undecided" check.
+  - GLOBAL_RULES §209 text matches the gold-standard fixture;
+  - no letter from an unapproved proposal;
+  - a resolved case's unsent draft is dropped.
 
 ---
 
-## 9. Decisions and verification
+## 10. Decisions and verification
 
 **Ed:**
-1. The field strip: are "Still there / Not present" per prior issue acceptable taps, and is a photo required for "Not present" on certified cases?
-2. Moving Advance, Reduce and Mark cured to office-only.
-3. Who is the second approver for certified, fine and self-help.
-4. Bulk-approval limits.
-5. The drive-scope model (full, section, or spot list).
-6. Treatment of seasonal and intermittent categories.
-7. Whether to replace the cure-lapse job entirely.
-8. Record-ownership split for AI proposal internals.
+1. When ordinary RESOLVEs apply: **(A) automatically at drive completion**, or **(B) at batch approval** with one click (5.6).
+2. The route-did-not-pass safety net: on or off, and the distance.
+3. Drive scopes: full community by default, plus sections and spot lists; who defines sections.
+4. Whether self-help / 10-day categories follow the ordinary rule or the certified rule.
+5. Whether Vantaca-carryover courtesy cases follow the ordinary rule.
+6. What happens when a resolved condition is photographed again: the default suggestion (reverse vs. NEW) by elapsed time.
+7. Certified: a photo required on manual resolution? Expiry handling at day 180 (recertify, refer, or board)? Any clock restart?
+8. Moving Advance, Reduce, Add prior and Mark cured to office-only.
+9. The second approver for certified, fine and self-help.
+10. Record-ownership split for AI proposal internals.
 
 **Counsel [VERIFY]:**
-1. Chapter 209 notice content and the delivery method per stage (certified mail and what counts as proof).
-2. Cure-period minimums per stage.
-3. Hearing-request rights and timing.
-4. The repeat-violation-within-six-months rule and what counts as the "same" violation.
-5. Owner-change handling.
-6. Board-approval requirements before fines and self-help.
-7. Using AI-proposed classifications with human approval.
-8. Evidence retention.
+1. Chapter 209 notice content and delivery per stage; certified proof.
+2. Cure minimums.
+3. Hearing rights.
+4. The six-month repeat rule and the "same violation" definition, including after an auto-resolution and a later sighting.
+5. The meaning of the 180-day certified window and the expiry options.
+6. Owner-change handling.
+7. Board approval before fines and self-help.
+8. Closing ordinary cases from a documented completed drive with no re-sighting (evidence and records).
 
-**Engineering (read-only, done here):** D1, D2, D4, D5, D13, D15 and the cure-lapse run state were checked in production with aggregate queries only.
+**Engineering (read-only, done here):**
+- D1, D2, D4, D5, D13 and D15, the cure-lapse run state, and the certified clock data (208 open certified; 138 dated; 64 dated more than 180 days ago; 0 field checks) were all checked in production with aggregate queries only.
+
+---
+
+## Change log
+**rev 2 (2026-09-28):** ChatGPT review of `1a4e5bf9`, applying Ed's correction (Issue #1, 14:35 UTC).
+- Removed per-issue "Still there / Not present" taps, the positive-absence requirement, the blanket UNCERTAIN default, and "RESOLVE only with check".
+- Ordinary non-certified cases with no matching photo on a completed, in-scope drive are **auto-proposed RESOLVE**. Apply timing (A or B) is Ed's decision.
+- Certified and fine cases never resolve from a missing photo.
+- Mapped the certified clock precisely (2.11): three inconsistent start dates, display-only expiry, 70 undated, 64 past 180 days.
+- Added drive scope (full, section, spot), property-scoped exceptions, the drive-eligibility rules, auditable resolution events with reversal, and separate lifecycles.
+- Documented the existing reconcile CURE logic (2.12).
+- Updated the matrix, screen, phases, tests and decisions to match.
+- Separated from the `user_profiles` verification script (branch `chore/verify-user-profiles-privileges`).
+
+**rev 1 (`1a4e5bf9`):** initial assessment. Did not incorporate Ed's 14:35 correction, which was posted before rev 1's reply and missed.

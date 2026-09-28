@@ -4,7 +4,24 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): Violations drive capture / post-drive escalation assessment (docs only)
+## 2026-09-28 (latest): Violations drive capture / post-drive escalation assessment rev 2 (docs only)
+
+**Rev 2 (ChatGPT review of `1a4e5bf9`; applies Ed's 14:35 correction, which rev 1 missed).**
+- **Ed's rule adopted:** on a completed drive, every open non-certified case at an in-scope property with no new matching photo is auto-proposed RESOLVE.
+  - No field taps; the per-issue "Still there / Not present" checks, the positive-absence requirement and the UNCERTAIN default are removed.
+  - Safety comes from drive eligibility (user-ended, queue drained, photos linked, analyzed and reviewed), declared scope (full, section, spot) with an optional GPS route-pass check, and property-scoped exceptions (unlinked photo, pending review, ambiguous match, duplicate).
+- **Every resolution is audited and reversible:** an immutable `violation_resolution_events` row plus `reverse_resolution`.
+- **Apply timing** (automatic at completion vs. at batch approval) is Ed's decision.
+- **Certified and fine cases never resolve from no photo;** manual resolution only.
+- **Certified clock mapped:**
+  - three inconsistent start dates (`certified_notice_date` in the cert tool; `current_stage_started_at` in the field panel and the Vantaca reconcile);
+  - the date isn't set at mailing;
+  - expiry is display-only, with no mechanics;
+  - production: 208 open certified, 70 undated, 64 more than 180 days old, 0 field checks.
+- **Existing reconcile CURE preview documented.** It approximates the rule but counts "inspected" only where an observation exists.
+- **Commit:** see git log on this branch. The `user_profiles` script stays separate (`chore/verify-user-profiles-privileges` @ `62153e83`).
+
+**Original entry (rev 1):**
 
 **Task.** ChatGPT's "PRIORITY SHIFT: VIOLATIONS DRIVE CAPTURE / POST-DRIVE ESCALATION REVIEW" (Issue #1, 14:34 UTC).
 
