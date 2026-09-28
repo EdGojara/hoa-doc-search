@@ -161,6 +161,7 @@ async function loadExceptions(){
   }
 }
 function excRow(x,commOpts){
+  if (x.reimbursement) return excReimbRow(x,commOpts);
   const needVendor = !x.suggested_vendor_id;
   const vend = (x.suggested_vendor&&x.suggested_vendor.name) || x.vendor_name || '(vendor unknown)';
   return `<div class="exc" data-id="${x.id}" style="border:1px solid #f6d5ad;background:#fffdf7;border-radius:9px;padding:10px 12px;margin-bottom:10px;">
@@ -178,6 +179,55 @@ function excRow(x,commOpts){
     </div>
   </div>`;
 }
+// A held REIMBURSEMENT (Issue #3): the payee is the person, the amount is what
+// staff requested (never the receipt total), and the account is picked from the
+// community's chart. Loads to approval with the receipt PDF attached.
+function excReimbRow(x,commOpts){
+  const rb=x.reimbursement||{};
+  const amt=rb.requested_cents?(rb.requested_cents/100).toFixed(2):'';
+  const fig=(c)=>c?money(c):'n/a';
+  const sel=(opts,val)=>val?opts.replace(`value="${val}"`,`value="${val}" selected`):opts;
+  setTimeout(()=>{ const cs=document.getElementById('exc-rcomm-'+x.id); if(cs&&cs.value) excReimbAccounts(x.id); },0);
+  return `<div class="exc" data-id="${x.id}" style="border:1px solid #d8c7f3;background:#fbf8ff;border-radius:9px;padding:10px 12px;margin-bottom:10px;">
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;">
+      <div><span style="font-size:10.5px;font-weight:800;color:#6b21a8;background:#f3e8ff;border-radius:20px;padding:2px 8px;margin-right:6px;">REIMBURSEMENT</span><b>${escapeHtml(rb.reimbursee||'who?')}</b> · requested <b>${fig(rb.requested_cents)}</b></div>
+      <span style="font-size:11px;font-weight:700;color:#92400e;background:#fde9c8;border-radius:20px;padding:2px 9px;">needs review</span>
+    </div>
+    <div class="note" style="font-size:11.5px;color:#64748b;margin:3px 0 4px;">Receipt total ${fig(rb.receipt_total_cents)} (supporting document, not the amount owed) · receipt allocation ${fig(rb.allocation_cents)}${rb.allocation_note?' ('+escapeHtml(rb.allocation_note)+')':''} · ${x.storage_path?`<a href="javascript:void(0)" onclick="openExcFile('${x.id}')" style="color:#0B1D34;font-weight:600;">📄 view the receipt</a>`:'<span style="color:#b91c1c;">no PDF on file</span>'}</div>
+    ${x.notes?`<div style="font-size:12px;color:#92400e;margin:0 0 8px;">${escapeHtml(x.notes)}</div>`:''}
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+      <select id="exc-rcomm-${x.id}" onchange="excReimbAccounts('${x.id}')" style="font-size:12px;padding:3px 6px;"><option value="">— community —</option>${sel(commOpts,x.community_id||rb.community_id)}</select>
+      <input id="exc-rname-${x.id}" value="${escapeHtml(rb.reimbursee||'')}" placeholder="reimburse to…" style="font-size:12px;padding:4px 6px;border:1px solid #d7dee7;border-radius:5px;width:150px;">
+      <input id="exc-ramt-${x.id}" value="${amt}" inputmode="decimal" placeholder="amount" style="font-size:12px;padding:4px 6px;border:1px solid #d7dee7;border-radius:5px;width:80px;">
+      <select id="exc-racct-${x.id}" style="font-size:12px;padding:3px 6px;max-width:230px;"><option value="">— expense account —</option></select>
+      <button class="btn" style="padding:4px 11px;font-size:12px;" onclick="resolveReimbExc('${x.id}')">Create reimbursement (to approval)</button>
+      <button class="btn ghost" style="padding:4px 10px;font-size:12px;" onclick="dismissExc('${x.id}')">Not a reimbursement</button>
+      <span id="exc-msg-${x.id}" style="font-size:12px;"></span>
+    </div>
+  </div>`;
+}
+window.excReimbAccounts=function(id){
+  const cid=(document.getElementById('exc-rcomm-'+id)||{}).value; const s=document.getElementById('exc-racct-'+id); if(!s) return;
+  if(!cid){ s.innerHTML='<option value="">— expense account —</option>'; return; }
+  af('/api/ap/expense-accounts?community_id='+encodeURIComponent(cid)).then(r=>r.json()).then(j=>{
+    s.innerHTML='<option value="">— expense account —</option>'+(j.accounts||[]).map(a=>`<option value="${escapeHtml(a.id)}">${escapeHtml(a.account_number)} · ${escapeHtml(a.account_name)}</option>`).join('');
+  }).catch(()=>{ s.innerHTML='<option value="">Could not load accounts</option>'; });
+};
+window.resolveReimbExc=async function(id){
+  const msg=document.getElementById('exc-msg-'+id);
+  const v=(k)=>((document.getElementById('exc-'+k+'-'+id)||{}).value||'').trim();
+  const amt=Math.round(parseFloat(v('ramt').replace(/[$,]/g,''))*100);
+  const body={community_id:v('rcomm'),reimbursee_name:v('rname'),amount_cents:amt,account_id:v('racct')};
+  const miss=!body.community_id?'Pick the community.':!body.reimbursee_name?'Enter who is being reimbursed.':!(amt>0)?'Enter the amount.':!body.account_id?'Pick the expense account.':'';
+  if(miss){ if(msg){msg.style.color='#b91c1c';msg.textContent=miss;} return; }
+  if(msg){ msg.style.color='#64748b'; msg.textContent='Creating…'; }
+  try{
+    const r=await af('/api/ap-intake/exceptions/'+id+'/resolve-reimbursement',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok){ if(msg){msg.style.color='#b91c1c';msg.textContent=(j.detail||j.error||'Could not create.');} return; }
+    const card=document.querySelector('.exc[data-id="'+id+'"]'); if(card){ card.style.transition='opacity .2s'; card.style.opacity='0'; setTimeout(()=>{card.remove(); loadExceptions(); loadQueue();},220); }
+  }catch(e){ if(msg){msg.style.color='#b91c1c';msg.textContent='Could not create.';} }
+};
 window.openExcFile=async function(id){
   try{ const r=await af('/api/ap-intake/exceptions/'+id+'/file?json=1'); const j=await r.json(); if(j&&j.url) window.open(j.url,'_blank'); else alert('Could not open the bill.'); }
   catch(e){ alert('Could not open the bill.'); }

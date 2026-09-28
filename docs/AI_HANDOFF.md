@@ -4,7 +4,57 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): Trial Balance drill-down, read-first transaction summary (feat/tb-transaction-summary; NOT merged)
+## 2026-09-28 (latest): Issue #3 Emma reimbursement intake fix (fix/emma-reimbursement-intake; NOT merged, NOT deployed)
+
+Authorized by Ed (Issue #3, 20:51). No production writes: the real Gloria Allen email was NOT replayed, no payable or payee was created, no vendor data was changed. (Ownership History v1 is on feat/ownership-history, awaiting Ed's merge approval; see that branch's handoff.)
+
+Root cause:
+- `lib/ap/intake.js` exited on `looks_like_invoice=false` BEFORE the reimbursement branch.
+- The extractor is told that a paid receipt is not an invoice.
+- `graph_ingest.js` silently ignored `not_an_invoice`, so the email stayed 'linked'.
+- A reply draft promised a check anyway.
+
+Fix:
+- **Intent before document type.** `routeAfterStage`: reimbursement intent → reimbursement; invoice → invoice; payment intent + not an invoice → needs_review; otherwise not_an_invoice.
+- **Amount provenance** (`lib/ap/reimbursement.js`):
+  - the amount staff typed in the email is the payable amount;
+  - the receipt grand total and a handwritten allocation are evidence only;
+  - the handwritten allocation counts only if its lines add up;
+  - no amount, two amounts, more than the receipt, or disagreement with the allocation → needs_review with every figure;
+  - `extracted.reimbursement` keeps all figures.
+- **Coding.** Only a staff instruction that resolves to exactly one real account on the community chart. None, no match or ambiguous → needs_review. Non-staff senders can't direct coding.
+- **Payee.** The existing kind='reimbursement' path (never a trade vendor, not 1099). A new payee forces needs_review and is noted, including "confirm the mailing address".
+- **No silent terminal state:**
+  - `graph_ingest` records an exception for every needs_review, and for a payment request with no readable PDF;
+  - manual to-payables records exceptions and returns 422 if nothing loaded or was held;
+  - `recordException` is idempotent for the no-PDF case too.
+- **Exceptions:**
+  - reimbursement holds show the person, the requested amount, receipt total vs requested, and the reason;
+  - the vendor promote path is refused for them;
+  - new `POST /api/ap-intake/exceptions/:id/resolve-reimbursement` (admin) loads them with the PDF and hash kept.
+- **Reply drafts.** A promise of posting or a check is removed when no payable exists (sentence split on ". " so "$35.72" is safe).
+- **Triage.** An @bedrocktx.com sender never matches a vendor's email/contact_email; the vendor-name fallback is kept.
+
+Tests: tests/test_emma_reimbursement.js (15). npm test: 125/130, same 5 pre-existing failures as main.
+
+Read-only dry run on the real email (writes stubbed): → loaded-equivalent payable:
+- $35.72 to reimbursement payee "Gloria Allen" (would be created, needs_review);
+- Walmart as the source;
+- coded 5900 Community Events;
+- receipt PDF + hash attached;
+- awaiting_approval;
+- notes carrying requested $35.72 / receipt $166.00.
+The allocation reader's handwriting read was internally inconsistent both times, so it was dropped as evidence (safe). The pending draft's promise is replaced with "logged in Payables for review".
+
+Separate follow-ups (NOT in this branch):
+- Emma mailbox ~2-day ingestion lag (9/22 → 9/24; needs Render logs).
+- The Star Protection Agency vendor record lists a Bedrock staff address (data fix needs Ed's approval).
+- `fetchAttachmentBuffers` relies on inline contentBytes (the known large-file omission scar).
+- Replay / entry of the real Gloria payable needs Ed's approval.
+
+---
+
+## 2026-09-28: Trial Balance drill-down, read-first transaction summary (feat/tb-transaction-summary; NOT merged)
 
 **Accuracy fixes after ChatGPT review of `c2495884` (18:19 UTC).**
 1. **"Paid from" never guesses.** It uses only:
@@ -57,7 +107,7 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): Trial Balance drill-down on feat/trial-balance-drilldown (NOT merged/deployed)
+## 2026-09-28: Trial Balance drill-down on feat/trial-balance-drilldown (NOT merged/deployed)
 
 **Revision after ChatGPT review of `9a1d51b1` (17:19 UTC).**
 - **Period-start scope REMOVED (option a).** The TB and the detail now take only `as_of`: every account, every counted entry on or before the date. That TB balances whenever the ledger does. `start` is refused (400 `period_start_not_supported`) by both endpoints and by the library, and the UI has only "As of" plus "All history".

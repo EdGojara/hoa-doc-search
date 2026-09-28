@@ -195,6 +195,23 @@ router.post('/exceptions/:id/resolve', express.json(), async (req, res) => {
   } catch (err) { console.error('[ap_intake] resolve exception failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
+// POST /exceptions/:id/resolve-reimbursement — { community_id, reimbursee_name,
+// amount_cents, account_id } -> a reimbursement payable awaiting approval, with
+// the original receipt PDF kept on it (Issue #3).
+router.post('/exceptions/:id/resolve-reimbursement', express.json({ limit: '8kb' }), async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const b = req.body || {};
+    const { promoteReimbursementException } = require('../lib/ap/intake_exceptions');
+    const out = await promoteReimbursementException(req.params.id, {
+      communityId: b.community_id || null, reimburseeName: b.reimbursee_name || null,
+      amountCents: Number(b.amount_cents), accountId: b.account_id || null, resolvedBy: admin.full_name || 'staff',
+    });
+    if (!out.ok) return res.status(out.error === 'not_found' ? 404 : 400).json(out);
+    res.json(out);
+  } catch (err) { console.error('[ap_intake] resolve reimbursement failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 // POST /exceptions/:id/dismiss — not a bill / handled elsewhere.
 router.post('/exceptions/:id/dismiss', express.json(), async (req, res) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
