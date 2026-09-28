@@ -4,7 +4,64 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Trusted Pay terms + checkout disclosure built on a branch (migration 470 PROPOSED; NOT merged/deployed)
+## 2026-09-28 (latest): Fee policy split (processor cost + Bedrock margin) and optional support phone, on feat/trusted-pay-terms (NOT merged/deployed)
+
+**Task.** ChatGPT's "CHATGPT REVIEW — TRUSTED PAY TERMS BRANCH" (Issue #1, 02:48 UTC), reviewing `da941ff7` / `187b5ed3`.
+
+**Status.** Done on `feat/trusted-pay-terms` (this commit). Not merged, not deployed. No migration applied, no Stripe change, no production change. **Migration 470 is unchanged** (same sha256 `83f46eca…`); the refactor didn't need it. It still awaits Ed's approval.
+
+**Fee policy** (`lib/payments/pay_quote.js`, the one fee policy):
+- `feeBreakdown(method, amount)` (internal) returns **processor cost recovery + Bedrock margin = Payment Processing Fee**, plus the policy that produced it (`policy_version: 'fee-policy-1'`).
+- Configured per method, each component in basis points plus fixed cents, via env:
+  - `PAY_FEE_CARD_PROCESSOR_BPS`, `PAY_FEE_CARD_PROCESSOR_FIXED_CENTS`, `PAY_FEE_CARD_MARGIN_BPS`, `PAY_FEE_CARD_MARGIN_FIXED_CENTS`;
+  - the same four for `ACH`.
+- **Defaults are the existing economics, with no invented numbers:**
+  - card recovers 2.9% + 30c, grossed up because the processor takes it from the total;
+  - ACH recovers $0;
+  - **Bedrock margin = 0 for both** until Ed sets the pricing policy.
+  - With the defaults, every fee is identical to before.
+- The total is the smallest rounded charge that, after the modeled processor cost, leaves the Association its full principal and Bedrock its full margin. The Association's line is always the full Assessment/Payment Amount.
+- A bad setting (negative, fractional, non-numeric, processor ≥ 100%) refuses the quote and the checkout with `503 fee_policy_invalid`. Nothing is written; the fee is never guessed.
+
+**Homeowner-facing: unchanged.** Quote, quote token, checkout response and the Stripe line items carry only Assessment/Payment Amount, Payment Processing Fee (one combined line) and Total Payment. There's no split anywhere a homeowner can see.
+
+**Internal accounting.** On checkout, the fee line's existing `payments.processor_metadata` JSON gets `fee_components` = `{policy_version, processor_cost_cents, bedrock_margin_cents, policy}`.
+- That column is safe for this: webhook handling for assessment rows merges into it rather than overwriting (`assessment_posting.flagGLDeferred` merges; the legacy overwrite handlers run only for non-assessment rows).
+- `payments.processor_fee_cents` stays reserved for the ACTUAL processor fee on settlement (still a follow-up).
+- This corrects the previous entry, which said `processor_fee_cents` holds processor cost: that column exists, but nothing writes it yet.
+
+**Support phone** (`lib/payments/pay_terms.js`, template):
+- The phone appears only when `PAY_SUPPORT_PHONE` is set to a real number (digits and phone punctuation, at least 10 digits). Otherwise the terms name the email alone. Prose is refused, with a server log warning.
+- The template now uses `{{SUPPORT_REACH}}` and `{{SUPPORT_LINE}}`.
+- Because the default wording changed, **`TERMS_VERSION` is now `2026-09-27.2`**, rendered sha256 **`823bdfdbc9b6e33f74018a6002465440743504b5587f7e0f97633182f4c16606`** (default contact, no phone). Nothing was ever accepted under `.1`: branch only.
+- Terms are still marked **"Draft for legal review before live-money launch."**
+
+**Tests.**
+- `test_payment_foundation`: **63/63** (+8). The new ones:
+  - fee = processor + margin, per method;
+  - margin defaults to 0 and the defaults reproduce the old card and ACH fees exactly;
+  - card and ACH use different rules;
+  - Association principal preserved across about 500 amounts per method, with and without a margin;
+  - invalid settings refused;
+  - with a margin configured, the homeowner quote, token, response and Stripe lines show only the combined fee, while the fee row stores a split that sums to the fee and the acceptance records the combined fee;
+  - a misconfigured policy refuses quote and checkout (503, nothing written);
+  - the phone is omitted unless it's a real number, and the rendered terms carry no phone prose.
+- `470_terms_rehearsal` **17/17** (unchanged migration).
+- Full `run_all_tests`: 122/127. The 5 failures are the pre-existing unrelated ones: test_bedrock_ops, persona_routing, signature_identity, amanda_review, and check_requires_tracked (`lib/presentations`).
+- Sabotage: exposing the margin in the quote fails 2 tests; zeroing the margin computation fails 2 tests.
+
+**Open items / blockers.**
+1. **Ed: pricing policy** for the Bedrock margin (card and ACH). Set via the env vars above; no code change needed. Until then, margin is 0.
+2. **Ed: approve migration 470** (unchanged), then a file-only commit to main, and Ed applies it via the owner panel. Only then merge this branch.
+3. **Legal review** of the terms before live money.
+4. Optional: set `PAY_SUPPORT_PHONE` if a phone should appear in the terms. That changes the hash; bump the version if it's set after anyone has accepted.
+5. **Pending from 23:22:** regenerate the Drama Creek hosted onboarding link when Ed is at the keyboard.
+
+**Recommended next action.** ChatGPT reviews this commit. No merge, deploy, migration or Stripe change until approved.
+
+---
+
+## 2026-09-27: Trusted Pay terms + checkout disclosure built on a branch (migration 470 PROPOSED; NOT merged/deployed)
 
 **Task.** ChatGPT's "BUILD TRUSTED PAY TERMS + CHECKOUT DISCLOSURE" instruction (Issue #1, 23:33 UTC). The 23:22 "regenerate hosted onboarding link" instruction is still pending (see Open items).
 

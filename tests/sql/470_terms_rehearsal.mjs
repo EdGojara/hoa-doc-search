@@ -40,7 +40,7 @@ const payRows = (db, group, amount, fee, method = 'card') => db.query(`INSERT IN
   VALUES ($1,'assessment_payment','assessment',$3,'pending',$2,$4,$5,'1004384184',$6,'awaiting_payment','not_posted')` + (fee > 0 ? `, ($1,'assessment_payment','convenience_fee',$7,'pending',$2,$4,$5,'1004384184',$6,'awaiting_payment','not_posted')` : ''),
   fee > 0 ? [C, group, amount, P, T, method, fee] : [C, group, amount, P, T, method]);
 const accept = (db, o) => db.query(`INSERT INTO payment_terms_acceptances (payment_group_id, community_id, property_id, tenure_id, portal_user_id, actor_type, source, payment_method, amount_cents, fee_cents, total_cents, terms_version, terms_sha256, quote_issued_at)
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'2026-09-27.1',$12, now())`,
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'2026-09-27.2',$12, now())`,
   [o.group || GROUP, C, P, T, o.portal === undefined ? U : o.portal, o.actor || 'homeowner', o.source || 'portal', o.method || 'card', o.amount, o.fee, o.total === undefined ? o.amount + o.fee : o.total, o.sha || 'a'.repeat(64)]);
 
 // ---- apply + idempotency + no data ----

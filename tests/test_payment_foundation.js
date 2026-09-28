@@ -8,8 +8,8 @@ const { authorizeHomeownerPayment } = require('../lib/payments/homeowner_checkou
 // Quote tokens are keyed off the dedicated PAYMENT_LINK_SECRET.
 if (!process.env.PAYMENT_LINK_SECRET || process.env.PAYMENT_LINK_SECRET.length < 32) process.env.PAYMENT_LINK_SECRET = 'q'.repeat(48);
 const { createAssessmentCheckout, quoteAssessmentPayment, checkoutModeGate } = require('../lib/payments/assessment_checkout');
-const { paymentProcessingFee, signQuote, verifyQuote } = require('../lib/payments/pay_quote');
-const { getTerms } = require('../lib/payments/pay_terms');
+const { paymentProcessingFee, feeBreakdown, signQuote, verifyQuote } = require('../lib/payments/pay_quote');
+const { getTerms, supportConfig } = require('../lib/payments/pay_terms');
 const { processWebhookEvent } = require('../lib/payments/payment_lifecycle');
 const { verifyPaymentToken, signPaymentToken } = require('../lib/payments/payment_link');
 const { sandboxException } = require('../lib/payments/payment_sandbox');
@@ -650,7 +650,7 @@ t('terms: test-mode containment still refuses real homeowners at the quote and a
 });
 t('terms: the page is original, versioned, complete, and never names the processor', () => {
   const tm = getTerms();
-  assert.strictEqual(tm.version, '2026-09-27.1'); assert.ok(/^[0-9a-f]{64}$/.test(tm.sha256));
+  assert.strictEqual(tm.version, '2026-09-27.2'); assert.ok(/^[0-9a-f]{64}$/.test(tm.sha256));
   assert.ok(tm.html.includes('<title>Trusted Pay Payment Terms and Conditions</title>'));
   assert.ok(tm.html.includes('Draft for legal review before live-money launch'));
   assert.ok(!/\{\{[A-Z_]+\}\}/.test(tm.html), 'unfilled placeholder');
@@ -662,8 +662,102 @@ t('terms: the page is original, versioned, complete, and never names the process
   assert.strictEqual(getTerms().sha256, tm.sha256, 'hash is stable');
 });
 
+
+// ---------------------------------------------------------------- fee policy: processor cost + Bedrock margin
+// (Margin numbers below are TEST values only; the real margin is unset until Ed sets it.)
+const MARGIN_ENV = { PAY_FEE_CARD_MARGIN_BPS: '100', PAY_FEE_CARD_MARGIN_FIXED_CENTS: '25', PAY_FEE_ACH_PROCESSOR_BPS: '80', PAY_FEE_ACH_MARGIN_FIXED_CENTS: '50' };
+t('fee: the Payment Processing Fee = processor cost recovery + Bedrock margin, per method', () => {
+  for (const method of ['card', 'us_bank_account']) for (const amt of [100, 2500, 25000, 123457]) {
+    const b = feeBreakdown(method, amt, MARGIN_ENV);
+    assert.strictEqual(b.payment_processing_fee_cents, b.processor_cost_cents + b.bedrock_margin_cents, `${method} ${amt}`);
+    assert.strictEqual(b.total_cents, amt + b.payment_processing_fee_cents);
+    assert.ok(b.processor_cost_cents >= 0 && b.bedrock_margin_cents >= 0);
+  }
+  assert.strictEqual(feeBreakdown('card', 25000, MARGIN_ENV).bedrock_margin_cents, 250 + 25);
+  assert.strictEqual(feeBreakdown('us_bank_account', 25000, MARGIN_ENV).bedrock_margin_cents, 50);
+});
+t('fee: Bedrock margin defaults to zero for card and ACH; defaults keep the existing economics', () => {
+  for (const amt of [100, 25000, 999999]) {
+    const card = feeBreakdown('card', amt, {}), ach = feeBreakdown('us_bank_account', amt, {});
+    assert.strictEqual(card.bedrock_margin_cents, 0); assert.strictEqual(ach.bedrock_margin_cents, 0);
+    assert.strictEqual(card.payment_processing_fee_cents, Math.round((amt + 30) / (1 - 0.029)) - amt, 'card default = 2.9% + 30c gross-up');
+    assert.strictEqual(ach.payment_processing_fee_cents, 0, 'bank transfer default = no fee');
+  }
+});
+t('fee: card and ACH use different rules', () => {
+  const card = feeBreakdown('card', 25000, MARGIN_ENV), ach = feeBreakdown('us_bank_account', 25000, MARGIN_ENV);
+  assert.deepStrictEqual([card.policy.processor_bps, card.policy.processor_fixed_cents, card.policy.margin_bps, card.policy.margin_fixed_cents], [290, 30, 100, 25]);
+  assert.deepStrictEqual([ach.policy.processor_bps, ach.policy.processor_fixed_cents, ach.policy.margin_bps, ach.policy.margin_fixed_cents], [80, 0, 0, 50]);
+  assert.notStrictEqual(card.payment_processing_fee_cents, ach.payment_processing_fee_cents);
+});
+t('fee: the Association principal is preserved (after the modeled processor cost, the HOA gets the full amount and Bedrock its margin)', () => {
+  for (const env of [{}, MARGIN_ENV]) for (const method of ['card', 'us_bank_account']) for (let amt = 1; amt <= 500000; amt += 997) {
+    const b = feeBreakdown(method, amt, env), p = b.policy;
+    const processorTakes = (p.processor_bps || p.processor_fixed_cents) ? Math.round((b.total_cents * p.processor_bps) / 10000) + p.processor_fixed_cents : 0;
+    assert.ok(b.total_cents - processorTakes >= amt + b.bedrock_margin_cents, `${method} ${amt} short`);
+  }
+});
+t('fee: an invalid fee setting is refused, never guessed', () => {
+  const bads = [['card', { PAY_FEE_CARD_MARGIN_BPS: '-1' }], ['us_bank_account', { PAY_FEE_ACH_MARGIN_FIXED_CENTS: '2.5' }], ['card', { PAY_FEE_CARD_PROCESSOR_BPS: 'abc' }], ['card', { PAY_FEE_CARD_PROCESSOR_BPS: '10000' }]];
+  for (const [m, bad] of bads) assert.throws(() => feeBreakdown(m, 25000, bad), (e) => e.code === 'fee_policy_invalid', JSON.stringify(bad));
+});
+t('terms: support phone is shown only when a real number is configured (no prose stand-in)', () => {
+  const none = supportConfig({});
+  assert.strictEqual(none.SUPPORT_REACH, 'info@bedrocktx.com'); assert.ok(!/phone|portal/i.test(none.SUPPORT_LINE + none.SUPPORT_REACH));
+  const real = supportConfig({ PAY_SUPPORT_PHONE: '(281) 555-0100' });
+  assert.strictEqual(real.SUPPORT_REACH, 'info@bedrocktx.com or (281) 555-0100'); assert.ok(real.SUPPORT_LINE.endsWith('(281) 555-0100'));
+  const origWarn = console.warn; console.warn = () => {};
+  try {
+    const prose = supportConfig({ PAY_SUPPORT_PHONE: 'the phone number shown in your homeowner portal' });
+    assert.strictEqual(prose.phone, null); assert.strictEqual(prose.SUPPORT_REACH, 'info@bedrocktx.com');
+  } finally { console.warn = origWarn; }
+  assert.ok(!getTerms().html.includes('phone number shown'), 'rendered terms carry no phone prose');
+});
+
+// Run after the concurrent tests: these set process.env (the checkout reads the live policy).
+const sequential = [];
+const tSeq = (name, fn) => sequential.push({ name, fn });
+const withEnv = async (env, fn) => {
+  const saved = {}; for (const k of Object.keys(env)) { saved[k] = process.env[k]; process.env[k] = env[k]; }
+  try { return await fn(); } finally { for (const k of Object.keys(env)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
+};
+tSeq('fee: with a margin configured, the homeowner sees one combined fee; the split is stored internally only', () => withEnv(MARGIN_ENV, async () => {
+  const sb = world({ balance: 25000 }); const st = fakeStripe(); const { q, o } = await quoteOf(sb);
+  const split = feeBreakdown('card', 25000);
+  assert.ok(split.bedrock_margin_cents > 0);
+  assert.strictEqual(o.payment_processing_fee_cents, split.payment_processing_fee_cents, 'quote fee = processor + margin');
+  for (const opt of q.options) assert.deepStrictEqual(Object.keys(opt).sort(), ['amount_cents', 'expires_at', 'fee_label', 'method', 'payment_processing_fee_cents', 'quote_token', 'total_cents']);
+  const r = await createAssessmentCheckout(liveDeps(sb, st), { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', portalUserId: 'u1', ...urls, acceptance: accept(o) });
+  assert.ok(r.ok, JSON.stringify(r));
+  const tokenBody = JSON.parse(Buffer.from(o.quote_token.split('.')[0], 'base64url').toString('utf8'));
+  const visible = JSON.stringify({ q: { ...q, options: q.options.map(({ quote_token, ...x }) => x) }, token: tokenBody, r: { ...r, checkout_url: '' }, stripe: st.sessions[0].fees });
+  assert.ok(!/processor|markup|margin|cost|fee_components|policy/i.test(visible), 'homeowner-facing data exposes the split: ' + visible);
+  assert.deepStrictEqual(st.sessions[0].fees.map((f) => f.amount_cents), [25000, split.payment_processing_fee_cents], 'Association line is the full principal; one combined fee line');
+  const feeRow = sb._db.payments.find((p) => p.fee_type === 'convenience_fee'), asmt = sb._db.payments.find((p) => p.fee_type === 'assessment');
+  assert.strictEqual(asmt.amount_cents, 25000); assert.strictEqual(asmt.processor_metadata, undefined);
+  const fc = feeRow.processor_metadata.fee_components;
+  assert.deepStrictEqual([fc.processor_cost_cents, fc.bedrock_margin_cents, fc.policy_version], [split.processor_cost_cents, split.bedrock_margin_cents, 'fee-policy-1']);
+  assert.strictEqual(fc.processor_cost_cents + fc.bedrock_margin_cents, feeRow.amount_cents);
+  assert.strictEqual(sb._db.payment_terms_acceptances[0].fee_cents, split.payment_processing_fee_cents);
+}));
+tSeq('fee: a misconfigured fee policy refuses the quote and the checkout (503, nothing written)', () => withEnv({ PAY_FEE_CARD_MARGIN_BPS: 'oops' }, async () => {
+  const sb = world({ balance: 25000 }); const st = fakeStripe();
+  const origErr = console.error; console.error = () => {};
+  try {
+    const q = await quoteAssessmentPayment(liveDeps(sb, st), { propertyId: P1, actor: 'portal:u1', initiatedBy: 'homeowner_portal' });
+    assert.deepStrictEqual([q.status, q.error], [503, 'fee_policy_invalid']);
+    const tok = signQuote({ actor: 'portal:u1', propertyId: P1, tenureId: SELLER, quote: { method: 'card', amount_cents: 25000, payment_processing_fee_cents: 778, total_cents: 25778 }, terms: getTerms() });
+    const r = await createAssessmentCheckout(liveDeps(sb, st), { propertyId: P1, paymentMethod: 'card', initiatedBy: 'homeowner_portal', portalUserId: 'u1', ...urls, acceptance: accept({ quote_token: tok.token }) });
+    assert.deepStrictEqual([r.status, r.error], [503, 'fee_policy_invalid']);
+    assert.strictEqual(sb._db.payments.length + st.sessions.length, 0);
+  } finally { console.error = origErr; }
+}));
+
 (async () => {
   await Promise.all(results);
+  for (const { name, fn } of sequential) {
+    try { await fn(); console.log('PASS ', name); } catch (e) { failed++; console.log('FAIL ', name, '\n   ', e.message); }
+  }
   console.log(failed ? `\n${failed} FAILED` : '\nall payment foundation checks passed');
   process.exitCode = failed ? 1 : 0;
 })();
