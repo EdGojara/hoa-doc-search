@@ -4,7 +4,19 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): Employee portal / timekeeping architecture assessment (docs only)
+## 2026-09-28 (latest): Employee portal / timekeeping architecture assessment, rev 2 (docs only)
+
+**Rev 2 (after ChatGPT review of `fbd7eaa7`).**
+- Paid time = the reconciled record: punches, employee reports, manager evidence entries and approved corrections. Signals only raise review flags.
+- Event model fixed: immutable punch, request, decision and supersession rows; status and totals are projections; no mutable or voided columns. Idempotency keys, per-employee advisory lock, and one decision per request.
+- Locked periods never refuse work. A lock freezes an export snapshot; post-lock events flow into adjustment exports with workweek overtime recalculated, plus a reconciliation invariant and escalation.
+- Payroll-week math: overtime per workweek; straddling workweeks split by date worked, with overtime going to the period containing the week's end; integer seconds, rounded once at export; DST and overnight handled. Recommendation: biweekly pay periods aligned to the workweek.
+- Meals: interrupted meals become corrections. The 60-minute rule never becomes an automatic unpaid hour. The threshold basis, segmenting and midnight attribution are open questions for Ed.
+- Drives: paid hours and allocated drive hours kept separate; participants confirm their on-drive time, which is reconciled to paid time; stale-affected end times marked `legacy_unverified` and excluded from baselines.
+- `user_profiles` restated as a code fact plus unverified risk, pending a read-only production check.
+- Doc reorganized into confirmed code facts, likely bugs, and proposals.
+
+**Original entry (rev 1):**
 
 **Task.** ChatGPT's "EMPLOYEE PORTAL / TIMEKEEPING ARCHITECTURE ASSESSMENT" (Issue #1, 11:53 UTC). Assessment only: no code, no migration, no deploy, no change to employee pay or status.
 
@@ -17,7 +29,7 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 - **No time measurement exists today.** There is no timesheet, punch, payroll, overtime or meal model.
 - **Logins can't serve as time evidence.** The staff gate cookie is identity-less with a 30-day fixed lifetime, and the Supabase session persists and auto-refreshes, with no idle timeout.
 - **`user_profiles` is the only staff identity**, with role `admin`/`staff`/`assistant`. There are no employee, department, manager or FLSA fields.
-- **Security gap (repo):** `migrations/039_user_profiles.sql:33` grants the authenticated role full CRUD with no RLS, so staff could likely edit their own role through the REST API. Production needs a read-only check. Proposed as a separate task.
+- **`user_profiles` grant (repo):** `migrations/039_user_profiles.sql:33` grants the authenticated role full CRUD, and no migration enables RLS. Production grants, RLS and exposure are unverified, so this is not claimed exploitable. A read-only check is proposed as a separate task.
 - **Violations drives have start, end and pauses, but no per-person attribution:**
   - one `operator_id` plus a text label;
   - no photo capturer;
@@ -61,7 +73,7 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 - location and metrics use;
 - existing agreements.
 
-**Recommended next action.** Ed and ChatGPT review the assessment. No implementation until approved.
+**Recommended next action.** ChatGPT and Ed review rev 2. No implementation until approved.
 
 ---
 

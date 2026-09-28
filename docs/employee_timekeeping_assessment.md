@@ -1,448 +1,514 @@
-# Employee Portal and Timekeeping: Architecture Assessment
+# Employee Portal and Timekeeping: Architecture Assessment (rev 2)
 
-**Status:** assessment only. No code, migration, deploy, or change to employee pay or status.
+**Status:** assessment only. No code, migration, deploy, production write, or change to employee pay or status.
 **Requested by:** Ed via ChatGPT instruction, GitHub Issue #1 (2026-09-28 11:53 UTC).
-**Kept separate from:** `feat/trusted-pay-terms` and its pending pricing and migration-470 decisions.
+**Revision 2:** incorporates ChatGPT's review of `fbd7eaa7` (2026-09-28 12:05 UTC). The change log is at the end.
+**Kept separate from:** `feat/trusted-pay-terms` and its pending decisions.
 **Branch:** `docs/employee-timekeeping-assessment` (docs only).
 
-> **Legal notice.** This is an engineering assessment, not legal advice. Every wage-and-hour point below is marked **VERIFY**. Each needs current federal and Texas verification and review by employment/payroll counsel before any policy takes effect. That covers classification, overtime, meal periods, off-the-clock work, recordkeeping, notices, and any existing agreements. Nothing here is a legal conclusion.
+> **Legal notice.** This is an engineering assessment, not legal advice. Every wage-and-hour point is marked **VERIFY**. Each needs current federal and Texas verification and review by employment/payroll counsel before any policy takes effect. That covers classification, overtime, meal periods, off-the-clock work, recordkeeping, notices, pay timing, and existing agreements. Nothing here is a legal conclusion.
 
-**Legend.**
-- **[VERIFIED]:** read in the current code, with a path cited.
-- **[PROPOSAL]:** not built.
-- **[VERIFY]:** a legal or policy question for counsel or Ed.
+The document keeps three kinds of statement strictly apart:
+- **Section 2: CONFIRMED CODE FACTS.** Read in the current code, with the path cited. These describe code, not production data.
+- **Section 3: LIKELY BUGS AND UNVERIFIED RISKS.** Inferred from code; each needs a read-only production check before anyone calls it real.
+- **Sections 4 to 8: PROPOSALS.** Nothing in them is built.
 
 ---
 
 ## 1. Summary
 
-1. **Nothing in trustEd measures time worked today.** [VERIFIED]
-   - There is no timesheet, punch, payroll, overtime, or meal model. Searches for timesheet, clock_in, punch, payroll, pay_period, overtime, time_entr, hours_worked, time_spent found nothing relevant.
-   - The only "hourly" concepts are community billing rates (`migrations/002_bedrock_billing.sql:68`) and vendor rates.
-2. **Login sessions are useless as time evidence, and the design must never use them.** [VERIFIED]
-   - The staff gate cookie is a signed timestamp with no user identity. It lasts 30 days with no sliding renewal (`server.js:429-430`, `614-626`; `api/_require_admin.js:4-5`).
-   - The Supabase browser session persists in localStorage and auto-refreshes (`public/index.html:378`, created with no options).
-   - No idle timeout exists.
-   - This matches Ed's observation that employees stay logged in.
-3. **Staff identity exists but is thin.** [VERIFIED]
-   - `user_profiles` (`migrations/039_user_profiles.sql:17-28`) holds id, management_company_id, email, full_name, role (`admin`/`staff`/`assistant`), is_active, and last_sign_in_at.
-   - There are no employee fields: no department, manager, hire date, pay type, or FLSA status.
-4. **A security gap must be fixed before any approval workflow relies on roles.** [VERIFIED in repo]
-   - `migrations/039_user_profiles.sql:33` grants `SELECT, INSERT, UPDATE, DELETE ON user_profiles TO authenticated`.
-   - No migration enables row-level security on it.
-   - The Supabase anon key reaches the browser (`server.js` ~11025).
-   - A signed-in staffer could likely edit their own `role` directly through the Supabase REST API.
-   - Production state still needs a read-only check. I've proposed it as a separate task.
-5. **Violations drives already record start, end, and pauses, but not who did the work.** [VERIFIED]
-   - `inspections` stores one `operator_id` and a free-text `device_label`.
-   - Photos have no capturer field.
-   - The front end sends an empty body on observation confirm, so the reviewer is never recorded.
-   - Two likely data bugs corrupt drive timing today (section 5.4).
-6. **Recommendation.** [PROPOSAL]
-   - Build a small, Bedrock-scoped, append-only punch ledger, with employee and manager views, a correction workflow, overtime pre-approval, meal-period attestations, and period lock plus payroll CSV.
-   - Then add per-person drive participation, so labor-hours per drive come from punches, not logins.
-   - Stage it so that nothing touches pay until counsel signs off and Ed sets the effective date.
+1. **trustEd has no timekeeping model today** (section 2.4). Login sessions can't evidence time worked, because they are long-lived and don't identify activity (section 2.1).
+2. **Paid time is proposed to be reconciled, not just punched** (section 4.1). Explicit punches are the primary record.
+   - Employee reports, manager entries backed by credible evidence, and approved corrections also feed the paid record.
+   - Activity signals (drive GPS, task activity) only raise review flags that a manager must resolve.
+   - They never set hours on their own.
+   - Known work is never ignored because a punch is missing.
+3. **Every recorded fact is an immutable event row** (section 4.2). Status, "current" punches and totals are **projections** computed from events. No event row is ever updated or deleted.
+4. **Locked pay periods never refuse newly discovered work** (section 4.7).
+   - A lock freezes an **export snapshot**.
+   - Later work or corrections produce an auditable **adjustment export** in the next pay cycle, with the affected workweeks' overtime recalculated.
+5. **Overtime is computed per 7-day workweek and then allocated across pay periods by the date worked** (section 4.8).
+   - The math uses exact seconds.
+   - Rounding happens once, at export, by a documented rule.
+6. **Paid hours and drive hours are separate quantities** (section 4.10). Participants confirm their actual on-drive time, which is then reconciled to paid time. Drive end times affected by the stale-close behavior are marked unreliable and excluded from baselines.
+7. **Before anything relies on admin or manager roles**, run a read-only production check of `user_profiles` grants, RLS, and endpoint exposure (section 3.1).
 
 ---
 
-## 2. What exists today
+## 2. Confirmed code facts
 
-### 2.1 Authentication, users, roles [VERIFIED]
-
+### 2.1 Authentication and sessions
 **Staff sign-in:**
 - Microsoft through Supabase OAuth: `public/login.html:246-254`.
 - `POST /api/auth/exchange-supabase-session` requires an active `user_profiles` row and sets the gate cookie (`server.js:763-815`).
-- A shared-password fallback also exists: `POST /api/staff-login` (`server.js:711-730`).
+- A shared-password fallback exists: `POST /api/staff-login` (`server.js:711-730`).
 
-**Two layers:**
-- A global gate cookie (`server.js:639-657`) only proves "some staffer".
-- Per-endpoint Supabase JWT checks (`api/_require_admin.js:17-34`) identify the person:
-  - `requireStaff`: lines 51-58;
-  - `requireAdmin`: lines 38-45;
-  - `requireOwner`: lines 63-72; admin plus `OWNER_EMAIL`.
-- `api/_acting_user.js` (`requireActingUser`) is the shared "who did this" helper.
+**Gate cookie:**
+- `bedrock_gate`, `STAFF_GATE_TTL_DAYS = 30` (`server.js:429-430`).
+- Its value is a signed timestamp with **no user identity** (`server.js:614-626`; `api/_require_admin.js:4-5`).
+- Fixed expiry, no sliding renewal.
+- The global middleware is at `server.js:639-657`.
+
+**Per-person identity** comes from the Supabase JWT on each endpoint (`api/_require_admin.js:17-34`):
+- `requireStaff` (51-58);
+- `requireAdmin` (38-45);
+- `requireOwner` (63-72, admin plus `OWNER_EMAIL`).
+- `api/_acting_user.js` provides `requireActingUser`.
+
+**The Supabase browser client is created with no options** (`public/index.html:378`), so supabase-js defaults apply: the session persists and auto-refreshes. No idle-timeout code was found (searched idle, inactivity, heartbeat, refreshSession in `public/`).
 
 **Sign-out:**
-- `authSignOut()` (`public/index.html:442-445`) signs out of Supabase but does not clear the gate cookie.
-- `/staff-logout` (`server.js:733-739`) is separate.
-- Deactivating a user blocks JWT calls (`_require_admin.js:29`) but not an existing gate cookie.
+- `authSignOut()` (`public/index.html:442-445`) doesn't clear the gate cookie; `/staff-logout` (`server.js:733-739`) is separate.
+- Deactivation blocks JWT calls (`api/_require_admin.js:29`) but not an existing gate cookie.
 
-**Tables and rosters:**
-- **`user_profiles`:** described in 1.3.
-  - The `handle_new_user` trigger makes the first user admin and everyone after it staff, for any new auth user (`039:37-62`).
-  - I found no email-domain restriction.
-- **`portal_users`** (`078`, roles updated in `201_portal_manager_role.sql:24-27`) are homeowner, board and portal identities, not the staff directory.
-- **`portal_manager_scope`** (`201:35-47`) maps portal managers to communities.
-- **`management_companies`** (`001_foundation.sql:39-50`); Bedrock is `00000000-0000-0000-0000-000000000001`.
-- **Code-only rosters:**
-  - `lib/bd/people.js` is a business-card roster.
-  - `lib/team/roster.js` holds the AI personas.
+### 2.2 Staff identity, roles, scoping
+- **`user_profiles`** (`migrations/039_user_profiles.sql:17-28`): id (FK `auth.users`), management_company_id, email, full_name, role `CHECK IN ('admin','staff','assistant')`, is_active, last_sign_in_at. `preferences` was added in `131`.
+- **`039:33`:** `GRANT SELECT, INSERT, UPDATE, DELETE ON user_profiles TO authenticated, service_role`. No migration in the repo enables RLS on it or revokes that grant. Section 3.1 covers what this may mean in production.
+- **`handle_new_user` trigger** (`039:37-62`): the first auth user becomes admin and later ones become staff. No email-domain check was found.
+- **No employee fields**: no department, manager, hire date, pay type, or FLSA status. Searched migrations for hire_date, pay_type, hourly, salar, department, job_title, manager_id, reports_to, employee.
+- **Other identity tables:**
+  - `portal_users` (`078`; roles in `201:24-27`) and `portal_manager_scope` (`201:35-47`) are portal identities, not the staff directory.
+  - `management_companies` (`001:39-50`); Bedrock is `00000000-0000-0000-0000-000000000001`.
+- **Staff-to-community assignment:** no table. Nearest: free-text `work_items.assigned_to` (`256:32`), `homeowner_threads.assigned_staff_id` (`161:69`).
+- **Departments, org chart, presence:** not found.
 
-**Org scoping:**
-- `management_company_id` exists on `user_profiles` and `communities`.
-- The JWT-claim RLS policies in `001` are effectively unused, because the API uses the service role. Scoping is enforced in endpoint code.
-
-**Staff-to-community assignment:** no table.
-- The closest are free-text `work_items.assigned_to` (`256_work_items.sql:32`) and `homeowner_threads.assigned_staff_id` (`161:69`).
-
-**Departments, teams, org chart, presence:** not found.
-
-### 2.2 RLS and grants posture [VERIFIED]
-- Only 16 of 473 migrations enable RLS.
-- The current pattern for sensitive tables is: enable RLS, `REVOKE ALL ... FROM PUBLIC, anon, authenticated`, then grant to `service_role` only. Examples: `469:63-65`, `468:30-31`, `467:782-785`.
-- Timekeeping tables should follow this pattern, with all access through server endpoints.
-
-### 2.3 Audit and immutability patterns to reuse [VERIFIED]
+### 2.3 RLS and audit patterns
+- **RLS:** only 16 of 473 migrations enable it. The current pattern for sensitive tables is enable RLS, `REVOKE ALL ... FROM PUBLIC, anon, authenticated`, then grant to `service_role` only (`469:63-65`, `468:30-31`, `467:782-785`).
 - **Append-only by trigger:**
-  - `community_budget_events_append_only()` (`462_budget_approved_lock.sql:46-54`);
+  - `community_budget_events_append_only()` (`462:46-54`);
   - `ownership_tenures_guard()` (`456:68-90`);
   - `migration_attempts_append_only()` (`lib/migrations/apply_one.js:239-250`).
-- **Lock with a reasoned reopen.** This is the closest analog for a locked pay period (`462`):
-  - `community_budgets_lock_guard()` and `budget_line_items_lock_guard()`;
-  - a session-flag bypass;
-  - `reopen_community_budget(p_budget_id, p_reason, p_by)`, which requires a reason and an actor and is service-role only.
-- **Before/after change log:** `journal_entry_edits` (`280:33-42`), with `changes JSONB {field:{before,after}}`, the editor, and a reason.
-- **Actor from the JWT, never the request body:** `119_user_audit_attribution.sql`.
-- **Approval trail:** `ap_invoice_approvals` (`175:187-208`), with an action enum, user id and a name snapshot.
+- **Lock with a reasoned reopen:** `462` (`community_budgets_lock_guard`, `reopen_community_budget(p_budget_id, p_reason, p_by)`, service-role only).
+- **Before/after log:** `journal_entry_edits` (`280:33-42`, `changes JSONB`).
+- **Actor from the JWT:** `119_user_audit_attribution.sql`.
+- **Approval trail:** `ap_invoice_approvals` (`175:187-208`).
 
-### 2.4 Time, activity, tasks [VERIFIED]
-- **No staff activity log.** Searched: friction, login_events, staff_activity, page_view, activity_log, last_active.
-- **`calendar_events`** (`348`) has `vacation`/`sick`/`holiday` types with free-text times. It is tagged workpaper and allows hard DELETE. It is a PTO calendar, not a timekeeping record.
-- **`work_items`** (`256`) backs the Team Status board: assignee as free text, status, `received_at`, `sla_due_at`, `completed_at`. There is no start time and no time spent.
-- **`vendor_projects` / `project_milestones`** (`321`, `338`) have owners and dates only.
+### 2.4 Time, activity, tasks
+- **No timesheet, punch, payroll, overtime or meal model.** Searched timesheet, clock_in, punch, payroll, pay_period, overtime, time_entr, hours_worked, time_spent.
+- **"Hourly" appears only as community billing** (`002_bedrock_billing.sql:68`; seeds `003:160-171`).
+- **No staff activity log.** Searched friction, login_events, staff_activity, page_view, activity_log, last_active.
+- **`calendar_events`** (`348`) has vacation/sick/holiday types, free-text times and hard DELETE. It is a calendar, not a time record.
+- **`work_items`** (`256`) has a free-text assignee, `received_at`, `sla_due_at` and `completed_at`, with no start time and no time spent.
 
-### 2.5 Violations drives [VERIFIED]
-- **`inspections`** (`050_drv_and_memory_foundation.sql:156-172`).
-  - Columns: `started_at`, `ended_at`, `status`, `mode`, and one `operator_id` (UUID, no foreign key).
+### 2.5 Violations drives
+- **`inspections`** (`050:156-172`).
+  - Columns: `started_at`, `ended_at`, `status`, `mode`, and one `operator_id` (UUID, no FK).
   - Later additions: `device_label` (the driver's name as text), `last_ping_at`, and start/end offices (`165:82-89`).
-  - Status `paused` and `inspection_pause_segments` (`211`) record pause and resume times; `paused_by` is a text email.
+  - Status `paused` and `inspection_pause_segments` (`211`), with `paused_by` as a text email.
 - **Endpoints** (all in `api/inspections.js`):
-  - start: `POST /api/inspections` (line 107);
-  - resume within 12 hours by community plus device label (118-143);
-  - pause and resume (470, 505);
-  - `GET /:id/time-on-drive` (541), which returns active time = end − start − pauses.
-- **GPS:** `inspection_route_traces` (`052`), one ping about every 4.5 s, batched every 30 s (`public/index.html:22523, 22555`).
-- **Photos:** `inspection_photos` (`050:190`) has `captured_at` and `created_at` but **no capturer column** (insert at `api/inspections.js:722-737`).
+  - start: line 107;
+  - resume by community plus device label within 12 h: 118-143;
+  - pause and resume: 470, 505;
+  - `time-on-drive`: 541, computing end − start − pauses.
+- **Stale-drive job** (`lib/scheduler.js:483-523`, every 2 h):
+  - It marks drives `captured` when `last_ping_at` is older than 4 h, or it is null and `started_at` is older than 4 h.
+  - It sets `ended_at` to `last_ping_at`, or to `started_at + 4h` when there are no pings.
+- **Who writes `last_ping_at`:**
+  - Only `POST /:id/ping` (`api/inspections.js:4946`, patch at 4993).
+  - `public/inspector.html:417` calls `/ping`.
+  - The main Inspect tab in `public/index.html` posts batches to `/:id/route-trace` (22523, 22555), and that handler (2170) doesn't write `last_ping_at`.
+- **GPS:** `inspection_route_traces` (`052`), a ping about every 4.5 s. `GET /:id/route-trace` pages through all rows (2207). `GET /:id/coverage` (2336) reads pings without paging (around 2371).
+- **Photos:** `inspection_photos` (`050:190`) has `captured_at` and `created_at` but **no capturer column** (insert at 722-737).
 - **Observations:** `property_observations` (`050:226`) has `reviewer_user_id` and `reviewed_at`.
-  - Confirm is at `POST /observations/:id/confirm` (3607) and goes through `findOrContinueViolation`.
-  - The front end posts an empty body (`public/index.html:24598, 24691`), so **`reviewer_user_id` is always null** and only `reviewed_at` is usable.
-- **Violations and letters:**
-  - violations carry `opened_by_user_id`;
-  - `interactions` carries `created_at`/`printed_at`/`mailed_at` plus approver and sender ids (`119:77-79`).
-- **One person per drive:**
-  - There is no table assigning people to a drive and no driver/documenter role.
-  - Two people on the road show up as two drives, or one shared drive under one label.
+  - Confirm is at 3607 and goes through `findOrContinueViolation`.
+  - The front end posts an empty body on confirm and reject (`public/index.html:24598, 24691`), so the reviewer id is not sent.
+- **add-violation** (`api/inspections.js:4675`) inserts `opened_by_observation_id` and `opened_by_email` (4766-4767). No migration in the repo defines those columns.
+- **No participant table or roles:** one `operator_id` and one `device_label` per drive.
 
-### 2.6 Reusable plumbing [VERIFIED]
+### 2.6 Plumbing to reuse
 - **Scheduler:** `lib/scheduler.js`, a 15-minute tick with Central-time gating, logged to `cron_runs` (`059`).
-- **Time zones:** `_toCentralTimestamp` (`server.js:8677`), `_centralOffsetForDate` (8716), `centralParts()`.
+- **Time zones:** `_toCentralTimestamp` (`server.js:8677`), `_centralOffsetForDate` (8716), and `centralParts()`.
   - `centralParts()` is duplicated in `lib/scheduler.js:35`, `lib/ea/tessa_standing.js:18` and `lib/notifications/ar_reminder.js:29`.
-  - **There is no workweek helper**, and DST handling is date-granular. Timekeeping needs a proper tested helper.
+  - DST is resolved by calendar date. There is no workweek helper.
 - **Notifications:**
-  - Resend email: `lib/notifications/email.js`;
-  - Twilio SMS: `lib/notifications/sms.js`. The line is TEST-only and needs A2P registration before staff SMS;
+  - Resend: `lib/notifications/email.js`;
+  - Twilio: `lib/notifications/sms.js`;
   - Graph mail: `lib/email/graph_send.js`.
-  - There is no Teams chat.
-- **Export:**
-  - `xlsx` is a dependency (`package.json:106`; write example at `api/roster_import.js:287-295`);
-  - CSV helpers are in `api/checks.js:566-621` and `lib/accounting/positive_pay.js`.
-  - There is **no payroll provider integration** (searched ADP, Gusto, Paychex, QuickBooks, Paylocity, Rippling).
+  - No Teams chat.
+- **Export:** `xlsx` dependency (`package.json:106`; write example at `api/roster_import.js:287-295`); CSV helpers in `api/checks.js:566-621` and `lib/accounting/positive_pay.js`.
+- **No payroll provider integration.** Searched ADP, Gusto, Paychex, QuickBooks, Paylocity, Rippling.
 
 ---
 
-## 3. Proposed design [PROPOSAL]
+## 3. Likely bugs and unverified risks
 
-### 3.1 Principles
-1. **Time worked comes only from explicit employee punches** (or an approved correction). Login, activity, GPS and task output are never time evidence. They may be shown next to punches as context for a manager's review, never used to create or change hours.
-2. **Record everything; suppress nothing.**
-   - There is no auto-clock-out.
-   - There is no automatic meal deduction.
-   - The system never fabricates a punch.
-   - Missing data is flagged for the employee to fix or a manager to approve, with a reason.
-3. **Append-only ledger.**
-   - Punches are never edited.
-   - A correction is a new, reasoned, approved record that supersedes an earlier one.
-   - Totals are always computed from the ledger.
-4. **Rules are versioned data**: workweek start, overtime threshold, meal thresholds. Every computed result records which policy version it used.
-5. **Bedrock-scoped.** Employees belong to `management_company_id`. Communities, departments and tasks are allocation tags, not ownership. Timekeeping records are **Bedrock HR records (workpaper), never `association_record`**, so they are excluded from any community termination export.
-6. **Server-authoritative time.**
-   - The server stamps `recorded_at`.
-   - A client-reported time, if offline capture is ever supported, is kept separately and flagged when it differs.
+Each item needs read-only verification before anyone calls it real. Two are proposed as separate tasks outside this assessment.
 
-### 3.2 Minimal schema, stage 1-2 (all RLS on, service_role only, actor from the JWT)
+### 3.1 `user_profiles` privileges: priority, verify before claiming exploitability
+- **Code facts** (section 2.2): the repo grants the `authenticated` role full CRUD on `user_profiles`, and no RLS appears in any migration. The anon key is served to the browser (`server.js` around 11025).
+- **Not yet verified:**
+  - production grants (`information_schema.role_table_grants`);
+  - RLS state (`pg_class.relrowsecurity`, `pg_policies`), since either could have been changed outside migrations;
+  - whether PostgREST exposes the table to authenticated users;
+  - whether any browser code relies on direct access.
+- **Why it matters:** `requireAdmin` and `requireOwner` read `user_profiles.role`, so manager and approver roles for timekeeping depend on it.
+- **Status:** a candidate issue, not a confirmed vulnerability. **Verify before any role-based timekeeping approval exists.**
 
-**`employees`** (one row per `user_profiles` row that is an employee):
-- `user_id` (FK to user_profiles, RESTRICT), `management_company_id`, `employee_number` (optional), `department` (text or FK to a small `departments` table);
-- `manager_user_id`, `flsa_classification` (`nonexempt`/`exempt`, set only from counsel-approved classification), `timekeeping_required` (bool);
-- `effective_from`, `effective_to`, `created_by`, timestamps.
-- **Store no pay rates.** Rates stay with the payroll provider, which keeps sensitive compensation data out of trustEd.
+### 3.2 Drive end times may be fabricated
+- **The inference** (section 2.5): Inspect-tab drives never write `last_ping_at`, so the stale job may close any such drive older than 4 hours, setting `ended_at = started_at + 4h`, even mid-drive.
+- **The check:** count `inspections` where `ended_at = started_at + interval '4 hours'`, or `last_ping_at IS NULL` while route traces exist.
+- **A related risk:** resume (118-143) doesn't clear `ended_at`.
+- **Consequence for metrics:** until verified and fixed, historical `ended_at` values that could have come from the stale job are **unreliable** and must not be used as a baseline (see 4.10).
 
-**`timekeeping_policies`** (versioned; one active per company):
-- `workweek_start_dow`, `workweek_start_time` (local), `timezone` (`America/Chicago`), `overtime_threshold_minutes` (2400);
-- `meal_rules` JSONB (e.g. `[{min_worked_minutes:420, meal_minutes:60}, {min_worked_minutes:300, meal_minutes:30}]`), `meal_basis` (`worked_excluding_meals`);
-- `effective_from`, `approved_by`, `approved_at`.
+### 3.3 Coverage undercount
+`/:id/coverage` reads pings unpaged, so drives with more than 1,000 pings are probably undercounted (the PostgREST row cap).
 
-**`time_punches`** (append-only; blocked by trigger on UPDATE and DELETE):
-- `id`, `employee_id`, `kind` (`clock_in`, `meal_start`, `meal_end`, `clock_out`), `occurred_at` (the effective instant), `recorded_at` (server now);
-- `source` (`portal`, `manager_correction`, `kiosk` later), `client_reported_at`, `supersedes_punch_id`, `voided_by_correction_id`;
-- `note`, `recorded_by_user_id`.
-- Optional, off by default: an allocation tag (`community_id`, `department`, `task_ref`).
+### 3.4 add-violation may fail silently
+- It writes two columns no migration defines. If production lacks them, the insert fails and is only logged (catch around 4782).
+- **The check:** production `information_schema.columns` for `violations`.
 
-**`time_corrections`** (append-only request plus decision events):
-- The request: `employee_id`, the proposed punches (added, voided, or retimed), `reason` (required), `requested_by`, `requested_at`.
-- The decision: `status` (`pending`, `approved`, `rejected`), `decided_by`, `decided_at`, `decision_note`.
-- Approval inserts the new punches (`source='manager_correction'`, `supersedes_punch_id` set). The before/after lives in the linked rows, so nothing is overwritten.
-- Employees can request; managers approve.
-- **A manager may not approve their own corrections.** The owner approves those.
-
-**`overtime_approvals`**:
-- `employee_id`, `workweek_start`, `requested_minutes` over threshold, `reason`, `requested_by`, `requested_at`, `status`, `decided_by`, `decided_at`.
-- Advisory only. It never limits recorded or paid time (see 4.1).
-
-**`meal_attestations`**:
-- `employee_id`, `work_date`, `outcome` (`taken_full`, `short`, `interrupted`, `missed`, `waived_by_policy` if counsel allows), `minutes_taken`, `reason`, `recorded_at`, `reviewed_by`, `reviewed_at`.
-- A factual statement by the employee; never an automatic deduction.
-
-**`pay_periods`**:
-- `management_company_id`, `period_start`, `period_end`, `status` (`open`, `submitted`, `approved`, `locked`), `locked_by`, `locked_at`.
-- A lock guard blocks new punches and corrections dated inside a locked period, unless a reasoned `reopen_pay_period(id, reason, by)` event runs. This copies the `462` budget lock/reopen pattern.
-- Employee sign-off (`timesheet_attestations`: employee, period, attested_at, statement version) is recommended. Its wording is a counsel item.
-
-**Derived views** (computed, never stored as truth):
-- `v_time_intervals`: punch pairs turned into worked and meal intervals.
-- `v_daily_time`: per employee and work date: worked minutes, meal minutes, meal requirement met or not, missing-punch flags.
-- `v_workweek_time`: per employee and workweek: worked minutes, minutes over threshold, whether overtime was approved.
-
-**Stage 3 addition for drives:**
-
-**`inspection_participants`**:
-- `inspection_id`, `employee_id` (user), `role` (`driver`, `documenter`, `solo`, `trainee`, `trainer`, `safety_second`), `reason` (required when two or more participants).
-- `joined_at`, `left_at`, `added_by`.
-- It links drive labor to punched time. **It never creates time.**
-
-### 3.3 Employee portal (inside the staff app, Bedrock-first)
-A **"My Time"** tab in `public/index.html`. It should take three clicks or fewer to punch.
-
-**Big buttons:** Clock in, Start meal, End meal, Clock out.
-- Only the valid next action is enabled.
-- Each confirmation states the recorded time, e.g. "Clocked in 8:02 AM Central".
-
-**Today and this week:**
-- worked time, meal status, and running workweek total against 40:00;
-- a warning banner as the total approaches the threshold, with a **Request overtime approval** button;
-- missing-punch prompts with **Request correction** (reason required).
-
-**Meal prompts:**
-- As worked time nears 5:00 or 7:00 without a meal, a prompt appears: "Policy calls for a 30/60-minute unpaid meal".
-- After a short, interrupted or missed meal, a one-tap attestation with a reason. It records facts and does not change time automatically.
-
-**Pay period view:** daily lines, flags, and an attest-and-submit step.
-
-**What it will not do:** auto-clock-out, suppress hours, block clocking in past 40 hours, or start or stop time from login.
-
-### 3.4 Manager view
-- **Today board:** who is clocked in, on meal, or off. Status only; no surveillance feed.
-- **Exceptions queue:** missing punches, open shifts older than N hours, short or missed meals, overtime without approval, correction requests. Each one requires a decision with a note.
-- **Workweek grid:** per employee, daily totals, the workweek total, minutes over 40, and approval state.
-- **Pay period:** review, approve, lock, export. Reopen requires a reason and is logged.
-- **Audit drawer per day:** every punch, correction, approval and attestation with who, when and why, including superseded rows.
-
-### 3.5 Payroll export
-- **CSV** (xlsx optional) per pay period and employee:
-  - employee number, name, workweek start;
-  - regular minutes, minutes over threshold (as time, not dollars), meal exceptions count;
-  - unresolved flags count, approval and lock state, policy version;
-  - a hash of the included punch ids for audit.
-- The export refuses to generate for a period that isn't locked.
-- **Which provider?** No integration exists today. Ed should name Bedrock's payroll provider so the column layout matches its import format. **trustEd calculates hours only; the payroll provider calculates pay.**
-- Reconciliation test: export totals must equal ledger-derived totals for the period.
-
-### 3.6 Violations-drive labor measurement
-- A **run** = one `inspections` row.
-  - Existing data: community, actual `started_at` and `ended_at`, and pauses.
-  - Added: `inspection_participants` for the assigned people, each with a role and a reason.
-- **Per-person drive labor** = the overlap of that person's punched worked intervals with their `joined_at`–`left_at` on the drive.
-  - Punches bound it, so drive labor can never exceed paid time and is never inferred from GPS or login.
-- **Office follow-up labor.** Two options:
-  - (a) allocation-tagged punches ("switch task: DRV review, community X"). Explicit and accurate, but adds friction.
-  - (b) review event counts and timestamps. Cheap, but not time.
-  - Recommend (b) for metrics and (a) only if Ed wants hours per task. Either way, first fix reviewer attribution: send the actor from the JWT on confirm and reject, and add a capturer to photos.
-- **Comparable-drive metrics.** Report all of these; don't reduce them to one number:
-  - total labor-hours per completed drive, and per 100 properties covered;
-  - properties covered, from pings within radius (paginated) or observations;
-  - observations documented, and the confirmed vs. rejected rate at office review, a quality signal;
-  - rework: violations later edited, reopened, or found missed on the next drive;
-  - office follow-up events and elapsed time to letters printed;
-  - participant count and role mix, with reasons such as training, safety, or driving and documenting.
-- **Comparability** means the same community (or a similar size), mode, season, and scope (full sweep vs. spot check). Show distributions, not a single leaderboard.
-- **Guardrail.** These metrics inform coaching and staffing. They must never be used to change recorded hours. [VERIFY] with counsel how performance data may be used in discipline.
+### 3.5 No actor on drive work
+- Photos have no capturer column.
+- Confirm and reject don't send the reviewer, so per-person drive and review attribution isn't possible today.
+- This is a design gap rather than a runtime bug.
 
 ---
 
-## 4. Rules and edge cases
+## 4. Proposals
 
-### 4.1 Overtime and the 40-hour policy
+### 4.1 Principles (revised)
+1. **Paid time is the reconciled record of actual work.** Sources, in order of normal use:
+   - (a) explicit employee punches;
+   - (b) employee-reported time for missed punches or off-clock work;
+   - (c) manager entries based on credible evidence (for example, the employee was seen working, or sent documented work at a time);
+   - (d) approved corrections.
+   All four are immutable events, and all reconcile into one computed record.
+2. **Signals trigger review; they never set hours.**
+   - Drive GPS, task activity, document edits and email outside punched time raise a **review flag**.
+   - The manager must resolve each flag: either record the work (which creates a (c) entry) or document why it wasn't work.
+   - A manager cannot dismiss known work merely because no punch exists. [VERIFY] the employer-knowledge standard with counsel.
+3. **Record everything; suppress nothing.**
+   - No auto-clock-out.
+   - No automatic meal deduction.
+   - No fabricated punches.
+   - No hours reduced without a reasoned, attributed event that the employee is notified of.
+4. **Immutable events, computed projections** (section 4.2).
+5. **Rules are versioned data**, and every computed total names its policy version.
+6. **Bedrock-scoped HR records (workpaper)**, never `association_record`, and excluded from community exports.
+7. **Server-authoritative time** for live punches.
+
+### 4.2 Event model: immutable events vs. mutable projections
+This resolves the contradiction in rev 1. There are **no mutable status or "voided" columns on event tables.**
+
+**Immutable event tables.** Each has a trigger blocking UPDATE and DELETE; access is RLS on, service_role only, and the actor comes from the JWT.
+
+`time_punches`: one row per punch fact.
+- `id`, `employee_id`, `kind` (`clock_in`, `meal_start`, `meal_end`, `clock_out`), `occurred_at` (effective instant), `recorded_at` (server now), `policy_version`.
+- `origin`: `live` (employee, server time), `employee_report`, `manager_entry`, or `correction`.
+- `request_id`: FK to `time_change_requests`, required for any origin other than `live`.
+- `client_request_id`: the idempotency key. `UNIQUE (employee_id, client_request_id)`.
+- `client_reported_at`, `note`, `recorded_by_user_id`.
+
+`time_change_requests`: a proposed change to the record; the row never changes.
+- `id`, `employee_id`, `origin` (`employee`, `manager`, `review_flag`).
+- `operations` JSONB: an ordered list of `{op:'add', kind, occurred_at}` and `{op:'supersede', punch_id}`.
+- `reason` (required), `evidence` (optional references: an inspection id, a document id, free text), `requested_by`, `requested_at`, `client_request_id` (unique per requester).
+
+`time_change_decisions`: exactly one terminal decision per request.
+- `id`, `request_id UNIQUE`, `decision` (`approved`, `rejected`, `withdrawn`), `decided_by`, `decided_at`, `note`.
+- The unique constraint makes simultaneous approvals impossible: the second insert fails and the UI reports "already decided".
+- **Separation of duties:** `decided_by` must differ from the requester for manager-originated changes that reduce time, and a manager can't decide their own time. Enforced in the apply function.
+
+`time_punch_supersessions`: how a punch stops counting, without touching the punch.
+- `superseded_punch_id UNIQUE`, `decision_id`, `created_at`.
+
+`time_review_flags` and `time_flag_resolutions`: a flag, and exactly one resolution per flag.
+- Resolution values: `work_recorded`, which requires a linked approved request, or `not_work`, which requires a reason.
+
+`meal_attestations`: immutable employee statements (section 4.6).
+
+`overtime_requests` and `overtime_decisions`: the same request/decision pattern (section 4.5).
+
+`payroll_exports` and `payroll_export_lines`: immutable snapshots (section 4.7).
+
+**Projections.** These are views, or rebuildable caches with no authority:
+- `v_effective_punches`: punches with no row in `time_punch_supersessions`.
+- `v_change_request_status`: pending if there's no decision, otherwise the decision.
+- `v_time_intervals`: effective punches paired into worked and meal intervals, with exceptions (unpaired, overlapping).
+- `v_workday_time`, `v_workweek_time`, `v_pay_period_allocation`: section 4.8.
+
+**Applying an approval.** One database function, `apply_time_change(request_id, decided_by, note)`, runs in a single transaction:
+1. takes a per-employee advisory lock;
+2. inserts the decision;
+3. inserts the new punches (`origin='correction'`, `request_id` set);
+4. inserts the supersession rows;
+5. re-validates the resulting effective record (no overlaps; valid kind order);
+6. rejects the whole transaction if invalid.
+
+Nothing is updated. The audit trail is simply the event rows.
+
+**Mutable data kept outside the ledger** (normal tables with before/after logging, like `journal_entry_edits`): `employees` (profile and classification, effective-dated) and `timekeeping_policies` (versioned; a new version is a new row).
+
+### 4.3 Concurrency and idempotency
+- **Double clicks and retries:** the client generates `client_request_id` (a UUID) per intended action. A repeat returns the existing row with HTTP 200, `duplicate:true`.
+- **Live punch function** `record_punch(employee, kind, client_request_id)`:
+  - takes the per-employee advisory lock;
+  - reads the latest effective punch;
+  - allows only the valid next kind (`clock_in` → `meal_start`|`clock_out`; `meal_start` → `meal_end`; `meal_end` → `meal_start`|`clock_out`; `clock_out` → `clock_in`);
+  - stamps `occurred_at = now()` on the server.
+  - An invalid sequence returns a clear error plus a "request a correction" path, never a silent fix.
+- **Offline retries.** Proposed: no offline live punches in stage 2.
+  - If the device is offline, the portal queues an `employee_report` request carrying the device time as `client_reported_at`, which goes through approval.
+  - This avoids trusting device clocks while still capturing the work.
+- **Overlapping intervals:** refused at `record_punch`. For corrections, `apply_time_change` re-validates the whole affected day or week under the same lock.
+- **Simultaneous approvals:** the `request_id UNIQUE` on decisions, plus the advisory lock.
+- **Boundary calculations:**
+  - pure, deterministic functions of (effective events, policy version, time zone rules);
+  - computed at read time;
+  - exports record a **ledger watermark** (the max event `recorded_at` and id included) so any total can be reproduced.
+
+### 4.4 Corrections and evidence
+- **Employee:** "I forgot to clock out at 5:40 PM" or "I answered owner calls from 7:00 to 7:30 PM". This creates a request with a reason, and the manager decides.
+- **Manager:** "Seen working 7:00 to 7:30 PM (drive GPS, inspection id X)". This creates a manager-origin request.
+  - If it **adds** time, it can be decided by another approver or the owner, and the employee is notified.
+  - If it **reduces** time, the employee must be notified and given a way to respond, and separation of duties applies. [VERIFY] with counsel.
+- **Review flags** come from signals (4.1 #2), and each needs a resolution.
+- **Rejections require a note**, and the employee sees it.
+
+### 4.5 Overtime pre-approval (advisory)
 - **Policy as Ed described it:** no more than 40 worked hours in the workweek without prior approval.
-  - The system warns at a configurable lead, e.g. 36:00, and requests approval.
-  - It **records and exports all hours actually worked, including unapproved hours.**
-  - Unapproved overtime becomes a manager exception (a conduct matter), never a reduction in hours.
-- **Workweek:** a fixed, recurring 7-day period set in `timekeeping_policies`, e.g. Sunday 12:00 AM to Saturday 11:59:59 PM Central. Ed chooses it. [VERIFY] the rules for setting the workweek and changing it later.
-- **Hours count in the workweek in which they're worked.** A shift crossing the workweek boundary is split at the boundary for workweek totals. [VERIFY]
-- **Overtime treatment.** My understanding is that federal law generally requires 1.5× the regular rate for non-exempt hours over 40 in a workweek, and Texas generally follows the federal standard for private employers. [VERIFY both with counsel.] Regular-rate calculation (bonuses and similar) belongs to payroll and counsel, not trustEd.
-- **Unauthorized overtime:** it is generally understood that it must still be paid, while the employer may discipline for violating policy. [VERIFY]
-- **Exempt-to-nonexempt conversion** is the biggest legal item. [VERIFY]:
-  - the classification analysis per role;
-  - the effective date aligned to a workweek boundary;
-  - written notice and acknowledgment;
-  - handling of any past period;
-  - existing offer letters and agreements;
-  - benefits and PTO effects.
+  - The system warns at a configurable lead and routes an `overtime_request`.
+  - It **records and exports all hours actually worked, whether or not they were approved.**
+  - Unapproved overtime becomes a manager exception, never a reduction.
+- **The workweek** is a fixed, recurring 7-day period set in `timekeeping_policies`; Ed chooses it.
+- [VERIFY]:
+  - workweek designation and changes;
+  - my understanding that non-exempt hours over 40 in a workweek are generally owed at 1.5× the regular rate federally, with Texas generally following the federal standard for private employers;
+  - that unauthorized overtime must generally be paid, while the policy violation may be addressed separately;
+  - regular-rate components (payroll and counsel).
 
-### 4.2 Meal periods
-- **Policy as Ed described it:**
-  - 7 hours or more worked in a day: a 60-minute unpaid meal;
-  - 5 to under 7 hours: 30 minutes;
-  - under 5 hours: none.
-- **Recommended interpretation, for Ed and counsel to confirm:** the thresholds measure actual worked time excluding meal time, per workday.
-  - Otherwise the rule is circular: a 7:30 span with a 60-minute meal is 6:30 worked.
-  - Evaluate the requirement against worked time, and prompt as worked time approaches each threshold.
-- **Record, prompt, flag. Never deduct.** A meal exists only if the employee punched meal start and meal end.
-  - **Short** (less than the required minutes): flag, prompt an attestation, pay the time as punched. [VERIFY] how short breaks are treated; short rest breaks are generally understood to be compensable time.
-  - **Interrupted** (worked during the meal): the employee attests, and the interrupted portion is recorded as worked. [VERIFY] whether an interrupted meal is compensable in full.
-  - **Missed:** flag and attest. The time stays worked and paid.
-  - A meal punch that is never ended becomes a missing-punch exception resolved by correction. It is never auto-closed.
-- **Texas state law.** My understanding is that Texas has no general meal-break requirement for adult private-sector employees, so the 5-hour and 7-hour rule would be Bedrock policy rather than a legal mandate. [VERIFY] Whether and when a meal period may be unpaid under federal rules (completely relieved of duty, typically 30 minutes or more) is also [VERIFY].
-- **The policy text itself** (acknowledgment, how to report interruptions, no retaliation) needs counsel review.
+### 4.6 Meal periods
+**Decisions Ed must make.** These are not silently picked. Each has implications.
+1. **Basis for the 5-hour and 7-hour thresholds.**
+   - (a) **Net worked time excluding meals.** A 7:30 span with a 60-minute meal is 6:30 worked, so only a 30-minute meal is required.
+   - (b) **Scheduled or elapsed shift span.**
+   - Option (a) avoids circularity but lets a long span need a shorter meal. Option (b) is simpler to explain but can require a meal the work time doesn't reach.
+2. **Can the 60-minute meal be satisfied in segments** (for example 2 × 30 minutes)? If so, what is the minimum segment that counts?
+3. **Whose day is a shift that crosses midnight?** The start date, or split at midnight?
 
-### 4.3 Days, midnight, DST
-- **Store UTC** (`timestamptz`). Compute durations as real elapsed time.
-- **Workday for meal rules:** the shift is attributed to the local date it **started**. A 10 PM–4 AM shift is one workday with 6:00 worked, so a 30-minute meal is owed. Ed and counsel to confirm.
-- **Workweek totals:** split at the workweek boundary instant (4.1).
-- **DST:** spring-forward days have 23 hours and fall-back days have 25. A shift across the fall-back hour really is one hour longer. Test both.
-- **An open shift older than N hours** (configurable, e.g. 14) raises an exception for the manager. Still no auto-close.
+**Engineering rules** (independent of those answers):
+- **A meal exists only where the employee punched `meal_start` and `meal_end` and was relieved of duty.** The system never creates an unpaid meal by itself. A 60-minute requirement never becomes an automatic unpaid hour.
+- **Interrupted meal:** if the employee worked while the meal punch was open, the attestation opens a **correction request** that converts the worked minutes back to worked time.
+  - For example: `meal_end` at the interruption, then a new `meal_start` if the meal resumed; or supersede the meal entirely.
+  - Attesting alone is not enough. The recorded meal must reflect only relieved time.
+- **Short meal** (under the requirement): flag and attest. The unrelieved time outside the meal punches is already worked time. [VERIFY] how short breaks are treated: short rest breaks are generally understood to be compensable.
+- **Missed meal:** flag and attest. Nothing is deducted.
+- **Open meal punch** (never ended): an exception resolved by correction, never auto-closed.
+- [VERIFY]:
+  - my understanding that Texas has no general meal-break mandate for adult private-sector employees, so this would be Bedrock policy;
+  - federal conditions for an unpaid meal (completely relieved, typically 30 minutes or more);
+  - whether Bedrock's 5-hour and 7-hour policy is advisable as written;
+  - the policy text and acknowledgment.
 
-### 4.4 Missing punches and corrections
-- **Exceptions:** clock-out without a clock-in, a meal without an end, an overlapping shift, a punch dated in a locked period.
-- **The employee requests a correction with a reason; the manager approves.** On approval, new superseding punch rows are written, and the original stays visible and marked superseded.
-- **A manager-initiated correction still requires a reason**, and it notifies the employee, with the employee's acknowledgment recorded.
-- **Corrections that reduce hours** get extra scrutiny and require the employee's acknowledgment. [VERIFY] Counsel should weigh in on off-the-clock risk.
+### 4.7 Pay periods, locks, exports, adjustments
+**`pay_periods`:** `period_start`, `period_end`, `pay_date`. Status is a projection of immutable `pay_period_events` (`submitted`, `approved`, `locked`, `reopened`, each with actor and reason).
 
-### 4.5 Off-the-clock work
-Examples: email or Teams after hours, drives that start before clocking in.
-- **Policy line in the portal:** "Record all time you work. If you worked without clocking in, submit a correction." [VERIFY] the wording.
-- **Telemetry can flag possible off-the-clock work for a manager to review** (e.g. drive pings or document edits while clocked out), as an exception to resolve. It never becomes time on its own. [VERIFY] whether employer knowledge creates an obligation to pay, and how to handle the flags.
+**Lock** means: an **export snapshot** is taken and frozen. It does **not** block recording work.
+- New punches, reports and corrections dated inside a locked period are **always accepted**.
+- They're marked as *post-lock* by comparing their `recorded_at` with the snapshot's watermark.
+
+**`payroll_exports`** (immutable):
+- `id`, `pay_period_id`, `kind` (`regular` or `adjustment`), `sequence`, `ledger_watermark`, `policy_version`, `created_by`, `created_at`, `content_sha256`, `file_format_version`.
+
+**`payroll_export_lines`** (immutable), one row per employee, workweek and pay period:
+- `regular_seconds`, `overtime_seconds`;
+- for adjustment lines, a delta against what was previously exported for that employee, workweek and pay period;
+- `meal_exception_count`, `unresolved_exception_count`.
+
+**Adjustment export** (the next pay cycle, or off-cycle if payroll needs it):
+- For every employee-workweek touched by a post-lock event, recompute the full workweek, including overtime.
+- Subtract the sum of all previously exported lines for that employee-workweek.
+- Export the delta, tagged with the original pay period and workweek.
+- Overtime moves correctly: if an added hour pushes a prior workweek past 40, the delta is overtime, not regular time.
+- [VERIFY] with counsel and the payroll provider when corrected wages must be paid.
+
+**Reconciliation invariant:** for every employee-workweek, the sum of exported lines across all exports equals the current ledger computation. A daily check reports any drift and any post-lock events not yet exported.
+
+**Escalation:**
+- post-lock events older than N days;
+- adjustments crossing a pay date;
+- any adjustment that reduces previously exported time.
+All go to the owner, with the reason.
+
+**Reopen** is available for errors caught before payroll processes a period. It writes a `reopened` event with a reason and voids nothing: a new snapshot supersedes the old one via `sequence`. It is never the only way to record late work.
+
+### 4.8 Payroll-week math
+- **Overtime is a workweek quantity** [VERIFY]. It is computed per employee per 7-day workweek (a policy start instant in America/Chicago), never per pay period.
+- **Splitting intervals.** Each worked interval is split at three kinds of boundary, all computed as local wall-clock boundaries converted to UTC instants:
+  - (1) workweek boundaries, for the overtime test;
+  - (2) pay-period boundaries, for allocation;
+  - (3) local midnights, for daily display and meal-rule attribution per Ed's answer to 4.6 Q3.
+- **Allocating a workweek that straddles two pay periods:**
+  - **Regular seconds:** to each pay period by the date and time worked.
+  - **Overtime seconds** only become known when the workweek ends. Proposal: attribute them to the pay period containing the workweek's end.
+  - If a pay period closes before a straddling workweek ends, that period's regular-time export includes the known straddle hours, and the overtime lands in the next period's export as a normal line (not an adjustment).
+  - [VERIFY] with counsel and the payroll provider the timing for paying overtime on straddling workweeks.
+  - **Strong recommendation:** pick **biweekly pay periods aligned to the workweek start**. Then no workweek straddles a period and the problem disappears. This is a decision for Ed.
+- **Units:**
+  - All computation in integer seconds from UTC instants. No per-punch rounding. [VERIFY] if any rounding policy is wanted; none is proposed.
+  - Export per line: exact minutes, plus decimal hours to 2 places computed from the line's total seconds, rounded half-up once.
+  - The residue is documented, and the reconciliation compares seconds, not decimals.
+- **DST:**
+  - Durations are real elapsed seconds, so a shift across the fall-back hour really is one hour longer, and one across spring-forward is one hour shorter.
+  - Boundary instants are computed with a time-zone-aware conversion.
+  - Proposal: add one tested helper (`lib/time/central.js`: `workweekStartFor(instant, policy)`, `localMidnightsBetween`, `splitIntervalAt`) and retire the duplicated `centralParts()` copies over time.
+- **Overnight shifts:** split at midnight for daily display. Meal attribution follows Ed's 4.6 Q3 answer.
+- **Versioning:**
+  - Each export records its policy version, watermark and hash.
+  - A policy change applies from a future workweek start only; historical recomputation uses the policy version in force for that workweek.
+
+### 4.9 Employee portal and manager view
+**"My Time"** is a tab in the staff app; punching takes three clicks or fewer.
+- Buttons for the valid next punch, each confirming the server-recorded time.
+- Today and this week versus 40:00, with the overtime warning and a request button.
+- Meal prompts near thresholds, with an attestation and correction flow.
+- Missing-punch prompts.
+- A "report time I worked" button for off-clock work.
+- Pay-period review and attestation. [VERIFY] the wording.
+
+**Manager view:**
+- A today board showing status only.
+- An exceptions and flags queue, where each item needs a decision and a note.
+- A workweek grid.
+- Pay-period approve, lock and export, plus an adjustments queue.
+- A per-day audit drawer showing every event, including superseded ones.
+
+**The portal never:** auto-clocks out, deducts meals, blocks punching past 40 hours, or derives time from login.
+
+### 4.10 Violations-drive labor
+- **Two separate quantities:**
+  - (1) **paid hours**, from the reconciled record;
+  - (2) **allocated drive hours**, per person per drive.
+- Punch overlap is only a plausibility bound: it can include unrelated work, or miss a drive reported late.
+- **`inspection_participants`:** `inspection_id`, `employee_id`, `role` (`driver`, `documenter`, `solo`, `trainee`, `trainer`, `safety_second`), `reason` (required when two or more participants), `added_by`.
+- **Participant time claims** (immutable events): each participant **confirms their actual on-drive start and end** (and breaks). Confirmation is prefilled from drive start, pause and end where those are reliable, and it is editable with a reason. A manager approves.
+- **Reconciliation:**
+  - Approved drive time must fall inside paid worked time.
+  - Drive time outside punches raises a **review flag** (possible unrecorded work, resolved by the section 4.4 process).
+  - Punched time with no drive allocation is simply other work.
+- **Data quality:** proposal to add `inspections.ended_at_quality` (`user`, `auto_stale`, `legacy_unverified`). All historical drives possibly affected by 3.2 are marked `legacy_unverified` and **excluded from baselines** until confirmed.
+- **Metrics** (for coaching and staffing; never to change hours):
+  - labor-hours per completed comparable drive, and per 100 properties covered (paged coverage);
+  - confirmed vs. rejected observations at office review;
+  - rework (edits, reopens, misses found on the next drive);
+  - office follow-up events and elapsed time to printed letters;
+  - participant count and role mix, with reasons.
+  - Compare within the same community (or similar size), mode, season and scope, and show distributions.
+  - [VERIFY] the use of performance data in discipline.
+- **Prerequisites:** fix 3.2 through 3.5, and add capturer and reviewer attribution (actor from the JWT).
 
 ---
 
-## 5. Security, privacy, prerequisites
-
-### 5.1 Prerequisites (fix first)
-1. **`user_profiles` privileges.** Revoke authenticated INSERT/UPDATE/DELETE and enable RLS: a small migration, after a read-only check of production state. Approvals depend on role integrity.
-2. **Identity on timekeeping endpoints.** Every timekeeping endpoint uses the JWT (`requireStaff`/`requireAdmin`) and `requireActingUser`, never the gate cookie alone.
-3. **Signing up must not create staff automatically.** New auth users currently become `staff` automatically (`039:37-62`). Timekeeping should require an explicit `employees` row created by the owner or an admin.
-
-### 5.2 Privacy
-- **No GPS on punches by default.**
-  - Drive GPS already exists for inspections; keep it scoped to drives.
-  - If location-on-punch is ever wanted, make it an explicit, disclosed policy decision. [VERIFY]
-- **No keystroke, screen, or activity monitoring** as part of timekeeping.
-- **No IP or user-agent** on punches, matching the decision on Trusted Pay acceptance records. A server timestamp and the authenticated user are enough.
-- **Visibility.**
-  - Employees see their own records.
-  - Managers see their reports' records.
-  - Ed sees everyone.
-  - Enforce all of it server-side.
-- **Retention.** Bedrock HR records. [VERIFY] the required retention periods for payroll and time records, and set a retention policy. They are excluded from community exports.
-
-### 5.3 Record ownership
-Every new table is **workpaper** (Bedrock HR), documented in each migration header. `inspection_participants` is Bedrock workpaper too: it records Bedrock's labor. The drive itself stays as it is.
-
-### 5.4 Drive data bugs to fix before trusting drive metrics [VERIFIED in code; confirm with production data]
-- **Auto-close with a made-up end time.**
-  - The `stale_inspection_close` job (`lib/scheduler.js:483-523`) closes drives more than 4 hours past `last_ping_at`, or more than 4 hours past start if `last_ping_at` is null. It sets `ended_at` to `last_ping_at` or to start + 4 h.
-  - `last_ping_at` is written only by `POST /:id/ping` (`api/inspections.js:4946`). `public/inspector.html:417` calls it; the main Inspect tab in `public/index.html` posts to `/route-trace` instead, which doesn't update it.
-  - So Inspect-tab drives longer than 4 hours may be closed with `ended_at = start + 4 h`.
-- **Resume keeps the old end time.** Resuming a captured drive doesn't clear `ended_at` (`api/inspections.js:118-143`).
-- **Coverage undercount.** `GET /:id/coverage` reads pings unpaginated (around line 2371), so drives with more than 1,000 pings are undercounted.
-- **Likely silent failure in add-violation.** `api/inspections.js:4766-4767` inserts `opened_by_observation_id` and `opened_by_email`, and no migration defines those columns.
-- **No actor on photos or reviews** (2.5).
-- I've proposed these as a separate fix task.
+## 5. Security and privacy
+1. **Section 3.1 verification first.** No timekeeping role or approval ships until `user_profiles` grants, RLS and exposure are verified and, if needed, fixed.
+2. **Every timekeeping endpoint uses the JWT and `requireActingUser`**, never the gate cookie alone.
+3. **Employees are created explicitly** by the owner or an admin in an `employees` row; auto-created staff profiles (`039:37-62`) aren't enough.
+4. **No GPS on punches by default.** No keystroke, screen or activity monitoring. No IP or user agent on punches. [VERIFY] any location-on-punch policy.
+5. **Visibility:** employees see their own records, managers their reports', the owner everyone's. All enforced server-side.
+6. **Retention:** Bedrock HR records. [VERIFY] retention periods.
+7. **Record ownership:** every new table is workpaper, documented in its migration header.
 
 ---
 
 ## 6. Staged plan
 
-| Stage | Scope | Gate to start |
+| Stage | Scope | Gate |
 |---|---|---|
-| **0. Decisions** | Counsel: classification, overtime, meals, notices, policy text. Ed: workweek start, pay period cadence, payroll provider, meal-rule interpretation, who approves, effective date | Nothing builds that affects pay before this |
-| **1. Foundations** | Fix `user_profiles`, fix drive bugs, add `employees` + `timekeeping_policies` | Separate approvals; migrations via the owner panel |
-| **2. Punch ledger + My Time** | `time_punches` (append-only), daily and weekly views, employee portal, manager Today board | Can run as a **pilot, parallel to current pay**: no payroll effect |
-| **3. Exceptions + approvals** | Corrections, overtime pre-approval, meal attestations, pay periods with lock/reopen, audit drawer | Counsel-approved policy text |
-| **4. Payroll export** | Locked-period CSV in the provider's format, reconciliation | Payroll provider named; effective date set |
-| **5. Drive labor** | `inspection_participants`, reviewer and capturer attribution, drive metrics dashboard | Stages 2 and 5.4 done |
-| **6. Task allocation (optional)** | Allocation-tagged punches for department, community or task; link to `work_items` | Only if Ed wants hours per task |
+| 0. Decisions | Counsel review; Ed's answers (section 8) | Before anything affects pay |
+| 1. Foundations | Read-only verify and fix 3.1; verify and fix 3.2 to 3.5; `employees`, `timekeeping_policies`; time helper | Separate approvals; migrations via the owner panel |
+| 2. Ledger + My Time | Immutable punches, `record_punch`, projections, portal, today board | **Shadow pilot, parallel to current pay** |
+| 3. Changes + flags | Requests, decisions, supersessions, `apply_time_change`, review flags, meals, overtime requests | Counsel-approved policy text |
+| 4. Pay periods + export | Snapshots, adjustment exports, reconciliation, escalation, the provider's format | Provider named; effective date set |
+| 5. Drive labor | Participants, time claims, attribution, quality flags, metrics | Stages 1 and 3 done |
+| 6. Task allocation (optional) | Allocation tags, link to `work_items` | Only if Ed wants hours per task |
 
-**Recommended rollout:**
-- Run stage 2 as a 2–4 week shadow pilot, with employees punching while pay stays unchanged. This surfaces friction and edge cases.
-- Then go live at a workweek boundary after notices go out.
+The shadow pilot runs 2 to 4 weeks. Go live at a workweek boundary after notices.
 
 ---
 
 ## 7. Focused test strategy
-- **Pure rule engine** (`lib/timekeeping/rules.js`, no database), with table-driven tests:
-  - daily and weekly totals;
-  - shift across midnight (attributed to the start date for meals);
-  - shift across the workweek boundary (split for overtime);
-  - DST spring and fall days;
-  - meal classification: taken, short, interrupted, missed, not required under 5 hours, and exactly 5:00 / 7:00;
-  - missing and overlapping punches;
-  - overtime warning at the lead threshold;
-  - **unapproved overtime still counted in full**;
-  - **no code path deducts a meal or closes a shift automatically** (asserted on outputs).
-- **Ledger rehearsal** (PGlite, like `tests/sql/*_rehearsal.mjs`):
-  - UPDATE and DELETE on punches refused;
-  - correction supersedes without overwriting;
-  - locked period refuses new punches;
-  - reopen requires a reason and actor and is logged;
+- **Pure time math, table-driven:**
+  - workweek splitting;
+  - pay-period straddle allocation (regular by date; overtime to the period containing the week's end);
+  - midnight and DST (23-hour and 25-hour days);
+  - integer seconds and export rounding with residue;
+  - meal classification under each 4.6 option;
+  - unapproved overtime counted in full;
+  - no code path deducts meals or closes shifts.
+- **Ledger rehearsal (PGlite):**
+  - UPDATE and DELETE refused on every event table;
+  - supersession derived, not written into punches;
+  - one decision per request (a simultaneous second insert fails);
+  - `apply_time_change` is atomic and re-validates overlaps;
+  - `record_punch` enforces the kind sequence under the advisory lock;
+  - a duplicate `client_request_id` returns the existing row;
   - grants are service_role only.
+- **Locked periods:**
+  - post-lock events are accepted;
+  - the adjustment export deltas equal the recomputation minus prior exports, including an overtime shift from regular to overtime;
+  - the reconciliation invariant holds after several adjustments;
+  - reopen writes an event and voids nothing.
 - **Authorization:**
-  - an employee sees and punches only for themselves;
-  - a manager sees only their reports;
-  - a manager can't approve their own correction;
-  - a gate cookie without a JWT is refused;
-  - the actor always comes from the JWT.
-- **Export:** CSV totals equal ledger totals; refused unless the period is locked; stable ordering; stable hash.
+  - employee only sees their own records;
+  - manager only sees their reports;
+  - no self-approval;
+  - separation of duties on reductions;
+  - gate cookie without a JWT refused.
 - **Drive labor:**
-  - participant labor is bounded by punched time;
-  - two-person drives require a reason;
-  - metrics ignore login and session data entirely;
-  - coverage is paginated past 1,000 pings.
+  - claims must be approved;
+  - out-of-punch drive time raises a flag;
+  - `legacy_unverified` drives are excluded from baselines;
+  - coverage is paged past 1,000 pings.
 
 ---
 
-## 8. Decisions and verification list
+## 8. Decisions and verification
 
 **Ed:**
 1. Workweek start day and time.
-2. Pay period cadence.
+2. Pay period cadence (biweekly aligned to the workweek is recommended).
 3. Payroll provider.
-4. Which roles convert to hourly, and the effective date.
-5. Meal-rule basis (worked time excluding meals, per shift start date).
-6. Overtime warning lead.
-7. Who approves (managers or Ed only).
-8. Pilot length.
-9. Whether hours per task (stage 6) are wanted.
+4. Which roles convert, and the effective date.
+5. Meal basis: net worked vs. span (4.6 Q1).
+6. Whether the 60-minute meal can be split, and the minimum segment (Q2).
+7. Midnight-crossing day attribution (Q3).
+8. Overtime warning lead.
+9. Approvers and separation of duties.
+10. Pilot length.
+11. Whether hours per task are wanted.
 
 **Counsel (current federal + Texas) [VERIFY]:**
-1. Exempt/non-exempt classification per role.
-2. Conversion mechanics, notices and acknowledgments.
-3. Workweek designation.
-4. Overtime rate and regular-rate issues.
-5. Unauthorized overtime and discipline.
-6. Meal-period compensability (short, interrupted, missed) and whether Bedrock's 5 h/7 h policy is lawful and advisable as written.
-7. Off-the-clock work and employer knowledge.
-8. Recordkeeping content and retention.
-9. Corrections that reduce hours.
-10. Employee attestation wording.
-11. Location data and performance-metric use.
-12. Existing offer letters and agreements.
+1. Classification and conversion mechanics, notices.
+2. Workweek designation.
+3. Overtime rate and regular rate.
+4. Unauthorized overtime.
+5. Pay timing for straddling workweeks and post-lock adjustments.
+6. Meal compensability, and whether the 5-hour and 7-hour policy is advisable.
+7. Off-the-clock work and the employer-knowledge standard.
+8. Corrections that reduce time.
+9. Rounding (none proposed).
+10. Recordkeeping content and retention.
+11. Attestation wording.
+12. Location data and the use of performance metrics.
+13. Existing offer letters and agreements.
+
+**Read-only production checks (engineering):**
+1. `user_profiles` grants, RLS, exposure (3.1).
+2. Drive end-time corruption (3.2).
+3. The `violations` columns used by add-violation (3.4).
+
+---
+
+## Change log
+**rev 2 (2026-09-28):** ChatGPT review of `fbd7eaa7`.
+- Paid time is the reconciled record: punches plus employee reports, manager evidence entries and approved corrections. Signals raise review flags and never set hours.
+- Removed the append-only contradiction. `voided_by_correction_id` and the mutable status and decision fields are gone. Immutable punch, request, decision and supersession events; projections are derived.
+- Added idempotency and concurrency controls.
+- Locked periods no longer refuse work. They freeze snapshots, and post-lock work flows into adjustment exports with workweek overtime recalculated, a reconciliation invariant, and escalation.
+- Specified payroll-week math: workweek overtime, straddle allocation, integer seconds, rounding, DST and overnight handling, versioning.
+- Meal attestation now drives corrections for interrupted meals. The 60-minute rule never becomes an automatic unpaid hour. The threshold basis and segmenting are decisions for Ed; nothing is picked silently.
+- Drive labor: paid hours and allocated drive hours kept separate; confirmed participant time reconciled to paid time; stale-affected end times marked unreliable.
+- The `user_profiles` finding is restated as a code fact plus unverified risk, needing read-only production verification before anyone calls it exploitable.
+- Reorganized into confirmed code facts, likely bugs, and proposals.
+
+**rev 1 (`fbd7eaa7`):** initial assessment.
