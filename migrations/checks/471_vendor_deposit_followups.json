@@ -1,0 +1,162 @@
+{
+  "migration": "471_vendor_deposit_followups.sql",
+  "summary": "Vendor deposit follow-up: due date, event date and agreed total (with basis) on vendor_deposits, plus an append-only reconciliation ledger (proposals, one decision each, events). Proposal records only; nothing pays or changes an AP amount. Creates no data.",
+  "requires": [
+    "321_vendor_projects.sql",
+    "364_vendor_deposits.sql"
+  ],
+  "preflight": [
+    {
+      "name": "reconciliation table does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'vendor_deposit_reconciliations'",
+      "expect": 0
+    },
+    {
+      "name": "vendor_deposits exists (migration 364)",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'vendor_deposits'",
+      "expect": 1
+    },
+    {
+      "name": "follow-up columns not added yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'vendor_deposits' AND column_name IN ('balance_due_date', 'agreed_total_cents')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Adds follow-up columns to vendor_deposits: event_date, balance_due_date (+ basis), agreed_total_cents (+ basis; an estimate unless quote/contract), project_id. Existing rows keep NULLs; no row changes.",
+    "Creates empty append-only tables vendor_deposit_reconciliations, vendor_deposit_reconciliation_decisions (one decision per reconciliation: approve, reject, unrelated) and vendor_deposit_events.",
+    "Service role may SELECT and INSERT on the new ledger tables only. No payment, payable, AP amount or journal entry is created or changed."
+  ],
+  "objects": {
+    "added": [
+      "column:vendor_deposit_events.actor",
+      "column:vendor_deposit_events.actor_user_id",
+      "column:vendor_deposit_events.created_at",
+      "column:vendor_deposit_events.deposit_id",
+      "column:vendor_deposit_events.detail",
+      "column:vendor_deposit_events.event_type",
+      "column:vendor_deposit_events.id",
+      "column:vendor_deposit_reconciliation_decisions.created_at",
+      "column:vendor_deposit_reconciliation_decisions.decided_by_name",
+      "column:vendor_deposit_reconciliation_decisions.decided_by_user_id",
+      "column:vendor_deposit_reconciliation_decisions.decision",
+      "column:vendor_deposit_reconciliation_decisions.id",
+      "column:vendor_deposit_reconciliation_decisions.note",
+      "column:vendor_deposit_reconciliation_decisions.reconciliation_id",
+      "column:vendor_deposit_reconciliations.agreed_total_basis",
+      "column:vendor_deposit_reconciliations.agreed_total_cents",
+      "column:vendor_deposit_reconciliations.community_id",
+      "column:vendor_deposit_reconciliations.created_at",
+      "column:vendor_deposit_reconciliations.credits_shown_cents",
+      "column:vendor_deposit_reconciliations.deposit_billed_cents",
+      "column:vendor_deposit_reconciliations.deposit_id",
+      "column:vendor_deposit_reconciliations.deposit_paid_cents",
+      "column:vendor_deposit_reconciliations.deposit_still_owed_cents",
+      "column:vendor_deposit_reconciliations.extras_cents",
+      "column:vendor_deposit_reconciliations.final_total_cents",
+      "column:vendor_deposit_reconciliations.form",
+      "column:vendor_deposit_reconciliations.id",
+      "column:vendor_deposit_reconciliations.incoming_face_cents",
+      "column:vendor_deposit_reconciliations.incoming_invoice_id",
+      "column:vendor_deposit_reconciliations.math",
+      "column:vendor_deposit_reconciliations.needs_review",
+      "column:vendor_deposit_reconciliations.net_due_cents",
+      "column:vendor_deposit_reconciliations.outstanding_obligation_cents",
+      "column:vendor_deposit_reconciliations.proposed_by",
+      "column:vendor_deposit_reconciliations.proposed_by_user_id",
+      "column:vendor_deposit_reconciliations.reasons",
+      "column:vendor_deposit_reconciliations.tax_cents",
+      "column:vendor_deposit_reconciliations.variance_cents",
+      "column:vendor_deposit_reconciliations.vendor_id",
+      "column:vendor_deposit_reconciliations.warnings",
+      "column:vendor_deposits.agreed_total_basis",
+      "column:vendor_deposits.agreed_total_cents",
+      "column:vendor_deposits.balance_due_basis",
+      "column:vendor_deposits.balance_due_date",
+      "column:vendor_deposits.event_date",
+      "column:vendor_deposits.project_id",
+      "constraint:vendor_deposit_events.vendor_deposit_events_deposit_id_fkey",
+      "constraint:vendor_deposit_events.vendor_deposit_events_event_type_check",
+      "constraint:vendor_deposit_events.vendor_deposit_events_pkey",
+      "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_decision_check",
+      "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_pkey",
+      "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_reconciliation_id_fkey",
+      "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_reconciliation_id_key",
+      "constraint:vendor_deposit_reconciliations.vendor_deposit_reconciliations_community_id_fkey",
+      "constraint:vendor_deposit_reconciliations.vendor_deposit_reconciliations_deposit_id_fkey",
+      "constraint:vendor_deposit_reconciliations.vendor_deposit_reconciliations_form_check",
+      "constraint:vendor_deposit_reconciliations.vendor_deposit_reconciliations_incoming_invoice_id_fkey",
+      "constraint:vendor_deposit_reconciliations.vendor_deposit_reconciliations_paid_check",
+      "constraint:vendor_deposit_reconciliations.vendor_deposit_reconciliations_pkey",
+      "constraint:vendor_deposit_reconciliations.vendor_deposit_reconciliations_vendor_id_fkey",
+      "constraint:vendor_deposits.vendor_deposits_agreed_total_basis_check",
+      "constraint:vendor_deposits.vendor_deposits_agreed_total_cents_check",
+      "constraint:vendor_deposits.vendor_deposits_balance_due_basis_check",
+      "constraint:vendor_deposits.vendor_deposits_project_id_fkey",
+      "function:vendor_deposit_ledger_append_only",
+      "index:idx_vde_deposit",
+      "index:idx_vdr_deposit",
+      "index:idx_vdr_invoice",
+      "index:idx_vendor_deposits_due",
+      "index:vendor_deposit_events_pkey",
+      "index:vendor_deposit_reconciliation_decisions_pkey",
+      "index:vendor_deposit_reconciliation_decisions_reconciliation_id_key",
+      "index:vendor_deposit_reconciliations_pkey",
+      "table:vendor_deposit_events",
+      "table:vendor_deposit_reconciliation_decisions",
+      "table:vendor_deposit_reconciliations",
+      "trigger:vendor_deposit_events.trg_vde_append_only",
+      "trigger:vendor_deposit_reconciliation_decisions.trg_vdrd_append_only",
+      "trigger:vendor_deposit_reconciliations.trg_vdr_append_only"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {},
+  "protected": [
+    {
+      "table": "ap_invoices",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_payments",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "vendor_deposits",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "reconciliation ledger exists and is empty",
+      "sql": "SELECT count(*)::int FROM vendor_deposit_reconciliations",
+      "expect": 0
+    },
+    {
+      "name": "append-only triggers present on all three ledger tables",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname IN ('trg_vdr_append_only', 'trg_vdrd_append_only', 'trg_vde_append_only') AND NOT tgisinternal",
+      "expect": 3
+    },
+    {
+      "name": "deposit paid + still owed = billed enforced",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'vendor_deposit_reconciliations_paid_check'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [
+    {
+      "table": "vendor_deposit_reconciliations",
+      "expect_count": 0
+    }
+  ],
+  "reload_schema": true
+}

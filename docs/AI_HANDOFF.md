@@ -4,7 +4,77 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Stripe-hosted onboarding link opened for Ed; onboarding NOT yet completed
+## 2026-09-28 (latest): AP deposit follow-up for Emma (PRYME THYME KOOKERS #2836) on feat/ap-deposit-followup (migration 471 PROPOSED; NOT merged/deployed)
+
+**Task.** ChatGPT's "AP DEPOSIT FOLLOW-UP FOR EMMA" (Issue #1, 15:34 UTC), plus Ed's clarification on the four final-invoice forms (15:37 UTC). The model and approach were reported first in Issue #1 (#issuecomment-5873477749).
+
+**Status.**
+- Built on `feat/ap-deposit-followup` (cut from `main`; this commit).
+- Not merged, not deployed.
+- No production AP write, no payment, no check.
+- **Migration 471 is proposed only.** Ed must approve it before it is applied.
+
+**Existing model (verified).**
+- `vendor_deposits` (364) already records deposits at intake. The "⚠ APPLY DEPOSIT" note flags a later bill from the same vendor.
+- But nothing ever applied or closed a deposit.
+- There was no due date, no agreed total and no reconciliation record, and approval never checked deposits.
+
+**Production findings (read-only; NOT changed).**
+- **Invoice 2836 posted Dr 5900 Community Events, not 1430 Prepaid Vendor Deposits.** Intake chose 1430, but the line coder re-coded the single line and the accrual followed the lines (JE-2026-00322).
+- **All 4 deposits on file posted to expense accounts** (5450, 5905, 5450, 5900).
+- **Texas Access Works (Canyon Gate):**
+  - 03-090126-001, $22,035.61 ("50% due to start, 50% at completion"), is paid.
+  - 03-091426-001, the same amount, is awaiting approval and was also read as a deposit.
+  - It is most likely the completion bill. **A person should review it before approval.**
+- **Invoice 2836 approval state:** a manager "approved" row exists (15:17 UTC), but the invoice is still `awaiting_approval`; the admin release is pending. amount_paid is 0.
+
+**Built.**
+- **`lib/ap/deposit_reconcile.js`:** pure logic, no DB.
+  - Classifies the next bill as balance_only, full_total_less_deposit (with or without a credit line), revised_total, duplicate_or_statement, or ambiguous.
+  - Reconciles against the deposit ACTUALLY PAID.
+  - Invariant: paid + still owed + net due = final total, so the Association pays the total once, paid deposit or not.
+  - A second same-amount "deposit" (the Texas Access pattern) is ambiguous.
+  - `forceDepositLineCoding` keeps a deposit's lines on 1430.
+- **`lib/ap/deposit_followup.js`:**
+  - the upcoming-balances queue, keyed on the deposit, so it survives the deposit being paid;
+  - `setFollowup` (a basis is required for any agreed total; an estimate is labeled as one);
+  - propose / decide (approve, reject, unrelated; the proposer can't decide; flagged items need an admin; approval only when the bill total already equals the net due; approval marks the deposit applied and never pays);
+  - the approval gate.
+- **`lib/ap/intake.js`:**
+  - deposit lines follow 1430;
+  - a deposit-looking bill from a vendor with an open deposit is flagged and NOT recorded as a new deposit;
+  - all open deposits are read;
+  - a bill that may consume a deposit routes to manager_review;
+  - one open deposit triggers an automatic reconciliation proposal.
+- **`api/ap.js`:**
+  - `GET /api/ap/deposits/upcoming`, `PATCH /deposits/:id/followup`, `POST /deposits/:id/reconcile`, `POST /deposit-reconciliations/:id/decide`;
+  - invoice detail returns `deposit`;
+  - **approve and release return 409** while a reconciliation is pending, was rejected, doesn't match the net due, or was reconciled as a duplicate or statement. The gate fails closed (503) if it can't check.
+- **`public/index.html`:** a "💰 Upcoming balances" AP sub-tab, and a deposit block on the invoice detail (the follow-up form on the deposit bill; the reconciliation view with Approve / Reject / Not related on the final bill).
+- **`migrations/471_vendor_deposit_followups.sql`** (PROPOSED) and `migrations/checks/471_vendor_deposit_followups.json`:
+  - follow-up columns on `vendor_deposits`;
+  - append-only `vendor_deposit_reconciliations` (paid + still owed = billed CHECK), `vendor_deposit_reconciliation_decisions` (one per reconciliation), `vendor_deposit_events`;
+  - service_role SELECT and INSERT only;
+  - creates no data; 79 objects added, 0 changed.
+
+**Tests.**
+- `tests/test_ap_deposit_followup.js` **22/22**: each form, the unpaid deposit, the reminder surviving payment, no duplicate payable, no payment or JE from any path, the proposer can't decide, the final amount needs approval at the net due, the gate states, and graceful degradation before 471.
+- `tests/sql/471_deposit_followups_rehearsal.mjs` **20/20**, including an apply_one end-to-end run with the real checks file.
+- Sabotage: each of three disabled protections (the gate, paying the face, the deposit line coding) failed tests.
+- Full suite: 123/128, the same 5 pre-existing failures.
+- The UI block was render-checked.
+
+**Needs Ed (separate approvals).**
+1. **Approve migration 471.** Then a file-only commit to main, and apply via the owner panel. Only then merge this branch.
+2. **PRYME follow-up data:** event and balance due Oct 10, 2026, agreed total $6,685 as an estimate from the invoice's 50% statement. Entered through the new form after deploy, or approved as a one-off write.
+3. **Reclass decision** for the 4 deposits posted to expense (→ 1430). This would be correcting JEs, which is a production GL write.
+4. **Review Texas Access Works 03-091426-001** before anyone approves it.
+
+**Side finding.** In `api/operations.js`, `GET /:id` (line 220) is registered before `GET /upcoming` (line 403), so `/api/operations/upcoming` probably hits the project handler. Not verified at runtime; not fixed here.
+
+---
+
+## 2026-09-27: Stripe-hosted onboarding link opened for Ed; onboarding NOT yet completed
 
 **Task.** ChatGPT's "ED APPROVED STRIPE-HOSTED ONBOARDING" instruction (Issue #1, 23:09 UTC).
 

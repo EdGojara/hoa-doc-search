@@ -2067,6 +2067,7 @@
         <button class="ap-tab-btn" data-aptab="awaiting" onclick="apSubswitch('awaiting')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:600; color:#315A87; border-bottom:2px solid #315A87; margin-bottom:-1px;">📥 Awaiting Approval <span id="ap-count-awaiting" style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; margin-left:4px;">0</span></button>
         <button class="ap-tab-btn" data-aptab="approved" onclick="apSubswitch('approved')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">✓ Approved <span id="ap-count-approved" style="background:#dbeafe; color:#1e3a8a; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; margin-left:4px;">0</span></button>
         <button class="ap-tab-btn" data-aptab="all" onclick="apSubswitch('all')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📋 All Invoices</button>
+        <button class="ap-tab-btn" data-aptab="deposits" onclick="apSubswitch('deposits')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">💰 Upcoming balances</button>
         <button class="ap-tab-btn" data-aptab="aging" onclick="apSubswitch('aging')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📊 Aging</button>
         <button class="ap-tab-btn" data-aptab="vendors" onclick="apSubswitch('vendors')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">👷 Vendors</button>
       </div>
@@ -2112,6 +2113,14 @@
     <div id="ap-list-section" style="display:none;">
       <div class="panel">
         <div id="ap-list-container" style="font-size:13px;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Upcoming vendor balances: deposits whose balance is still to come (Ed 2026-09-28) -->
+    <div id="ap-deposits-section" style="display:none;">
+      <div class="panel">
+        <h3 style="margin:0 0 8px;">💰 Upcoming vendor balances</h3>
+        <div id="ap-deposits-container" style="font-size:13px;">Loading…</div>
       </div>
     </div>
 
@@ -46470,6 +46479,8 @@ ${questionsPage}
       const showList = tab === 'awaiting' || tab === 'approved' || tab === 'all';
       const showAging = tab === 'aging';
       const showVendors = tab === 'vendors';
+      const showDeposits = tab === 'deposits';
+      const ds = document.getElementById('ap-deposits-section'); if (ds) ds.style.display = showDeposits ? 'block' : 'none';
       document.getElementById('ap-drop-section').style.display = showDrop ? 'block' : 'none';
       document.getElementById('ap-list-section').style.display = showList ? 'block' : 'none';
       document.getElementById('ap-aging-section').style.display = showAging ? 'block' : 'none';
@@ -46478,6 +46489,7 @@ ${questionsPage}
       if (showList) apLoadList();
       if (showAging) apLoadAging();
       if (showVendors) venLoadList();
+      if (showDeposits) apLoadDeposits();
     };
 
     // ---- Vendor 360 — one searchable source of truth per vendor. All reads/writes
@@ -46610,6 +46622,125 @@ ${questionsPage}
         document.getElementById('ap-count-approved').textContent = (j2.invoices || []).length;
       } catch (_) {}
     }
+
+    // ---- Vendor deposits -> balance-due follow-up (Ed 2026-09-28) ----------
+    // A deposit bill (50% up front) leaves a balance due later. This queue is
+    // how Emma and the manager see it coming, and it stays visible after the
+    // deposit is approved and paid (it is keyed on the deposit subledger, not
+    // on the invoice's status). Nothing here pays or creates a payable.
+    const AP_DUE_BADGE = {
+      past_due: ['#fee2e2', '#991b1b', 'Past due'], due_soon: ['#fef3c7', '#92400e', 'Due soon'],
+      upcoming: ['#dbeafe', '#1e3a8a', 'Upcoming'], no_due_date: ['#f1f5f9', '#475569', 'Set due date'],
+    };
+    window.apLoadDeposits = async function () {
+      const c = document.getElementById('ap-deposits-container');
+      if (!c) return;
+      c.innerHTML = 'Loading…';
+      try {
+        const qs = apCommunityId ? '?community_id=' + encodeURIComponent(apCommunityId) : '';
+        const r = await fetch('/api/ap/deposits/upcoming' + qs);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'failed');
+        const rows = j.deposits || [];
+        if (!rows.length) { c.innerHTML = '<div style="color:#64748b; padding:14px;">No outstanding vendor deposits.</div>'; return; }
+        c.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <thead><tr style="text-align:left; color:#5a7390; font-size:11px; text-transform:uppercase;">
+            <th style="padding:6px 8px;">Due</th><th style="padding:6px 8px;">Vendor</th><th style="padding:6px 8px;">For</th>
+            <th style="padding:6px 8px; text-align:right;">Deposit billed</th><th style="padding:6px 8px;">Deposit paid?</th>
+            <th style="padding:6px 8px; text-align:right;">Expected balance</th><th style="padding:6px 8px;">Status</th></tr></thead>
+          <tbody>${rows.map((d) => {
+            const b = AP_DUE_BADGE[d.due_state] || AP_DUE_BADGE.no_due_date;
+            const paid = d.deposit_paid_cents >= d.deposit_billed_cents && d.deposit_billed_cents > 0 ? '✓ Paid'
+              : d.deposit_paid_cents > 0 ? 'Partly paid' : 'Not yet paid';
+            const pend = (d.pending_reconciliations || []).length;
+            return `<tr style="border-top:1px solid #e2e8f0; cursor:pointer;" onclick="${d.deposit_invoice ? `apOpenInvoice('${d.deposit_invoice.id}')` : ''}">
+              <td style="padding:8px;"><span style="background:${b[0]}; color:${b[1]}; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700;">${b[2]}</span><div style="margin-top:3px;">${apEsc(apFmtDate(d.balance_due_date))}</div></td>
+              <td style="padding:8px;">${apEsc(d.vendor_name || '')}<div style="color:#64748b; font-size:11px;">${apEsc(d.community_name || '')}</div></td>
+              <td style="padding:8px; max-width:260px;">${apEsc(d.project_description || '')}${d.event_date ? `<div style="color:#64748b; font-size:11px;">Event ${apEsc(apFmtDate(d.event_date))}</div>` : ''}</td>
+              <td style="padding:8px; text-align:right; font-family:ui-monospace,monospace;">${apFmtCents(d.deposit_billed_cents)}<div style="color:#64748b; font-size:11px;">inv ${apEsc(d.deposit_invoice ? d.deposit_invoice.number || '' : '')}</div></td>
+              <td style="padding:8px;">${paid}</td>
+              <td style="padding:8px; text-align:right; font-family:ui-monospace,monospace;">${d.expected_balance_cents == null ? '—' : apFmtCents(d.expected_balance_cents)}<div style="color:#92400e; font-size:10.5px;">${apEsc(d.expected_balance_label)}</div></td>
+              <td style="padding:8px;">${pend ? `<span style="color:#b45309; font-weight:700;">${pend} bill${pend === 1 ? '' : 's'} to reconcile</span>` : 'Waiting for final bill'}</td></tr>`;
+          }).join('')}</tbody></table>
+          <div style="font-size:11.5px; color:#64748b; margin-top:8px;">A reminder only. Nothing is paid from this list. When the vendor's final bill arrives, Emma matches it to the deposit and a person approves the net amount due before it can be released.</div>`;
+      } catch (e) { c.innerHTML = `<div style="color:#dc2626; padding:14px;">Failed: ${apEsc(e.message)}</div>`; }
+    };
+
+    function apDepositBlock(payload) {
+      const dep = payload.deposit;
+      if (!dep) return '';
+      const f = dep.followup || {};
+      const box = (inner, tone) => `<div style="margin:0 0 12px; padding:11px 13px; border-radius:6px; font-size:12.5px; ${tone}">${inner}</div>`;
+      if (dep.role === 'deposit_bill') {
+        const inp = 'padding:4px 6px; border:1px solid #cbd5e1; border-radius:5px; font-size:12px;';
+        return box(`💰 <strong>Deposit bill.</strong> ${f.expected_balance_cents == null ? 'Balance to follow' : `Expected balance <strong>${apFmtCents(f.expected_balance_cents)}</strong> <span style="color:#92400e;">(${apEsc(f.expected_balance_label)})</span>`}${f.balance_due_date ? `, due <strong>${apEsc(apFmtDate(f.balance_due_date))}</strong>` : ''}. Deposit paid: ${apFmtCents(f.deposit_paid_cents)} of ${apFmtCents(f.deposit_billed_cents)}.
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end; margin-top:8px;">
+            <label>Event date<br><input type="date" id="apdep-event" value="${apEsc(f.event_date || '')}" style="${inp}"></label>
+            <label>Balance due<br><input type="date" id="apdep-due" value="${apEsc(f.balance_due_date || '')}" style="${inp}"></label>
+            <label>Agreed total $<br><input type="number" step="0.01" id="apdep-total" value="${f.agreed_total_basis && f.agreed_total_basis !== 'derived_from_deposit_invoice' && f.agreed_total_cents != null ? (f.agreed_total_cents / 100).toFixed(2) : ''}" style="${inp} width:110px;"></label>
+            <label>Source<br><select id="apdep-basis" style="${inp}"><option value="invoice_estimate">Estimate from invoice</option><option value="quote">Quote</option><option value="contract">Contract</option><option value="staff_entered">Staff entered</option></select></label>
+            <button class="action-btn" style="font-size:12px; padding:5px 12px;" onclick="apDepositSave('${f.deposit_id}', '${payload.invoice.id}')">Save follow-up</button>
+          </div>`, 'background:#f0fdf4; border:1px solid #bbf7d0; color:#14532d;');
+      }
+      const recs = dep.reconciliations || [];
+      const r = recs[0];
+      if (!r) return '';
+      const formLabel = { balance_only: 'Final bill for the balance only', full_total_less_deposit: 'Full total less the deposit', revised_total: 'Revised total (changes vs agreed)', duplicate_or_statement: 'Duplicate copy or statement (not payable)', ambiguous: 'Unclear: a person must classify it' }[r.form] || r.form;
+      const row = (k, v) => `<tr><td style="padding:2px 10px 2px 0; color:#475569;">${k}</td><td style="padding:2px 0; text-align:right; font-family:ui-monospace,monospace;">${v}</td></tr>`;
+      const decided = r.decision;
+      return box(`🔗 <strong>Matched to a vendor deposit.</strong> ${apEsc(formLabel)}${r.needs_review ? ' <span style="color:#b91c1c; font-weight:700;">Needs manager review</span>' : ''}
+        <table style="margin-top:6px; font-size:12.5px;">
+          ${row('Agreed total', r.agreed_total_cents == null ? '—' : apFmtCents(r.agreed_total_cents) + (r.agreed_total_basis && !['quote', 'contract'].includes(r.agreed_total_basis) ? ' (estimate)' : ''))}
+          ${row('Deposit billed', apFmtCents(r.deposit_billed_cents))}
+          ${row('Deposit actually paid', apFmtCents(r.deposit_paid_cents))}
+          ${r.deposit_still_owed_cents ? row('Deposit still owed (separate bill)', apFmtCents(r.deposit_still_owed_cents)) : ''}
+          ${row('This bill (face)', apFmtCents(r.incoming_face_cents))}
+          ${r.credits_shown_cents ? row('Deposit credit on this bill', '-' + apFmtCents(r.credits_shown_cents)) : ''}
+          ${r.extras_cents ? row('Extras / fees on this bill', apFmtCents(r.extras_cents)) : ''}
+          ${r.tax_cents ? row('Tax', apFmtCents(r.tax_cents)) : ''}
+          ${r.final_total_cents != null ? row('Final total', apFmtCents(r.final_total_cents)) : ''}
+          ${r.variance_cents ? row('Change vs agreed', apFmtCents(r.variance_cents)) : ''}
+          ${row('<strong>Net due on this bill</strong>', r.net_due_cents == null ? '—' : '<strong>' + apFmtCents(r.net_due_cents) + '</strong>')}
+          ${f.balance_due_date ? row('Due', apEsc(apFmtDate(f.balance_due_date))) : ''}
+        </table>
+        ${(r.math || []).map((m) => `<div style="color:#334155; margin-top:3px;">• ${apEsc(m)}</div>`).join('')}
+        ${(r.reasons || []).length ? `<div style="color:#b91c1c; margin-top:4px;">Review: ${apEsc(r.reasons.join(', ').replace(/_/g, ' '))}</div>` : ''}
+        ${decided ? `<div style="margin-top:8px;">Decided: <strong>${apEsc(decided.decision)}</strong> by ${apEsc(decided.decided_by_name)}${decided.note ? ' — ' + apEsc(decided.note) : ''}</div>`
+          : `<div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+              <button class="action-btn" style="font-size:12px; padding:5px 12px;" onclick="apDepositDecide('${r.id}', 'approve', '${payload.invoice.id}')">Approve net due</button>
+              <button class="secondary-btn" style="font-size:12px; padding:5px 12px;" onclick="apDepositDecide('${r.id}', 'reject', '${payload.invoice.id}')">Reject</button>
+              <button class="secondary-btn" style="font-size:12px; padding:5px 12px;" onclick="apDepositDecide('${r.id}', 'unrelated', '${payload.invoice.id}')">Not related to the deposit</button>
+            </div>
+            <div style="font-size:11px; color:#64748b; margin-top:4px;">Approving records the math and applies the deposit. It does not pay. The bill still goes through normal approval and the check run, and only at the net due.</div>`}`,
+        'background:#fff7ed; border:1px solid #fed7aa; color:#7c2d12;');
+    }
+
+    window.apDepositSave = async function (depositId, invoiceId) {
+      const v = (id) => (document.getElementById(id) || {}).value || '';
+      const body = { event_date: v('apdep-event') || null, balance_due_date: v('apdep-due') || null };
+      const tot = v('apdep-total');
+      if (tot) { body.agreed_total_cents = Math.round(Number(tot) * 100); body.agreed_total_basis = v('apdep-basis'); }
+      const r = await fetch('/api/ap/deposits/' + encodeURIComponent(depositId) + '/followup', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { alert('Could not save: ' + (j.hint || j.error || r.status)); return; }
+      apOpenInvoice(invoiceId);
+    };
+
+    window.apDepositDecide = async function (recId, decision, invoiceId) {
+      let note = null;
+      if (decision !== 'approve') {
+        note = prompt(decision === 'reject' ? 'Why is the reconciliation wrong?' : 'Why is this bill not related to the deposit?');
+        if (!note) return;
+      } else if (!confirm('Approve this reconciliation? It records the net amount due and applies the deposit. It does not pay anything.')) return;
+      const r = await fetch('/api/ap/deposit-reconciliations/' + encodeURIComponent(recId) + '/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, note }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const why = (j.blockers || []).map((b) => ({ invoice_total_not_net_due: 'the bill total must equal the net due first (net the deposit on the bill)', manager_review_required: 'this one needs an admin because it was flagged for review', classify_first: 'classify the bill first' }[b] || b)).join('; ');
+        alert('Not approved: ' + (why || j.error || r.status));
+        return;
+      }
+      apOpenInvoice(invoiceId);
+    };
 
     window.apLoadList = async function () {
       const c = document.getElementById('ap-list-container');
@@ -47104,6 +47235,7 @@ ${questionsPage}
             </div>
           </div>
 
+          ${apDepositBlock(payload)}
           <h4 style="margin:14px 0 6px; color:#0B1D34;">Line Items + GL Coding</h4>
           ${payload.restatement && payload.restatement.is_restatement ? `<div style="margin:0 0 10px; padding:11px 13px; border-radius:6px; background:#fffbeb; border:1px solid #fde047; font-size:12.5px; color:#92400e;">⚠️ <strong>This bill restacks prior-period invoices.</strong> The vendor re-listed ${payload.restatement.prior_period_count} prior month${payload.restatement.prior_period_count===1?'':'s'} as "Outstanding Invoice" line${payload.restatement.prior_period_count===1?'':'s'}${payload.restatement.has_adjustment?' plus a re-listed adjustment':''}. During cutover we can't confirm those are unpaid — pay only the current month, <strong>$${(Number(payload.restatement.current_cents)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>, and hold the rest for review.<div style="margin-top:8px;"><button class="action-btn" style="font-size:12px; padding:5px 12px;" onclick="apHoldPriorPeriods('${inv.id}')">Pay current month only — hold prior-period lines</button></div></div>` : ''}
           ${lines.some((l) => l.prior_payment) ? `<div style="margin:0 0 10px; padding:9px 12px; border-radius:6px; background:#eff6ff; border:1px solid #bfdbfe; font-size:12px; color:#1e3a8a;">📄 <strong>Prior payments already recorded in Vantaca.</strong> The lines marked 📄 below are payments already made and posted in Vantaca — they are history, not credits, and are <strong>not posted again here</strong>. We record only the balance due, <strong>$${(Number(inv.total_cents)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>.</div>` : ''}

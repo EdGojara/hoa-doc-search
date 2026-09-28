@@ -1081,7 +1081,20 @@ router.get('/invoices/:id', async (req, res) => {
       }
     } catch (e) { console.warn('[ap] restatement classify skipped:', e.message); }
 
-    res.json({ invoice, lines: outLines, approvals: approvals || [], recurrence, policy, open_credits: openCredits, applied_credit: appliedCredit, statement, restatement, documents });
+    // Deposit follow-up / reconciliation for this bill (either side of it).
+    let deposit = null;
+    try {
+      const df = require('../lib/ap/deposit_followup');
+      const view = await df.reconciliationViewForInvoice(supabase, invoice.id);
+      if (view) deposit = { role: 'final_bill', ...view };
+      else {
+        const { data: dep, error: depErr } = await supabase.from('vendor_deposits').select('*').eq('deposit_invoice_id', invoice.id).maybeSingle();
+        if (depErr) throw depErr;
+        if (dep) deposit = { role: 'deposit_bill', followup: df.describe(dep, invoice) };
+      }
+    } catch (e) { console.warn('[ap] deposit view skipped:', e.message); }
+
+    res.json({ invoice, lines: outLines, approvals: approvals || [], recurrence, policy, open_credits: openCredits, applied_credit: appliedCredit, statement, restatement, documents, deposit });
   } catch (err) {
     console.error('[ap] invoice detail failed:', err);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -1114,6 +1127,27 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
     if (!inv) return res.status(404).json({ error: 'not_found' });
     if (inv.status === 'voided') return res.status(400).json({ error: 'voided', detail: 'This invoice was voided.' });
     if (!inv.posting_journal_entry_id) return res.status(400).json({ error: 'not_coded', detail: 'Code the expense account first — an uncoded bill has no journal entry to approve.' });
+    // A bill reconciled against a vendor DEPOSIT can't be approved or released
+    // until a person decides the reconciliation, and then only at the net due.
+    // This is what stops the full face (or a second deposit) being paid twice.
+    // (Ed 2026-09-28: PRYME THYME #2836.)
+    try {
+      const { approvalGateForInvoice } = require('../lib/ap/deposit_followup');
+      const gate = await approvalGateForInvoice(supabase, id, inv.total_cents);
+      if (gate.block) {
+        const detail = {
+          deposit_reconciliation_pending: 'This bill was matched to a vendor deposit. Review the deposit reconciliation (net amount due) before approving.',
+          deposit_reconciliation_rejected: 'The deposit reconciliation for this bill was rejected. Fix the bill and re-run it, or mark the bill unrelated to the deposit.',
+          invoice_total_not_reconciled_net_due: 'The approved deposit reconciliation says a different net amount is due. Adjust the bill to the net due first.',
+          reconciled_as_duplicate_or_statement: 'This document was reconciled as a duplicate or a statement. It is not payable; void it instead.',
+        }[gate.reason] || 'Deposit reconciliation needs attention.';
+        return res.status(409).json({ error: gate.reason, detail, reconciliation_id: gate.reconciliation && gate.reconciliation.id });
+      }
+    } catch (e) {
+      // Fail closed: if we can't tell whether a deposit applies, don't release.
+      console.error('[ap] deposit gate check failed:', e.message);
+      return res.status(503).json({ error: 'deposit_gate_unavailable', detail: 'Could not check this bill against vendor deposits. Try again.' });
+    }
 
     const { data: prior } = await supabase.from('ap_invoice_approvals')
       .select('action, user_id, user_name, created_at').eq('invoice_id', id).order('created_at');
@@ -1815,6 +1849,72 @@ router.get('/invoices/:id/suggest-code', async (req, res) => {
 // wherever it was promised (usually an email thread). This is what makes "please
 // make sure we get credit for this on the Swim Houston bill" real: the promise
 // becomes a hold on that vendor's next invoice instead of a memory. (Ed 2026-07-15.)
+// ---------------------------------------------------------------------------
+// Vendor deposits -> balance-due follow-up (Ed 2026-09-28; lib/ap/deposit_followup.js).
+// None of these pay anything or change an AP amount.
+// ---------------------------------------------------------------------------
+async function _apActor(req) {
+  const { resolveUserRole } = require('./users');
+  const ctx = await resolveUserRole(req);
+  if (!ctx || !ctx.supabaseUserId) return null;
+  if (ctx.user && ctx.user.is_active === false) return null;
+  return { id: (ctx.user && ctx.user.id) || null, name: (ctx.user && (ctx.user.full_name || ctx.user.email)) || 'staff', role: ctx.role };
+}
+
+// GET /deposits/upcoming?community_id= — the "Upcoming vendor balances" queue.
+router.get('/deposits/upcoming', async (req, res) => {
+  try {
+    const { upcomingBalances } = require('../lib/ap/deposit_followup');
+    const rows = await upcomingBalances(supabase, { communityId: req.query.community_id || null });
+    res.json({ deposits: rows });
+  } catch (err) { console.error('[ap] upcoming deposits failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// PATCH /deposits/:id/followup — event / due date / agreed total (with basis) / project.
+router.patch('/deposits/:id/followup', express.json(), async (req, res) => {
+  try {
+    const actor = await _apActor(req);
+    if (!actor) return res.status(401).json({ error: 'sign_in_required' });
+    const b = req.body || {};
+    const fields = {};
+    for (const k of ['event_date', 'balance_due_date', 'balance_due_basis', 'agreed_total_basis', 'project_id', 'notes']) if (k in b) fields[k] = b[k];
+    if ('agreed_total_cents' in b) fields.agreed_total_cents = b.agreed_total_cents === null || b.agreed_total_cents === '' ? null : Number(b.agreed_total_cents);
+    const { setFollowup } = require('../lib/ap/deposit_followup');
+    const out = await setFollowup(supabase, { depositId: req.params.id, fields, actor: actor.name, actorUserId: actor.id });
+    if (out.error) return res.status(out.error === 'not_found' ? 404 : 400).json(out);
+    res.json(out);
+  } catch (err) { console.error('[ap] deposit follow-up failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /deposits/:id/reconcile { invoice_id } — propose (never applies anything).
+router.post('/deposits/:id/reconcile', express.json(), async (req, res) => {
+  try {
+    const actor = await _apActor(req);
+    if (!actor) return res.status(401).json({ error: 'sign_in_required' });
+    const invoiceId = (req.body || {}).invoice_id;
+    if (!invoiceId) return res.status(400).json({ error: 'invoice_id_required' });
+    const { proposeReconciliation } = require('../lib/ap/deposit_followup');
+    const out = await proposeReconciliation(supabase, { depositId: req.params.id, invoiceId, actor: actor.name, actorUserId: actor.id, isStatement: (req.body || {}).is_statement === true });
+    if (out.error) return res.status(String(out.error).endsWith('not_found') ? 404 : 400).json(out);
+    res.json(out);
+  } catch (err) { console.error('[ap] deposit reconcile failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
+// POST /deposit-reconciliations/:id/decide { decision: approve|reject|unrelated, note }
+router.post('/deposit-reconciliations/:id/decide', express.json(), async (req, res) => {
+  try {
+    const actor = await _apActor(req);
+    if (!actor) return res.status(401).json({ error: 'sign_in_required' });
+    const { decideReconciliation } = require('../lib/ap/deposit_followup');
+    const out = await decideReconciliation(supabase, {
+      reconciliationId: req.params.id, decision: (req.body || {}).decision, note: (req.body || {}).note || null,
+      actor: actor.name, actorUserId: actor.id, role: actor.role,
+    });
+    if (out.error) return res.status(out.error === 'not_found' ? 404 : out.error === 'already_decided' ? 409 : 400).json(out);
+    res.json(out);
+  } catch (err) { console.error('[ap] deposit decision failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
+});
+
 router.post('/credits', express.json(), async (req, res) => {
   try {
     const b = req.body || {};
