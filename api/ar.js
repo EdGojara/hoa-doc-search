@@ -15,12 +15,15 @@
 //   GET    /aging?community_id            portfolio aging summary
 //   GET    /billing-policies?community_id current active policy
 //   POST   /billing-policies              create/update policy
+//   GET    /ownership-history/:property_id   every owner period + per-tenure ledger (read-only)
+//   GET    /former-owner-exceptions?community_id  former owners / legacy accounts with balances (read-only)
 // ============================================================================
 
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { createCharge, recordPayment, applyPayment, getOwnerLedger } = require('../lib/accounting/ar_engine');
 const { safeErrorMessage } = require('./_safe_error');
+const { propertyOwnershipHistory, formerOwnerExceptions } = require('../lib/ar/ownership_history');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
@@ -243,6 +246,48 @@ router.post('/billing-policies', express.json(), async (req, res) => {
     res.json({ policy: data });
   } catch (err) {
     console.error('[ar] create policy failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Ownership history + prior-owner balances (Issue #1). READ-ONLY: every owner
+// period on the lot with its own ledger, closeout and status; rows that can't
+// be tied to an owner are listed as Unassigned. Source policy and closeout
+// rules: lib/ar/ownership_history.js.
+// ----------------------------------------------------------------------------
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+router.get('/ownership-history/:property_id', async (req, res) => {
+  try {
+    const pid = req.params.property_id;
+    if (!UUID.test(pid)) return res.status(400).json({ error: 'property_id_invalid' });
+    const h = await propertyOwnershipHistory(supabase, pid);
+    if (!h) return res.status(404).json({ error: 'property_not_found' });
+    res.json(h);
+  } catch (err) {
+    console.error('[ar] ownership history failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.get('/former-owner-exceptions', async (req, res) => {
+  try {
+    const q = req.query;
+    const cid = q.community_id && q.community_id !== 'all' ? q.community_id : null;
+    if (cid && !UUID.test(cid)) return res.status(400).json({ error: 'community_id_invalid' });
+    for (const k of ['ended_from', 'ended_to']) if (q[k] && !ISO_DAY.test(q[k])) return res.status(400).json({ error: `${k}_invalid` });
+    if (q.side && !['debit', 'credit'].includes(q.side)) return res.status(400).json({ error: 'side_invalid' });
+    const flag = (v) => v === '1' || v === 'true';
+    const filters = {
+      side: q.side || null, ended_from: q.ended_from || null, ended_to: q.ended_to || null,
+      conversion_only: flag(q.conversion_only), include_unknown: flag(q.include_unknown),
+      include_legacy: q.include_legacy === undefined ? true : flag(q.include_legacy), include_clean: flag(q.include_clean),
+    };
+    res.json(await formerOwnerExceptions(supabase, { communityId: cid, filters }));
+  } catch (err) {
+    console.error('[ar] former-owner exceptions failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

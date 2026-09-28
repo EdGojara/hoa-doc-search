@@ -73,7 +73,7 @@
   // Five workflow groups — daily work (Homeowners, Bills) first; technical
   // setup (chart, journal entries, policy) tucked into Setup at the end.
   const GROUPS = [
-    { id:'homeowners', label:'👤 Homeowners', views:[['owners','Accounts'],['ar','AR Aging']] },
+    { id:'homeowners', label:'👤 Homeowners', views:[['owners','Accounts'],['ar','AR Aging'],['formerowners','Former Owners']] },
     { id:'bills',      label:'🧾 Bills (AP)', views:[['ap','AP Aging'],['checks','Print Checks']] },
     { id:'bank',       label:'🏦 Bank Rec',   views:[['bankrec','Reconciliation']] },
     { id:'financials', label:'📊 Financials', views:[['bs','Balance Sheet'],['is','Income Statement'],['eq','Equity'],['undeposited','Undeposited'],['trial','Trial Balance'],['tieout','Tie-Out']] },
@@ -146,6 +146,7 @@
       if (VIEW==='policy') return renderBillingPolicy();
       if (VIEW==='owners') return renderOwners();
       if (VIEW==='ar') return renderArAging();
+      if (VIEW==='formerowners') return await renderFormerOwnerReport();
       if (VIEW==='ap') return renderApAging();
       if (VIEW==='checks') return renderChecks();
       if (VIEW==='bankrec') return renderBankRec();
@@ -1662,6 +1663,8 @@
     const h = x.headline || {};
     const facts = (x.facts || []).map((f) => `<tr title="Source: ${esc(f.source)}"><td style="color:var(--ink-soft); width:34%; padding:5px 10px 5px 0; vertical-align:top;">${esc(f.label)}</td><td style="padding:5px 0;">${esc(f.value)}</td></tr>`).join('');
     const docs = (x.documents || []).map((d) => `<a href="${esc(d.href)}" target="_blank" style="display:inline-block; padding:6px 12px; border:1px solid var(--rule); border-radius:8px; text-decoration:none; font-weight:600; margin:0 6px 6px 0;">📎 View ${esc(d.label)}</a>`).join('');
+    const own = x.related && x.related.ownership;
+    const ownBtn = own ? `<a href="javascript:void(0)" onclick="tbCloseTxn(); ohOpen('${esc(own.property_id)}', ${own.tenure_id ? `'${esc(own.tenure_id)}'` : 'null'})" style="display:inline-block; padding:6px 12px; border:1px solid var(--rule); border-radius:8px; text-decoration:none; margin:0 6px 6px 0;">🏠 View owner ledger</a>` : '';
     const rel = (x.links || []).map((l) => `<a href="javascript:void(0)" onclick="tbTxn('${esc(l.journal_entry_id)}')" style="display:inline-block; padding:6px 12px; border:1px solid var(--rule); border-radius:8px; text-decoration:none; margin:0 6px 6px 0;">↗ ${esc(l.label)}</a>`).join('');
     const acct = (x.accounting || []).map((a) => `<tr><td style="padding:4px 10px 4px 0;">${a.debit_cents ? 'Dr' : '<span style="padding-left:18px;">Cr</span>'} ${esc(a.account)}</td><td class="num">${a.debit_cents ? fmt(a.debit_cents) : ''}</td><td class="num">${a.credit_cents ? fmt(a.credit_cents) : ''}</td><td class="muted" style="font-size:11.5px; padding-left:10px;">${esc(a.memo || '')}</td></tr>`).join('');
     const gaps = (x.gaps || []).length ? `<div style="margin-top:12px; padding:9px 12px; border-radius:8px; background:#fffbeb; border:1px solid #fde68a; font-size:12.5px; color:#92400e;"><strong>Not recorded:</strong><ul style="margin:4px 0 0 18px; padding:0;">${x.gaps.map((g) => `<li>${esc(g)}</li>`).join('')}</ul></div>` : '';
@@ -1675,7 +1678,7 @@
           <h2 class="sec" style="margin:4px 0 2px;">${esc(h.title || 'Journal entry')}</h2>
           <div style="font-size:14px;">${h.counterparty ? `<strong>${esc(h.counterparty)}</strong> · ` : ''}${esc(h.date || '')}</div>
         </div>${closeBtn}</div>
-      ${docs || rel ? `<div style="margin-top:12px;">${docs}${rel}</div>` : ''}
+      ${docs || rel || ownBtn ? `<div style="margin-top:12px;">${docs}${rel}${ownBtn}</div>` : ''}
       ${facts ? `<h3 style="margin:14px 0 4px; font-size:13px;">What happened</h3><table style="font-size:13px;"><tbody>${facts}</tbody></table>` : ''}
       ${gaps}
       <h3 style="margin:16px 0 4px; font-size:13px;">Accounting entry</h3>
@@ -1693,6 +1696,153 @@
         <button onclick="tbCloseTxn()" style="padding:7px 14px; border:none; border-radius:8px; background:var(--navy, #0B1D34); color:#fff; cursor:pointer; font-weight:600;">Close</button>
       </div>`);
   };
+
+  // ── Ownership history + prior-owner balances (Issue #1). READ-ONLY. Every
+  //    owner period on a lot with its own ledger and status; rows that can't be
+  //    tied to an owner are shown as Unassigned. Source policy + closeout rules
+  //    live in lib/ar/ownership_history.js; this only renders them.
+  const OH_CHIP = { current:['#0B1D34','#e2e8f0'], closed_clean:['#065f46','#d1fae5'], debit_remains:['#991b1b','#fee2e2'],
+    credit_remains:['#9a3412','#ffedd5'], post_end_review:['#92400e','#fef3c7'], unknown:['#475569','#f1f5f9'], legacy_unlinked:['#6b21a8','#f3e8ff'] };
+  const ohChip = (st) => { const c = OH_CHIP[st && st.code] || OH_CHIP.unknown;
+    return `<span style="display:inline-block; padding:2px 9px; border-radius:10px; font-size:11.5px; font-weight:700; color:${c[0]}; background:${c[1]};">${esc(((st && st.icon) ? st.icon + ' ' : '') + ((st && st.label) || ''))}</span>`; };
+  const ohSigned = (c) => c == null ? 'Unknown' : (Number(c) < 0 ? '(' + fmt(Math.abs(c)) + ')' : fmt(c));
+  const ohSpan = (t) => `${esc(t.start_date || 'start not recorded')} – ${esc(t.end_date || 'present')}`;
+  function ohLedger(t) {
+    if (!t.ledger.length) return `<div class="muted" style="padding:8px 0; font-size:12.5px;">No ledger rows for this ownership period${t.is_current ? '' : ' (history before the current ledger was not migrated per owner)'}.</div>`;
+    const rows = t.ledger.map((r) => {
+      const tag = r.class === 'closeout' ? '<span style="color:#065f46; font-weight:700;">closeout</span>' : r.class === 'post_end' ? '<span style="color:#92400e; font-weight:700;">after end</span>' : '';
+      const flags = (r.flags || []).filter((f) => f !== 'posted after ownership ended').map((f) => `<div class="muted" style="font-size:11px;">${esc(f)}</div>`).join('');
+      return `<tr${r.class === 'post_end' ? ' style="background:#fffbeb;"' : ''}><td>${esc(r.date || '')}</td><td>${esc(r.description || '')}${flags}</td><td class="muted" style="font-size:11.5px;">${esc(r.type || '')}${r.source !== 'homeowner_transactions' ? ' · trustEd' : ''}</td><td>${tag}</td><td class="num">${ohSigned(r.amount_cents)}</td><td class="num" style="font-weight:600;">${ohSigned(r.running_balance_cents)}</td></tr>`;
+    }).join('');
+    return `<table style="font-size:12.5px; margin-top:6px;"><thead><tr><th>Date</th><th>Description</th><th>Type</th><th></th><th class="num">Amount</th><th class="num">Balance</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  function ohTenureCard(t, open) {
+    const who = t.owners.length ? esc(t.owners.join(' & ')) : '<span class="muted">Owner name not recorded</span>';
+    let money = '';
+    if (t.is_current) money = `<div>Current balance: <strong>${ohSigned(t.balance_cents)}</strong></div>`;
+    else if (t.status.code === 'unknown') money = `<div class="muted">Ending balance: Unknown (no ledger data for this ownership period)</div>`;
+    else {
+      money = `<div>Balance at ownership end (${esc(t.end_date)}): <strong>${ohSigned(t.balance_at_end_cents)}</strong></div>`
+        + (t.closeout || []).map((c) => `<div>Closing payoff ${esc(c.date)}${c.check_number ? ' (check ' + esc(c.check_number) + ')' : ''}: <strong>${ohSigned(c.amount_cents)}</strong> <span class="muted" style="font-size:11.5px;">${esc(c.note || '')}</span></div>`).join('')
+        + ((t.unexpected_post_end || []).length ? `<div style="color:#92400e;">Unexpected activity after ownership ended: <strong>${ohSigned(t.unexpected_post_end_cents)}</strong> (${t.unexpected_post_end.length} row${t.unexpected_post_end.length === 1 ? '' : 's'})</div>` : '')
+        + `<div>Final seller balance: <strong>${ohSigned(t.final_balance_cents)}</strong></div>`;
+    }
+    return `<div style="border:1px solid var(--rule); border-radius:10px; padding:12px 14px; margin-bottom:10px;" id="oh-t-${esc(t.tenure_id)}">
+      <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <div><div style="font-weight:700;">${who}</div><div class="muted" style="font-size:12.5px;">Ownership: ${ohSpan(t)}${t.has_opening_balance ? ' · includes conversion opening balance' : ''}</div></div>
+        <div>${ohChip(t.status)}</div></div>
+      <div style="margin-top:8px; font-size:13px; line-height:1.6;">${money}</div>
+      <details${open ? ' open' : ''} style="margin-top:6px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:600;">View owner ledger (${t.ledger.length})</summary>${ohLedger(t)}</details>
+    </div>`;
+  }
+  window.ohClose = function () { const m = document.getElementById('oh-modal'); if (m) m.remove(); };
+  window.ohOpen = async function (pid, focusTenure) {
+    let m = document.getElementById('oh-modal');
+    if (!m) {
+      m = document.createElement('div'); m.id = 'oh-modal';
+      m.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.35); z-index:10001; display:flex; align-items:flex-start; justify-content:center; overflow-y:auto; padding:40px 16px;';
+      m.onclick = (e) => { if (e.target === m) ohClose(); };
+      document.body.appendChild(m);
+    }
+    const card = (inner) => `<div style="background:#fff; border-radius:12px; width:min(860px, 100%); padding:20px 22px; box-shadow:0 12px 40px rgba(0,0,0,0.2);">${inner}</div>`;
+    const closeBtn = `<button onclick="ohClose()" style="border:none; background:none; font-size:22px; cursor:pointer; line-height:1;">×</button>`;
+    m.innerHTML = card(`<div style="display:flex; justify-content:flex-end;">${closeBtn}</div><div class="muted">Loading ownership history…</div>`);
+    let h;
+    try {
+      const r = await fetch(`/api/ar/ownership-history/${encodeURIComponent(pid)}`);
+      h = await r.json();
+      if (!r.ok) throw new Error(h.error || r.status);
+    } catch (e) { m.innerHTML = card(`<div style="display:flex; justify-content:flex-end;">${closeBtn}</div><div style="color:var(--err);">Couldn't load ownership history: ${esc(e.message)}</div>`); return; }
+    const rc = h.reconciliation || {};
+    const cur = h.current_owner ? ohTenureCard(h.current_owner, focusTenure === h.current_owner.tenure_id) : '<div class="muted">No current owner period is recorded for this lot.</div>';
+    const prior = (h.prior_owners || []).map((t) => ohTenureCard(t, focusTenure === t.tenure_id)).join('') || '<div class="muted">No prior owners on record.</div>';
+    const rowList = (rows) => rows.map((r) => `<tr><td>${esc(r.date || '')}</td><td>${esc(r.description || '')}</td><td class="muted" style="font-size:11.5px;">${esc(r.reason || '')}</td><td class="num">${ohSigned(r.amount_cents)}</td></tr>`).join('');
+    const review = (h.unassigned || []).length + (h.stamped_elsewhere || []).length + (h.possible_duplicates || []).length
+      ? `<h3 style="margin:16px 0 4px; font-size:13px; color:#92400e;">Unassigned / needs review</h3>
+         <table style="font-size:12.5px;"><thead><tr><th>Date</th><th>Description</th><th>Why</th><th class="num">Amount</th></tr></thead><tbody>
+         ${rowList(h.unassigned || [])}${rowList(h.stamped_elsewhere || [])}${rowList(h.possible_duplicates || [])}</tbody></table>` : '';
+    const cc = rc.current_balance_check;
+    const recon = `<div style="margin-top:14px; padding:10px 12px; border-radius:8px; font-size:12.5px; background:${rc.clean ? '#f0fdf4' : '#fffbeb'}; border:1px solid ${rc.clean ? '#bbf7d0' : '#fde68a'};">
+        <strong>${rc.clean ? '✓ Reconciles' : '⚠ Needs review'}:</strong> sum of owner balances ${ohSigned(rc.sum_of_tenures_cents)} + unassigned ${ohSigned(rc.unassigned_cents)} = lot total ${ohSigned(rc.property_total_cents)}.
+        ${(rc.reasons || []).length ? `<ul style="margin:4px 0 0 18px; padding:0;">${rc.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+        ${cc && cc.note ? `<div style="margin-top:4px;">${esc(cc.note)} (${ohSigned(cc.native_trusted_postings_cents)})</div>` : ''}
+        <div class="muted" style="margin-top:4px;">${esc(rc.scope || '')}</div></div>`;
+    m.innerHTML = card(`
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+        <div><div class="muted" style="font-size:11.5px; text-transform:uppercase; letter-spacing:0.05em;">Ownership history</div>
+          <h2 class="sec" style="margin:4px 0 2px;">${esc(h.property.address || 'Property')}</h2></div>${closeBtn}</div>
+      <h3 style="margin:14px 0 6px; font-size:13px;">Current owner</h3>${cur}
+      <h3 style="margin:14px 0 6px; font-size:13px;">Prior owners</h3>${prior}
+      ${review}${recon}
+      <div style="display:flex; justify-content:flex-end; margin-top:14px;"><button onclick="ohClose()" style="padding:7px 14px; border:none; border-radius:8px; background:var(--navy, #0B1D34); color:#fff; cursor:pointer; font-weight:600;">Close</button></div>`);
+    if (focusTenure) { const el = document.getElementById('oh-t-' + focusTenure); if (el) el.scrollIntoView({ block: 'center' }); }
+  };
+
+  // Former Owners With Non-Zero Balances: the routine accounting control.
+  let OH_ALL = false;
+  async function renderFormerOwnerReport() {
+    const g = (id) => document.getElementById(id);
+    const prev = { side: g('fo_side') ? g('fo_side').value : '', from: g('fo_from') ? g('fo_from').value : '', to: g('fo_to') ? g('fo_to').value : '',
+      conv: g('fo_conv') ? g('fo_conv').checked : false, unk: g('fo_unk') ? g('fo_unk').checked : false, leg: g('fo_leg') ? g('fo_leg').checked : true, clean: g('fo_clean') ? g('fo_clean').checked : false };
+    const qs = new URLSearchParams({ community_id: OH_ALL ? 'all' : CID });
+    if (prev.side) qs.set('side', prev.side);
+    if (prev.from) qs.set('ended_from', prev.from);
+    if (prev.to) qs.set('ended_to', prev.to);
+    if (prev.conv) qs.set('conversion_only', '1');
+    if (prev.unk) qs.set('include_unknown', '1');
+    if (!prev.leg) qs.set('include_legacy', '0');
+    if (prev.clean) qs.set('include_clean', '1');
+    $('body').innerHTML = `<div class="muted" style="padding:30px; text-align:center;">Checking every former owner${OH_ALL ? ' in every community (about a minute)' : ''}…</div>`;
+    const r = await fetch('/api/ar/former-owner-exceptions?' + qs.toString());
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    const s = j.summary || {};
+    const stat = (v, l) => `<div class="stat"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+    const known = (j.rows || []).filter((x) => x.kind === 'owner'), legacy = (j.rows || []).filter((x) => x.kind === 'legacy');
+    const ownerRows = known.map((x) => `<tr>
+        ${OH_ALL ? `<td>${esc(x.community || '')}</td>` : ''}<td>${esc(x.address || '')}</td><td>${esc(x.prior_owner || '—')}</td><td>${esc(x.end_date || '')}</td>
+        <td class="num">${ohSigned(x.final_balance_cents)}</td><td>${esc(x.last_transaction_date || '')}</td>
+        <td style="font-size:12px;">${(x.closeout || []).map((c) => `${esc(c.date)} ${ohSigned(c.amount_cents)}${c.check_number ? ' #' + esc(c.check_number) : ''}`).join('<br>') || '<span class="muted">none</span>'}</td>
+        <td>${ohChip(x.status)}</td>
+        <td><a href="javascript:void(0)" onclick="ohOpen('${esc(x.property_id)}','${esc(x.tenure_id)}')">Owner ledger</a></td></tr>`).join('');
+    const legacyRows = legacy.map((x) => `<tr>${OH_ALL ? `<td>${esc(x.community || '')}</td>` : ''}<td style="font-family:ui-monospace,monospace;">${esc(x.vantaca_account_id || '')}</td>
+        <td class="num">${ohSigned(x.final_balance_cents)}</td><td>${esc(x.last_transaction_date || '')}</td><td>${ohChip(x.status)}</td></tr>`).join('');
+    const ctl = (j.controls || []).map((c) => `<tr><td>${esc(c.community || '')}</td><td class="num">${fmt(c.gl_control.subledger_cents)}</td><td class="num">${fmt(c.gl_control.gl_1300_2400_net_cents)}</td><td class="num">${ohSigned(c.gl_control.variance_cents)}</td>
+        <td class="muted" style="font-size:11.5px;">${c.excluded.non_live_rows} reverted-batch rows and ${c.excluded.mirror_rows} import mirrors not counted${c.excluded.possible_duplicates ? `; ${c.excluded.possible_duplicates} possible duplicate(s) held out` : ''}</td></tr>`).join('');
+    const sel = (v) => prev.side === v ? ' selected' : '';
+    $('body').innerHTML = `
+      <div class="summary">
+        ${stat((s.debit_remains || 0) + (s.credit_remains || 0), 'Prior owners with a balance')}
+        ${stat(s.post_end_review || 0, 'Activity after ownership ended')}
+        ${stat(s.legacy_nonzero || 0, 'Legacy accounts with a balance')}
+        ${stat(s.unknown || 0, 'Unknown (no ledger data)')}
+        ${stat(s.closed_clean || 0, 'Closed cleanly')}
+      </div>
+      <div class="card" style="margin-bottom:14px; display:flex; gap:12px; flex-wrap:wrap; align-items:center; font-size:13px;">
+        <label><input type="checkbox" id="fo_all" ${OH_ALL ? 'checked' : ''}> All communities</label>
+        <label>Show <select id="fo_side"><option value="">debits &amp; credits</option><option value="debit"${sel('debit')}>debits only</option><option value="credit"${sel('credit')}>credits only</option></select></label>
+        <label>Ended from ${dateInput('fo_from', prev.from)}</label><label>to ${dateInput('fo_to', prev.to)}</label>
+        <label><input type="checkbox" id="fo_conv" ${prev.conv ? 'checked' : ''}> Migrated / conversion only</label>
+        <label><input type="checkbox" id="fo_leg" ${prev.leg ? 'checked' : ''}> Legacy accounts</label>
+        <label><input type="checkbox" id="fo_unk" ${prev.unk ? 'checked' : ''}> Unknown periods</label>
+        <label><input type="checkbox" id="fo_clean" ${prev.clean ? 'checked' : ''}> Closed at $0.00</label>
+        ${goBtn('fo_go')}
+      </div>
+      <div class="card" style="margin-bottom:14px;"><h2 class="sec" style="margin-bottom:4px;">Former owners</h2>
+        <div class="sub" style="margin-bottom:8px;">${esc(j.counts_note || '')} Nothing here changes a balance; fixes are separate, approved actions.</div>
+        <table><thead><tr>${OH_ALL ? '<th>Community</th>' : ''}<th>Property</th><th>Prior owner</th><th>Ownership ended</th><th class="num">Ending balance</th><th>Last activity</th><th>Closing payoff</th><th>Status</th><th></th></tr></thead>
+        <tbody>${ownerRows || `<tr><td colspan="9" class="muted" style="padding:14px; text-align:center;">No former owners match these filters.</td></tr>`}</tbody></table></div>
+      ${legacy.length ? `<div class="card" style="margin-bottom:14px;"><h2 class="sec" style="margin-bottom:4px;">Legacy accounts: property/owner not linked</h2>
+        <div class="sub" style="margin-bottom:8px;">Vantaca accounts with no lot or person on file. Linking one needs source evidence, never a date guess.</div>
+        <table><thead><tr>${OH_ALL ? '<th>Community</th>' : ''}<th>Vantaca acct</th><th class="num">Balance</th><th>Last activity</th><th>Status</th></tr></thead><tbody>${legacyRows}</tbody></table></div>` : ''}
+      ${ctl ? `<div class="card"><h2 class="sec" style="margin-bottom:4px;">AR control (informational)</h2>
+        <div class="sub" style="margin-bottom:8px;">Every owner, legacy and unassigned balance vs GL 1300 + 2400. The GL tie-out is not owner-aware, so this does not prove any single owner's balance.</div>
+        <table><thead><tr><th>Community</th><th class="num">Owner subledger</th><th class="num">GL 1300 + 2400</th><th class="num">Variance</th><th>Not counted</th></tr></thead><tbody>${ctl}</tbody></table></div>` : ''}`;
+    $('fo_go').onclick = () => {
+      OH_ALL = $('fo_all').checked;
+      renderFormerOwnerReport().catch((e) => { $('body').innerHTML = '<div class="card" style="color:var(--err)">Couldn\'t load: ' + esc(e.message) + '</div>'; });
+    };
+  }
 
   const BUCKETS = [['current','Current'],['d1_30','1–30'],['d31_60','31–60'],['d61_90','61–90'],['d91_120','91–120'],['d120_plus','120+']];
 
@@ -2048,6 +2198,7 @@
           <div style="font-size:26px; font-weight:800; color:${j.total_cents>0?'#b91c1c':'#047857'};">${fmt(j.total_cents)}</div>
           <div style="margin-top:6px; display:flex; gap:6px; justify-content:flex-end;">
             <button class="secondary-btn" style="font-size:12px; padding:5px 12px; cursor:pointer;" onclick="window.open('/api/gl/${CID}/owners/${o.property_id}/statement?inline=1','_blank')">📄 Statement</button>
+            <button class="secondary-btn" style="font-size:12px; padding:5px 12px; cursor:pointer;" onclick="ohOpen('${o.property_id}')">🏠 Ownership history</button>
             <button class="secondary-btn" style="font-size:12px; padding:5px 12px; cursor:pointer;" onclick="payToggle('${o.property_id}')">💵 Record payment</button>
           </div>
           <div id="payForm" data-pid="${o.property_id}" style="display:none; margin-top:10px; text-align:left; padding:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; min-width:240px;">

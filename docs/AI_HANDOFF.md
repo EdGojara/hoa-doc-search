@@ -4,7 +4,57 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): Ownership History + Prior Owner Balances: DATA-MODEL REVIEW posted (nothing built)
+## 2026-09-28 (latest): Ownership History + Prior Owner Balances v1 (feat/ownership-history; NOT merged, NOT deployed)
+
+Status: read-only v1 built per ChatGPT's 19:57 review. No migration, no production writes, no seed re-run. Awaiting ChatGPT review + Ed approval.
+
+Canonical source policy (lib/ar/ownership_history.js header, enforced by tests):
+- Balance population = committed homeowner_transactions + trustEd-native ar_charges/ar_payments (source != 'vantaca_migration', not voided).
+- ar_* rows with source 'vantaca_migration' are import MIRRORS: never added (Quail Ridge: 212 charges + 2 payments mirror the June Vantaca import).
+- A native row matching a live ledger row (same lot, same signed amount, within 3 days) is held out and flagged as a possible duplicate.
+- homeowner_ledger_entries is a statement display copy: never read.
+- Reverted/pending batch rows are not live (counted only).
+- Tenure balances and the lot total come from the same population, so the lot total always equals the sum of owner balances plus unassigned rows (tested).
+
+Closeout rules:
+- Authorized closeout requires a closing-payoff row (raw_row_jsonb.source='closing_payoff') on the tenure that the approved proposal names as seller, linked to a CLOSED home sale for the same lot. Dates alone never qualify.
+- Ended tenures show: balance at ownership end, closeout rows, unexpected post-end rows, final balance.
+- Any unexpected post-end row puts the tenure in "Activity after ownership ended: review".
+- An ended tenure with no ledger rows is Unknown; it is never counted as $0 or cleared.
+
+Built:
+- lib/ar/ownership_history.js (pure builders + read-only loaders)
+- GET /api/ar/ownership-history/:property_id
+- GET /api/ar/former-owner-exceptions?community_id=<id|all>&side&ended_from&ended_to&conversion_only&include_unknown&include_legacy&include_clean
+- Accounting UI:
+  - Homeowners → Former Owners (the report, with an informational GL 1300+2400 control);
+  - Accounts → 🏠 Ownership history panel;
+  - the JE transaction summary shows the owner/ownership period only from a recorded tenure_id, with a 🏠 View owner ledger button.
+- tests/test_ownership_history.js (20) + 2 new transaction-summary cases.
+- Platform-knowledge entry added; the stale Trial Balance entry that mentioned "Period start" was corrected. The seed re-run needs Ed's approval.
+
+Validated read-only on production:
+- LOPF resale: at end $119.23 → payoff 8/27 ($119.23, check 105699) → final $0.00 ✓ Closed cleanly.
+- 271 ended tenures are Unknown. 112 legacy accounts are non-zero (net $10,948.66).
+- Quail Ridge: mirrors are excluded, and history equals the current-balance view.
+- 11 native certified-letter fees ($345) are counted here. The current-balance views (v_homeowner_current_balance) omit them.
+- GL control variances match reconciliation_status once those fees are included: Waterview -$8,089.55, Still Creek -$2,059.16, Eaglewood +$123.32, LOPF $0.
+
+Findings needing a decision (NOT fixed here):
+- F1 (CONFIRMED, customer-facing): api/gl.js computeArAging / owner search / owner account / homeowner statement use ar_charges whenever ANY open ar_charges exist, and fall back to the ledger only when none do. Production, read-only:
+  - Waterview: AR aging reads 6 certified fees = $210.00 against a current-owner ledger of $231,460.51.
+  - Still Creek: $75.00 against $71,324.52.
+  - Quail Ridge: reads the migration mirror $20,234.48 against the ledger's $19,056.08.
+  - Per owner, the account screen and statement PDF show only the fee as "open charges" for any owner with a certified fee.
+  - Fix proposal (separate branch, needs approval): apply the same source policy as ownership_history (ledger + non-mirror native rows).
+- F2: native certified fees are posted to GL 1300 but not to homeowner_transactions, so every current-balance surface understates by $345.
+- npm test: 125/130. The 5 failures (bedrock_ops, persona_routing, signature_identity, amanda_review, check_requires_tracked -> lib/presentations) also fail on unmodified main.
+
+Next: ChatGPT review; Ed approval to merge; separately decide F1/F2 and the seed re-run.
+
+---
+
+## 2026-09-28: Ownership History + Prior Owner Balances: DATA-MODEL REVIEW posted (nothing built)
 
 Status: review only. No code, no migration, no production writes. TB drill-down + transaction summary are MERGED/LIVE (main b8cce60b); the entries below describing them as "NOT merged" are superseded.
 
