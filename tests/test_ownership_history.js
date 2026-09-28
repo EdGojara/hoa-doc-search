@@ -21,9 +21,11 @@ const ht = (tenure, date, cents, extra = {}) => ({ id: 'h' + (++n), source_batch
 const T = (id, start, end, extra = {}) => ({ id, community_id: 'c1', property_id: 'lot1', kind: 'owner', start_date: start, end_date: end, origin: 'backfill_historical', ...extra });
 const owners = [{ tenure_id: 'tA', name: 'Seller One', is_primary: true }, { tenure_id: 'tB', name: 'Buyer Two', is_primary: true }, { tenure_id: 'tC', name: 'Early Owner', is_primary: true }];
 
-function history({ tenures, htRows = [], arCharges = [], arPayments = [], proposals = [], sales = [], view = null }) {
+// READY = a community with a posted ledger conversion (baseline optional).
+const READY = { ready: true, basis: "conversion_batches.status = 'posted'", batch_code: 'CONV-TEST', as_of_date: null };
+function history({ tenures, htRows = [], arCharges = [], arPayments = [], proposals = [], sales = [], view = null, readiness = READY }) {
   const population = oh.canonicalPopulation({ htRows, batches: B, arCharges, arPayments });
-  return oh.buildPropertyHistory({ property: P, tenures, owners, proposals, sales, population, currentOwnerView: view });
+  return oh.buildPropertyHistory({ property: P, tenures, owners, proposals, sales, population, currentOwnerView: view, readiness });
 }
 const payoffRow = (tenure, date, cents, link = {}) => ht(tenure, date, cents, { source_batch_id: 'payoff', raw_source: 'closing_payoff', raw_home_sale_id: 'sale1', raw_proposal_id: 'prop1', raw_check_number: '105699', ...link });
 const PROPOSAL = [{ id: 'prop1', status: 'approved', seller_tenure_id: 'tA', buyer_tenure_id: 'tB', home_sale_id: 'sale1' }];
@@ -213,6 +215,37 @@ t('exception report: Unknown excluded by default and never counted as cleared; l
   assert.strictEqual(oh.exceptionRows([h], legacy, () => 'Community', { side: 'credit' }).rows.length, 1);
   assert.strictEqual(oh.exceptionRows([h], legacy, () => 'Community', { include_legacy: false }).rows.length, 1);
   assert.strictEqual(oh.exceptionRows([h], legacy, () => 'Community', { ended_from: '2026-09-01' }).rows.length, 0);
+});
+
+t('READINESS: unimported community shows "history not imported", never $0, never clean, never a normal Unknown', () => {
+  const tenures = [T('tC', '2013-06-04', '2019-03-11'), T('tB', '2019-03-12', null)];
+  const htRows = [ht('tB', '2026-06-01', 26000)];                       // snapshot rows exist but prove nothing
+  const arCharges = [{ id: 'n1', property_id: 'lot1', tenure_id: 'tB', charge_date: '2026-09-15', original_amount_cents: 3500, status: 'open', source_module: 'certified_letter_fee' }];
+  const h = history({ tenures, htRows, arCharges, readiness: oh.NOT_READY });
+  for (const t2 of [h.current_owner, ...h.prior_owners]) {
+    assert.strictEqual(t2.status.code, 'not_imported');
+    assert.strictEqual(t2.balance_cents, null); assert.strictEqual(t2.final_balance_cents, null);
+    assert.strictEqual(t2.ledger.length, 0);
+  }
+  assert.strictEqual(h.prior_owners[0].owners[0], 'Early Owner');           // who owned it is still shown
+  assert.strictEqual(h.reconciliation.clean, false);
+  assert.strictEqual(h.reconciliation.property_total_cents, null);
+  assert.strictEqual(h.readiness.ready, false);
+  // a missing readiness argument is treated as NOT ready (safe default)
+  const population = oh.canonicalPopulation({ htRows, batches: B });
+  assert.strictEqual(oh.buildPropertyHistory({ property: P, tenures, owners, population }).current_owner.status.code, 'not_imported');
+});
+
+t('READINESS: in an imported community, a period that ended before the conversion baseline is "before baseline", not Unknown', () => {
+  const rd = { ...READY, as_of_date: '2026-07-31' };
+  const h = history({ tenures: [T('tC', '2013-01-01', '2019-03-11'), T('tX', '2019-03-12', '2026-08-15'), T('tB', '2026-08-16', null)], htRows: [ht('tB', '2026-09-01', 100)], readiness: rd });
+  const byId = Object.fromEntries(h.prior_owners.map((t2) => [t2.tenure_id, t2]));
+  assert.strictEqual(byId.tC.status.code, 'pre_baseline'); assert.strictEqual(byId.tC.final_balance_cents, null);
+  assert.strictEqual(byId.tX.status.code, 'unknown');                    // ended after baseline with no rows
+  const r = oh.exceptionRows([h], [], () => 'LOPF', {});
+  assert.strictEqual(r.summary.pre_baseline, 1); assert.strictEqual(r.summary.unknown, 1); assert.strictEqual(r.summary.closed_clean, 0);
+  assert.strictEqual(r.rows.length, 0);                                   // neither shown unless asked
+  assert.strictEqual(oh.exceptionRows([h], [], () => 'LOPF', { include_unknown: true }).rows.length, 2);
 });
 
 t('read-only: the module performs no writes', () => {

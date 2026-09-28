@@ -6,6 +6,15 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ## 2026-09-28 (latest): Ownership History + Prior Owner Balances v1 (feat/ownership-history; NOT merged, NOT deployed)
 
+UPDATE (Ed 20:36 blocker, resolved on the branch): only LOPF is imported.
+- Readiness = a conversion_batches row with status='posted' for the community. Today only LOPF: CONV-LPF-20260731, baseline 2026-07-31, approved by Ed.
+- NOT a readiness signal: ownership_tenures, backfill metadata, snapshot rows, native AR rows, gl_cutover_date (set for 7 communities).
+- Unimported communities: every owner period shows "Owner ledger history not imported yet"; there are no balances, no clean badge and no Unknown. The portfolio report skips them entirely and lists them as not imported.
+- Within LOPF, a period that ended on or before the baseline with no rows is "Ended before the conversion baseline" (68), separate from Unknown (2 periods ended after the baseline with no rows).
+- Counts from LOPF only: 1 closed cleanly (the resale), 0 with balances, 0 post-end, 68 before baseline, 2 Unknown, 5 legacy accounts (net $335.07 credit). GL control $58,707.04 vs $58,707.04 (ties).
+- The earlier all-community validation numbers in this entry (271 Unknown, 112 legacy, Waterview/Still Creek/Eaglewood variances) were metadata/backfill-only and are NOT owner-ledger evidence.
+- Tests: 24.
+
 Status: read-only v1 built per ChatGPT's 19:57 review. No migration, no production writes, no seed re-run. Awaiting ChatGPT review + Ed approval.
 
 Canonical source policy (lib/ar/ownership_history.js header, enforced by tests):

@@ -1702,7 +1702,8 @@
   //    tied to an owner are shown as Unassigned. Source policy + closeout rules
   //    live in lib/ar/ownership_history.js; this only renders them.
   const OH_CHIP = { current:['#0B1D34','#e2e8f0'], closed_clean:['#065f46','#d1fae5'], debit_remains:['#991b1b','#fee2e2'],
-    credit_remains:['#9a3412','#ffedd5'], post_end_review:['#92400e','#fef3c7'], unknown:['#475569','#f1f5f9'], legacy_unlinked:['#6b21a8','#f3e8ff'] };
+    credit_remains:['#9a3412','#ffedd5'], post_end_review:['#92400e','#fef3c7'], unknown:['#475569','#f1f5f9'], legacy_unlinked:['#6b21a8','#f3e8ff'],
+    pre_baseline:['#475569','#f1f5f9'], not_imported:['#475569','#e2e8f0'] };
   const ohChip = (st) => { const c = OH_CHIP[st && st.code] || OH_CHIP.unknown;
     return `<span style="display:inline-block; padding:2px 9px; border-radius:10px; font-size:11.5px; font-weight:700; color:${c[0]}; background:${c[1]};">${esc(((st && st.icon) ? st.icon + ' ' : '') + ((st && st.label) || ''))}</span>`; };
   const ohSigned = (c) => c == null ? 'Unknown' : (Number(c) < 0 ? '(' + fmt(Math.abs(c)) + ')' : fmt(c));
@@ -1719,8 +1720,10 @@
   function ohTenureCard(t, open) {
     const who = t.owners.length ? esc(t.owners.join(' & ')) : '<span class="muted">Owner name not recorded</span>';
     let money = '';
-    if (t.is_current) money = `<div>Current balance: <strong>${ohSigned(t.balance_cents)}</strong></div>`;
+    if (t.status.code === 'not_imported') money = `<div class="muted">${t.is_current ? 'Owner balance' : 'Prior-owner balance'} unavailable until the community ledger import is posted.</div>`;
+    else if (t.is_current) money = `<div>Current balance: <strong>${ohSigned(t.balance_cents)}</strong></div>`;
     else if (t.status.code === 'unknown') money = `<div class="muted">Ending balance: Unknown (no ledger data for this ownership period)</div>`;
+    else if (t.status.code === 'pre_baseline') money = `<div class="muted">Ending balance: not available. This ownership ended before the conversion baseline, and history before the baseline was not imported.</div>`;
     else {
       money = `<div>Balance at ownership end (${esc(t.end_date)}): <strong>${ohSigned(t.balance_at_end_cents)}</strong></div>`
         + (t.closeout || []).map((c) => `<div>Closing payoff ${esc(c.date)}${c.check_number ? ' (check ' + esc(c.check_number) + ')' : ''}: <strong>${ohSigned(c.amount_cents)}</strong> <span class="muted" style="font-size:11.5px;">${esc(c.note || '')}</span></div>`).join('')
@@ -1732,7 +1735,7 @@
         <div><div style="font-weight:700;">${who}</div><div class="muted" style="font-size:12.5px;">Ownership: ${ohSpan(t)}${t.has_opening_balance ? ' · includes conversion opening balance' : ''}</div></div>
         <div>${ohChip(t.status)}</div></div>
       <div style="margin-top:8px; font-size:13px; line-height:1.6;">${money}</div>
-      <details${open ? ' open' : ''} style="margin-top:6px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:600;">View owner ledger (${t.ledger.length})</summary>${ohLedger(t)}</details>
+      ${t.status.code === 'not_imported' ? '' : `<details${open ? ' open' : ''} style="margin-top:6px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:600;">View owner ledger (${t.ledger.length})</summary>${ohLedger(t)}</details>`}
     </div>`;
   }
   window.ohClose = function () { const m = document.getElementById('oh-modal'); if (m) m.remove(); };
@@ -1767,7 +1770,11 @@
       + ((h.possible_duplicates || []).length
         ? `<h3 style="margin:16px 0 4px; font-size:13px; color:#92400e;">Possible duplicates: counted in the owner's balance, needs review</h3>${tbl(h.possible_duplicates)}` : '');
     const cc = rc.current_balance_check;
-    const recon = `<div style="margin-top:14px; padding:10px 12px; border-radius:8px; font-size:12.5px; background:${rc.clean ? '#f0fdf4' : '#fffbeb'}; border:1px solid ${rc.clean ? '#bbf7d0' : '#fde68a'};">
+    const rd = h.readiness || {};
+    const readyBanner = rd.ready
+      ? `<div class="muted" style="font-size:12px; margin-top:4px;">Owner ledger imported: ${esc(rd.batch_code || '')}${rd.as_of_date ? ', baseline ' + esc(rd.as_of_date) : ''}.</div>`
+      : `<div style="margin-top:10px; padding:10px 12px; border-radius:8px; font-size:13px; background:#f1f5f9; border:1px solid #cbd5e1;"><strong>Owner ledger history not imported yet for this community.</strong> Ownership dates are shown; balances are unavailable until the community ledger import is posted.</div>`;
+    const recon = !rd.ready ? '' : `<div style="margin-top:14px; padding:10px 12px; border-radius:8px; font-size:12.5px; background:${rc.clean ? '#f0fdf4' : '#fffbeb'}; border:1px solid ${rc.clean ? '#bbf7d0' : '#fde68a'};">
         <strong>${rc.clean ? '✓ Reconciles' : '⚠ Needs review'}:</strong> sum of owner balances ${ohSigned(rc.sum_of_tenures_cents)} + unassigned ${ohSigned(rc.unassigned_cents)} = lot total ${ohSigned(rc.property_total_cents)}.
         ${(rc.reasons || []).length ? `<ul style="margin:4px 0 0 18px; padding:0;">${rc.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
         ${cc && cc.note ? `<div style="margin-top:4px;">${esc(cc.note)} (${ohSigned(cc.native_trusted_postings_cents)})</div>` : ''}
@@ -1775,7 +1782,7 @@
     m.innerHTML = card(`
       <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
         <div><div class="muted" style="font-size:11.5px; text-transform:uppercase; letter-spacing:0.05em;">Ownership history</div>
-          <h2 class="sec" style="margin:4px 0 2px;">${esc(h.property.address || 'Property')}</h2></div>${closeBtn}</div>
+          <h2 class="sec" style="margin:4px 0 2px;">${esc(h.property.address || 'Property')}</h2></div>${closeBtn}</div>${readyBanner}
       <h3 style="margin:14px 0 6px; font-size:13px;">Current owner</h3>${cur}
       <h3 style="margin:14px 0 6px; font-size:13px;">Prior owners</h3>${prior}
       ${review}${recon}
@@ -1815,21 +1822,28 @@
     const ctl = (j.controls || []).map((c) => `<tr><td>${esc(c.community || '')}</td><td class="num">${fmt(c.gl_control.subledger_cents)}</td><td class="num">${fmt(c.gl_control.gl_1300_2400_net_cents)}</td><td class="num">${ohSigned(c.gl_control.variance_cents)}</td>
         <td class="muted" style="font-size:11.5px;">${c.excluded.non_live_rows} reverted-batch rows and ${c.excluded.mirror_rows} import mirrors not counted${c.excluded.possible_duplicates_flagged ? `; ${c.excluded.possible_duplicates_flagged} possible duplicate(s) counted and flagged for review` : ''}</td></tr>`).join('');
     const sel = (v) => prev.side === v ? ' selected' : '';
+    const rdy = j.readiness || [];
+    const readyNames = rdy.filter((x) => x.ready).map((x) => `${esc(x.community)} (${esc(x.batch_code || '')}${x.as_of_date ? ', baseline ' + esc(x.as_of_date) : ''})`);
+    const notReady = rdy.filter((x) => !x.ready).map((x) => esc(x.community));
+    const readyLine = `<div class="card" style="margin-bottom:14px; font-size:13px;"><strong>Owner ledger imported:</strong> ${readyNames.join(', ') || 'none'}.
+      ${notReady.length ? `<br><span class="muted"><strong>Not imported yet</strong> (not counted anywhere on this page; prior-owner balances unavailable until the community ledger import is posted): ${notReady.join(', ')}.</span>` : ''}</div>`;
     $('body').innerHTML = `
       <div class="summary">
         ${stat((s.debit_remains || 0) + (s.credit_remains || 0), 'Prior owners with a balance')}
         ${stat(s.post_end_review || 0, 'Activity after ownership ended')}
         ${stat(s.legacy_nonzero || 0, 'Legacy accounts with a balance')}
         ${stat(s.unknown || 0, 'Unknown (no ledger data)')}
+        ${stat(s.pre_baseline || 0, 'Ended before import baseline')}
         ${stat(s.closed_clean || 0, 'Closed cleanly')}
       </div>
+      ${readyLine}
       <div class="card" style="margin-bottom:14px; display:flex; gap:12px; flex-wrap:wrap; align-items:center; font-size:13px;">
         <label><input type="checkbox" id="fo_all" ${OH_ALL ? 'checked' : ''}> All communities</label>
         <label>Show <select id="fo_side"><option value="">debits &amp; credits</option><option value="debit"${sel('debit')}>debits only</option><option value="credit"${sel('credit')}>credits only</option></select></label>
         <label>Ended from ${dateInput('fo_from', prev.from)}</label><label>to ${dateInput('fo_to', prev.to)}</label>
         <label><input type="checkbox" id="fo_conv" ${prev.conv ? 'checked' : ''}> Migrated / conversion only</label>
         <label><input type="checkbox" id="fo_leg" ${prev.leg ? 'checked' : ''}> Legacy accounts</label>
-        <label><input type="checkbox" id="fo_unk" ${prev.unk ? 'checked' : ''}> Unknown periods</label>
+        <label><input type="checkbox" id="fo_unk" ${prev.unk ? 'checked' : ''}> Unknown / before-baseline periods</label>
         <label><input type="checkbox" id="fo_clean" ${prev.clean ? 'checked' : ''}> Closed at $0.00</label>
         ${goBtn('fo_go')}
       </div>
