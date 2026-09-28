@@ -48,18 +48,19 @@ router.get('/:communityId/chart-of-accounts', async (req, res) => {
 
 router.get('/:communityId/trial-balance', async (req, res) => {
   try {
-    const { start, end } = req.query;
-    // Optional reporting scope (Ed 2026-09-28, TB drill-down). No dates = the
-    // all-history view, unchanged. With dates the rows come from the SAME code
+    const { start, as_of: asOf } = req.query;
+    // Optional AS-OF date (Ed 2026-09-28, TB drill-down). No date = the
+    // all-history view, unchanged. With as_of the rows come from the SAME code
     // the drill-down uses (lib/accounting/trial_balance_detail.js), so every row
-    // ties to its detail by construction.
-    if (start || end) {
+    // ties to its detail by construction, and the report balances whenever the
+    // ledger does. A period START is refused: it would not be a trial balance.
+    if (start || asOf) {
       const tbd = require('../lib/accounting/trial_balance_detail');
-      const scope = tbd.validateScope({ start, end });
+      const scope = tbd.validateScope({ start, end: asOf });
       if (scope.error) return res.status(400).json({ error: scope.error });
       const inputs = await tbd.loadCommunityTrialBalanceInputs(supabase, req.params.communityId);
-      const out = tbd.scopedTrialBalance({ ...inputs, start: scope.start, end: scope.end });
-      return res.json({ ...out, source: 'scoped' });
+      const out = tbd.scopedTrialBalance({ ...inputs, end: scope.end });
+      return res.json({ ...out, source: 'as_of' });
     }
     const { data, error } = await supabase
       .from('v_trial_balance')
@@ -79,7 +80,7 @@ router.get('/:communityId/trial-balance', async (req, res) => {
   }
 });
 
-// GET /:communityId/trial-balance/detail?account_id=&fund_id=&start=&end=&page=&page_size=
+// GET /:communityId/trial-balance/detail?account_id=&fund_id=&as_of=&page=&page_size=
 // The exact counted journal-entry lines behind one Trial Balance row, with
 // opening + period debits - period credits = ending, a running balance, and a
 // reconciliation to the row. Read-only. fund_id empty or 'none' = no fund.
@@ -90,17 +91,17 @@ router.get('/:communityId/trial-balance/detail', async (req, res) => {
     const accountId = req.query.account_id;
     if (!accountId) return res.status(400).json({ error: 'account_id_required' });
     const fundId = req.query.fund_id && req.query.fund_id !== 'none' ? req.query.fund_id : null;
-    const scope = tbd.validateScope({ start: req.query.start, end: req.query.end });
+    const scope = tbd.validateScope({ start: req.query.start, end: req.query.as_of });
     if (scope.error) return res.status(400).json({ error: scope.error });
     const account = await tbd.loadAccount(supabase, communityId, accountId);
     if (!account) return res.status(404).json({ error: 'account_not_found' });
     const lines = await tbd.loadAccountLines(supabase, communityId, accountId);
-    const detail = tbd.buildDetail({ account, lines, fundId, start: scope.start, end: scope.end, page: req.query.page, pageSize: req.query.page_size });
+    const detail = tbd.buildDetail({ account, lines, fundId, end: scope.end, page: req.query.page, pageSize: req.query.page_size });
     if (detail.error) return res.status(400).json({ error: detail.error });
     // Reconcile to the Trial Balance row the user clicked. Unscoped: against the
     // real v_trial_balance row. Scoped: the TB row is built by the same function.
     let reconciliation;
-    if (!scope.start && !scope.end) {
+    if (!scope.end) {
       let q = supabase.from('v_trial_balance').select('total_debits_cents, total_credits_cents').eq('community_id', communityId).eq('account_id', accountId);
       q = fundId ? q.eq('fund_id', fundId) : q.is('fund_id', null);
       const { data: vrows, error: vErr } = await q;
@@ -108,7 +109,7 @@ router.get('/:communityId/trial-balance/detail', async (req, res) => {
       const v = (vrows || []).reduce((a, r) => ({ d: a.d + Number(r.total_debits_cents || 0), c: a.c + Number(r.total_credits_cents || 0) }), { d: 0, c: 0 });
       reconciliation = { source: 'v_trial_balance', row_debits_cents: v.d, row_credits_cents: v.c };
     } else {
-      reconciliation = { source: 'scoped', row_debits_cents: detail.tb_row.total_debits_cents, row_credits_cents: detail.tb_row.total_credits_cents };
+      reconciliation = { source: 'as_of', row_debits_cents: detail.tb_row.total_debits_cents, row_credits_cents: detail.tb_row.total_credits_cents };
     }
     reconciliation.detail_debits_cents = detail.tb_row.total_debits_cents;
     reconciliation.detail_credits_cents = detail.tb_row.total_credits_cents;

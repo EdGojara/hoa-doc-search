@@ -74,12 +74,36 @@ t('an inactive account with postings is dropped exactly as v_trial_balance drops
   assert.strictEqual(tb.balanced, false);
   assert.strictEqual(tb.totals.credits - tb.totals.debits, 777);
 });
-t('scoped (September): every row ties; the scoped TB is still in balance', () => {
-  const tb = assertEveryRowTies({ start: '2026-09-01', end: '2026-09-30' });
-  // Balance-sheet rows carry forward, income rows are September-only, so the
-  // scoped TB balances only with the prior-period P&L rolled into equity; the
-  // rows themselves still tie exactly.
-  assert.ok(tb.rows.length > 0);
+t('as of a date: every row ties to its detail, and the TB BALANCES (every account, every entry on or before the date)', () => {
+  const clean = LINES.filter((l) => !(l.journal_entries === JES.a1 && (l.account_id === 'a-old' || l.credit_cents === 777)));
+  for (const asOf of ['2026-07-31', '2026-08-15', '2026-09-03', '2026-09-30']) {
+    const tb = tbd.scopedTrialBalance({ accounts: ACCTS, lines: clean, funds: FUNDS, end: asOf });
+    assert.ok(tb.balanced, `as of ${asOf}: ${JSON.stringify(tb.totals)}`);
+    for (const r of tb.rows) {
+      const d = tbd.buildDetail({ account: acct(r.account_id), lines: clean.filter((l) => l.account_id === r.account_id), fundId: r.fund_id, end: asOf });
+      assert.deepStrictEqual([d.tb_row.total_debits_cents, d.tb_row.total_credits_cents], [r.total_debits_cents, r.total_credits_cents], `${asOf} ${r.account_number}`);
+      assert.strictEqual(d.opening.net_cents, 0, 'as-of scope has no carried-forward opening');
+    }
+  }
+});
+t('badge semantics: a date can never turn a sound ledger "Out of balance"; only a real ledger problem can', () => {
+  const clean = LINES.filter((l) => !(l.journal_entries === JES.a1 && (l.account_id === 'a-old' || l.credit_cents === 777)));
+  const dates = [...new Set(clean.map((l) => l.journal_entries.posting_date))].sort();
+  for (const d of dates) assert.ok(tbd.scopedTrialBalance({ accounts: ACCTS, lines: clean, funds: FUNDS, end: d }).balanced, `as of ${d}`);
+  // An unbalanced ledger (a one-sided line) reads out of balance at and after its date, never before.
+  const broken = [...clean, L({ id: 'je-oops', posting_date: '2026-08-10', reference: 'JE-X', status: 'posted' }, 'a-cash', 100, 0)];
+  assert.ok(tbd.scopedTrialBalance({ accounts: ACCTS, lines: broken, funds: FUNDS, end: '2026-08-09' }).balanced);
+  assert.ok(!tbd.scopedTrialBalance({ accounts: ACCTS, lines: broken, funds: FUNDS, end: '2026-08-10' }).balanced);
+});
+t('a period-START scope is refused (it would not be a trial balance), by the TB and by the detail', () => {
+  assert.strictEqual(tbd.scopedTrialBalance({ accounts: ACCTS, lines: LINES, funds: FUNDS, start: '2026-09-01', end: '2026-09-30' }).error, 'period_start_not_supported');
+  assert.strictEqual(tbd.validateScope({ start: '2026-09-01' }).error, 'period_start_not_supported');
+});
+t('as of a date excludes later entries: September activity is out of an August 31 detail', () => {
+  const d = tbd.buildDetail({ account: acct('a-rev'), lines: linesFor('a-rev'), fundId: 'f-op', end: '2026-08-31' });
+  assert.ok(d.lines.length > 0 && d.lines.every((l) => l.reference === 'JE-1'), d.lines.map((l) => l.reference).join());   // no September JE-8
+  assert.ok(/credits minus debits/.test(d.sign_convention));
+  assert.strictEqual(d.scope.as_of, '2026-08-31');
 });
 t('drafts and voids WITHOUT a reversal never count; voided-with-reversal pairs show both sides and net to zero', () => {
   const d = tbd.buildDetail({ account: acct('a-exp'), lines: linesFor('a-exp'), fundId: 'f-op' });
@@ -88,20 +112,6 @@ t('drafts and voids WITHOUT a reversal never count; voided-with-reversal pairs s
   assert.ok(refs.includes('JE-4') && refs.includes('JE-5'));
   assert.strictEqual(d.lines.find((l) => l.reference === 'JE-4').entry_status, 'voided_with_reversal');
   assert.strictEqual(d.ending.net_cents, 300000, 'landscaping only; the mistaken entry nets out');
-});
-t('balance-sheet account carries forward: opening includes conversion + August, period is September', () => {
-  const d = tbd.buildDetail({ account: acct('a-cash'), lines: linesFor('a-cash'), fundId: 'f-op', start: '2026-09-01', end: '2026-09-30' });
-  assert.strictEqual(d.scope.carries_forward, true);
-  assert.strictEqual(d.opening.net_cents, 5000000 + 1200000 - 300000);
-  assert.deepStrictEqual(d.lines.map((l) => l.reference), ['JE-4', 'JE-5', 'JE-8', 'JE-9']);
-  assert.strictEqual(d.ending.net_cents, 5000000 + 1200000 - 300000 + 1200000 - 500000);
-});
-t('income account follows the report period only: August assessments are out of a September scope', () => {
-  const d = tbd.buildDetail({ account: acct('a-rev'), lines: linesFor('a-rev'), fundId: 'f-op', start: '2026-09-01', end: '2026-09-30' });
-  assert.strictEqual(d.scope.carries_forward, false);
-  assert.strictEqual(d.opening.net_cents, 0);
-  assert.deepStrictEqual([d.period.credits_cents, d.ending.natural_cents], [1200000, 1200000]);
-  assert.ok(/credits minus debits/.test(d.sign_convention));
 });
 t('null-fund lines fall back to the account fund; one account in two funds is two rows that each tie', () => {
   const tb = tbd.scopedTrialBalance({ accounts: ACCTS, lines: LINES, funds: FUNDS });
@@ -132,8 +142,7 @@ t('lines carry source navigation (JE id, reference, source module, document path
   assert.deepStrictEqual([l.journal_entry_id, l.source_module, l.source_document_path], ['je-e1', 'ap_invoice', 'ap_invoices/x.pdf']);
 });
 t('invalid scopes are refused; an empty account returns an empty, balanced detail', () => {
-  assert.strictEqual(tbd.validateScope({ start: '2026-13-01' }).error, 'start_invalid');
-  assert.strictEqual(tbd.validateScope({ start: '2026-09-30', end: '2026-09-01' }).error, 'start_after_end');
+  assert.strictEqual(tbd.validateScope({ end: '2026-13-01' }).error, 'as_of_invalid');
   const d = tbd.buildDetail({ account: acct('a-old'), lines: [], fundId: 'f-op' });
   assert.deepStrictEqual([d.total_lines, d.ending.net_cents, d.lines.length], [0, 0, 0]);
 });

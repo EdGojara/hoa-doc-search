@@ -1542,14 +1542,14 @@
 
   // ---- Trial Balance + drill-down (Ed 2026-09-28) --------------------------
   // Every account/fund row (and its amounts) opens the exact posted journal lines
-  // behind it, reconciled to the row: opening + period debits - period credits =
-  // ending. Optional period: balance-sheet accounts carry forward, income/expense
-  // accounts follow the period. No period = all history (the book trial balance).
-  window._tbScope = window._tbScope || { start: '', end: '' };
+  // behind it, reconciled to the row. Scope is all history or AS OF a date (every
+  // account, every entry on or before it), so the report balances whenever the
+  // ledger does. No period-start scope: that would not be a trial balance.
+  window._tbScope = window._tbScope || { asOf: '' };
   const fmtSigned = (c) => (Number(c) < 0 ? '−' : '') + fmt(Math.abs(Number(c || 0)));
   async function renderTrial() {
     const sc = window._tbScope;
-    const qs = new URLSearchParams(); if (sc.start) qs.set('start', sc.start); if (sc.end) qs.set('end', sc.end);
+    const qs = new URLSearchParams(); if (sc.asOf) qs.set('as_of', sc.asOf);
     $('body').innerHTML = `<div class="card"><div class="muted">Loading trial balance…</div></div>`;
     let j;
     try {
@@ -1573,22 +1573,17 @@
         <span class="badge ${j.balanced?'ok':'err'}">${j.balanced?'✓ In balance':'✗ Out of balance'}</span>
       </div>
       <div style="display:flex; gap:10px; align-items:end; flex-wrap:wrap; margin-bottom:12px;">
-        <label style="font-size:12px; color:var(--ink-soft);">Period start<br><input type="date" id="tb-start" value="${esc(sc.start)}" style="${inp}"></label>
-        <label style="font-size:12px; color:var(--ink-soft);">As of<br><input type="date" id="tb-end" value="${esc(sc.end)}" style="${inp}"></label>
+        <label style="font-size:12px; color:var(--ink-soft);">As of<br><input type="date" id="tb-asof" value="${esc(sc.asOf)}" style="${inp}"></label>
         <button onclick="tbApplyScope()" style="padding:7px 14px; border:1px solid var(--rule); border-radius:8px; background:#fff; cursor:pointer; font-weight:600;">Apply</button>
-        ${sc.start||sc.end ? `<button onclick="tbClearScope()" style="padding:7px 14px; border:none; background:none; color:var(--ink-soft); cursor:pointer; text-decoration:underline;">All history</button>` : ''}
-        <span class="muted" style="font-size:12px;">${sc.start||sc.end ? `Scope: ${esc(sc.start||'beginning')} to ${esc(sc.end||'latest')}. Balance-sheet accounts carry forward prior periods; income and expense accounts show the period only.` : 'All posted history. Click any row or amount to see the entries behind it.'}</span>
+        ${sc.asOf ? `<button onclick="tbClearScope()" style="padding:7px 14px; border:none; background:none; color:var(--ink-soft); cursor:pointer; text-decoration:underline;">All history</button>` : ''}
+        <span class="muted" style="font-size:12px;">${sc.asOf ? `As of ${esc(sc.asOf)}: every posted entry on or before that date, for every account.` : 'All posted history.'} Click any row or amount to see the entries behind it.</span>
       </div>
       <table><thead><tr><th>Acct</th><th>Name</th><th>Fund</th><th class="num">Debit</th><th class="num">Credit</th><th></th></tr></thead>
       <tbody>${body}<tr class="total"><td colspan="3">Total</td><td class="num">${fmt(j.totals.debits)}</td><td class="num">${fmt(j.totals.credits)}</td><td></td></tr></tbody></table>
     </div>`;
   }
-  window.tbApplyScope = function () {
-    window._tbScope = { start: ($('tb-start')||{}).value || '', end: ($('tb-end')||{}).value || '' };
-    if (window._tbScope.start && window._tbScope.end && window._tbScope.start > window._tbScope.end) { alert('Period start is after the as-of date.'); return; }
-    renderTrial();
-  };
-  window.tbClearScope = function () { window._tbScope = { start: '', end: '' }; renderTrial(); };
+  window.tbApplyScope = function () { window._tbScope = { asOf: ($('tb-asof')||{}).value || '' }; renderTrial(); };
+  window.tbClearScope = function () { window._tbScope = { asOf: '' }; renderTrial(); };
   window.tbCloseDrill = function () { const d = document.getElementById('tb-drawer'); if (d) d.remove(); };
   window.tbDrill = async function (accountId, fundId, page) {
     let d = document.getElementById('tb-drawer');
@@ -1600,7 +1595,7 @@
     d.innerHTML = `<div style="display:flex; justify-content:flex-end;"><button onclick="tbCloseDrill()" style="border:none; background:none; font-size:22px; cursor:pointer;">×</button></div><div class="muted">Loading entries…</div>`;
     const sc = window._tbScope;
     const qs = new URLSearchParams({ account_id: accountId, fund_id: fundId || 'none', page: String(page || 1), page_size: '100' });
-    if (sc.start) qs.set('start', sc.start); if (sc.end) qs.set('end', sc.end);
+    if (sc.asOf) qs.set('as_of', sc.asOf);
     let x;
     try {
       const r = await fetch(`/api/gl/${CID}/trial-balance/detail?${qs}`);
@@ -1609,7 +1604,9 @@
     } catch (e) { d.innerHTML = `<div style="display:flex; justify-content:flex-end;"><button onclick="tbCloseDrill()" style="border:none; background:none; font-size:22px; cursor:pointer;">×</button></div><div style="color:var(--err);">Couldn't load the entries: ${esc(e.message)}</div>`; return; }
     const a = x.account || {}, rc = x.reconciliation || {};
     const natLabel = a.normal_balance === 'credit' ? 'credit balance' : 'debit balance';
-    const docLink = (l) => l.source_document_id ? `/api/homeowner/file?kind=document&id=${encodeURIComponent(l.source_document_id)}`
+    // Both targets are staff-gated (global staff cookie): a library document by
+    // id via /api/documents/:id/preview, a storage path via /api/homeowner/file.
+    const docLink = (l) => l.source_document_id ? `/api/documents/${encodeURIComponent(l.source_document_id)}/preview`
       : (l.source_document_path ? `/api/homeowner/file?kind=document&path=${encodeURIComponent(l.source_document_path)}` : null);
     const lineRows = (x.lines || []).map((l) => `<tr>
         <td style="white-space:nowrap;">${esc(l.posting_date)}</td>
@@ -1626,7 +1623,7 @@
       : `<div class="muted" style="font-size:12px; margin-top:8px;">${x.total_lines} line${x.total_lines === 1 ? '' : 's'}</div>`;
     d.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
         <div><h2 class="sec" style="margin:0;">${esc(a.account_number)} ${esc(a.account_name)}</h2>
-          <div class="muted" style="font-size:12px; margin-top:2px;">${esc(a.account_type)} · normal ${esc(a.normal_balance)} balance · ${esc(x.scope.start || 'beginning')} to ${esc(x.scope.end || 'latest')} · ${esc(x.scope.rule)}</div></div>
+          <div class="muted" style="font-size:12px; margin-top:2px;">${esc(a.account_type)} · normal ${esc(a.normal_balance)} balance · ${esc(x.scope.rule)}</div></div>
         <button onclick="tbCloseDrill()" style="border:none; background:none; font-size:22px; cursor:pointer;">×</button></div>
       <div style="margin:12px 0; padding:10px 12px; border-radius:8px; background:#f7f5ef; font-size:13px;">
         Opening balance ${fmtSigned(x.opening.net_cents)} + period debits ${fmt(x.period.debits_cents)} − period credits ${fmt(x.period.credits_cents)} = ending balance <strong>${fmtSigned(x.ending.net_cents)}</strong>
@@ -1635,8 +1632,8 @@
           <span class="muted" style="font-size:11.5px;"> Row debits ${fmt(rc.row_debits_cents)} / credits ${fmt(rc.row_credits_cents)}; detail ${fmt(rc.detail_debits_cents)} / ${fmt(rc.detail_credits_cents)}${x.opening.debits_cents || x.opening.credits_cents ? ` (includes opening debits ${fmt(x.opening.debits_cents)} / credits ${fmt(x.opening.credits_cents)})` : ''}.</span></div>
       </div>
       ${x.total_lines ? `<table><thead><tr><th>Date</th><th>Entry</th><th>Description</th><th>Source</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Running</th></tr></thead>
-        <tbody>${x.page === 1 && (x.opening.net_cents || x.opening.debits_cents) ? `<tr><td colspan="6" class="muted">Opening balance (carried forward)</td><td class="num">${fmtSigned(x.opening.natural_cents)}</td></tr>` : ''}${lineRows}</tbody></table>${pager}`
-        : `<div class="muted" style="padding:16px; text-align:center;">No posted entries for this account and fund in this scope${x.opening.net_cents ? '; the balance is all carried forward' : ''}.</div>`}`;
+        <tbody>${lineRows}</tbody></table>${pager}`
+        : `<div class="muted" style="padding:16px; text-align:center;">No posted entries for this account and fund in this scope.</div>`}`;
   };
 
   const BUCKETS = [['current','Current'],['d1_30','1–30'],['d31_60','31–60'],['d61_90','61–90'],['d91_120','91–120'],['d120_plus','120+']];
@@ -3092,7 +3089,7 @@
     } catch (e) { alert('Could not load entry: '+e.message); return; }
     const e = detail.entry || {}; const lines = detail.lines || [];
     const opts = (sel)=>accounts.map((a)=>`<option value="${esc(a.id)}"${a.id===sel?' selected':''}>${esc(a.account_number)} — ${esc(a.account_name)}</option>`).join('');
-    const docLink = (e.source_document_id) ? `/api/homeowner/file?kind=document&id=${encodeURIComponent(e.source_document_id)}`
+    const docLink = (e.source_document_id) ? `/api/documents/${encodeURIComponent(e.source_document_id)}/preview`
                   : (e.source_document_path ? `/api/homeowner/file?kind=document&path=${encodeURIComponent(e.source_document_path)}` : null);
     const auto = (e.source_module||'')!=='manual';
     const histHtml = edits.length ? `<details style="margin-top:12px;"><summary style="cursor:pointer; font-weight:600; font-size:12.5px;">Change history (${edits.length})</summary>${edits.map((x)=>`<div style="font-size:11.5px; color:#555; border-left:2px solid var(--rule); padding:4px 0 4px 8px; margin-top:6px;"><strong>${esc((x.created_at||'').slice(0,16).replace('T',' '))}</strong> ${esc(x.edited_by_name||'staff')}${x.reason?' — '+esc(x.reason):''}<br>${esc(Object.keys(x.changes||{}).join(', '))} changed</div>`).join('')}</details>` : '';

@@ -6,6 +6,22 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ## 2026-09-28 (latest): Trial Balance drill-down on feat/trial-balance-drilldown (NOT merged/deployed)
 
+**Revision after ChatGPT review of `9a1d51b1` (17:19 UTC).**
+- **Period-start scope REMOVED (option a).** The TB and the detail now take only `as_of`: every account, every counted entry on or before the date. That TB balances whenever the ledger does. `start` is refused (400 `period_start_not_supported`) by both endpoints and by the library, and the UI has only "As of" plus "All history".
+  - Carry-forward/period logic and the opening split are gone; the opening is always 0.
+  - A balanced period report (opening/closing to equity) is left for a separate design.
+- **Badge semantics tested.** As of every posting date in the fixture the TB is balanced. A deliberately one-sided line reads out of balance only on and after its date. The only other "out of balance" is the view's own inactive-account behavior, a real ledger condition.
+- **Production, read-only:** Waterview and Canyon Gate as of 07-31, 08-31 and 09-28 are all balanced, with sampled detail rows tying (12/12 each); `start` is refused.
+- **Paperclip:**
+  - a storage path goes to `/api/homeowner/file?kind=document&path=` (staff-gated, bucket allowlisted);
+  - a `source_document_id` (FK to library_documents, migration 280) now goes to `/api/documents/:id/preview` (staff-gated). The old `kind=document&id=` link returned 400, and was also broken in the existing JE modal on this page, now fixed.
+  - Neither path is on the public allowlist.
+  - Production: 302 JEs carry a document path; 0 carry a document id.
+- **"Opening-only rows":** with no period start there is no carried-forward opening. Every row with any debit or credit through the as-of date is clickable; a row with no entries has nothing to drill into and isn't listed (as before).
+- **Tests:** unit 12/12 (replaced the carry-forward and period tests with as-of balance, badge semantics and start-refused tests); real-view rehearsal 3/3; the narrowed statement guard still passes.
+
+**Superseded below:** the period-start description and limitation 1.
+
 **Task.** "TRIAL BALANCE DRILL-DOWN" (Issue #1, 16:45 UTC). Kept separate from `feat/ap-deposit-followup`. No accounting data changed; read-only feature.
 
 **What exists (investigated first).**
