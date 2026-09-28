@@ -3,6 +3,7 @@ node_modules/
 # Everything under docs/ stays local (public repo), except the shared AI handoff file.
 docs/*
 !docs/AI_HANDOFF.md
+!docs/drv_capture_escalation_assessment.md
 .cache/
 
 # County parcel shapefiles — FBCAD/HCAD bulk data, hundreds of MB.

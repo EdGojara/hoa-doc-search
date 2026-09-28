@@ -4,7 +4,69 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Stripe-hosted onboarding link opened for Ed; onboarding NOT yet completed
+## 2026-09-28 (latest): Violations drive capture / post-drive escalation assessment (docs only)
+
+**Task.** ChatGPT's "PRIORITY SHIFT: VIOLATIONS DRIVE CAPTURE / POST-DRIVE ESCALATION REVIEW" (Issue #1, 14:34 UTC).
+
+**Where.**
+- The assessment: [`docs/drv_capture_escalation_assessment.md`](drv_capture_escalation_assessment.md), on docs-only branch `docs/drv-capture-escalation-assessment`, cut from `main`.
+- Separate from timekeeping (paused; branch `docs/employee-timekeeping-assessment` untouched at `23ed1d3e`) and from payments (`feat/trusted-pay-terms`). Those branches' handoff entries live on their own copies of this file.
+
+**Status.**
+- No code, migration, letter, violation-status change, merge or deploy.
+- The production checks were read-only aggregate counts (no PII).
+
+**Key findings.**
+- **Capture is already minimal.** The inspector selects a house and takes photos. They don't choose a category or stage; AI proposes the category, and office confirm is the only gate.
+- **But escalation is spread across five paths:**
+  - confirm auto-advances courtesy_1 → courtesy_2;
+  - the cure-lapse job can auto-escalate to certified and fine (not running since 2026-06-07);
+  - staff Advance/Reduce, reachable from the field modal;
+  - reconcile;
+  - resolve (two different endpoints).
+- **One approval gate for all stages.** The standard letter's §209 text is hard-coded, not from GLOBAL_RULES.
+- **"No photo = resolved" is unsafe now:**
+  - "Mark clean" is browser memory only;
+  - there are three coverage definitions;
+  - the stale-drive job **is running** and has fabricated end times (6 drives end at exactly start + 4 h);
+  - 15 of the last 60 drives exceed the 1,000-ping cap that coverage reads hit.
+- **Confirmed in production:**
+  - add-violation writes columns that don't exist;
+  - confirm reads priority columns that don't exist, ignores the error, and defaults to "standard";
+  - GPS property-match functions don't exist (manual selection works: 9 of 5,220 photos unlinked);
+  - reviewer is recorded on only 96 of 5,128 observations.
+
+**Proposal.**
+- Persisted property visits, plus per-prior-issue "Still there / Not present" checks. The inspector never escalates.
+- Drive completion and one coverage definition.
+- A single end-of-drive reconciliation proposing CONTINUE/ESCALATE, NEW, RESOLVE (positive evidence of absence only), NEEDS_REVIEW or UNCERTAIN.
+- A review screen, with a second, distinct approver for certified, fine and self-help.
+- State changes only after approval, recorded in an immutable `violation_stage_events` history.
+- A versioned community policy.
+- §209 wording from GLOBAL_RULES.
+- Phase 0 fixes the confirmed defects first. The engine runs in shadow mode before it replaces the old paths.
+
+**Also delivered today (separate branch).** `chore/verify-user-profiles-privileges` @ `62153e83`: `scripts/verify_user_profiles_privileges.sql`, a READ-ONLY SQL script for Ed to run in the Supabase SQL editor.
+- It reports production RLS, policies, grants, effective privileges, triggers and role counts for `user_profiles`.
+- It includes a proposed (not applied) fix.
+- The service-role REST key can't read the catalogs, so the result needs Ed to run it.
+
+**Needs Ed.**
+- the field strip taps and photo requirement;
+- moving Advance/Reduce/Mark cured to office-only;
+- the second approver;
+- bulk-approve limits;
+- the drive-scope model;
+- seasonal categories;
+- whether to retire the cure-lapse job.
+
+**Needs counsel.** Chapter 209 notice content and delivery per stage, cure minimums, hearing rights, the six-month repeat rule, owner change, board-approval requirements.
+
+**Recommended next action.** ChatGPT and Ed review. No implementation until approved.
+
+---
+
+## 2026-09-27: Stripe-hosted onboarding link opened for Ed; onboarding NOT yet completed
 
 **Task.** ChatGPT's "ED APPROVED STRIPE-HOSTED ONBOARDING" instruction (Issue #1, 23:09 UTC).
 
