@@ -126,6 +126,20 @@ t('single homeowner payment: property address from the payment record', async ()
   d.ar_payments.push({ property_id: 'p1', posting_journal_entry_id: 'je1', amount_cents: 25000, payment_date: '2026-09-01', source: 'stripe', source_reference: 'pi_123', status: 'received' });
   const s = await summarizeJournalEntry(fake(d), 'je1');
   assert.deepStrictEqual([s.headline.kind, s.headline.counterparty], ['homeowner_payment', '603 Meadow Knoll Drive']);
+  assert.ok(s.gaps.some((g) => /Ownership period is not recorded/.test(g)));
+  assert.deepStrictEqual(s.related.ownership, { property_id: 'p1', tenure_id: null });
+});
+t('homeowner charge with a recorded tenure shows the owner and ownership period (never inferred)', async () => {
+  const d = base();
+  d.journal_entries.push(je({ source_module: 'certified_letter_fee' }));
+  d.ar_charges.push({ property_id: 'p1', tenure_id: 't1', posting_journal_entry_id: 'je1', charge_date: '2026-09-15', original_amount_cents: 3500, balance_remaining_cents: 3500, status: 'open', description: 'Certified letter fee' });
+  d.ownership_tenures = [{ id: 't1', property_id: 'p1', kind: 'owner', start_date: '2019-03-12', end_date: '2026-08-26' }];
+  d.property_ownerships = [{ tenure_id: 't1', is_primary: true, contacts: { full_name: 'John Doe' } }];
+  const s = await summarizeJournalEntry(fake(d), 'je1');
+  const f = s.facts.find((x) => x.label === 'Owner / ownership period');
+  assert.strictEqual(f.value, 'John Doe · 2019-03-12 – 2026-08-26');
+  assert.match(f.source, /tenure_id/);
+  assert.deepStrictEqual(s.related.ownership, { property_id: 'p1', tenure_id: 't1' });
 });
 t('graceful: missing tables, no documents, manual entry with no poster, unknown entry', async () => {
   const d = base();

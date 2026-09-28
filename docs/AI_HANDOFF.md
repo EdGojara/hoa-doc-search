@@ -4,7 +4,7 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): Issue #3 Emma reimbursement intake fix (MERGED to main per Ed's Issue #3 authorization; deploy + live replay pending verification)
+## 2026-09-28 (latest): Issue #3 Emma reimbursement intake fix (MERGED main 98e84536, deployed 23:33Z; live replay done: payable ae09b28c $35.72 LOPF 5900 awaiting_approval + needs_review; line-row fix pending on fix/ap-staff-directed-lines)
 
 Authorized by Ed (Issue #3, 20:51). No production writes: the real Gloria Allen email was NOT replayed, no payable or payee was created, no vendor data was changed. (Ownership History v1 is on feat/ownership-history, awaiting Ed's merge approval; see that branch's handoff.)
 
@@ -59,7 +59,7 @@ Separate follow-ups (NOT in this branch):
 
 ---
 
-## 2026-09-28: Ownership History + Prior Owner Balances v1 (feat/ownership-history; NOT merged, NOT deployed)
+## 2026-09-28: Ownership History + Prior Owner Balances v1 (MERGED to main per Ed's Issue #1 authorization; LOPF-only readiness as reviewed at 803828bc)
 
 UPDATE (Ed 20:36 blocker, resolved on the branch): only LOPF is imported.
 - Readiness = a conversion_batches row with status='posted' for the community. Today only LOPF: CONV-LPF-20260731, baseline 2026-07-31, approved by Ed.
