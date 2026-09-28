@@ -4,7 +4,62 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-27 (latest): Stripe-hosted onboarding link opened for Ed; onboarding NOT yet completed
+## 2026-09-28 (latest): Trial Balance drill-down on feat/trial-balance-drilldown (NOT merged/deployed)
+
+**Task.** "TRIAL BALANCE DRILL-DOWN" (Issue #1, 16:45 UTC). Kept separate from `feat/ap-deposit-followup`. No accounting data changed; read-only feature.
+
+**What exists (investigated first).**
+- Financials → Trial Balance (`public/accounting.html` `renderTrial`) reads `GET /api/gl/:cid/trial-balance`, which reads `v_trial_balance` (migration 453).
+- The view counts lines from POSTED entries plus VOIDED entries that have a reversal (`void_reversal_je_id`; the posted reversal nets them). It groups by account × `COALESCE(line.fund_id, account.fund_id)` and includes active accounts only.
+- It is all-history, with no date scope.
+- There was no existing account-activity endpoint. The JE review modal (`jeOpenEdit`) and the document link pattern (`/api/homeowner/file?kind=document`) are reused.
+
+**Built.**
+- **`lib/accounting/trial_balance_detail.js`**: one source of truth for "which lines count", mirroring the view exactly.
+  - `buildDetail` returns, for one row: opening / period debits / period credits / ending, lines with a running balance computed over the whole scope (correct on every page), natural-sign figures, the sign-convention text, and the TB-row totals.
+  - `scopedTrialBalance` builds TB rows with the SAME code, so a scoped TB and its drill-down can't disagree.
+  - **Scope:**
+    - balance-sheet accounts (asset, liability, equity) carry forward: opening = everything before `start`;
+    - revenue and expense accounts use the period only;
+    - no dates = all history.
+- **`api/gl.js`:**
+  - `GET /trial-balance` is unchanged without dates, and now also returns `account_id` and `fund_id`. With `start`/`end` it returns the scoped rows.
+  - **New `GET /trial-balance/detail?account_id=&fund_id=&start=&end=&page=&page_size=`** returns the lines plus a `reconciliation` block. Unscoped, it is checked against the REAL `v_trial_balance` row; mismatches are logged.
+  - Bad scopes return 400; a missing account returns 404; the page size is capped at 500.
+- **UI:**
+  - period controls ("Period start", "As of", Apply, "All history");
+  - every row and amount is clickable, with a visible "View detail ›" cue;
+  - a right-hand drawer with a loading state, an error state and an empty state ("balance is all carried forward");
+  - the line "Opening + period debits − period credits = ending", the normal-balance sign labeled, and a ✓/✗ tie-out badge showing the row vs detail figures;
+  - a lines table (date, entry link → JE modal, description/memo, source + 📎 document, debit, credit, running balance) with a voided-with-reversal pill;
+  - paging at 100 lines.
+- **Platform knowledge:** a new `scripts/seed_platform_knowledge.js` entry ("how do I see which entries make up a TB line"). It needs a re-run of the seed after deploy; that is a production write, not done.
+
+**Reconciliation evidence.**
+- `tests/test_tb_drilldown.js` **12/12**:
+  - every row ties, all-history and scoped;
+  - drafts and voids without a reversal excluded; void + reversal pairs shown and netting out;
+  - balance-sheet carry-forward vs income period;
+  - null-fund fallback; one account in two funds as two rows;
+  - inactive accounts dropped like the view (the TB then shows out of balance; surfaced, not hidden);
+  - running balance continuous across pages;
+  - source navigation fields; invalid scopes.
+- `tests/sql/tb_drilldown_rehearsal.mjs` **3/3**: the REAL migration-453 view in PGlite on 920 generated lines. The drill-down reproduces it row for row, every row's detail ties, and the grand totals match.
+- **Production, read-only:**
+  - all **382** non-zero TB rows across **7 communities (about 58k lines)** tie exactly between the view and the drill-down;
+  - the real endpoints, run locally, work: Waterview 1000 has 6,513 lines, 66 pages, ties, and the running balance ends at the ending balance; September-scoped rows tie; a reversed scope returns 400.
+- The drawer and table were render-checked with a stubbed DOM. It was not clicked in a browser, because the page needs a staff login.
+- **Guard adjusted:** `tests/test_budget_monthly_plan.js` asserted `api/gl.js` is byte-identical to main, which fails any branch touching the TB endpoint. It is narrowed so the statement modules must be unchanged and any `api/gl.js` change must sit inside the Trial Balance section. It still fails on a statement-route change (verified).
+- Full suite: 122/128 before the guard fix; with the fix, the only failures are the same 5 pre-existing ones.
+
+**Limitations.**
+- A scoped TB does not roll prior-period income and expense into equity, so a mid-year scoped TB can show "out of balance" even though every row ties to its detail. The all-history TB is the balancing view. Closing/retained-earnings roll-forward is not modeled here.
+- Scoped TB requests read every line for the community (paged through `fetchAll`, about 24k for Waterview), so they are slower than the view.
+- The drill-down lists counted lines only. Draft entries and voids without a reversal are excluded, exactly like the TB.
+
+---
+
+## 2026-09-27: Stripe-hosted onboarding link opened for Ed; onboarding NOT yet completed
 
 **Task.** ChatGPT's "ED APPROVED STRIPE-HOSTED ONBOARDING" instruction (Issue #1, 23:09 UTC).
 

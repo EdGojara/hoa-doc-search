@@ -48,9 +48,22 @@ router.get('/:communityId/chart-of-accounts', async (req, res) => {
 
 router.get('/:communityId/trial-balance', async (req, res) => {
   try {
+    const { start, end } = req.query;
+    // Optional reporting scope (Ed 2026-09-28, TB drill-down). No dates = the
+    // all-history view, unchanged. With dates the rows come from the SAME code
+    // the drill-down uses (lib/accounting/trial_balance_detail.js), so every row
+    // ties to its detail by construction.
+    if (start || end) {
+      const tbd = require('../lib/accounting/trial_balance_detail');
+      const scope = tbd.validateScope({ start, end });
+      if (scope.error) return res.status(400).json({ error: scope.error });
+      const inputs = await tbd.loadCommunityTrialBalanceInputs(supabase, req.params.communityId);
+      const out = tbd.scopedTrialBalance({ ...inputs, start: scope.start, end: scope.end });
+      return res.json({ ...out, source: 'scoped' });
+    }
     const { data, error } = await supabase
       .from('v_trial_balance')
-      .select('account_number, account_name, account_type, normal_balance, fund_code, fund_name, total_debits_cents, total_credits_cents, balance_cents')
+      .select('account_id, fund_id, account_number, account_name, account_type, normal_balance, fund_code, fund_name, total_debits_cents, total_credits_cents, balance_cents')
       .eq('community_id', req.params.communityId)
       .order('account_number');
     if (error) throw error;
@@ -59,9 +72,51 @@ router.get('/:communityId/trial-balance', async (req, res) => {
       debits: a.debits + Number(r.total_debits_cents || 0),
       credits: a.credits + Number(r.total_credits_cents || 0),
     }), { debits: 0, credits: 0 });
-    res.json({ rows, totals, balanced: totals.debits === totals.credits });
+    res.json({ rows, totals, balanced: totals.debits === totals.credits, source: 'v_trial_balance' });
   } catch (err) {
     console.error('[gl] trial-balance failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /:communityId/trial-balance/detail?account_id=&fund_id=&start=&end=&page=&page_size=
+// The exact counted journal-entry lines behind one Trial Balance row, with
+// opening + period debits - period credits = ending, a running balance, and a
+// reconciliation to the row. Read-only. fund_id empty or 'none' = no fund.
+router.get('/:communityId/trial-balance/detail', async (req, res) => {
+  try {
+    const tbd = require('../lib/accounting/trial_balance_detail');
+    const { communityId } = req.params;
+    const accountId = req.query.account_id;
+    if (!accountId) return res.status(400).json({ error: 'account_id_required' });
+    const fundId = req.query.fund_id && req.query.fund_id !== 'none' ? req.query.fund_id : null;
+    const scope = tbd.validateScope({ start: req.query.start, end: req.query.end });
+    if (scope.error) return res.status(400).json({ error: scope.error });
+    const account = await tbd.loadAccount(supabase, communityId, accountId);
+    if (!account) return res.status(404).json({ error: 'account_not_found' });
+    const lines = await tbd.loadAccountLines(supabase, communityId, accountId);
+    const detail = tbd.buildDetail({ account, lines, fundId, start: scope.start, end: scope.end, page: req.query.page, pageSize: req.query.page_size });
+    if (detail.error) return res.status(400).json({ error: detail.error });
+    // Reconcile to the Trial Balance row the user clicked. Unscoped: against the
+    // real v_trial_balance row. Scoped: the TB row is built by the same function.
+    let reconciliation;
+    if (!scope.start && !scope.end) {
+      let q = supabase.from('v_trial_balance').select('total_debits_cents, total_credits_cents').eq('community_id', communityId).eq('account_id', accountId);
+      q = fundId ? q.eq('fund_id', fundId) : q.is('fund_id', null);
+      const { data: vrows, error: vErr } = await q;
+      if (vErr) throw vErr;
+      const v = (vrows || []).reduce((a, r) => ({ d: a.d + Number(r.total_debits_cents || 0), c: a.c + Number(r.total_credits_cents || 0) }), { d: 0, c: 0 });
+      reconciliation = { source: 'v_trial_balance', row_debits_cents: v.d, row_credits_cents: v.c };
+    } else {
+      reconciliation = { source: 'scoped', row_debits_cents: detail.tb_row.total_debits_cents, row_credits_cents: detail.tb_row.total_credits_cents };
+    }
+    reconciliation.detail_debits_cents = detail.tb_row.total_debits_cents;
+    reconciliation.detail_credits_cents = detail.tb_row.total_credits_cents;
+    reconciliation.ties = reconciliation.row_debits_cents === reconciliation.detail_debits_cents && reconciliation.row_credits_cents === reconciliation.detail_credits_cents;
+    if (!reconciliation.ties) console.error(`[gl] TB drill-down does not tie: account ${accountId} fund ${fundId}`, reconciliation);
+    res.json({ ...detail, reconciliation });
+  } catch (err) {
+    console.error('[gl] trial-balance detail failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

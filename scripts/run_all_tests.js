@@ -170,6 +170,8 @@ const CHECKS = [
   'scripts/check_migration_immutability.js',
   'scripts/check_migration_checks.js',
   'tests/sql/apply_one_rehearsal.mjs',
+  'tests/test_tb_drilldown.js',
+  'tests/sql/tb_drilldown_rehearsal.mjs',
 ];
 
 const args = process.argv.slice(2);
