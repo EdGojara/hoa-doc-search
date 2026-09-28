@@ -46652,7 +46652,6 @@ ${questionsPage}
             const b = AP_DUE_BADGE[d.due_state] || AP_DUE_BADGE.no_due_date;
             const paid = d.deposit_paid_cents >= d.deposit_billed_cents && d.deposit_billed_cents > 0 ? '✓ Paid'
               : d.deposit_paid_cents > 0 ? 'Partly paid' : 'Not yet paid';
-            const pend = (d.pending_reconciliations || []).length;
             return `<tr style="border-top:1px solid #e2e8f0; cursor:pointer;" onclick="${d.deposit_invoice ? `apOpenInvoice('${d.deposit_invoice.id}')` : ''}">
               <td style="padding:8px;"><span style="background:${b[0]}; color:${b[1]}; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700;">${b[2]}</span><div style="margin-top:3px;">${apEsc(apFmtDate(d.balance_due_date))}</div></td>
               <td style="padding:8px;">${apEsc(d.vendor_name || '')}<div style="color:#64748b; font-size:11px;">${apEsc(d.community_name || '')}</div></td>
@@ -46660,9 +46659,9 @@ ${questionsPage}
               <td style="padding:8px; text-align:right; font-family:ui-monospace,monospace;">${apFmtCents(d.deposit_billed_cents)}<div style="color:#64748b; font-size:11px;">inv ${apEsc(d.deposit_invoice ? d.deposit_invoice.number || '' : '')}</div></td>
               <td style="padding:8px;">${paid}</td>
               <td style="padding:8px; text-align:right; font-family:ui-monospace,monospace;">${d.expected_balance_cents == null ? '—' : apFmtCents(d.expected_balance_cents)}<div style="color:#92400e; font-size:10.5px;">${apEsc(d.expected_balance_label)}</div></td>
-              <td style="padding:8px;">${pend ? `<span style="color:#b45309; font-weight:700;">${pend} bill${pend === 1 ? '' : 's'} to reconcile</span>` : 'Waiting for final bill'}</td></tr>`;
+              <td style="padding:8px; max-width:240px;"><span style="font-weight:${d.obligation_state === 'final_bill_held' ? '700; color:#b45309' : '500'};">${apEsc(d.obligation_label || '')}</span>${(d.documents || []).length ? `<div style="color:#64748b; font-size:11px;">${d.documents.length} document${d.documents.length === 1 ? '' : 's'}</div>` : ''}</td></tr>`;
           }).join('')}</tbody></table>
-          <div style="font-size:11.5px; color:#64748b; margin-top:8px;">A reminder only. Nothing is paid from this list. When the vendor's final bill arrives, Emma matches it to the deposit and a person approves the net amount due before it can be released.</div>`;
+          <div style="font-size:11.5px; color:#64748b; margin-top:8px;">A reminder only; nothing is paid from this list, and an item stays here until the final bill is actually paid. When the vendor's final bill arrives, Emma matches it to the deposit and HOLDS it: she cannot release it until the deposit accounting is recorded and the bill is approved at the net due.</div>`;
       } catch (e) { c.innerHTML = `<div style="color:#dc2626; padding:14px;">Failed: ${apEsc(e.message)}</div>`; }
     };
 
@@ -46671,6 +46670,7 @@ ${questionsPage}
       if (!dep) return '';
       const f = dep.followup || {};
       const box = (inner, tone) => `<div style="margin:0 0 12px; padding:11px 13px; border-radius:6px; font-size:12.5px; ${tone}">${inner}</div>`;
+      const docList = (docs) => (docs && docs.length) ? `<div style="margin-top:6px; color:#334155;">Documents: ${docs.map((d) => apEsc((d.kind || 'doc') + ': ' + (d.label || ''))).join(' · ')}</div>` : '';
       if (dep.role === 'deposit_bill') {
         const inp = 'padding:4px 6px; border:1px solid #cbd5e1; border-radius:5px; font-size:12px;';
         return box(`💰 <strong>Deposit bill.</strong> ${f.expected_balance_cents == null ? 'Balance to follow' : `Expected balance <strong>${apFmtCents(f.expected_balance_cents)}</strong> <span style="color:#92400e;">(${apEsc(f.expected_balance_label)})</span>`}${f.balance_due_date ? `, due <strong>${apEsc(apFmtDate(f.balance_due_date))}</strong>` : ''}. Deposit paid: ${apFmtCents(f.deposit_paid_cents)} of ${apFmtCents(f.deposit_billed_cents)}.
@@ -46682,36 +46682,43 @@ ${questionsPage}
             <button class="action-btn" style="font-size:12px; padding:5px 12px;" onclick="apDepositSave('${f.deposit_id}', '${payload.invoice.id}')">Save follow-up</button>
           </div>`, 'background:#f0fdf4; border:1px solid #bbf7d0; color:#14532d;');
       }
-      const recs = dep.reconciliations || [];
+      const recs = (dep.reconciliations || []).filter((x) => !x.superseded);
       const r = recs[0];
       if (!r) return '';
       const formLabel = { balance_only: 'Final bill for the balance only', full_total_less_deposit: 'Full total less the deposit', revised_total: 'Revised total (changes vs agreed)', duplicate_or_statement: 'Duplicate copy or statement (not payable)', ambiguous: 'Unclear: a person must classify it' }[r.form] || r.form;
       const row = (k, v) => `<tr><td style="padding:2px 10px 2px 0; color:#475569;">${k}</td><td style="padding:2px 0; text-align:right; font-family:ui-monospace,monospace;">${v}</td></tr>`;
-      const decided = r.decision;
-      return box(`🔗 <strong>Matched to a vendor deposit.</strong> ${apEsc(formLabel)}${r.needs_review ? ' <span style="color:#b91c1c; font-weight:700;">Needs manager review</span>' : ''}
+      const t = r.decision;
+      const isAdmin = (window.currentUser || {}).role === 'admin';
+      const btn = (label, decision, primary) => `<button class="${primary ? 'action-btn' : 'secondary-btn'}" style="font-size:12px; padding:5px 12px;" onclick="apDepositDecide('${r.id}', '${decision}', '${payload.invoice.id}')">${label}</button>`;
+      const hold = dep.hold ? `<div style="margin:0 0 8px; padding:8px 10px; border-radius:5px; background:#fee2e2; border:1px solid #fecaca; color:#991b1b; font-weight:600;">⛔ ${apEsc(dep.hold.message)}</div>` : '';
+      return box(`${hold}🔗 <strong>Matched to a vendor deposit.</strong> ${apEsc(formLabel)}${r.needs_review ? ' <span style="color:#b91c1c; font-weight:700;">Needs manager review</span>' : ''}
         <table style="margin-top:6px; font-size:12.5px;">
           ${row('Agreed total', r.agreed_total_cents == null ? '—' : apFmtCents(r.agreed_total_cents) + (r.agreed_total_basis && !['quote', 'contract'].includes(r.agreed_total_basis) ? ' (estimate)' : ''))}
           ${row('Deposit billed', apFmtCents(r.deposit_billed_cents))}
           ${row('Deposit actually paid', apFmtCents(r.deposit_paid_cents))}
-          ${r.deposit_still_owed_cents ? row('Deposit still owed (separate bill)', apFmtCents(r.deposit_still_owed_cents)) : ''}
+          ${Number(r.deposit_still_owed_cents) ? row('Deposit still owed (separate bill)', apFmtCents(r.deposit_still_owed_cents)) : ''}
           ${row('This bill (face)', apFmtCents(r.incoming_face_cents))}
-          ${r.credits_shown_cents ? row('Deposit credit on this bill', '-' + apFmtCents(r.credits_shown_cents)) : ''}
-          ${r.extras_cents ? row('Extras / fees on this bill', apFmtCents(r.extras_cents)) : ''}
-          ${r.tax_cents ? row('Tax', apFmtCents(r.tax_cents)) : ''}
+          ${Number(r.credits_shown_cents) ? row('Deposit credit on this bill', '-' + apFmtCents(r.credits_shown_cents)) : ''}
+          ${Number(r.extras_cents) ? row('Extras / fees on this bill', apFmtCents(r.extras_cents)) : ''}
+          ${Number(r.tax_cents) ? row('Tax', apFmtCents(r.tax_cents)) : ''}
           ${r.final_total_cents != null ? row('Final total', apFmtCents(r.final_total_cents)) : ''}
-          ${r.variance_cents ? row('Change vs agreed', apFmtCents(r.variance_cents)) : ''}
+          ${Number(r.variance_cents) ? row('Change vs agreed', apFmtCents(r.variance_cents)) : ''}
           ${row('<strong>Net due on this bill</strong>', r.net_due_cents == null ? '—' : '<strong>' + apFmtCents(r.net_due_cents) + '</strong>')}
           ${f.balance_due_date ? row('Due', apEsc(apFmtDate(f.balance_due_date))) : ''}
         </table>
         ${(r.math || []).map((m) => `<div style="color:#334155; margin-top:3px;">• ${apEsc(m)}</div>`).join('')}
         ${(r.reasons || []).length ? `<div style="color:#b91c1c; margin-top:4px;">Review: ${apEsc(r.reasons.join(', ').replace(/_/g, ' '))}</div>` : ''}
-        ${decided ? `<div style="margin-top:8px;">Decided: <strong>${apEsc(decided.decision)}</strong> by ${apEsc(decided.decided_by_name)}${decided.note ? ' — ' + apEsc(decided.note) : ''}</div>`
+        ${docList(f.documents)}
+        ${r.confirmed ? `<div style="margin-top:6px;">Match confirmed by ${apEsc(r.confirmed.decided_by_name)}.</div>` : ''}
+        ${t ? `<div style="margin-top:8px;">Decided: <strong>${apEsc(t.decision.replace(/_/g, ' '))}</strong> by ${apEsc(t.decided_by_name)}${t.note ? ' — ' + apEsc(t.note) : ''}</div>`
           : `<div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-              <button class="action-btn" style="font-size:12px; padding:5px 12px;" onclick="apDepositDecide('${r.id}', 'approve', '${payload.invoice.id}')">Approve net due</button>
-              <button class="secondary-btn" style="font-size:12px; padding:5px 12px;" onclick="apDepositDecide('${r.id}', 'reject', '${payload.invoice.id}')">Reject</button>
-              <button class="secondary-btn" style="font-size:12px; padding:5px 12px;" onclick="apDepositDecide('${r.id}', 'unrelated', '${payload.invoice.id}')">Not related to the deposit</button>
+              ${r.confirmed ? '' : btn('Confirm match', 'confirmed_match', true)}
+              ${btn('Reject (math is wrong)', 'reject')}
+              ${btn('Duplicate / statement', 'duplicate_confirmed')}
+              ${isAdmin ? btn('Not related (admin)', 'unrelated') : ''}
+              ${isAdmin ? btn('Record manual deposit accounting (admin)', 'manual_accounting_recorded') : ''}
             </div>
-            <div style="font-size:11px; color:#64748b; margin-top:4px;">Approving records the math and applies the deposit. It does not pay. The bill still goes through normal approval and the check run, and only at the net due.</div>`}`,
+            <div style="font-size:11px; color:#64748b; margin-top:4px;">Nothing here pays or changes the bill. Emma cannot release a deposit bill yet: an admin posts the adjusting journal entry and records it, and the bill can then be approved at the net due through the normal two-key approval and check run.</div>`}`,
         'background:#fff7ed; border:1px solid #fed7aa; color:#7c2d12;');
     }
 
@@ -46727,18 +46734,21 @@ ${questionsPage}
     };
 
     window.apDepositDecide = async function (recId, decision, invoiceId) {
-      let note = null;
-      if (decision !== 'approve') {
-        note = prompt(decision === 'reject' ? 'Why is the reconciliation wrong?' : 'Why is this bill not related to the deposit?');
-        if (!note) return;
-      } else if (!confirm('Approve this reconciliation? It records the net amount due and applies the deposit. It does not pay anything.')) return;
-      const r = await fetch('/api/ap/deposit-reconciliations/' + encodeURIComponent(recId) + '/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, note }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        const why = (j.blockers || []).map((b) => ({ invoice_total_not_net_due: 'the bill total must equal the net due first (net the deposit on the bill)', manager_review_required: 'this one needs an admin because it was flagged for review', classify_first: 'classify the bill first' }[b] || b)).join('; ');
-        alert('Not approved: ' + (why || j.error || r.status));
-        return;
+      const body = { decision };
+      if (decision === 'confirmed_match') {
+        if (!confirm('Confirm this bill matches the deposit? The bill stays held until the deposit accounting is recorded.')) return;
+      } else if (decision === 'manual_accounting_recorded') {
+        body.accounting_je_reference = prompt('Adjusting journal entry reference that relieved the deposit (e.g. JE-2026-00340). The bill total must already equal the net due.');
+        if (!body.accounting_je_reference) return;
+        body.note = prompt('Note for the record (what the entry did):');
+        if (!body.note) return;
+      } else {
+        body.note = prompt({ reject: 'Why is the reconciliation wrong?', unrelated: 'Why is this bill not related to the deposit?', duplicate_confirmed: 'Why is this a duplicate or statement? (void the bill afterwards)' }[decision] || 'Note');
+        if (!body.note) return;
       }
+      const r = await fetch('/api/ap/deposit-reconciliations/' + encodeURIComponent(recId) + '/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { alert('Not recorded: ' + (j.hint || String(j.error || r.status).replace(/_/g, ' '))); return; }
       apOpenInvoice(invoiceId);
     };
 

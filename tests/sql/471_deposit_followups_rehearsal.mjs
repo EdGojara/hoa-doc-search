@@ -1,9 +1,14 @@
 // tests/sql/471_deposit_followups_rehearsal.mjs — rehearsal for the PROPOSED migration
-// 471 (vendor deposit follow-ups) on top of the REAL 364 vendor_deposits table:
-// idempotent apply, no data created, follow-up CHECKs, the reconciliation ledger's
-// paid-check and append-only guards, one decision per reconciliation, grants, and
-// an end-to-end apply through lib/migrations/apply_one.js with its real checks file.
-// Skips without PGlite. Set DUMP_471_OBJECTS=1 to print the object diff.
+// 471 (vendor deposit follow-ups) on top of the REAL 364 vendor_deposits table.
+// Proves the SQL side of the review fixes: idempotent apply, no data; follow-up
+// update + audit event atomic; direct UPDATE of vendor_deposits denied to the
+// service role (only the audited function); proposals + decisions via functions
+// with row locks, identity required, admin-only decisions, one terminal decision,
+// supersession, and manual_accounting_recorded live checks (net > 0, bill total =
+// net, deposit paid unchanged, posted JE in the community, one applied bill per
+// deposit); a refused call writes NOTHING; append-only ledger; grants; and an
+// end-to-end apply through lib/migrations/apply_one.js with its real checks file.
+// Skips without PGlite. DUMP_471_OBJECTS=1 prints the object diff.
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -23,14 +28,18 @@ let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => { if (cond) { pass++; console.log('PASS ', name); } else { fail++; console.log('FAIL ', name, extra); } };
 const expectErr = async (name, fn, re) => { try { await fn(); fail++; console.log('FAIL ', name, '(no error)'); } catch (e) { const ok = !re || re.test(e.message); ok ? pass++ : fail++; console.log(ok ? 'PASS ' : 'FAIL ', name, ok ? '' : e.message); } };
 
-const C = '00000000-0000-0000-0000-00000000000c', V = '00000000-0000-0000-0000-0000000000e1', INV = '00000000-0000-0000-0000-0000000000a1', INV2 = '00000000-0000-0000-0000-0000000000a2', DEP = '00000000-0000-0000-0000-0000000000d1';
+const C = '00000000-0000-0000-0000-00000000000c', C2 = '00000000-0000-0000-0000-00000000000d', V = '00000000-0000-0000-0000-0000000000e1';
+const INV_DEP = '00000000-0000-0000-0000-0000000000a1', INV_FIN = '00000000-0000-0000-0000-0000000000a2', INV_FULL = '00000000-0000-0000-0000-0000000000a3', INV_OTHER = '00000000-0000-0000-0000-0000000000a4';
+const DEP = '00000000-0000-0000-0000-0000000000d1';
+const JE_OK = '00000000-0000-0000-0000-0000000000f1', JE_DRAFT = '00000000-0000-0000-0000-0000000000f2', JE_OTHER = '00000000-0000-0000-0000-0000000000f3';
+const U_EMMA = '00000000-0000-0000-0000-000000000111', U_ED = '00000000-0000-0000-0000-000000000222', U_M = '00000000-0000-0000-0000-000000000333';
 const STUB = `
   CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
   CREATE OR REPLACE FUNCTION trusted_set_updated_at() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.updated_at = now(); RETURN NEW; END $$;
   CREATE TABLE communities (id uuid primary key, name text);
   CREATE TABLE vendors (id uuid primary key, name text);
   CREATE TABLE chart_of_accounts (id uuid primary key default gen_random_uuid(), account_number text);
-  CREATE TABLE journal_entries (id uuid primary key default gen_random_uuid(), community_id uuid);
+  CREATE TABLE journal_entries (id uuid primary key default gen_random_uuid(), community_id uuid, status text NOT NULL DEFAULT 'posted', reference text);
   CREATE TABLE journal_entry_lines (id uuid primary key default gen_random_uuid(), journal_entry_id uuid);
   CREATE TABLE ap_invoices (id uuid primary key, community_id uuid NOT NULL, vendor_id uuid NOT NULL, vendor_invoice_number text, total_cents bigint NOT NULL CHECK (total_cents > 0),
     amount_paid_cents bigint NOT NULL DEFAULT 0, status text NOT NULL DEFAULT 'awaiting_approval');
@@ -40,61 +49,106 @@ const STUB = `
 async function world() {
   const db = new PGlite();
   await db.exec(STUB);
-  await db.exec(`INSERT INTO communities VALUES ('${C}', 'Waterview Estates'); INSERT INTO vendors VALUES ('${V}', 'PRYME THYME KOOKERS');
-    INSERT INTO ap_invoices (id, community_id, vendor_id, vendor_invoice_number, total_cents) VALUES ('${INV}', '${C}', '${V}', '2836', 334250), ('${INV2}', '${C}', '${V}', '2901', 334250);`);
+  await db.exec(`INSERT INTO communities VALUES ('${C}', 'Waterview Estates'), ('${C2}', 'Other'); INSERT INTO vendors VALUES ('${V}', 'PRYME THYME KOOKERS');
+    INSERT INTO ap_invoices (id, community_id, vendor_id, vendor_invoice_number, total_cents) VALUES
+      ('${INV_DEP}', '${C}', '${V}', '2836', 334250), ('${INV_FIN}', '${C}', '${V}', '2901', 334250), ('${INV_FULL}', '${C}', '${V}', '2902', 668500), ('${INV_OTHER}', '${C2}', '${V}', '77', 100);
+    INSERT INTO journal_entries (id, community_id, status, reference) VALUES ('${JE_OK}', '${C}', 'posted', 'JE-1'), ('${JE_DRAFT}', '${C}', 'draft', 'JE-2'), ('${JE_OTHER}', '${C2}', 'posted', 'JE-3');`);
   await db.exec(M364);
-  await db.exec(`INSERT INTO vendor_deposits (id, community_id, vendor_id, deposit_invoice_id, deposit_amount_cents, remaining_balance_cents) VALUES ('${DEP}', '${C}', '${V}', '${INV}', 334250, 334250);`);
+  await db.exec(`INSERT INTO vendor_deposits (id, community_id, vendor_id, deposit_invoice_id, deposit_amount_cents, remaining_balance_cents) VALUES ('${DEP}', '${C}', '${V}', '${INV_DEP}', 334250, 334250);`);
   return db;
 }
+const n = async (db, sql) => Number((await db.query(sql)).rows[0].n);
 
-// ---- apply twice, no data created, existing deposit untouched ----
+// ---- apply twice, no data, existing deposit untouched ----
 const db = await world();
 const snap = async () => JSON.stringify((await db.query(`SELECT id, deposit_amount_cents, remaining_balance_cents, status FROM vendor_deposits ORDER BY id`)).rows);
 const before = await snap();
 await db.exec(M471); await db.exec(M471);
-check('471 applies twice (idempotent); existing deposit row unchanged; nothing created', before === await snap()
-  && Number((await db.query(`SELECT count(*)::int n FROM vendor_deposit_reconciliations`)).rows[0].n) === 0);
-const cols = (await db.query(`SELECT column_name FROM information_schema.columns WHERE table_name='vendor_deposits'`)).rows.map((r) => r.column_name);
-check('follow-up columns added', ['event_date', 'balance_due_date', 'balance_due_basis', 'agreed_total_cents', 'agreed_total_basis', 'project_id'].every((c) => cols.includes(c)));
+check('471 applies twice (idempotent); existing deposit unchanged; nothing created', before === await snap() && await n(db, `SELECT count(*)::int n FROM vendor_deposit_reconciliations`) === 0);
 
-// ---- follow-up CHECKs ----
-await db.exec(`UPDATE vendor_deposits SET event_date='2026-10-10', balance_due_date='2026-10-10', balance_due_basis='staff_entered', agreed_total_cents=668500, agreed_total_basis='invoice_estimate' WHERE id='${DEP}'`);
-check('follow-up recorded on the existing deposit', (await db.query(`SELECT balance_due_date::text d FROM vendor_deposits WHERE id='${DEP}'`)).rows[0].d === '2026-10-10');
-await expectErr('an unknown agreed-total basis is refused', () => db.query(`UPDATE vendor_deposits SET agreed_total_basis='guess' WHERE id='${DEP}'`), /check/i);
-await expectErr('a negative agreed total is refused', () => db.query(`UPDATE vendor_deposits SET agreed_total_cents=-1 WHERE id='${DEP}'`), /check/i);
+// ---- follow-up via the audited function ----
+const setF = (patch, user = U_ED) => db.query(`SELECT vendor_deposit_set_followup($1, $2::jsonb, 'Ed', $3) AS r`, [DEP, JSON.stringify(patch), user]);
+await expectErr('follow-up needs an identity', () => setF({ balance_due_date: '2026-10-10' }, null), /identity_required/);
+await setF({ event_date: '2026-10-10', balance_due_date: '2026-10-10', balance_due_basis: 'staff_entered', agreed_total_cents: 668500, agreed_total_basis: 'invoice_estimate' });
+check('follow-up recorded with its audit event', (await db.query(`SELECT balance_due_date::text d FROM vendor_deposits WHERE id='${DEP}'`)).rows[0].d === '2026-10-10'
+  && await n(db, `SELECT count(*)::int n FROM vendor_deposit_events WHERE event_type='followup_set'`) === 1);
+await expectErr('an agreed total without a basis is refused', () => setF({ agreed_total_cents: 700000, agreed_total_basis: null }), /needs_basis|check/i);
+check('...and the refused update wrote no event (atomic)', await n(db, `SELECT count(*)::int n FROM vendor_deposit_events`) === 1);
 
-// ---- reconciliation ledger ----
-const rec = (o = {}) => db.query(`INSERT INTO vendor_deposit_reconciliations (deposit_id, community_id, vendor_id, incoming_invoice_id, form, deposit_billed_cents, deposit_paid_cents, deposit_still_owed_cents,
-    incoming_face_cents, net_due_cents, final_total_cents, needs_review, proposed_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'emma') RETURNING id`,
-  [DEP, C, V, INV2, o.form || 'balance_only', 334250, o.paid ?? 0, o.owed ?? 334250, 334250, 334250, 668500, false]);
-const r1 = (await rec()).rows[0].id;
-check('a reconciliation proposal is recorded', !!r1);
-await expectErr('deposit paid + still owed must equal deposit billed', () => rec({ paid: 100, owed: 100 }), /paid_check/);
-await expectErr('an unknown form is refused', () => rec({ form: 'guess' }), /check/i);
+// ---- the service role can't bypass the audited function ----
+await db.exec(`GRANT USAGE ON SCHEMA public TO service_role;`);
+let roleOk = true;
+try { await db.exec(`SET ROLE service_role`); } catch (_) { roleOk = false; }
+if (roleOk) {
+  await expectErr('service role: direct UPDATE of vendor_deposits is denied', () => db.query(`UPDATE vendor_deposits SET balance_due_date = '2027-01-01'`), /permission denied/);
+  await expectErr('service role: direct INSERT into the reconciliation ledger is denied', () => db.query(`INSERT INTO vendor_deposit_events (deposit_id, event_type, actor) VALUES ('${DEP}', 'followup_set', 'x')`), /permission denied/);
+  const r = await db.query(`SELECT vendor_deposit_set_followup($1, '{"notes":"via function"}'::jsonb, 'Ed', $2) AS r`, [DEP, U_ED]);
+  check('service role: the audited function still works (SECURITY DEFINER)', r.rows[0].r.notes === 'via function');
+  await db.exec(`RESET ROLE`);
+} else { check('SET ROLE unsupported here; role checks covered by grants test below', true); }
+
+// ---- proposals ----
+const propose = (inv, o = {}) => db.query(`SELECT vendor_deposit_propose($1::jsonb) AS id`, [JSON.stringify({
+  deposit_id: DEP, incoming_invoice_id: inv, form: o.form || 'balance_only', deposit_billed_cents: 334250, deposit_paid_cents: o.paid ?? 0, deposit_still_owed_cents: o.owed ?? 334250,
+  incoming_face_cents: o.face || 334250, net_due_cents: o.net ?? 334250, final_total_cents: 668500, needs_review: false, proposed_by: o.by === undefined ? 'emma' : o.by, proposed_by_user_id: o.byId || U_EMMA })]).then((r) => r.rows[0].id);
+await expectErr('proposal needs an identity', () => propose(INV_FIN, { by: '' }), /identity_required/);
+await expectErr('proposal against the deposit\'s own bill is refused', () => propose(INV_DEP), /same_as_deposit_invoice/);
+await expectErr('proposal across communities is refused', () => propose(INV_OTHER), /vendor_or_community_mismatch/);
+await expectErr('deposit paid + still owed must equal billed', () => propose(INV_FIN, { paid: 1, owed: 1 }), /paid_check/);
+const r1 = await propose(INV_FIN);
+check('proposal recorded with its event', !!r1 && await n(db, `SELECT count(*)::int n FROM vendor_deposit_events WHERE event_type='reconciliation_proposed'`) === 1);
+
+// ---- decisions ----
+const decide = (rec, decision, o = {}) => db.query(`SELECT vendor_deposit_decide($1, $2, $3, $4, $5, $6, $7, $8, $9) AS id`,
+  [rec, decision, o.actor || 'Ed', o.user === undefined ? U_ED : o.user, o.role || 'admin', o.note === undefined ? 'ok' : o.note, o.je || null, o.net ?? null, o.paid ?? null]);
+const counts = async () => `${await n(db, `SELECT count(*)::int n FROM vendor_deposit_reconciliation_decisions`)}/${await n(db, `SELECT count(*)::int n FROM vendor_deposit_events`)}`;
+let c0 = await counts();
+await expectErr('decision needs an identity', () => decide(r1, 'confirmed_match', { user: null }), /identity_required/);
+await expectErr('the proposer cannot decide', () => decide(r1, 'confirmed_match', { user: U_EMMA }), /proposer_cannot_decide/);
+await expectErr('"unrelated" is admin-only', () => decide(r1, 'unrelated', { role: 'staff', user: U_M }), /admin_required/);
+await expectErr('a reject needs a note', () => decide(r1, 'reject', { note: '' }), /note_required/);
+await expectErr('manual accounting refuses a non-positive net', () => decide(r1, 'manual_accounting_recorded', { je: JE_OK, net: 0, paid: 0 }), /net_due_not_positive/);
+await expectErr('manual accounting refuses when the bill total is not the net due', () => decide(r1, 'manual_accounting_recorded', { je: JE_OK, net: 334000, paid: 0 }), /invoice_total_not_net_due/);
+await expectErr('manual accounting refuses a stale deposit-paid snapshot', () => decide(r1, 'manual_accounting_recorded', { je: JE_OK, net: 334250, paid: 334250 }), /stale_reconciliation/);
+await expectErr('manual accounting refuses an unposted JE', () => decide(r1, 'manual_accounting_recorded', { je: JE_DRAFT, net: 334250, paid: 0 }), /accounting_je_invalid/);
+await expectErr('manual accounting refuses a JE from another community', () => decide(r1, 'manual_accounting_recorded', { je: JE_OTHER, net: 334250, paid: 0 }), /accounting_je_invalid/);
+check('every refused decision wrote NOTHING (atomic)', c0 === await counts(), `${c0} vs ${await counts()}`);
+await decide(r1, 'confirmed_match', { role: 'staff', user: U_M, note: null });
+await expectErr('only one confirmed_match per reconciliation', () => decide(r1, 'confirmed_match'), /already_decided|duplicate/);
+await decide(r1, 'manual_accounting_recorded', { je: JE_OK, net: 334250, paid: 0, note: 'Dr 5900 / Cr 1430 relieved' });
+check('confirmed match then manual accounting recorded, each with its event', await n(db, `SELECT count(*)::int n FROM vendor_deposit_reconciliation_decisions WHERE reconciliation_id='${r1}'`) === 2
+  && await n(db, `SELECT count(*)::int n FROM vendor_deposit_events WHERE event_type='reconciliation_decided'`) === 2);
+await expectErr('no second terminal decision', () => decide(r1, 'reject'), /already_decided/);
+const rFull = await propose(INV_FULL, { face: 668500 });
+await expectErr('the deposit cannot be applied to a second bill', async () => { await db.exec(`UPDATE ap_invoices SET total_cents = 334250 WHERE id = '${INV_FULL}'`); await decide(rFull, 'manual_accounting_recorded', { je: JE_OK, net: 334250, paid: 0 }); }, /deposit_already_applied_elsewhere/);
+const rOld = await propose(INV_FULL, { form: 'ambiguous', net: null });
+const rNew = await propose(INV_FULL);
+await expectErr('a superseded proposal cannot be decided', () => decide(rOld, 'reject'), /superseded/);
+await expectErr('manual accounting refuses a non-payable form', async () => { const x = await propose(INV_FULL, { form: 'duplicate_or_statement', net: 0 }); await decide(x, 'manual_accounting_recorded', { je: JE_OK, net: 334250, paid: 0 }); }, /form_not_payable/);
+await decide(rNew, 'unrelated', { note: 'different job' }).catch(() => {});
+
+// ---- ledger immutability + grants ----
 await expectErr('a reconciliation cannot be edited', () => db.query(`UPDATE vendor_deposit_reconciliations SET net_due_cents = 1`), /permanent/);
-await expectErr('a reconciliation cannot be deleted', () => db.query(`DELETE FROM vendor_deposit_reconciliations`), /permanent/);
-await db.query(`INSERT INTO vendor_deposit_reconciliation_decisions (reconciliation_id, decision, decided_by_name) VALUES ($1, 'approve', 'Ed')`, [r1]);
-await expectErr('only one decision per reconciliation', () => db.query(`INSERT INTO vendor_deposit_reconciliation_decisions (reconciliation_id, decision, decided_by_name) VALUES ($1, 'reject', 'Ed')`, [r1]), /duplicate|unique/i);
-const r2 = (await rec()).rows[0].id;
-await db.query(`INSERT INTO vendor_deposit_reconciliation_decisions (reconciliation_id, decision, decided_by_name, note) VALUES ($1, 'unrelated', 'Ed', 'different job')`, [r2]);
-check('"unrelated" is an allowed decision', true);
-await expectErr('an unknown decision is refused', async () => { const r3 = (await rec()).rows[0].id; await db.query(`INSERT INTO vendor_deposit_reconciliation_decisions (reconciliation_id, decision, decided_by_name) VALUES ($1, 'pay', 'Ed')`, [r3]); }, /check/i);
-await expectErr('decisions cannot be edited', () => db.query(`UPDATE vendor_deposit_reconciliation_decisions SET decision='reject'`), /permanent/);
-await db.query(`INSERT INTO vendor_deposit_events (deposit_id, event_type, actor) VALUES ($1, 'followup_set', 'Ed')`, [DEP]);
-await expectErr('events cannot be deleted', () => db.query(`DELETE FROM vendor_deposit_events`), /permanent/);
-await expectErr('a deposit with a reconciliation cannot be deleted out from under it', () => db.query(`DELETE FROM vendor_deposits WHERE id='${DEP}'`), /foreign key|violates/i);
-check('no payment or journal entry was written by any of this', Number((await db.query(`SELECT (SELECT count(*) FROM ap_payments) + (SELECT count(*) FROM journal_entries) AS n`)).rows[0].n) === 0);
-const grants = (await db.query(`SELECT grantee, privilege_type FROM information_schema.role_table_grants WHERE table_name = 'vendor_deposit_reconciliations'`)).rows;
-check('ledger grants: service_role SELECT+INSERT only; nothing for anon/authenticated',
-  grants.filter((g) => g.grantee === 'service_role').map((g) => g.privilege_type).sort().join(',') === 'INSERT,SELECT' && !grants.some((g) => ['anon', 'authenticated'].includes(g.grantee)), JSON.stringify(grants));
+await expectErr('a decision cannot be deleted', () => db.query(`DELETE FROM vendor_deposit_reconciliation_decisions`), /permanent/);
+await expectErr('an event cannot be deleted', () => db.query(`DELETE FROM vendor_deposit_events`), /permanent/);
+await expectErr('a deposit with reconciliations cannot be deleted', () => db.query(`DELETE FROM vendor_deposits WHERE id='${DEP}'`), /foreign key|violates/i);
+check('no payment was written by any of this', await n(db, `SELECT count(*)::int n FROM ap_payments`) === 0);
+const g = (await db.query(`SELECT grantee, table_name, privilege_type FROM information_schema.role_table_grants WHERE table_name LIKE 'vendor_deposit%'`)).rows;
+check('ledger: service_role SELECT only; nothing for anon/authenticated',
+  ['vendor_deposit_reconciliations', 'vendor_deposit_reconciliation_decisions', 'vendor_deposit_events'].every((t) => g.filter((x) => x.table_name === t && x.grantee === 'service_role').map((x) => x.privilege_type).join() === 'SELECT')
+  && !g.some((x) => ['anon', 'authenticated'].includes(x.grantee) && x.table_name !== 'vendor_deposits'), JSON.stringify(g));
+check('vendor_deposits: no UPDATE/DELETE for service_role', !g.some((x) => x.table_name === 'vendor_deposits' && x.grantee === 'service_role' && ['UPDATE', 'DELETE'].includes(x.privilege_type)));
+const fx = (await db.query(`SELECT p.proname, has_function_privilege('anon', p.oid, 'EXECUTE') a, has_function_privilege('service_role', p.oid, 'EXECUTE') s
+  FROM pg_proc p WHERE p.proname IN ('vendor_deposit_set_followup', 'vendor_deposit_propose', 'vendor_deposit_decide')`)).rows;
+check('functions: EXECUTE for service_role only', fx.length === 3 && fx.every((f) => f.s && !f.a), JSON.stringify(fx));
 
 // ---- end to end through the single-migration tool with the real checks file ----
 const checksPath = `${REPO}/migrations/checks/471_vendor_deposit_followups.json`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'm471-e2e-'));
 fs.mkdirSync(path.join(dir, 'checks'));
 fs.writeFileSync(path.join(dir, '471_vendor_deposit_followups.sql'), M471);
-fs.writeFileSync(path.join(dir, 'checks', '471_vendor_deposit_followups.json'), fs.existsSync(checksPath) ? lf(checksPath) : JSON.stringify({
-  migration: '471_vendor_deposit_followups.sql', summary: 'dump', requires: [], preflight: [], expected_changes: ['x'], objects: { added: [], changed: [], removed: [] }, row_changes: {}, protected: [], verify: [], api_checks: [], reload_schema: true }));
+fs.writeFileSync(path.join(dir, 'checks', '471_vendor_deposit_followups.json'), process.env.DUMP_471_OBJECTS || !fs.existsSync(checksPath) ? JSON.stringify({
+  migration: '471_vendor_deposit_followups.sql', summary: 'dump', requires: [], preflight: [], expected_changes: ['x'], objects: { added: [], changed: [], removed: [] }, row_changes: {}, protected: [], verify: [], api_checks: [], reload_schema: true }) : lf(checksPath));
 const db2 = await world();
 await db2.exec(`CREATE TABLE schema_migrations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), filename text NOT NULL UNIQUE, sha256 text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now(), applied_by text, duration_ms integer, error text);
   INSERT INTO schema_migrations (filename, sha256) VALUES ('321_vendor_projects.sql', 'r'), ('364_vendor_deposits.sql', 'r');`);
@@ -106,7 +160,7 @@ const ctx = { client, user: { id: 'owner', email: 'owner@example.test' }, deploy
 const plan = await A.planMigration({ ...ctx, filename: '471_vendor_deposit_followups.sql' });
 check('tool plan: 471 ready, all preflight green', plan.status === 'ready' && (plan.preflight || []).every((p) => p.ok), JSON.stringify(plan.preflight || plan.reason));
 const r = await A.applyMigration({ ...ctx, planToken: plan.plan_token, log: { error() {} }, apiCheck: async () => ({ ok: true, count: 0 }) });
-if (process.env.DUMP_471_OBJECTS) console.log(JSON.stringify({ status: r.status, error: r.error, objects: r.detail && r.detail.objects, written: r.detail && r.detail.tables_written }, null, 1));
+if (process.env.DUMP_471_OBJECTS) console.log(JSON.stringify({ status: r.status, error: r.error, objects: r.detail && r.detail.objects }, null, 1));
 check('tool apply: 471 applied, verified, recorded; no rows written', r.status === 'applied' && r.detail.verify.every((v) => v.ok) && r.detail.protected.every((p) => p.unchanged) && r.detail.tables_written.length === 0,
   JSON.stringify({ status: r.status, error: r.error, written: r.detail && r.detail.tables_written }).slice(0, 500));
 fs.rmSync(dir, { recursive: true, force: true });

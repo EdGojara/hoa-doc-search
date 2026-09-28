@@ -1,12 +1,18 @@
 // tests/test_ap_deposit_followup.js — vendor deposit -> balance-due follow-up
-// (Ed 2026-09-28, PRYME THYME KOOKERS #2836). Offline: pure reconciler plus the
-// DB layer against an in-memory fake. Proves: every final-bill form nets the
-// deposit correctly (paid AND unpaid), the reminder survives the deposit being
-// paid, nothing here ever pays or creates/changes a payable, and the approval
-// gate refuses a bill until its reconciliation is decided at the net due.
+// (Ed 2026-09-28, PRYME THYME KOOKERS #2836; revised after ChatGPT code review).
+// Offline. Proves:
+//   * every final-bill form nets the deposit correctly, paid AND unpaid;
+//   * the obligation stays visible until the final bill is actually paid;
+//   * the approval gate HOLDS any bill from a vendor with an outstanding deposit
+//     (driven by the deposits, not by whether a proposal was written) and fails
+//     closed; only a reviewed "unrelated" or an admin-recorded adjusting entry
+//     (live re-check) releases it;
+//   * intake -> proposal -> gate end to end on the real commitInvoice, with a
+//     deposit's lines staying on 1430 and nothing paid, posted or re-amounted.
+// The SQL functions' atomicity/state machine are proven in
+// tests/sql/471_deposit_followups_rehearsal.mjs.
 const assert = require('assert');
-const { reconcileDeposit, approvalBlockers, forceDepositLineCoding, invariantHolds } = require('../lib/ap/deposit_reconcile');
-const df = require('../lib/ap/deposit_followup');
+const path = require('path');
 
 let failed = 0;
 const results = [];
@@ -14,127 +20,27 @@ const t = (name, fn) => results.push((async () => {
   try { await fn(); console.log('PASS ', name); } catch (e) { failed++; console.log('FAIL ', name, '\n   ', e.message); }
 })());
 
-// PRYME THYME shape: $3,342.50 deposit, invoice states $3,342.50 balance.
-const DEP = { id: 'dep-1', community_id: 'c1', vendor_id: 'v1', deposit_invoice_id: 'inv-dep', deposit_amount_cents: 334250, remaining_balance_cents: 334250, status: 'outstanding' };
-const DEP_INV_UNPAID = { id: 'inv-dep', vendor_invoice_number: '2836', total_cents: 334250, amount_paid_cents: 0, status: 'awaiting_approval', file_sha256: 'aaa' };
-const DEP_INV_PAID = { ...DEP_INV_UNPAID, amount_paid_cents: 334250, status: 'paid' };
-const bill = (o) => ({ vendor_invoice_number: '2901', total_cents: 334250, tax_cents: 0, file_sha256: 'bbb', ...o });
-
-// ---------------------------------------------------------------- form 1: balance only
-t('form 1 balance only, deposit paid: net due = the balance; deposit untouched', () => {
-  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill() });
-  assert.strictEqual(r.form, 'balance_only');
-  assert.deepStrictEqual([r.net_due_cents, r.final_total_cents, r.deposit_still_owed_cents, r.outstanding_obligation_cents], [334250, 668500, 0, 334250]);
-  assert.ok(r.invariant_ok && !r.needs_review, JSON.stringify(r.reasons));
-  assert.ok(r.warnings.includes('agreed_total_is_an_estimate'), 'total derived from the deposit invoice is labeled an estimate');
-});
-t('form 1 balance only, deposit NOT yet paid: net due is still only the balance; the deposit bill stays owed', () => {
-  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_UNPAID, incoming: bill() });
-  assert.strictEqual(r.form, 'balance_only');
-  assert.deepStrictEqual([r.net_due_cents, r.deposit_still_owed_cents, r.outstanding_obligation_cents], [334250, 334250, 668500]);
-  assert.ok(r.warnings.includes('deposit_not_yet_paid') && r.invariant_ok);
-});
-
-// ---------------------------------------------------------------- form 2: full total less deposit
-const fullLines = [{ description: 'Burger Combo (500 servings) + Tent Setup', amount_cents: 668500 }, { description: 'Less deposit paid (inv 2836)', amount_cents: -334250 }];
-t('form 2 full total with deposit credit, deposit paid: pay total less deposit, never the full total', () => {
-  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill({ total_cents: 334250 }), incomingLines: fullLines });
-  assert.strictEqual(r.form, 'full_total_less_deposit');
-  assert.deepStrictEqual([r.final_total_cents, r.credits_shown_cents, r.net_due_cents], [668500, 334250, 334250]);
-  assert.ok(r.invariant_ok && !r.needs_review, JSON.stringify(r.reasons));
-});
-t('form 2 with credit but deposit NOT paid: flagged; final bill net stays total-less-credit; deposit bill still owed', () => {
-  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_UNPAID, incoming: bill({ total_cents: 334250 }), incomingLines: fullLines });
-  assert.strictEqual(r.form, 'full_total_less_deposit');
-  assert.ok(r.reasons.includes('vendor_credited_a_deposit_not_yet_paid') && r.needs_review);
-  assert.deepStrictEqual([r.net_due_cents, r.deposit_still_owed_cents, r.outstanding_obligation_cents], [334250, 334250, 668500]);
-  assert.ok(r.invariant_ok, 'the Association pays the $6,685 total exactly once across both bills');
-});
-t('form 2 full total billed WITHOUT a deposit credit: net due = face less deposit billed (the face is never paid)', () => {
-  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill({ total_cents: 668500 }), incomingLines: [{ description: 'Event catering + tent', amount_cents: 668500 }] });
-  assert.strictEqual(r.form, 'full_total_less_deposit');
-  assert.strictEqual(r.net_due_cents, 334250);
-  assert.ok(r.reasons.includes('full_total_billed_without_deposit_credit') && r.needs_review);
-});
-
-// ---------------------------------------------------------------- form 3: revised total
-t('form 3 revised balance with extras and tax: variance flagged for manager review with the math', () => {
-  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill({ total_cents: 367250, tax_cents: 5000 }),
-    incomingLines: [{ description: 'Balance per agreement', amount_cents: 334250 }, { description: 'Additional 50 servings', amount_cents: 28000 }, { description: 'Sales tax', amount_cents: 5000 }] });
-  assert.strictEqual(r.form, 'revised_total');
-  assert.deepStrictEqual([r.net_due_cents, r.final_total_cents, r.variance_cents], [367250, 701500, 33000]);
-  assert.ok(r.needs_review && r.reasons.includes('revised_total') && r.math.length >= 2 && r.extras_cents === 33000);
-  assert.ok(r.invariant_ok);
-});
-t('form 3 revised FULL total with no credit: read as full total, net = face less deposit, still reviewed', () => {
-  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill({ total_cents: 700000 }), incomingLines: [{ description: 'Event total revised', amount_cents: 700000 }] });
-  assert.strictEqual(r.form, 'revised_total');
-  assert.deepStrictEqual([r.final_total_cents, r.net_due_cents], [700000, 700000 - 334250]);
-  assert.ok(r.reasons.includes('read_as_revised_full_total_without_credit') && r.needs_review && r.invariant_ok);
-});
-
-// ---------------------------------------------------------------- form 4: duplicate / statement
-t('form 4 re-sent deposit invoice (same number or same file): not payable', () => {
-  for (const inc of [bill({ vendor_invoice_number: '2836' }), bill({ vendor_invoice_number: 'X-9', file_sha256: 'aaa' })]) {
-    const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_UNPAID, incoming: inc });
-    assert.strictEqual(r.form, 'duplicate_or_statement'); assert.strictEqual(r.net_due_cents, 0);
-  }
-});
-t('form 4 vendor statement: linked, not payable', () => {
-  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill({ total_cents: 334250 }), isStatement: true });
-  assert.strictEqual(r.form, 'duplicate_or_statement'); assert.strictEqual(r.net_due_cents, 0);
-});
-
-// ---------------------------------------------------------------- ambiguity
-t('a second "deposit" for the same amount (Texas Access Works pattern) is ambiguous, never auto-classified', () => {
-  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill({ is_deposit_invoice: true }) });
-  assert.strictEqual(r.form, 'ambiguous'); assert.strictEqual(r.net_due_cents, null);
-  assert.ok(r.needs_review && r.reasons.includes('looks_like_second_deposit_or_completion'));
-});
-t('no agreed total and no stated balance: ambiguous, a person classifies it', () => {
-  const r = reconcileDeposit({ deposit: { ...DEP, remaining_balance_cents: null }, depositInvoice: DEP_INV_PAID, incoming: bill({ total_cents: 400000 }) });
-  assert.strictEqual(r.form, 'ambiguous'); assert.ok(r.needs_review);
-});
-t('a quote/contract agreed total is not labeled an estimate; a mismatching credit is flagged', () => {
-  const r = reconcileDeposit({ deposit: { ...DEP, agreed_total_cents: 668500, agreed_total_basis: 'contract' }, depositInvoice: DEP_INV_PAID,
-    incoming: bill({ total_cents: 368500 }), incomingLines: [{ description: 'Event total', amount_cents: 668500 }, { description: 'Deposit received', amount_cents: -300000 }] });
-  assert.ok(!r.warnings.includes('agreed_total_is_an_estimate'));
-  assert.ok(r.reasons.includes('credit_differs_from_deposit_billed') && !r.invariant_ok && r.needs_review);
-});
-t('invariant: paid + still owed + net due = final total for every payable form', () => {
-  assert.ok(invariantHolds({ form: 'balance_only', deposit_paid_cents: 100, deposit_still_owed_cents: 0, net_due_cents: 100, final_total_cents: 200 }));
-  assert.ok(!invariantHolds({ form: 'balance_only', deposit_paid_cents: 100, deposit_still_owed_cents: 0, net_due_cents: 200, final_total_cents: 200 }));
-});
-
-// ---------------------------------------------------------------- approval blockers
-t('approval needs the bill total to already equal the net due (the face is never approved as-is)', () => {
-  const r = { form: 'full_total_less_deposit', net_due_cents: 334250, needs_review: false };
-  assert.deepStrictEqual(approvalBlockers(r, { total_cents: 668500, status: 'awaiting_approval' }), ['invoice_total_not_net_due']);
-  assert.deepStrictEqual(approvalBlockers(r, { total_cents: 334250, status: 'awaiting_approval' }), []);
-  assert.ok(approvalBlockers({ form: 'ambiguous', needs_review: true }, null, { role: 'staff' }).includes('classify_first'));
-  assert.ok(approvalBlockers({ form: 'revised_total', net_due_cents: 5, needs_review: true }, { total_cents: 5 }, { role: 'staff' }).includes('manager_review_required'));
-  assert.deepStrictEqual(approvalBlockers({ form: 'revised_total', net_due_cents: 5, needs_review: true }, { total_cents: 5 }, { role: 'admin' }), []);
-});
-t('deposit bill lines follow the deposit (1430) account, not the line classifier (the 5900 bug)', () => {
-  const lines = [{ line_number: 1, description: 'Burger Combo + Tent Setup', amount_cents: 334250, gl_account_id: 'acct-5900' }];
-  const out = forceDepositLineCoding(lines, { account_id: 'acct-1430', reason: 'Deposit invoice — prepaid asset' });
-  assert.strictEqual(out[0].gl_account_id, 'acct-1430'); assert.strictEqual(out[0].amount_cents, 334250); assert.ok(out[0].needs_review);
-  assert.strictEqual(forceDepositLineCoding(lines, null)[0].gl_account_id, 'acct-5900', 'no deposit account -> untouched');
-});
-
-// ---------------------------------------------------------------- DB layer on a fake
-function fakeDb(seed) {
+// ---------------------------------------------------------------- in-memory fake (PostgREST-ish + rpc)
+function fakeDb(seed = {}) {
   const db = JSON.parse(JSON.stringify(seed));
   const writes = [];
+  const rpcCalls = [];
+  const missing = new Set(seed._missing || []);
+  delete db._missing;
   const table = (n) => (db[n] = db[n] || []);
   let seq = 0;
+  const nowIso = () => new Date(Date.UTC(2026, 8, 28, 12, 0, 0) + (++seq) * 1000).toISOString();
   function q(name) {
-    const st = { name, filters: [], op: 'select', payload: null, one: false, maybe: false, order: null, lim: null, rng: null };
+    const st = { filters: [], op: 'select', payload: null, one: false, maybe: false, order: null, lim: null, rng: null };
     const rows = () => table(name).filter((r) => st.filters.every((f) => f(r)));
     const api = {
       select() { return api; },
       eq(c, v) { st.filters.push((r) => r[c] === v); return api; },
+      neq(c, v) { st.filters.push((r) => r[c] !== v); return api; },
       in(c, vs) { st.filters.push((r) => vs.includes(r[c])); return api; },
+      is(c, v) { st.filters.push((r) => (r[c] ?? null) === v); return api; },
+      ilike(c, pat) { const re = new RegExp('^' + String(pat).replace(/%/g, '.*') + '$', 'i'); st.filters.push((r) => re.test(r[c] || '')); return api; },
+      or(expr) { const m = String(expr).match(/account_number\.eq\.(\d+)/); if (m) st.filters.push((r) => r.account_number === m[1]); return api; },
       order(c, o = {}) { st.order = { c, asc: o.ascending !== false }; return api; },
       range(a, b) { st.rng = [a, b]; return api; },
       limit(n) { st.lim = n; return api; },
@@ -142,138 +48,306 @@ function fakeDb(seed) {
       single() { st.one = true; return api; },
       insert(p) { st.op = 'insert'; st.payload = p; return api; },
       update(p) { st.op = 'update'; st.payload = p; return api; },
-      then(res, rej) {
-        try {
-          if (st.op === 'insert') {
-            const arr = (Array.isArray(st.payload) ? st.payload : [st.payload]).map((r) => ({ id: `${name}-${++seq}`, created_at: new Date(Date.now() + seq).toISOString(), ...r }));
-            if (name === 'vendor_deposit_reconciliation_decisions' && arr.some((r) => table(name).some((x) => x.reconciliation_id === r.reconciliation_id))) {
-              return res({ data: null, error: { code: '23505', message: 'duplicate key' } });
-            }
-            table(name).push(...arr); writes.push({ op: 'insert', table: name, rows: arr });
-            return res({ data: st.one ? arr[0] : arr, error: null });
-          }
-          if (st.op === 'update') {
-            const hit = rows(); hit.forEach((r) => Object.assign(r, st.payload)); writes.push({ op: 'update', table: name, patch: st.payload, n: hit.length });
-            return res({ data: hit, error: null });
-          }
-          let out = rows();
-          if (st.order) out = [...out].sort((a, b) => (String(a[st.order.c]) < String(b[st.order.c]) ? -1 : 1) * (st.order.asc ? 1 : -1));
-          if (st.rng) out = out.slice(st.rng[0], st.rng[1] + 1);
-          if (st.lim != null) out = out.slice(0, st.lim);
-          out = out.map((r) => ({ ...r }));
-          if (st.maybe || st.one) return res({ data: out[0] || null, error: null });
-          return res({ data: out, error: null });
-        } catch (e) { return rej ? rej(e) : res({ data: null, error: e }); }
+      then(res) {
+        if (missing.has(name)) return res({ data: null, error: { message: `relation "${name}" does not exist` } });
+        if (st.op === 'insert') {
+          const arr = (Array.isArray(st.payload) ? st.payload : [st.payload]).map((r) => ({ id: `${name}-${++seq}`, created_at: nowIso(), ...r }));
+          table(name).push(...arr); writes.push({ op: 'insert', table: name, rows: arr });
+          return res({ data: st.one ? arr[0] : arr, error: null });
+        }
+        if (st.op === 'update') {
+          const hit = rows(); hit.forEach((r) => Object.assign(r, st.payload)); writes.push({ op: 'update', table: name, patch: st.payload, n: hit.length });
+          return res({ data: hit, error: null });
+        }
+        let out = rows();
+        if (st.order) out = [...out].sort((a, b) => (String(a[st.order.c]) < String(b[st.order.c]) ? -1 : String(a[st.order.c]) > String(b[st.order.c]) ? 1 : 0) * (st.order.asc ? 1 : -1));
+        if (st.rng) out = out.slice(st.rng[0], st.rng[1] + 1);
+        if (st.lim != null) out = out.slice(0, st.lim);
+        out = out.map((r) => ({ ...r }));
+        return res({ data: st.maybe || st.one ? (out[0] || null) : out, error: null });
       },
     };
     return api;
   }
-  return { from: q, _db: db, _writes: writes };
+  // Minimal emulation of the 471 functions (their real semantics are rehearsed in SQL).
+  async function rpc(fn, args) {
+    rpcCalls.push({ fn, args });
+    if (missing.has('vendor_deposit_reconciliations')) return { data: null, error: { message: `Could not find the function public.${fn}` } };
+    if (fn === 'vendor_deposit_propose') {
+      const d = table('vendor_deposits').find((x) => x.id === args.p_row.deposit_id);
+      const row = { id: `rec-${++seq}`, created_at: nowIso(), community_id: d.community_id, vendor_id: d.vendor_id, ...args.p_row };
+      table('vendor_deposit_reconciliations').push(row); table('vendor_deposit_events').push({ deposit_id: d.id, event_type: 'reconciliation_proposed' });
+      return { data: row.id, error: null };
+    }
+    if (fn === 'vendor_deposit_decide') {
+      const row = { id: `dec-${++seq}`, created_at: nowIso(), reconciliation_id: args.p_reconciliation_id, decision: args.p_decision, decided_by_user_id: args.p_actor_user_id,
+        decided_by_name: args.p_actor, note: args.p_note, accounting_je_id: args.p_accounting_je_id, verified_invoice_total_cents: args.p_expected_net_cents, verified_deposit_paid_cents: args.p_live_deposit_paid_cents };
+      table('vendor_deposit_reconciliation_decisions').push(row);
+      return { data: row.id, error: null };
+    }
+    if (fn === 'vendor_deposit_set_followup') {
+      const d = table('vendor_deposits').find((x) => x.id === args.p_deposit_id);
+      Object.assign(d, args.p_patch); table('vendor_deposit_events').push({ deposit_id: d.id, event_type: 'followup_set' });
+      return { data: args.p_patch, error: null };
+    }
+    return { data: null, error: { message: 'unknown function' } };
+  }
+  return { from: q, rpc, _db: db, _writes: writes, _rpc: rpcCalls };
 }
-const seed = (depInv = DEP_INV_UNPAID, finalInv = null) => ({
+const MONEY_TABLES = ['ap_payments', 'ap_payment_applications', 'check_register'];
+const noMoneyMoved = (sb) => assert.ok(!sb._writes.some((w) => MONEY_TABLES.includes(w.table)), 'nothing paid');
+
+// ---------------------------------------------------------------- pure reconciler
+const { reconcileDeposit, approvalBlockers, forceDepositLineCoding, invariantHolds } = require('../lib/ap/deposit_reconcile');
+const DEP = { id: 'dep-1', community_id: 'c1', vendor_id: 'v1', deposit_invoice_id: 'inv-dep', deposit_amount_cents: 334250, remaining_balance_cents: 334250, status: 'outstanding' };
+const DEP_INV_UNPAID = { id: 'inv-dep', vendor_invoice_number: '2836', total_cents: 334250, amount_paid_cents: 0, status: 'awaiting_approval', file_sha256: 'aaa' };
+const DEP_INV_PAID = { ...DEP_INV_UNPAID, amount_paid_cents: 334250, status: 'paid' };
+const bill = (o) => ({ vendor_invoice_number: '2901', total_cents: 334250, tax_cents: 0, file_sha256: 'bbb', ...o });
+const fullLines = [{ description: 'Burger Combo (500 servings) + Tent Setup', amount_cents: 668500 }, { description: 'Less deposit paid (inv 2836)', amount_cents: -334250 }];
+
+t('form 1 balance only, deposit paid: net due = the balance', () => {
+  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill() });
+  assert.deepStrictEqual([r.form, r.net_due_cents, r.final_total_cents, r.deposit_still_owed_cents], ['balance_only', 334250, 668500, 0]);
+  assert.ok(r.invariant_ok && !r.needs_review && r.warnings.includes('agreed_total_is_an_estimate'));
+});
+t('form 1 balance only, deposit NOT paid: net is the balance; the deposit bill stays owed', () => {
+  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_UNPAID, incoming: bill() });
+  assert.deepStrictEqual([r.net_due_cents, r.deposit_still_owed_cents, r.outstanding_obligation_cents], [334250, 334250, 668500]);
+  assert.ok(r.warnings.includes('deposit_not_yet_paid') && r.invariant_ok);
+});
+t('form 2 full total with deposit credit, deposit paid: pay total less deposit, never the total', () => {
+  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill({ total_cents: 334250 }), incomingLines: fullLines });
+  assert.deepStrictEqual([r.form, r.final_total_cents, r.credits_shown_cents, r.net_due_cents], ['full_total_less_deposit', 668500, 334250, 334250]);
+  assert.ok(r.invariant_ok && !r.needs_review);
+});
+t('form 2 with credit but deposit NOT paid: flagged; total still paid exactly once across both bills', () => {
+  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_UNPAID, incoming: bill({ total_cents: 334250 }), incomingLines: fullLines });
+  assert.ok(r.reasons.includes('vendor_credited_a_deposit_not_yet_paid') && r.needs_review && r.invariant_ok);
+  assert.deepStrictEqual([r.net_due_cents, r.outstanding_obligation_cents], [334250, 668500]);
+});
+t('form 2 full total WITHOUT a credit: net = face less deposit billed; the face is never the payable', () => {
+  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill({ total_cents: 668500 }), incomingLines: [{ description: 'Event catering + tent', amount_cents: 668500 }] });
+  assert.deepStrictEqual([r.form, r.net_due_cents], ['full_total_less_deposit', 334250]);
+  assert.ok(r.reasons.includes('full_total_billed_without_deposit_credit'));
+});
+t('form 3 revised balance with extras and tax: variance flagged with the math', () => {
+  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill({ total_cents: 367250, tax_cents: 5000 }),
+    incomingLines: [{ description: 'Balance per agreement', amount_cents: 334250 }, { description: 'Additional 50 servings', amount_cents: 28000 }, { description: 'Sales tax', amount_cents: 5000 }] });
+  assert.deepStrictEqual([r.form, r.net_due_cents, r.final_total_cents, r.variance_cents], ['revised_total', 367250, 701500, 33000]);
+  assert.ok(r.needs_review && r.math.length >= 2 && r.invariant_ok);
+});
+t('form 3 revised FULL total with no credit: read as full total, still reviewed', () => {
+  const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill({ total_cents: 700000 }), incomingLines: [{ description: 'Event total revised', amount_cents: 700000 }] });
+  assert.deepStrictEqual([r.form, r.final_total_cents, r.net_due_cents], ['revised_total', 700000, 365750]);
+  assert.ok(r.reasons.includes('read_as_revised_full_total_without_credit'));
+});
+t('form 4 re-sent deposit invoice (same number or file) and statements: not payable', () => {
+  for (const inc of [bill({ vendor_invoice_number: '2836' }), bill({ vendor_invoice_number: 'X-9', file_sha256: 'aaa' })]) {
+    const r = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_UNPAID, incoming: inc });
+    assert.deepStrictEqual([r.form, r.net_due_cents], ['duplicate_or_statement', 0]);
+  }
+  assert.strictEqual(reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill(), isStatement: true }).form, 'duplicate_or_statement');
+});
+t('ambiguous: a second same-amount "deposit" (Texas Access pattern), or no agreed total to compare', () => {
+  const a = reconcileDeposit({ deposit: DEP, depositInvoice: DEP_INV_PAID, incoming: bill({ is_deposit_invoice: true }) });
+  assert.ok(a.form === 'ambiguous' && a.net_due_cents === null && a.reasons.includes('looks_like_second_deposit_or_completion'));
+  assert.strictEqual(reconcileDeposit({ deposit: { ...DEP, remaining_balance_cents: null }, depositInvoice: DEP_INV_PAID, incoming: bill({ total_cents: 400000 }) }).form, 'ambiguous');
+});
+t('a zero or negative net is a credit/refund, never an ordinary payable', () => {
+  const r = reconcileDeposit({ deposit: { ...DEP, agreed_total_cents: 300000, agreed_total_basis: 'contract' }, depositInvoice: DEP_INV_PAID,
+    incoming: bill({ total_cents: 1 }), incomingLines: [{ description: 'Event total', amount_cents: 300000 }, { description: 'Less deposit', amount_cents: -334250 }] });
+  assert.ok(r.reasons.includes('net_due_not_positive_credit_or_refund') && r.needs_review, JSON.stringify(r.reasons));
+});
+t('invariant and blockers', () => {
+  assert.ok(invariantHolds({ form: 'balance_only', deposit_paid_cents: 100, deposit_still_owed_cents: 0, net_due_cents: 100, final_total_cents: 200 }));
+  assert.ok(!invariantHolds({ form: 'balance_only', deposit_paid_cents: 100, deposit_still_owed_cents: 0, net_due_cents: 200, final_total_cents: 200 }));
+  assert.deepStrictEqual(approvalBlockers({ form: 'full_total_less_deposit', net_due_cents: 334250, needs_review: false }, { total_cents: 668500 }), ['invoice_total_not_net_due']);
+});
+t('deposit bill lines follow the deposit (1430) account, not the line classifier', () => {
+  const out = forceDepositLineCoding([{ description: 'Burger Combo', amount_cents: 334250, gl_account_id: 'acct-5900' }], { account_id: 'acct-1430', reason: 'Deposit' });
+  assert.ok(out[0].gl_account_id === 'acct-1430' && out[0].needs_review);
+});
+
+// ---------------------------------------------------------------- DB layer on the fake
+const df = require('../lib/ap/deposit_followup');
+const seed = (depInv = DEP_INV_UNPAID, extraInvoices = [], more = {}) => ({
   vendor_deposits: [{ ...DEP }],
-  ap_invoices: [{ ...depInv, community_id: 'c1', vendor_id: 'v1' }, ...(finalInv ? [{ community_id: 'c1', vendor_id: 'v1', status: 'awaiting_approval', notes: '', ...finalInv }] : [])],
-  ap_invoice_lines: [], vendor_deposit_reconciliations: [], vendor_deposit_reconciliation_decisions: [], vendor_deposit_events: [],
+  ap_invoices: [{ ...depInv, community_id: 'c1', vendor_id: 'v1', notes: 'Emma: DEPOSIT invoice' }, ...extraInvoices.map((i) => ({ community_id: 'c1', vendor_id: 'v1', status: 'awaiting_approval', notes: '', amount_paid_cents: 0, tax_cents: 0, ...i }))],
+  ap_invoice_lines: [], ap_invoice_documents: [], vendor_deposit_reconciliations: [], vendor_deposit_reconciliation_decisions: [], vendor_deposit_events: [],
+  journal_entries: [{ id: 'je-adj', community_id: 'c1', status: 'posted', reference: 'JE-2026-00340' }],
+  ...more,
 });
-const MONEY_TABLES = ['ap_payments', 'ap_payment_applications', 'check_register', 'journal_entries', 'journal_entry_lines'];
-const noMoneyMoved = (sb) => {
-  assert.ok(!sb._writes.some((w) => MONEY_TABLES.includes(w.table)), 'nothing paid or posted');
-  assert.ok(!sb._writes.some((w) => w.table === 'ap_invoices'), 'no AP bill created or changed');
-};
+const inv = (sb, id) => sb._db.ap_invoices.find((i) => i.id === id);
 
-t('reminder survives the deposit being approved and paid (queue keyed on the deposit, live paid status)', async () => {
-  const sb = fakeDb(seed(DEP_INV_PAID));
-  const [row] = await df.upcomingBalances(sb, { communityId: 'c1' });
-  assert.ok(row, 'still listed after the deposit is paid');
-  assert.deepStrictEqual([row.deposit_paid_cents, row.deposit_still_owed_cents, row.expected_balance_cents], [334250, 0, 334250]);
+t('gate: a bill from a vendor with an outstanding deposit is HELD even with no proposal at all', async () => {
+  const sb = fakeDb(seed(DEP_INV_PAID, [{ id: 'inv-final', vendor_invoice_number: '2901', total_cents: 334250 }]));
+  assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-final'))).reason, 'deposit_reconciliation_missing');
+  assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-dep'))).block, false, "the deposit's own bill is not held by its own deposit");
+  const other = { id: 'x', community_id: 'c1', vendor_id: 'v-other', total_cents: 5 };
+  assert.strictEqual((await df.approvalGateForInvoice(sb, other)).block, false, 'unrelated vendors are untouched');
+});
+t('gate fails CLOSED when the reconciliation ledger (migration 471) is missing', async () => {
+  const sb = fakeDb({ ...seed(DEP_INV_PAID, [{ id: 'inv-final', total_cents: 334250 }]), _missing: ['vendor_deposit_reconciliations'] });
+  assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-final'))).reason, 'deposit_check_unavailable');
+});
+t('gate: confirmed match / pending stays HELD (Emma cannot release); reject and duplicate stay held', async () => {
+  const sb = fakeDb(seed(DEP_INV_PAID, [{ id: 'inv-final', vendor_invoice_number: '2901', total_cents: 334250 }]));
+  const p = await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
+  assert.ok(p.ok, JSON.stringify(p));
+  assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-final'))).reason, 'deposit_accounting_pending');
+  await df.decideReconciliation(sb, { reconciliationId: p.reconciliation_id, decision: 'confirmed_match', actor: 'Martha', actorUserId: 'u-m', role: 'staff' });
+  assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-final'))).reason, 'deposit_accounting_pending', 'confirming the match does not release the bill');
+  const p2 = await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
+  await df.decideReconciliation(sb, { reconciliationId: p2.reconciliation_id, decision: 'reject', note: 'wrong event', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' });
+  assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-final'))).reason, 'deposit_reconciliation_rejected', 'the NEWEST proposal governs');
+  const p3 = await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
+  await df.decideReconciliation(sb, { reconciliationId: p3.reconciliation_id, decision: 'duplicate_confirmed', note: 'copy', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' });
+  assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-final'))).reason, 'duplicate_or_statement_void_it');
+  noMoneyMoved(sb);
+});
+t('gate: admin "unrelated" releases it; multiple open deposits each need resolving', async () => {
+  const sb = fakeDb(seed(DEP_INV_PAID, [{ id: 'inv-other', vendor_invoice_number: '3001', total_cents: 99900 }, { id: 'inv-dep2', vendor_invoice_number: '2837', total_cents: 50000, amount_paid_cents: 50000, status: 'paid' }],
+    { vendor_deposits: [{ ...DEP }, { ...DEP, id: 'dep-2', deposit_invoice_id: 'inv-dep2', deposit_amount_cents: 50000, remaining_balance_cents: 50000 }] }));
+  const a = await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-other', actor: 'emma' });
+  const b = await df.proposeReconciliation(sb, { depositId: 'dep-2', invoiceId: 'inv-other', actor: 'emma' });
+  assert.strictEqual((await df.decideReconciliation(sb, { reconciliationId: a.reconciliation_id, decision: 'unrelated', note: 'holiday lights', actor: 'Martha', actorUserId: 'u-m', role: 'staff' })).error, 'admin_required');
+  assert.strictEqual((await df.decideReconciliation(sb, { reconciliationId: a.reconciliation_id, decision: 'unrelated', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' })).error, 'note_required');
+  assert.strictEqual(sb._db.vendor_deposit_reconciliation_decisions.length, 0, 'refused decisions write nothing');
+  await df.decideReconciliation(sb, { reconciliationId: a.reconciliation_id, decision: 'unrelated', note: 'holiday lights', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' });
+  assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-other'))).deposit_id, 'dep-2', 'still held by the second deposit');
+  await df.decideReconciliation(sb, { reconciliationId: b.reconciliation_id, decision: 'unrelated', note: 'holiday lights', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' });
+  assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-other'))).block, false);
+  assert.strictEqual(sb._db.vendor_deposits[0].status, 'outstanding', 'an unrelated bill never touches the deposit');
+});
+t('manual accounting: admin only, identity required, JE required, live re-check, stale proposals refused', async () => {
+  const sb = fakeDb(seed(DEP_INV_UNPAID, [{ id: 'inv-final', vendor_invoice_number: '2901', total_cents: 334250 }]));
+  const p = await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
+  const base = { reconciliationId: p.reconciliation_id, decision: 'manual_accounting_recorded', note: 'Dr 5900 / Cr 1430', accountingJeRef: 'JE-2026-00340' };
+  assert.strictEqual((await df.decideReconciliation(sb, { ...base, actor: 'Ed', actorUserId: null, role: 'admin' })).error, 'identity_required');
+  assert.strictEqual((await df.decideReconciliation(sb, { ...base, actor: 'Martha', actorUserId: 'u-m', role: 'staff' })).error, 'admin_required');
+  assert.strictEqual((await df.decideReconciliation(sb, { ...base, accountingJeRef: 'JE-NOPE', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' })).error, 'accounting_je_required');
+  // The deposit gets paid after the proposal: the proposal is stale and must be re-run.
+  inv(sb, 'inv-dep').amount_paid_cents = 334250; inv(sb, 'inv-dep').status = 'paid';
+  assert.strictEqual((await df.decideReconciliation(sb, { ...base, actor: 'Ed', actorUserId: 'u-ed', role: 'admin' })).error, 'stale_reconciliation');
+  const p2 = await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
+  const ok = await df.decideReconciliation(sb, { ...base, reconciliationId: p2.reconciliation_id, actor: 'Ed', actorUserId: 'u-ed', role: 'admin' });
+  assert.ok(ok.ok, JSON.stringify(ok));
+  const call = sb._rpc.filter((c) => c.fn === 'vendor_deposit_decide').pop().args;
+  assert.deepStrictEqual([call.p_accounting_je_id, call.p_expected_net_cents, call.p_live_deposit_paid_cents], ['je-adj', 334250, 334250]);
+  assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-final'))).block, false, 'released only after the recorded, re-checked accounting');
+  inv(sb, 'inv-final').total_cents = 668500;
+  assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-final'))).reason, 'invoice_changed_after_accounting');
+  noMoneyMoved(sb);
+  assert.ok(!sb._writes.some((w) => w.table === 'ap_invoices' || w.table === 'journal_entries' || w.table === 'vendor_deposits'), 'no AP amount, JE or deposit status written by this layer');
+});
+t('manual accounting refuses a full-face bill (must be netted first) and a non-positive net', async () => {
+  const sb = fakeDb(seed(DEP_INV_PAID, [{ id: 'inv-final', vendor_invoice_number: '2901', total_cents: 668500 }]));
+  sb._db.ap_invoice_lines.push({ invoice_id: 'inv-final', line_number: 1, description: 'Event total', amount_cents: 668500 });
+  const p = await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
+  assert.strictEqual(p.reconciliation.net_due_cents, 334250);
+  const r = await df.decideReconciliation(sb, { reconciliationId: p.reconciliation_id, decision: 'manual_accounting_recorded', note: 'x', accountingJeRef: 'JE-2026-00340', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' });
+  assert.strictEqual(r.error, 'invoice_total_not_net_due', JSON.stringify(r));
+  assert.ok(!sb._rpc.some((c) => c.fn === 'vendor_deposit_decide'), 'refused before anything is written');
+  // A credit (net <= 0): never recorded as a payable.
+  const sb2 = fakeDb(seed(DEP_INV_PAID, [{ id: 'inv-cr', vendor_invoice_number: '2999', total_cents: 1 }], { vendor_deposits: [{ ...DEP, agreed_total_cents: 300000, agreed_total_basis: 'contract' }] }));
+  sb2._db.ap_invoice_lines.push({ invoice_id: 'inv-cr', line_number: 1, description: 'Event total', amount_cents: 300000 }, { invoice_id: 'inv-cr', line_number: 2, description: 'Less deposit', amount_cents: -334250 });
+  const p2 = await df.proposeReconciliation(sb2, { depositId: 'dep-1', invoiceId: 'inv-cr', actor: 'emma' });
+  const r2 = await df.decideReconciliation(sb2, { reconciliationId: p2.reconciliation_id, decision: 'manual_accounting_recorded', note: 'x', accountingJeRef: 'JE-2026-00340', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' });
+  assert.strictEqual(r2.error, 'net_due_not_positive');
+});
+t('a real "full total less deposit" bill is NOT mistaken for a statement in the deposit context', async () => {
+  const sb = fakeDb(seed(DEP_INV_PAID, [{ id: 'inv-final', vendor_invoice_number: '2901', total_cents: 334250 }]));
+  sb._db.ap_invoice_lines.push({ invoice_id: 'inv-final', line_number: 1, description: 'Burger Combo + Tent Setup', amount_cents: 668500 }, { invoice_id: 'inv-final', line_number: 2, description: 'Less deposit paid', amount_cents: -334250 });
+  assert.ok(require('../lib/ap/statement_lines').classifyStatement(sb._db.ap_invoice_lines).is_statement, 'the generic classifier would call it a statement');
+  const p = await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
+  assert.deepStrictEqual([p.reconciliation.form, p.reconciliation.net_due_cents], ['full_total_less_deposit', 334250]);
+  const s2 = await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'Martha', isStatement: true });
+  assert.strictEqual(s2.reconciliation.form, 'duplicate_or_statement', 'a person can still call it a statement');
+});
+t('obligation stays in the queue until the final bill is PAID (not when reconciled or approved)', async () => {
+  const sb = fakeDb(seed(DEP_INV_PAID, [{ id: 'inv-final', vendor_invoice_number: '2901', total_cents: 334250 }]));
+  let [row] = await df.upcomingBalances(sb, { communityId: 'c1' });
+  assert.strictEqual(row.obligation_state, 'waiting_for_final_bill');
+  const p = await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
+  [row] = await df.upcomingBalances(sb, {}); assert.strictEqual(row.obligation_state, 'final_bill_held');
+  await df.decideReconciliation(sb, { reconciliationId: p.reconciliation_id, decision: 'manual_accounting_recorded', note: 'adj', accountingJeRef: 'JE-2026-00340', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' });
+  [row] = await df.upcomingBalances(sb, {}); assert.strictEqual(row.obligation_state, 'final_bill_accounted_awaiting_payment', 'still listed while unpaid');
+  inv(sb, 'inv-final').amount_paid_cents = 334250; inv(sb, 'inv-final').status = 'paid';
+  [row] = await df.upcomingBalances(sb, {}); assert.strictEqual(row.obligation_state, 'final_bill_paid');
   assert.ok(/ESTIMATE/.test(row.expected_balance_label));
-  noMoneyMoved(sb);
 });
-t('follow-up: due date and agreed total are recorded with their basis and an audit event; no payable', async () => {
+t('follow-up goes through the audited function (no bare UPDATE); identity and basis required', async () => {
   const sb = fakeDb(seed());
-  const bad = await df.setFollowup(sb, { depositId: 'dep-1', fields: { agreed_total_cents: 668500 }, actor: 'Ed' });
-  assert.strictEqual(bad.error, 'agreed_total_basis_required');
-  const ok = await df.setFollowup(sb, { depositId: 'dep-1', fields: { event_date: '2026-10-10', balance_due_date: '2026-10-10', agreed_total_cents: 668500, agreed_total_basis: 'invoice_estimate' }, actor: 'Ed' });
+  assert.strictEqual((await df.setFollowup(sb, { depositId: 'dep-1', fields: { balance_due_date: '2026-10-10' }, actor: 'Ed', actorUserId: null })).error, 'identity_required');
+  assert.strictEqual((await df.setFollowup(sb, { depositId: 'dep-1', fields: { agreed_total_cents: 668500 }, actor: 'Ed', actorUserId: 'u-ed' })).error, 'agreed_total_basis_required');
+  const ok = await df.setFollowup(sb, { depositId: 'dep-1', fields: { event_date: '2026-10-10', balance_due_date: '2026-10-10', agreed_total_cents: 668500, agreed_total_basis: 'invoice_estimate' }, actor: 'Ed', actorUserId: 'u-ed' });
   assert.ok(ok.ok, JSON.stringify(ok));
-  assert.strictEqual(sb._db.vendor_deposits[0].balance_due_basis, 'staff_entered');
-  assert.strictEqual(sb._db.vendor_deposit_events[0].event_type, 'followup_set');
-  const [row] = await df.upcomingBalances(sb, {});
-  assert.strictEqual(row.balance_due_date, '2026-10-10'); assert.ok(/ESTIMATE/.test(row.expected_balance_label));
-  noMoneyMoved(sb);
+  assert.strictEqual(sb._rpc[0].fn, 'vendor_deposit_set_followup');
+  assert.strictEqual(sb._rpc[0].args.p_patch.balance_due_basis, 'staff_entered');
+  assert.ok(!sb._writes.some((w) => w.op === 'update' && w.table === 'vendor_deposits'), 'no direct UPDATE of vendor_deposits');
 });
-t('a final bill creates a reconciliation proposal only: no duplicate payable, no payment, no JE', async () => {
-  const sb = fakeDb(seed(DEP_INV_PAID, { id: 'inv-final', vendor_invoice_number: '2901', total_cents: 334250, tax_cents: 0 }));
-  const out = await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
-  assert.ok(out.ok, JSON.stringify(out));
-  assert.strictEqual(sb._db.vendor_deposit_reconciliations[0].form, 'balance_only');
-  assert.strictEqual(sb._db.vendor_deposit_reconciliations[0].net_due_cents, 334250);
-  assert.strictEqual(sb._db.ap_invoices.length, 2, 'no extra bill was created from the reminder or the reconciliation');
-  noMoneyMoved(sb);
-  assert.strictEqual((await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-dep', actor: 'emma' })).error, 'same_as_deposit_invoice');
-});
-t('approval gate: pending blocks; approve only at net due; reject blocks; unrelated releases the gate', async () => {
-  // Full-total bill ($6,685 face) with no credit: net due $3,342.50, so approving must be refused until the bill is netted.
-  const sb = fakeDb(seed(DEP_INV_PAID, { id: 'inv-final', vendor_invoice_number: '2901', total_cents: 668500, tax_cents: 0 }));
-  await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
-  const rec = sb._db.vendor_deposit_reconciliations[0];
-  assert.strictEqual(rec.net_due_cents, 334250);
-  assert.strictEqual((await df.approvalGateForInvoice(sb, 'inv-final', 668500)).reason, 'deposit_reconciliation_pending');
-  const refused = await df.decideReconciliation(sb, { reconciliationId: rec.id, decision: 'approve', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' });
-  assert.deepStrictEqual(refused.blockers, ['invoice_total_not_net_due']);
-  assert.strictEqual(sb._db.vendor_deposits[0].status, 'outstanding');
-  // Staff net the deposit on the bill through the normal recode path (simulated): now it can be approved.
-  sb._db.ap_invoices[1].total_cents = 334250;
-  const ok = await df.decideReconciliation(sb, { reconciliationId: rec.id, decision: 'approve', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' });
-  assert.ok(ok.ok, JSON.stringify(ok));
-  assert.strictEqual(sb._db.vendor_deposits[0].status, 'applied');
-  assert.strictEqual(sb._db.vendor_deposits[0].applied_invoice_id, 'inv-final');
-  assert.strictEqual((await df.approvalGateForInvoice(sb, 'inv-final', 334250)).block, false);
-  assert.strictEqual((await df.approvalGateForInvoice(sb, 'inv-final', 668500)).reason, 'invoice_total_not_reconciled_net_due');
-  assert.strictEqual((await df.decideReconciliation(sb, { reconciliationId: rec.id, decision: 'reject', note: 'x', actor: 'Ed' })).error, 'already_decided');
-  assert.ok(!sb._writes.some((w) => MONEY_TABLES.includes(w.table)), 'approving the reconciliation paid nothing');
 
-  const sb2 = fakeDb(seed(DEP_INV_PAID, { id: 'inv-final', vendor_invoice_number: '2901', total_cents: 334250, tax_cents: 0 }));
-  await df.proposeReconciliation(sb2, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
-  const rec2 = sb2._db.vendor_deposit_reconciliations[0];
-  assert.strictEqual((await df.decideReconciliation(sb2, { reconciliationId: rec2.id, decision: 'reject', actor: 'Ed' })).error, 'note_required');
-  await df.decideReconciliation(sb2, { reconciliationId: rec2.id, decision: 'reject', note: 'wrong event', actor: 'Ed' });
-  assert.strictEqual((await df.approvalGateForInvoice(sb2, 'inv-final', 334250)).reason, 'deposit_reconciliation_rejected');
+// ---------------------------------------------------------------- intake end to end (real commitInvoice, faked deps)
+t('intake: deposit bill books to 1430; completion bill gets proposals and is HELD; nothing paid', async () => {
+  const shared = fakeDb({
+    vendors: [{ id: 'v1', auto_pay_ach: false }],
+    chart_of_accounts: [
+      { id: 'acct-1430', community_id: 'c1', account_number: '1430', account_name: 'Prepaid Vendor Deposits', is_active: true },
+      { id: 'acct-5900', community_id: 'c1', account_number: '5900', account_name: 'Community Events', is_active: true },
+      { id: 'acct-2000', community_id: 'c1', account_number: '2000', account_name: 'Accounts Payable', is_active: true },
+    ],
+    ap_invoices: [], ap_invoice_lines: [], vendor_deposits: [], vendor_deposit_reconciliations: [], vendor_deposit_reconciliation_decisions: [], vendor_deposit_events: [], journal_entries: [],
+  });
+  const posted = [];
+  const mock = (rel, exports) => { const p = require.resolve(path.join('..', 'lib', rel)); require.cache[p] = { id: p, filename: p, loaded: true, exports }; };
+  const sbPath = require.resolve('@supabase/supabase-js');
+  const realSb = require.cache[sbPath];
+  require.cache[sbPath] = { id: sbPath, filename: sbPath, loaded: true, exports: { createClient: () => shared } };
+  mock('ap/invoice_extract', { extractInvoice: async () => ({}) });
+  mock('ap/dedup', { findDuplicates: async () => ({ verdict: 'unique', matches: [] }) });
+  mock('ap/convenience_fee', { getVendorConvenienceFee: async () => ({ cents: 0 }), applyConvenienceFee: () => {} });
+  mock('accounting/gl_classifier', { suggestClassification: async () => ({ account_id: 'acct-5900', confidence: 'high', reason: 'vendor history' }) });
+  mock('ap/decide_path', { decideApprovalPath: async () => ({ approval_path: 'release', approval_path_reason: 'recurring' }) });
+  mock('ap/code_lines', { codeInvoiceLines: async ({ lineItems }) => lineItems.map((l, i) => ({ line_number: i + 1, description: l.description, amount_cents: l.amount_cents, gl_account_id: 'acct-5900', reason: 'line classifier' })) });
+  mock('ap/cutover_review', { preCutoverHold: async () => ({ hold: false }), markPendingReview: async () => {} });
+  mock('accounting/posting', { postJournalEntry: async (e) => { posted.push(e); shared._db.journal_entries.push({ id: `je-${posted.length}`, community_id: e.community_id, status: 'posted' }); return { entry: { id: `je-${posted.length}` } }; } });
+  delete require.cache[require.resolve('../lib/ap/intake')];
+  try {
+    const { commitInvoice } = require('../lib/ap/intake');
+    const dep = await commitInvoice({ vendorId: 'v1', communityId: 'c1', sha256: 'aaa', intakeMethod: 'email', extracted: {
+      invoice_number: '2836', invoice_date: '2026-09-22', total_cents: 334250, vendor_name: 'PRYME THYME KOOKERS', is_deposit_invoice: true, remaining_balance_cents: 334250,
+      terms: '50% Non-Refundable Deposit. Balance due day of set-up', line_items: [{ description: '50% deposit — Burger Combo (500 servings) and Tent Setup', amount_cents: 334250 }] } });
+    assert.strictEqual(dep.outcome, 'loaded', JSON.stringify(dep));
+    assert.strictEqual(shared._db.vendor_deposits.length, 1);
+    assert.strictEqual(shared._db.ap_invoice_lines[0].gl_account_id, 'acct-1430', 'deposit line stays on 1430, not the classifier 5900');
+    assert.strictEqual(posted[0].lines.find((l) => l.debit_cents > 0).account_id, 'acct-1430', 'accrual debits 1430');
 
-  const sb3 = fakeDb(seed(DEP_INV_PAID, { id: 'inv-final', vendor_invoice_number: '2901', total_cents: 99900, tax_cents: 0 }));
-  await df.proposeReconciliation(sb3, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'emma' });
-  const rec3 = sb3._db.vendor_deposit_reconciliations[0];
-  await df.decideReconciliation(sb3, { reconciliationId: rec3.id, decision: 'unrelated', note: 'different job (holiday lights)', actor: 'Ed' });
-  assert.strictEqual((await df.approvalGateForInvoice(sb3, 'inv-final', 99900)).block, false);
-  assert.strictEqual(sb3._db.vendor_deposits[0].status, 'outstanding', 'an unrelated bill leaves the deposit waiting for its real final bill');
-});
-t('final amount needs a person: the proposer cannot decide their own reconciliation; flagged ones need an admin', async () => {
-  const sb = fakeDb(seed(DEP_INV_PAID, { id: 'inv-final', vendor_invoice_number: '2901', total_cents: 367250, tax_cents: 5000 }));
-  await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-final', actor: 'Celina', actorUserId: 'u-celina' });
-  const rec = sb._db.vendor_deposit_reconciliations[0];
-  assert.strictEqual(rec.form, 'revised_total'); assert.strictEqual(rec.needs_review, true);
-  assert.strictEqual((await df.decideReconciliation(sb, { reconciliationId: rec.id, decision: 'approve', actor: 'Celina', actorUserId: 'u-celina', role: 'staff' })).error, 'proposer_cannot_decide');
-  const staff = await df.decideReconciliation(sb, { reconciliationId: rec.id, decision: 'approve', actor: 'Martha', actorUserId: 'u-m', role: 'staff' });
-  assert.ok(staff.blockers.includes('manager_review_required'));
-  assert.ok((await df.decideReconciliation(sb, { reconciliationId: rec.id, decision: 'approve', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' })).ok);
-  noMoneyMoved(sb);
-});
-t('duplicate copy of the deposit bill: reconciled as not payable; approving it keeps the bill blocked', async () => {
-  const sb = fakeDb(seed(DEP_INV_UNPAID, { id: 'inv-copy', vendor_invoice_number: '2836-R', total_cents: 334250, tax_cents: 0, file_sha256: 'aaa' }));
-  await df.proposeReconciliation(sb, { depositId: 'dep-1', invoiceId: 'inv-copy', actor: 'emma' });
-  const rec = sb._db.vendor_deposit_reconciliations[0];
-  assert.strictEqual(rec.form, 'duplicate_or_statement'); assert.strictEqual(rec.net_due_cents, 0);
-  await df.decideReconciliation(sb, { reconciliationId: rec.id, decision: 'approve', actor: 'Ed', actorUserId: 'u-ed', role: 'admin' });
-  assert.strictEqual((await df.approvalGateForInvoice(sb, 'inv-copy', 334250)).reason, 'reconciled_as_duplicate_or_statement');
-  assert.strictEqual(sb._db.vendor_deposits[0].status, 'outstanding');
-  noMoneyMoved(sb);
-});
-t('before migration 471: the approval gate degrades open (no reconciliation tables) and upcoming still lists deposits', async () => {
-  const sb = fakeDb(seed());
-  const orig = sb.from;
-  sb.from = (n) => (n.startsWith('vendor_deposit_') ? { select() { return this; }, eq() { return this; }, in() { return this; }, order() { return this; },
-    then(res) { return res({ data: null, error: { message: 'relation "vendor_deposit_reconciliations" does not exist' } }); } } : orig(n));
-  assert.strictEqual((await df.approvalGateForInvoice(sb, 'x', 1)).block, false);
-  assert.strictEqual((await df.upcomingBalances(sb, {})).length, 1);
+    const fin = await commitInvoice({ vendorId: 'v1', communityId: 'c1', sha256: 'bbb', intakeMethod: 'email', extracted: {
+      invoice_number: '2901', invoice_date: '2026-10-10', total_cents: 334250, vendor_name: 'PRYME THYME KOOKERS', is_deposit_invoice: false,
+      line_items: [{ description: 'Balance — Burger Combo and Tent Setup', amount_cents: 334250 }] } });
+    assert.strictEqual(fin.outcome, 'loaded');
+    const finalRow = shared._db.ap_invoices.find((i) => i.vendor_invoice_number === '2901');
+    assert.strictEqual(finalRow.approval_path, 'manager_review', 'never on the light release path');
+    assert.ok(/APPLY DEPOSIT/.test(finalRow.notes));
+    assert.strictEqual(shared._db.vendor_deposit_reconciliations.length, 1);
+    assert.strictEqual(shared._db.vendor_deposit_reconciliations[0].form, 'balance_only');
+    assert.strictEqual((await df.approvalGateForInvoice(shared, finalRow)).reason, 'deposit_accounting_pending');
+
+    // A second same-amount "deposit" from the same vendor: flagged, NOT a new deposit, held.
+    const second = await commitInvoice({ vendorId: 'v1', communityId: 'c1', sha256: 'ccc', intakeMethod: 'email', extracted: {
+      invoice_number: '2950', invoice_date: '2026-10-11', total_cents: 334250, vendor_name: 'PRYME THYME KOOKERS', is_deposit_invoice: true, remaining_balance_cents: 0,
+      line_items: [{ description: '50% at completion', amount_cents: 334250 }] } });
+    assert.strictEqual(second.outcome, 'loaded');
+    assert.strictEqual(shared._db.vendor_deposits.length, 1, 'not recorded as a second deposit');
+    const secondRow = shared._db.ap_invoices.find((i) => i.vendor_invoice_number === '2950');
+    assert.ok(/DEPOSIT OR COMPLETION/.test(secondRow.notes));
+    assert.strictEqual((await df.approvalGateForInvoice(shared, secondRow)).block, true);
+    noMoneyMoved(shared);
+    assert.strictEqual(shared._db.ap_invoices.length, 3, 'no payable created beyond the three bills received');
+  } finally {
+    if (realSb) require.cache[sbPath] = realSb; else delete require.cache[sbPath];
+    delete require.cache[require.resolve('../lib/ap/intake')];
+  }
 });
 
 (async () => {

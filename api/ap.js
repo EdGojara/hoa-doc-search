@@ -1123,28 +1123,24 @@ router.post('/invoices/:id/approve', express.json(), async (req, res) => {
     const isAdmin = ctx.role === 'admin';
     const notes = (req.body || {}).notes || null;
 
-    const { data: inv } = await supabase.from('ap_invoices').select('id, status, total_cents, posting_journal_entry_id').eq('id', id).maybeSingle();
+    const { data: inv } = await supabase.from('ap_invoices').select('id, status, total_cents, posting_journal_entry_id, vendor_id, community_id').eq('id', id).maybeSingle();
     if (!inv) return res.status(404).json({ error: 'not_found' });
     if (inv.status === 'voided') return res.status(400).json({ error: 'voided', detail: 'This invoice was voided.' });
     if (!inv.posting_journal_entry_id) return res.status(400).json({ error: 'not_coded', detail: 'Code the expense account first — an uncoded bill has no journal entry to approve.' });
-    // A bill reconciled against a vendor DEPOSIT can't be approved or released
-    // until a person decides the reconciliation, and then only at the net due.
-    // This is what stops the full face (or a second deposit) being paid twice.
-    // (Ed 2026-09-28: PRYME THYME #2836.)
+    // HARD deposit hold (Ed 2026-09-28, revised after code review): a bill from a
+    // vendor with an OUTSTANDING deposit in this community can't be approved or
+    // released until each such deposit is resolved for this bill (reviewed
+    // unrelated, or the deposit accounting recorded by an admin after a live
+    // re-check). Driven by the deposits themselves, not by whether a proposal
+    // was written; fails closed.
     try {
-      const { approvalGateForInvoice } = require('../lib/ap/deposit_followup');
-      const gate = await approvalGateForInvoice(supabase, id, inv.total_cents);
+      const { approvalGateForInvoice, HOLD_MESSAGES } = require('../lib/ap/deposit_followup');
+      const gate = await approvalGateForInvoice(supabase, inv);
       if (gate.block) {
-        const detail = {
-          deposit_reconciliation_pending: 'This bill was matched to a vendor deposit. Review the deposit reconciliation (net amount due) before approving.',
-          deposit_reconciliation_rejected: 'The deposit reconciliation for this bill was rejected. Fix the bill and re-run it, or mark the bill unrelated to the deposit.',
-          invoice_total_not_reconciled_net_due: 'The approved deposit reconciliation says a different net amount is due. Adjust the bill to the net due first.',
-          reconciled_as_duplicate_or_statement: 'This document was reconciled as a duplicate or a statement. It is not payable; void it instead.',
-        }[gate.reason] || 'Deposit reconciliation needs attention.';
-        return res.status(409).json({ error: gate.reason, detail, reconciliation_id: gate.reconciliation && gate.reconciliation.id });
+        return res.status(409).json({ error: gate.reason, detail: HOLD_MESSAGES[gate.reason] || 'Held for a vendor deposit.',
+          deposit_id: gate.deposit_id || null, reconciliation_id: gate.reconciliation && gate.reconciliation.id });
       }
     } catch (e) {
-      // Fail closed: if we can't tell whether a deposit applies, don't release.
       console.error('[ap] deposit gate check failed:', e.message);
       return res.status(503).json({ error: 'deposit_gate_unavailable', detail: 'Could not check this bill against vendor deposits. Try again.' });
     }
@@ -1857,8 +1853,8 @@ async function _apActor(req) {
   const { resolveUserRole } = require('./users');
   const ctx = await resolveUserRole(req);
   if (!ctx || !ctx.supabaseUserId) return null;
-  if (ctx.user && ctx.user.is_active === false) return null;
-  return { id: (ctx.user && ctx.user.id) || null, name: (ctx.user && (ctx.user.full_name || ctx.user.email)) || 'staff', role: ctx.role };
+  if (!ctx.user || ctx.user.is_active === false || !ctx.user.id) return null;   // fail closed on missing identity
+  return { id: ctx.user.id, name: (ctx.user && (ctx.user.full_name || ctx.user.email)) || 'staff', role: ctx.role };
 }
 
 // GET /deposits/upcoming?community_id= — the "Upcoming vendor balances" queue.
@@ -1881,7 +1877,7 @@ router.patch('/deposits/:id/followup', express.json(), async (req, res) => {
     if ('agreed_total_cents' in b) fields.agreed_total_cents = b.agreed_total_cents === null || b.agreed_total_cents === '' ? null : Number(b.agreed_total_cents);
     const { setFollowup } = require('../lib/ap/deposit_followup');
     const out = await setFollowup(supabase, { depositId: req.params.id, fields, actor: actor.name, actorUserId: actor.id });
-    if (out.error) return res.status(out.error === 'not_found' ? 404 : 400).json(out);
+    if (out.error) return res.status(out.error === 'deposit_not_found' ? 404 : out.error === 'identity_required' ? 401 : 400).json(out);
     res.json(out);
   } catch (err) { console.error('[ap] deposit follow-up failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
@@ -1900,7 +1896,10 @@ router.post('/deposits/:id/reconcile', express.json(), async (req, res) => {
   } catch (err) { console.error('[ap] deposit reconcile failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
-// POST /deposit-reconciliations/:id/decide { decision: approve|reject|unrelated, note }
+// POST /deposit-reconciliations/:id/decide
+//   { decision: confirmed_match | reject | unrelated (admin) | duplicate_confirmed |
+//               manual_accounting_recorded (admin; accounting_je_reference), note }
+// None of these pay, change an AP amount or post a journal entry.
 router.post('/deposit-reconciliations/:id/decide', express.json(), async (req, res) => {
   try {
     const actor = await _apActor(req);
@@ -1908,9 +1907,12 @@ router.post('/deposit-reconciliations/:id/decide', express.json(), async (req, r
     const { decideReconciliation } = require('../lib/ap/deposit_followup');
     const out = await decideReconciliation(supabase, {
       reconciliationId: req.params.id, decision: (req.body || {}).decision, note: (req.body || {}).note || null,
-      actor: actor.name, actorUserId: actor.id, role: actor.role,
+      actor: actor.name, actorUserId: actor.id, role: actor.role, accountingJeRef: (req.body || {}).accounting_je_reference || null,
     });
-    if (out.error) return res.status(out.error === 'not_found' ? 404 : out.error === 'already_decided' ? 409 : 400).json(out);
+    if (out.error) {
+      const code = { not_found: 404, already_decided: 409, superseded: 409, stale_reconciliation: 409, identity_required: 401, admin_required: 403, proposer_cannot_decide: 403 }[out.error] || 400;
+      return res.status(code).json(out);
+    }
     res.json(out);
   } catch (err) { console.error('[ap] deposit decision failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });

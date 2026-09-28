@@ -1,6 +1,6 @@
 {
   "migration": "471_vendor_deposit_followups.sql",
-  "summary": "Vendor deposit follow-up: due date, event date and agreed total (with basis) on vendor_deposits, plus an append-only reconciliation ledger (proposals, one decision each, events). Proposal records only; nothing pays or changes an AP amount. Creates no data.",
+  "summary": "Vendor deposit follow-up (narrow slice): due date, event date and agreed total (with basis) on vendor_deposits; an append-only reconciliation ledger (proposals, decisions, events); and three functions that make every follow-up edit, proposal and decision atomic with its audit event. Never pays, changes an AP amount, a journal entry or a deposit's status. Creates no data.",
   "requires": [
     "321_vendor_projects.sql",
     "364_vendor_deposits.sql"
@@ -20,12 +20,18 @@
       "name": "follow-up columns not added yet",
       "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'vendor_deposits' AND column_name IN ('balance_due_date', 'agreed_total_cents')",
       "expect": 0
+    },
+    {
+      "name": "journal_entries has status and community_id (manual-accounting check)",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'journal_entries' AND column_name IN ('status', 'community_id')",
+      "expect": 2
     }
   ],
   "expected_changes": [
-    "Adds follow-up columns to vendor_deposits: event_date, balance_due_date (+ basis), agreed_total_cents (+ basis; an estimate unless quote/contract), project_id. Existing rows keep NULLs; no row changes.",
-    "Creates empty append-only tables vendor_deposit_reconciliations, vendor_deposit_reconciliation_decisions (one decision per reconciliation: approve, reject, unrelated) and vendor_deposit_events.",
-    "Service role may SELECT and INSERT on the new ledger tables only. No payment, payable, AP amount or journal entry is created or changed."
+    "Adds follow-up columns to vendor_deposits: event_date, balance_due_date (+ basis), agreed_total_cents (+ required basis; an estimate unless quote/contract), project_id. Existing rows keep NULLs; no row changes.",
+    "Creates empty append-only tables vendor_deposit_reconciliations, vendor_deposit_reconciliation_decisions and vendor_deposit_events.",
+    "Creates vendor_deposit_set_followup, vendor_deposit_propose and vendor_deposit_decide (SECURITY DEFINER, EXECUTE for service_role only): each writes its change and audit event in one transaction with row locks.",
+    "Revokes UPDATE/DELETE on vendor_deposits from service_role/authenticated/anon (follow-up edits only through the audited function); service_role keeps SELECT/INSERT. No payment, payable, AP amount or journal entry is created or changed."
   ],
   "objects": {
     "added": [
@@ -36,13 +42,17 @@
       "column:vendor_deposit_events.detail",
       "column:vendor_deposit_events.event_type",
       "column:vendor_deposit_events.id",
+      "column:vendor_deposit_reconciliation_decisions.accounting_je_id",
       "column:vendor_deposit_reconciliation_decisions.created_at",
       "column:vendor_deposit_reconciliation_decisions.decided_by_name",
+      "column:vendor_deposit_reconciliation_decisions.decided_by_role",
       "column:vendor_deposit_reconciliation_decisions.decided_by_user_id",
       "column:vendor_deposit_reconciliation_decisions.decision",
       "column:vendor_deposit_reconciliation_decisions.id",
       "column:vendor_deposit_reconciliation_decisions.note",
       "column:vendor_deposit_reconciliation_decisions.reconciliation_id",
+      "column:vendor_deposit_reconciliation_decisions.verified_deposit_paid_cents",
+      "column:vendor_deposit_reconciliation_decisions.verified_invoice_total_cents",
       "column:vendor_deposit_reconciliations.agreed_total_basis",
       "column:vendor_deposit_reconciliations.agreed_total_cents",
       "column:vendor_deposit_reconciliations.community_id",
@@ -78,10 +88,11 @@
       "constraint:vendor_deposit_events.vendor_deposit_events_deposit_id_fkey",
       "constraint:vendor_deposit_events.vendor_deposit_events_event_type_check",
       "constraint:vendor_deposit_events.vendor_deposit_events_pkey",
+      "constraint:vendor_deposit_reconciliation_decisions.vdrd_manual_accounting_evidence",
+      "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_accounting_je_id_fkey",
       "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_decision_check",
       "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_pkey",
       "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_reconciliation_id_fkey",
-      "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_reconciliation_id_key",
       "constraint:vendor_deposit_reconciliations.vendor_deposit_reconciliations_community_id_fkey",
       "constraint:vendor_deposit_reconciliations.vendor_deposit_reconciliations_deposit_id_fkey",
       "constraint:vendor_deposit_reconciliations.vendor_deposit_reconciliations_form_check",
@@ -91,16 +102,21 @@
       "constraint:vendor_deposit_reconciliations.vendor_deposit_reconciliations_vendor_id_fkey",
       "constraint:vendor_deposits.vendor_deposits_agreed_total_basis_check",
       "constraint:vendor_deposits.vendor_deposits_agreed_total_cents_check",
+      "constraint:vendor_deposits.vendor_deposits_agreed_total_needs_basis",
       "constraint:vendor_deposits.vendor_deposits_balance_due_basis_check",
       "constraint:vendor_deposits.vendor_deposits_project_id_fkey",
+      "function:vendor_deposit_decide",
       "function:vendor_deposit_ledger_append_only",
+      "function:vendor_deposit_propose",
+      "function:vendor_deposit_set_followup",
       "index:idx_vde_deposit",
       "index:idx_vdr_deposit",
       "index:idx_vdr_invoice",
       "index:idx_vendor_deposits_due",
+      "index:uq_vdrd_one_confirm",
+      "index:uq_vdrd_one_terminal",
       "index:vendor_deposit_events_pkey",
       "index:vendor_deposit_reconciliation_decisions_pkey",
-      "index:vendor_deposit_reconciliation_decisions_reconciliation_id_key",
       "index:vendor_deposit_reconciliations_pkey",
       "table:vendor_deposit_events",
       "table:vendor_deposit_reconciliation_decisions",
@@ -147,8 +163,13 @@
       "expect": 3
     },
     {
-      "name": "deposit paid + still owed = billed enforced",
-      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'vendor_deposit_reconciliations_paid_check'",
+      "name": "the three audited functions exist",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname IN ('vendor_deposit_set_followup', 'vendor_deposit_propose', 'vendor_deposit_decide')",
+      "expect": 3
+    },
+    {
+      "name": "one terminal decision per reconciliation enforced",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_vdrd_one_terminal'",
       "expect": 1
     }
   ],

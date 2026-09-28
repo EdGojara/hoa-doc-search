@@ -4,7 +4,83 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): AP deposit follow-up for Emma (PRYME THYME KOOKERS #2836) on feat/ap-deposit-followup (migration 471 PROPOSED; NOT merged/deployed)
+## 2026-09-28 (latest): AP deposit follow-up, REVISED narrow slice after ChatGPT code review (feat/ap-deposit-followup; migration 471 PROPOSED; NOT merged/deployed)
+
+**Why revised.** ChatGPT's code review of `7a4e2d09` (Issue #1, 16:08 UTC) found six blocking gaps:
+1. the accounting path was incomplete;
+2. the obligation vanished on approval;
+3. the gate could be bypassed;
+4. decisions weren't atomic or current;
+5. the duplicate/statement lifecycle was left open;
+6. audit and authorization were weak.
+
+All six are addressed by narrowing the slice. **Emma CANNOT release a deposit-consuming bill in this slice.** Nothing changes an AP amount, a journal entry or a deposit's status, and nothing pays.
+
+**What the slice does now.**
+- **Obligation tracking** (`upcomingBalances`). Each outstanding deposit shows:
+  - due date, estimate label and source documents (the invoice file plus `ap_invoice_documents`);
+  - an obligation state: `waiting_for_final_bill` → `final_bill_held` → `final_bill_accounted_awaiting_payment` → `final_bill_paid`.
+  - **The item stays listed until the final bill is actually PAID.** Reconciling never clears it, and `vendor_deposits.status` is never changed here.
+- **Hard hold** (`approvalGateForInvoice`, used by approve/release). A bill whose vendor + community has an OUTSTANDING deposit (other than the one the bill itself created) is held until EACH such deposit is resolved for this bill, by the newest proposal's terminal decision:
+  - `unrelated` (admin only, with a note): released;
+  - `manual_accounting_recorded` (admin only): released while the bill total stays at the verified amount;
+  - anything else, including no proposal or multiple deposits: held.
+  - **Fails closed:** `deposit_check_unavailable` if the 471 ledger is absent. It is driven by the deposits themselves, so a skipped or failed proposal can't let a bill through.
+- **Atomic, audited writes.** Migration 471 now adds three `SECURITY DEFINER` functions (EXECUTE for service_role only). Each takes row locks, runs its checks, and writes its change plus its audit event in ONE transaction, or nothing:
+  - `vendor_deposit_set_followup`;
+  - `vendor_deposit_propose`;
+  - `vendor_deposit_decide`: requires identity (non-null user); the proposer can't decide; a state machine allows at most one `confirmed_match` and one terminal decision (`reject` / `unrelated` / `duplicate_confirmed` / `manual_accounting_recorded`); superseded proposals can't be decided.
+  - For `manual_accounting_recorded` it requires, under lock: an admin; a payable form; net > 0; the bill's live total = the net; the deposit invoice's live paid amount = the recomputed snapshot (else `stale_reconciliation`); a POSTED adjusting JE in this community; and no other bill already applied to the deposit.
+  - UPDATE/DELETE on `vendor_deposits` is revoked, so edits only go through the audited function.
+  - The JS layer also re-evaluates live data first, and refuses a full-face bill or a non-positive net before anything is written.
+- **Duplicate or statement:** `duplicate_confirmed` keeps the bill HELD with "void it". The existing void reverses the accrual, so it is never treated as not-payable while its AP row and JE are still open.
+- **Statement inference removed from the deposit path.** `lib/ap/statement_lines.js` counts any negative "deposit" line as a Vantaca prior payment, which would have turned a genuine "full total less deposit" bill into a non-payable statement. In the deposit context, "statement" is now a person's call. (Tested.)
+- **Intake** proposes against EACH open deposit. Kept from before: deposit lines stay on 1430; a deposit-looking bill from a vendor with an open deposit isn't recorded as a new deposit; the bill routes to manager_review.
+- **UI:** a red "⛔ Held: Emma cannot release this bill" banner and source documents on the reconciliation view. Buttons: Confirm match, Reject, Duplicate/statement, and (admin) Not related and Record manual deposit accounting (which asks for the JE reference). The queue shows the obligation state and document count.
+
+**Deposit accounting design** (NOT implemented; the next, separately gated step). D = deposit billed, B = balance, T = D + B.
+
+| Deposit booked as | Final bill form | Correct result | What today's intake posts | Adjusting entry |
+|---|---|---|---|---|
+| **Prepaid 1430** (intended; deposit Dr 1430 / Cr AP, paid Dr AP / Cr Cash) | Balance only (face B) | Dr Expense T, Cr 1430 D, Cr AP B | Dr Expense B / Cr AP B | **Dr Expense D / Cr 1430 D**; AP unchanged |
+| Prepaid 1430 | Full total with credit line −D | Same | If the credit line is coded 1430: correct as posted. If coded to expense: Dr Exp T, Cr Exp D, Cr AP B | Credit coded 1430: none. Coded to expense: **Dr Expense D / Cr 1430 D** |
+| Prepaid 1430 | Full total T, no credit | Same, payable B | Dr Expense T / Cr AP T | **Dr AP D / Cr 1430 D**, AND the AP bill must drop from T to B (add a −D line coded 1430). This is an AP amount change, so it belongs to the gated step. |
+| **Expensed** (the 4 live rows; deposit Dr Expense / Cr AP) | Balance only | Total expense T, AP B | Dr Expense B / Cr AP B | None (optionally reclass to the project) |
+| Expensed | Full total with credit line −D | Same | Credit coded to expense: correct. Coded 1430: Cr 1430 D (a wrong negative prepaid) | Coded 1430: **Dr 1430 D / Cr Expense D** |
+| Expensed | Full total T, no credit | Payable B | Dr Expense T / Cr AP T | **Dr AP D / Cr Expense D**, AND the bill drops from T to B |
+
+- **Unpaid deposit:** the same entries apply. The deposit bill's AP D stays open on its own bill, so AP totals D + B = T and the total is paid once.
+- **Revised total T′:** expense T′; the variance is reviewed.
+- **Net ≤ 0:** a vendor credit to collect (`vendor_credits_expected`), never a payable.
+- **Converting the 4 live expensed deposits to prepaid now** would be Dr 1430 D / Cr Expense D, then relieved at completion as in the prepaid rows. That is Ed's decision, and it is a production GL write.
+- **Until the automated step exists:** Ed posts the adjusting JE by hand (and nets the bill to B where needed, via void and re-enter), then records `manual_accounting_recorded` with the JE reference. The function re-checks everything under lock.
+
+**Tests (revised).**
+- `test_ap_deposit_followup` **22/22**, including:
+  - the hold with no proposal;
+  - the hold failing CLOSED without 471;
+  - confirmed/pending, reject and duplicate all staying held;
+  - admin unrelated releasing, with multiple deposits each needing resolution;
+  - manual accounting: identity, admin, JE, stale re-check, the full-face bill refused, net ≤ 0 refused, released only after it, and re-held if the bill changes;
+  - the obligation staying listed until PAID;
+  - follow-up only via the audited function;
+  - a "full total less deposit" bill NOT mistaken for a statement;
+  - the real `commitInvoice` intake end to end (deposit line and JE on 1430 → completion bill proposal plus hold → a second same-amount "deposit" not recorded, and held), with nothing paid.
+- `471_deposit_followups_rehearsal` **39/39**:
+  - every function refusal, and that each refused call writes nothing;
+  - the one-terminal and one-confirm limits, supersession, and one applied bill per deposit;
+  - as the service role: direct UPDATE denied, direct ledger INSERT denied, and the function working;
+  - append-only tables, grants and EXECUTE grants;
+  - apply_one end to end (89 objects).
+- **Sabotage:** removing the candidate hold, failing open, allowing a face-amount release, removing the stale check, or not revoking UPDATE each fails tests.
+- **Full suite:** 123/128, the same 5 pre-existing failures.
+- **Bug caught by the rehearsal and fixed:** `jsonb_populate_record` bypasses column defaults.
+
+**Still needs Ed (unchanged; separate approvals).** Migration 471 approval; PRYME follow-up data; the reclass decision for the 4 expensed deposits; review of Texas Access Works 03-091426-001. **New:** approve building the gated accounting step per the table above.
+
+---
+
+## 2026-09-28: AP deposit follow-up for Emma (PRYME THYME KOOKERS #2836), first cut (superseded by the revision above)
 
 **Task.** ChatGPT's "AP DEPOSIT FOLLOW-UP FOR EMMA" (Issue #1, 15:34 UTC), plus Ed's clarification on the four final-invoice forms (15:37 UTC). The model and approach were reported first in Issue #1 (#issuecomment-5873477749).
 
