@@ -1,7 +1,8 @@
-# Violations Drive Capture and Post-Drive Escalation: Assessment (rev 2)
+# Violations Drive Capture and Post-Drive Escalation: Assessment (rev 3)
 
 **Status:** assessment only. No code, migration, deploy, letter sent, violation status changed, or production write. The production checks below were read-only (aggregate counts only; no PII).
 **Requested by:** Ed via ChatGPT "PRIORITY SHIFT" instruction, GitHub Issue #1 (2026-09-28 14:34 UTC).
+**Revision 3:** adds a mandatory, objective coverage gate (section 5.3) and separates the certified clock's meaning into its own decision (section 5.8), per ChatGPT's review of `4b4c73ef`.
 **Revision 2:** applies Ed's operating rule (Issue #1, 2026-09-28 14:35 UTC) per ChatGPT's review of `1a4e5bf9`. The change log is at the end.
 **Kept separate from:** employee timekeeping (paused, branch untouched) and payment work.
 **Branch:** `docs/drv-capture-escalation-assessment` (docs only, cut from `main`).
@@ -259,7 +260,7 @@ Miranda Pierce is the AI "Compliance / DRV" email persona:
    - upload queue drained;
    - every photo linked and AI-analyzed;
    - every observation at in-scope properties reviewed.
-2. **The property was in the drive's declared scope** (section 5.3).
+2. **The property was covered:** it is in the drive's declared scope, **and** either it was photographed on this drive, or the drive's GPS route objectively passed it (the **completion gate**, section 5.3). Tapping End Drive never makes an uncovered property count as inspected.
 3. **There is no unresolved exception at that property** (section 5.5). Exceptions block only the affected property, never the whole community, and are never the default for an ordinary no-photo case.
 4. **The case is eligible:** open, non-certified, opened before this drive started, and not in an excluded class (section 5.4).
 
@@ -297,11 +298,34 @@ The inspector picks a scope when starting the drive. Default: **full community**
 | **Section** | Pick saved sections (street list or drawn polygon, stored per community) | Properties in those sections |
 | **Spot list** | A list (e.g. certified re-checks, a complaint list) | Exactly those properties |
 
-**Route check** (a configurable safety net, for Ed to decide on):
-- For full-community and section scopes, a property in scope that the **paged** GPS track never came within X m of is flagged **route did not pass**. That is an exception for that property only.
-- This catches a street that was skipped without anyone tapping anything.
-- It depends on fixing D1 and D2.
-- If Ed prefers pure declared scope, the check can be turned off per community.
+**Coverage and completion gate** (mandatory for every drive that can auto-resolve; no per-property or per-issue taps):
+- **A property is `covered` on this drive** if either:
+  - (a) **Photo:** it has a linked photo from this drive. It is deemed visited by its photo, **even if GPS failed.**
+  - (b) **GPS pass:** at least one accepted ping from this drive lies within **D metres** of the property's location (`properties.latitude/longitude`, cluster-validated).
+    - Pings come from the **fully paged** route (`inspection_route_traces`; requires D1 and D2).
+    - Accepted pings have `accuracy_m` ≤ A.
+    - D and A are policy values; the suggested defaults are D = 50 m (the existing coverage default) and A = 50 m.
+- **Only covered, in-scope properties are eligible for auto-RESOLVE.**
+  - An in-scope property that is **not covered** gets **no resolution and no per-issue flag**.
+  - Its ordinary cases simply stay open and carry forward to the next drive.
+  - It appears once, as a line in the drive's **coverage gaps** list (grouped by street).
+- **Route interruptions:**
+  - Gaps in the ping stream (more than T seconds, or a jump of more than J metres between consecutive accepted pings) are **not interpolated**.
+  - Properties along a gap are covered only by photo or by other pings.
+  - So a half-driven community resolves only the half actually driven.
+- **Drive-level completion summary**, shown before any resolution applies:
+  - in-scope count; covered by photo; covered by GPS; not covered;
+  - coverage %;
+  - GPS quality (ping count, gaps, median accuracy).
+- **When coverage of a full-community or section drive is below a threshold C** (policy, e.g. 90%), the reviewer must do one of these before resolutions apply. Both are drive-level choices, not per-property taps:
+  - (i) **narrow the scope** to the sections actually driven (the map suggests the sections whose properties are mostly covered), or
+  - (ii) **accept as partial**: covered properties resolve normally, and the uncovered ones carry forward.
+- **GPS unavailable for the whole drive** (permission denied, device failure):
+  - Photographed properties are covered by photo, and their ordinary cases without a matching photo resolve.
+  - **Properties with no photo are not covered, so they don't resolve.**
+  - Optional (Ed's decision; off by default): a reviewer may record a **street-level coverage attestation** for the drive ("drove Oak Bend and Elm Ct; GPS failed"), with a reason. It is audited and needs a second person. It is still drive-level, never per-issue.
+- **Spot-list scopes** use the same rule: each listed property must be covered by photo or GPS.
+- **Stored per drive:** `drive_property_coverage` (property, `method` = photo, gps, attested or none, `min_distance_m`, `ping_count`, gap flags). Every resolution event cites its property's coverage record.
 
 **A property outside the declared scope** is simply not part of the drive. Its cases aren't resolved and aren't flagged; they wait for a drive whose scope includes them.
 
@@ -346,7 +370,7 @@ A photo of a *different* issue at the same property doesn't block RESOLVE for th
   - two open cases that could match one photo;
   - duplicate-photo flag;
   - photo linked to a different house by the reviewer.
-- **Route did not pass** the property (if enabled; section 5.3).
+- **Not covered:** no photo and no qualifying GPS pass (section 5.3). The property's ordinary cases carry forward. This is a single coverage-gap line per property, not a per-violation exception.
 - **Drive auto-closed** (`ended_at_quality = auto_stale`) or otherwise not ended by a user: the drive is **not eligible** for auto-RESOLVE until a person confirms it was completed.
 
 Each exception names its reason. Clearing it (linking the photo, reviewing the observation, confirming the drive) re-runs reconciliation for that property.
@@ -378,7 +402,7 @@ Mailing still never changes the stage.
 ### 5.7 Audit and reversibility
 **`violation_resolution_events`** (immutable), written for every automatic or approved resolution:
 - `violation_id`, `inspection_id` (the completed drive), `drive_scope_id`, `property_id`;
-- `evidence`: `{no_matching_photo: true, photos_at_property: N, property_in_scope: true, route_passed: true|null, exceptions: []}`;
+- `evidence`: `{no_matching_photo: true, photos_at_property: N, property_in_scope: true, coverage: {method: photo|gps|attested, min_distance_m, ping_count}, exceptions: []}`;
 - `policy_version`, `rule` (`completed_drive_no_photo`);
 - `prior_stage`, `prior_stage_started_at`, `prior_cure_period_ends_at`;
 - `actor` (`system` + the approving user for option B, or `system` for option A).
@@ -411,12 +435,14 @@ Mailing still never changes the stage.
    - Matching photo: continuation plus a `violation_field_checks` `not_cured` record written automatically from the photo, as evidence for the board-only "not cured as of" report.
    - No photo: no change.
 4. **Resolution:** **manual only**, by an office user with a reason (and a photo if Ed requires one). It uses the one unified resolve endpoint (fixes D12).
-5. **Window expiry** (day 180 from `certified_notice_date`): **open questions for Ed and counsel; the code has no behavior today:**
+5. **Start date going forward:** unify on the **actual postmark** for newly mailed certified notices (set at lock-and-batch and record-mailing). Existing dates are **not** rewritten. Undated carryovers stay "needs dating" until staff enter the real date.
+6. **No automatic expiry or closure.** The 64 open cases dated more than 180 days ago, and every other certified case, stay open until a person acts. The 180-day certified window and the separate **183-day repeat-violation look-back** (`detectRecurrence`) are **different rules** and are never merged.
+7. **Window expiry, the operational meaning** (a separate decision for Ed and counsel; the code has no behavior today):
    - What happens at expiry? The options noted in code comments are "recertify / refer", i.e. send a new certified notice, refer to the attorney, or board review. Who decides, and is there a deadline?
    - Does the clock ever restart without a new certified notice, for example after a hearing or a board action?
    - What does the "six-month clock" govern legally, versus Bedrock's operating practice (Ed: "certified letters are good for 180 days", `vantaca_reconcile.js:4-6`)? [VERIFY]
    - How are certified cases handled after an ownership change? [VERIFY]
-6. **Work list:** the existing "Certified §209 cases" view (enforcement around 11256, 11505-11591) becomes the single certified queue, sorted by days remaining, with expired and undated cases at the top.
+8. **Work list:** the existing "Certified §209 cases" view (enforcement around 11256, 11505-11591) becomes the single certified queue, sorted by days remaining, with expired and undated cases at the top.
 
 ### 5.9 Data model (minimal, all new, immutable where marked)
 - `drive_scopes` (with a property snapshot).
@@ -426,7 +452,7 @@ Mailing still never changes the stage.
 - `reconciliation_decisions` (immutable; one per proposal; a second approval row for gated stages).
 - `violation_resolution_events` and `violation_stage_events` (immutable).
 - `observation_case_links`.
-- `community_enforcement_policy_versions`: the ladder, cure days per stage, gates, the recurrence rule, the auto-resolve settings (apply timing A or B, route check on or off, self-help and carryover inclusion), and the certified window.
+- `community_enforcement_policy_versions`: the ladder, cure days per stage, gates, the recurrence rule, the auto-resolve settings (apply timing A or B, coverage-gate values D/A/T/J/C and attestation allowed, self-help and carryover inclusion), and the certified window.
 - **Record ownership:** `association_record` for enforcement evidence, decisions and events. AI proposal internals are workpaper [confirm with Ed].
 
 ---
@@ -454,12 +480,16 @@ certified_209 (certified_notice_date = postmark)
 
 ## 7. Edge cases
 - **Inspector forgets to select a house:** the photo is unlinked, which is an exception for the nearby properties until it's linked. There is no GPS fallback until D15 is fixed.
-- **The condition was present but the inspector didn't photograph it:** the case auto-resolves under Ed's rule. The reversal path (5.7) covers it when a later drive finds it. The route check narrows the "street skipped" variant.
+- **The condition was present but the inspector didn't photograph it:** the case auto-resolves under Ed's rule. The reversal path (5.7) covers it when a later drive finds it. The mandatory coverage gate prevents the "street skipped" variant: a street the route never passed stays uncovered and nothing on it resolves.
 - **Photo of a different issue at the same house:** it doesn't block RESOLVE of the prior case. It becomes a NEW proposal.
 - **AI labels the same condition differently:** a confirmed alias counts as a match. An unconfirmed alias or low confidence is an exception for that case.
 - **A case opened on this drive:** excluded (the 2-day gap).
 - **A drive started, then the tablet died, and the stale job closed it:** not eligible for auto-RESOLVE until a person confirms the drive was completed.
 - **Offline photos uploaded after "End drive":** the drive can't complete until the queue is drained, which the device reports. Late photos re-run reconciliation for their property.
+- **GPS off for the whole drive:** only photographed properties are covered, so no-photo cases elsewhere carry forward (unless Ed enables the audited street-level attestation).
+- **GPS drops mid-drive:** properties along the gap aren't covered unless photographed. The coverage summary shows the gap.
+- **Team ends after half the streets:** the uncovered half carries forward. Below threshold C, the reviewer narrows the scope or accepts the drive as partial before anything resolves.
+- **Poor GPS accuracy** (urban canyon, tree cover): pings with accuracy worse than A are ignored, so affected properties are covered only by photo.
 - **Two drives in one community on the same day,** with different sections: each reconciles its own scope. Overlapping scopes: a matching photo from either drive counts, so RESOLVE waits until both are complete.
 - **Owner changed since the notice:** the case still resolves on no photo under Ed's rule. Escalation on a new owner goes to NEEDS_REVIEW [VERIFY].
 - **Resolved case with an unmailed draft:** the draft is dropped. A resolved case with a letter mailed earlier keeps it in its history.
@@ -472,7 +502,7 @@ certified_209 (certified_notice_date = postmark)
 | Phase | Scope | Gate |
 |---|---|---|
 | **0. Fix confirmed defects** | Fix these first: D1 (route-trace updates `last_ping_at`; `ended_at_quality`); D2 (paged coverage); D4; D5; D6; D7; D13 (reviewer and actor on confirm and reject). Keep the cure-lapse job **off** (D9). Set `certified_notice_date` at mailing, and one certified clock source | Small separate approvals; migrations via the owner panel |
-| **1. Scope and visits** | `drive_scopes` (full, section, spot), automatic property visits, End-drive queue check, service-worker shell; remove Advance, Reduce, Add prior and Mark cured from the field modal (office-only) | Ed approves |
+| **1. Scope and visits** | `drive_scopes` (full, section, spot), **coverage gate (`drive_property_coverage`)**, automatic property visits, End-drive queue check, service-worker shell; remove Advance, Reduce, Add prior and Mark cured from the field modal (office-only) | Ed approves |
 | **2. History and policy** | `violation_stage_events` from all paths; resolution events plus reversal; `community_enforcement_policy_versions` seeded from the current hard-coded ladder, with no behavior change; alias-aware index and counts (D8) | Rehearsal plus a production read-only diff |
 | **3. Reconciliation (shadow)** | The engine runs after each drive and **only displays** proposals, including RESOLVE, next to what staff actually do | 2 to 4 weeks comparing proposals with actual staff actions |
 | **4. Apply** | RESOLVE applied per Ed's choice (A or B), with reversal; ESCALATE and NEW through review; second approver for certified, fine and self-help; drafts from approved proposals; GLOBAL_RULES §209 injection (D11) | Counsel review of notice content and gates |
@@ -489,11 +519,20 @@ certified_209 (certified_notice_date = postmark)
   - a different-issue photo doesn't block RESOLVE;
   - a case opened on this drive is excluded;
   - self-help and carryover cases follow the configured inclusion;
-  - an unlinked photo, pending AI, an unreviewed observation, an ambiguous alias, a duplicate flag, or the route not passing each block **only that property**;
+  - an unlinked photo, pending AI, an unreviewed observation, an ambiguous alias, a duplicate flag, each block **only that property**; an uncovered property carries forward;
   - an out-of-scope property is untouched;
   - an `auto_stale` drive is ineligible;
   - the policy version is recorded;
   - there is **no default UNCERTAIN** for ordinary no-photo cases.
+- **Coverage gate:**
+  - photo gives covered even with zero pings;
+  - GPS pass within D with accuracy ≤ A gives covered;
+  - a ping gap is not interpolated;
+  - an uncovered in-scope property never resolves;
+  - a half-route fixture resolves only the covered half;
+  - below C, resolution is blocked until the scope is narrowed or the drive accepted as partial;
+  - GPS-off drive: only photographed properties resolve;
+  - the 5,000-ping fixture is fully paged.
 - **Reversal:**
   - a reversed resolution restores the prior stage, stage start and cure dates;
   - the original event is kept;
@@ -501,7 +540,7 @@ certified_209 (certified_notice_date = postmark)
 - **Scope and coverage:**
   - property snapshot at drive start;
   - section and spot scopes;
-  - the route check with a 5,000-ping fixture (paged).
+  - the coverage gate with a 5,000-ping fixture (paged).
 - **Certified clock:**
   - every surface reads `certified_notice_date`;
   - undated shows "needs dating";
@@ -523,12 +562,12 @@ certified_209 (certified_notice_date = postmark)
 
 **Ed:**
 1. When ordinary RESOLVEs apply: **(A) automatically at drive completion**, or **(B) at batch approval** with one click (5.6).
-2. The route-did-not-pass safety net: on or off, and the distance.
+2. Coverage-gate values: pass distance D, ping accuracy A, gap limits T and J, and the full-scope threshold C. Also whether the audited street-level attestation is allowed when GPS fails. (The gate itself is mandatory.)
 3. Drive scopes: full community by default, plus sections and spot lists; who defines sections.
 4. Whether self-help / 10-day categories follow the ordinary rule or the certified rule.
 5. Whether Vantaca-carryover courtesy cases follow the ordinary rule.
 6. What happens when a resolved condition is photographed again: the default suggestion (reverse vs. NEW) by elapsed time.
-7. Certified: a photo required on manual resolution? Expiry handling at day 180 (recertify, refer, or board)? Any clock restart?
+7. Certified: a photo required on manual resolution? **Separately, the operational meaning of the 180-day window** (what happens at expiry; any restart), decided with counsel. No automatic expiry or closure in any case.
 8. Moving Advance, Reduce, Add prior and Mark cured to office-only.
 9. The second approver for certified, fine and self-help.
 10. Record-ownership split for AI proposal internals.
@@ -549,6 +588,13 @@ certified_209 (certified_notice_date = postmark)
 ---
 
 ## Change log
+**rev 3 (2026-09-28):** ChatGPT review of `4b4c73ef`.
+- The mandatory coverage and completion gate: a property is covered by a photo on this drive, or by a fully paged GPS pass within D metres at accuracy ≤ A.
+- Route gaps are not interpolated. Uncovered in-scope properties carry forward, without resolution or per-issue flags.
+- Below the full-scope threshold C, the reviewer narrows the scope or accepts the drive as partial.
+- GPS-off drives resolve only photographed properties; an optional audited street-level attestation is an Ed decision.
+- Certified: the start date is unified on the actual postmark for new mail only. No automatic expiry or closure of the 64 older cases. The 180-day window and the 183-day repeat look-back are kept distinct. The window's operational meaning is a separate Ed and counsel decision.
+
 **rev 2 (2026-09-28):** ChatGPT review of `1a4e5bf9`, applying Ed's correction (Issue #1, 14:35 UTC).
 - Removed per-issue "Still there / Not present" taps, the positive-absence requirement, the blanket UNCERTAIN default, and "RESOLVE only with check".
 - Ordinary non-certified cases with no matching photo on a completed, in-scope drive are **auto-proposed RESOLVE**. Apply timing (A or B) is Ed's decision.

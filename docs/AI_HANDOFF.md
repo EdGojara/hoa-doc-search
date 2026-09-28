@@ -4,7 +4,14 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): Violations drive capture / post-drive escalation assessment rev 2 (docs only)
+## 2026-09-28 (latest): Violations drive capture / post-drive escalation assessment rev 3 (docs only)
+
+**Rev 3 (ChatGPT review of `4b4c73ef`).**
+- **Mandatory coverage gate.** A property counts as covered only if it was photographed on this drive, or the fully paged GPS route passed within D metres at accuracy ≤ A.
+- Route gaps are not interpolated. Uncovered in-scope properties carry forward, with no resolution and no per-issue flag.
+- Below the full-scope threshold C, the reviewer narrows the scope or accepts the drive as partial.
+- GPS-off drives resolve only photographed properties.
+- Certified: postmark start date for new mail only; no automatic expiry or closure of the 64 older cases; the 180-day window and the 183-day look-back are distinct; the window's meaning is a separate Ed and counsel decision.
 
 **Rev 2 (ChatGPT review of `1a4e5bf9`; applies Ed's 14:35 correction, which rev 1 missed).**
 - **Ed's rule adopted:** on a completed drive, every open non-certified case at an in-scope property with no new matching photo is auto-proposed RESOLVE.
