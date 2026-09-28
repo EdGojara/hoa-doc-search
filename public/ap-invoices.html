@@ -195,6 +195,7 @@ function excReimbRow(x,commOpts){
     </div>
     <div class="note" style="font-size:11.5px;color:#64748b;margin:3px 0 4px;">Receipt total ${fig(rb.receipt_total_cents)} (supporting document, not the amount owed) · receipt allocation ${fig(rb.allocation_cents)}${rb.allocation_note?' ('+escapeHtml(rb.allocation_note)+')':''} · ${x.storage_path?`<a href="javascript:void(0)" onclick="openExcFile('${x.id}')" style="color:#0B1D34;font-weight:600;">📄 view the receipt</a>`:'<span style="color:#b91c1c;">no PDF on file</span>'}</div>
     ${x.notes?`<div style="font-size:12px;color:#92400e;margin:0 0 8px;">${escapeHtml(x.notes)}</div>`:''}
+    ${excAddrLine(rb)}
     <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
       <select id="exc-rcomm-${x.id}" onchange="excReimbAccounts('${x.id}')" style="font-size:12px;padding:3px 6px;"><option value="">— community —</option>${sel(commOpts,x.community_id||rb.community_id)}</select>
       <input id="exc-rname-${x.id}" value="${escapeHtml(rb.reimbursee||'')}" placeholder="reimburse to…" style="font-size:12px;padding:4px 6px;border:1px solid #d7dee7;border-radius:5px;width:150px;">
@@ -205,6 +206,16 @@ function excReimbRow(x,commOpts){
       <span id="exc-msg-${x.id}" style="font-size:12px;"></span>
     </div>
   </div>`;
+}
+// Address supplied in the staff instruction: evidence for the reviewer, never
+// saved to the payee automatically.
+function excAddrLine(rb){
+  const f=(a)=>a&&a.line1?[a.line1,[a.city,a.state].filter(Boolean).join(', '),a.zip].filter(Boolean).join(' '):'';
+  const cands=(rb.requested_remit_address_candidates||[]).map(f).filter(Boolean);
+  if(!cands.length && !rb.payee_address_on_file) return '';
+  const stated=cands.length>1?`${cands.map(escapeHtml).join(' / ')} <b>(more than one: confirm which)</b>`:escapeHtml(cands[0]||'');
+  const onFile=rb.payee_address_on_file?f(rb.payee_address_on_file):'';
+  return `<div style="font-size:12px;color:#334155;margin:0 0 8px;">📮 ${stated?`Address supplied in staff instruction: <b>${stated}</b>`:''}${onFile?`${stated?' · ':''}On file: <b>${escapeHtml(onFile)}</b>`:''} <span style="color:#92400e;">confirm before check run</span></div>`;
 }
 window.excReimbAccounts=function(id){
   const cid=(document.getElementById('exc-rcomm-'+id)||{}).value; const s=document.getElementById('exc-racct-'+id); if(!s) return;

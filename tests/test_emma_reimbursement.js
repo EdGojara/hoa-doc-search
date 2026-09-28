@@ -16,7 +16,8 @@ const t = (name, fn) => results.push({ name, fn });
 
 // The real Issue #3 email (no address needed for the logic).
 const SUBJECT = 'Reimbursement';
-const BODY = 'Please process reimbursement in the amount of $35.72 to be paid to Gloria Allen.\nCode to community events\nThank you';
+// Address is a made-up sample (public repo); the real one lives only in the email.
+const BODY = 'Please process reimbursement in the amount of $35.72 to be paid to Gloria Allen.\n123 Sample Lane, Houston, Texas 77084\nCode to community events\nThank you';
 const STAFF = 'celina@bedrocktx.com';
 const LOPF = 'c-lopf';
 const ACCOUNTS = [
@@ -28,7 +29,7 @@ const RECEIPT = { looks_like_invoice: false, vendor_name: 'Walmart', invoice_dat
 const INTENT = { is_reimbursement: true, reimbursee_name: 'Gloria Allen', community_hint: null, from_board_member: false };
 
 // autoIntake with every external dependency faked; records what was committed.
-function run({ extracted = RECEIPT, intent = INTENT, body = BODY, sender = STAFF, communityId = LOPF, accounts = ACCOUNTS, allocation = { cents: 3572, note: 'BBQ sauce 3 x $11 + tax' }, payeeCreated = true, subject = SUBJECT } = {}) {
+function run({ extracted = RECEIPT, intent = INTENT, body = BODY, sender = STAFF, communityId = LOPF, accounts = ACCOUNTS, allocation = { cents: 3572, note: 'BBQ sauce 3 x $11 + tax' }, payeeCreated = true, subject = SUBJECT, onFile = null } = {}) {
   const calls = { commit: null, payee: null };
   const deps = {
     stageInvoice: async () => ({ extracted: JSON.parse(JSON.stringify(extracted)), sha256: 'sha-gloria', storagePath: 'ap_invoices/gloria.pdf' }),
@@ -37,6 +38,7 @@ function run({ extracted = RECEIPT, intent = INTENT, body = BODY, sender = STAFF
     loadAccounts: async () => accounts,
     resolveCommunity: async () => ({ community: null }),
     findOrCreateReimbursementPayee: async (a) => { calls.payee = a; return { payee: { id: 'payee-gloria', kind: 'reimbursement' }, created: payeeCreated }; },
+    payeeAddressOnFile: async () => onFile,
     commitInvoice: async (a) => { calls.commit = a; return { outcome: 'loaded', invoice_id: 'inv-1' }; },
   };
   return autoIntake({ buffer: Buffer.from('%PDF'), filename: 'Gloria Allen Reimbursement.pdf', intakeMethod: 'email', sourceRef: 'email:g1',
@@ -143,7 +145,7 @@ t('a payment-intent email cannot finish as "not an invoice": it becomes needs_re
   assert.ok(/!pdfs\.length && paymentAsked[\s\S]{0,200}recordException/.test(src));
 });
 
-t('reply promise is removed when no payable exists, kept when one does', () => {
+t('reply promise is removed when no payable exists; strong language only for an approved/paid item', () => {
   const draft = 'Hi Celina,\n\nThanks! I\'ll get this posted and cut the check for Gloria this week.\n\nEmma';
   const held = R.stateAwarePaymentDraft(draft, { payable: false, needs_review: true });
   assert.ok(held.changed);
@@ -151,9 +153,46 @@ t('reply promise is removed when no payable exists, kept when one does', () => {
   assert.match(held.body, /logged this in Payables for review/);
   const none = R.stateAwarePaymentDraft(draft, { payable: false, needs_review: false });
   assert.ok(!/cut the check/i.test(none.body)); assert.match(none.body, /review it before anything is paid/);
-  const paid = R.stateAwarePaymentDraft(draft, { payable: true });
+  const paid = R.stateAwarePaymentDraft(draft, { payable: true, status: 'approved' });
   assert.strictEqual(paid.changed, false); assert.strictEqual(paid.body, draft);
+  assert.strictEqual(R.stateAwarePaymentDraft(draft, { payable: true, status: 'paid' }).changed, false);
   assert.strictEqual(R.stateAwarePaymentDraft('Hi, got it, thanks.', { payable: false }).changed, false);
+});
+
+t('payable exists + awaiting_approval + needs_review: a "cut the check" promise is replaced, not kept', () => {
+  const draft = 'Hi Celina,\n\nThanks! I\'ll get this posted and cut the check for Gloria this week.\n\nEmma';
+  const r = R.stateAwarePaymentDraft(draft, { payable: true, status: 'awaiting_approval', needs_review: true });
+  assert.ok(r.changed);
+  assert.ok(!/cut the check|get this posted/i.test(r.body));
+  assert.match(r.body, /entered this in Payables for review\. Nothing is paid until it's reviewed and approved\./);
+  const plain = R.stateAwarePaymentDraft(draft, { payable: true, status: 'awaiting_approval', needs_review: false });
+  assert.match(plain.body, /entered this in Payables for approval\./); assert.ok(!/cut the check/i.test(plain.body));
+  // graph_ingest passes the real state (payable + needs_review) for filed items too.
+  const src = require('fs').readFileSync(require.resolve('../lib/email/graph_ingest'), 'utf8');
+  assert.ok(/payable: true, status: 'awaiting_approval', needs_review: filedNeedsReview/.test(src));
+  assert.ok(!/if \(d0 && d0\.body && !filedIds\.length\)/.test(src), 'the scrub must also run when a payable exists');
+});
+
+t('remit address from the staff instruction is kept as evidence, shown to the reviewer, never written to the payee', async () => {
+  const { out, calls } = await run();
+  const rb = calls.commit.extracted.reimbursement;
+  assert.deepStrictEqual(rb.requested_remit_address, { line1: '123 Sample Lane', city: 'Houston', state: 'TX', zip: '77084' });
+  assert.match(calls.commit.extraNotes, /Mailing address supplied in the staff instruction: 123 Sample Lane, Houston, TX 77084\. Not saved to the payee; confirm it before the check run\./);
+  assert.deepStrictEqual(Object.keys(calls.payee).sort(), ['email', 'name']);   // payee creation gets no address
+  assert.strictEqual(out.outcome, 'loaded');
+  // Differs from an address already on file: both surfaced, neither changed.
+  const diff = await run({ payeeCreated: false, onFile: { line1: '9 Other Rd', city: 'Katy', state: 'TX', zip: '77450' } });
+  assert.match(diff.calls.commit.extraNotes, /Mailing address DIFFERS: staff instruction says 123 Sample Lane, Houston, TX 77084; on file: 9 Other Rd, Katy, TX 77450\. Neither was changed/);
+  assert.strictEqual(diff.calls.commit.extracted.reimbursement.payee_address_on_file.zip, '77450');
+  // Held for review: the address still reaches the exception for the review card.
+  const held = await run({ communityId: null });
+  assert.strictEqual(held.out.outcome, 'needs_review');
+  assert.strictEqual(held.out.extracted.reimbursement.requested_remit_address.line1, '123 Sample Lane');
+  // Two addresses -> both kept as candidates, none picked.
+  const two = R.statedRemitAddresses('Pay to 123 Sample Lane, Houston, Texas 77084 or 45 Oak Ln, Katy, TX 77450');
+  assert.strictEqual(two.length, 2);
+  assert.match(R.remitAddressNote(two, null), /More than one mailing address/);
+  assert.deepStrictEqual(R.statedRemitAddresses('Lot 12 on 9/22, zip 77084'), []);
 });
 
 t('draft scrub never splits a sentence inside a dollar amount (the real Emma draft shape)', () => {
