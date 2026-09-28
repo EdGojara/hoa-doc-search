@@ -96,7 +96,9 @@ t('multiple outstanding deposits: resolving one is not enough', async () => {
 t('recorded deposit accounting at the net due releases through the normal route; a changed bill is re-held', async () => {
   reset(); session = { role: 'admin' };
   shared._db.vendor_deposit_reconciliations.push({ id: 'rec-1', deposit_id: 'dep-1', incoming_invoice_id: 'inv-final', form: 'balance_only', net_due_cents: 334250, created_at: '2026-09-28T12:00:00Z' });
-  shared._db.vendor_deposit_reconciliation_decisions.push({ id: 'd1', reconciliation_id: 'rec-1', decision: 'manual_accounting_recorded', verified_invoice_total_cents: 334250, created_at: '2026-09-28T12:01:00Z' });
+  shared._db.journal_entries.push({ id: 'je-final', community_id: 'c1', status: 'posted' });
+  shared._db.vendor_deposit_reconciliation_decisions.push({ id: 'd1', reconciliation_id: 'rec-1', decision: 'manual_accounting_recorded', verified_invoice_total_cents: 334250,
+    verified_deposit_paid_cents: 334250, verified_bill_posting_je_id: 'je-final', verified_bill_lines: [], created_at: '2026-09-28T12:01:00Z' });
   const r = await post('/api/ap/invoices/inv-final/approve');
   assert.strictEqual(r.status, 200, JSON.stringify(r.body)); assert.strictEqual(released.length, 1);
   shared._db.ap_invoices.find((i) => i.id === 'inv-final').total_cents = 668500; released.length = 0;
@@ -113,6 +115,65 @@ t('bills that are NOT deposit candidates keep working: other vendors, and the de
   shared._db.ap_invoices.find((i) => i.id === 'inv-dep').status = 'awaiting_approval';
   const d = await post('/api/ap/invoices/inv-dep/approve');
   assert.strictEqual(d.status, 200, 'the deposit bill is not held by its own deposit');
+});
+
+
+// ---- a recorded attestation is re-validated on EVERY approval and payment ----
+function attest() {
+  reset({ vendor_deposits: [{ ...DEP, gl_account_id: 'acct-1430' }] });
+  const db = shared._db;
+  db.ap_invoice_lines.push({ id: 'l1', invoice_id: 'inv-final', gl_account_id: 'acct-5900', amount_cents: 334250 });
+  db.journal_entries.push({ id: 'je-final', community_id: 'c1', status: 'posted', voided_at: null }, { id: 'je-rel', community_id: 'c1', status: 'posted', voided_at: null });
+  db.journal_entry_lines = [{ journal_entry_id: 'je-rel', account_id: 'acct-5900', debit_cents: 334250, credit_cents: 0 }, { journal_entry_id: 'je-rel', account_id: 'acct-1430', debit_cents: 0, credit_cents: 334250 }];
+  db.vendor_deposit_reconciliations.push({ id: 'rec-1', deposit_id: 'dep-1', incoming_invoice_id: 'inv-final', form: 'balance_only', net_due_cents: 334250, deposit_billed_cents: 334250, created_at: '2026-09-28T12:00:00Z' });
+  db.vendor_deposit_reconciliation_decisions.push({ id: 'd1', reconciliation_id: 'rec-1', decision: 'manual_accounting_recorded', accounting_je_id: 'je-rel', deposit_accounting_state: 'prepaid',
+    verified_invoice_total_cents: 334250, verified_deposit_paid_cents: 334250, verified_bill_posting_je_id: 'je-final',
+    verified_bill_lines: [{ gl_account_id: 'acct-5900', amount_cents: 334250 }], created_at: '2026-09-28T12:01:00Z' });
+  return db;
+}
+const mutations = [
+  ['the relief JE is voided', (db) => { db.journal_entries.find((j) => j.id === 'je-rel').voided_at = '2026-09-29T00:00:00Z'; }, 'relief_entry_no_longer_valid'],
+  ['the relief JE is no longer posted', (db) => { db.journal_entries.find((j) => j.id === 'je-rel').status = 'draft'; }, 'relief_entry_no_longer_valid'],
+  ['the relief JE no longer credits 1430 for the deposit', (db) => { db.journal_entry_lines.find((l) => l.account_id === 'acct-1430').credit_cents = 300000; }, 'relief_entry_no_longer_valid'],
+  ["the bill is RECODED at the same total", (db) => { db.ap_invoice_lines.find((l) => l.id === 'l1').gl_account_id = 'acct-5100'; }, 'bill_coding_changed_after_accounting'],
+  ["the bill's posting JE is voided", (db) => { db.journal_entries.find((j) => j.id === 'je-final').voided_at = '2026-09-29T00:00:00Z'; }, 'bill_posting_changed_after_accounting'],
+  ["the bill is re-posted under a new JE", (db) => { db.ap_invoices.find((i) => i.id === 'inv-final').posting_journal_entry_id = 'je-new'; db.journal_entries.push({ id: 'je-new', community_id: 'c1', status: 'posted' }); }, 'bill_posting_changed_after_accounting'],
+  ["the deposit's payment changes (refund/reversal)", (db) => { db.ap_invoices.find((i) => i.id === 'inv-dep').amount_paid_cents = 0; }, 'deposit_payment_changed_after_accounting'],
+];
+t('baseline: a valid, unchanged attestation releases (admin) through the route', async () => {
+  attest(); session = { role: 'admin' };
+  const r = await post('/api/ap/invoices/inv-final/approve');
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+});
+for (const [what, mutate, reason] of mutations) {
+  t(`after attestation, ${what}: BOTH approval keys are refused again (${reason})`, async () => {
+    const db = attest(); mutate(db);
+    session = { role: 'staff' };
+    const m = await post('/api/ap/invoices/inv-final/approve');
+    assert.deepStrictEqual([m.status, m.body && m.body.error], [409, reason]);
+    session = { role: 'admin' };
+    const a = await post('/api/ap/invoices/inv-final/approve');
+    assert.deepStrictEqual([a.status, a.body && a.body.error], [409, reason]); assert.strictEqual(released.length, 0);
+  });
+}
+t('payment surfaces re-check too: mark-paid and /payments refuse a bill whose attestation went stale', async () => {
+  const db = attest(); db.ap_invoices.find((i) => i.id === 'inv-final').status = 'approved';
+  db.journal_entries.find((j) => j.id === 'je-rel').voided_at = '2026-09-29T00:00:00Z';
+  session = { role: 'admin' };
+  const mp = await post('/api/ap/invoices/inv-final/mark-paid', { method: 'ach' });
+  assert.deepStrictEqual([mp.status, mp.body.error], [409, 'relief_entry_no_longer_valid']);
+  const pay = await post('/api/ap/payments', { community_id: 'c1', vendor_id: 'v1', amount_cents: 334250, applications: [{ invoice_id: 'inv-final', applied_cents: 334250 }] });
+  assert.strictEqual(pay.status, 409);
+});
+t('check run: a held bill is not listed as payable and cannot be put in a run; other bills still pay', async () => {
+  const db = attest(); db.journal_entries.find((j) => j.id === 'je-rel').voided_at = '2026-09-29T00:00:00Z';
+  db.ap_invoices.find((i) => i.id === 'inv-final').status = 'approved';
+  db.ap_invoices.find((i) => i.id === 'inv-plain').status = 'approved';
+  db.bank_accounts = [{ id: 'bank-1', community_id: 'c1' }];
+  const cr = require('../lib/accounting/check_run');
+  const list = await cr.listPayableInvoices({ community_id: 'c1' });
+  assert.deepStrictEqual(list.map((i) => i.id).sort(), ['inv-plain']);
+  await assert.rejects(() => cr.createCheckRun({ community_id: 'c1', bank_account_id: 'bank-1', payment_date: '2026-10-10', invoice_ids: ['inv-final'], user: {} }), /Held for a vendor deposit: 2901/);
 });
 
 (async () => {

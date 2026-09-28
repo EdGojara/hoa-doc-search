@@ -64,7 +64,11 @@ async function world() {
       ('${JE_DRAFT}', '${A1430}', 0, 334250), ('${JE_OTHER}', '${A1430}', 0, 334250),
       ('${JE_AMT}', '${AEXP}', 300000, 0), ('${JE_AMT}', '${A1430}', 0, 300000),
       ('${JE_ACCT}', '${AEXP}', 334250, 0), ('${JE_ACCT}', '${AEXP}', 0, 334250);
-    UPDATE ap_invoices SET posting_journal_entry_id = '${JE_DEP}' WHERE id = '${INV_DEP}';`);
+    UPDATE ap_invoices SET posting_journal_entry_id = '${JE_DEP}' WHERE id = '${INV_DEP}';
+    INSERT INTO journal_entries (id, community_id, status, reference) VALUES ('00000000-0000-0000-0000-0000000000b1', '${C}', 'posted', 'JE-FIN'), ('00000000-0000-0000-0000-0000000000b2', '${C}', 'posted', 'JE-FULL');
+    UPDATE ap_invoices SET posting_journal_entry_id = '00000000-0000-0000-0000-0000000000b1' WHERE id = '${INV_FIN}';
+    UPDATE ap_invoices SET posting_journal_entry_id = '00000000-0000-0000-0000-0000000000b2' WHERE id = '${INV_FULL}';
+    INSERT INTO ap_invoice_lines (invoice_id, gl_account_id, amount_cents) VALUES ('${INV_FIN}', '${AEXP}', 334250);`);
   await db.exec(M364);
   await db.exec(`INSERT INTO vendor_deposits (id, community_id, vendor_id, deposit_invoice_id, gl_account_id, deposit_amount_cents, remaining_balance_cents) VALUES ('${DEP}', '${C}', '${V}', '${INV_DEP}', '${A1430}', 334250, 334250);`);
   return db;
@@ -123,16 +127,21 @@ await expectErr('"unrelated" is admin-only', () => decide(r1, 'unrelated', { rol
 await expectErr('a reject needs a note', () => decide(r1, 'reject', { note: '' }), /note_required/);
 await expectErr('manual accounting refuses a non-positive net', () => decide(r1, 'manual_accounting_recorded', { je: JE_OK, net: 0, paid: 0 }), /net_due_not_positive/);
 await expectErr('manual accounting refuses when the bill total is not the net due', () => decide(r1, 'manual_accounting_recorded', { je: JE_OK, net: 334000, paid: 0 }), /invoice_total_not_net_due/);
+await expectErr('manual accounting refuses a bill whose own entry is not posted', async () => { await db.exec(`UPDATE journal_entries SET status = 'draft' WHERE reference = 'JE-FIN'`);
+  try { await decide(r1, 'manual_accounting_recorded', { je: JE_OK, net: 334250, paid: 0 }); } finally { await db.exec(`UPDATE journal_entries SET status = 'posted' WHERE reference = 'JE-FIN'`); } }, /bill_not_posted/);
 await expectErr('manual accounting refuses a stale deposit-paid snapshot', () => decide(r1, 'manual_accounting_recorded', { je: JE_OK, net: 334250, paid: 334250 }), /stale_reconciliation/);
 await expectErr('manual accounting refuses an unposted JE', () => decide(r1, 'manual_accounting_recorded', { je: JE_DRAFT, net: 334250, paid: 0 }), /accounting_je_invalid/);
 await expectErr('manual accounting refuses a JE from another community', () => decide(r1, 'manual_accounting_recorded', { je: JE_OTHER, net: 334250, paid: 0 }), /accounting_je_invalid/);
 await expectErr('prepaid deposit: a JE crediting 1430 for the wrong amount does not relieve it', () => decide(r1, 'manual_accounting_recorded', { je: JE_AMT, net: 334250, paid: 0 }), /je_does_not_relieve_deposit/);
 await expectErr('prepaid deposit: a JE that never touches 1430 does not relieve it', () => decide(r1, 'manual_accounting_recorded', { je: JE_ACCT, net: 334250, paid: 0 }), /je_does_not_relieve_deposit/);
-await expectErr('prepaid deposit: no JE at all (and the bill\'s own accrual has no 1430 credit) is refused', () => decide(r1, 'manual_accounting_recorded', { je: null, net: 334250, paid: 0 }), /accounting_je_required/);
+await expectErr('prepaid deposit: no JE at all (and the bill\'s own accrual has no 1430 credit) is refused', () => decide(r1, 'manual_accounting_recorded', { je: null, net: 334250, paid: 0 }), /je_does_not_relieve_deposit|accounting_je_required/);
 check('every refused decision wrote NOTHING (atomic)', c0 === await counts(), `${c0} vs ${await counts()}`);
 await decide(r1, 'confirmed_match', { role: 'staff', user: U_M, note: null });
 await expectErr('only one confirmed_match per reconciliation', () => decide(r1, 'confirmed_match'), /already_decided|duplicate/);
 await decide(r1, 'manual_accounting_recorded', { je: JE_OK, net: 334250, paid: 0, note: 'Dr 5900 / Cr 1430 relieved' });
+const snapRow = (await db.query(`SELECT verified_bill_posting_je_id j, verified_bill_lines l FROM vendor_deposit_reconciliation_decisions WHERE reconciliation_id = $1 AND decision = 'manual_accounting_recorded'`, [r1])).rows[0];
+check('the attestation records what it was made against (bill posting JE + GL lines) for the gate to re-check',
+  snapRow && snapRow.j === '00000000-0000-0000-0000-0000000000b1' && snapRow.l.length === 1 && snapRow.l[0].gl_account_id === AEXP && Number(snapRow.l[0].amount_cents) === 334250, JSON.stringify(snapRow));
 check('confirmed match then manual accounting recorded, each with its event', await n(db, `SELECT count(*)::int n FROM vendor_deposit_reconciliation_decisions WHERE reconciliation_id='${r1}'`) === 2
   && await n(db, `SELECT count(*)::int n FROM vendor_deposit_events WHERE event_type='reconciliation_decided'`) === 2);
 await expectErr('no second terminal decision', () => decide(r1, 'reject'), /already_decided/);

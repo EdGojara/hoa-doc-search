@@ -1278,9 +1278,24 @@ router.post('/invoices/:id/void', express.json(), async (req, res) => {
 // (ACH, debit/credit card, wire). Records the payment (Dr AP / Cr Cash) so the
 // expense + cash post and the payable clears — it never shows in a check run and
 // no check is cut. (Ed 2026-07-14.)
+// Deposit hold at PAYMENT time too (not just approval): a recorded deposit
+// attestation is re-validated against live data before money moves, so a void,
+// recode or deposit-payment change after approval re-holds the bill. Fails closed.
+async function _depositPaymentHold(invoiceIds) {
+  const { approvalGateForInvoice, HOLD_MESSAGES } = require('../lib/ap/deposit_followup');
+  for (const id of invoiceIds) {
+    const gate = await approvalGateForInvoice(supabase, { id });
+    if (gate.block) return { invoice_id: id, error: gate.reason, detail: HOLD_MESSAGES[gate.reason] || 'Held for a vendor deposit.' };
+  }
+  return null;
+}
+
 router.post('/invoices/:id/mark-paid', express.json(), async (req, res) => {
   try {
     const { id } = req.params;
+    let hold;
+    try { hold = await _depositPaymentHold([id]); } catch (e) { console.error('[ap] deposit payment hold check failed:', e.message); return res.status(503).json({ error: 'deposit_gate_unavailable' }); }
+    if (hold) return res.status(409).json(hold);
     const method = ['ach', 'credit_card', 'wire', 'cash', 'other'].includes((req.body || {}).method) ? req.body.method : 'ach';
     const { data: inv } = await supabase.from('ap_invoices').select('*').eq('id', id).maybeSingle();
     if (!inv) return res.status(404).json({ error: 'not_found' });
@@ -1977,6 +1992,10 @@ router.post('/credits/:id/resolve', express.json(), async (req, res) => {
 
 router.post('/payments', express.json(), async (req, res) => {
   try {
+    const ids = ((req.body || {}).applications || []).map((a) => a && a.invoice_id).filter(Boolean);
+    let hold;
+    try { hold = await _depositPaymentHold(ids); } catch (e) { console.error('[ap] deposit payment hold check failed:', e.message); return res.status(503).json({ error: 'deposit_gate_unavailable' }); }
+    if (hold) return res.status(409).json(hold);
     const result = await recordPayment(req.body || {});
     res.json(result);
   } catch (err) {

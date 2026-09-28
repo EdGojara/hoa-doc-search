@@ -46661,7 +46661,7 @@ ${questionsPage}
               <td style="padding:8px; text-align:right; font-family:ui-monospace,monospace;">${d.expected_balance_cents == null ? '—' : apFmtCents(d.expected_balance_cents)}<div style="color:#92400e; font-size:10.5px;">${apEsc(d.expected_balance_label)}</div></td>
               <td style="padding:8px; max-width:240px;"><span style="font-weight:${d.obligation_state === 'final_bill_held' ? '700; color:#b45309' : '500'};">${apEsc(d.obligation_label || '')}</span>${(d.documents || []).length ? `<div style="color:#64748b; font-size:11px;">${d.documents.length} document${d.documents.length === 1 ? '' : 's'}</div>` : ''}</td></tr>`;
           }).join('')}</tbody></table>
-          <div style="font-size:11.5px; color:#64748b; margin-top:8px;">A reminder only; nothing is paid from this list, and an item stays here until the final bill is actually paid. When the vendor's final bill arrives, Emma matches it to the deposit and HOLDS it: she cannot release it until the deposit accounting is recorded and the bill is approved at the net due.</div>`;
+          <div style="font-size:11.5px; color:#64748b; margin-top:8px;">A reminder only; nothing is paid from this list, and an item stays here until the final bill is actually paid. When the vendor's final bill arrives, Emma matches it to the deposit and HOLDS it. Releasing it is a manual step: an admin records the deposit accounting, then the bill is approved at the net due. A final bill for the full total without the deposit credit can't be paid in this version; ask the vendor to reissue it for the balance.</div>`;
       } catch (e) { c.innerHTML = `<div style="color:#dc2626; padding:14px;">Failed: ${apEsc(e.message)}</div>`; }
     };
 
@@ -46722,7 +46722,8 @@ ${questionsPage}
               ${isAdmin ? btn('Not related (admin)', 'unrelated') : ''}
               ${isAdmin ? btn('Record deposit accounting (admin attestation)', 'manual_accounting_recorded') : ''}
             </div>
-            <div style="font-size:11px; color:#64748b; margin-top:4px;">Nothing here pays or changes the bill. Emma cannot release a deposit bill yet: an admin posts the adjusting journal entry and records it, and the bill can then be approved at the net due through the normal two-key approval and check run.</div>`}`,
+            <div style="font-size:11.5px; color:#7c2d12; margin-top:6px; font-weight:600;">Manual step required. Emma cannot release this bill. An admin records the deposit accounting (a relief entry crediting 1430 if the deposit was prepaid; none if it was expensed). A bill that shows the FULL total without the deposit credit cannot be paid in this version: ask the vendor to reissue it for the balance only.</div>
+            <div style="font-size:11px; color:#64748b; margin-top:4px;">Nothing here pays or changes the bill. After the accounting is recorded, the bill goes through the normal two-key approval and check run at the net due, and it is re-checked at each step: if the bill, its coding, the deposit payment or the relief entry changes, it is held again.</div>`}`,
         'background:#fff7ed; border:1px solid #fed7aa; color:#7c2d12;');
     }
 

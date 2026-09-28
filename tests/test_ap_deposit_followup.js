@@ -26,7 +26,7 @@ const noMoneyMoved = (sb) => assert.ok(!sb._writes.some((w) => MONEY_TABLES.incl
 
 // ---------------------------------------------------------------- pure reconciler
 const { reconcileDeposit, approvalBlockers, forceDepositLineCoding, invariantHolds } = require('../lib/ap/deposit_reconcile');
-const DEP = { id: 'dep-1', community_id: 'c1', vendor_id: 'v1', deposit_invoice_id: 'inv-dep', deposit_amount_cents: 334250, remaining_balance_cents: 334250, status: 'outstanding' };
+const DEP = { id: 'dep-1', community_id: 'c1', vendor_id: 'v1', deposit_invoice_id: 'inv-dep', gl_account_id: 'acct-1430', deposit_amount_cents: 334250, remaining_balance_cents: 334250, status: 'outstanding' };
 const DEP_INV_UNPAID = { id: 'inv-dep', vendor_invoice_number: '2836', total_cents: 334250, amount_paid_cents: 0, status: 'awaiting_approval', file_sha256: 'aaa' };
 const DEP_INV_PAID = { ...DEP_INV_UNPAID, amount_paid_cents: 334250, status: 'paid' };
 const bill = (o) => ({ vendor_invoice_number: '2901', total_cents: 334250, tax_cents: 0, file_sha256: 'bbb', ...o });
@@ -99,9 +99,11 @@ t('deposit bill lines follow the deposit (1430) account, not the line classifier
 const df = require('../lib/ap/deposit_followup');
 const seed = (depInv = DEP_INV_UNPAID, extraInvoices = [], more = {}) => ({
   vendor_deposits: [{ ...DEP }],
-  ap_invoices: [{ ...depInv, community_id: 'c1', vendor_id: 'v1', notes: 'Emma: DEPOSIT invoice' }, ...extraInvoices.map((i) => ({ community_id: 'c1', vendor_id: 'v1', status: 'awaiting_approval', notes: '', amount_paid_cents: 0, tax_cents: 0, ...i }))],
+  ap_invoices: [{ ...depInv, community_id: 'c1', vendor_id: 'v1', notes: 'Emma: DEPOSIT invoice' }, ...extraInvoices.map((i) => ({ community_id: 'c1', vendor_id: 'v1', status: 'awaiting_approval', notes: '', amount_paid_cents: 0, tax_cents: 0, posting_journal_entry_id: `je-bill-${i.id}`, ...i }))],
   ap_invoice_lines: [], ap_invoice_documents: [], vendor_deposit_reconciliations: [], vendor_deposit_reconciliation_decisions: [], vendor_deposit_events: [],
-  journal_entries: [{ id: 'je-adj', community_id: 'c1', status: 'posted', reference: 'JE-2026-00340' }],
+  journal_entries: [{ id: 'je-adj', community_id: 'c1', status: 'posted', reference: 'JE-2026-00340' },
+    ...extraInvoices.map((i) => ({ id: `je-bill-${i.id}`, community_id: 'c1', status: 'posted' }))],
+  journal_entry_lines: [{ journal_entry_id: 'je-adj', account_id: 'acct-1430', debit_cents: 0, credit_cents: 334250 }],
   ...more,
 });
 const inv = (sb, id) => sb._db.ap_invoices.find((i) => i.id === id);
@@ -110,8 +112,8 @@ t('gate: a bill from a vendor with an outstanding deposit is HELD even with no p
   const sb = fakeDb(seed(DEP_INV_PAID, [{ id: 'inv-final', vendor_invoice_number: '2901', total_cents: 334250 }]));
   assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-final'))).reason, 'deposit_reconciliation_missing');
   assert.strictEqual((await df.approvalGateForInvoice(sb, inv(sb, 'inv-dep'))).block, false, "the deposit's own bill is not held by its own deposit");
-  const other = { id: 'x', community_id: 'c1', vendor_id: 'v-other', total_cents: 5 };
-  assert.strictEqual((await df.approvalGateForInvoice(sb, other)).block, false, 'unrelated vendors are untouched');
+  sb._db.ap_invoices.push({ id: 'x', community_id: 'c1', vendor_id: 'v-other', total_cents: 5, status: 'awaiting_approval' });
+  assert.strictEqual((await df.approvalGateForInvoice(sb, { id: 'x' })).block, false, 'unrelated vendors are untouched');
 });
 t('gate never fails open on a partial invoice row (the route-bypass class): it reloads vendor/community', async () => {
   const sb = fakeDb(seed(DEP_INV_PAID, [{ id: 'inv-final', vendor_invoice_number: '2901', total_cents: 334250 }]));

@@ -119,10 +119,15 @@ CREATE TABLE IF NOT EXISTS vendor_deposit_reconciliation_decisions (
   deposit_accounting_state     TEXT CHECK (deposit_accounting_state IS NULL OR deposit_accounting_state IN ('prepaid', 'expensed')),
   verified_invoice_total_cents BIGINT,
   verified_deposit_paid_cents  BIGINT,
+  -- What the attestation was made against; the approval/payment gate re-checks
+  -- all of it every time, so a later void, recode or payment change re-holds.
+  verified_bill_posting_je_id  UUID,
+  verified_bill_lines          JSONB,
   created_at                   TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   CONSTRAINT vdrd_manual_accounting_evidence CHECK (decision <> 'manual_accounting_recorded'
     OR (verified_invoice_total_cents > 0 AND verified_deposit_paid_cents IS NOT NULL AND deposit_accounting_state IS NOT NULL
-        AND (deposit_accounting_state = 'expensed' OR accounting_je_id IS NOT NULL)))
+        AND (deposit_accounting_state = 'expensed' OR accounting_je_id IS NOT NULL)
+        AND verified_bill_posting_je_id IS NOT NULL AND verified_bill_lines IS NOT NULL))
 );
 -- A relieving journal entry backs exactly one decision; it can't be reused.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vdrd_je_used_once ON vendor_deposit_reconciliation_decisions (accounting_je_id) WHERE accounting_je_id IS NOT NULL;
@@ -219,7 +224,7 @@ CREATE OR REPLACE FUNCTION vendor_deposit_decide(p_reconciliation_id uuid, p_dec
   p_note text, p_accounting_je_id uuid, p_expected_net_cents bigint, p_live_deposit_paid_cents bigint)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE r vendor_deposit_reconciliations%ROWTYPE; d vendor_deposits%ROWTYPE; inv ap_invoices%ROWTYPE; paid bigint; je_status text; je_comm uuid; new_id uuid;
-        dep_state text; je uuid;
+        dep_state text; je uuid; bill_je_status text; bill_lines jsonb;
 BEGIN
   IF p_actor_user_id IS NULL OR coalesce(btrim(p_actor), '') = '' THEN RAISE EXCEPTION 'identity_required'; END IF;
   SELECT * INTO r FROM vendor_deposit_reconciliations WHERE id = p_reconciliation_id;
@@ -239,6 +244,10 @@ BEGIN
     SELECT * INTO inv FROM ap_invoices WHERE id = r.incoming_invoice_id FOR UPDATE;
     IF inv.status = 'voided' THEN RAISE EXCEPTION 'invoice_voided'; END IF;
     IF inv.total_cents <> p_expected_net_cents THEN RAISE EXCEPTION 'invoice_total_not_net_due'; END IF;
+    SELECT status INTO bill_je_status FROM journal_entries WHERE id = inv.posting_journal_entry_id;
+    IF bill_je_status IS DISTINCT FROM 'posted' THEN RAISE EXCEPTION 'bill_not_posted'; END IF;
+    SELECT coalesce(jsonb_agg(jsonb_build_object('gl_account_id', gl_account_id, 'amount_cents', amount_cents) ORDER BY gl_account_id, amount_cents), '[]'::jsonb)
+      INTO bill_lines FROM ap_invoice_lines WHERE invoice_id = inv.id;
     SELECT coalesce(amount_paid_cents, 0) INTO paid FROM ap_invoices WHERE id = d.deposit_invoice_id;
     IF coalesce(paid, 0) <> coalesce(p_live_deposit_paid_cents, -1) THEN RAISE EXCEPTION 'stale_reconciliation'; END IF;
     IF EXISTS (SELECT 1 FROM vendor_deposit_reconciliation_decisions k JOIN vendor_deposit_reconciliations x ON x.id = k.reconciliation_id
@@ -263,12 +272,14 @@ BEGIN
   END IF;
 
   INSERT INTO vendor_deposit_reconciliation_decisions (reconciliation_id, decision, decided_by_user_id, decided_by_name, decided_by_role, note,
-    accounting_je_id, deposit_accounting_state, verified_invoice_total_cents, verified_deposit_paid_cents)
+    accounting_je_id, deposit_accounting_state, verified_invoice_total_cents, verified_deposit_paid_cents, verified_bill_posting_je_id, verified_bill_lines)
   VALUES (r.id, p_decision, p_actor_user_id, p_actor, p_role, p_note,
     CASE WHEN p_decision = 'manual_accounting_recorded' THEN je END,
     CASE WHEN p_decision = 'manual_accounting_recorded' THEN dep_state END,
     CASE WHEN p_decision = 'manual_accounting_recorded' THEN p_expected_net_cents END,
-    CASE WHEN p_decision = 'manual_accounting_recorded' THEN p_live_deposit_paid_cents END)
+    CASE WHEN p_decision = 'manual_accounting_recorded' THEN p_live_deposit_paid_cents END,
+    CASE WHEN p_decision = 'manual_accounting_recorded' THEN inv.posting_journal_entry_id END,
+    CASE WHEN p_decision = 'manual_accounting_recorded' THEN bill_lines END)
   RETURNING id INTO new_id;
   INSERT INTO vendor_deposit_events (deposit_id, event_type, actor, actor_user_id, detail)
   VALUES (r.deposit_id, 'reconciliation_decided', p_actor, p_actor_user_id,

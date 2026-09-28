@@ -70,6 +70,13 @@ function fakeDb(seed = {}) {
     if (fn === 'vendor_deposit_decide') {
       const row = { id: `dec-${++seq}`, created_at: nowIso(), reconciliation_id: args.p_reconciliation_id, decision: args.p_decision, decided_by_user_id: args.p_actor_user_id,
         decided_by_name: args.p_actor, note: args.p_note, accounting_je_id: args.p_accounting_je_id, verified_invoice_total_cents: args.p_expected_net_cents, verified_deposit_paid_cents: args.p_live_deposit_paid_cents };
+      if (args.p_decision === 'manual_accounting_recorded') {
+        // Same snapshot the SQL function records (bill posting JE + GL lines).
+        const rec = table('vendor_deposit_reconciliations').find((x) => x.id === args.p_reconciliation_id) || {};
+        const bill = table('ap_invoices').find((x) => x.id === rec.incoming_invoice_id) || {};
+        row.verified_bill_posting_je_id = bill.posting_journal_entry_id || null;
+        row.verified_bill_lines = table('ap_invoice_lines').filter((l) => l.invoice_id === bill.id).map((l) => ({ gl_account_id: l.gl_account_id || null, amount_cents: l.amount_cents }));
+      }
       table('vendor_deposit_reconciliation_decisions').push(row);
       return { data: row.id, error: null };
     }

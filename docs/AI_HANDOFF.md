@@ -4,7 +4,45 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): AP deposit follow-up, second review fixes (feat/ap-deposit-followup; migration 471 PROPOSED; NOT merged/deployed)
+## 2026-09-28 (latest): AP deposit follow-up, attestation re-validation (third review; feat/ap-deposit-followup; migration 471 PROPOSED; NOT merged/deployed)
+
+**ChatGPT review of `19c9663f`** (16:45 UTC). It confirmed the route correction; one remaining issue: a recorded attestation was re-checked only against the bill total.
+
+**Fixed.**
+- **The attestation records what it was made against.** Migration 471 adds `verified_bill_posting_je_id` and `verified_bill_lines` (GL account + amount per line) to decisions, alongside the verified deposit-paid amount and the relief JE. The function also refuses (`bill_not_posted`) if the bill's own entry isn't posted.
+- **The gate re-validates EVERYTHING on every check**, reading a FRESH invoice row. Any of these re-holds the bill with a specific reason:
+  - the bill total differs;
+  - the bill's posting JE was replaced, voided or un-posted;
+  - the bill's GL coding changed, **even at the same total**;
+  - the deposit invoice's paid amount changed, or it was voided;
+  - the relief JE is missing, un-posted or voided, or no longer credits the deposit account for the deposit amount.
+- **Checked before every money step**, not just approval:
+  - both approval keys (manager and admin release);
+  - `POST /invoices/:id/mark-paid` and `POST /payments` (409 when held; 503 if the check can't run);
+  - the check run: `listPayableInvoices` omits held bills, and `createCheckRun` refuses the whole run naming the held bill.
+  - `depositHoldsForInvoices` batches this: one deposit query per community, and gate calls only for bills whose vendor has an outstanding deposit.
+- **UI states the manual step plainly.** Emma cannot release; an admin records the deposit accounting; a full-total bill without the deposit credit can't be paid in this version (the vendor reissues it for the balance); and it is re-checked at every step.
+
+**Tests.**
+- Approval route **17/17**. Seven post-attestation mutations each re-hold BOTH keys:
+  - relief JE voided;
+  - relief JE un-posted;
+  - relief JE credit changed;
+  - bill recoded at the same total;
+  - bill posting JE voided;
+  - bill re-posted under a new JE;
+  - deposit payment reversed.
+  Plus mark-paid and /payments refused, the check run omitting and refusing the held bill while a plain bill still lists, and an unchanged attestation still releasing.
+- Unit **24/24**.
+- SQL rehearsal **52/52**: bill-not-posted refusal and the snapshot recorded; apply_one end to end with 94 objects plus the grant verifies.
+- **Sabotage:** turning off re-validation fails 10 route tests; removing the check-run filter fails 1; removing the payment hold fails 1.
+- Full suite 124/129 (the same 5 pre-existing failures).
+
+**Still manual** (unchanged from the entry below): reconcile a held bill; confirm or reject; an admin records the deposit accounting; no in-app netting of a full-face bill; duplicate → Void.
+
+---
+
+## 2026-09-28: AP deposit follow-up, second review fixes (superseded in part by the entry above)
 
 **ChatGPT review of `a1d20750`** (Issue #1, 16:28 UTC), item by item.
 
