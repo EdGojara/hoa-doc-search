@@ -1757,10 +1757,15 @@
     const cur = h.current_owner ? ohTenureCard(h.current_owner, focusTenure === h.current_owner.tenure_id) : '<div class="muted">No current owner period is recorded for this lot.</div>';
     const prior = (h.prior_owners || []).map((t) => ohTenureCard(t, focusTenure === t.tenure_id)).join('') || '<div class="muted">No prior owners on record.</div>';
     const rowList = (rows) => rows.map((r) => `<tr><td>${esc(r.date || '')}</td><td>${esc(r.description || '')}</td><td class="muted" style="font-size:11.5px;">${esc(r.reason || '')}</td><td class="num">${ohSigned(r.amount_cents)}</td></tr>`).join('');
-    const review = (h.unassigned || []).length + (h.stamped_elsewhere || []).length + (h.possible_duplicates || []).length
-      ? `<h3 style="margin:16px 0 4px; font-size:13px; color:#92400e;">Unassigned / needs review</h3>
-         <table style="font-size:12.5px;"><thead><tr><th>Date</th><th>Description</th><th>Why</th><th class="num">Amount</th></tr></thead><tbody>
-         ${rowList(h.unassigned || [])}${rowList(h.stamped_elsewhere || [])}${rowList(h.possible_duplicates || [])}</tbody></table>` : '';
+    // Two different things: rows with no valid owner period (Unassigned, not in
+    // any owner's balance) vs possible duplicates, which stay on their owner's
+    // ledger and ARE counted in that owner's balance.
+    const tbl = (rows) => `<table style="font-size:12.5px;"><thead><tr><th>Date</th><th>Description</th><th>Why</th><th class="num">Amount</th></tr></thead><tbody>${rowList(rows)}</tbody></table>`;
+    const unassignedRows = (h.unassigned || []).concat(h.stamped_elsewhere || []);
+    const review = (unassignedRows.length
+        ? `<h3 style="margin:16px 0 4px; font-size:13px; color:#92400e;">Unassigned: not tied to an owner on this lot</h3>${tbl(unassignedRows)}` : '')
+      + ((h.possible_duplicates || []).length
+        ? `<h3 style="margin:16px 0 4px; font-size:13px; color:#92400e;">Possible duplicates: counted in the owner's balance, needs review</h3>${tbl(h.possible_duplicates)}` : '');
     const cc = rc.current_balance_check;
     const recon = `<div style="margin-top:14px; padding:10px 12px; border-radius:8px; font-size:12.5px; background:${rc.clean ? '#f0fdf4' : '#fffbeb'}; border:1px solid ${rc.clean ? '#bbf7d0' : '#fde68a'};">
         <strong>${rc.clean ? '✓ Reconciles' : '⚠ Needs review'}:</strong> sum of owner balances ${ohSigned(rc.sum_of_tenures_cents)} + unassigned ${ohSigned(rc.unassigned_cents)} = lot total ${ohSigned(rc.property_total_cents)}.
