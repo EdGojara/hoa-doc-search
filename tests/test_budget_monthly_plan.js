@@ -119,8 +119,21 @@ const sum = (m) => m.reduce((s, v) => s + v, 0);
   });
   await t('Budget vs Actual and the statements are untouched by Phase 2', () => {
     const { execSync } = require('child_process');
-    let d; try { d = execSync('git diff --stat main -- lib/accounting/financial_statements.js lib/accounting/report_categories.js api/gl.js', { cwd: path.join(__dirname, '..') }).toString(); } catch (_) { return console.log('      (skipped: main not available)'); }
+    let d; try { d = execSync('git diff --stat main -- lib/accounting/financial_statements.js lib/accounting/report_categories.js', { cwd: path.join(__dirname, '..') }).toString(); } catch (_) { return console.log('      (skipped: main not available)'); }
     assert.strictEqual(d.trim(), '', 'statement code changed: ' + d);
+    // api/gl.js also serves the Trial Balance (Ed 2026-09-28: TB drill-down). The
+    // statements must stay untouched, so every changed line in api/gl.js must sit
+    // inside the Trial Balance section, never in a statement route.
+    const root = path.join(__dirname, '..');
+    const src = require('fs').readFileSync(path.join(root, 'api', 'gl.js'), 'utf8').split(/\r?\n/);
+    const from = src.findIndex((l) => l.includes("router.get('/:communityId/trial-balance'")) + 1;
+    const to = src.findIndex((l) => l.includes('// Per-homeowner ledgers')) + 1;
+    const hunks = execSync('git diff -U0 main -- api/gl.js', { cwd: root }).toString().split(/\r?\n/).filter((l) => l.startsWith('@@'));
+    for (const h of hunks) {
+      const m = h.match(/\+(\d+)(?:,(\d+))?/); const startLine = Number(m[1]); const count = m[2] === undefined ? 1 : Number(m[2]);
+      const endLine = startLine + Math.max(count, 1) - 1;
+      assert.ok(from > 0 && to > from && startLine >= from && endLine < to, `api/gl.js changed outside the Trial Balance section: ${h}`);
+    }
   });
 
   // ---- live ----
