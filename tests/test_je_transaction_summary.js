@@ -31,15 +31,17 @@ function fake(tables, missing = []) {
   };
 }
 const COA = [{ id: 'a-ap', account_number: '2000', account_name: 'Accounts Payable' }, { id: 'a-cash', account_number: '1000', account_name: 'Operating Cash' },
+  { id: 'a-disc', account_number: '4900', account_name: 'Early-pay Discounts' }, { id: 'a-sav', account_number: '1100', account_name: 'Savings', account_subtype: 'cash' },
+  { id: 'a-clear', account_number: '1090', account_name: 'Cash in Transit - Clearing', account_subtype: 'current_asset' },
   { id: 'a-light', account_number: '5105', account_name: 'Electricity - Street Lights' }, { id: 'a-land', account_number: '5200', account_name: 'Landscaping' }];
 const base = () => ({
   chart_of_accounts: COA, vendors: [{ id: 'v-nrg', name: 'NRG Business' }, { id: 'v-land', name: 'ABC Landscaping' }],
-  bank_accounts: [{ id: 'b-op', account_nickname: 'Operating Checking', bank_name: 'NewFirst' }], user_profiles: [{ id: 'u-ed', full_name: 'Ed Gojara' }],
+  bank_accounts: [{ id: 'b-op', community_id: 'c1', account_nickname: 'Operating Checking', bank_name: 'NewFirst', gl_account_number: '1000' }], user_profiles: [{ id: 'u-ed', full_name: 'Ed Gojara' }],
   properties: [{ id: 'p1', street_address: '603 Meadow Knoll Drive' }],
   journal_entries: [], journal_entry_lines: [], journal_entry_edits: [], ap_payments: [], ap_payment_applications: [], ap_invoices: [], ap_invoice_lines: [], ap_invoice_approvals: [],
   check_register: [], ar_payments: [], ar_charges: [],
 });
-const je = (o) => ({ id: 'je1', reference: 'JE-1', status: 'posted', posting_date: '2026-08-05', total_debits_cents: 302085, total_credits_cents: 302085, ...o });
+const je = (o) => ({ id: 'je1', community_id: 'c1', reference: 'JE-1', status: 'posted', posting_date: '2026-08-05', total_debits_cents: 302085, total_credits_cents: 302085, ...o });
 const noInvented = (s) => { for (const f of s.facts) assert.ok(f.value && !/null|undefined|NaN/.test(f.value) && f.source, JSON.stringify(f)); };
 
 t('AP ACH payment: payee, method, date, amount, bill paid, bill expense account, invoice document, and the gaps', async () => {
@@ -59,7 +61,8 @@ t('AP ACH payment: payee, method, date, amount, bill paid, bill expense account,
   assert.strictEqual(f['Paid from (GL cash account)'].value, '1000 Operating Cash');
   assert.ok(s.documents.some((x) => x.href === '/api/homeowner/file?kind=document&path=ap_invoices%2Fnrg.pdf'));
   assert.ok(s.links.some((l) => l.journal_entry_id === 'je-bill'), 'link to the bill entry');
-  assert.ok(s.gaps.some((g) => /No bank account/.test(g)) && s.gaps.some((g) => /reference number/.test(g)));
+  assert.ok(s.gaps.some((g) => /No bank account/.test(g)) && s.gaps.includes('No ACH reference number is recorded.'));
+  assert.ok(/bank_accounts.gl_account_number/.test(f['Paid from (GL cash account)'].source));
   assert.deepStrictEqual(s.accounting.map((a) => [a.account, a.debit_cents, a.credit_cents]), [['2000 Accounts Payable', 302085, 0], ['1000 Operating Cash', 0, 302085]]);
   noInvented(s);
 });
@@ -134,6 +137,45 @@ t('graceful: missing tables, no documents, manual entry with no poster, unknown 
   assert.strictEqual(s.origin.posted_by, null);
   assert.deepStrictEqual(s.audit.edits, []);
   assert.strictEqual((await summarizeJournalEntry(fake(d), 'nope')).error, 'not_found');
+});
+
+// ---- "Paid from" never guesses; gap wording follows the actual method ----
+const payWith = (method, creditLines, extra = {}) => {
+  const d = base();
+  d.journal_entries.push(je({ description: `AP payment ${method}`, source_module: 'payment_intake' }));
+  d.journal_entry_lines.push({ journal_entry_id: 'je1', line_number: 1, account_id: 'a-ap', debit_cents: 302085, credit_cents: 0 },
+    ...creditLines.map((c, i) => ({ journal_entry_id: 'je1', line_number: i + 2, account_id: c[0], debit_cents: 0, credit_cents: c[1], bank_account_id: c[2] || null })));
+  d.ap_payments.push({ id: 'pay1', vendor_id: 'v-nrg', payment_date: '2026-08-05', amount_cents: 302085, payment_method: method, check_number: null, bank_account_id: null, posting_journal_entry_id: 'je1', status: 'completed', ...extra });
+  return d;
+};
+t('a multi-credit entry whose first credit is NOT cash (discount first) is not mislabeled; the real cash line is used', async () => {
+  const s = await summarizeJournalEntry(fake(payWith('ach', [['a-disc', 5000], ['a-cash', 297085]])), 'je1');
+  assert.strictEqual(s.facts.find((x) => /Paid from/.test(x.label)).value, '1000 Operating Cash');
+});
+t('no credited account is a known bank/cash account (clearing only): no "Paid from" at all, stated as a gap', async () => {
+  const s = await summarizeJournalEntry(fake(payWith('credit_card', [['a-clear', 302085]])), 'je1');
+  assert.ok(!s.facts.some((x) => /Paid from/.test(x.label)), JSON.stringify(s.facts));
+  assert.ok(s.gaps.some((g) => /can't be determined from the ledger lines \(no credited account is a known bank\/cash account\)/.test(g)), s.gaps.join(' | '));
+  assert.ok(s.gaps.includes('No card transaction reference is recorded.'));
+});
+t('two cash accounts credited: ambiguous, so no guess', async () => {
+  const s = await summarizeJournalEntry(fake(payWith('wire', [['a-cash', 200000], ['a-sav', 102085]])), 'je1');
+  assert.ok(!s.facts.some((x) => /Paid from/.test(x.label)));
+  assert.ok(s.gaps.some((g) => /2 cash accounts credited/.test(g)) && s.gaps.includes('No wire reference number is recorded.'));
+});
+t('a credit line explicitly tagged with a bank account names that bank', async () => {
+  const s = await summarizeJournalEntry(fake(payWith('ach', [['a-cash', 302085, 'b-op']])), 'je1');
+  const f = s.facts.find((x) => x.label === 'Paid from');
+  assert.deepStrictEqual([f.value, f.source], ['Operating Checking · NewFirst', 'journal_entry_lines.bank_account_id → bank_accounts.account_nickname']);
+});
+t('reference-number gap wording follows the method; none when a reference exists', async () => {
+  for (const [m, want] of [['cash', 'No payment reference number is recorded.'], ['other', 'No payment reference number is recorded.'], ['check', 'No check number is recorded.']]) {
+    const s = await summarizeJournalEntry(fake(payWith(m, [['a-cash', 302085]])), 'je1');
+    assert.ok(s.gaps.includes(want), `${m}: ${s.gaps.join(' | ')}`);
+    assert.ok(!s.gaps.some((g) => /ACH/.test(g)), `${m} must not be called ACH`);
+  }
+  const withRef = await summarizeJournalEntry(fake(payWith('wire', [['a-cash', 302085]], { check_number: 'FED-123' })), 'je1');
+  assert.ok(!withRef.gaps.some((g) => /reference|check number/.test(g)));
 });
 
 (async () => {

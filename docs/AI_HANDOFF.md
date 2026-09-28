@@ -6,6 +6,18 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ## 2026-09-28 (latest): Trial Balance drill-down, read-first transaction summary (feat/tb-transaction-summary; NOT merged)
 
+**Accuracy fixes after ChatGPT review of `c2495884` (18:19 UTC).**
+1. **"Paid from" never guesses.** It uses only:
+   - a credit line explicitly tagged with a bank account (the bank is named); or
+   - exactly ONE credited account that is a bank's GL account (`bank_accounts.gl_account_number` in the community; verified in production for 6 communities) or is classified `account_subtype='cash'`.
+
+   With no candidate or several, nothing is shown, and a gap says it "can't be determined from the ledger lines (reason)". The first-credit-line fallback is removed. `account_subtype` alone is unreliable in production: operating cash is `current_asset` and only 3 accounts are `cash`.
+2. **The missing-reference gap is method-specific:** ACH / wire / check / card each get their own wording; cash and other get a neutral "No payment reference number is recorded."
+
+**Tests:** 13/13 (+5). New: a discount-first multi-credit entry isn't mislabeled; a clearing-only credit gives no "Paid from" plus a gap; two cash credits are ambiguous; a bank-tagged line names the bank; gap wording per method. Sabotage: restoring the first-credit guess fails 2.
+
+**Real example unchanged in substance:** JE-2026-00180 still shows "Paid from (GL cash account): 1000 Operating Cash Account", now sourced from a bank GL match, with the gap "No ACH reference number is recorded." 
+
 **Task.** Issue #1 (18:03 UTC): make a TB transaction explain what happened before showing the accounting and the edit controls.
 
 **What the data supports (inspected first; nothing invented).**
