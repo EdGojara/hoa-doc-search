@@ -172,6 +172,7 @@ const CHECKS = [
   'tests/sql/apply_one_rehearsal.mjs',
   'tests/test_tb_drilldown.js',
   'tests/sql/tb_drilldown_rehearsal.mjs',
+  'tests/test_je_transaction_summary.js',
 ];
 
 const args = process.argv.slice(2);

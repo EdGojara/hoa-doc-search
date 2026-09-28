@@ -4,6 +4,47 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
+## 2026-09-28 (latest): Trial Balance drill-down, read-first transaction summary (feat/tb-transaction-summary; NOT merged)
+
+**Task.** Issue #1 (18:03 UTC): make a TB transaction explain what happened before showing the accounting and the edit controls.
+
+**What the data supports (inspected first; nothing invented).**
+- **AP payment:** `ap_payments.posting_journal_entry_id` → payee, method, check #, date, amount, status, notes, bank account. Via `ap_payment_applications` → the bill(s) paid (number, date, document, expense accounts, the bill's own JE); `check_register` → check status and cleared date.
+- **AP bill:** `ap_invoices` (by posting JE or `source_reference`) → vendor, invoice #, dates, amount, paid, status, line descriptions and GL accounts, intake method, coding reason, `ap_invoice_approvals`, payments applied, document.
+- **Homeowner:** `ar_payments` / `ar_charges.posting_journal_entry_id` → property.
+- **Reversal and void:** `reverses_je_id` / `void_reversal_je_id`.
+- **Fallback:** line `vendor_id` / `property_id` tags.
+
+**Gaps, stated in the UI as "Not recorded":**
+- no bank account on many AP payments (then the GL cash account is shown);
+- no ACH reference numbers;
+- 1,115 Vantaca-migrated entries have no source records;
+- manual entries often have no `posted_by_user_id`;
+- no supporting document on most non-bill entries;
+- the AP bill has no in-app deep link, so it is linked through the bill's journal entry instead.
+
+**Built.**
+- `lib/accounting/je_transaction_summary.js` (read-only resolver; each fact tagged with its source).
+- `GET /api/books/journal-entries/:id/summary` (staff-gated like the JE detail).
+- A TB drawer entry now opens a **read-first modal**, in this order:
+  1. headline (what, who, when, amount);
+  2. "View invoice" / related-entry buttons;
+  3. **What happened** (hover shows each field's source);
+  4. **Not recorded** gaps;
+  5. **Accounting entry** (Dr/Cr);
+  6. collapsed **Audit & source** (origin, posted by, coding, review flag, notes, edit history, per-field data sources);
+  7. **Edit entry…** (the existing change-logged editor, unchanged permissions).
+
+**Evidence.**
+- Real production data (read-only): the ACH example JE-2026-00180 (NRG Business, $3,020.85, pays invoice 114 014 568 021, originally 5105 Street Lights, invoice PDF linked, gaps: no bank account, no ACH reference). Also a check payment (Eaglewood Operating Checking, check #1000 issued), an AP bill with approvals and paid-by, a reversal, a Vantaca entry (gap only), a certified-letter fee charge, and the conversion opening entry (a batch; not mislabeled).
+- Rendered with real data (static preview; the live page needs a staff login).
+- `tests/test_je_transaction_summary.js` **8/8**: mapping per type; batch not headlined; missing tables, documents and poster handled; unknown JE gives not_found; no invented values. Sabotage: 2 of 2 caught.
+- Full suite 124/129 (the same 5 pre-existing failures).
+
+**Incident (no impact).** While trying to serve the static preview, `preview_start` launched the full app server locally (`server.js`, against production env) for about 10 s. Its log shows **0 scheduler jobs enabled** and no requests; it was stopped immediately. `launch.json` was restored byte-for-byte.
+
+---
+
 ## 2026-09-28 (latest): Trial Balance drill-down on feat/trial-balance-drilldown (NOT merged/deployed)
 
 **Revision after ChatGPT review of `9a1d51b1` (17:19 UTC).**

@@ -280,6 +280,22 @@ router.get('/journal-entries/:id', async (req, res) => {
   }
 });
 
+// GET /journal-entries/:id/summary — "what actually happened?" (Ed 2026-09-28).
+// Read-only: the real-world transaction behind an entry (payee, bill, method,
+// documents, approvals, origin), each fact tagged with its data source, plus the
+// accounting lines and audit info, and the gaps the data can't answer.
+router.get('/journal-entries/:id/summary', async (req, res) => {
+  try {
+    const { summarizeJournalEntry } = require('../lib/accounting/je_transaction_summary');
+    const out = await summarizeJournalEntry(supabase, req.params.id);
+    if (out.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+    res.json(out);
+  } catch (err) {
+    console.error('[books] JE summary failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // Edit a posted entry in place (open period only) with a change-log row.
 router.patch('/journal-entries/:id', express.json({ limit: '256kb' }), async (req, res) => {
   try {

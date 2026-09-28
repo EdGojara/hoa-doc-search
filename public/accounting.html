@@ -1610,7 +1610,7 @@
       : (l.source_document_path ? `/api/homeowner/file?kind=document&path=${encodeURIComponent(l.source_document_path)}` : null);
     const lineRows = (x.lines || []).map((l) => `<tr>
         <td style="white-space:nowrap;">${esc(l.posting_date)}</td>
-        <td style="white-space:nowrap;">${typeof jeOpenEdit === 'function' ? `<a href="javascript:void(0)" onclick="jeOpenEdit('${esc(l.journal_entry_id)}')" title="Open this journal entry">${esc(l.reference)}</a>` : esc(l.reference)}${l.entry_status === 'voided_with_reversal' ? ' <span class="pill" title="Voided; its reversal entry nets it out">voided</span>' : ''}</td>
+        <td style="white-space:nowrap;"><a href="javascript:void(0)" onclick="tbTxn('${esc(l.journal_entry_id)}')" title="What happened: the transaction behind this entry">${esc(l.reference)}</a>${l.entry_status === 'voided_with_reversal' ? ' <span class="pill" title="Voided; its reversal entry nets it out">voided</span>' : ''}</td>
         <td>${esc(l.description || '')}${l.memo ? `<div class="muted" style="font-size:11px;">${esc(l.memo)}</div>` : ''}</td>
         <td style="font-size:12px;">${esc(l.source_module || '')}${docLink(l) ? ` <a href="${docLink(l)}" target="_blank" title="Source document">📎</a>` : ''}</td>
         <td class="num">${l.debit_cents ? fmt(l.debit_cents) : ''}</td>
@@ -1634,6 +1634,64 @@
       ${x.total_lines ? `<table><thead><tr><th>Date</th><th>Entry</th><th>Description</th><th>Source</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Running</th></tr></thead>
         <tbody>${lineRows}</tbody></table>${pager}`
         : `<div class="muted" style="padding:16px; text-align:center;">No posted entries for this account and fund in this scope.</div>`}`;
+  };
+
+  // ---- Transaction summary: "what actually happened?" (Ed 2026-09-28) -------
+  // Read-first view of one journal entry: the real-world transaction (payee,
+  // bill, method, documents, approvals, origin) from existing records, then the
+  // accounting lines, then audit. Editing stays behind "Edit entry" (the existing
+  // change-logged editor). Each fact shows its data source on hover.
+  window.tbCloseTxn = function () { const m = document.getElementById('tb-txn'); if (m) m.remove(); };
+  window.tbTxn = async function (jeId) {
+    let m = document.getElementById('tb-txn');
+    if (!m) {
+      m = document.createElement('div'); m.id = 'tb-txn';
+      m.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.35); z-index:10000; display:flex; align-items:flex-start; justify-content:center; overflow-y:auto; padding:40px 16px;';
+      m.onclick = (e) => { if (e.target === m) tbCloseTxn(); };
+      document.body.appendChild(m);
+    }
+    const card = (inner) => `<div style="background:#fff; border-radius:12px; width:min(760px, 100%); padding:20px 22px; box-shadow:0 12px 40px rgba(0,0,0,0.2);">${inner}</div>`;
+    const closeBtn = `<button onclick="tbCloseTxn()" style="border:none; background:none; font-size:22px; cursor:pointer; line-height:1;">×</button>`;
+    m.innerHTML = card(`<div style="display:flex; justify-content:flex-end;">${closeBtn}</div><div class="muted">Loading transaction…</div>`);
+    let x;
+    try {
+      const r = await fetch(`/api/books/journal-entries/${encodeURIComponent(jeId)}/summary`);
+      x = await r.json();
+      if (!r.ok) throw new Error(x.error || r.status);
+    } catch (e) { m.innerHTML = card(`<div style="display:flex; justify-content:flex-end;">${closeBtn}</div><div style="color:var(--err);">Couldn't load this transaction: ${esc(e.message)}</div>`); return; }
+    const h = x.headline || {};
+    const facts = (x.facts || []).map((f) => `<tr title="Source: ${esc(f.source)}"><td style="color:var(--ink-soft); width:34%; padding:5px 10px 5px 0; vertical-align:top;">${esc(f.label)}</td><td style="padding:5px 0;">${esc(f.value)}</td></tr>`).join('');
+    const docs = (x.documents || []).map((d) => `<a href="${esc(d.href)}" target="_blank" style="display:inline-block; padding:6px 12px; border:1px solid var(--rule); border-radius:8px; text-decoration:none; font-weight:600; margin:0 6px 6px 0;">📎 View ${esc(d.label)}</a>`).join('');
+    const rel = (x.links || []).map((l) => `<a href="javascript:void(0)" onclick="tbTxn('${esc(l.journal_entry_id)}')" style="display:inline-block; padding:6px 12px; border:1px solid var(--rule); border-radius:8px; text-decoration:none; margin:0 6px 6px 0;">↗ ${esc(l.label)}</a>`).join('');
+    const acct = (x.accounting || []).map((a) => `<tr><td style="padding:4px 10px 4px 0;">${a.debit_cents ? 'Dr' : '<span style="padding-left:18px;">Cr</span>'} ${esc(a.account)}</td><td class="num">${a.debit_cents ? fmt(a.debit_cents) : ''}</td><td class="num">${a.credit_cents ? fmt(a.credit_cents) : ''}</td><td class="muted" style="font-size:11.5px; padding-left:10px;">${esc(a.memo || '')}</td></tr>`).join('');
+    const gaps = (x.gaps || []).length ? `<div style="margin-top:12px; padding:9px 12px; border-radius:8px; background:#fffbeb; border:1px solid #fde68a; font-size:12.5px; color:#92400e;"><strong>Not recorded:</strong><ul style="margin:4px 0 0 18px; padding:0;">${x.gaps.map((g) => `<li>${esc(g)}</li>`).join('')}</ul></div>` : '';
+    const au = x.audit || {}, o = x.origin || {};
+    const edits = (au.edits || []).map((e) => `<li>${esc(String(e.at || '').slice(0, 10))} — ${esc(e.by || 'staff')}${e.reason ? ': ' + esc(e.reason) : ''}</li>`).join('');
+    const sources = (x.facts || []).map((f) => `<li><strong>${esc(f.label)}</strong>: ${esc(f.source)}</li>`).join('');
+    m.innerHTML = card(`
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+        <div>
+          <div class="muted" style="font-size:11.5px; text-transform:uppercase; letter-spacing:0.05em;">${esc(o.label || '')} · ${esc(x.reference || '')}${x.status && x.status !== 'posted' ? ' · ' + esc(x.status) : ''}</div>
+          <h2 class="sec" style="margin:4px 0 2px;">${esc(h.title || 'Journal entry')}</h2>
+          <div style="font-size:14px;">${h.counterparty ? `<strong>${esc(h.counterparty)}</strong> · ` : ''}${esc(h.date || '')}</div>
+        </div>${closeBtn}</div>
+      ${docs || rel ? `<div style="margin-top:12px;">${docs}${rel}</div>` : ''}
+      ${facts ? `<h3 style="margin:14px 0 4px; font-size:13px;">What happened</h3><table style="font-size:13px;"><tbody>${facts}</tbody></table>` : ''}
+      ${gaps}
+      <h3 style="margin:16px 0 4px; font-size:13px;">Accounting entry</h3>
+      <table style="font-size:13px;"><thead><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th><th>Memo</th></tr></thead><tbody>${acct}</tbody></table>
+      <details style="margin-top:14px; font-size:12.5px;"><summary style="cursor:pointer; font-weight:600;">Audit &amp; source</summary>
+        <div style="margin-top:6px; line-height:1.6;">
+          Origin: ${esc(o.label || '')}${o.source_reference ? ` (ref ${esc(o.source_reference)})` : ''}<br>
+          Posted by: ${esc(o.posted_by || 'Not recorded')}${o.posted_at ? ' · ' + esc(String(o.posted_at).slice(0, 16).replace('T', ' ')) : ''}<br>
+          ${au.classification_reason ? `Coding: ${esc(au.classification_reason)}<br>` : ''}${au.needs_review ? '<strong>Flagged for review</strong><br>' : ''}${au.notes ? `Notes: ${esc(au.notes)}<br>` : ''}
+          ${edits ? `Edits:<ul style="margin:2px 0 0 18px;">${edits}</ul>` : 'No edits since posting.'}
+          ${sources ? `<div style="margin-top:6px;">Data sources:<ul style="margin:2px 0 0 18px;">${sources}</ul></div>` : ''}
+        </div></details>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+        ${typeof jeOpenEdit === 'function' ? `<button onclick="tbCloseTxn(); jeOpenEdit('${esc(x.journal_entry_id)}')" style="padding:7px 14px; border:1px solid var(--rule); border-radius:8px; background:#fff; cursor:pointer;">Edit entry…</button>` : ''}
+        <button onclick="tbCloseTxn()" style="padding:7px 14px; border:none; border-radius:8px; background:var(--navy, #0B1D34); color:#fff; cursor:pointer; font-weight:600;">Close</button>
+      </div>`);
   };
 
   const BUCKETS = [['current','Current'],['d1_30','1–30'],['d31_60','31–60'],['d61_90','61–90'],['d91_120','91–120'],['d120_plus','120+']];
