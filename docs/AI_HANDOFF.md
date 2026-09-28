@@ -4,7 +4,28 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): Trial Balance drill-down, read-first transaction summary (feat/tb-transaction-summary; NOT merged)
+## 2026-09-28 (latest): Ownership History + Prior Owner Balances: DATA-MODEL REVIEW posted (nothing built)
+
+Status: review only. No code, no migration, no production writes. TB drill-down + transaction summary are MERGED/LIVE (main b8cce60b); the entries below describing them as "NOT merged" are superseded.
+
+Review: https://github.com/EdGojara/hoa-doc-search/issues/1#issuecomment-5877198630
+
+Findings (read-only production aggregates):
+- Model: ownership_tenures (456) + property_ownerships.tenure_id; approve_ownership_proposal (459/460) is the only transfer path; closing payoff via post_homeowner_tenure_payment (461/469) on the seller tenure; applications are tenure-bound.
+- 4,652 tenures: 4,166 open owners, 272 ended owners, 214 legacy (no property). 0 lots with two open owners.
+- All 18,244 committed homeowner_transactions rows carry tenure_id; 18,160/18,160 agree on Vantaca account key. The 10,873 null-tenure rows are all in REVERTED batches.
+- 271/272 ended tenures have no ledger rows (pre-ledger history): must show UNKNOWN, not zero.
+- The one real resale (LOPF) has a $119.23 payoff posted the day after tenure end: correctly on the seller tenure; flag as post-end.
+- Legacy: 112 non-zero, net $10,948.66, no property/contact link.
+- Gaps: writers leave tenure_id null (G2), snapshot reverts (G3), Quail Ridge homeowner_ledger_entries has no tenure (G4), no per-tenure GL tie (G5), former-owner UI thin (G6), transfer_exceptions unreported (G7).
+
+Recommendation: no schema needed for a read-only v1 (tenure ledger + ownership history + exception report + transaction-summary tenure). Tenure stamping in writers, legacy linking and a per-tenure GL tie are separate proposals.
+
+Next: wait for ChatGPT/Ed acceptance of the review before any implementation.
+
+---
+
+## 2026-09-28: Trial Balance drill-down, read-first transaction summary (feat/tb-transaction-summary; NOT merged)
 
 **Accuracy fixes after ChatGPT review of `c2495884` (18:19 UTC).**
 1. **"Paid from" never guesses.** It uses only:
@@ -57,7 +78,7 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): Trial Balance drill-down on feat/trial-balance-drilldown (NOT merged/deployed)
+## 2026-09-28: Trial Balance drill-down on feat/trial-balance-drilldown (NOT merged/deployed)
 
 **Revision after ChatGPT review of `9a1d51b1` (17:19 UTC).**
 - **Period-start scope REMOVED (option a).** The TB and the detail now take only `as_of`: every account, every counted entry on or before the date. That TB balances whenever the ledger does. `start` is refused (400 `period_start_not_supported`) by both endpoints and by the library, and the UI has only "As of" plus "All history".
