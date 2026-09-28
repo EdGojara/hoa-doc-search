@@ -11,7 +11,7 @@ Status: read-only v1 built per ChatGPT's 19:57 review. No migration, no producti
 Canonical source policy (lib/ar/ownership_history.js header, enforced by tests):
 - Balance population = committed homeowner_transactions + trustEd-native ar_charges/ar_payments (source != 'vantaca_migration', not voided).
 - ar_* rows with source 'vantaca_migration' are import MIRRORS: never added (Quail Ridge: 212 charges + 2 payments mirror the June Vantaca import).
-- A native row matching a live ledger row (same lot, same signed amount, within 3 days) is held out and flagged as a possible duplicate.
+- A native row matching a live ledger row (same lot, same signed amount, within 3 days) STAYS IN the balance and is flagged "possible duplicate: needs review"; the lot cannot show as reconciled (ChatGPT review 20:23). Only the durable vantaca_migration marker excludes a live row.
 - homeowner_ledger_entries is a statement display copy: never read.
 - Reverted/pending batch rows are not live (counted only).
 - Tenure balances and the lot total come from the same population, so the lot total always equals the sum of owner balances plus unassigned rows (tested).
@@ -30,7 +30,7 @@ Built:
   - Homeowners → Former Owners (the report, with an informational GL 1300+2400 control);
   - Accounts → 🏠 Ownership history panel;
   - the JE transaction summary shows the owner/ownership period only from a recorded tenure_id, with a 🏠 View owner ledger button.
-- tests/test_ownership_history.js (20) + 2 new transaction-summary cases.
+- tests/test_ownership_history.js (22) + 2 new transaction-summary cases.
 - Platform-knowledge entry added; the stale Trial Balance entry that mentioned "Period start" was corrected. The seed re-run needs Ed's approval.
 
 Validated read-only on production:

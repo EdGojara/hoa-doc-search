@@ -1808,7 +1808,7 @@
     const legacyRows = legacy.map((x) => `<tr>${OH_ALL ? `<td>${esc(x.community || '')}</td>` : ''}<td style="font-family:ui-monospace,monospace;">${esc(x.vantaca_account_id || '')}</td>
         <td class="num">${ohSigned(x.final_balance_cents)}</td><td>${esc(x.last_transaction_date || '')}</td><td>${ohChip(x.status)}</td></tr>`).join('');
     const ctl = (j.controls || []).map((c) => `<tr><td>${esc(c.community || '')}</td><td class="num">${fmt(c.gl_control.subledger_cents)}</td><td class="num">${fmt(c.gl_control.gl_1300_2400_net_cents)}</td><td class="num">${ohSigned(c.gl_control.variance_cents)}</td>
-        <td class="muted" style="font-size:11.5px;">${c.excluded.non_live_rows} reverted-batch rows and ${c.excluded.mirror_rows} import mirrors not counted${c.excluded.possible_duplicates ? `; ${c.excluded.possible_duplicates} possible duplicate(s) held out` : ''}</td></tr>`).join('');
+        <td class="muted" style="font-size:11.5px;">${c.excluded.non_live_rows} reverted-batch rows and ${c.excluded.mirror_rows} import mirrors not counted${c.excluded.possible_duplicates_flagged ? `; ${c.excluded.possible_duplicates_flagged} possible duplicate(s) counted and flagged for review` : ''}</td></tr>`).join('');
     const sel = (v) => prev.side === v ? ' selected' : '';
     $('body').innerHTML = `
       <div class="summary">

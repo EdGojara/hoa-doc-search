@@ -149,13 +149,42 @@ t('SOURCE POLICY: the same economic event in two AR surfaces is counted once', (
   assert.strictEqual(h.excluded.mirror_rows, 1);
 });
 
-t('SOURCE POLICY: a native posting that duplicates a ledger row is held out and flagged, not added', () => {
+t('SOURCE POLICY: a same-amount native posting near a ledger row stays IN the balance and is flagged (never silently dropped)', () => {
   const htRows = [ht('tB', '2026-08-27', 3500)];
   const arCharges = [{ id: 'n1', property_id: 'lot1', tenure_id: 'tB', charge_date: '2026-08-28', original_amount_cents: 3500, status: 'open', source_module: 'certified_letter_fee' }];
   const h = history({ tenures: [T('tB', '2026-01-01', null)], htRows, arCharges, view: { balance_cents: 3500 } });
-  assert.strictEqual(h.current_owner.balance_cents, 3500);
+  assert.strictEqual(h.current_owner.balance_cents, 7000);
+  assert.strictEqual(h.reconciliation.property_total_cents, 7000);
   assert.strictEqual(h.possible_duplicates.length, 1);
+  assert.ok(h.current_owner.ledger.find((r) => r.key === 'arc:n1').flags.some((f) => /possible duplicate/.test(f)));
+  assert.ok(h.current_owner.review_flags.length >= 1);
   assert.strictEqual(h.reconciliation.clean, false);
+  assert.ok(h.reconciliation.reasons.some((x) => /included in the totals, needs review/.test(x)));
+});
+
+t('SOURCE POLICY: two distinct same-amount transactions on one lot within 3 days are both counted', () => {
+  // A $35 imported charge and an unrelated $35 native certified fee two days later.
+  const htRows = [ht('tA', '2026-08-10', 3500)];
+  const arCharges = [{ id: 'n2', property_id: 'lot1', tenure_id: 'tA', charge_date: '2026-08-12', original_amount_cents: 3500, status: 'open', source_module: 'certified_letter_fee' }];
+  const arPayments = [{ id: 'p2', property_id: 'lot1', tenure_id: 'tA', payment_date: '2026-08-11', amount_cents: 3500, status: 'received', source: 'stripe' }];
+  const h = history({ tenures: [T('tA', '2020-01-01', '2026-08-26'), T('tB', '2026-08-27', null)], htRows, arCharges, arPayments });
+  const s = h.prior_owners[0];
+  assert.strictEqual(s.ledger.length, 3);                     // nothing dropped
+  assert.strictEqual(s.final_balance_cents, 3500 + 3500 - 3500);
+  assert.notStrictEqual(s.status.code, 'closed_clean');      // a seller never looks cleared by suppression
+  assert.strictEqual(h.possible_duplicates.length, 1);        // only the same-signed match is flagged
+});
+
+t('SOURCE POLICY: a true mirror with the durable vantaca_migration marker is excluded exactly once', () => {
+  const htRows = [ht('tB', '2026-01-01', 26000), ht('tB', '2026-02-01', -10960)];
+  const arCharges = [{ id: 'm1', property_id: 'lot1', tenure_id: 'tB', charge_date: '2026-01-01', original_amount_cents: 26000, status: 'open', source_module: 'vantaca_migration' }];
+  const arPayments = [{ id: 'mp1', property_id: 'lot1', tenure_id: 'tB', payment_date: '2026-02-01', amount_cents: 10960, status: 'received', source: 'vantaca_migration' }];
+  const h = history({ tenures: [T('tB', '2026-01-01', null)], htRows, arCharges, arPayments, view: { balance_cents: 15040 } });
+  assert.strictEqual(h.current_owner.balance_cents, 15040);
+  assert.strictEqual(h.current_owner.ledger.length, 2);
+  assert.strictEqual(h.excluded.mirror_rows, 2);
+  assert.strictEqual(h.possible_duplicates.length, 0);
+  assert.ok(h.reconciliation.clean);
 });
 
 t('SOURCE POLICY: a native-only posting (certified fee) is additive and explained against the current-balance view', () => {
