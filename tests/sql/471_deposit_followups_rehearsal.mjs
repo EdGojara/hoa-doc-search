@@ -32,6 +32,8 @@ const C = '00000000-0000-0000-0000-00000000000c', C2 = '00000000-0000-0000-0000-
 const INV_DEP = '00000000-0000-0000-0000-0000000000a1', INV_FIN = '00000000-0000-0000-0000-0000000000a2', INV_FULL = '00000000-0000-0000-0000-0000000000a3', INV_OTHER = '00000000-0000-0000-0000-0000000000a4';
 const DEP = '00000000-0000-0000-0000-0000000000d1';
 const JE_OK = '00000000-0000-0000-0000-0000000000f1', JE_DRAFT = '00000000-0000-0000-0000-0000000000f2', JE_OTHER = '00000000-0000-0000-0000-0000000000f3';
+const JE_DEP = '00000000-0000-0000-0000-0000000000f4', JE_AMT = '00000000-0000-0000-0000-0000000000f5', JE_ACCT = '00000000-0000-0000-0000-0000000000f6';
+const A1430 = '00000000-0000-0000-0000-000000001430', AEXP = '00000000-0000-0000-0000-000000005900';
 const U_EMMA = '00000000-0000-0000-0000-000000000111', U_ED = '00000000-0000-0000-0000-000000000222', U_M = '00000000-0000-0000-0000-000000000333';
 const STUB = `
   CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
@@ -40,9 +42,10 @@ const STUB = `
   CREATE TABLE vendors (id uuid primary key, name text);
   CREATE TABLE chart_of_accounts (id uuid primary key default gen_random_uuid(), account_number text);
   CREATE TABLE journal_entries (id uuid primary key default gen_random_uuid(), community_id uuid, status text NOT NULL DEFAULT 'posted', reference text);
-  CREATE TABLE journal_entry_lines (id uuid primary key default gen_random_uuid(), journal_entry_id uuid);
+  CREATE TABLE journal_entry_lines (id uuid primary key default gen_random_uuid(), journal_entry_id uuid, account_id uuid, debit_cents bigint NOT NULL DEFAULT 0, credit_cents bigint NOT NULL DEFAULT 0);
+  CREATE TABLE ap_invoice_lines (id uuid primary key default gen_random_uuid(), invoice_id uuid, gl_account_id uuid, amount_cents bigint);
   CREATE TABLE ap_invoices (id uuid primary key, community_id uuid NOT NULL, vendor_id uuid NOT NULL, vendor_invoice_number text, total_cents bigint NOT NULL CHECK (total_cents > 0),
-    amount_paid_cents bigint NOT NULL DEFAULT 0, status text NOT NULL DEFAULT 'awaiting_approval');
+    amount_paid_cents bigint NOT NULL DEFAULT 0, status text NOT NULL DEFAULT 'awaiting_approval', posting_journal_entry_id uuid);
   CREATE TABLE ap_payments (id uuid primary key default gen_random_uuid(), amount_cents bigint);
   CREATE TABLE vendor_projects (id uuid primary key default gen_random_uuid(), community_id uuid NOT NULL, title text);
 `;
@@ -52,9 +55,18 @@ async function world() {
   await db.exec(`INSERT INTO communities VALUES ('${C}', 'Waterview Estates'), ('${C2}', 'Other'); INSERT INTO vendors VALUES ('${V}', 'PRYME THYME KOOKERS');
     INSERT INTO ap_invoices (id, community_id, vendor_id, vendor_invoice_number, total_cents) VALUES
       ('${INV_DEP}', '${C}', '${V}', '2836', 334250), ('${INV_FIN}', '${C}', '${V}', '2901', 334250), ('${INV_FULL}', '${C}', '${V}', '2902', 668500), ('${INV_OTHER}', '${C2}', '${V}', '77', 100);
-    INSERT INTO journal_entries (id, community_id, status, reference) VALUES ('${JE_OK}', '${C}', 'posted', 'JE-1'), ('${JE_DRAFT}', '${C}', 'draft', 'JE-2'), ('${JE_OTHER}', '${C2}', 'posted', 'JE-3');`);
+    INSERT INTO journal_entries (id, community_id, status, reference) VALUES ('${JE_OK}', '${C}', 'posted', 'JE-1'), ('${JE_DRAFT}', '${C}', 'draft', 'JE-2'), ('${JE_OTHER}', '${C2}', 'posted', 'JE-3'),
+      ('${JE_DEP}', '${C}', 'posted', 'JE-DEP'), ('${JE_AMT}', '${C}', 'posted', 'JE-AMT'), ('${JE_ACCT}', '${C}', 'posted', 'JE-ACCT');
+    -- The deposit was booked PREPAID: its accrual debits 1430.
+    INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_cents, credit_cents) VALUES
+      ('${JE_DEP}', '${A1430}', 334250, 0),
+      ('${JE_OK}', '${AEXP}', 334250, 0), ('${JE_OK}', '${A1430}', 0, 334250),
+      ('${JE_DRAFT}', '${A1430}', 0, 334250), ('${JE_OTHER}', '${A1430}', 0, 334250),
+      ('${JE_AMT}', '${AEXP}', 300000, 0), ('${JE_AMT}', '${A1430}', 0, 300000),
+      ('${JE_ACCT}', '${AEXP}', 334250, 0), ('${JE_ACCT}', '${AEXP}', 0, 334250);
+    UPDATE ap_invoices SET posting_journal_entry_id = '${JE_DEP}' WHERE id = '${INV_DEP}';`);
   await db.exec(M364);
-  await db.exec(`INSERT INTO vendor_deposits (id, community_id, vendor_id, deposit_invoice_id, deposit_amount_cents, remaining_balance_cents) VALUES ('${DEP}', '${C}', '${V}', '${INV_DEP}', 334250, 334250);`);
+  await db.exec(`INSERT INTO vendor_deposits (id, community_id, vendor_id, deposit_invoice_id, gl_account_id, deposit_amount_cents, remaining_balance_cents) VALUES ('${DEP}', '${C}', '${V}', '${INV_DEP}', '${A1430}', 334250, 334250);`);
   return db;
 }
 const n = async (db, sql) => Number((await db.query(sql)).rows[0].n);
@@ -80,7 +92,9 @@ await db.exec(`GRANT USAGE ON SCHEMA public TO service_role;`);
 let roleOk = true;
 try { await db.exec(`SET ROLE service_role`); } catch (_) { roleOk = false; }
 if (roleOk) {
-  await expectErr('service role: direct UPDATE of vendor_deposits is denied', () => db.query(`UPDATE vendor_deposits SET balance_due_date = '2027-01-01'`), /permission denied/);
+  await expectErr('service role: direct UPDATE of a follow-up column is denied', () => db.query(`UPDATE vendor_deposits SET balance_due_date = '2027-01-01'`), /permission denied/);
+  await db.query(`UPDATE vendor_deposits SET notes = 'staff note' WHERE id = '${DEP}'`);
+  check('service role: updating pre-existing columns (notes/status) still works', (await db.query(`SELECT notes FROM vendor_deposits WHERE id = '${DEP}'`)).rows[0].notes === 'staff note');
   await expectErr('service role: direct INSERT into the reconciliation ledger is denied', () => db.query(`INSERT INTO vendor_deposit_events (deposit_id, event_type, actor) VALUES ('${DEP}', 'followup_set', 'x')`), /permission denied/);
   const r = await db.query(`SELECT vendor_deposit_set_followup($1, '{"notes":"via function"}'::jsonb, 'Ed', $2) AS r`, [DEP, U_ED]);
   check('service role: the audited function still works (SECURITY DEFINER)', r.rows[0].r.notes === 'via function');
@@ -112,6 +126,9 @@ await expectErr('manual accounting refuses when the bill total is not the net du
 await expectErr('manual accounting refuses a stale deposit-paid snapshot', () => decide(r1, 'manual_accounting_recorded', { je: JE_OK, net: 334250, paid: 334250 }), /stale_reconciliation/);
 await expectErr('manual accounting refuses an unposted JE', () => decide(r1, 'manual_accounting_recorded', { je: JE_DRAFT, net: 334250, paid: 0 }), /accounting_je_invalid/);
 await expectErr('manual accounting refuses a JE from another community', () => decide(r1, 'manual_accounting_recorded', { je: JE_OTHER, net: 334250, paid: 0 }), /accounting_je_invalid/);
+await expectErr('prepaid deposit: a JE crediting 1430 for the wrong amount does not relieve it', () => decide(r1, 'manual_accounting_recorded', { je: JE_AMT, net: 334250, paid: 0 }), /je_does_not_relieve_deposit/);
+await expectErr('prepaid deposit: a JE that never touches 1430 does not relieve it', () => decide(r1, 'manual_accounting_recorded', { je: JE_ACCT, net: 334250, paid: 0 }), /je_does_not_relieve_deposit/);
+await expectErr('prepaid deposit: no JE at all (and the bill\'s own accrual has no 1430 credit) is refused', () => decide(r1, 'manual_accounting_recorded', { je: null, net: 334250, paid: 0 }), /accounting_je_required/);
 check('every refused decision wrote NOTHING (atomic)', c0 === await counts(), `${c0} vs ${await counts()}`);
 await decide(r1, 'confirmed_match', { role: 'staff', user: U_M, note: null });
 await expectErr('only one confirmed_match per reconciliation', () => decide(r1, 'confirmed_match'), /already_decided|duplicate/);
@@ -127,6 +144,36 @@ await expectErr('a superseded proposal cannot be decided', () => decide(rOld, 'r
 await expectErr('manual accounting refuses a non-payable form', async () => { const x = await propose(INV_FULL, { form: 'duplicate_or_statement', net: 0 }); await decide(x, 'manual_accounting_recorded', { je: JE_OK, net: 334250, paid: 0 }); }, /form_not_payable/);
 await decide(rNew, 'unrelated', { note: 'different job' }).catch(() => {});
 
+// ---- accounting-state scenarios on fresh deposits ----
+const extraDeposit = async (tag, { prepaid, finalLines = [], finalJeLines = [] }) => {
+  const dep = `00000000-0000-0000-0000-0000000d${tag}000`.slice(0, 36), di = `00000000-0000-0000-0000-0000000a${tag}001`.slice(0, 36), fi = `00000000-0000-0000-0000-0000000a${tag}002`.slice(0, 36);
+  const dje = `00000000-0000-0000-0000-0000000e${tag}001`.slice(0, 36), fje = `00000000-0000-0000-0000-0000000e${tag}002`.slice(0, 36);
+  await db.exec(`INSERT INTO journal_entries (id, community_id, status) VALUES ('${dje}', '${C}', 'posted'), ('${fje}', '${C}', 'posted');
+    INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_cents) VALUES ('${dje}', '${prepaid ? A1430 : AEXP}', 334250);
+    INSERT INTO ap_invoices (id, community_id, vendor_id, vendor_invoice_number, total_cents, posting_journal_entry_id) VALUES ('${di}', '${C}', '${V}', 'D${tag}', 334250, '${dje}'), ('${fi}', '${C}', '${V}', 'F${tag}', 334250, '${fje}');
+    INSERT INTO vendor_deposits (id, community_id, vendor_id, deposit_invoice_id, gl_account_id, deposit_amount_cents, remaining_balance_cents) VALUES ('${dep}', '${C}', '${V}', '${di}', '${A1430}', 334250, 334250);`);
+  for (const [acct, amt] of finalLines) await db.query(`INSERT INTO ap_invoice_lines (invoice_id, gl_account_id, amount_cents) VALUES ($1, $2, $3)`, [fi, acct, amt]);
+  for (const [acct, dr, cr] of finalJeLines) await db.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_id, debit_cents, credit_cents) VALUES ($1, $2, $3, $4)`, [fje, acct, dr, cr]);
+  const rec = (await db.query(`SELECT vendor_deposit_propose($1::jsonb) AS id`, [JSON.stringify({ deposit_id: dep, incoming_invoice_id: fi, form: 'balance_only', deposit_billed_cents: 334250,
+    deposit_paid_cents: 0, deposit_still_owed_cents: 334250, incoming_face_cents: 334250, net_due_cents: 334250, final_total_cents: 668500, needs_review: false, proposed_by: 'emma', proposed_by_user_id: U_EMMA })])).rows[0].id;
+  return { dep, fi, rec };
+};
+{
+  const x = await extraDeposit('2', { prepaid: true });
+  await expectErr('a relieving JE cannot be reused for another deposit', () => decide(x.rec, 'manual_accounting_recorded', { je: JE_OK, net: 334250, paid: 0 }), /accounting_je_already_used|uq_vdrd_je_used_once/);
+  const y = await extraDeposit('3', { prepaid: true, finalLines: [[AEXP, 668500], [A1430, -334250]], finalJeLines: [[AEXP, 668500, 0], [A1430, 0, 334250]] });
+  await decide(y.rec, 'manual_accounting_recorded', { je: null, net: 334250, paid: 0, note: 'credit line on the bill relieved 1430' });
+  const yRow = (await db.query(`SELECT deposit_accounting_state s, accounting_je_id j FROM vendor_deposit_reconciliation_decisions WHERE reconciliation_id = $1 AND decision = 'manual_accounting_recorded'`, [y.rec])).rows[0];
+  check('prepaid: the final bill\'s own accrual with a 1430 credit counts as the relief entry', yRow && yRow.s === 'prepaid' && !!yRow.j, JSON.stringify(yRow));
+  const z = await extraDeposit('4', { prepaid: false, finalLines: [[AEXP, 334250]] });
+  await expectErr('expensed deposit: a relief JE is refused (nothing to relieve)', () => decide(z.rec, 'manual_accounting_recorded', { je: JE_DRAFT, net: 334250, paid: 0 }), /no_relief_entry_for_expensed_deposit/);
+  const w = await extraDeposit('5', { prepaid: false, finalLines: [[AEXP, 668500], [A1430, -334250]] });
+  await expectErr('expensed deposit: a final bill that touches 1430 is refused', () => decide(w.rec, 'manual_accounting_recorded', { je: null, net: 334250, paid: 0 }), /final_bill_touches_deposit_account/);
+  await decide(z.rec, 'manual_accounting_recorded', { je: null, net: 334250, paid: 0, note: 'deposit already expensed; bill is the balance' });
+  const zRow = (await db.query(`SELECT deposit_accounting_state s, accounting_je_id j FROM vendor_deposit_reconciliation_decisions WHERE reconciliation_id = $1 AND decision = 'manual_accounting_recorded'`, [z.rec])).rows[0];
+  check('expensed: recorded with no relief entry and state "expensed"', zRow && zRow.s === 'expensed' && zRow.j === null, JSON.stringify(zRow));
+}
+
 // ---- ledger immutability + grants ----
 await expectErr('a reconciliation cannot be edited', () => db.query(`UPDATE vendor_deposit_reconciliations SET net_due_cents = 1`), /permanent/);
 await expectErr('a decision cannot be deleted', () => db.query(`DELETE FROM vendor_deposit_reconciliation_decisions`), /permanent/);
@@ -137,7 +184,11 @@ const g = (await db.query(`SELECT grantee, table_name, privilege_type FROM infor
 check('ledger: service_role SELECT only; nothing for anon/authenticated',
   ['vendor_deposit_reconciliations', 'vendor_deposit_reconciliation_decisions', 'vendor_deposit_events'].every((t) => g.filter((x) => x.table_name === t && x.grantee === 'service_role').map((x) => x.privilege_type).join() === 'SELECT')
   && !g.some((x) => ['anon', 'authenticated'].includes(x.grantee) && x.table_name !== 'vendor_deposits'), JSON.stringify(g));
-check('vendor_deposits: no UPDATE/DELETE for service_role', !g.some((x) => x.table_name === 'vendor_deposits' && x.grantee === 'service_role' && ['UPDATE', 'DELETE'].includes(x.privilege_type)));
+const colPriv = async (col) => (await db.query(`SELECT has_column_privilege('service_role', 'vendor_deposits', $1, 'UPDATE') p`, [col])).rows[0].p;
+check('vendor_deposits: every pre-existing column still UPDATE-able by service_role (existing workflows unaffected)',
+  (await Promise.all(['status', 'applied_invoice_id', 'applied_at', 'notes', 'remaining_balance_cents', 'deposit_amount_cents', 'gl_account_id', 'project_description', 'vendor_id', 'deposit_invoice_id', 'updated_at'].map(colPriv))).every(Boolean));
+check('vendor_deposits: the six follow-up columns are function-only', !(await Promise.all(['event_date', 'balance_due_date', 'balance_due_basis', 'agreed_total_cents', 'agreed_total_basis', 'project_id'].map(colPriv))).some(Boolean));
+check('vendor_deposits: DELETE/INSERT/SELECT unchanged for service_role', (await db.query(`SELECT has_table_privilege('service_role', 'vendor_deposits', 'DELETE') d, has_table_privilege('service_role', 'vendor_deposits', 'INSERT') i, has_table_privilege('service_role', 'vendor_deposits', 'SELECT') s`)).rows.every((r) => r.d && r.i && r.s));
 const fx = (await db.query(`SELECT p.proname, has_function_privilege('anon', p.oid, 'EXECUTE') a, has_function_privilege('service_role', p.oid, 'EXECUTE') s
   FROM pg_proc p WHERE p.proname IN ('vendor_deposit_set_followup', 'vendor_deposit_propose', 'vendor_deposit_decide')`)).rows;
 check('functions: EXECUTE for service_role only', fx.length === 3 && fx.every((f) => f.s && !f.a), JSON.stringify(fx));

@@ -1,6 +1,6 @@
 {
   "migration": "471_vendor_deposit_followups.sql",
-  "summary": "Vendor deposit follow-up (narrow slice): due date, event date and agreed total (with basis) on vendor_deposits; an append-only reconciliation ledger (proposals, decisions, events); and three functions that make every follow-up edit, proposal and decision atomic with its audit event. Never pays, changes an AP amount, a journal entry or a deposit's status. Creates no data.",
+  "summary": "Vendor deposit follow-up (narrow slice): due date, event date and agreed total (with basis) on vendor_deposits; an append-only reconciliation ledger (proposals, decisions, events); three audited SECURITY DEFINER functions; and a CHANGE to grants on the existing vendor_deposits table (UPDATE becomes column-level so only the new follow-up columns are function-only). Never pays or changes an AP amount, a journal entry or a deposit's status. Creates no data.",
   "requires": [
     "321_vendor_projects.sql",
     "364_vendor_deposits.sql"
@@ -30,8 +30,8 @@
   "expected_changes": [
     "Adds follow-up columns to vendor_deposits: event_date, balance_due_date (+ basis), agreed_total_cents (+ required basis; an estimate unless quote/contract), project_id. Existing rows keep NULLs; no row changes.",
     "Creates empty append-only tables vendor_deposit_reconciliations, vendor_deposit_reconciliation_decisions and vendor_deposit_events.",
-    "Creates vendor_deposit_set_followup, vendor_deposit_propose and vendor_deposit_decide (SECURITY DEFINER, EXECUTE for service_role only): each writes its change and audit event in one transaction with row locks.",
-    "Revokes UPDATE/DELETE on vendor_deposits from service_role/authenticated/anon (follow-up edits only through the audited function); service_role keeps SELECT/INSERT. No payment, payable, AP amount or journal entry is created or changed."
+    "Creates vendor_deposit_set_followup, vendor_deposit_propose and vendor_deposit_decide (SECURITY DEFINER, EXECUTE for service_role only). Each writes its change and audit event in one transaction with row locks. manual_accounting_recorded is an admin attestation with structural checks (net > 0, bill total = net, deposit paid unchanged, one applied bill per deposit, and a posted relief JE crediting the deposit account for the deposit amount when the deposit was booked prepaid; none when it was expensed).",
+    "CHANGES grants on the EXISTING table vendor_deposits (not visible in the object diff, so verified below): table-level UPDATE is revoked from service_role/authenticated/anon and re-granted to service_role on every pre-existing column. Only the six new follow-up columns are function-only. DELETE, INSERT and SELECT are unchanged."
   ],
   "objects": {
     "added": [
@@ -48,6 +48,7 @@
       "column:vendor_deposit_reconciliation_decisions.decided_by_role",
       "column:vendor_deposit_reconciliation_decisions.decided_by_user_id",
       "column:vendor_deposit_reconciliation_decisions.decision",
+      "column:vendor_deposit_reconciliation_decisions.deposit_accounting_state",
       "column:vendor_deposit_reconciliation_decisions.id",
       "column:vendor_deposit_reconciliation_decisions.note",
       "column:vendor_deposit_reconciliation_decisions.reconciliation_id",
@@ -89,6 +90,7 @@
       "constraint:vendor_deposit_events.vendor_deposit_events_event_type_check",
       "constraint:vendor_deposit_events.vendor_deposit_events_pkey",
       "constraint:vendor_deposit_reconciliation_decisions.vdrd_manual_accounting_evidence",
+      "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_de_deposit_accounting_state_check",
       "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_accounting_je_id_fkey",
       "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_decision_check",
       "constraint:vendor_deposit_reconciliation_decisions.vendor_deposit_reconciliation_decisions_pkey",
@@ -113,6 +115,7 @@
       "index:idx_vdr_deposit",
       "index:idx_vdr_invoice",
       "index:idx_vendor_deposits_due",
+      "index:uq_vdrd_je_used_once",
       "index:uq_vdrd_one_confirm",
       "index:uq_vdrd_one_terminal",
       "index:vendor_deposit_events_pkey",
@@ -168,8 +171,23 @@
       "expect": 3
     },
     {
-      "name": "one terminal decision per reconciliation enforced",
-      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname = 'uq_vdrd_one_terminal'",
+      "name": "one terminal decision per reconciliation, one decision per relief JE",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE indexname IN ('uq_vdrd_one_terminal', 'uq_vdrd_je_used_once')",
+      "expect": 2
+    },
+    {
+      "name": "grant change: service_role can still UPDATE a pre-existing vendor_deposits column (status)",
+      "sql": "SELECT has_column_privilege('service_role', 'vendor_deposits', 'status', 'UPDATE')::int",
+      "expect": 1
+    },
+    {
+      "name": "grant change: follow-up column balance_due_date is function-only",
+      "sql": "SELECT has_column_privilege('service_role', 'vendor_deposits', 'balance_due_date', 'UPDATE')::int",
+      "expect": 0
+    },
+    {
+      "name": "grant change: DELETE on vendor_deposits unchanged for service_role",
+      "sql": "SELECT has_table_privilege('service_role', 'vendor_deposits', 'DELETE')::int",
       "expect": 1
     }
   ],

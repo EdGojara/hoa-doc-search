@@ -171,6 +171,7 @@ const CHECKS = [
   'scripts/check_migration_checks.js',
   'tests/sql/apply_one_rehearsal.mjs',
   'tests/test_ap_deposit_followup.js',
+  'tests/test_ap_deposit_approve_route.js',
   'tests/sql/471_deposit_followups_rehearsal.mjs',
 ];
 

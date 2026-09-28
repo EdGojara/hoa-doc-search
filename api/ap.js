@@ -1091,6 +1091,11 @@ router.get('/invoices/:id', async (req, res) => {
         const { data: dep, error: depErr } = await supabase.from('vendor_deposits').select('*').eq('deposit_invoice_id', invoice.id).maybeSingle();
         if (depErr) throw depErr;
         if (dep) deposit = { role: 'deposit_bill', followup: df.describe(dep, invoice) };
+        else {
+          // Held for a deposit but not reconciled yet: say so, and offer to start it.
+          const gate = await df.approvalGateForInvoice(supabase, invoice);
+          if (gate.block) deposit = { role: 'held_candidate', hold: { reason: gate.reason, message: df.HOLD_MESSAGES[gate.reason] || 'Held for a vendor deposit.' }, deposit_id: gate.deposit_id || null };
+        }
       }
     } catch (e) { console.warn('[ap] deposit view skipped:', e.message); }
 

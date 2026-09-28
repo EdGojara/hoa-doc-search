@@ -4,7 +4,71 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): AP deposit follow-up, REVISED narrow slice after ChatGPT code review (feat/ap-deposit-followup; migration 471 PROPOSED; NOT merged/deployed)
+## 2026-09-28 (latest): AP deposit follow-up, second review fixes (feat/ap-deposit-followup; migration 471 PROPOSED; NOT merged/deployed)
+
+**ChatGPT review of `a1d20750`** (Issue #1, 16:28 UTC), item by item.
+
+**1. Approval "bypass."**
+- The committed route at `a1d20750` already selected `vendor_id, community_id` (api/ap.js:1126); the review likely read the earlier `7a4e2d09`.
+- The underlying weakness was real, though: the helper returned `block:false` on a partial row (fail-open). It now reloads vendor/community/total by id, and blocks if it can't.
+- **The test fake ignored `select()` column lists**, so no fake-based test could ever catch a narrow SELECT. The shared fake (`tests/_fake_supabase_deposits.js`) now projects columns like PostgREST.
+- **New `tests/test_ap_deposit_approve_route.js`** mounts the REAL `api/ap.js` router and makes HTTP calls to `POST /invoices/:id/approve`:
+  - manager key 1 → 409 (no approval row);
+  - admin release → 409 (nothing released);
+  - pending/confirmed → 409 "Emma cannot release";
+  - missing 471 → 409 fail-closed;
+  - multiple deposits → 409 until each is resolved;
+  - recorded accounting at the net → 200, and re-held if the bill changes;
+  - other vendors and the deposit bill itself → normal.
+- **Sabotage:** reproducing the reviewer's exact bypass (narrow SELECT plus fail-open gate) fails 6 route tests. With only a narrow SELECT, the reload still holds (0 fails).
+
+**2. Revocation compatibility.**
+- **Code search** (whole repo, excluding node_modules and academy): the only writer of `vendor_deposits` is `lib/ap/intake.js` (INSERT, around line 358). No UPDATE or DELETE exists anywhere.
+- **Narrowed anyway:** table-level UPDATE is replaced by column-level UPDATE on every pre-existing column. Only the six follow-up columns are function-only. DELETE, INSERT and SELECT are unchanged.
+- **The rehearsal proves it:**
+  - `has_column_privilege` shows the service role can still update status, applied_invoice_id, notes and every other pre-existing column, and cannot update the follow-up columns;
+  - a live `SET ROLE service_role` UPDATE of notes succeeds while a follow-up column UPDATE is denied;
+  - DELETE, INSERT and SELECT are intact.
+
+**3. Full-total, no-credit bills.**
+- `manual_accounting_recorded` requires the bill's live total to equal the net due. A full-face bill T can never pass, so it **stays held**.
+- **This version has no supported in-app way to net a bill from T to B.** The hold message says so: have the vendor reissue it for the balance (the new bill is proposed automatically and reconciles as balance_only), or wait for the accounting step.
+- A re-proposal on a changed bill records the ORIGINAL billed face (warning `bill_amount_changed_since_first_proposal` plus a math line). Tested.
+
+**4. Manual accounting is an attestation with structural JE checks, not "verified accounting."**
+- The SQL reads how the DEPOSIT was booked from its own posted accrual.
+- **Prepaid** (the accrual debited the deposit account): requires a posted JE in this community, never used by another decision (`uq_vdrd_je_used_once`), with a CREDIT line on the deposit account for exactly the deposit billed. The final bill's own accrual counts when it carries that credit.
+- **Expensed** (the 4 live rows): no relief JE is allowed, and the final bill may not touch the deposit account.
+- The recorded state is stored (`deposit_accounting_state`). The UI labels it "admin attestation."
+- Rehearsed: wrong amount, wrong account, missing JE, reuse, the own-accrual path, and both expensed rules.
+
+**5. Changed objects.**
+- The object diff shows 92 added and 0 changed, because the tool's snapshot doesn't track ACLs. The grant change on the EXISTING `vendor_deposits` is now stated in `expected_changes` and **verified by the apply tool** with three verify steps:
+  - status is still updatable;
+  - balance_due_date is function-only;
+  - DELETE is unchanged.
+- The functions are new, so CREATE OR REPLACE creates them rather than replacing anything.
+
+**What stays manual, exactly.**
+1. **Reconciling a held bill** with no proposal: click "Reconcile against the deposit" on the red held banner.
+2. **Confirm or reject the match** (staff).
+3. **Deposit accounting (admin):**
+   - if prepaid, post the JE crediting 1430 for the deposit amount (unless the bill's own entry already does), then record it with the JE reference;
+   - if expensed, record with no JE.
+   - In both cases the bill must already read the net due.
+4. **A full-face bill** can't be netted in-app. The vendor reissues it, or it waits for the accounting step.
+5. **Duplicate or statement:** confirm it, then use the existing Void.
+6. **Normal two-key approval and the check run** afterwards.
+
+**Tests.**
+- Unit 24/24;
+- approval route 7/7;
+- SQL rehearsal 50/50 (apply_one end to end with 92 objects and the grant verifies);
+- full suite 124/129 (the same 5 pre-existing failures).
+
+---
+
+## 2026-09-28: AP deposit follow-up, REVISED narrow slice after ChatGPT code review (superseded in part by the entry above)
 
 **Why revised.** ChatGPT's code review of `7a4e2d09` (Issue #1, 16:08 UTC) found six blocking gaps:
 1. the accounting path was incomplete;

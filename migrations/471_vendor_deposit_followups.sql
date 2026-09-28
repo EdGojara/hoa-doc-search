@@ -31,6 +31,9 @@
 --     confirmed_match and one terminal decision (reject | unrelated |
 --     duplicate_confirmed | manual_accounting_recorded) per reconciliation.
 --   * vendor_deposit_events: immutable history.
+--   * Grants on the EXISTING vendor_deposits table change: table-level UPDATE is
+--     replaced by column-level UPDATE on every pre-existing column, so only the
+--     new follow-up columns are function-only. DELETE/SELECT/INSERT unchanged.
 --   * Functions (SECURITY DEFINER, EXECUTE for service role only), each ONE
 --     transaction with row locks, the
 --     checks, the write and its audit event, or nothing:
@@ -113,12 +116,16 @@ CREATE TABLE IF NOT EXISTS vendor_deposit_reconciliation_decisions (
   decided_by_role              TEXT,
   note                         TEXT,
   accounting_je_id             UUID REFERENCES journal_entries(id) ON DELETE RESTRICT,
+  deposit_accounting_state     TEXT CHECK (deposit_accounting_state IS NULL OR deposit_accounting_state IN ('prepaid', 'expensed')),
   verified_invoice_total_cents BIGINT,
   verified_deposit_paid_cents  BIGINT,
   created_at                   TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   CONSTRAINT vdrd_manual_accounting_evidence CHECK (decision <> 'manual_accounting_recorded'
-    OR (accounting_je_id IS NOT NULL AND verified_invoice_total_cents > 0 AND verified_deposit_paid_cents IS NOT NULL))
+    OR (verified_invoice_total_cents > 0 AND verified_deposit_paid_cents IS NOT NULL AND deposit_accounting_state IS NOT NULL
+        AND (deposit_accounting_state = 'expensed' OR accounting_je_id IS NOT NULL)))
 );
+-- A relieving journal entry backs exactly one decision; it can't be reused.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vdrd_je_used_once ON vendor_deposit_reconciliation_decisions (accounting_je_id) WHERE accounting_je_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vdrd_one_terminal ON vendor_deposit_reconciliation_decisions (reconciliation_id) WHERE decision <> 'confirmed_match';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vdrd_one_confirm ON vendor_deposit_reconciliation_decisions (reconciliation_id) WHERE decision = 'confirmed_match';
 DROP TRIGGER IF EXISTS trg_vdrd_append_only ON vendor_deposit_reconciliation_decisions;
@@ -193,16 +200,26 @@ END $$;
 
 -- ---- decision: checks + insert + audit event, atomically --------------------
 -- manual_accounting_recorded is the ONLY decision that lets a deposit-consuming
--- bill be approved, and only when: an admin records it; the adjusting journal
--- entry exists, is posted and is in this community; the bill's live total equals
--- the net due recomputed from live data by the caller; the deposit invoice's live
--- paid amount equals what that recomputation used (otherwise the proposal is
--- stale); the net due is positive (a credit/refund is not a payable); and no
--- other bill already had this deposit applied.
+-- bill be approved. It is an ADMIN ATTESTATION backed by structural checks, not
+-- a full accounting verification. It requires: an admin; a payable form; a
+-- positive net (a credit/refund is not a payable); the bill's live total equal
+-- to the net recomputed from live data (so a full-face bill that was never
+-- netted can't pass); the deposit invoice's live paid amount unchanged since that
+-- recomputation (else the proposal is stale); no other bill already applied to
+-- this deposit; and, by how the DEPOSIT was booked (read from its own posted
+-- accrual):
+--   prepaid  (deposit accrual debited the deposit account, e.g. 1430): a posted
+--            JE in this community, used by no other decision, with a CREDIT line
+--            on that deposit account for exactly the deposit billed. The final
+--            bill's own accrual counts when it carries that credit line.
+--   expensed (deposit accrual debited an expense; the 4 live rows): no relief
+--            entry is expected for a bill whose face is already the net, and the
+--            final bill may not touch the deposit account.
 CREATE OR REPLACE FUNCTION vendor_deposit_decide(p_reconciliation_id uuid, p_decision text, p_actor text, p_actor_user_id uuid, p_role text,
   p_note text, p_accounting_je_id uuid, p_expected_net_cents bigint, p_live_deposit_paid_cents bigint)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE r vendor_deposit_reconciliations%ROWTYPE; d vendor_deposits%ROWTYPE; inv ap_invoices%ROWTYPE; paid bigint; je_status text; je_comm uuid; new_id uuid;
+        dep_state text; je uuid;
 BEGIN
   IF p_actor_user_id IS NULL OR coalesce(btrim(p_actor), '') = '' THEN RAISE EXCEPTION 'identity_required'; END IF;
   SELECT * INTO r FROM vendor_deposit_reconciliations WHERE id = p_reconciliation_id;
@@ -224,23 +241,38 @@ BEGIN
     IF inv.total_cents <> p_expected_net_cents THEN RAISE EXCEPTION 'invoice_total_not_net_due'; END IF;
     SELECT coalesce(amount_paid_cents, 0) INTO paid FROM ap_invoices WHERE id = d.deposit_invoice_id;
     IF coalesce(paid, 0) <> coalesce(p_live_deposit_paid_cents, -1) THEN RAISE EXCEPTION 'stale_reconciliation'; END IF;
-    SELECT status, community_id INTO je_status, je_comm FROM journal_entries WHERE id = p_accounting_je_id;
-    IF je_status IS DISTINCT FROM 'posted' OR je_comm IS DISTINCT FROM d.community_id THEN RAISE EXCEPTION 'accounting_je_invalid'; END IF;
     IF EXISTS (SELECT 1 FROM vendor_deposit_reconciliation_decisions k JOIN vendor_deposit_reconciliations x ON x.id = k.reconciliation_id
                WHERE x.deposit_id = r.deposit_id AND k.decision = 'manual_accounting_recorded' AND x.incoming_invoice_id <> r.incoming_invoice_id)
       THEN RAISE EXCEPTION 'deposit_already_applied_elsewhere'; END IF;
+    dep_state := CASE WHEN EXISTS (SELECT 1 FROM ap_invoices di JOIN journal_entry_lines l ON l.journal_entry_id = di.posting_journal_entry_id
+                                    WHERE di.id = d.deposit_invoice_id AND l.account_id = d.gl_account_id AND l.debit_cents > 0)
+                      THEN 'prepaid' ELSE 'expensed' END;
+    IF dep_state = 'prepaid' THEN
+      je := coalesce(p_accounting_je_id, inv.posting_journal_entry_id);
+      IF je IS NULL THEN RAISE EXCEPTION 'accounting_je_required'; END IF;
+      SELECT status, community_id INTO je_status, je_comm FROM journal_entries WHERE id = je;
+      IF je_status IS DISTINCT FROM 'posted' OR je_comm IS DISTINCT FROM d.community_id THEN RAISE EXCEPTION 'accounting_je_invalid'; END IF;
+      IF NOT EXISTS (SELECT 1 FROM journal_entry_lines WHERE journal_entry_id = je AND account_id = d.gl_account_id AND credit_cents = r.deposit_billed_cents)
+        THEN RAISE EXCEPTION 'je_does_not_relieve_deposit'; END IF;
+      IF EXISTS (SELECT 1 FROM vendor_deposit_reconciliation_decisions WHERE accounting_je_id = je) THEN RAISE EXCEPTION 'accounting_je_already_used'; END IF;
+    ELSE
+      IF p_accounting_je_id IS NOT NULL THEN RAISE EXCEPTION 'no_relief_entry_for_expensed_deposit'; END IF;
+      IF EXISTS (SELECT 1 FROM ap_invoice_lines WHERE invoice_id = inv.id AND gl_account_id = d.gl_account_id) THEN RAISE EXCEPTION 'final_bill_touches_deposit_account'; END IF;
+      je := NULL;
+    END IF;
   END IF;
 
   INSERT INTO vendor_deposit_reconciliation_decisions (reconciliation_id, decision, decided_by_user_id, decided_by_name, decided_by_role, note,
-    accounting_je_id, verified_invoice_total_cents, verified_deposit_paid_cents)
+    accounting_je_id, deposit_accounting_state, verified_invoice_total_cents, verified_deposit_paid_cents)
   VALUES (r.id, p_decision, p_actor_user_id, p_actor, p_role, p_note,
-    CASE WHEN p_decision = 'manual_accounting_recorded' THEN p_accounting_je_id END,
+    CASE WHEN p_decision = 'manual_accounting_recorded' THEN je END,
+    CASE WHEN p_decision = 'manual_accounting_recorded' THEN dep_state END,
     CASE WHEN p_decision = 'manual_accounting_recorded' THEN p_expected_net_cents END,
     CASE WHEN p_decision = 'manual_accounting_recorded' THEN p_live_deposit_paid_cents END)
   RETURNING id INTO new_id;
   INSERT INTO vendor_deposit_events (deposit_id, event_type, actor, actor_user_id, detail)
   VALUES (r.deposit_id, 'reconciliation_decided', p_actor, p_actor_user_id,
-    jsonb_build_object('reconciliation_id', r.id, 'decision', p_decision, 'note', p_note, 'invoice_id', r.incoming_invoice_id, 'accounting_je_id', p_accounting_je_id));
+    jsonb_build_object('reconciliation_id', r.id, 'decision', p_decision, 'note', p_note, 'invoice_id', r.incoming_invoice_id, 'accounting_je_id', je, 'deposit_accounting_state', dep_state));
   RETURN new_id;
 END $$;
 
@@ -249,9 +281,13 @@ ALTER TABLE vendor_deposit_reconciliation_decisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE vendor_deposit_events ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON vendor_deposit_reconciliations, vendor_deposit_reconciliation_decisions, vendor_deposit_events FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON vendor_deposit_reconciliations, vendor_deposit_reconciliation_decisions, vendor_deposit_events TO service_role;
--- Follow-up edits go through vendor_deposit_set_followup (with its audit event),
--- never a bare UPDATE. Intake still INSERTs deposits; nothing else writes them.
-REVOKE UPDATE, DELETE ON vendor_deposits FROM service_role, authenticated, anon;
+-- The six follow-up columns change only through vendor_deposit_set_followup (with
+-- its audit event). Every pre-existing column stays updatable by the service role
+-- exactly as before (future apply/cancel paths), and DELETE is untouched. Code
+-- search 2026-09-28: the only writer of vendor_deposits is intake's INSERT.
+REVOKE UPDATE ON vendor_deposits FROM service_role, authenticated, anon;
+GRANT UPDATE (community_id, vendor_id, deposit_invoice_id, gl_account_id, project_description, deposit_amount_cents,
+  remaining_balance_cents, status, applied_invoice_id, applied_at, notes, record_ownership, created_at, updated_at) ON vendor_deposits TO service_role;
 REVOKE ALL ON FUNCTION vendor_deposit_set_followup(uuid, jsonb, text, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION vendor_deposit_propose(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION vendor_deposit_decide(uuid, text, text, uuid, text, text, uuid, bigint, bigint) FROM PUBLIC;

@@ -46682,6 +46682,10 @@ ${questionsPage}
             <button class="action-btn" style="font-size:12px; padding:5px 12px;" onclick="apDepositSave('${f.deposit_id}', '${payload.invoice.id}')">Save follow-up</button>
           </div>`, 'background:#f0fdf4; border:1px solid #bbf7d0; color:#14532d;');
       }
+      if (dep.role === 'held_candidate') {
+        return box(`⛔ <strong>${apEsc(dep.hold.message)}</strong>${dep.deposit_id ? `<div style="margin-top:8px;"><button class="action-btn" style="font-size:12px; padding:5px 12px;" onclick="apDepositReconcile('${dep.deposit_id}', '${payload.invoice.id}')">Reconcile against the deposit</button></div>` : ''}`,
+          'background:#fee2e2; border:1px solid #fecaca; color:#991b1b;');
+      }
       const recs = (dep.reconciliations || []).filter((x) => !x.superseded);
       const r = recs[0];
       if (!r) return '';
@@ -46716,11 +46720,18 @@ ${questionsPage}
               ${btn('Reject (math is wrong)', 'reject')}
               ${btn('Duplicate / statement', 'duplicate_confirmed')}
               ${isAdmin ? btn('Not related (admin)', 'unrelated') : ''}
-              ${isAdmin ? btn('Record manual deposit accounting (admin)', 'manual_accounting_recorded') : ''}
+              ${isAdmin ? btn('Record deposit accounting (admin attestation)', 'manual_accounting_recorded') : ''}
             </div>
             <div style="font-size:11px; color:#64748b; margin-top:4px;">Nothing here pays or changes the bill. Emma cannot release a deposit bill yet: an admin posts the adjusting journal entry and records it, and the bill can then be approved at the net due through the normal two-key approval and check run.</div>`}`,
         'background:#fff7ed; border:1px solid #fed7aa; color:#7c2d12;');
     }
+
+    window.apDepositReconcile = async function (depositId, invoiceId) {
+      const r = await fetch('/api/ap/deposits/' + encodeURIComponent(depositId) + '/reconcile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invoice_id: invoiceId }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { alert('Could not reconcile: ' + (j.hint || String(j.error || r.status).replace(/_/g, ' '))); return; }
+      apOpenInvoice(invoiceId);
+    };
 
     window.apDepositSave = async function (depositId, invoiceId) {
       const v = (id) => (document.getElementById(id) || {}).value || '';
@@ -46738,9 +46749,17 @@ ${questionsPage}
       if (decision === 'confirmed_match') {
         if (!confirm('Confirm this bill matches the deposit? The bill stays held until the deposit accounting is recorded.')) return;
       } else if (decision === 'manual_accounting_recorded') {
-        body.accounting_je_reference = prompt('Adjusting journal entry reference that relieved the deposit (e.g. JE-2026-00340). The bill total must already equal the net due.');
-        if (!body.accounting_je_reference) return;
-        body.note = prompt('Note for the record (what the entry did):');
+        const ref = prompt([
+          'Record the deposit accounting (admin attestation).',
+          '',
+          'If the deposit was booked to 1430 (prepaid): enter the journal entry that CREDITS 1430 for the deposit amount (e.g. JE-2026-00340). Leave blank if this bill\'s own entry already credits 1430.',
+          'If the deposit was expensed: leave blank (nothing to relieve).',
+          '',
+          'The bill must already read the net due.',
+        ].join('\n'));
+        if (ref === null) return;
+        if (ref.trim()) body.accounting_je_reference = ref.trim();
+        body.note = prompt('Note for the record (what was done):');
         if (!body.note) return;
       } else {
         body.note = prompt({ reject: 'Why is the reconciliation wrong?', unrelated: 'Why is this bill not related to the deposit?', duplicate_confirmed: 'Why is this a duplicate or statement? (void the bill afterwards)' }[decision] || 'Note');
