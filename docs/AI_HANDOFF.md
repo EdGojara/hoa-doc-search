@@ -32,7 +32,7 @@ Fix:
   - reimbursement holds show the person, the requested amount, receipt total vs requested, and the reason;
   - the vendor promote path is refused for them;
   - new `POST /api/ap-intake/exceptions/:id/resolve-reimbursement` (admin) loads them with the PDF and hash kept.
-- **Reply drafts.** A promise of posting, payment or a check survives only for an approved/scheduled/paid item. Otherwise it is replaced with the real state (ChatGPT 23:03 revision):
+- **Reply drafts.** Claim-level rule (ChatGPT 23:15): each sentence is classified as action / scheduled / issued / sent / paid, and a sentence is kept only if the AP state proves that claim. Nothing keeps a future action promise ("I'll cut the check"). approved → no payment claims ("approved; payment hasn't been issued yet"). scheduled → scheduled only. issued/check_printed → scheduled + issued (not mailed). paid → all. partially_paid → scheduled only. Earlier summary (23:03):
   - payable + review: "entered in Payables for review";
   - payable, no holds: "entered in Payables for approval";
   - exception only: "logged in Payables for review".
@@ -40,7 +40,7 @@ Fix:
 - **Remit address.** A mailing address typed in the staff instruction is kept as evidence on extracted.reimbursement (requested_remit_address + candidates) and in the payable notes / review card ("confirm before check run"). It is NEVER written to the payee. If the payee or its linked contact has an address on file and it differs, both are shown and neither is changed.
 - **Triage.** An @bedrocktx.com sender never matches a vendor's email/contact_email; the vendor-name fallback is kept.
 
-Tests: tests/test_emma_reimbursement.js (17). npm test: 125/130, same 5 pre-existing failures as main.
+Tests: tests/test_emma_reimbursement.js (20). npm test: 125/130, same 5 pre-existing failures as main.
 
 Read-only dry run on the real email (writes stubbed): → loaded-equivalent payable:
 - $35.72 to reimbursement payee "Gloria Allen" (would be created, needs_review);

@@ -153,9 +153,8 @@ t('reply promise is removed when no payable exists; strong language only for an 
   assert.match(held.body, /logged this in Payables for review/);
   const none = R.stateAwarePaymentDraft(draft, { payable: false, needs_review: false });
   assert.ok(!/cut the check/i.test(none.body)); assert.match(none.body, /review it before anything is paid/);
-  const paid = R.stateAwarePaymentDraft(draft, { payable: true, status: 'approved' });
-  assert.strictEqual(paid.changed, false); assert.strictEqual(paid.body, draft);
-  assert.strictEqual(R.stateAwarePaymentDraft(draft, { payable: true, status: 'paid' }).changed, false);
+  // A future "I'll cut the check" is never kept, whatever the state.
+  assert.ok(R.stateAwarePaymentDraft(draft, { payable: true, status: 'paid' }).changed);
   assert.strictEqual(R.stateAwarePaymentDraft('Hi, got it, thanks.', { payable: false }).changed, false);
 });
 
@@ -193,6 +192,40 @@ t('remit address from the staff instruction is kept as evidence, shown to the re
   assert.strictEqual(two.length, 2);
   assert.match(R.remitAddressNote(two, null), /More than one mailing address/);
   assert.deepStrictEqual(R.statedRemitAddresses('Lot 12 on 9/22, zip 77084'), []);
+});
+
+t('approved: "cut the check" / "check issued" are removed; it may say approved, not issued', () => {
+  const d = "Hi Celina,\n\nGood news. I'll cut the check today. The check has been issued to Gloria.\n\nEmma";
+  const r = R.stateAwarePaymentDraft(d, { payable: true, status: 'approved' });
+  assert.ok(r.changed);
+  assert.ok(!/cut the check|has been issued/i.test(r.body));
+  assert.match(r.body, /Good news\. It's approved in Payables\. Payment hasn't been issued yet\./);
+  assert.strictEqual((r.body.match(/approved in Payables/g) || []).length, 1);
+});
+
+t('scheduled: "payment has been sent" is removed; "payment is scheduled" may stay', () => {
+  const d = 'Hi,\n\nPayment is scheduled for the next check run. Payment has been sent to Gloria.\n\nEmma';
+  const r = R.stateAwarePaymentDraft(d, { payable: true, status: 'scheduled' });
+  assert.ok(r.changed);
+  assert.match(r.body, /Payment is scheduled for the next check run\./);
+  assert.ok(!/has been sent/i.test(r.body));
+  assert.match(r.body, /It hasn't been issued yet\./);
+  assert.strictEqual(R.stateAwarePaymentDraft('Payment is scheduled for the next check run.', { payable: true, status: 'scheduled' }).changed, false);
+});
+
+t('issued / check_printed / paid keep only the claims that state proves', () => {
+  const issuedTxt = 'The check has been issued to Gloria.';
+  assert.strictEqual(R.stateAwarePaymentDraft(issuedTxt, { payable: true, status: 'issued' }).changed, false);
+  assert.strictEqual(R.stateAwarePaymentDraft(issuedTxt, { payable: true, status: 'check_printed' }).changed, false);
+  // Printed/issued does not prove it was mailed.
+  const mailed = R.stateAwarePaymentDraft('The check has been issued. The check was mailed yesterday.', { payable: true, status: 'check_printed' });
+  assert.ok(mailed.changed); assert.match(mailed.body, /The check has been issued\./); assert.ok(!/mailed/.test(mailed.body));
+  const paidTxt = 'The check has been issued and was mailed. The invoice has been paid in full.';
+  assert.strictEqual(R.stateAwarePaymentDraft(paidTxt, { payable: true, status: 'paid' }).changed, false);
+  // partially_paid never supports "paid in full".
+  const part = R.stateAwarePaymentDraft('The invoice has been paid in full.', { payable: true, status: 'partially_paid' });
+  assert.ok(part.changed); assert.match(part.body, /partially paid in Payables/);
+  assert.deepStrictEqual(R.claimsIn("I'll cut the check"), ['action']);
 });
 
 t('draft scrub never splits a sentence inside a dollar amount (the real Emma draft shape)', () => {
