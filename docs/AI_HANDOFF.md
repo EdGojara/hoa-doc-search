@@ -4,7 +4,21 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 
 ---
 
-## 2026-09-28 (latest): Issue #3 Emma reimbursement intake fix (MERGED main 98e84536, deployed 23:33Z; live replay done: payable ae09b28c $35.72 LOPF 5900 awaiting_approval + needs_review; line-row fix pending on fix/ap-staff-directed-lines)
+## 2026-09-28 (latest): Issue #3 LIVE + line fix merged (fix/ap-staff-directed-lines merged per Ed's chat approval); Ownership History merged main 978e49c7, deployed 23:48Z
+
+- **Replay** (Ed authorized on #3 + confirmed in chat) → payable ae09b28c-b3c0-4225-a645-a49c7f95c057:
+  - $35.72, LOPF, 5900 Community Events (staff_directive);
+  - awaiting_approval + needs_review;
+  - new reimbursement payee Gloria Allen (no address yet);
+  - receipt PDF + sha kept; cutover_review PENDING (no JE);
+  - email handled; draft now says "entered in Payables for review". Stopped before approval.
+- **Defect found:** the payable has NO ap_invoice_lines row. The reimbursement line uses amount_cents, but code_lines reads amount (dollars). Also latent: a single-account staff directive gets overridden by per-line classifier coding.
+  - Fix: fix/ap-staff-directed-lines @ 6e5baf5a (sticky header needs_review; returned = persisted; staff-directed provenance). ChatGPT cleared; Ed approved in chat; merged to main.
+  - Gloria's line patch approved by Ed in chat (one line $35.72 → 5900; needs_review and cutover hold kept).
+- **Star Protection (vendor a3dea309):** contact_email = a Bedrock staff address, contact_name = a staff member. Proposed: NULL both (or move the staff address to account_manager_email); split remit_address_line1. NOT changed.
+- **Mailbox lag → Issue #4:** ingest is manual-only since 2026-07-07 (EMAIL_INGEST_AUTO gate); every mailbox lags between Pull inbox presses. Decision needed.
+
+## 2026-09-28: Issue #3 Emma reimbursement intake fix (merged to main 98e84536)
 
 Authorized by Ed (Issue #3, 20:51). No production writes: the real Gloria Allen email was NOT replayed, no payable or payee was created, no vendor data was changed. (Ownership History v1 is on feat/ownership-history, awaiting Ed's merge approval; see that branch's handoff.)
 

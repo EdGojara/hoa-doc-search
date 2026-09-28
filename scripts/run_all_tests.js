@@ -175,6 +175,7 @@ const CHECKS = [
   'tests/test_je_transaction_summary.js',
   'tests/test_emma_reimbursement.js',
   'tests/test_ownership_history.js',
+  'tests/test_ap_commit_review_flag.js',
 ];
 
 const args = process.argv.slice(2);
