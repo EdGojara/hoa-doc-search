@@ -1757,11 +1757,21 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
         has_community: !!m.community_id,
       });
     }
-    let loaded = 0, dup = 0;
+    let loaded = 0, dup = 0, exceptioned = 0; const held = [];
     for (const pdf of pdfs) {
-      const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '', staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '' });
+      const out = await autoIntake({ buffer: pdf.buffer, filename: pdf.filename, intakeMethod: 'email', sourceRef: `email:${m.graph_id}`, communityId: m.community_id || null, vendorIdHint: m.resolved_vendor_id || null, achHintText: m.subject || '', staffNote: m.body_full || m.body_preview || '', staffSenderEmail: m.sender_email || '', emailSubject: m.subject || '' });
       if (out && out.outcome === 'loaded') loaded += 1;
-      else if (out && out.outcome === 'held_suspected_duplicate') dup += 1;
+      else if (out && (out.outcome === 'held_suspected_duplicate' || out.outcome === 'blocked_duplicate')) dup += 1;
+      else if (out && out.outcome === 'needs_review') {
+        // Held (e.g. a reimbursement needing its account): it goes to the Payables
+        // exceptions list with its PDF, never silently "handled". (Issue #3.)
+        const { recordException } = require('../lib/ap/intake_exceptions');
+        const r = await recordException({ emailMessageId: m.id, sourceRef: `email:${m.graph_id}`, reason: out.reason, extracted: out.extracted || {}, storagePath: out.storage_path, sha256: out.sha256, communityId: m.community_id || null });
+        if (r.ok) { exceptioned += 1; held.push(out.reason); }
+      }
+    }
+    if (!loaded && !dup && !exceptioned) {
+      return res.status(422).json({ error: 'not_loaded', detail: 'Nothing in this email could be loaded or held for review; it stays in the inbox.' });
     }
     // Teach the map so the next bill on this account/vendor auto-routes.
     if (m.community_id) {
@@ -1771,7 +1781,7 @@ router.post('/:id/to-payables', express.json(), async (req, res) => {
       } catch (e) { console.warn('[email_triage] learn (payables) skipped:', e.message); }
     }
     await supabase.from('email_messages').update({ triage_status: 'handled', reviewed_by: (req.body || {}).reviewed_by || 'staff', reviewed_at: new Date().toISOString() }).eq('id', m.id);
-    res.json({ ok: true, loaded, duplicates: dup });
+    res.json({ ok: true, loaded, duplicates: dup, held_for_review: exceptioned, held_reasons: held });
   } catch (err) { console.error('[email_triage] to-payables failed:', err.message); res.status(500).json({ error: safeErrorMessage(err) }); }
 });
 
