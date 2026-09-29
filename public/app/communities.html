@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Communities · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/app/tx.css">
+<style>
+  .cl-wrap { padding: 34px 32px 48px; max-width: 1180px; }
+  .cl-head h1 { margin: 6px 0 6px; font-family: var(--font-serif); font-weight: 600; font-size: clamp(34px, 4vw, 46px); color: var(--navy); line-height: 1.05; }
+  .cl-head p { margin: 0; color: var(--tx-text-2); font-size: 15px; max-width: 760px; }
+  .cl-list { margin-top: 18px; overflow: hidden; }
+  .cl-row { display: grid; grid-template-columns: minmax(0, 1.3fr) 150px minmax(0, 1.6fr) auto; gap: 18px; align-items: center; padding: 18px 22px; border-top: 1px solid var(--tx-rule-soft); }
+  .cl-row:first-child { border-top: 0; }
+  .cl-row:hover { background: #FCFBF8; }
+  .cl-name { font-size: 16px; font-weight: 600; color: var(--navy); }
+  .cl-sub { font-size: 12.5px; color: var(--tx-muted); margin-top: 4px; }
+  .cl-issues { font-size: 13px; color: var(--tx-text-2); line-height: 1.55; }
+  .cl-issues b { color: var(--tx-text); font-weight: 600; }
+  .cl-quiet .cl-row { padding: 12px 22px; }
+  .cl-quiet .cl-name { font-weight: 500; font-size: 14.5px; }
+  .cl-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; font-size: 12px; color: var(--tx-muted); }
+  .cl-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .cl-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  @media (max-width: 900px) {
+    .cl-wrap { padding: 22px 16px 40px; }
+    .cl-row { grid-template-columns: minmax(0, 1fr) auto; }
+    .cl-row > .cl-dots { grid-column: 1 / -1; }
+    .cl-row > .cl-issues { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top">
+      <button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button>
+      <span class="tx-switch" style="cursor:default">Communities</span>
+      <div style="margin-left:auto;display:flex;gap:14px;align-items:center">
+        <span class="tx-muted" style="font-size:12px" id="cl-stamp"></span>
+        <button id="cl-refresh" type="button" class="tx-btn tx-btn--sec" style="height:32px"></button>
+      </div>
+    </div>
+    <div class="cl-wrap">
+      <div class="cl-head">
+        <span class="tx-lbl">Data readiness</span>
+        <h1 id="cl-headline">Checking every community…</h1>
+        <p id="cl-sub">What came over from Vantaca, what reconciles, what's missing and what still needs action. Green only where a stored check proves it.</p>
+      </div>
+      <div id="cl-body">
+        <div class="tx-card cl-list"><div class="cl-row"><div><div class="tx-skel" style="height:16px;width:60%"></div></div><div></div><div><div class="tx-skel" style="height:12px;width:80%"></div></div><div></div></div></div>
+      </div>
+      <div class="cl-legend" id="cl-legend"></div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/tx-icons.js"></script>
+<script src="/app/readiness-ui.js"></script>
+<script src="/app/tx.js"></script>
+<script>if (TX.fixture) document.write('<script src="fixtures/readiness.fixture.js"><\/script>');</script>
+<script>
+(async function () {
+  'use strict';
+  var esc = TX.esc, icon = TX.icon, $ = function (id) { return document.getElementById(id); };
+  var user = await TX.boot({ active: 'communities' });
+  if (!user) return;
+  $('cl-refresh').innerHTML = icon('refresh', { size: 14 }) + '<span>Refresh</span>';
+  $('cl-refresh').addEventListener('click', load);
+  $('cl-legend').innerHTML = TXReady.ORDER.map(function (s) { var m = TXReady.meta(s); return '<span title="' + esc(m.plain) + '"><i style="background:' + m.dot + '"></i>' + esc(m.label) + '</span>'; }).join('');
+
+  function href(c) { return (TX.fixture ? 'community.html?fixture=1&id=' : '/app/communities/') + encodeURIComponent(c.id); }
+
+  function row(r) {
+    var lc = TXReady.lifecycle(r.community);
+    var act = r.areas.filter(function (a) { return TXReady.meta(a.status).group === 'act'; })
+      .sort(function (a, b) { return TXReady.ORDER.indexOf(a.status) - TXReady.ORDER.indexOf(b.status); });
+    var issues = act.slice(0, 3).map(function (a) { return '<b>' + esc(a.title) + '</b>: ' + esc(TXReady.meta(a.status).label.toLowerCase()); }).join(' · ') +
+      (act.length > 3 ? ' · +' + (act.length - 3) + ' more' : '');
+    if (!act.length) {
+      issues = lc.quiet ? esc(r.areas[0] ? r.areas[0].summary : '') : 'Nothing needs action. ' + r.counts.ready + ' ready, ' + r.counts.imported_not_verified + ' not verifiable.';
+    }
+    var dots = '<div class="tx-dotbar" aria-label="' + esc(r.areas.map(function (a) { return a.title + ': ' + TXReady.meta(a.status).label; }).join(', ')) + '">' +
+      r.areas.map(function (a) { return '<i title="' + esc(a.title + ': ' + TXReady.meta(a.status).label) + '" style="background:' + TXReady.meta(a.status).dot + '"></i>'; }).join('') + '</div>';
+    return '<a class="cl-row" href="' + href(r.community) + '">' +
+      '<div><div class="cl-name">' + esc(r.community.name) + '</div><div class="cl-sub"><span class="tx-pill tx-pill--' + lc.pill + '">' + lc.label + '</span>' +
+      (r.needs_action ? ' &nbsp;' + r.needs_action + ' need' + (r.needs_action === 1 ? 's' : '') + ' action' : '') + '</div></div>' +
+      '<div class="cl-dots">' + dots + '</div>' +
+      '<div class="cl-issues">' + issues + '</div>' +
+      '<span class="tx-muted">' + icon('arrowRight', { size: 16 }) + '</span></a>';
+  }
+
+  async function load() {
+    $('cl-headline').textContent = 'Checking every community…';
+    var res = await TX.get('/api/readiness/communities');
+    if (!res.ok) {
+      $('cl-headline').textContent = 'Couldn’t load data readiness.';
+      $('cl-body').innerHTML = '<div class="tx-err" style="margin-top:16px">' + icon('alert', { size: 16 }) + '<span>' + esc(res.error) + '. Nothing is assumed; refresh to try again.</span></div>';
+      return;
+    }
+    var list = res.data.communities || [];
+    var working = list.filter(function (r) { return !TXReady.lifecycle(r.community).quiet; });
+    var quiet = list.filter(function (r) { return TXReady.lifecycle(r.community).quiet; });
+    var needing = working.filter(function (r) { return r.needs_action > 0; }).length;
+    $('cl-headline').textContent = needing ? needing + ' of ' + working.length + ' communities need import work.' : 'Every managed community is imported as far as the data can prove.';
+    var html = '<div class="tx-card cl-list">' + (working.map(row).join('') || '<div class="cl-row"><span class="tx-muted">No managed communities.</span></div>') + '</div>';
+    if (quiet.length) {
+      html += '<div class="tx-section-h"><span class="tx-lbl">Not being imported</span><span class="tx-muted" style="font-size:12.5px">Prospects and communities leaving Bedrock</span></div>' +
+        '<div class="tx-card cl-list cl-quiet">' + quiet.map(row).join('') + '</div>';
+    }
+    $('cl-body').innerHTML = html;
+    $('cl-stamp').textContent = 'Checked ' + new Date(res.data.generated_at || Date.now()).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+  }
+  load();
+})();
+</script>
+</body>
+</html>

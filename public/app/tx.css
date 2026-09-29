@@ -211,3 +211,27 @@
   .tx-brief-row .tx-btn { grid-column: 2; justify-self: start; }
   .tx-ok { border-left: 0; padding-left: 0; }
 }
+
+/* ---------- Data Readiness (Issue #6) -------------------------------------- */
+.tx-dotbar { display: flex; gap: 4px; align-items: center; }
+.tx-dotbar i { width: 10px; height: 10px; border-radius: 3px; display: block; }
+.tx-chip {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px;
+  background: var(--tx-subtle); color: var(--tx-text-2); font-size: 12px; margin: 4px 6px 0 0;
+}
+.tx-section-h { display: flex; align-items: baseline; gap: 10px; margin: 28px 0 10px; }
+.tx-section-h h2 { margin: 0; font-family: var(--font-serif); font-weight: 600; font-size: 26px; color: var(--navy); }
+.tx-ready-row {
+  display: grid; grid-template-columns: 190px 118px minmax(0, 1fr) auto; gap: 16px; align-items: start;
+  padding: 16px 20px; border-top: 1px solid var(--tx-rule-soft);
+}
+.tx-ready-row:first-child { border-top: 0; }
+.tx-ready-title { font-weight: 600; font-size: 14.5px; }
+.tx-ready-src { font-size: 11.5px; color: var(--tx-muted); margin-top: 6px; font-family: var(--font-mono); }
+.tx-ready-quiet .tx-ready-row { padding: 11px 20px; }
+.tx-ready-quiet .tx-ready-title { font-weight: 500; }
+@media (max-width: 900px) {
+  .tx-ready-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .tx-ready-row > :nth-child(3) { grid-column: 1 / -1; }
+  .tx-ready-row > :nth-child(4) { grid-column: 1 / -1; justify-self: start; }
+}

@@ -880,6 +880,9 @@ app.use('/app', (req, res, next) => {
   return next();
 });
 app.get('/app/today', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'today.html')));
+// Communities + Data Readiness (Issue #6). Same gate + kill switch as above.
+app.get('/app/communities', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'communities.html')));
+app.get('/app/communities/:id', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'community.html')));
 
 // Static assets. HTML files (the staff app, portal pages) get `no-cache` so the
 // browser MUST revalidate against the server before reusing a copy — otherwise
@@ -1293,6 +1296,8 @@ app.use('/api/transactions', transactionsRouter);
 // background jobs). Cost-conscious per Ed 2026-06-08 standing rule.
 const todayRouter = require('./api/today');
 app.use('/api/today', todayRouter);
+// Community Data Readiness — read-only, staff sign-in (Issue #6).
+app.use('/api/readiness', require('./api/readiness'));
 
 // ARC historical decisions — structured library of past approvals/denials
 // (informational context for the AI assessment engine; never binding precedent)
