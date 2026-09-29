@@ -17,8 +17,8 @@ require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-const THRESHOLD = 8; // a private individual owning 8+ homes in the portfolio is suspicious
-const CORPORATE = /\b(LLC|L\.L\.C|INC|CORP|CO\.|COMPANY|HOMES?|PROPERT(Y|IES)|TRUST|RENT|RENTALS?|MANAGEMENT|BORROWER|GROUP|HOLDINGS?|CAPITAL|INVESTMENTS?|INVESTOR|PARTNERS?|REALTY|BUILDERS?|DEVELOPMENT|ASSOCIATES?|ENTERPRISES?|VENTURES?|FUND|REIT|LP|LTD|BANK|HOA|ASSOCIATION)\b/i;
+// The rule lives in lib/owners/concentration.js so /app/owners flags the same contacts.
+const { THRESHOLD, CORPORATE, EMAIL_THRESHOLD_INDIVIDUAL, EMAIL_THRESHOLD_ANY } = require('../lib/owners/concentration');
 
 async function fetchAllOwnerships() {
   const rows = [];
@@ -46,8 +46,6 @@ async function fetchAllOwnerships() {
 // 7/13). This check watched ownership only, so it passed — while every email
 // from any of those 50 addresses kept resolving to her. A real person has one or
 // two emails; a contact holding a dozen distinct addresses is a merge collapse.
-const EMAIL_THRESHOLD_INDIVIDUAL = 5; // a private person with 5+ distinct emails on file is suspicious
-const EMAIL_THRESHOLD_ANY = 15;       // even a builder/LLC shouldn't hold 15+ — that's a collapse
 
 async function fetchAllEmailMethods() {
   const rows = [];

@@ -887,6 +887,8 @@ app.get('/app/communities/:id', (req, res) => res.sendFile(require('path').join(
 app.get('/app/financial', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'financial.html')));
 // Operations home (Issue #6). Read-only.
 app.get('/app/operations', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'operations.html')));
+// Owners (Issue #6). Read-only search + owner-record exceptions.
+app.get('/app/owners', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'owners.html')));
 
 // Static assets. HTML files (the staff app, portal pages) get `no-cache` so the
 // browser MUST revalidate against the server before reusing a copy — otherwise
@@ -1304,6 +1306,8 @@ app.use('/api/today', todayRouter);
 app.use('/api/readiness', require('./api/readiness'));
 // Operations overview — read-only, staff sign-in (Issue #6).
 app.use('/api/ops', require('./api/ops'));
+// Owners search + overview — read-only, staff sign-in, no contact PII in search (Issue #6).
+app.use('/api/owners', require('./api/owners'));
 
 // ARC historical decisions — structured library of past approvals/denials
 // (informational context for the AI assessment engine; never binding precedent)

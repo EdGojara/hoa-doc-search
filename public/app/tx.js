@@ -20,7 +20,7 @@
   var NAV = [
     ['today', 'Today', '/app/today'],
     ['communities', 'Communities', '/app/communities'],
-    ['owners', 'Owners', '/#tab=ownerar'],
+    ['owners', 'Owners', '/app/owners'],
     ['financial', 'Financial', '/app/financial'],
     ['operations', 'Operations', '/app/operations'],
     ['projects', 'Projects', '/#tab=status'],

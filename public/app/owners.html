@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Owners · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/app/tx.css">
+<style>
+  .ow-wrap { padding: 34px 32px 48px; max-width: 1240px; }
+  .ow-head h1 { margin: 6px 0 6px; font-family: var(--font-serif); font-weight: 600; font-size: clamp(34px, 4vw, 46px); color: var(--navy); line-height: 1.05; }
+  .ow-head p { margin: 0; color: var(--tx-text-2); font-size: 15px; max-width: 780px; }
+  .ow-search { margin-top: 22px; padding: 20px 22px; }
+  .ow-input { display: flex; align-items: center; gap: 10px; border: 1px solid var(--tx-rule); border-radius: 12px; padding: 0 14px; height: 52px; background: var(--tx-ivory); }
+  .ow-input:focus-within { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(212, 175, 55, .18); }
+  .ow-input input { flex: 1; border: 0; background: transparent; font: 500 16px var(--font-sans); color: var(--tx-text); outline: none; min-width: 0; }
+  .ow-hint { font-size: 12.5px; color: var(--tx-muted); margin-top: 8px; }
+  .ow-res { margin-top: 12px; }
+  .ow-r { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 11px 4px; border-top: 1px solid var(--tx-rule-soft); font-size: 13.5px; }
+  .ow-r:first-child { border-top: 0; }
+  .ow-r:hover { background: #FCFBF8; }
+  .ow-r b { color: var(--navy); }
+  .ow-acct { font-family: var(--font-mono); font-size: 12px; color: var(--tx-muted); }
+  .ow-mx { overflow-x: auto; }
+  .ow-mx table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ow-mx th { text-align: right; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--tx-muted); font-weight: 600; padding: 12px; border-bottom: 1px solid var(--tx-rule-soft); }
+  .ow-mx th:first-child, .ow-mx td:first-child, .ow-mx th:last-child, .ow-mx td:last-child { text-align: left; }
+  .ow-mx td { padding: 11px 12px; border-top: 1px solid var(--tx-rule-soft); text-align: right; font-variant-numeric: tabular-nums; }
+  .ow-mx tr:first-child td { border-top: 0; }
+  .ow-mx td.ow-name a { font-weight: 600; color: var(--navy); }
+  .ow-zero { color: var(--tx-rule); }
+  .ow-hot { font-weight: 700; color: var(--tx-warn); }
+  .ow-other { font-size: 13px; color: var(--tx-text-2); padding: 14px 20px; border-top: 1px solid var(--tx-rule-soft); }
+  .ow-other:first-child { border-top: 0; }
+  .ow-work { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; margin-top: 12px; }
+  .ow-tile { padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; }
+  .ow-tile h3 { margin: 0 0 2px; font-size: 15px; color: var(--navy); display: flex; align-items: center; gap: 8px; }
+  .ow-tile a { font-size: 13.5px; display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; }
+  .ow-tile a:hover { color: var(--navy); text-decoration: underline; text-decoration-color: var(--gold); }
+  .ow-tile a span { color: var(--tx-muted); font-size: 11.5px; white-space: nowrap; }
+  @media (max-width: 900px) { .ow-r { grid-template-columns: minmax(0, 1fr) auto; } .ow-r > :nth-child(2), .ow-r > :nth-child(3) { grid-column: 1 / -1; } }
+  @media (max-width: 760px) { .ow-wrap { padding: 22px 16px 40px; } }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top">
+      <button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button>
+      <span class="tx-switch" style="cursor:default">Owners</span>
+      <div style="margin-left:auto;display:flex;gap:14px;align-items:center">
+        <span class="tx-muted" style="font-size:12px" id="ow-stamp"></span>
+        <button id="ow-refresh" type="button" class="tx-btn tx-btn--sec" style="height:32px"></button>
+      </div>
+    </div>
+    <div class="ow-wrap">
+      <div class="ow-head">
+        <span class="tx-lbl">Owners</span>
+        <h1 id="ow-headline">Find any owner or home.</h1>
+        <p>Search every community by owner name, property address or account number. Balances and the GL tie-out live in Financial; this page is about who owns what and which records need attention.</p>
+      </div>
+
+      <section class="tx-card ow-search" aria-label="Find an owner">
+        <label class="ow-input">
+          <span class="tx-muted">&#8981;</span>
+          <input id="ow-q" type="search" autocomplete="off" spellcheck="false" placeholder="Owner name, property address, or account number" aria-label="Search owners">
+        </label>
+        <div class="ow-hint" id="ow-hint">Results show name, property address, community and account number only. Open a result for the full record.</div>
+        <div class="ow-res" id="ow-res"></div>
+      </section>
+
+      <div class="tx-section-h"><h2>Records that need attention</h2><span class="tx-muted" style="font-size:13px" id="ow-sub"></span></div>
+      <div id="ow-att"></div>
+
+      <div class="tx-section-h"><h2>By community</h2></div>
+      <div class="tx-card ow-mx" id="ow-matrix"><div style="padding:18px"><div class="tx-skel" style="height:14px;width:70%"></div></div></div>
+      <div id="ow-other-wrap"></div>
+
+      <div class="tx-section-h"><h2>Where the work lives</h2><span class="tx-muted" style="font-size:13px">These open the current screens while they move into the new design</span></div>
+      <div class="ow-work" id="ow-work"></div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/tx-icons.js"></script>
+<script src="/app/tx.js"></script>
+<script>if (TX.fixture) document.write('<script src="/app/fixtures/owners.fixture.js"><\/script>');</script>
+<script>
+(async function () {
+  'use strict';
+  var esc = TX.esc, icon = TX.icon, $ = function (id) { return document.getElementById(id); };
+  var user = await TX.boot({ active: 'owners' });
+  if (!user) return;
+  $('ow-refresh').innerHTML = icon('refresh', { size: 14 }) + '<span>Refresh</span>';
+  $('ow-refresh').addEventListener('click', loadOverview);
+  document.querySelector('.ow-input > span').outerHTML = icon('search', { size: 18, color: 'var(--tx-muted)' });
+
+  var WORK = [
+    ['owners', 'Owner records', [['Homeowner 360', '/admin/homeowner'], ['Homes and owners', '/#tab=homes'], ['Property lookup', '/#tab=lookup']]],
+    ['team', 'Ownership changes', [['Ownership proposals', '/ownership-proposals-review.html'], ['Home sales', '/admin/home-sales']]],
+    ['financial', 'Balances and collections', [['Financial (balances, ties)', '/app/financial', true], ['Statements', '/admin/statements'], ['Collections', '/admin/collections'], ['Payment plans', '/admin/payment-plans']]],
+    ['inbox', 'Owner portal', [['Portal users', '/#tab=portalusers']]],
+  ];
+  $('ow-work').innerHTML = WORK.map(function (w) {
+    return '<div class="tx-card ow-tile"><h3>' + icon(w[0], { size: 17, color: 'var(--tx-gold-ink)' }) + esc(w[1]) + '</h3>' +
+      w[2].map(function (l) { return '<a href="' + esc(l[1]) + '">' + esc(l[0]) + '<span>' + (l[2] ? 'new' : 'current screen') + '</span></a>'; }).join('') + '</div>';
+  }).join('');
+
+  // ---- search -----------------------------------------------------------
+  var sseq = 0, timer = null;
+  function open360(id) { return '/admin/homeowner?property=' + encodeURIComponent(id); }
+  async function search(q) {
+    var mine = ++sseq;
+    if (String(q || '').trim().length < 2) { $('ow-res').innerHTML = ''; return; }
+    $('ow-res').innerHTML = '<div class="tx-muted" style="font-size:13px;padding:8px 4px">Searching…</div>';
+    var r = await TX.get('/api/owners/search?q=' + encodeURIComponent(q));
+    if (mine !== sseq) return;
+    if (!r.ok) { $('ow-res').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + (r.status === 401 ? 'Your sign-in expired. Sign in again.' : 'Search failed: ' + esc(r.error) + '. This is not "no results".') + '</span></div>'; return; }
+    var rows = r.data.results || [];
+    if (!rows.length) { $('ow-res').innerHTML = '<div class="tx-muted" style="font-size:13px;padding:8px 4px">' + esc(r.data.note || 'No owner or property matches “' + q + '”.') + '</div>'; return; }
+    $('ow-res').innerHTML = rows.map(function (x) {
+      var acct = [x.trusted_account_number, x.vantaca_account_id && ('Vantaca ' + x.vantaca_account_id)].filter(Boolean).join(' · ');
+      return '<a class="ow-r" href="' + open360(x.property_id) + '"><div><b>' + esc(x.owner_name || 'No current owner') + '</b></div>' +
+        '<div>' + esc(x.street_address || '') + (x.unit ? ' #' + esc(x.unit) : '') + '</div>' +
+        '<div class="tx-muted">' + esc(x.community || '') + (acct ? '<div class="ow-acct">' + esc(acct) + '</div>' : '') + '</div>' +
+        '<span class="tx-muted" style="font-size:12px;white-space:nowrap">Open in Homeowner 360 ' + icon('arrowRight', { size: 14 }) + '</span></a>';
+    }).join('') + (r.data.capped ? '<div class="ow-hint">Showing the first matches. Type more to narrow it down.</div>' : '');
+  }
+  $('ow-q').addEventListener('input', function () { clearTimeout(timer); var v = this.value; timer = setTimeout(function () { search(v); }, 280); });
+  var pre = new URLSearchParams(location.search).get('q');
+  if (pre) { $('ow-q').value = pre; search(pre); }
+
+  // ---- overview ---------------------------------------------------------
+  var STATUS = { bankruptcy: 'bankruptcy', foreclosure: 'foreclosure', lien_filed: 'lien filed', with_attorney: 'with attorney', board_review: 'board review', payment_plan: 'payment plan', late_notice: 'late notice', delinquent_reminder: 'delinquent reminder' };
+  function renderOverview(o) {
+    var att = '', n = 0;
+    function row(title, detail, href, action, tone) {
+      n += 1;
+      att += '<div class="tx-brief-row"><span class="tx-num"' + (tone ? ' style="background:var(--tx-warn-bg);color:var(--tx-warn)"' : '') + '>' + n + '</span><div><div class="tx-brief-title">' + esc(title) + '</div><div class="tx-brief-detail">' + esc(detail) + '</div></div>' +
+        (href ? '<a class="tx-btn ' + (n === 1 ? 'tx-btn--pri' : 'tx-btn--sec') + '" href="' + esc(href) + '">' + esc(action || 'Open') + '</a>' : '<span></span>') + '</div>';
+    }
+    o.problems.forEach(function (p) { row(p.message, 'Refresh to try again. Nothing is assumed.', null, null, true); });
+    (o.collapse || []).forEach(function (c) {
+      row('Check: ' + (c.name || 'one contact') + ' is the current owner of ' + c.properties + ' homes', 'A private individual with ' + o.collapse_threshold + '+ homes is how past record merges showed up. It may be legitimate. ' + c.communities.join(', ') + '.', '/admin/homeowner?contact=' + encodeURIComponent(c.contact_id), 'Open', true);
+    });
+    o.managed.filter(function (m) { return m.no_owner; }).forEach(function (m) {
+      row(m.community.name + ': ' + m.no_owner + ' of ' + m.properties + ' properties have no current owner', 'Owner roster not imported or not linked for these lots.', '/#tab=homes', 'Open Homes and owners');
+    });
+    o.managed.filter(function (m) { return m.proposals; }).forEach(function (m) {
+      row(m.community.name + ': ' + m.proposals + ' ownership change' + (m.proposals === 1 ? '' : 's') + ' to review', 'Proposed from an import; the owner record changes only when approved.', '/ownership-proposals-review.html', 'Review');
+    });
+    if (!n) att = '<div style="padding:18px 0 14px;display:flex;gap:10px;align-items:center;color:var(--tx-ok);font-weight:600">' + icon('check', { size: 18 }) + 'No owner records need attention.</div>';
+    $('ow-att').innerHTML = '<div class="tx-card tx-brief">' + att + '</div>';
+    var t = o.totals;
+    $('ow-sub').textContent = t.properties != null ? t.properties.toLocaleString() + ' properties across ' + o.managed.length + ' managed communities' + (o.collapse && !o.collapse.length ? ' · owner-collapse check clear' : '') : '';
+    $('ow-headline').textContent = n ? 'Find any owner or home. ' + n + ' record ' + (n === 1 ? 'issue needs' : 'issues need') + ' attention.' : 'Find any owner or home.';
+
+    function num(v, hot) { return v == null ? '<td class="tx-muted" title="Couldn’t load">?</td>' : !v ? '<td class="ow-zero">—</td>' : '<td class="' + (hot ? 'ow-hot' : '') + '">' + v.toLocaleString() + '</td>'; }
+    var head = '<tr><th>Community</th><th>Properties</th><th>No current owner</th><th>Ownership changes</th><th>At legal</th><th>In collections</th><th>Collection statuses</th></tr>';
+    var body = o.managed.map(function (m) {
+      var st = m.collections == null ? '<span class="tx-muted">?</span>' : m.collections.length ? m.collections.map(function (c) { return '<span class="tx-chip">' + c.count + ' ' + esc(STATUS[c.status] || c.status.replace(/_/g, ' ')) + '</span>'; }).join('') : '<span class="ow-zero">—</span>';
+      return '<tr><td class="ow-name"><a href="/app/communities/' + encodeURIComponent(m.community.id) + '">' + esc(m.community.name) + '</a></td>' +
+        num(m.properties) + num(m.no_owner, true) + num(m.proposals, true) + num(m.at_legal) + num(m.in_collections) + '<td>' + st + '</td></tr>';
+    }).join('');
+    $('ow-matrix').innerHTML = o.managed.length ? '<table><thead>' + head + '</thead><tbody>' + body + '</tbody></table>' : '<div style="padding:18px" class="tx-muted">No managed communities.</div>';
+
+    $('ow-other-wrap').innerHTML = o.other.length ? '<div class="tx-section-h"><span class="tx-lbl">Not counted</span><span class="tx-muted" style="font-size:12.5px">Prospects and communities leaving Bedrock. Records stay as they are.</span></div><div class="tx-card">' +
+      o.other.map(function (m) {
+        var label = m.group === 'leaving' ? 'Leaving' + (m.community.management_end_date ? ' (last day ' + m.community.management_end_date + ')' : '') : 'Prospect';
+        var parts = [];
+        if (m.properties) parts.push(m.properties.toLocaleString() + ' properties');
+        if (m.at_legal) parts.push(m.at_legal + ' at legal');
+        if (m.in_collections) parts.push(m.in_collections + ' in collections');
+        return '<div class="ow-other"><b>' + esc(m.community.name) + '</b> · ' + esc(label) + (parts.length ? ': ' + esc(parts.join(', ')) : '') + '</div>';
+      }).join('') + '</div>' : '';
+  }
+
+  async function loadOverview() {
+    var r = await TX.get('/api/owners/overview');
+    if (!r.ok) {
+      $('ow-att').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + (r.status === 401 ? 'Your sign-in expired. Sign in again.' : 'Couldn’t load owner records: ' + esc(r.error) + '. Nothing is assumed.') + '</span></div>';
+      $('ow-matrix').innerHTML = '<div style="padding:18px" class="tx-muted">Not loaded.</div>';
+      return;
+    }
+    renderOverview(r.data);
+    $('ow-stamp').textContent = 'Checked ' + new Date(r.data.generated_at || Date.now()).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+  }
+  loadOverview();
+})();
+</script>
+</body>
+</html>
