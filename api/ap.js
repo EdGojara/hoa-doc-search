@@ -170,7 +170,7 @@ async function findOrCreateVendor({ vendor_name, vendor_email, vendor_phone, sug
     is_active: true,
     is_1099_vendor: false,
     payment_terms_days: 30,
-    account_manager_email: vendor_email || null,
+    account_manager_email: require('../lib/ap/vendor_email_guard').vendorEmailOrNull(vendor_email, vendor_name),
     account_manager_phone: vendor_phone || null,
     remit_address_line1: vendor_addr?.line1 || null,
     remit_city: vendor_addr?.city || null,

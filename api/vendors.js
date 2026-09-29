@@ -435,6 +435,15 @@ router.patch('/:vendorId', async (req, res) => {
   if (req.body && req.body.w9_on_file === true) update.w9_uploaded_at = new Date().toISOString();
   if (Object.keys(update).length === 0) return res.status(400).json({ error: 'no updatable fields supplied' });
   try {
+    // A Bedrock staff address never goes on a vendor (only Bedrock itself may
+    // carry one). Refused with a clear message rather than silently dropped.
+    const { refusedStaffEmailFields, isStaffEmail } = require('../lib/ap/vendor_email_guard');
+    if (['email', 'contact_email'].some((k) => isStaffEmail(update[k]))) {
+      const { data: cur, error: ce } = await supabase.from('vendors').select('name').eq('id', vendorId).maybeSingle();
+      if (ce) throw ce;
+      const refused = refusedStaffEmailFields(update, (update.name || (cur && cur.name) || ''));
+      if (refused.length) return res.status(400).json({ error: 'staff_email_not_allowed', fields: refused, detail: "A Bedrock staff email can't be a vendor's email or contact. Enter the vendor's own contact." });
+    }
     const { data, error } = await supabase
       .from('vendors')
       .update(update)
