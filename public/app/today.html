@@ -31,6 +31,20 @@
 </style>
 </head>
 <body class="tx-body">
+<script>
+  // Landing safety (Issue #6): if a script fails before the page finishes
+  // booting, offer the legacy workspace instead of a blank screen. Never bare
+  // "/", which may land right back here.
+  window.addEventListener('error', function () {
+    if (window.__txBooted || window.__txFallbackShown) return;
+    window.__txFallbackShown = true;
+    var show = function () {
+      var host = document.getElementById('tx-main') || document.body;
+      host.insertAdjacentHTML('afterbegin', '<div role="alert" style="padding:14px 28px;background:#FBF0DE;color:#7A4A0E;font:14px Inter,sans-serif">Something failed while loading the new home. <a href="/?workspace=legacy" style="color:#0B1D34;font-weight:600">Open the legacy workspace</a></div>');
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show); else show();
+  });
+</script>
 <div class="tx-shell" id="tx-shell">
   <main class="tx-main" id="tx-main">
     <div class="tx-top">
@@ -75,14 +89,26 @@
 
     <div class="th-okwrap"><div class="tx-okstrip" id="th-ok"><span class="tx-lbl">In good shape</span></div></div>
 
+    <div class="th-okwrap" aria-label="Go to">
+      <span class="tx-lbl" style="display:block;padding-bottom:8px">Go to</span>
+      <nav class="tx-goto" id="th-goto"></nav>
+    </div>
+
     <div class="th-lower">
       <section aria-labelledby="th-act-title">
         <span class="tx-lbl" id="th-act-title" style="display:block;padding-bottom:6px">Recent activity</span>
         <div id="th-activity"></div>
       </section>
       <section>
-        <span class="tx-lbl" style="display:block;padding-bottom:8px">About this page</span>
-        <div class="tx-insight">Preview of the new Trusted design. It reads the same data as the main app and changes nothing. Every item links to where the work is done.</div>
+        <span class="tx-lbl" style="display:block;padding-bottom:8px">Workspace</span>
+        <div class="tx-insight">
+          The new Trusted design reads the same data as the legacy workspace and changes nothing. Every item links to where the work is done.
+          <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;cursor:pointer">
+            <input type="checkbox" id="th-legacy-pref" style="margin-top:3px">
+            <span>Keep opening the legacy workspace on this device</span>
+          </label>
+          <span id="th-legacy-note" class="tx-muted" style="display:block;font-size:12px;margin-top:4px"></span>
+        </div>
       </section>
     </div>
   </main>
@@ -105,6 +131,33 @@
   var $ = function (id) { return document.getElementById(id); };
   var user = await TX.boot({ active: 'today' });
   if (!user) return;
+  window.__txBooted = true;
+
+  // ---- Go to: the migration-work surfaces, plus an explicit legacy entry ----
+  $('th-goto').innerHTML = [
+    ['communities', 'Data readiness', '/app/communities'],
+    ['financial', 'Financial', '/app/financial'],
+    ['operations', 'Operations', '/app/operations'],
+    ['inbox', 'Imports and conversion', '/#tab=vantaca-imports', 'legacy'],
+    ['arrowRight', 'Legacy workspace', TX.LEGACY_URL, 'plain'],
+  ].map(function (g) {
+    return '<a href="' + esc(g[2]) + '"' + (g[3] ? ' class="is-legacy" title="Opens the legacy workspace"' : '') + '>' + icon(g[0], { size: 16 }) + esc(g[1]) + (g[3] === 'legacy' ? ' <small>legacy</small>' : '') + '</a>';
+  }).join('');
+
+  // ---- Per-device workspace choice (localStorage; undone with one click) ----
+  var prefBox = $('th-legacy-pref'), prefNote = $('th-legacy-note');
+  function prefGet() { try { return localStorage.getItem('tx.workspace') === 'legacy'; } catch (_) { return null; } }
+  function prefShow() {
+    var v = prefGet();
+    prefBox.checked = !!v;
+    prefBox.disabled = v === null;
+    prefNote.textContent = v === null ? 'This browser blocks saving the choice.' : v ? 'Signing in or opening trustEd will open the legacy workspace on this device. The new home stays one click away.' : '';
+  }
+  prefBox.addEventListener('change', function () {
+    try { if (prefBox.checked) localStorage.setItem('tx.workspace', 'legacy'); else localStorage.removeItem('tx.workspace'); } catch (_) {}
+    prefShow();
+  });
+  prefShow();
   var firstName = String(user.full_name || '').split(/\s+/)[0] || '';
   $('th-refresh').innerHTML = icon('refresh', { size: 14 }) + '<span class="th-rl">Refresh</span>';
   $('th-refresh').setAttribute('aria-label', 'Refresh');
