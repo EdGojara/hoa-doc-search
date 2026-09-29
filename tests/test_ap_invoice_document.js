@@ -117,7 +117,7 @@ const invById = (id) => db.ap_invoices.find((r) => r.id === id);
     assert.strictEqual(doc.file_size_bytes, 12345);
   });
 
-  await t('a failed document write loads the bill held for review with the reason (never silent)', async () => {
+  await t('a failed document write loads the bill flagged for review (not on hold) with the reason (never silent)', async () => {
     failDocInsert = true;
     const r = await commitInvoice({ extracted: extracted('PS-3'), vendorId: 'V1', communityId: 'C1', sha256: 'sha-ccc', storagePath: 'ap_invoices/sha-ccc_RMWBH.pdf', intakeMethod: 'email', sourceRef: 'email:graph-2' });
     failDocInsert = false;
@@ -125,15 +125,68 @@ const invById = (id) => db.ap_invoices.find((r) => r.id === id);
     assert.ok(inv, 'the bill still loads');
     assert.strictEqual(inv.source_document_id, null);
     assert.strictEqual(inv.needs_review, true);
-    assert.ok(/Source document not indexed/.test(inv.notes), inv.notes);
+    assert.strictEqual(inv.status, 'awaiting_approval', 'flagged for review, not on hold');
+    assert.ok(/Source document not indexed .*loaded and flagged for review/.test(inv.notes), inv.notes);
     assert.strictEqual(r.needs_review, true);
   });
 
-  await t('no stored PDF (stash failed) is also held for review, not silently accepted', async () => {
+  await t('no stored PDF (stash failed) is also loaded and flagged for review, not silently accepted', async () => {
     const r = await commitInvoice({ extracted: extracted('PS-4'), vendorId: 'V1', communityId: 'C1', sha256: 'sha-ddd', storagePath: null, intakeMethod: 'email', sourceRef: 'email:graph-3' });
     const inv = invById(r.invoice_id);
     assert.strictEqual(inv.needs_review, true);
     assert.ok(/source PDF was not stored/.test(inv.notes));
+  });
+
+  await t('race: a concurrent run files the same PDF between our lookup and insert → unique conflict returns the winner, no second row', async () => {
+    // A fake that enforces migration 472's partial unique index and lets a
+    // competing intake run insert right after our SELECT saw nothing.
+    const docs = [];
+    let competitorInserted = false;
+    const raceClient = {
+      from(table) {
+        const st = { filters: [], op: 'select' };
+        const q = {
+          select() { return q; }, order() { return q; }, limit() { return q; },
+          eq(c, v) { st.filters.push([c, v]); return q; },
+          maybeSingle: async () => ({ data: table === 'communities' ? { name: 'Sample HOA', management_company_id: 'M1' } : null, error: null }),
+          insert(p) {
+            st.op = 'insert';
+            const clash = docs.find((d) => d.category === 'vendor_invoice' && d.community_id === p.community_id && d.file_hash === p.file_hash);
+            if (clash) { st.error = { code: '23505', message: 'duplicate key value violates unique constraint "uq_library_documents_vendor_invoice_hash"' }; return q; }
+            st.row = { id: 'doc-' + (docs.length + 1), ...p }; docs.push(st.row); return q;
+          },
+          single: async () => (st.error ? { data: null, error: st.error } : { data: st.row, error: null }),
+          then(res, rej) {
+            const rows = docs.filter((d) => st.filters.every(([c, v]) => d[c] === v));
+            const out = { data: rows, error: null };
+            // After OUR first lookup comes back empty, the competitor files it.
+            if (table === 'library_documents' && st.op === 'select' && !competitorInserted && !rows.length) {
+              competitorInserted = true;
+              docs.push({ id: 'doc-winner', category: 'vendor_invoice', community_id: 'C1', file_hash: 'sha-race', file_path: 'ap_invoices/sha-race_x.pdf' });
+            }
+            return Promise.resolve(out).then(res, rej);
+          },
+        };
+        return q;
+      },
+    };
+    const { ensureInvoiceDocument } = require('../lib/ap/invoice_document');
+    const r = await ensureInvoiceDocument(raceClient, { communityId: 'C1', vendorName: 'RMWBH', invoiceNumber: 'PS-R', storagePath: 'ap_invoices/sha-race_x.pdf', sha256: 'sha-race' });
+    assert.strictEqual(r.ok, true, JSON.stringify(r));
+    assert.strictEqual(r.id, 'doc-winner');
+    assert.strictEqual(r.raced, true);
+    assert.strictEqual(docs.filter((d) => d.file_hash === 'sha-race').length, 1, 'exactly one document row');
+  });
+
+  await t('race: a non-unique insert error is still reported, never swallowed', async () => {
+    const errClient = { from(table) { const q = { select() { return q; }, order() { return q; }, limit() { return q; }, eq() { return q; },
+      maybeSingle: async () => ({ data: { name: 'X', management_company_id: 'M1' }, error: null }),
+      insert() { return q; }, single: async () => ({ data: null, error: { code: '42501', message: 'permission denied' } }),
+      then(res) { return Promise.resolve({ data: [], error: null }).then(res); } }; return q; } };
+    const { ensureInvoiceDocument } = require('../lib/ap/invoice_document');
+    const r = await ensureInvoiceDocument(errClient, { communityId: 'C1', storagePath: 'p', sha256: 'h' });
+    assert.strictEqual(r.ok, false);
+    assert.ok(/permission denied/.test(r.reason));
   });
 
   await t('upload: a picked community that is not an active Bedrock community is held, never used', async () => {

@@ -1,0 +1,41 @@
+{
+  "migration": "472_vendor_invoice_document_unique.sql",
+  "summary": "Adds a partial UNIQUE index on library_documents (community_id, file_hash) for category 'vendor_invoice' rows with a hash, so the canonical AP intake's one-document-per-invoice-PDF identity is database-enforced (Issue #9). No data is created or changed.",
+  "requires": [
+    "469_payments_safe_foundation.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the index does not exist yet",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'uq_library_documents_vendor_invoice_hash'",
+      "expect": 0
+    },
+    {
+      "name": "no duplicate vendor_invoice (community_id, file_hash) groups (the index would fail to build)",
+      "sql": "SELECT count(*)::int FROM (SELECT community_id, file_hash FROM library_documents WHERE category = 'vendor_invoice' AND file_hash IS NOT NULL GROUP BY community_id, file_hash HAVING count(*) > 1) d",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Adds 1 partial unique index: uq_library_documents_vendor_invoice_hash on library_documents (community_id, file_hash) WHERE category = 'vendor_invoice' AND file_hash IS NOT NULL.",
+    "No rows are inserted, updated or deleted."
+  ],
+  "objects": {
+    "added": ["index:uq_library_documents_vendor_invoice_hash"],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {},
+  "protected": [
+    { "table": "library_documents", "order_by": "id" }
+  ],
+  "verify": [
+    {
+      "name": "the partial unique index exists",
+      "sql": "SELECT count(*)::int FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'uq_library_documents_vendor_invoice_hash' AND indexdef ILIKE '%UNIQUE%' AND indexdef ILIKE '%vendor_invoice%'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [],
+  "reload_schema": false
+}
