@@ -1,0 +1,37 @@
+{
+  "description": "RMWBH shape: one matter per invoice; matter number + parties with the address in parentheses; every time entry dated; AP lines are the individual entries (no owner or address on them). A narrative date (order entered) must stay a referenced date.",
+  "invoice": { "vendor_invoice_number": "PS-INV900001", "invoice_date": "2026-07-16", "total_cents": 46000 },
+  "ap_lines": [
+    { "line_number": 1, "description": "Prepared draft of Release of Notice of Lis Pendens.", "amount_cents": 11500 },
+    { "line_number": 2, "description": "Reviewed and finalized Release of Notice of Lis Pendens for filing.", "amount_cents": 7300 },
+    { "line_number": 3, "description": "Prepared draft of Release of Abstract of Judgment.", "amount_cents": 11500 },
+    { "line_number": 4, "description": "Reviewed and finalized Release of Abstract of Judgment.", "amount_cents": 7300 },
+    { "line_number": 5, "description": "Reviewed Order of Discharge entered 5/20/2026; scanned and e-recorded document.", "amount_cents": 4200 },
+    { "line_number": 6, "description": "Reviewed document for recording in Real Property Records.", "amount_cents": 4200 }
+  ],
+  "raw": {
+    "invoice_number": "PS-INV900001", "invoice_date": "2026-07-16", "total": 460.00,
+    "matters": [{
+      "matter_ref": "99999-00004", "section_heading": null,
+      "title": "Testerly, Marigold Ann & Pemberton, Quill (4101 Sample Meadow Dr)",
+      "parties": ["Testerly, Marigold Ann", "Pemberton, Quill"], "property_address": "4101 Sample Meadow Dr", "owner_account_number": null,
+      "work_type": "collection", "fees": 460.00, "expenses": null, "total": 460.00,
+      "entries": [
+        { "date": "2026-06-12", "kind": "fee", "description": "Prepared draft of Release of Notice of Lis Pendens.", "amount": 115.00, "no_charge": false },
+        { "date": "2026-06-12", "kind": "fee", "description": "Reviewed and finalized Release of Notice of Lis Pendens for filing.", "amount": 73.00, "no_charge": false },
+        { "date": "2026-06-12", "kind": "fee", "description": "Prepared draft of Release of Abstract of Judgment.", "amount": 115.00, "no_charge": false },
+        { "date": "2026-06-12", "kind": "fee", "description": "Reviewed and finalized Release of Abstract of Judgment.", "amount": 73.00, "no_charge": false },
+        { "date": "2026-06-15", "kind": "fee", "description": "Reviewed Order of Discharge entered 5/20/2026; scanned and e-recorded document.", "amount": 42.00, "no_charge": false },
+        { "date": "2026-06-15", "kind": "fee", "description": "Reviewed document for recording in Real Property Records.", "amount": 42.00, "no_charge": false }
+      ],
+      "referenced_dates": [{ "date": "2026-05-20", "context": "Order of Discharge entered" }]
+    }],
+    "other_dates": [{ "date": "2026-07-31", "context": "due date" }]
+  },
+  "expect": {
+    "status": "valid", "matters": 1,
+    "line_map": { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0 },
+    "service_basis": [{ "start": "2026-06-12", "end": "2026-06-15", "source": "pdf_entry" }],
+    "work_types": ["collection"], "referenced_dates": [1]
+  }
+}
