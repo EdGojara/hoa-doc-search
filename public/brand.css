@@ -194,3 +194,37 @@
   box-shadow: 0 30px 60px rgba(0, 0, 0, 0.45);
   color: var(--ink);
 }
+
+
+/* -----------------------------------------------------------------------------
+   Trusted product surface tokens — Issue #6 v3 canonical direction (2026-09-29)
+   Used by the app shell and .tx-* primitives (public/app/tx.css). Mirrored in
+   lib/brand.js `productColors`. Light working surfaces sit on ivory; the
+   Systems Console uses the --tx-console-* set. Status colors are for state
+   only (ok / needs a look / info / problem), never decoration.
+   ----------------------------------------------------------------------------- */
+:root {
+  --tx-ivory:        #FAF8F4;   /* app background */
+  --tx-surface:      #FFFFFF;   /* raised card */
+  --tx-quiet:        #F4F1EA;   /* quiet strip ("In good shape") */
+  --tx-subtle:       #F1EEE7;   /* subtle fill */
+  --tx-rule:         #E4DFD4;   /* borders */
+  --tx-rule-soft:    #EFEBE2;   /* row dividers inside cards */
+  --tx-text:         #15181D;   /* primary text on light */
+  --tx-text-2:       #4A5260;   /* secondary text on light */
+  --tx-muted:        #6E6A60;   /* labels, captions */
+  --tx-gold-ink:     #8C6D1F;   /* gold for text on light (AA contrast) */
+  --tx-gold-wash:    #F7F0DA;   /* Amanda insight / numbered markers */
+  --tx-ok:           #1F5A3E;   --tx-ok-bg:   #E6F0EA;
+  --tx-warn:         #7A4A0E;   --tx-warn-bg: #FBF0DE;
+  --tx-info:         #244B73;   --tx-info-bg: #E7EEF7;
+  --tx-bad:          #8A2A1F;   --tx-bad-bg:  #F8E5E2;
+  --tx-side:         #0B1D34;   /* sidebar = --navy */
+  --tx-side-active:  #16305A;
+  --tx-side-text:    #AEB7C6;
+  --tx-console-bg:   #081527;
+  --tx-console-panel:#0E2140;
+  --tx-console-rule: #16294A;
+  --tx-radius:       14px;
+  --tx-shadow:       0 1px 2px rgba(11, 29, 52, 0.06), 0 8px 24px rgba(11, 29, 52, 0.05);
+}
