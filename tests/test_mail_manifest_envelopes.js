@@ -72,6 +72,21 @@ t('same bundle_id with mismatched content or property is NOT merged: each member
   assert.ok(stage.envelopes.every((e) => /letter_type/.test(e.integrity_warning)));
 });
 
+t('same bundle_id + property + content + type but DIFFERENT addresses is NOT merged: separate flagged rows', () => {
+  const r = groupManifestEnvelopes([
+    { id: 'z1', address: '7 Z St', category: 'A', letter_type: 'Courtesy 1', content: 'pz/bundle.pdf', property_id: 'pz', bundle_id: 'BZ' },
+    { id: 'z2', address: '7 Zed Street', category: 'B', letter_type: 'Courtesy 1', content: 'pz/bundle.pdf', property_id: 'pz', bundle_id: 'BZ' },
+  ]);
+  assert.strictEqual(r.envelope_count, 2); assert.strictEqual(r.combined_envelopes, 0);
+  assert.ok(r.envelopes.every((e) => /^bundle BZ members disagree on address/.test(e.integrity_warning)));
+  // A non-bundle property+content group is worded as an envelope group.
+  const g = groupManifestEnvelopes([
+    { id: 'g1', address: '8 G St', category: 'A', letter_type: 'Courtesy 1', content: 'pg/f.pdf', property_id: 'pg' },
+    { id: 'g2', address: '8 G St', category: 'B', letter_type: 'Courtesy 2', content: 'pg/f.pdf', property_id: 'pg' },
+  ]);
+  assert.ok(g.envelopes.every((e) => /^envelope group members disagree on letter_type/.test(e.integrity_warning)));
+});
+
 t('a letter with no PDF stays its own row (never merged into another)', () => {
   const r = groupManifestEnvelopes([{ id: 'd1', address: '2 B St', category: 'Z', letter_type: 'Courtesy 1', content: null, property_id: 'p4' }, { id: 'd2', address: '2 B St', category: 'W', letter_type: 'Courtesy 1', content: null, property_id: 'p4' }]);
   assert.strictEqual(r.envelope_count, 2); assert.ok(r.envelopes.every((e) => !e.has_pdf));
