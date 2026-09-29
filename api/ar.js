@@ -24,6 +24,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { createCharge, recordPayment, applyPayment, getOwnerLedger } = require('../lib/accounting/ar_engine');
 const { safeErrorMessage } = require('./_safe_error');
 const { propertyOwnershipHistory, formerOwnerExceptions } = require('../lib/ar/ownership_history');
+const { arControl } = require('../lib/ar/ar_control');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
@@ -158,7 +159,9 @@ async function _fetchAllForCommunity(table, community_id, cap, select) {
   for (let from = 0; from < cap; from += page) {
     const to = Math.min(from + page - 1, cap - 1);
     const { data, error } = await supabase.from(table).select(select || '*')
-      .eq('community_id', community_id).range(from, to);
+      // Stable order: unordered pages drift past 1,000 rows (duplicated AND
+      // skipped balances). Both callers' views carry property_id. (Issue #6.)
+      .eq('community_id', community_id).order('property_id', { ascending: true }).range(from, to);
     if (error) throw error;
     out.push(...(data || []));
     if (!data || data.length < page) break;
@@ -258,6 +261,21 @@ router.post('/billing-policies', express.json(), async (req, res) => {
 // ----------------------------------------------------------------------------
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+// GET /control?community_id= — owner receivables (canonical current AR) next to
+// the GL AR control (1300 + 2400 net) for one community, with the conversion
+// state. Read-only. Feeds the Operator Home receivables card (Issue #6); the
+// same lib/ar/ar_control.js drives Kat's month-end tie-out, so they agree.
+router.get('/control', async (req, res) => {
+  try {
+    const cid = String(req.query.community_id || '');
+    if (!UUID.test(cid)) return res.status(400).json({ error: 'community_id_invalid' });
+    res.json(await arControl(supabase, cid));
+  } catch (err) {
+    console.error('[ar] control failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
 
 router.get('/ownership-history/:property_id', async (req, res) => {
   try {

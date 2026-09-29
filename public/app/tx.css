@@ -1,0 +1,213 @@
+/* =============================================================================
+   public/app/tx.css — Trusted product primitives (Issue #6 v3, 2026-09-29)
+   -----------------------------------------------------------------------------
+   Load AFTER /brand.css. Every color comes from a brand.css token; nothing is
+   hard-coded here. Class prefix .tx-* so nothing collides with index.html.
+
+   Principles encoded here (ChatGPT/Ed review of v3):
+   - exceptions dominate, healthy states stay quiet (.tx-okstrip);
+   - every figure can carry a source (.tx-src);
+   - every status says what happens next (.tx-steps);
+   - responsive: the hero shrinks on short screens, the sidebar collapses to
+     icons under 1100px and to a top menu under 760px; strips wrap, type never
+     shrinks to fit.
+   ============================================================================= */
+
+.tx-body {
+  margin: 0;
+  background: var(--tx-ivory);
+  color: var(--tx-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+.tx-body *, .tx-body *::before, .tx-body *::after { box-sizing: border-box; }
+/* :where() keeps this reset at zero specificity so .tx-btn / .tx-src win. */
+:where(.tx-body) a { color: inherit; text-decoration: none; }
+.tx-serif { font-family: var(--font-serif); }
+.tx-mono  { font-family: var(--font-mono); }
+.tx-muted { color: var(--tx-muted); }
+.tx-lbl {
+  font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+  font-weight: 600; color: var(--tx-muted);
+}
+.tx-icon { flex-shrink: 0; display: block; }
+
+/* ---------- Shell ---------------------------------------------------------- */
+.tx-shell { display: flex; min-height: 100vh; }
+.tx-side {
+  width: 232px; flex-shrink: 0; background: var(--tx-side); color: var(--tx-side-text);
+  display: flex; flex-direction: column; padding: 22px 14px 16px;
+  position: sticky; top: 0; height: 100vh;
+}
+.tx-logo { display: flex; align-items: center; gap: 10px; padding: 0 8px 22px; }
+.tx-logo span {
+  font-family: var(--font-serif); font-size: 19px; letter-spacing: .22em;
+  color: var(--tx-ivory); font-weight: 600;
+}
+.tx-nav {
+  display: flex; align-items: center; gap: 11px; height: 38px; padding: 0 10px;
+  border-radius: 9px; font-size: 13.5px; color: var(--tx-side-text); white-space: nowrap;
+}
+.tx-nav:hover { background: rgba(255, 255, 255, .05); color: var(--tx-ivory); }
+.tx-nav.is-on {
+  background: var(--tx-side-active); color: var(--tx-ivory); font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--gold);
+}
+.tx-nav.is-on .tx-icon { color: var(--gold); }
+.tx-cmd {
+  margin-top: auto; display: flex; align-items: center; gap: 8px; height: 40px;
+  padding: 0 10px; border-radius: 10px; background: var(--navy-soft);
+  border: 1px solid rgba(255, 255, 255, .08); font-size: 12.5px; color: var(--tx-side-text);
+  white-space: nowrap; overflow: hidden; cursor: pointer; font-family: inherit; width: 100%;
+}
+.tx-cmd .tx-icon { color: var(--gold); }
+.tx-kbd {
+  margin-left: auto; flex-shrink: 0; font-family: var(--font-mono); font-size: 10.5px;
+  border: 1px solid rgba(255, 255, 255, .16); border-radius: 5px; padding: 1px 5px;
+}
+.tx-me {
+  display: flex; align-items: center; gap: 10px; padding: 14px 6px 0; margin-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, .08); min-width: 0;
+}
+.tx-me-name { font-size: 13px; color: var(--tx-ivory); font-weight: 600; }
+.tx-me-role { font-size: 11.5px; color: var(--ink-faint); }
+.tx-av {
+  width: 34px; height: 34px; border-radius: 50%; background: var(--gold); color: var(--navy);
+  display: flex; align-items: center; justify-content: center; font-weight: 700;
+  font-size: 12.5px; flex-shrink: 0;
+}
+.tx-main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.tx-top {
+  height: 58px; display: flex; align-items: center; gap: 14px; padding: 0 28px;
+  border-bottom: 1px solid var(--tx-rule-soft); background: var(--tx-ivory);
+}
+.tx-switch {
+  display: flex; align-items: center; gap: 6px; font: 600 14px var(--font-sans);
+  color: var(--navy); background: none; border: 0; padding: 6px 8px; border-radius: 8px; cursor: pointer;
+}
+.tx-switch select {
+  font: 600 14px var(--font-sans); color: var(--navy); background: transparent;
+  border: 0; cursor: pointer; padding-right: 4px;
+}
+.tx-menu-btn { display: none; background: none; border: 0; color: var(--navy); cursor: pointer; padding: 6px; }
+
+/* ---------- Surfaces -------------------------------------------------------- */
+.tx-card { background: var(--tx-surface); border-radius: var(--tx-radius); box-shadow: var(--tx-shadow); }
+.tx-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 36px; padding: 0 14px; border-radius: 9px; font: 600 13px var(--font-sans);
+  white-space: nowrap; cursor: pointer; border: 1px solid transparent;
+}
+.tx-btn--pri  { background: var(--navy); color: var(--tx-ivory); }
+.tx-btn--sec  { background: var(--tx-surface); color: var(--navy); border-color: var(--tx-rule); }
+.tx-btn--gold { background: var(--gold); color: var(--navy); }
+.tx-btn:focus-visible, .tx-nav:focus-visible, .tx-cmd:focus-visible, .tx-src:focus-visible {
+  outline: 2px solid var(--gold); outline-offset: 2px;
+}
+.tx-pill {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px;
+  border-radius: 11px; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+}
+.tx-pill--ok   { background: var(--tx-ok-bg);   color: var(--tx-ok); }
+.tx-pill--warn { background: var(--tx-warn-bg); color: var(--tx-warn); }
+.tx-pill--info { background: var(--tx-info-bg); color: var(--tx-info); }
+.tx-pill--bad  { background: var(--tx-bad-bg);  color: var(--tx-bad); }
+.tx-pill--mute { background: var(--tx-subtle);  color: var(--tx-text-2); }
+
+/* Source link — the gold underline means "this figure opens its source". */
+.tx-src {
+  text-decoration: underline; text-decoration-color: var(--gold);
+  text-underline-offset: 3px; text-decoration-thickness: 1.5px; cursor: pointer;
+}
+
+/* ---------- Hero (community photo) ----------------------------------------- */
+.tx-hero {
+  position: relative; height: clamp(190px, 30vh, 292px);
+  background-color: var(--navy); background-size: cover; background-position: center 60%;
+}
+.tx-hero::after {
+  content: ''; position: absolute; inset: 0;
+  background:
+    linear-gradient(90deg, rgba(11, 29, 52, .92) 0%, rgba(11, 29, 52, .72) 38%, rgba(11, 29, 52, .18) 75%, rgba(11, 29, 52, .05) 100%),
+    linear-gradient(0deg, rgba(11, 29, 52, .35), rgba(11, 29, 52, 0) 45%);
+}
+.tx-hero-inner {
+  position: absolute; inset: 0; z-index: 1; padding: clamp(24px, 5vh, 44px) 40px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.tx-hero .tx-lbl { color: var(--gold); }
+.tx-hero h1 {
+  margin: 0; font-family: var(--font-serif); font-weight: 600; color: var(--tx-ivory);
+  font-size: clamp(36px, 5vw, 54px); line-height: 1;
+}
+.tx-hero-sub { font-size: 17px; color: var(--ink); max-width: 720px; }
+.tx-hero-link {
+  position: absolute; right: 28px; top: 24px; z-index: 1; font-size: 12.5px; font-weight: 600;
+  color: var(--tx-ivory); background: rgba(11, 29, 52, .45); border: 1px solid rgba(250, 248, 244, .25);
+  padding: 6px 12px; border-radius: 18px;
+}
+
+/* ---------- Briefing -------------------------------------------------------- */
+.tx-brief { padding: 22px 24px 8px; }
+.tx-brief-head { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; }
+.tx-face { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.tx-brief-row {
+  display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 14px;
+  align-items: center; padding: 15px 0; border-top: 1px solid var(--tx-rule-soft);
+}
+.tx-num {
+  width: 26px; height: 26px; border-radius: 50%; background: var(--tx-gold-wash);
+  color: var(--tx-gold-ink); font: 600 13px var(--font-mono);
+  display: flex; align-items: center; justify-content: center;
+}
+.tx-brief-title { font-size: 15.5px; font-weight: 600; }
+.tx-brief-detail { font-size: 13px; color: var(--tx-muted); margin-top: 3px; }
+
+/* ---------- Quiet healthy strip -------------------------------------------- */
+.tx-okstrip {
+  display: flex; align-items: center; flex-wrap: wrap; row-gap: 12px;
+  padding: 16px 22px; border-radius: 12px; background: var(--tx-quiet);
+}
+.tx-okstrip > .tx-lbl { width: 118px; flex-shrink: 0; color: var(--tx-ok); }
+.tx-ok { display: flex; flex-direction: column; gap: 3px; padding: 0 22px; border-left: 1px solid var(--tx-rule); min-width: 150px; }
+.tx-ok:nth-child(2) { border-left: 0; padding-left: 0; }
+.tx-ok-k { font-size: 13px; color: var(--tx-muted); }
+.tx-ok-v { font-size: 17px; font-weight: 600; }
+.tx-ok-d { font-size: 12px; color: var(--tx-muted); }
+
+/* ---------- Timeline -------------------------------------------------------- */
+.tx-tl { display: grid; grid-template-columns: 58px 14px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 13px; padding: 6px 0; }
+.tx-tl-t { font-family: var(--font-mono); font-size: 11.5px; color: var(--tx-muted); }
+
+/* ---------- Amanda insight -------------------------------------------------- */
+.tx-insight { background: var(--tx-gold-wash); border-radius: 10px; padding: 12px 14px; font-size: 13px; line-height: 19px; color: #4A3B12; }
+
+/* ---------- Loading / error states (never a silent zero) ------------------- */
+.tx-skel { background: linear-gradient(90deg, var(--tx-subtle), var(--tx-rule-soft), var(--tx-subtle)); background-size: 200% 100%; animation: tx-shimmer 1.4s infinite; border-radius: 6px; }
+@keyframes tx-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.tx-err { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--tx-warn); background: var(--tx-warn-bg); border-radius: 8px; padding: 8px 10px; }
+@media (prefers-reduced-motion: reduce) { .tx-skel { animation: none; } }
+
+/* ---------- Responsive ------------------------------------------------------ */
+@media (max-width: 1100px) {
+  .tx-side { width: 68px; padding: 22px 10px 16px; }
+  .tx-logo span, .tx-nav span, .tx-cmd span, .tx-me > div:not(.tx-av) { display: none; }
+  .tx-nav, .tx-cmd { justify-content: center; padding: 0; }
+  .tx-me { justify-content: center; padding-left: 0; padding-right: 0; }
+}
+@media (max-width: 760px) {
+  .tx-side { display: none; position: fixed; z-index: 20; width: 240px; left: 0; top: 0; }
+  .tx-shell.is-menu-open .tx-side { display: flex; }
+  .tx-shell.is-menu-open .tx-logo span, .tx-shell.is-menu-open .tx-nav span, .tx-shell.is-menu-open .tx-cmd span { display: inline; }
+  .tx-shell.is-menu-open .tx-nav, .tx-shell.is-menu-open .tx-cmd { justify-content: flex-start; padding: 0 10px; }
+  .tx-menu-btn { display: inline-flex; }
+  .tx-top { padding: 0 12px; gap: 8px; }
+  .tx-switch select { max-width: 200px; text-overflow: ellipsis; }
+  .tx-hero-inner { padding: 22px 16px; }
+  .tx-hero-link { display: none; }
+  .tx-brief { padding: 18px 16px 6px; }
+  .tx-brief-row { grid-template-columns: 26px minmax(0, 1fr); }
+  .tx-brief-row .tx-btn { grid-column: 2; justify-self: start; }
+  .tx-ok { border-left: 0; padding-left: 0; }
+}

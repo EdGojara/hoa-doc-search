@@ -870,6 +870,17 @@ app.get('/', (req, res, next) => {
   return next();
 });
 
+// Trusted app preview (Issue #6, v3 canonical design) — /app/today is the new
+// Operator Home. Read-only, behind the same staff gate as everything else, and
+// not linked from the main app yet. Reversible: set TRUSTED_APP_DISABLED=1 to
+// send /app/* back to the main app. Registered BEFORE express.static so the
+// kill switch also covers the raw /app/*.html files.
+app.use('/app', (req, res, next) => {
+  if (process.env.TRUSTED_APP_DISABLED === '1') return res.redirect('/');
+  return next();
+});
+app.get('/app/today', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'today.html')));
+
 // Static assets. HTML files (the staff app, portal pages) get `no-cache` so the
 // browser MUST revalidate against the server before reusing a copy — otherwise
 // a deploy ships but operators keep seeing the old page until a hard-refresh

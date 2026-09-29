@@ -214,7 +214,10 @@ router.get('/', async (_req, res) => {
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('name', { ascending: true });
     if (error) throw error;
-    res.json({ communities: data || [] });
+    // hero: the community photo (lib/community_branding.js) for the Operator
+    // Home header (Issue #6). null when no photo is on file.
+    const { getCommunityAssets } = require('../lib/community_branding');
+    res.json({ communities: (data || []).map((c) => Object.assign({}, c, { hero: getCommunityAssets(c.name).hero || null })) });
   } catch (err) {
     console.error('[community-profile] / list failed:', err.message);
     res.status(500).json({ error: err.message });

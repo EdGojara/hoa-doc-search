@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Today · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../brand.css">
+<link rel="stylesheet" href="tx.css">
+<style>
+  /* Page layout only; every visual primitive lives in tx.css. */
+  .th-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 22px; padding: 0 28px; margin-top: -58px; position: relative; z-index: 2; }
+  .th-lower { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 22px; padding: 22px 28px 40px; }
+  .th-rec { padding: 22px; display: flex; flex-direction: column; gap: 10px; }
+  .th-total { font-family: var(--font-serif); font-size: 40px; font-weight: 600; color: var(--navy); line-height: 1; align-self: flex-start; }
+  .th-okwrap { margin: 22px 28px 0; }
+  .th-gl { font-size: 13px; display: flex; align-items: flex-start; gap: 6px; }
+  .th-gl.is-match { color: var(--tx-ok); }
+  .th-gl.is-diff, .th-gl.is-none { color: var(--tx-text-2); }
+  .th-gl.is-error { color: var(--tx-warn); }
+  .th-refresh { margin-left: auto; display: flex; gap: 14px; align-items: center; }
+  .th-refresh button { background: none; border: 0; color: var(--tx-text-2); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font: 500 12.5px var(--font-sans); }
+  .th-stamp { font-size: 12px; color: var(--tx-muted); }
+  .th-empty { padding: 18px 0 14px; border-top: 1px solid var(--tx-rule-soft); display: flex; gap: 10px; align-items: center; color: var(--tx-ok); font-weight: 600; }
+  .th-problem .tx-num { background: var(--tx-warn-bg); color: var(--tx-warn); }
+  .th-warn .tx-num { background: var(--tx-warn-bg); color: var(--tx-warn); }
+  @media (max-width: 1100px) { .th-grid, .th-lower { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 760px) { .th-grid, .th-lower { padding-left: 16px; padding-right: 16px; } .th-okwrap { margin: 18px 16px 0; } .th-stamp { display: none; } .th-refresh button .th-rl { display: none; } }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top">
+      <button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button>
+      <label class="tx-switch"><span class="tx-lbl" style="position:absolute;left:-9999px">Community</span>
+        <select id="th-community" aria-label="Community"><option>Loading…</option></select>
+      </label>
+      <div class="th-refresh">
+        <span class="th-stamp" id="th-stamp"></span>
+        <button id="th-refresh" type="button" title="Refresh (no auto-refresh; loads only when you ask)"></button>
+      </div>
+    </div>
+
+    <section class="tx-hero" id="th-hero">
+      <div class="tx-hero-inner">
+        <span class="tx-lbl" id="th-dateline">&nbsp;</span>
+        <h1 id="th-greeting">&nbsp;</h1>
+        <span class="tx-hero-sub" id="th-headline">&nbsp;</span>
+      </div>
+      <a class="tx-hero-link" href="/#tab=community">Community profile →</a>
+    </section>
+
+    <div class="th-grid">
+      <section class="tx-card tx-brief" aria-labelledby="th-brief-title">
+        <div class="tx-brief-head">
+          <div style="display:flex;flex-direction:column;gap:1px">
+            <span id="th-brief-title" style="font-size:15px;font-weight:600;color:var(--navy)">Today's briefing</span>
+            <span class="tx-muted" style="font-size:12.5px" id="th-brief-sub">Loading…</span>
+          </div>
+        </div>
+        <div id="th-items">
+          <div class="tx-brief-row"><span class="tx-num">1</span><div><div class="tx-skel" style="height:16px;width:60%"></div><div class="tx-skel" style="height:12px;width:80%;margin-top:8px"></div></div><span></span></div>
+          <div class="tx-brief-row"><span class="tx-num">2</span><div><div class="tx-skel" style="height:16px;width:50%"></div><div class="tx-skel" style="height:12px;width:70%;margin-top:8px"></div></div><span></span></div>
+        </div>
+      </section>
+
+      <section class="tx-card th-rec" aria-labelledby="th-rec-title">
+        <span class="tx-lbl" id="th-rec-title">Owner receivables</span>
+        <div id="th-rec"><div class="tx-skel" style="height:40px;width:70%"></div></div>
+      </section>
+    </div>
+
+    <div class="th-okwrap"><div class="tx-okstrip" id="th-ok"><span class="tx-lbl">In good shape</span></div></div>
+
+    <div class="th-lower">
+      <section aria-labelledby="th-act-title">
+        <span class="tx-lbl" id="th-act-title" style="display:block;padding-bottom:6px">Recent activity</span>
+        <div id="th-activity"></div>
+      </section>
+      <section>
+        <span class="tx-lbl" style="display:block;padding-bottom:8px">About this page</span>
+        <div class="tx-insight">Preview of the new Trusted design. It reads the same data as the main app and changes nothing. Every item links to where the work is done.</div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="tx-icons.js"></script>
+<script src="briefing.js"></script>
+<script src="tx.js"></script>
+<script>
+(function () {
+  'use strict';
+  if (TX.fixture) document.write('<script src="fixtures/today.fixture.js"><\/script>');
+})();
+</script>
+<script>
+(async function () {
+  'use strict';
+  var esc = TX.esc, icon = TX.icon;
+  var $ = function (id) { return document.getElementById(id); };
+  var user = await TX.boot({ active: 'today' });
+  if (!user) return;
+  var firstName = String(user.full_name || '').split(/\s+/)[0] || '';
+  $('th-refresh').innerHTML = icon('refresh', { size: 14 }) + '<span class="th-rl">Refresh</span>';
+  $('th-refresh').setAttribute('aria-label', 'Refresh');
+
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (_) { return null; } }
+
+  // ---- community switcher (alphabetical, active only) ----------------------
+  var commRes = await TX.get('/api/community-profile/');
+  var communities = commRes.ok ? (commRes.data.communities || []).filter(function (c) { return c.active !== false; }) : [];
+  communities.sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+  var sel = $('th-community');
+  if (!communities.length) {
+    sel.innerHTML = '<option>' + (commRes.ok ? 'No communities' : 'Couldn’t load communities') + '</option>';
+  } else {
+    sel.innerHTML = communities.map(function (c) { return '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>'; }).join('');
+    var wanted = new URLSearchParams(location.search).get('community') || store('tx.today.community');
+    if (wanted && communities.some(function (c) { return c.id === wanted; })) sel.value = wanted;
+  }
+  sel.addEventListener('change', function () { store('tx.today.community', sel.value); load(); });
+  $('th-refresh').addEventListener('click', function () { load(); });
+
+  function current() { return communities.find(function (c) { return c.id === sel.value; }) || null; }
+
+  // ---- render --------------------------------------------------------------
+  function row(n, it, cls) {
+    return '<div class="tx-brief-row ' + (cls || '') + '"><span class="tx-num">' + n + '</span><div>' +
+      '<div class="tx-brief-title">' + esc(it.title) + '</div>' +
+      '<div class="tx-brief-detail">' + esc(it.detail) + (it.source ? ' <a class="tx-src" href="' + esc(it.href) + '">' + esc(it.source) + '</a>' : '') + '</div></div>' +
+      '<a class="tx-btn ' + (n === 1 ? 'tx-btn--pri' : 'tx-btn--sec') + '" href="' + esc(it.href) + '">' + esc(it.action || 'Open') + '</a></div>';
+  }
+
+  function render(b, c) {
+    var hero = $('th-hero');
+    hero.style.backgroundImage = c && c.hero ? 'url("' + c.hero + '")' : '';
+    $('th-dateline').textContent = new Date().toLocaleDateString('en-US', { timeZone: 'America/Chicago', weekday: 'long', month: 'long', day: 'numeric' }) + (c ? ' · ' + c.name : '');
+    $('th-greeting').textContent = b.greeting;
+    $('th-headline').textContent = b.headline + ' ' + b.subline;
+    $('th-brief-sub').textContent = 'From Mail Queue, Payables and the homeowner inbox · ' + new Date().toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+
+    var html = '';
+    var n = 0;
+    b.problems.forEach(function (p) {
+      n += 1;
+      html += row(n, { title: p.message, detail: 'Nothing is hidden: this source did not answer, so it is not counted as clear.', source: p.label, href: p.href, action: 'Open' }, 'th-problem');
+    });
+    b.items.forEach(function (it) { n += 1; html += row(n, it, it.tone === 'warn' ? 'th-warn' : ''); });
+    if (!n) html = '<div class="th-empty">' + icon('check', { size: 18 }) + 'Nothing needs you right now.</div>';
+    $('th-items').innerHTML = html;
+
+    var ok = '<span class="tx-lbl">In good shape</span>';
+    b.healthy.forEach(function (h) {
+      ok += '<div class="tx-ok"><span class="tx-ok-k">' + esc(h.label) + '</span><span class="tx-ok-v">' + esc(h.value) + '</span><span class="tx-ok-d">' + esc(h.detail) + '</span></div>';
+    });
+    if (!b.healthy.length) ok += '<div class="tx-ok"><span class="tx-ok-d">Nothing is fully clear yet. See the briefing above.</span></div>';
+    $('th-ok').innerHTML = ok;
+
+    var r = b.receivables;
+    if (!r.ok) {
+      $('th-rec').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t load receivables. <a class="tx-src" href="' + TXBriefing.LINKS.aging + '">Open Owner AR</a></span></div>';
+    } else {
+      var glCls = r.gl ? 'is-' + r.gl.state : '';
+      var glIcon = r.gl && r.gl.state === 'match' ? icon('check', { size: 14 }) : icon('info', { size: 14 });
+      $('th-rec').innerHTML =
+        '<a class="th-total tx-src" href="' + TXBriefing.LINKS.aging + '" title="Open Owner AR">' + esc(r.total) + '</a>' +
+        '<div class="tx-muted" style="font-size:13px;margin-top:8px">' + r.owing + ' ' + (r.owing === 1 ? 'owner owes' : 'owners owe') + ' · ' + r.in_credit + ' in credit</div>' +
+        (r.gl ? '<div class="th-gl ' + glCls + '" style="margin-top:6px">' + glIcon + '<span>' + esc(r.gl.text) + '</span></div>' : '') +
+        '<span class="tx-lbl" style="margin-top:10px">Source</span>' +
+        '<div class="tx-muted" style="font-size:12.5px">Owner ledger (committed transactions) · GL from posted journal entries</div>' +
+        '<a class="tx-btn tx-btn--sec" href="' + TXBriefing.LINKS.aging + '" style="margin-top:8px;align-self:flex-start">Open Owner AR</a>';
+    }
+  }
+
+  function renderActivity(today, c) {
+    var d = today.ok ? today.data : null;
+    if (!d) { $('th-activity').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t load recent activity.</span></div>'; return; }
+    var ev = [];
+    // /api/today?community_id= scopes calls and imports server-side (capped reads).
+    ((d.calls && d.calls.items) || []).forEach(function (x) { ev.push({ at: x.started_at, text: '<b>Call</b> ' + esc(x.brief_concern ? String(x.brief_concern).slice(0, 110) : 'from a homeowner'), done: true }); });
+    ((d.uploads && d.uploads.items) || []).forEach(function (x) { ev.push({ at: x.imported_at, text: '<b>Import</b> ' + esc(String(x.report_type || 'Vantaca report').replace(/_/g, ' ')) + ' · ' + esc(x.status || ''), done: x.status === 'committed' || x.status === 'completed' }); });
+    ev = ev.filter(function (e) { return e.at; }).sort(function (a, b) { return new Date(b.at) - new Date(a.at); }).slice(0, 6);
+    var se = d.section_errors || {};
+    var failed = ['calls', 'uploads'].filter(function (k) { return se[k]; }).map(function (k) { return k === 'calls' ? 'calls' : 'imports'; });
+    var warn = failed.length ? '<div class="tx-err" style="margin-bottom:8px">' + icon('alert', { size: 16 }) + '<span>Couldn’t load recent ' + failed.join(' or ') + '. This list may be incomplete.</span></div>' : '';
+    if (!ev.length) { $('th-activity').innerHTML = warn + (failed.length === 2 ? '' : '<div class="tx-muted" style="font-size:13px">No calls or imports recorded recently.</div>'); return; }
+    $('th-activity').innerHTML = warn + ev.map(function (e) {
+      var t = new Date(e.at);
+      var sameDay = t.toDateString() === new Date().toDateString();
+      var stamp = sameDay ? t.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' }) : t.toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' });
+      return '<div class="tx-tl"><span class="tx-tl-t">' + esc(stamp) + '</span>' + (e.done ? icon('check', { size: 14, color: 'var(--tx-ok)', stroke: 2.4 }) : icon('circle', { size: 14, color: 'var(--tx-info)', stroke: 2.2 })) + '<span>' + e.text + '</span></div>';
+    }).join('');
+  }
+
+  // ---- load: one round of reads, only when the page opens or you ask -----
+  var seq = 0;
+  async function load() {
+    var mine = ++seq;
+    var c = current();
+    var cid = c ? encodeURIComponent(c.id) : '';
+    var q = cid ? '?community_id=' + cid : '';
+    var isAdmin = user.role === 'admin';
+    var results = await Promise.all([
+      TX.get('/api/enforcement/mail-queue/summary' + q),
+      // Owner sees bills waiting on HIS release; ed-queue is owner-only, so a
+      // 403 (a non-owner admin) falls back to the manager queue.
+      (isAdmin ? TX.get('/api/ap/ed-queue') : Promise.resolve({ ok: false, status: 403 })).then(function (r) {
+        return r.ok ? { src: r, owner: true } : TX.get('/api/ap/manager-queue').then(function (m) { return { src: m, owner: false }; });
+      }),
+      TX.get('/api/today' + q),
+      cid ? TX.get('/api/ar/control' + q) : Promise.resolve({ ok: false, error: 'no community' }),
+    ]);
+    if (mine !== seq) return; // a newer load (community switch) superseded this one
+    var b = TXBriefing.buildBriefing(
+      { mail: results[0], payables: results[1].src, today: results[2], control: results[3] },
+      { communityId: c && c.id, isOwner: results[1].owner, firstName: firstName }
+    );
+    render(b, c);
+    renderActivity(results[2], c);
+    $('th-stamp').textContent = 'Loaded ' + new Date().toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+  }
+  load();
+})();
+</script>
+</body>
+</html>

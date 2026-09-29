@@ -1,5 +1,4 @@
 {
-  "api/ar.js": 1,
   "api/billing.js": 4,
   "api/contacts.js": 2,
   "api/documents.js": 1,
@@ -10,7 +9,6 @@
   "api/pool_access.js": 2,
   "api/roster_import.js": 4,
   "lib/accounting/financial_statements.js": 1,
-  "lib/accounting/reconciliation_status.js": 1,
   "lib/enforcement/violation_report.js": 1,
   "scripts/apply_mailing_conflicts.js": 1,
   "scripts/backfill_enforcement_states.js": 1,

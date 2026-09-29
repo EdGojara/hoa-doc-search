@@ -41,6 +41,16 @@ router.get('/', async (req, res) => {
     // operational queries so demo threads/calls/imports/AR are excluded too.
     const demoIds = await require('../lib/demo/demo_guard').demoCommunityIds();
     const notDemo = (q) => (demoIds.length ? q.not('community_id', 'in', '(' + demoIds.join(',') + ')') : q);
+    // Optional scope (Operator Home is per community). Filtering server-side
+    // matters: the inbox, calls and imports reads are capped, so filtering a
+    // portfolio-wide top N in the browser would drop a quiet community's rows.
+    // Strict UUID (same pattern as api/ar.js). No community_id = portfolio view;
+    // a SUPPLIED but malformed one is a 400, never a silent widening of the read.
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const rawScope = String(req.query.community_id || '').trim();
+    if (rawScope && !UUID.test(rawScope)) return res.status(400).json({ error: 'community_id_invalid' });
+    const scopeCommunityId = rawScope || null;
+    const scoped = (q) => (scopeCommunityId ? q.eq('community_id', scopeCommunityId) : q);
 
     const [
       inboxRes,
@@ -51,25 +61,25 @@ router.get('/', async (req, res) => {
     ] = await Promise.allSettled([
       // Inbox — threads needing staff attention (first response or follow-up).
       // Bounded to last 7 days so the query stays cheap even as volume grows.
-      notDemo(supabase
+      scoped(notDemo(supabase
         .from('homeowner_threads')
         .select('id, community_id, property_id, subject, topic_tag, next_action_status, created_at, last_homeowner_message_at, first_response_due_at, breached_yellow_at, breached_red_at, breached_overdue_at')
         .in('next_action_status', ['awaiting_staff_first_response', 'awaiting_staff_followup'])
         .gte('created_at', sevenDaysAgo)
         .order('created_at', { ascending: false })
-        .limit(10)),
+        .limit(10))),
       // Recent calls — last 10 inbound
-      notDemo(supabase
+      scoped(notDemo(supabase
         .from('homeowner_calls')
         .select('call_sid, community_id, caller_phone, caller_homeowner_id, started_at, ended_at, duration_seconds, brief')
         .order('started_at', { ascending: false })
-        .limit(10)),
+        .limit(10))),
       // Recent Vantaca imports — last 5 of any status
-      notDemo(supabase
+      scoped(notDemo(supabase
         .from('vantaca_imports')
         .select('id, community_id, report_type, source_filename, status, as_of_date, extraction_row_count, imported_at')
         .order('imported_at', { ascending: false })
-        .limit(5)),
+        .limit(5))),
       // AR freshness — committed transaction batches grouped by community.
       // We'll merge with full community list below.
       notDemo(supabase
@@ -92,10 +102,22 @@ router.get('/', async (req, res) => {
     const communityNameById = new Map();
     communities.forEach(c => communityNameById.set(c.id, c.name));
 
+    // A failed sub-query must never read as "nothing to do" (Issue #6: the
+    // Operator Home briefing is built from this). Report which sections failed
+    // so the UI can say "couldn't load" instead of rendering a clean zero.
+    const _sectionError = (r) => (r.status === 'rejected'
+      ? String((r.reason && r.reason.message) || r.reason || 'failed')
+      : (r.value && r.value.error ? String(r.value.error.message || r.value.error) : null));
+    const section_errors = {};
+    [['inbox', inboxRes], ['calls', callsRes], ['uploads', uploadsRes], ['ar_freshness', arRes], ['communities', communitiesRes]]
+      .forEach(([k, r]) => { const e = _sectionError(r); if (e) { section_errors[k] = e; console.warn('[today] section failed:', k, e); } });
+
     // ---- inbox ----
     const inboxItems = (inboxRes.status === 'fulfilled' ? inboxRes.value?.data : []) || [];
     const inbox = {
       count: inboxItems.length,
+      // The query is capped at 10; say so rather than implying exactly 10.
+      capped: inboxItems.length >= 10,
       items: inboxItems.slice(0, 5).map(t => {
         const sla = (() => {
           if (t.breached_overdue_at) return 'overdue';
@@ -105,6 +127,7 @@ router.get('/', async (req, res) => {
         })();
         return {
           id: t.id,
+          community_id: t.community_id,
           community_name: communityNameById.get(t.community_id) || '',
           subject: t.subject,
           topic_tag: t.topic_tag,
@@ -194,6 +217,7 @@ router.get('/', async (req, res) => {
       calls,
       uploads,
       ar_freshness,
+      section_errors,
     });
   } catch (err) {
     console.error('[today] failed:', err.message);

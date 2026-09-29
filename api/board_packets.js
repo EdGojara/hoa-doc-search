@@ -50,33 +50,9 @@ const { BEDROCK_MGMT_CO_ID } = require('../lib/company');
 
 const router = express.Router();
 
-// ----------------------------------------------------------------------------
-// Community visual assets (logo + hero image) per the Bedrock design system.
-// Hardcoded for now (only 3 communities have full assets); later this moves
-// to a logo_path / hero_path column on the communities table so Ed can
-// upload new community photos from the UI.
-// ----------------------------------------------------------------------------
-const COMMUNITY_ASSETS = {
-  'Lakes of Pine Forest': {
-    hero: '/photos/communities/LPF_hero.jpg',
-    logo: '/logos/lakes_of_pine_forest_logo.png',
-    legal_suffix: 'Homeowners Association'
-  },
-  'Canyon Gate at Cinco Ranch': {
-    hero: null,
-    logo: '/logos/canyon_gate_logo.png',
-    legal_suffix: 'Homeowners Association'
-  },
-  'Waterview Estates': {
-    hero: null,
-    logo: '/logos/waterview_logo.jpg',
-    legal_suffix: 'Homeowners Association'
-  }
-};
-
-function getCommunityAssets(communityName) {
-  return COMMUNITY_ASSETS[communityName] || { hero: null, logo: null, legal_suffix: '' };
-}
+// Community visual assets (logo + hero image) — the map lives in
+// lib/community_branding.js so the Operator Home hero reads the same one.
+const { getCommunityAssets } = require('../lib/community_branding');
 
 // Build the per-community asset set used by the renderer. Prefers a logo
 // uploaded via the Community Settings panel (community.logo_signed_url) over

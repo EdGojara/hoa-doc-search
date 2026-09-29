@@ -36,3 +36,6 @@ tmp/
 *-BEFORE-snapshot*.json
 *-ROLLBACK*.sql
 *-POST-APPLY-*
+
+# Visual QA harness output (scripts/visual_snapshot.js)
+visual-snapshots/
