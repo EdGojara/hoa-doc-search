@@ -79,6 +79,7 @@
   function setDetail(d, notice) {
     state.detail = d;
     state.items = clone((d.draft || d.suggestion).items);
+    state.items.forEach(function (it) { it._staffDate = it.service_date_source === 'staff'; });
     state.dirty = false; state.errors = []; state.notice = notice;
     renderDetail();
   }
@@ -190,9 +191,10 @@
       '<div class="lg-item-head"><div><span class="tx-lbl">Item ' + (i + 1) + ' · ' + esc(lineLabel(it.source_line_ids)) + '</span>' +
         '<div class="lg-item-amt">' + money(it.amount_cents) + (sum !== it.amount_cents ? ' <span class="lg-off">split totals ' + money(sum) + '</span>' : '') + '</div></div>' +
         '<div class="lg-item-meta">' +
-          '<label><span class="tx-lbl">Service date</span><input type="date" class="lg-in" data-f="service_date" value="' + esc(it.service_date || '') + '"' + (ed ? '' : ' disabled') + '></label>' +
+          '<label><span class="tx-lbl">Specific service date</span><input type="date" class="lg-in" data-f="service_date" value="' + esc(it.service_date || '') + '"' + (ed ? '' : ' disabled') + ' title="Optional. Leave blank to use the date on the line or the invoice service period."></label>' +
           '<label><span class="tx-lbl">Matter / reference</span><input class="lg-in" data-f="matter_ref" value="' + esc(it.matter_ref || '') + '" placeholder="Optional"' + (ed ? '' : ' disabled') + '></label>' +
         '</div></div>' +
+      '<div class="lg-when">' + icon('info', { size: 13 }) + '<span>When: ' + esc(it._dateEdited ? (it.service_date ? 'service date ' + it.service_date + ', entered by staff (owner period rechecked on save)' : 'from the line text or invoice service period (rechecked on save)') : (it.service_basis || 'no service date on the line or the invoice')) + '</span></div>' +
       '<div class="lg-lines">' + lines.map(function (l) {
         return '<div class="lg-line"><span class="lg-ln">L' + l.line_number + '</span><span class="lg-lt">' + esc(l.description || '') + '</span><span class="lg-la">' + money(l.amount_cents) + '</span>' +
           (l.account ? '<span class="lg-lacct tx-muted">' + esc(l.account) + '</span>' : '') +
@@ -216,7 +218,7 @@
         inp.addEventListener('change', function () {
           var f = inp.getAttribute('data-f');
           it[f] = inp.value || null;
-          if (f === 'service_date') it.allocations.forEach(function (a) { if (a.property_id) a._edited = true; });
+          if (f === 'service_date') { it._dateEdited = true; it._staffDate = !!it.service_date; it.service_period_start = null; it.service_period_end = null; it.allocations.forEach(function (a) { if (a.property_id) a._edited = true; }); }
           markDirty(); if (f === 'service_date') renderItems();
         });
       });
@@ -227,7 +229,9 @@
           it.source_line_ids = it.source_line_ids.filter(function (x) { return x !== lid; });
           it.amount_cents -= line.amount_cents;
           rebalance(it);
-          state.items.splice(i + 1, 0, { source_line_ids: [lid], matter_ref: null, service_date: it.service_date, amount_cents: line.amount_cents,
+          it._dateEdited = true; if (!it._staffDate) it.service_date = null;   // re-derived on the server
+          it.allocations.forEach(function (a) { if (a.property_id) a._edited = true; });
+          state.items.splice(i + 1, 0, { source_line_ids: [lid], matter_ref: null, service_date: it._staffDate ? it.service_date : null, _staffDate: !!it._staffDate, _dateEdited: true, amount_cents: line.amount_cents,
             allocations: [{ amount_cents: line.amount_cents, classification: 'needs_review', property_id: null, charge_category: null, note: null, evidence: [], review_reasons: ['split off by staff; decide this line'], _edited: true }] });
           markDirty(); renderItems();
         });
@@ -238,6 +242,8 @@
         it.source_line_ids = it.source_line_ids.concat(next.source_line_ids);
         it.amount_cents += next.amount_cents;
         it.allocations = it.allocations.concat(next.allocations);
+        it._dateEdited = true; if (!it._staffDate) it.service_date = null;   // re-derived on the server from the combined lines
+        it.allocations.forEach(function (a) { if (a.property_id) a._edited = true; });
         state.items.splice(i + 1, 1);
         markDirty(); renderItems();
       });

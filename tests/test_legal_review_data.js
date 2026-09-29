@@ -125,8 +125,8 @@ t('buildDraft: a charge category is dropped from anything not recoverable', () =
   assert.strictEqual(R.buildDraft(loaded(), b).items[1].allocations[0].charge_category, null);
 });
 
-t('buildDraft: service date source is derived (invoice period / staff / none), bad dates refused', () => {
-  const d = loaded(); d.invoice.service_period_end = '2026-08-15';
+t('buildDraft: service basis is derived on the server (invoice point / staff / none), bad dates refused', () => {
+  const d = loaded(); d.invoice.service_period_start = '2026-08-15'; d.invoice.service_period_end = '2026-08-15';
   const b = goodBody(); b.items[0].service_date = '2026-08-15'; b.items[1].service_date = '2026-07-01';
   const r = R.buildDraft(d, b);
   assert.strictEqual(r.items[0].service_date_source, 'invoice_service_period');
@@ -134,6 +134,17 @@ t('buildDraft: service date source is derived (invoice period / staff / none), b
   const bad = goodBody(); bad.items[0].service_date = '08/15/2026';
   assert.ok(R.buildDraft(loaded(), bad).errors.some((e) => /not a date/.test(e)));
   assert.strictEqual(R.buildDraft(loaded(), goodBody()).items[0].service_date_source, 'none');
+});
+
+t('buildDraft: an invoice service RANGE is kept as a range; a staff date overrides it; line-text date wins', () => {
+  const d = loaded(); d.invoice.service_period_start = '2026-08-01'; d.invoice.service_period_end = '2026-08-31';
+  const b = goodBody(); b.items[1].service_date = '2026-08-20';
+  const r = R.buildDraft(d, b);
+  assert.deepStrictEqual([r.items[0].service_date, r.items[0].service_period_start, r.items[0].service_period_end, r.items[0].service_date_source], [null, '2026-08-01', '2026-08-31', 'invoice_service_period']);
+  assert.deepStrictEqual([r.items[1].service_date, r.items[1].service_period_start, r.items[1].service_date_source], ['2026-08-20', null, 'staff']);
+  assert.ok(r.items[0].allocations[0].evidence.some((e) => e.kind === 'service_basis' && /2026-08-01 to 2026-08-31/.test(e.value)));
+  const d2 = loaded(); d2.lines[2].description += ' - order entered 8/12/2026';
+  assert.deepStrictEqual([R.buildDraft(d2, goodBody()).items[1].service_date, R.buildDraft(d2, goodBody()).items[1].service_date_source], ['2026-08-12', 'line_text']);
 });
 
 t('buildDraft: an allocation split that does not balance is saved but blocks approval', () => {

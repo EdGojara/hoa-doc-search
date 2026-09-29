@@ -131,7 +131,7 @@ t('address + account agree → high even without a name', () => {
 
 t('service date in a former owner period → "former", never recoverable to the current owner', () => {
   const lines = [L('a', 'Pemberton, Quill O. - 4202 Example Hollow Ct. - Fees - collection', 194400)];
-  const a = one(S.suggestReview(inv(lines, { service_period_end: '2026-05-31' }), lines, ctx));
+  const a = one(S.suggestReview(inv(lines, { service_period_start: '2026-05-01', service_period_end: '2026-05-31' }), lines, ctx));
   assert.strictEqual(a.property_id, P2);
   assert.strictEqual(a.tenure_match, 'former');
   assert.strictEqual(a.tenure_id, 't2old');
@@ -241,6 +241,82 @@ t('a surname-only (partial) name neither corroborates nor lowers confidence', ()
   assert.strictEqual(a.confidence, 'medium');
   assert.strictEqual(a.classification, 'homeowner_recoverable');
   assert.ok(a.evidence.some((e) => e.kind === 'name_check' && /surname matches/.test(e.value)));
+});
+
+// ---- service range vs ownership boundary (ChatGPT review, step 2 blocker) ------
+// P2 was sold: former owner through 2026-06-14, current owner from 2026-06-15.
+const P2LINE = 'Pemberton, Quill O. - 4202 Example Hollow Ct. - Fees - collection';
+t('range: a service period wholly inside the CURRENT owner period → current', () => {
+  const lines = [L('a', P2LINE, 5000)];
+  const r = S.suggestReview(inv(lines, { service_period_start: '2026-07-01', service_period_end: '2026-07-31' }), lines, ctx);
+  const a = one(r);
+  assert.strictEqual(a.tenure_match, 'current');
+  assert.strictEqual(a.tenure_id, 't2');
+  assert.strictEqual(r.items[0].service_date, null);
+  assert.strictEqual(r.items[0].service_period_start, '2026-07-01');
+  assert.strictEqual(r.items[0].service_period_end, '2026-07-31');
+  assert.strictEqual(r.items[0].service_date_source, 'invoice_service_period');
+});
+
+t('range: a service period wholly inside a FORMER owner period → former, never current', () => {
+  const lines = [L('a', P2LINE, 5000)];
+  const a = one(S.suggestReview(inv(lines, { service_period_start: '2026-05-01', service_period_end: '2026-06-14' }), lines, ctx));
+  assert.strictEqual(a.tenure_match, 'former');
+  assert.strictEqual(a.tenure_id, 't2old');
+});
+
+t('range: a service period that CROSSES the sale → unresolved (not its end date’s owner)', () => {
+  const lines = [L('a', P2LINE, 5000)];
+  const a = one(S.suggestReview(inv(lines, { service_period_start: '2026-06-01', service_period_end: '2026-06-30' }), lines, ctx));
+  assert.strictEqual(a.tenure_match, 'unresolved');
+  assert.strictEqual(a.tenure_id, null);
+  assert.strictEqual(a.classification, 'needs_review');
+  assert.ok(a.review_reasons.some((x) => /crosses an ownership change/.test(x)));
+});
+
+t('range: a date printed on the line overrides the invoice range', () => {
+  const lines = [L('a', P2LINE + ' - demand letter sent 6/5/2026', 5000)];
+  const r = S.suggestReview(inv(lines, { service_period_start: '2026-06-01', service_period_end: '2026-06-30' }), lines, ctx);
+  const a = one(r);
+  assert.strictEqual(r.items[0].service_date, '2026-06-05');
+  assert.strictEqual(r.items[0].service_period_start, null);
+  assert.strictEqual(r.items[0].service_date_source, 'line_text');
+  assert.strictEqual(a.tenure_match, 'former');     // June 5 is before the June 15 sale
+  assert.ok(a.evidence.some((e) => e.kind === 'service_basis' && /printed on the line/.test(e.value)));
+});
+
+t('range: two dates printed on the line form a range (and can cross the sale)', () => {
+  const lines = [L('a', P2LINE + ' - letters 6/5/2026 and 6/20/2026', 5000)];
+  const r = S.suggestReview(inv(lines), lines, ctx);
+  assert.strictEqual(r.items[0].service_period_start, '2026-06-05');
+  assert.strictEqual(r.items[0].service_period_end, '2026-06-20');
+  assert.strictEqual(one(r).tenure_match, 'unresolved');
+});
+
+t('range: dates far outside the invoice window are ignored (not a service date)', () => {
+  const b = S.serviceBasis({ invoice_date: '2026-08-31' }, 'Judgment abstracted 3/1/2019');
+  assert.strictEqual(b.source, 'none');
+});
+
+t('range: an invoice showing only a period END is not a service date; recent transfer stays unresolved', () => {
+  const lines = [L('a', P2LINE, 5000)];
+  const r = S.suggestReview(inv(lines, { service_period_end: '2026-07-31' }), lines, ctx);
+  assert.strictEqual(r.items[0].service_date, null);
+  assert.strictEqual(r.items[0].service_date_source, 'none');
+  assert.strictEqual(one(r).tenure_match, 'unresolved');
+  assert.ok(one(r).evidence.some((e) => e.kind === 'service_basis' && /only one end/.test(e.value)));
+});
+
+t('range: start = end is a single service date', () => {
+  const b = S.serviceBasis({ invoice_date: '2026-08-31', service_period_start: '2026-07-10', service_period_end: '2026-07-10' }, 'x');
+  assert.deepStrictEqual([b.date, b.start, b.end, b.source], ['2026-07-10', null, null, 'invoice_service_period']);
+});
+
+t('range: no line date + no invoice period + recent real transfer → unresolved', () => {
+  const lines = [L('a', P2LINE, 5000)];
+  const r = S.suggestReview(inv(lines), lines, ctx);
+  assert.strictEqual(r.items[0].service_date_source, 'none');
+  assert.strictEqual(one(r).tenure_match, 'unresolved');
 });
 
 console.log(`\n${pass} passed${process.exitCode ? ', FAILURES above' : ''}`);

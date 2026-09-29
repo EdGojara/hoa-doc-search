@@ -82,8 +82,8 @@ const { db, client } = await buildWorld();
 const q1 = async (sql) => (await db.query(sql)).rows[0];
 const plan = await A.planMigration({ ...ctx(client), filename: F });
 check('plan: ready, every preflight passes', plan.status === 'ready' && plan.preflight.every((p) => p.ok), JSON.stringify(plan.preflight.filter((p) => !p.ok)));
-check('plan: 6 protected tables, 99 added / 0 changed / 0 removed objects',
-  plan.protected.length === 6 && plan.objects.added.length === 99 && plan.objects.changed.length === 0 && plan.objects.removed.length === 0,
+check('plan: 6 protected tables, 103 added / 0 changed / 0 removed objects',
+  plan.protected.length === 6 && plan.objects.added.length === 103 && plan.objects.changed.length === 0 && plan.objects.removed.length === 0,
   JSON.stringify({ p: plan.protected.length, a: plan.objects.added.length }));
 const r = await A.applyMigration({ ...ctx(client), planToken: plan.plan_token, log: { error() {} },
   apiCheck: async ({ table }) => ({ ok: true, count: Number((await q1(`SELECT count(*)::int n FROM ${table}`)).n) }) });
@@ -148,6 +148,19 @@ if (r.status === 'applied') {
   check('save: a table rule violation (recoverable, no property) rolls the whole save back', /legal_alloc_recoverable_has_property/.test(bad3 || '') && JSON.stringify(await counts()) === JSON.stringify(c3), bad3);
   const bad4 = await saveErr(2, [], 'a0000000-0000-4000-8000-000000000002');
   check('save: an invoice saved under the wrong community is refused', /invoice_community_mismatch/.test(bad4 || ''), bad4);
+  const s3 = await save(2, [{ source_line_ids: [], amount_cents: 5000, service_period_start: '2026-05-01', service_period_end: '2026-05-31', service_date_source: 'invoice_service_period',
+    allocations: [{ amount_cents: 5000, classification: 'needs_review' }] }]);
+  const rng = await q1(`SELECT i.service_date, i.service_period_start::text s, i.service_period_end::text e, i.service_date_source src FROM legal_invoice_items i JOIN legal_invoice_reviews r ON r.id = i.review_id WHERE r.ap_invoice_id = '${INV2}' AND i.is_active`);
+  check('save: a service RANGE is persisted as a range (not collapsed to a date)', s3.ok === true && rng.service_date === null && rng.s === '2026-05-01' && rng.e === '2026-05-31' && rng.src === 'invoice_service_period', JSON.stringify(rng));
+  const itemRule = async (cols, vals) => tryErr(`INSERT INTO legal_invoice_items (review_id, community_id, revision, amount_cents, ${cols}) VALUES ('${rev.id}', '${C}', 9, 100, ${vals})`);
+  check('rule: an item cannot carry both a point date and a range',
+    /legal_item_service_point_or_range/.test(await itemRule('service_date, service_period_start, service_period_end, service_date_source', `'2026-05-10', '2026-05-01', '2026-05-31', 'staff'`) || ''));
+  check('rule: a half-open range and a backwards range are rejected',
+    /legal_item_service_point_or_range/.test(await itemRule('service_period_start, service_date_source', `'2026-05-01', 'invoice_service_period'`) || '')
+    && /legal_item_service_point_or_range/.test(await itemRule('service_period_start, service_period_end, service_date_source', `'2026-05-31', '2026-05-01', 'invoice_service_period'`) || ''));
+  check('rule: a date with source "none", or no date with a named source, is rejected',
+    /legal_item_service_source_matches/.test(await itemRule('service_date, service_date_source', `'2026-05-10', 'none'`) || '')
+    && /legal_item_service_source_matches/.test(await itemRule('service_date_source', `'staff'`) || ''));
   check('grants: only the service role may execute the save function',
     (await q1(`SELECT has_function_privilege('service_role', 'legal_review_save_draft(uuid, uuid, integer, text, jsonb, jsonb)', 'EXECUTE') AND NOT has_function_privilege('anon', 'legal_review_save_draft(uuid, uuid, integer, text, jsonb, jsonb)', 'EXECUTE') AND NOT has_function_privilege('authenticated', 'legal_review_save_draft(uuid, uuid, integer, text, jsonb, jsonb)', 'EXECUTE') ok`)).ok === true);
   check('grants: browser roles cannot read the review tables',

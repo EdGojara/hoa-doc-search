@@ -10,9 +10,11 @@
 -- Model (ChatGPT review): review → items (matters) → allocations.
 --   legal_invoice_reviews      one per AP invoice
 --   legal_invoice_items        a matter/charge built from one or more AP lines
---                              (source line ids + text preserved); carries the
---                              SERVICE date (not the invoice date) and where it
---                              came from
+--                              (source line ids + text preserved); carries WHEN
+--                              the work was done (not the invoice date): a point
+--                              (service_date) OR a range (service_period_start/
+--                              end), never both, and where it came from. A range
+--                              is never collapsed to one end for owner matching.
 --   legal_invoice_allocations  amount_cents + classification + optional
 --                              property / tenure + charge category + evidence +
 --                              confidence + tenure match + bankruptcy stop.
@@ -68,11 +70,21 @@ CREATE TABLE IF NOT EXISTS legal_invoice_items (
   matter_ref          text,
   amount_cents        bigint NOT NULL CHECK (amount_cents <> 0),
   service_date        date,
+  service_period_start date,
+  service_period_end  date,
   service_date_source text NOT NULL DEFAULT 'none'
                       CHECK (service_date_source IN ('line_text', 'invoice_service_period', 'staff', 'none')),
   superseded_at       timestamptz,
   created_by          text,
-  created_at          timestamptz NOT NULL DEFAULT now()
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  -- A point or a whole range (both ends), never both; a range runs forward;
+  -- 'none' means no date at all, anything else names a date or a range.
+  CONSTRAINT legal_item_service_point_or_range CHECK (
+    (service_period_start IS NULL) = (service_period_end IS NULL)
+    AND (service_date IS NULL OR service_period_start IS NULL)
+    AND (service_period_end IS NULL OR service_period_end >= service_period_start)),
+  CONSTRAINT legal_item_service_source_matches CHECK (
+    (service_date_source = 'none') = (service_date IS NULL AND service_period_start IS NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_legal_invoice_items_review ON legal_invoice_items (review_id) WHERE is_active;
 
@@ -170,11 +182,12 @@ BEGIN
 
   FOR v_item IN SELECT value FROM jsonb_array_elements(p_items) LOOP
     INSERT INTO legal_invoice_items (review_id, community_id, revision, sort_order, source_line_ids, source_text, matter_ref,
-                                     amount_cents, service_date, service_date_source, created_by)
+                                     amount_cents, service_date, service_period_start, service_period_end, service_date_source, created_by)
     VALUES (v_review.id, p_community_id, v_rev, v_i,
             ARRAY(SELECT jsonb_array_elements_text(coalesce(v_item->'source_line_ids', '[]'::jsonb)))::uuid[],
             v_item->>'source_text', v_item->>'matter_ref', (v_item->>'amount_cents')::bigint,
-            (v_item->>'service_date')::date, coalesce(v_item->>'service_date_source', 'none'), p_actor)
+            (v_item->>'service_date')::date, (v_item->>'service_period_start')::date, (v_item->>'service_period_end')::date,
+            coalesce(v_item->>'service_date_source', 'none'), p_actor)
     RETURNING id INTO v_item_id;
 
     FOR v_alloc IN SELECT value FROM jsonb_array_elements(coalesce(v_item->'allocations', '[]'::jsonb)) LOOP

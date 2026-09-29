@@ -93,8 +93,8 @@ window.TX_FIXTURE = {
         "voided": false,
         "accrued": true,
         "has_file": true,
-        "service_period_start": null,
-        "service_period_end": null,
+        "service_period_start": "2026-08-01",
+        "service_period_end": "2026-08-31",
         "community_id": "00000000-0000-4000-8000-0000000000c1"
       },
       "community": {
@@ -159,7 +159,10 @@ window.TX_FIXTURE = {
             "matter_ref": null,
             "amount_cents": 33300,
             "service_date": null,
-            "service_date_source": "none",
+            "service_period_start": "2026-08-01",
+            "service_period_end": "2026-08-31",
+            "service_date_source": "invoice_service_period",
+            "service_basis": "service period 2026-08-01 to 2026-08-31, from the invoice service period",
             "allocations": [
               {
                 "property_id": "00000000-0000-4000-8000-000000000101",
@@ -180,8 +183,12 @@ window.TX_FIXTURE = {
                     "value": "Testerly, Marigold"
                   },
                   {
+                    "kind": "service_basis",
+                    "value": "service period 2026-08-01 to 2026-08-31, from the invoice service period"
+                  },
+                  {
                     "kind": "tenure",
-                    "value": "no service date on the invoice; no ownership change within 180 days, so the current owner"
+                    "value": "the whole service period (2026-08-01 to 2026-08-31) falls in the current owner’s period"
                   },
                   {
                     "kind": "name_check",
@@ -211,7 +218,10 @@ window.TX_FIXTURE = {
             "matter_ref": null,
             "amount_cents": 19440,
             "service_date": null,
-            "service_date_source": "none",
+            "service_period_start": "2026-08-01",
+            "service_period_end": "2026-08-31",
+            "service_date_source": "invoice_service_period",
+            "service_basis": "service period 2026-08-01 to 2026-08-31, from the invoice service period",
             "allocations": [
               {
                 "property_id": "00000000-0000-4000-8000-000000000102",
@@ -232,8 +242,12 @@ window.TX_FIXTURE = {
                     "value": "Pemberton, Quill O."
                   },
                   {
+                    "kind": "service_basis",
+                    "value": "service period 2026-08-01 to 2026-08-31, from the invoice service period"
+                  },
+                  {
                     "kind": "tenure",
-                    "value": "no service date on the invoice; no ownership change within 180 days, so the current owner"
+                    "value": "the whole service period (2026-08-01 to 2026-08-31) falls in the current owner’s period"
                   },
                   {
                     "kind": "name_check",
@@ -261,7 +275,10 @@ window.TX_FIXTURE = {
             "matter_ref": null,
             "amount_cents": 6750,
             "service_date": null,
-            "service_date_source": "none",
+            "service_period_start": "2026-08-01",
+            "service_period_end": "2026-08-31",
+            "service_date_source": "invoice_service_period",
+            "service_basis": "service period 2026-08-01 to 2026-08-31, from the invoice service period",
             "allocations": [
               {
                 "property_id": "00000000-0000-4000-8000-000000000103",
@@ -282,8 +299,12 @@ window.TX_FIXTURE = {
                     "value": "Farrow, Juniper"
                   },
                   {
+                    "kind": "service_basis",
+                    "value": "service period 2026-08-01 to 2026-08-31, from the invoice service period"
+                  },
+                  {
                     "kind": "tenure",
-                    "value": "no service date on the invoice; no ownership change within 180 days, so the current owner"
+                    "value": "the whole service period (2026-08-01 to 2026-08-31) falls in the current owner’s period"
                   },
                   {
                     "kind": "name_check",
@@ -312,7 +333,10 @@ window.TX_FIXTURE = {
             "matter_ref": null,
             "amount_cents": 16650,
             "service_date": null,
-            "service_date_source": "none",
+            "service_period_start": "2026-08-01",
+            "service_period_end": "2026-08-31",
+            "service_date_source": "invoice_service_period",
+            "service_basis": "service period 2026-08-01 to 2026-08-31, from the invoice service period",
             "allocations": [
               {
                 "property_id": null,
@@ -345,7 +369,10 @@ window.TX_FIXTURE = {
             "matter_ref": null,
             "amount_cents": 11500,
             "service_date": null,
-            "service_date_source": "none",
+            "service_period_start": "2026-08-01",
+            "service_period_end": "2026-08-31",
+            "service_date_source": "invoice_service_period",
+            "service_basis": "service period 2026-08-01 to 2026-08-31, from the invoice service period",
             "allocations": [
               {
                 "property_id": null,

@@ -29,7 +29,7 @@
   ],
   "expected_changes": [
     "Adds vendors.is_legal_counsel (boolean, default false) and sets it true for Winstead PC, Daughtry & Farine P.C. and RMWBH (3 rows updated, none added).",
-    "Creates 4 empty tables: legal_invoice_reviews, legal_invoice_items, legal_invoice_allocations, legal_invoice_review_events, with CHECK constraints, 5 indexes plus primary keys and the unique ap_invoice_id key, and the house updated_at trigger on legal_invoice_reviews.",
+    "Creates 4 empty tables (items carry when the work was done as a point date or a whole service range, never both): legal_invoice_reviews, legal_invoice_items, legal_invoice_allocations, legal_invoice_review_events, with CHECK constraints, 5 indexes plus primary keys and the unique ap_invoice_id key, and the house updated_at trigger on legal_invoice_reviews.",
     "Grants the service role SELECT/INSERT/UPDATE on the review tables and SELECT/INSERT on the events table (no DELETE: history is never deleted).",
     "Adds legal_review_save_draft(...): one atomic draft save (claim review under a row lock, refuse a stale base revision, supersede the prior active set, insert the new revision, record the event). Guards that the invoice, properties and tenures belong to the community. Service role only; row-level security on and browser roles revoked on all four tables.",
     "No GL, AP, owner-ledger, journal or homeowner data is created or changed."
@@ -67,6 +67,8 @@
       "column:legal_invoice_items.revision",
       "column:legal_invoice_items.service_date",
       "column:legal_invoice_items.service_date_source",
+      "column:legal_invoice_items.service_period_end",
+      "column:legal_invoice_items.service_period_start",
       "column:legal_invoice_items.sort_order",
       "column:legal_invoice_items.source_line_ids",
       "column:legal_invoice_items.source_text",
@@ -109,6 +111,8 @@
       "constraint:legal_invoice_items.legal_invoice_items_review_id_fkey",
       "constraint:legal_invoice_items.legal_invoice_items_revision_check",
       "constraint:legal_invoice_items.legal_invoice_items_service_date_source_check",
+      "constraint:legal_invoice_items.legal_item_service_point_or_range",
+      "constraint:legal_invoice_items.legal_item_service_source_matches",
       "constraint:legal_invoice_review_events.legal_invoice_review_events_action_check",
       "constraint:legal_invoice_review_events.legal_invoice_review_events_community_id_fkey",
       "constraint:legal_invoice_review_events.legal_invoice_review_events_pkey",
