@@ -120,6 +120,10 @@ if (r.status === 'applied') {
   check('save: pdf_entry source + extraction_id persisted', s1.ok === true && it.extraction_id === ext.id && it.src === 'pdf_entry', JSON.stringify({ s1, it }));
   let bad = null; try { await save(1, [{ source_line_ids: [], amount_cents: 5000, extraction_id: otherExt, allocations: [{ amount_cents: 5000, classification: 'needs_review' }] }]); } catch (e) { bad = e.message; }
   check('save: an extraction from a different invoice rolls the whole save back', /legal_review_extraction_not_for_invoice/.test(bad || '') && (await q1(`SELECT revision FROM legal_invoice_reviews WHERE ap_invoice_id = '${INV2}'`)).revision === 1, bad);
+  const s2 = await save(1, [{ source_line_ids: [], amount_cents: 5000, allocations: [{ amount_cents: 5000, classification: 'needs_review' }] }]);
+  const hist = (await db.query(`SELECT i.revision, i.is_active, i.extraction_id FROM legal_invoice_items i JOIN legal_invoice_reviews r ON r.id = i.review_id WHERE r.ap_invoice_id = '${INV2}' ORDER BY i.revision`)).rows;
+  check('provenance: a resave keeps the superseded revision pointing at its own read; the new revision records its own (none here)',
+    s2.ok === true && hist.length === 2 && hist[0].is_active === false && hist[0].extraction_id === ext.id && hist[1].is_active === true && hist[1].extraction_id === null, JSON.stringify(hist));
   check('grants: extractions are append-only for the service role (no UPDATE / DELETE)',
     (await q1(`SELECT has_table_privilege('service_role', 'legal_invoice_extractions', 'INSERT') AND NOT has_table_privilege('service_role', 'legal_invoice_extractions', 'UPDATE') AND NOT has_table_privilege('service_role', 'legal_invoice_extractions', 'DELETE') ok`)).ok === true);
   check('grants: browser roles cannot read extractions',

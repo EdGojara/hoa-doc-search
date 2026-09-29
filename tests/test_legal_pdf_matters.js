@@ -287,6 +287,73 @@ t('work type: Winstead "CLTN" titles count as collection support', () => {
   assert.ok(a.evidence.some((e) => e.kind === 'work_type' && /supported/.test(e.value) && !/contradicted/.test(e.value)));
 });
 
+// ---- provenance round trip: a saved item keeps the exact read it relied on --------
+// A fake of the stored rows (as legal_review_save_draft wrote them; the 474
+// rehearsal proves the function persists extraction_id). loadSavedDraft must
+// read extraction_id back, and detailPayload must keep it, even when a newer
+// read now exists.
+function savedDb({ noColumn = false } = {}) {
+  const selects = [];
+  const rows = {
+    legal_invoice_reviews: { id: 'rev-1', revision: 2, status: 'draft', updated_by: 'staff@example.test', updated_at: '2026-09-29T21:00:00Z' },
+    legal_invoice_items: [{ id: 'it-1', sort_order: 0, source_line_ids: ['L1', 'L2'], source_text: 'x', matter_ref: '9999.0004', amount_cents: 33606,
+      service_date: '2026-08-03', service_period_start: null, service_period_end: null, service_date_source: 'pdf_entry', extraction_id: 'read-OLD' }],
+    legal_invoice_allocations: [{ id: 'al-1', item_id: 'it-1', amount_cents: 33606, classification: 'homeowner_recoverable', property_id: 'p', tenure_id: 't', charge_category: 'attorney_fee_other', tenure_match: 'current', confidence: 'high', bankruptcy_stop: false, evidence: [], suggested: true, note: null }],
+    legal_invoice_review_events: [],
+    legal_invoice_extractions: [{ id: 'read-OLD', status: 'valid', created_at: '2026-09-29T20:40:00Z', created_by: 'staff@example.test' }],
+  };
+  const from = (table) => {
+    const st = { cols: '' };
+    const res = () => {
+      if (table === 'legal_invoice_items' && noColumn && /extraction_id/.test(st.cols)) return { data: null, error: { code: '42703', message: 'column legal_invoice_items.extraction_id does not exist' } };
+      let data = rows[table];
+      if (table === 'legal_invoice_items') data = data.map((r) => { const o = {}; st.cols.split(',').map((c) => c.trim()).forEach((c) => { o[c] = r[c]; }); return o; });
+      return { data, error: null };
+    };
+    const b = {
+      select(c) { st.cols = c; selects.push(table + ': ' + c); return b; },
+      eq() { return b; }, in() { return b; }, order() { return b; }, limit() { return b; }, range() { return b; },
+      maybeSingle() { return Promise.resolve({ data: rows[table], error: null }); },
+      then(ok, bad) { return Promise.resolve(res()).then(ok, bad); },
+    };
+    return b;
+  };
+  return { from, selects };
+}
+async function provenanceTests(run) {
+  await run('provenance: a saved item reads back the exact extraction_id it was saved with', async () => {
+    const db = savedDb();
+    const saved = await R.loadSavedDraft(db, 'inv');
+    assert.ok(db.selects.some((s) => /^legal_invoice_items: .*extraction_id/.test(s)), db.selects.join(' | '));
+    assert.strictEqual(saved.items[0].extraction_id, 'read-OLD');
+    assert.deepStrictEqual(saved.reads.map((r) => r.id), ['read-OLD']);
+  });
+  await run('provenance: detailPayload keeps the saved read even when a NEWER read is latest', async () => {
+    const saved = await R.loadSavedDraft(savedDb(), 'inv');
+    const fx = DF(); const d = loaded(fx, baseCtx());
+    const p = R.detailPayload(Object.assign({}, d, { saved, extraction: { id: 'read-NEW', status: 'valid', matters: [], line_map: {}, problems: [], created_at: '2026-09-30T09:00:00Z' }, extractionUse: { ok: false, reason: 'x' } }));
+    assert.strictEqual(p.draft.items[0].extraction_id, 'read-OLD');   // not swapped for the latest
+    assert.deepStrictEqual(p.draft.reads.map((r) => [r.id, r.is_latest]), [['read-OLD', false]]);
+    assert.strictEqual(p.extraction.id, 'read-NEW');
+  });
+  await run('provenance: before migration 474 the draft still loads (no extraction_id column yet)', async () => {
+    const saved = await R.loadSavedDraft(savedDb({ noColumn: true }), 'inv');
+    assert.strictEqual(saved.items.length, 1); assert.strictEqual(saved.items[0].extraction_id, undefined); assert.deepStrictEqual(saved.reads, []);
+  });
+  await run('provenance: a resave records the read THAT revision relied on (server-derived, never the browser’s)', async () => {
+    const fx = DF(); const ctx = withExtraction(fx, 'read-NEW'); const d = loaded(fx, ctx);
+    const body = { base_revision: 2, items: [
+      { source_line_ids: ['L1', 'L2'], extraction_id: 'read-FORGED', allocations: [{ amount_cents: 33606, classification: 'needs_review' }] },
+      { source_line_ids: ['L3'], allocations: [{ amount_cents: 32400, classification: 'needs_review' }] },
+      { source_line_ids: ['L4'], allocations: [{ amount_cents: 6000, classification: 'association_legal_expense' }] }] };
+    const b = R.buildDraft(d, body);
+    assert.ok(!b.errors, JSON.stringify(b.errors));
+    assert.deepStrictEqual(b.items.map((it) => it.extraction_id), ['read-NEW', 'read-NEW', 'read-NEW']);
+    const noRead = R.buildDraft(loaded(fx, baseCtx()), body);   // the read is stale/absent now → this revision relied on none
+    assert.deepStrictEqual(noRead.items.map((it) => it.extraction_id), [null, null, null]);
+  });
+}
+
 // ---- 5) readInvoicePdf with a stubbed database + model --------------------------
 function fakeDb({ tableMissing = false, prior = null, file = Buffer.from('%PDF-synthetic') } = {}) {
   const writes = [];
@@ -359,6 +426,7 @@ async function asyncTests(run) {
   console.log('test_legal_pdf_matters');
   const run = async (name, fn) => { try { await fn(); pass += 1; console.log('  ok  ', name); } catch (e) { console.error('  FAIL', name, '\n       ', e.message); process.exitCode = 1; } };
   for (const [name, fn] of tests) await run(name, fn);
+  await provenanceTests(run);
   await asyncTests(run);
   console.log(`\n${pass} passed${process.exitCode ? ', FAILURES above' : ''}`);
 })();

@@ -241,6 +241,7 @@
           '<label><span class="tx-lbl">Specific service date</span><input type="date" class="lg-in" data-f="service_date" value="' + esc(it.service_date || '') + '"' + (ed ? '' : ' disabled') + ' title="Optional. Leave blank to use the date on the line or the invoice service period."></label>' +
           '<label><span class="tx-lbl">Matter / reference</span><input class="lg-in" data-f="matter_ref" value="' + esc(it.matter_ref || '') + '" placeholder="Optional"' + (ed ? '' : ' disabled') + '></label>' +
         '</div></div>' +
+      readLine(it) +
       '<div class="lg-when">' + icon('info', { size: 13 }) + '<span>When: ' + esc(it._dateEdited ? (it.service_date ? 'service date ' + it.service_date + ', entered by staff (owner period rechecked on save)' : 'from the line text or invoice service period (rechecked on save)') : (it.service_basis || 'no service date on the line or the invoice')) + '</span></div>' +
       '<div class="lg-lines">' + lines.map(function (l) {
         return '<div class="lg-line"><span class="lg-ln">L' + l.line_number + '</span><span class="lg-lt">' + esc(l.description || '') + '</span><span class="lg-la">' + money(l.amount_cents) + '</span>' +
@@ -251,6 +252,17 @@
       (ed ? '<div class="lg-item-actions"><button type="button" class="tx-btn tx-btn--sec" data-act="split">Split amount</button>' +
         (i < state.items.length - 1 ? '<button type="button" class="lg-link" data-act="merge">Combine with the next item</button>' : '') + '</div>' : '') +
     '</section>';
+  }
+  // Provenance of a saved item: the exact PDF read it relied on (as saved).
+  function readLine(it) {
+    var d = state.detail;
+    if (!it.extraction_id) return '';
+    var reads = (d.draft && d.draft.reads) || [];
+    var r = reads.filter(function (x) { return x.id === it.extraction_id; })[0];
+    var latest = d.extraction && d.extraction.id === it.extraction_id;
+    var when = r ? fmtTime(r.created_at) : (latest && d.extraction ? fmtTime(d.extraction.created_at) : '');
+    return '<div class="lg-when">' + icon('receipt', { size: 13 }) + '<span>Based on the PDF read' + (when ? ' of ' + esc(when) : '') + ' (read ' + esc(String(it.extraction_id).slice(0, 8)) + ')' +
+      (r && !r.is_latest && d.extraction ? '. A newer read exists; this saved item still points at the read it used.' : '') + '</span></div>';
   }
   function renderItems() {
     $('lg-items').innerHTML = state.items.map(itemHtml).join('');
