@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/app/tx.css">
+<style>
+  .cd-wrap { padding: 0 32px 48px; max-width: 1180px; }
+  .cd-hero { height: clamp(170px, 24vh, 230px); }
+  .cd-summary { display: flex; flex-wrap: wrap; gap: 10px 22px; margin-top: 10px; color: var(--ink); font-size: 14px; }
+  .cd-card { margin-top: 18px; }
+  .cd-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px 20px; margin-top: 14px; font-size: 12.5px; color: var(--tx-text-2); }
+  .cd-legend div { display: flex; gap: 8px; align-items: flex-start; }
+  .cd-na { font-size: 13px; color: var(--tx-muted); margin-top: 8px; }
+  .cd-back { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--tx-text-2); }
+  @media (max-width: 760px) { .cd-wrap { padding: 0 16px 40px; } }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top">
+      <button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button>
+      <a class="cd-back" id="cd-back" href="/app/communities">← All communities</a>
+      <div style="margin-left:auto;display:flex;gap:14px;align-items:center">
+        <span class="tx-muted" style="font-size:12px" id="cd-stamp"></span>
+        <button id="cd-refresh" type="button" class="tx-btn tx-btn--sec" style="height:32px"></button>
+      </div>
+    </div>
+    <section class="tx-hero cd-hero" id="cd-hero">
+      <div class="tx-hero-inner">
+        <span class="tx-lbl" id="cd-life">&nbsp;</span>
+        <h1 id="cd-name">&nbsp;</h1>
+        <div class="cd-summary" id="cd-summary"></div>
+      </div>
+    </section>
+    <div class="cd-wrap">
+      <div class="tx-section-h"><h2>Data readiness</h2><span class="tx-muted" style="font-size:13px" id="cd-count"></span></div>
+      <div id="cd-body"><div class="tx-card"><div class="tx-ready-row"><div class="tx-skel" style="height:14px;width:70%"></div><div></div><div class="tx-skel" style="height:12px;width:90%"></div><div></div></div></div></div>
+      <details style="margin-top:22px">
+        <summary class="tx-lbl" style="cursor:pointer">What the statuses mean</summary>
+        <div class="cd-legend" id="cd-legend"></div>
+      </details>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/tx-icons.js"></script>
+<script src="/app/readiness-ui.js"></script>
+<script src="/app/tx.js"></script>
+<script>if (TX.fixture) document.write('<script src="/app/fixtures/readiness.fixture.js"><\/script>');</script>
+<script>
+(async function () {
+  'use strict';
+  var esc = TX.esc, icon = TX.icon, $ = function (id) { return document.getElementById(id); };
+  var m = location.pathname.match(/\/app\/communities\/([^/?#]+)/);
+  var id = m ? decodeURIComponent(m[1]) : new URLSearchParams(location.search).get('id');
+  var user = await TX.boot({ active: 'communities' });
+  if (!user) return;
+  if (TX.fixture) $('cd-back').href = 'communities.html?fixture=1';
+  $('cd-refresh').innerHTML = icon('refresh', { size: 14 }) + '<span>Refresh</span>';
+  $('cd-refresh').addEventListener('click', load);
+  $('cd-legend').innerHTML = TXReady.ORDER.map(function (s) { var mm = TXReady.meta(s); return '<div>' + TXReady.pill(s) + '<span>' + esc(mm.plain) + '</span></div>'; }).join('');
+
+  function areaRow(a) {
+    var chips = (a.missing || []).map(function (x) { return '<span class="tx-chip">' + esc(x) + '</span>'; }).join('');
+    var action = a.href ? '<a class="tx-btn ' + (TXReady.meta(a.status).group === 'act' ? 'tx-btn--sec' : 'tx-btn--sec') + '" href="' + esc(a.href) + '" style="height:32px">Open</a>' : '<span></span>';
+    return '<div class="tx-ready-row" id="area-' + esc(a.key) + '">' +
+      '<div class="tx-ready-title">' + esc(a.title) + '</div>' +
+      '<div>' + TXReady.pill(a.status) + '</div>' +
+      '<div><div style="font-size:13.5px">' + esc(a.summary) + '</div>' +
+        (chips ? '<div>' + chips + '</div>' : '') +
+        (a.next ? '<div style="font-size:13px;margin-top:6px"><b>Next:</b> ' + esc(a.next) + '</div>' : '') +
+        (a.source ? '<div class="tx-ready-src">Source: ' + esc(a.source) + '</div>' : '') +
+      '</div>' + action + '</div>';
+  }
+
+  async function load() {
+    var res = await TX.get('/api/readiness/communities/' + encodeURIComponent(id || ''));
+    if (!res.ok) {
+      $('cd-name').textContent = res.status === 404 ? 'Community not found' : 'Couldn’t load this community';
+      $('cd-body').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc(res.error) + '. Nothing is assumed; refresh to try again.</span></div>';
+      return;
+    }
+    var r = res.data, c = r.community, lc = TXReady.lifecycle(c);
+    document.title = c.name + ' · Trusted';
+    $('cd-name').textContent = c.name;
+    $('cd-life').textContent = lc.label + (c.management_end_date ? ' · last day ' + c.management_end_date : '');
+
+    // Hero photo from the shared community branding map (same as Operator Home).
+    TX.get('/api/community-profile/').then(function (cr) {
+      var hit = cr.ok && (cr.data.communities || []).find(function (x) { return x.id === c.id; });
+      if (hit && hit.hero) $('cd-hero').style.backgroundImage = 'url("' + hit.hero + '")';
+    });
+
+    var act = r.areas.filter(function (a) { return TXReady.meta(a.status).group === 'act'; })
+      .sort(function (a, b) { return TXReady.ORDER.indexOf(a.status) - TXReady.ORDER.indexOf(b.status); });
+    var quiet = r.areas.filter(function (a) { return TXReady.meta(a.status).group === 'quiet'; })
+      .sort(function (a, b) { return TXReady.ORDER.indexOf(a.status) - TXReady.ORDER.indexOf(b.status); });
+    var na = r.areas.filter(function (a) { return a.status === 'not_applicable'; });
+
+    $('cd-summary').innerHTML =
+      '<span><b>' + r.needs_action + '</b> need action</span>' +
+      '<span><b>' + r.counts.ready + '</b> ready</span>' +
+      '<span><b>' + r.counts.imported_not_verified + '</b> imported, not verifiable</span>' +
+      (na.length ? '<span><b>' + na.length + '</b> not applicable</span>' : '');
+    $('cd-count').textContent = r.areas.length + ' areas checked';
+
+    var html = '';
+    if (act.length) html += '<div class="tx-lbl" style="margin-top:4px">Needs action</div><div class="tx-card cd-card">' + act.map(areaRow).join('') + '</div>';
+    if (quiet.length) html += '<div class="tx-lbl" style="margin-top:26px">Imported</div><div class="tx-card cd-card tx-ready-quiet">' + quiet.map(areaRow).join('') + '</div>';
+    if (na.length === r.areas.length) {
+      html = '<div class="tx-card cd-card" style="padding:22px"><div style="font-size:15px">' + esc(na[0].summary) + '</div><div class="cd-na">All ' + na.length + ' data areas are not applicable.</div></div>';
+    } else if (na.length) {
+      html += '<div class="cd-na" style="margin-top:14px"><b>Not applicable:</b> ' + na.map(function (a) { return esc(a.title) + ' (' + esc(a.summary) + ')'; }).join('; ') + '</div>';
+    }
+    $('cd-body').innerHTML = html;
+    $('cd-stamp').textContent = 'Checked ' + new Date(r.generated_at || Date.now()).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+  }
+  load();
+})();
+</script>
+</body>
+</html>
