@@ -21,7 +21,7 @@
     ['today', 'Today', '/app/today'],
     ['communities', 'Communities', '/app/communities'],
     ['owners', 'Owners', '/#tab=ownerar'],
-    ['financial', 'Financial', '/#tab=ap'],
+    ['financial', 'Financial', '/app/financial'],
     ['operations', 'Operations', '/#tab=inspect'],
     ['projects', 'Projects', '/#tab=status'],
     ['governance', 'Governance', '/#tab=meetings'],

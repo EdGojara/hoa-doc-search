@@ -179,6 +179,7 @@ const CHECKS = [
   'tests/test_reconciliation_ar_readiness.js',
   'tests/test_today_scope.js',
   'tests/test_data_readiness.js',
+  'tests/test_financial_home.js',
   'scripts/check_brand_token_parity.js',
   'tests/test_emma_reimbursement.js',
   'tests/test_ownership_history.js',
