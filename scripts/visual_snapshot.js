@@ -24,6 +24,7 @@ const PAGES = [
   { name: 'community', path: '/app/community.html?fixture=1&id=00000000-0000-4000-8000-00000000000b' },
   { name: 'community-ready', path: '/app/community.html?fixture=1&id=00000000-0000-4000-8000-00000000000a' },
   { name: 'community-leaving', path: '/app/community.html?fixture=1&id=00000000-0000-4000-8000-00000000000d' },
+  { name: 'financial', path: '/app/financial.html?fixture=1' },
 ];
 const WIDTHS = [
   { name: 'desktop', width: 1440, height: 900 },

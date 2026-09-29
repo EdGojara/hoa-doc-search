@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Financial · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/app/tx.css">
+<style>
+  .fn-wrap { padding: 34px 32px 48px; max-width: 1240px; }
+  .fn-head h1 { margin: 6px 0 6px; font-family: var(--font-serif); font-weight: 600; font-size: clamp(34px, 4vw, 46px); color: var(--navy); line-height: 1.05; }
+  .fn-head p { margin: 0; color: var(--tx-text-2); font-size: 15px; max-width: 780px; }
+  .fn-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 22px; margin-top: 22px; align-items: start; }
+  .fn-stat { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; }
+  .fn-stat-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .fn-stat-k { font-size: 13px; color: var(--tx-text-2); }
+  .fn-stat-v { font-family: var(--font-serif); font-size: 28px; font-weight: 600; color: var(--navy); white-space: nowrap; }
+  .fn-note { font-size: 12px; color: var(--tx-muted); }
+  .fn-mx { overflow-x: auto; }
+  .fn-mx table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .fn-mx th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--tx-muted); font-weight: 600; padding: 12px 14px; border-bottom: 1px solid var(--tx-rule-soft); white-space: nowrap; }
+  .fn-mx td { padding: 11px 14px; border-top: 1px solid var(--tx-rule-soft); vertical-align: middle; }
+  .fn-mx tr:first-child td { border-top: 0; }
+  .fn-mx td.fn-name a { font-weight: 600; color: var(--navy); }
+  .fn-mx .tx-pill { cursor: pointer; }
+  .fn-mx tr.fn-na td { color: var(--tx-muted); }
+  .fn-work { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; margin-top: 12px; }
+  .fn-tile { padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; }
+  .fn-tile h3 { margin: 0 0 2px; font-size: 15px; color: var(--navy); display: flex; align-items: center; gap: 8px; }
+  .fn-tile a { font-size: 13.5px; color: var(--tx-text); display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; }
+  .fn-tile a:hover { color: var(--navy); text-decoration: underline; text-decoration-color: var(--gold); }
+  .fn-tile a span { color: var(--tx-muted); font-size: 11.5px; white-space: nowrap; }
+  .fn-legacy { font-size: 12px; color: var(--tx-muted); margin-top: 8px; }
+  .fn-unavail { font-size: 12.5px; color: var(--tx-muted); margin-top: 10px; display: flex; gap: 6px; align-items: flex-start; }
+  @media (max-width: 1100px) { .fn-grid { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 760px) { .fn-wrap { padding: 22px 16px 40px; } }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top">
+      <button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button>
+      <span class="tx-switch" style="cursor:default">Financial</span>
+      <div style="margin-left:auto;display:flex;gap:14px;align-items:center">
+        <span class="tx-muted" style="font-size:12px" id="fn-stamp"></span>
+        <button id="fn-refresh" type="button" class="tx-btn tx-btn--sec" style="height:32px"></button>
+      </div>
+    </div>
+    <div class="fn-wrap">
+      <div class="fn-head">
+        <span class="tx-lbl">Financial</span>
+        <h1 id="fn-headline">Checking approvals and books…</h1>
+        <p>Bills waiting on approval, bills that couldn't be filed, and whether each community's books are converted and reconciled. A tie or a reconciliation is shown only where a stored check proves it.</p>
+      </div>
+
+      <div class="fn-grid">
+        <section class="tx-card tx-brief" aria-labelledby="fn-att-title">
+          <div class="tx-brief-head"><div><div id="fn-att-title" style="font-size:15px;font-weight:600;color:var(--navy)">Needs financial attention</div><div class="tx-muted" style="font-size:12.5px">From the approval queues, bill intake and data readiness</div></div></div>
+          <div id="fn-items"><div class="tx-brief-row"><span class="tx-num">1</span><div><div class="tx-skel" style="height:16px;width:55%"></div><div class="tx-skel" style="height:12px;width:75%;margin-top:8px"></div></div><span></span></div></div>
+          <div id="fn-unavail"></div>
+        </section>
+        <section class="tx-card fn-stat" aria-labelledby="fn-stat-title">
+          <span class="tx-lbl" id="fn-stat-title">Reconciled vs not</span>
+          <div id="fn-stats"><div class="tx-skel" style="height:28px;width:60%"></div></div>
+        </section>
+      </div>
+
+      <div style="margin-top:22px"><div class="tx-okstrip" id="fn-ok"><span class="tx-lbl">In good shape</span></div></div>
+
+      <div class="tx-section-h"><h2>Books by community</h2><span class="tx-muted" style="font-size:13px">Click a status to open where that work is done</span></div>
+      <div class="tx-card fn-mx" id="fn-matrix"><div style="padding:18px"><div class="tx-skel" style="height:14px;width:70%"></div></div></div>
+
+      <div class="tx-section-h"><h2>Where the work lives</h2><span class="tx-muted" style="font-size:13px">These open the current screens while they move into the new design</span></div>
+      <div class="fn-work" id="fn-work"></div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/tx-icons.js"></script>
+<script src="/app/readiness-ui.js"></script>
+<script src="/app/financial.js"></script>
+<script src="/app/tx.js"></script>
+<script>if (TX.fixture) document.write('<script src="/app/fixtures/financial.fixture.js"><\/script>');</script>
+<script>
+(async function () {
+  'use strict';
+  var esc = TX.esc, icon = TX.icon, $ = function (id) { return document.getElementById(id); };
+  var user = await TX.boot({ active: 'financial' });
+  if (!user) return;
+  $('fn-refresh').innerHTML = icon('refresh', { size: 14 }) + '<span>Refresh</span>';
+  $('fn-refresh').addEventListener('click', load);
+
+  // The current screens, named plainly. Temporary: each moves into /app/*
+  // later; until then the link says it opens the current screen.
+  var A = '/admin/accounting?view=';
+  var WORK = [
+    ['receipt', 'Payables', [['Enter and approve bills', '/#tab=ap'], ['Owner release queue', '/ed.html'], ['Bill intake (Emma)', '/admin/ap'], ['Print checks', A + 'checks']]],
+    ['owners', 'Receivables', [['Owner accounts', A + 'owners'], ['AR aging', A + 'ar'], ['Former owners', A + 'formerowners'], ['Payment plans', '/admin/payment-plans'], ['Collections', '/admin/collections']]],
+    ['financial', 'Accounting', [['Trial balance', A + 'trial'], ['Journal entries', A + 'je'], ['Chart of accounts', A + 'coa'], ['Periods', A + 'periods']]],
+    ['projects', 'Budgets', [['Budget and monthly plan', A + 'budget'], ['Budget vs actual', A + 'bva']]],
+    ['communities', 'Banking', [['Bank reconciliation', A + 'bankrec'], ['Bank setup', '/admin/bank-setup'], ['Statement tracker', '/admin/statement-tracker']]],
+    ['operations', 'Reports and close', [['Balance sheet', A + 'bs'], ['Income statement', A + 'is'], ['Financial review', '/#tab=finrev']]],
+    ['inbox', 'Imports and conversion', [['Community data readiness', '/app/communities', true], ['Vantaca imports', '/#tab=vantaca-imports'], ['Owner transactions', '/#tab=transactions']]],
+  ];
+  $('fn-work').innerHTML = WORK.map(function (w) {
+    return '<div class="tx-card fn-tile"><h3>' + icon(w[0], { size: 17, color: 'var(--tx-gold-ink)' }) + esc(w[1]) + '</h3>' +
+      w[2].map(function (l) { return '<a href="' + esc(l[1]) + '">' + esc(l[0]) + '<span>' + (l[2] ? 'new' : 'current screen') + '</span></a>'; }).join('') + '</div>';
+  }).join('');
+
+  function row(n, it) {
+    var cls = it.tone === 'bad' ? 'th-problem' : it.tone === 'warn' ? 'th-warn' : '';
+    return '<div class="tx-brief-row ' + cls + '"><span class="tx-num"' + (it.tone ? ' style="background:var(--tx-' + (it.tone === 'bad' ? 'bad' : 'warn') + '-bg);color:var(--tx-' + (it.tone === 'bad' ? 'bad' : 'warn') + ')"' : '') + '>' + n + '</span><div>' +
+      '<div class="tx-brief-title">' + esc(it.title) + '</div>' +
+      '<div class="tx-brief-detail">' + esc(it.detail) + ' <a class="tx-src" href="' + esc(it.href) + '">' + esc(it.source) + '</a></div></div>' +
+      '<a class="tx-btn ' + (n === 1 ? 'tx-btn--pri' : 'tx-btn--sec') + '" href="' + esc(it.href) + '">' + esc(it.action || 'Open') + '</a></div>';
+  }
+
+  function render(f) {
+    $('fn-headline').textContent = f.headline;
+    var html = '', n = 0;
+    f.problems.forEach(function (p) { n += 1; html += row(n, { title: p.message, detail: 'This source did not answer, so it is not counted as clear.', source: p.label, href: '#', tone: 'warn', action: 'Refresh' }); });
+    f.attention.forEach(function (a) { n += 1; html += row(n, a); });
+    if (!n) html = '<div class="th-empty" style="padding:18px 0 14px;border-top:1px solid var(--tx-rule-soft);display:flex;gap:10px;align-items:center;color:var(--tx-ok);font-weight:600">' + icon('check', { size: 18 }) + 'Nothing needs financial attention right now.</div>';
+    $('fn-items').innerHTML = html;
+    $('fn-items').querySelectorAll('a[href="#"]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); load(); }); });
+    $('fn-unavail').innerHTML = f.unavailable.map(function (u) { return '<div class="fn-unavail">' + icon('info', { size: 14 }) + '<span>' + esc(u.message) + '</span></div>'; }).join('');
+
+    var ok = '<span class="tx-lbl">In good shape</span>';
+    f.quiet.forEach(function (q) { ok += '<div class="tx-ok"><span class="tx-ok-k">' + esc(q.label) + '</span><span class="tx-ok-v">' + esc(q.value) + '</span><span class="tx-ok-d">' + esc(q.detail) + '</span></div>'; });
+    if (!f.quiet.length) ok += '<div class="tx-ok"><span class="tx-ok-d">Nothing is fully clear yet. See above.</span></div>';
+    $('fn-ok').innerHTML = ok;
+
+    var c = f.counts;
+    if (c.communities == null) {
+      $('fn-stats').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t load readiness, so nothing here is counted.</span></div>';
+    } else {
+      $('fn-stats').innerHTML =
+        '<div class="fn-stat-row"><span class="fn-stat-k">Receivables tie to the GL</span><span class="fn-stat-v">' + c.ar_ties + ' of ' + c.ar_comparable + '</span></div>' +
+        '<div class="fn-note">Of the communities with a posted ledger conversion.' + (c.ar_awaiting ? ' ' + c.ar_awaiting + ' more ' + (c.ar_awaiting === 1 ? 'is' : 'are') + ' waiting on conversion before they can be compared.' : '') + '</div>' +
+        '<div class="fn-stat-row"><span class="fn-stat-k">Bank recs reconciled at $0</span><span class="fn-stat-v">' + c.bank_reconciled + ' of ' + c.bank_applicable + '</span></div>' +
+        '<div class="fn-stat-row"><span class="fn-stat-k">Communities not financially ready</span><span class="fn-stat-v">' + c.not_ready + ' of ' + c.communities + '</span></div>' +
+        '<a class="tx-btn tx-btn--sec" href="/app/communities" style="align-self:flex-start">Open data readiness</a>';
+    }
+
+    if (!f.matrix.length) {
+      $('fn-matrix').innerHTML = '<div style="padding:18px" class="tx-muted">' + (c.communities == null ? 'Readiness didn’t load.' : 'No communities.') + '</div>';
+    } else {
+      var head = '<tr><th>Community</th>' + TXFinancial.FIN_AREAS.map(function (a) { return '<th>' + esc(a[1]) + '</th>'; }).join('') + '</tr>';
+      var body = f.matrix.map(function (m) {
+        if (m.not_applicable) return '<tr class="fn-na"><td class="fn-name"><a href="/app/communities/' + encodeURIComponent(m.community.id) + '">' + esc(m.community.name) + '</a></td><td colspan="5">' + esc(TXReady.lifecycle(m.community).label) + ': ' + esc(m.cells[0].summary) + '</td></tr>';
+        return '<tr><td class="fn-name"><a href="/app/communities/' + encodeURIComponent(m.community.id) + '">' + esc(m.community.name) + '</a></td>' +
+          m.cells.map(function (cell) {
+            var tip = cell.summary + (cell.missing.length ? ' · ' + cell.missing.join('; ') : '');
+            var pill = TXReady.pill(cell.status).replace('<span ', '<span title="' + esc(tip) + '" ');
+            return '<td>' + (cell.href ? '<a href="' + esc(cell.href) + '">' + pill + '</a>' : pill) + '</td>';
+          }).join('') + '</tr>';
+      }).join('');
+      $('fn-matrix').innerHTML = '<table><thead>' + head + '</thead><tbody>' + body + '</tbody></table>';
+    }
+  }
+
+  var seq = 0;
+  async function load() {
+    var mine = ++seq;
+    $('fn-headline').textContent = 'Checking approvals and books…';
+    var isAdmin = user.role === 'admin';
+    var r = await Promise.all([
+      isAdmin ? TX.get('/api/ap/ed-queue') : Promise.resolve({ ok: false, status: 403 }),
+      TX.get('/api/ap/manager-queue'),
+      isAdmin ? TX.get('/api/ap-intake/exceptions') : Promise.resolve({ ok: false, status: 403 }),
+      TX.get('/api/readiness/communities'),
+    ]);
+    if (mine !== seq) return;
+    render(TXFinancial.build({ edQueue: r[0], managerQueue: r[1], intake: r[2], readiness: r[3] }, {}));
+    $('fn-stamp').textContent = 'Checked ' + new Date().toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+  }
+  load();
+})();
+</script>
+</body>
+</html>

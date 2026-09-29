@@ -883,6 +883,8 @@ app.get('/app/today', (req, res) => res.sendFile(require('path').join(__dirname,
 // Communities + Data Readiness (Issue #6). Same gate + kill switch as above.
 app.get('/app/communities', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'communities.html')));
 app.get('/app/communities/:id', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'community.html')));
+// Financial home (Issue #6). Read-only aggregation of existing endpoints.
+app.get('/app/financial', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'financial.html')));
 
 // Static assets. HTML files (the staff app, portal pages) get `no-cache` so the
 // browser MUST revalidate against the server before reusing a copy — otherwise
