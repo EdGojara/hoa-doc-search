@@ -44,9 +44,12 @@ router.get('/', async (req, res) => {
     // Optional scope (Operator Home is per community). Filtering server-side
     // matters: the inbox, calls and imports reads are capped, so filtering a
     // portfolio-wide top N in the browser would drop a quiet community's rows.
-    // Strict UUID (same pattern as api/ar.js); anything else = portfolio view.
+    // Strict UUID (same pattern as api/ar.js). No community_id = portfolio view;
+    // a SUPPLIED but malformed one is a 400, never a silent widening of the read.
     const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const scopeCommunityId = UUID.test(String(req.query.community_id || '')) ? String(req.query.community_id) : null;
+    const rawScope = String(req.query.community_id || '').trim();
+    if (rawScope && !UUID.test(rawScope)) return res.status(400).json({ error: 'community_id_invalid' });
+    const scopeCommunityId = rawScope || null;
     const scoped = (q) => (scopeCommunityId ? q.eq('community_id', scopeCommunityId) : q);
 
     const [
