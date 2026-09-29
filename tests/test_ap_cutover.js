@@ -67,7 +67,7 @@ t('every AP posting call site is covered by the guard', () => {
   }
 });
 // ---- pre-cutover review policy (mig 458, lib/ap/cutover_review.js) ----------
-const { isPreCutover, reviewPreCutoverInvoice, preCutoverHold } = require('../lib/ap/cutover_review');
+const { isPreCutover, reviewPreCutoverInvoice, preCutoverHold, markPendingReview, needsReviewAfterDecision, PRIOR_HOLD } = require('../lib/ap/cutover_review');
 function fakeDb(seed) {
   const db = JSON.parse(JSON.stringify(seed));
   const from = (table) => {
@@ -92,6 +92,35 @@ const seedDb = (inv) => ({
   chart_of_accounts: [{ id: 'ap', community_id: 'c1', account_number: '2000', is_active: true }],
   ap_invoice_lines: [{ invoice_id: 'i1', gl_account_id: 'exp', amount_cents: 1700, tax_amount_cents: 34 }],
   ap_invoices: [{ id: 'i1', community_id: 'c1', vendor_id: 'v1', vendor_invoice_number: 'N-1', invoice_date: '2026-07-13', total_cents: 1734, status: 'awaiting_approval', posting_journal_entry_id: null, cutover_review: 'PENDING', ...inv }],
+});
+
+t('STICKY: a cutover decision clears only the cutover hold, never an earlier unrelated review hold', async () => {
+  // Invoice already held for another reason (e.g. new reimbursement payee) BEFORE the cutover hold.
+  const { client, db } = fakeDb(seedDb({ cutover_review: null, needs_review: true, cutover_review_notes: null }));
+  await markPendingReview(client, 'i1', CUT, '2026-07-13');
+  assert.strictEqual(db.ap_invoices[0].cutover_review, 'PENDING');
+  assert.ok(db.ap_invoices[0].cutover_review_notes.includes(PRIOR_HOLD));
+  await reviewPreCutoverInvoice(client, { invoiceId: 'i1', decision: 'NOT_IN_CONVERTED_BOOKS', reviewedBy: 'Ed', notes: 'new request' }, { postJournalEntry: async () => ({ entry: { id: 'je1' } }) });
+  assert.strictEqual(db.ap_invoices[0].needs_review, true, 'the earlier hold survives the cutover decision');
+  assert.ok(db.ap_invoices[0].cutover_review_notes.includes(PRIOR_HOLD), 'marker kept when the reviewer adds a note');
+  // Same for ALREADY_IN.
+  const b = fakeDb(seedDb({ cutover_review: null, needs_review: true, cutover_review_notes: null }));
+  await markPendingReview(b.client, 'i1', CUT, '2026-07-13');
+  await reviewPreCutoverInvoice(b.client, { invoiceId: 'i1', decision: 'ALREADY_IN_CONVERTED_BOOKS', reviewedBy: 'Ed' });
+  assert.strictEqual(b.db.ap_invoices[0].needs_review, true);
+});
+
+t('STICKY: with no earlier hold, the cutover decision clears the flag it raised (and NEEDS_REVIEW keeps it)', async () => {
+  const { client, db } = fakeDb(seedDb({ cutover_review: null, needs_review: false, cutover_review_notes: null }));
+  await markPendingReview(client, 'i1', CUT, '2026-07-13');
+  assert.strictEqual(db.ap_invoices[0].needs_review, true);
+  assert.ok(!db.ap_invoices[0].cutover_review_notes.includes(PRIOR_HOLD));
+  // A repeat park (e.g. a later re-code attempt) must not mistake its own flag for a prior hold.
+  await markPendingReview(client, 'i1', CUT, '2026-07-13');
+  assert.ok(!db.ap_invoices[0].cutover_review_notes.includes(PRIOR_HOLD));
+  await reviewPreCutoverInvoice(client, { invoiceId: 'i1', decision: 'NOT_IN_CONVERTED_BOOKS', reviewedBy: 'Ed' }, { postJournalEntry: async () => ({ entry: { id: 'je1' } }) });
+  assert.strictEqual(db.ap_invoices[0].needs_review, false);
+  assert.deepStrictEqual([needsReviewAfterDecision('NEEDS_REVIEW', ''), needsReviewAfterDecision('ALREADY_IN_CONVERTED_BOOKS', ''), needsReviewAfterDecision('NOT_IN_CONVERTED_BOOKS', `x ${PRIOR_HOLD}`)], [true, false, true]);
 });
 
 t('pre-cutover test: before / on / after cutover, and no cutover', () => {
