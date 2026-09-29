@@ -45,8 +45,8 @@ console.log('test_data_readiness');
 
 t('fully proven community: ready where controls exist, not_verified where they cannot', () => {
   const r = evaluate(community(), facts(), NOW);
-  for (const k of ['profile', 'properties', 'ledger', 'ar', 'budget', 'bank', 'documents', 'insurance']) assert.strictEqual(area(r, k).status, S.READY, k);
-  for (const k of ['gl', 'violations', 'vendors', 'board']) assert.strictEqual(area(r, k).status, S.NOT_VERIFIED, k + ' must never be green without a stored control');
+  for (const k of ['profile', 'properties', 'ledger', 'ar', 'budget', 'bank', 'insurance']) assert.strictEqual(area(r, k).status, S.READY, k);
+  for (const k of ['gl', 'violations', 'vendors', 'board', 'documents']) assert.strictEqual(area(r, k).status, S.NOT_VERIFIED, k + ' must never be green without a stored control');
   assert.strictEqual(r.needs_action, 0);
 });
 
@@ -89,6 +89,25 @@ t('GL cutover without a posted conversion: ledger not_imported, AR never compare
   assert.strictEqual(area(r, 'ar').status, S.NOT_RECONCILED);
   assert.ok(!/difference/.test(area(r, 'ar').summary), 'unconverted AR must not show a GL difference');
   assert.strictEqual(area(r, 'gl').status, S.NOT_VERIFIED, 'GL stands on its own');
+});
+
+t('posted conversion + 0 open exceptions → ready, no action', () => {
+  const r = evaluate(community(), facts(), NOW);
+  assert.strictEqual(area(r, 'ledger').status, S.READY);
+  assert.strictEqual(r.needs_action, 0);
+});
+
+t('posted conversion + open exceptions → partial and counted in needs_action (never quiet ready)', () => {
+  const r = evaluate(community(), facts({ conversion: ok({ batches: [{ batch_code: 'CONV-1', as_of_date: '2026-07-31', status: 'posted' }], latestRun: { all_pass: true }, openExceptions: 2 }) }), NOW);
+  assert.strictEqual(area(r, 'ledger').status, S.PARTIAL);
+  assert.strictEqual(r.needs_action, 1);
+  assert.ok(/2 conversion exceptions still open/.test(area(r, 'ledger').summary));
+});
+
+t('documents: full required set present + indexed is not_verified, not ready (no Vantaca manifest)', () => {
+  const d = area(evaluate(community(), facts(), NOW), 'documents');
+  assert.strictEqual(d.status, S.NOT_VERIFIED);
+  assert.ok(d.missing.some((m) => /Vantaca document list/.test(m)));
 });
 
 t('posted conversion + AR difference → error with the difference', () => {
@@ -154,4 +173,49 @@ t('worst status and needs_action roll up', () => {
   assert.strictEqual(r.needs_action, 2);
 });
 
-console.log(`\n${pass} passed${process.exitCode ? ', FAILURES above' : ''}`);
+// ---- fetchFacts bank read: latest rec per active account, no shared cap ----
+// Generic in-memory PostgREST fake: eq / in / order / range / limit / head count.
+function fakeDb(tables) {
+  return {
+    from(table) {
+      const st = { eq: [], inF: [], order: [], from: 0, to: Infinity, head: false };
+      const rows = () => {
+        let r = (tables[table] || []).filter((x) => st.eq.every(([k, v]) => x[k] === v) && st.inF.every(([k, vs]) => vs.includes(x[k])));
+        for (const [k, asc] of st.order.slice().reverse()) r = r.slice().sort((a, b) => (a[k] > b[k] ? 1 : a[k] < b[k] ? -1 : 0) * (asc ? 1 : -1));
+        return r;
+      };
+      const q = {
+        select(_c, opts) { if (opts && opts.head) st.head = true; return q; },
+        eq(k, v) { st.eq.push([k, v]); return q; }, in(k, vs) { st.inF.push([k, vs]); return q; },
+        not() { return q; }, is() { return q; }, gte() { return q; },
+        order(k, o) { st.order.push([k, !o || o.ascending !== false]); return q; },
+        range(a, b) { st.from = a; st.to = b; return q; }, limit(n) { st.to = st.from + n - 1; return q; },
+        maybeSingle() { return Promise.resolve({ data: rows()[0] || null, error: null }); },
+        then(res, rej) {
+          const all = rows();
+          const out = st.head ? { data: null, count: all.length, error: null } : { data: all.slice(st.from, st.to + 1), error: null };
+          return Promise.resolve(out).then(res, rej);
+        },
+      };
+      return q;
+    },
+  };
+}
+
+(async () => {
+  const { fetchFacts } = require('../lib/community/data_readiness');
+  const busy = Array.from({ length: 600 }, (_, i) => ({ community_id: 'c1', bank_account_id: 'A', period_end: `20${10 + Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}-28`, status: 'reconciled', difference_cents: 0 }));
+  const db = fakeDb({
+    bank_accounts: [{ id: 'A', community_id: 'c1', account_nickname: 'Busy', is_active: true }, { id: 'B', community_id: 'c1', account_nickname: 'Quiet', is_active: true }],
+    bank_reconciliations: busy.concat([{ community_id: 'c1', bank_account_id: 'B', period_end: '2009-01-31', status: 'unbalanced', difference_cents: 500 }]),
+  });
+  const f = await fetchFacts(db, community(), NOW);
+  t('bank: every active account gets its own latest rec, even behind 600 rows of another account', () => {
+    assert.ok(f.bank.ok, f.bank.error);
+    const quiet = f.bank.value.accounts.find((a) => a.name === 'Quiet');
+    assert.ok(quiet && quiet.latest, 'Quiet account latest rec must not be dropped by a shared cap');
+    assert.strictEqual(quiet.latest.status, 'unbalanced');
+    assert.strictEqual(area(evaluate(community(), facts({ bank: f.bank }), NOW), 'bank').status, S.ERROR);
+  });
+  console.log(`\n${pass} passed${process.exitCode ? ', FAILURES above' : ''}`);
+})();
