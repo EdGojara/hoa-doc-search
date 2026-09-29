@@ -201,6 +201,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/login-next.js"></script>
   <script>
     let supa = null;
 
@@ -210,7 +211,8 @@
       // without the query string), then used by exchangeAndRedirect.
       try {
         const qp = new URLSearchParams(location.search).get('next');
-        if (qp && /^\/[A-Za-z0-9/_-]*$/.test(qp)) sessionStorage.setItem('postLoginRedirect', qp);
+        // Path-only, or exactly the legacy-workspace escape hatch (login-next.js).
+        if (qp && (window.TXLoginNext ? TXLoginNext.isSafeNext(qp) : /^\/[A-Za-z0-9/_-]*$/.test(qp))) sessionStorage.setItem('postLoginRedirect', qp);
       } catch (_) {}
       const r = await fetch('/api/auth/config');
       const cfg = await r.json();
@@ -297,7 +299,7 @@
         // Success — gate cookie is set, drop into the app (or back to the page
         // that sent us here, e.g. the Tessa app). (Ed 2026-08-01.)
         var _next = '/';
-        try { var n = sessionStorage.getItem('postLoginRedirect'); if (n && /^\/[A-Za-z0-9/_-]*$/.test(n)) { _next = n; sessionStorage.removeItem('postLoginRedirect'); } } catch (_) {}
+        try { var n = sessionStorage.getItem('postLoginRedirect'); if (n && (window.TXLoginNext ? TXLoginNext.isSafeNext(n) : /^\/[A-Za-z0-9/_-]*$/.test(n))) { _next = n; sessionStorage.removeItem('postLoginRedirect'); } } catch (_) {}
         window.location.replace(_next);
       } catch (e) {
         pending.classList.remove('show');

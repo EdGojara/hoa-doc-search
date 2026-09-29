@@ -442,6 +442,7 @@ const _STAFF_GATE_PUBLIC = [
   // The login flow itself
   /^\/staff-login\.html$/,
   /^\/login\.html$/,                        // Microsoft OAuth entry page
+  /^\/login-next\.js$/,                     // login.html's post-login destination rule (static, no data)
   /^\/api\/staff-login$/,
   /^\/api\/auth\/config$/,
   /^\/api\/auth\/exchange-supabase-session$/, // Microsoft-OAuth → gate-cookie exchange (validates JWT inside)
