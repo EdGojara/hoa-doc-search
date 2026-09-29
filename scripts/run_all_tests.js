@@ -62,6 +62,7 @@ const CHECKS = [
   'tests/test_legal_review_suggest.js',
   'tests/test_legal_review_data.js',
   'tests/test_legal_pdf_matters.js',
+  'tests/test_legal_review_triage.js',
   'tests/test_recognition_schedule.js',
   'tests/test_forward_note_voice.js',
   'tests/test_persona_knows_team.js',

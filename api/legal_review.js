@@ -6,6 +6,8 @@
 //
 //   GET  /invoices                    attorney invoices (the three firms), newest
 //                                     first, with draft status
+//   GET  /summaries                   the proposed outcome of every invoice
+//                                     (accepted vs exceptions, in money)
 //   GET  /invoices/:id                one invoice: lines, suggestions with their
 //                                     evidence, the saved draft, reconciliation
 //   GET  /invoices/:id/properties?q=  property search inside the invoice's
@@ -39,6 +41,16 @@ router.get('/invoices', async (req, res) => {
     res.json(Object.assign({ generated_at: new Date().toISOString() }, await R.listInvoices(supabase)));
   } catch (err) {
     console.error('[legal-review] list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.get('/summaries', async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    res.json(await R.listSummaries(supabase));
+  } catch (err) {
+    console.error('[legal-review] summaries failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -86,9 +98,9 @@ router.post('/invoices/:id/draft', express.json({ limit: '256kb' }), async (req,
     if (!d) return res.status(404).json({ error: 'not_a_legal_invoice' });
     if (d.readOnly) return res.status(409).json({ error: 'read_only', detail: d.readOnly });
     if (!d.schemaReady) return res.status(409).json({ error: 'migration_pending', detail: 'Saving drafts turns on once migration 473 is applied.' });
-    const built = R.buildDraft(d, req.body);
-    if (built.errors) return res.status(400).json({ error: 'draft_invalid', errors: built.errors });
     const actor = staff.email || staff.id || 'staff';
+    const built = R.buildDraft(d, req.body, actor);
+    if (built.errors) return res.status(400).json({ error: 'draft_invalid', errors: built.errors });
     const rec = built.reconciliation;
     const summary = {
       items: built.items.length,
