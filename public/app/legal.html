@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Legal Invoice Review · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/app/tx.css">
+<style>
+  .lg-wrap { padding: 34px 32px 48px; max-width: 1360px; }
+  .lg-hd h1 { margin: 6px 0 6px; font-family: var(--font-serif); font-weight: 600; font-size: clamp(32px, 4vw, 44px); color: var(--navy); line-height: 1.05; }
+  .lg-hd p { margin: 0; color: var(--tx-text-2); font-size: 15px; max-width: 820px; }
+  .lg-crumb { font-size: 12px; color: var(--tx-muted); }
+  .lg-manual { font-size: 13px; color: var(--tx-warn); background: var(--tx-warn-bg); border-radius: 8px; padding: 10px 12px; margin-top: 12px; max-width: 820px; }
+  .lg-when { display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--tx-text-2); }
+  .lg-crumb a { text-decoration: underline; text-decoration-color: var(--gold); }
+  .lg-grid { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 22px; margin-top: 22px; align-items: start; }
+  .lg-banner { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--tx-info); background: var(--tx-info-bg); border-radius: 8px; padding: 10px 12px; margin-top: 12px; }
+  .lg-listcard { overflow: hidden; }
+  .lg-listhead { padding: 14px 16px 10px; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid var(--tx-rule-soft); }
+  .lg-row { display: block; padding: 12px 16px; border-top: 1px solid var(--tx-rule-soft); cursor: pointer; }
+  .lg-row:first-child { border-top: 0; }
+  .lg-row:hover { background: var(--tx-subtle); }
+  .lg-row.is-on { background: var(--tx-gold-wash); box-shadow: inset 3px 0 0 var(--gold); }
+  .lg-row-top, .lg-row-sub { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+  .lg-row-sub { font-size: 12px; color: var(--tx-muted); margin-top: 4px; }
+  .lg-row-sub span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lg-vendor { font-weight: 600; color: var(--navy); font-size: 13.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lg-amt { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; }
+  .lg-detail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .lg-head { padding: 20px 22px; }
+  .lg-head-top { display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+  .lg-head h2 { margin: 4px 0 8px; font-size: 22px; color: var(--navy); font-family: var(--font-serif); font-weight: 600; }
+  .lg-facts { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--tx-text-2); }
+  .lg-total { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .lg-total-v { font-family: var(--font-serif); font-size: 30px; font-weight: 600; color: var(--navy); }
+  .lg-draftline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12.5px; color: var(--tx-text-2); margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--tx-rule-soft); }
+  .lg-link { background: none; border: 0; padding: 0; font: inherit; font-size: 12.5px; color: var(--navy); text-decoration: underline; text-decoration-color: var(--gold); cursor: pointer; }
+  .lg-recon { padding: 16px 22px; position: sticky; top: 8px; z-index: 2; }
+  .lg-recon-row { display: flex; gap: 28px; align-items: center; flex-wrap: wrap; }
+  .lg-recon-v { font-family: var(--font-mono); font-size: 16px; margin-top: 2px; }
+  .lg-recon-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+  .lg-block { margin-top: 10px; font-size: 13px; }
+  .lg-block summary, .lg-ev summary, .lg-hist summary { cursor: pointer; color: var(--navy); font-size: 12.5px; }
+  .lg-block ul, .lg-ev ul { margin: 6px 0 0 18px; padding: 0; }
+  .lg-item { padding: 18px 22px; display: flex; flex-direction: column; gap: 12px; }
+  .lg-item-head { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  .lg-item-amt { font-family: var(--font-mono); font-size: 17px; margin-top: 2px; }
+  .lg-off { font-size: 12px; color: var(--tx-bad); margin-left: 6px; }
+  .lg-item-meta { display: flex; gap: 12px; flex-wrap: wrap; }
+  .lg-item-meta label, .lg-alloc-grid label, .lg-note { display: flex; flex-direction: column; gap: 4px; }
+  .lg-in { height: 34px; border: 1px solid var(--tx-rule); border-radius: 7px; padding: 0 10px; font: inherit; font-size: 13px; background: var(--tx-surface); color: var(--tx-text); min-width: 0; }
+  .lg-in:disabled { background: var(--tx-subtle); color: var(--tx-text-2); }
+  .lg-in.is-bad { border-color: var(--tx-bad); }
+  .lg-amt-in { font-family: var(--font-mono); width: 120px; }
+  .lg-lines { border: 1px solid var(--tx-rule-soft); border-radius: 8px; }
+  .lg-line { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 4px 10px; padding: 8px 12px; border-top: 1px solid var(--tx-rule-soft); font-size: 13px; align-items: baseline; }
+  .lg-line:first-child { border-top: 0; }
+  .lg-ln { font-family: var(--font-mono); font-size: 11.5px; color: var(--tx-muted); }
+  .lg-lt { overflow-wrap: anywhere; }
+  .lg-la { font-family: var(--font-mono); white-space: nowrap; }
+  .lg-lacct, .lg-line .lg-link { grid-column: 2 / 4; font-size: 11.5px; justify-self: start; }
+  .lg-alloc { border-left: 3px solid var(--tx-rule); padding: 4px 0 4px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .lg-alloc-grid { display: grid; grid-template-columns: 130px minmax(180px, 1fr) minmax(220px, 1.3fr); gap: 12px; align-items: start; }
+  .lg-prop-box { grid-column: 1 / -1; }
+  .lg-find[hidden] { display: none; }
+  .lg-find .lg-in { max-width: 420px; }
+  .lg-prop { font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
+  .lg-prop-actions { display: flex; gap: 12px; margin-top: 4px; }
+  .lg-find { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+  .lg-results { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow: auto; }
+  .lg-result { text-align: left; background: var(--tx-surface); border: 1px solid var(--tx-rule-soft); border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  .lg-result:hover { background: var(--tx-gold-wash); }
+  .lg-badges { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .lg-reasons { margin: 0 0 0 18px; padding: 0; font-size: 12.5px; color: var(--tx-warn); }
+  .lg-ev { font-size: 12.5px; }
+  .lg-ev-k { font-weight: 600; text-transform: capitalize; }
+  .lg-note { max-width: 520px; }
+  .lg-item-actions { display: flex; gap: 14px; align-items: center; }
+  .lg-foot { position: sticky; bottom: 0; background: var(--tx-ivory); padding: 12px 0; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--tx-rule-soft); }
+  .lg-foot-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .lg-ok { display: flex; gap: 8px; align-items: center; color: var(--tx-ok); font-size: 13px; font-weight: 600; }
+  .lg-hist { font-size: 12.5px; }
+  .lg-hist-row { display: flex; gap: 14px; flex-wrap: wrap; padding: 6px 0; border-top: 1px solid var(--tx-rule-soft); }
+  .lg-empty { padding: 26px 24px; display: flex; gap: 14px; align-items: flex-start; }
+  @media (max-width: 1280px) { .lg-alloc-grid { grid-template-columns: 130px minmax(0, 1fr); } .lg-alloc-grid label:nth-child(3) { grid-column: 1 / -1; } }
+  @media (max-width: 1100px) { .lg-grid { grid-template-columns: minmax(0, 1fr); } .lg-listcard { max-height: 360px; overflow: auto; } }
+  @media (max-width: 760px) {
+    .lg-wrap { padding: 22px 16px 40px; }
+    .lg-alloc-grid { grid-template-columns: minmax(0, 1fr); }
+    .lg-total { align-items: flex-start; }
+    .lg-recon { position: static; }
+    .lg-item, .lg-head, .lg-recon { padding: 16px; }
+  }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top">
+      <button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button>
+      <span class="tx-switch" style="cursor:default">Financial</span>
+      <div style="margin-left:auto;display:flex;gap:14px;align-items:center">
+        <span class="tx-muted" style="font-size:12px" id="lg-stamp"></span>
+        <button id="lg-refresh" type="button" class="tx-btn tx-btn--sec" style="height:32px"></button>
+      </div>
+    </div>
+    <div class="lg-wrap">
+      <div class="lg-hd">
+        <div class="lg-crumb"><a href="/app/financial">Financial</a> / Legal invoice review</div>
+        <h1>Legal invoice review</h1>
+        <p>Attorney bills, split into what the association pays and what a homeowner owes, matched to the property and the owner at the time of the work, with the reasons shown. Draft only: nothing here posts to the books or charges an owner.</p>
+        <div class="lg-manual"><strong>Manual review first.</strong> Suggestions read the bill’s line text only. Names, addresses and matter numbers printed only on the attorney’s PDF aren’t read yet, so open the PDF for those lines. Reading the PDF comes before anything here can post.</div>
+        <div id="lg-banner"></div>
+      </div>
+      <div class="lg-grid">
+        <section class="tx-card lg-listcard" aria-labelledby="lg-list-title">
+          <div class="lg-listhead"><span class="tx-lbl" id="lg-list-title">Attorney invoices</span><span class="tx-muted" style="font-size:12px" id="lg-count"></span></div>
+          <div id="lg-list"><div style="padding:16px"><div class="tx-skel" style="height:14px;width:70%"></div><div class="tx-skel" style="height:12px;width:50%;margin-top:10px"></div></div></div>
+        </section>
+        <div class="lg-detail" id="lg-detail"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/tx-icons.js"></script>
+<script src="/app/legal-suggest.js"></script>
+<script src="/app/tx.js"></script>
+<script>if (TX.fixture) document.write('<script src="/app/fixtures/legal.fixture.js"><\/script>');</script>
+<script src="/app/legal.js"></script>
+</body>
+</html>

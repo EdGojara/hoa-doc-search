@@ -6,6 +6,8 @@
 //                        renders the sidebar shell, resolves the user
 //   TX.get(url)          authed JSON GET → { ok, data } | { ok:false, error }
 //                        (never throws; a failure is data the page must show)
+//   TX.post(url, body)   authed JSON POST, same result shape (plus the error
+//                        body as `body`, so a page can show validation detail)
 //   TX.icon(name)        Lucide-based icon (public/app/tx-icons.js)
 //   TX.esc(s)            HTML escape
 //
@@ -52,25 +54,29 @@
     try { var s = (await supa.auth.getSession()).data.session; return s ? s.access_token : null; } catch (_) { return null; }
   }
 
-  async function get(url) {
+  async function request(method, url, payload) {
     if (FIXTURE) {
-      var f = (window.TX_FIXTURE || {})[url.split('?')[0]];
-      return f === undefined ? { ok: false, error: 'no fixture for ' + url } : f;
+      var f = (window.TX_FIXTURE || {})[(method === 'GET' ? '' : method + ' ') + url.split('?')[0]];
+      return f === undefined ? { ok: false, error: 'no fixture for ' + method + ' ' + url } : f;
     }
     try {
       var headers = { Accept: 'application/json' };
+      if (payload !== undefined) headers['Content-Type'] = 'application/json';
       var t = await token();
       if (t) headers.Authorization = 'Bearer ' + t;
-      var r = await fetch(url, { headers: headers, credentials: 'same-origin' });
+      var r = await fetch(url, { method: method, headers: headers, credentials: 'same-origin', body: payload === undefined ? undefined : JSON.stringify(payload) });
       var body = null;
       try { body = await r.json(); } catch (_) { body = null; }
-      if (!r.ok) return { ok: false, status: r.status, error: (body && (body.error || body.detail)) || ('HTTP ' + r.status) };
+      if (!r.ok) return { ok: false, status: r.status, error: (body && (body.error || body.detail)) || ('HTTP ' + r.status), body: body };
       return { ok: true, data: body };
     } catch (e) {
-      console.warn('[tx] fetch failed', url, e && e.message);
+      console.warn('[tx] fetch failed', method, url, e && e.message);
       return { ok: false, error: (e && e.message) || 'network error' };
     }
   }
+  function get(url) { return request('GET', url); }
+  function post(url, payload) { return request('POST', url, payload || {}); }
+
 
   function renderShell(active, user) {
     var host = document.getElementById('tx-shell');
@@ -139,5 +145,5 @@
     return user;
   }
 
-  window.TX = { boot: boot, get: get, icon: icon, esc: esc, fixture: FIXTURE, mark: mark, LEGACY_URL: LEGACY_URL };
+  window.TX = { boot: boot, get: get, post: post, icon: icon, esc: esc, fixture: FIXTURE, mark: mark, LEGACY_URL: LEGACY_URL };
 })();
