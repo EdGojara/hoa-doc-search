@@ -13,6 +13,11 @@
 --         failed        the read itself failed (error recorded)
 --       Source hash, model and prompt version are kept so a read is
 --       reproducible. Rows are never updated or deleted.
+--       Each read is bound to BOTH sides: the PDF (source_sha256) and the
+--       payable as it stood at read time (payable_snapshot: invoice id,
+--       number, date, total, and every non-zero line's id, number, amount and
+--       text; payable_fingerprint = its sha256). If the payable changes
+--       afterwards, even in place, the read is stale: never reused, never used.
 -- Items record which extraction they relied on (extraction_id), and a service
 -- date taken from the PDF's time / expense entries is its own source
 -- ('pdf_entry'), distinct from a date merely mentioned in narrative.
@@ -29,6 +34,8 @@ CREATE TABLE IF NOT EXISTS legal_invoice_extractions (
   community_id        uuid NOT NULL REFERENCES communities(id) ON DELETE RESTRICT,
   source_storage_path text,
   source_sha256       text,
+  payable_fingerprint text NOT NULL,
+  payable_snapshot    jsonb NOT NULL,
   model               text NOT NULL,
   prompt_version      text NOT NULL,
   status              text NOT NULL CHECK (status IN ('valid', 'needs_review', 'failed')),
@@ -42,6 +49,7 @@ CREATE TABLE IF NOT EXISTS legal_invoice_extractions (
   created_by          text,
   created_at          timestamptz NOT NULL DEFAULT now(),
   -- A failed read says why; a completed read keeps what the model returned.
+  CONSTRAINT legal_extraction_payable_fingerprint_format CHECK (payable_fingerprint ~ '^[0-9a-f]{64}$'),
   CONSTRAINT legal_extraction_status_detail CHECK (
     (status = 'failed' AND error IS NOT NULL) OR (status <> 'failed' AND raw IS NOT NULL))
 );

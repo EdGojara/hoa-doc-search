@@ -167,6 +167,10 @@ window.TX_FIXTURE = {
                     "value": "invoice PDF matter 9999.0004: Farrow, Juniper - 9903 Fixture Bend Ct. (Deed Restriction Matters)"
                   },
                   {
+                    "kind": "work_type",
+                    "value": "deed-restriction work per the invoice PDF: supported by the heading / title"
+                  },
+                  {
                     "kind": "address",
                     "value": "9903 Fixture Bend Ct.",
                     "matched": 1
@@ -225,6 +229,10 @@ window.TX_FIXTURE = {
                   {
                     "kind": "pdf_matter",
                     "value": "invoice PDF matter 9999.0007: Pemberton, Quill O. - 4202 Example Hollow Ct. (Collection Matters)"
+                  },
+                  {
+                    "kind": "work_type",
+                    "value": "collection work per the invoice PDF: supported by the heading / title"
                   },
                   {
                     "kind": "address",
@@ -289,6 +297,10 @@ window.TX_FIXTURE = {
                   {
                     "kind": "pdf_matter",
                     "value": "invoice PDF matter 9999.0001: General Matters (General Matters)"
+                  },
+                  {
+                    "kind": "work_type",
+                    "value": "general / association matter per the invoice PDF"
                   },
                   {
                     "kind": "work_type",

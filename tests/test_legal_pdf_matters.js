@@ -210,28 +210,97 @@ t('save: lines from two PDF matters combined by staff → dates span both, noted
 });
 
 // usable or not
-t('usable: only a valid read that still describes the payable lines is used', () => {
-  const lines = [{ id: 'a', amount_cents: 100 }, { id: 'b', amount_cents: 0 }];
-  assert.strictEqual(R.usableExtraction(null, lines).ok, false);
-  assert.strictEqual(R.usableExtraction({ status: 'failed', error: 'x' }, lines).ok, false);
-  assert.strictEqual(R.usableExtraction({ status: 'needs_review', line_map: { a: 0 } }, lines).ok, false);
-  assert.strictEqual(R.usableExtraction({ status: 'valid', line_map: { a: 0 } }, lines).ok, true);
-  const stale = R.usableExtraction({ status: 'valid', line_map: { a: 0 } }, [{ id: 'a', amount_cents: 100 }, { id: 'c', amount_cents: 5 }]);
-  assert.strictEqual(stale.ok, false); assert.ok(/changed after the PDF was read/.test(stale.reason));
+// ---- freshness: a read is bound to the payable it was proven against -------------
+const INV0 = { id: 'inv-1', invoice_date: '2026-08-31', total_cents: 10000 };
+const LINES0 = [{ id: 'a', line_number: 1, description: 'Farrow - Fees', amount_cents: 10000 }, { id: 'b', line_number: 2, description: 'zero', amount_cents: 0 }];
+const cur = (inv, num, lines) => { const s = R.payableSnapshot(inv, num, lines); return { snapshot: s, fingerprint: R.payableFingerprint(s), lines }; };
+const readAt = (c) => ({ status: 'valid', line_map: { a: 0 }, payable_fingerprint: c.fingerprint });
+t('fingerprint: covers id, number, date, total and each non-zero line (id, number, amount, text); order-independent', () => {
+  const base = cur(INV0, '900', LINES0);
+  assert.ok(/^[0-9a-f]{64}$/.test(base.fingerprint));
+  assert.strictEqual(cur(INV0, '900', LINES0.slice().reverse()).fingerprint, base.fingerprint);
+  assert.strictEqual(cur(INV0, '900', [LINES0[0]]).fingerprint, base.fingerprint);   // a zero line plays no part in the proof
+  assert.deepStrictEqual(base.snapshot.lines.map((l) => l.id), ['a']);
+});
+t('usable: only a valid read bound to the payable as it is NOW', () => {
+  const now = cur(INV0, '900', LINES0);
+  assert.strictEqual(R.usableExtraction(null, now).ok, false);
+  assert.strictEqual(R.usableExtraction({ status: 'failed', error: 'x' }, now).ok, false);
+  assert.strictEqual(R.usableExtraction({ status: 'needs_review', line_map: { a: 0 }, payable_fingerprint: now.fingerprint }, now).ok, false);
+  assert.strictEqual(R.usableExtraction(readAt(now), now).ok, true);
+  assert.strictEqual(R.usableExtraction({ status: 'valid', line_map: { a: 0 } }, now).ok, false);   // an unbound read is never used
+});
+const SAME_ID_EDITS = [
+  ['a line amount', (inv, lines) => [inv, '900', [Object.assign({}, lines[0], { amount_cents: 9999 }), lines[1]]]],
+  ['a line description', (inv, lines) => [inv, '900', [Object.assign({}, lines[0], { description: 'Pemberton - Fees' }), lines[1]]]],
+  ['the invoice total', (inv, lines) => [Object.assign({}, inv, { total_cents: 10001 }), '900', lines]],
+  ['the invoice number', (inv, lines) => [inv, '901', lines]],
+  ['the invoice date', (inv, lines) => [Object.assign({}, inv, { invoice_date: '2026-09-01' }), '900', lines]],
+  ['a zero line becoming non-zero', (inv, lines) => [inv, '900', [lines[0], Object.assign({}, lines[1], { amount_cents: 5 })]]],
+];
+SAME_ID_EDITS.forEach(([what, edit]) => {
+  t('stale: same line ids but ' + what + ' changed in place → the read is not used', () => {
+    const atRead = cur(INV0, '900', LINES0);
+    const args = edit(INV0, LINES0);
+    const now = cur(args[0], args[1], args[2]);
+    assert.notStrictEqual(now.fingerprint, atRead.fingerprint);
+    const u = R.usableExtraction(readAt(atRead), now);
+    assert.strictEqual(u.ok, false); assert.strictEqual(u.stale, true); assert.ok(/changed after the PDF was read/.test(u.reason));
+  });
+});
+t('stale: loadInvoice-shaped payload shows the stale reason and suggestions fall back to line text', () => {
+  const fx = DF(); const ctx = baseCtx(); const d = loaded(fx, ctx);
+  const a = M.assessExtraction(fx.raw, fx.invoice, fx.ap_lines);
+  const atRead = cur(d.invoice, fx.invoice.vendor_invoice_number, d.lines);
+  const edited = d.lines.map((l, i) => (i === 0 ? Object.assign({}, l, { description: l.description + ' (recoded)' }) : l));
+  const now = cur(d.invoice, fx.invoice.vendor_invoice_number, edited);
+  const use = R.usableExtraction({ status: 'valid', line_map: a.line_map, payable_fingerprint: atRead.fingerprint }, now);
+  assert.strictEqual(use.ok, false);
+  const p = R.detailPayload(Object.assign({}, d, { lines: edited, extraction: { id: 'x', status: 'valid', matters: a.matters, line_map: a.line_map, problems: [] }, extractionUse: use }));
+  assert.strictEqual(p.extraction.used, false); assert.ok(/changed after the PDF was read/.test(p.extraction.note));
+  assert.ok(p.suggestion.items.every((it) => it.service_date_source !== 'pdf_entry'));
+});
+
+// ---- work type: the model's label is evidence, checked against the printed text ----
+const wtOf = (fx) => S.suggestReview(invOf(fx), fx.ap_lines, withExtraction(fx)).items;
+t('work type: a label the heading supports is suggested and says so', () => {
+  const dr = wtOf(DF())[0].allocations[0];
+  assert.strictEqual(dr.charge_category, 'attorney_fee_other');
+  assert.ok(dr.evidence.some((e) => e.kind === 'work_type' && /supported by the heading/.test(e.value)));
+});
+t('work type: a label the heading CONTRADICTS gives no category and goes to review', () => {
+  const fx = DF(); fx.raw.matters[0].work_type = 'collection';   // listed under "Deed Restriction Matters"
+  const a = wtOf(fx)[0].allocations[0];
+  assert.strictEqual(a.charge_category, null); assert.strictEqual(a.classification, 'needs_review');
+  assert.ok(a.evidence.some((e) => e.kind === 'work_type' && /contradicted/.test(e.value)));
+});
+t('work type: a label nothing in the text supports is kept but flagged as the model’s label only', () => {
+  const fx = DF(); const m = fx.raw.matters[1];
+  m.section_heading = null; m.title = 'Pemberton, Quill O. - 4202 Example Hollow Ct.';
+  m.entries = [{ date: '2026-08-10', kind: 'fee', description: 'Telephone conference with client.', amount: 204.00 }, { date: '2026-08-24', kind: 'fee', description: 'Review file.', amount: 120.00 }];
+  const a = wtOf(fx)[1].allocations[0];
+  assert.strictEqual(a.charge_category, 'attorney_fee');
+  assert.ok(a.evidence.some((e) => e.kind === 'work_type' && /model’s label only/.test(e.value)));
+});
+t('work type: Winstead "CLTN" titles count as collection support', () => {
+  const a = wtOf(load('winstead-cltn-outstanding.json'))[0].allocations[0];
+  assert.ok(a.evidence.some((e) => e.kind === 'work_type' && /supported/.test(e.value) && !/contradicted/.test(e.value)));
 });
 
 // ---- 5) readInvoicePdf with a stubbed database + model --------------------------
 function fakeDb({ tableMissing = false, prior = null, file = Buffer.from('%PDF-synthetic') } = {}) {
   const writes = [];
   const builder = (table) => {
-    const st = { table, op: 'select', row: null };
+    const st = { table, op: 'select', row: null, eq: {} };
     const b = {
-      select() { return b; }, eq() { return b; }, neq() { return b; }, order() { return b; }, limit() { return b; },
+      select() { return b; }, eq(k, v) { st.eq[k] = v; return b; }, neq() { return b; }, order() { return b; }, limit() { return b; },
       insert(row) { st.op = 'insert'; st.row = row; writes.push({ table, row }); return b; },
       single() { return Promise.resolve({ data: { id: 'new-ext', status: st.row && st.row.status }, error: null }); },
       then(res, rej) {
         if (tableMissing && table === 'legal_invoice_extractions') return Promise.resolve({ data: null, error: { code: 'PGRST205', message: 'Could not find the table legal_invoice_extractions' } }).then(res, rej);
-        return Promise.resolve({ data: prior ? [prior] : [], error: null }).then(res, rej);
+        // A prior read is returned only when it matches every eq() filter asked for.
+        const hit = prior && Object.keys(st.eq).every((k) => !(k in prior) || prior[k] === st.eq[k]);
+        return Promise.resolve({ data: hit ? [prior] : [], error: null }).then(res, rej);
       },
     };
     return b;
@@ -246,10 +315,23 @@ async function asyncTests(run) {
     const out = await R.readInvoicePdf(db, fxD(), 'staff@example.test', { deps: { extractLegalInvoice: async () => { called++; }, PROMPT_VERSION: 'v', MODEL: 'm' } });
     assert.strictEqual(out.error, 'migration_pending'); assert.strictEqual(db.writes.length, 0); assert.strictEqual(called, 0);
   });
-  await run('read-pdf: a prior read of the same file is reused (no model call, no write)', async () => {
-    const db = fakeDb({ prior: { id: 'old-ext', status: 'valid' } }); let called = 0;
-    const out = await R.readInvoicePdf(db, fxD(), 'staff@example.test', { deps: { extractLegalInvoice: async () => { called++; }, PROMPT_VERSION: 'v', MODEL: 'm' } });
+  const shaOf = (b) => require('crypto').createHash('sha256').update(b).digest('hex');
+  const FILE = Buffer.from('%PDF-synthetic');
+  const fpOf = (d) => R.payableFingerprint(R.payableSnapshot(d.invoice, d.invoiceNumber, d.lines));
+  await run('read-pdf: a prior read of the same file, prompt AND payable is reused (no model call, no write)', async () => {
+    const d = fxD();
+    const db = fakeDb({ prior: { id: 'old-ext', status: 'valid', source_sha256: shaOf(FILE), prompt_version: 'v', payable_fingerprint: fpOf(d) } }); let called = 0;
+    const out = await R.readInvoicePdf(db, d, 'staff@example.test', { deps: { extractLegalInvoice: async () => { called++; }, PROMPT_VERSION: 'v', MODEL: 'm' } });
     assert.deepStrictEqual(out, { extraction_id: 'old-ext', status: 'valid', reused: true }); assert.strictEqual(called, 0); assert.strictEqual(db.writes.length, 0);
+  });
+  await run('read-pdf: same file + prompt but the payable changed in place (same line ids) → NOT reused; a fresh read is made', async () => {
+    const d = fxD(); const oldFp = fpOf(d);
+    d.lines = d.lines.map((l, i) => (i === 0 ? Object.assign({}, l, { amount_cents: l.amount_cents + 1 }) : l));
+    const db = fakeDb({ prior: { id: 'old-ext', status: 'valid', source_sha256: shaOf(FILE), prompt_version: 'v', payable_fingerprint: oldFp } }); let called = 0;
+    const out = await R.readInvoicePdf(db, d, 'staff@example.test', { deps: { extractLegalInvoice: async () => { called++; return { raw: DF().raw, model: 'm', prompt_version: 'v' }; }, PROMPT_VERSION: 'v', MODEL: 'm' } });
+    assert.strictEqual(called, 1); assert.strictEqual(out.reused, false);
+    assert.strictEqual(db.writes[0].row.payable_fingerprint, fpOf(d)); assert.notStrictEqual(db.writes[0].row.payable_fingerprint, oldFp);
+    assert.strictEqual(out.status, 'needs_review');   // the edited line no longer ties to its matter
   });
   await run('read-pdf: a fresh read is validated and written ONLY to legal_invoice_extractions', async () => {
     const db = fakeDb(); const raw = DF().raw;
@@ -258,11 +340,14 @@ async function asyncTests(run) {
     const w = db.writes[0]; assert.strictEqual(w.table, 'legal_invoice_extractions');
     assert.strictEqual(w.row.status, 'valid'); assert.strictEqual(w.row.raw, raw); assert.strictEqual(w.row.created_by, 'staff@example.test');
     assert.ok(/^[0-9a-f]{64}$/.test(w.row.source_sha256)); assert.strictEqual(Object.keys(w.row.line_map).length, 4);
+    assert.ok(/^[0-9a-f]{64}$/.test(w.row.payable_fingerprint)); assert.strictEqual(w.row.payable_snapshot.total_cents, 72006);
+    assert.strictEqual(w.row.payable_snapshot.lines.length, 4); assert.strictEqual(w.row.payable_snapshot.invoice_number, '900594');
   });
   await run('read-pdf: a model failure is recorded as failed with why (never swallowed)', async () => {
     const db = fakeDb();
     const out = await R.readInvoicePdf(db, fxD(), 'staff@example.test', { force: true, deps: { extractLegalInvoice: async () => { throw new Error('The invoice reader returned malformed JSON'); }, PROMPT_VERSION: 'v', MODEL: 'm' } });
     assert.strictEqual(out.status, 'failed'); assert.strictEqual(db.writes[0].row.status, 'failed'); assert.ok(/malformed JSON/.test(db.writes[0].row.error));
+    assert.ok(/^[0-9a-f]{64}$/.test(db.writes[0].row.payable_fingerprint));   // even a failed read records what it was run against
   });
   await run('read-pdf: no stored file → no_invoice_file, nothing written', async () => {
     const db = fakeDb(); const d = fxD(); d.sourcePath = null;

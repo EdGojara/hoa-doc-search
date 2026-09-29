@@ -22,7 +22,7 @@
     }
   ],
   "expected_changes": [
-    "Creates the empty, append-only table legal_invoice_extractions (service role SELECT/INSERT only; row-level security on; browser roles revoked) with its status CHECKs and an index on (ap_invoice_id, created_at).",
+    "Creates the empty, append-only table legal_invoice_extractions (service role SELECT/INSERT only; row-level security on; browser roles revoked) bound to both the PDF (source_sha256) and the payable as it stood at read time (payable_fingerprint + payable_snapshot, both required), with its status and fingerprint CHECKs and an index on (ap_invoice_id, created_at).",
     "Adds legal_invoice_items.extraction_id (nullable FK) and widens the service-date source CHECK to include 'pdf_entry'. Existing items are untouched.",
     "Replaces legal_review_save_draft() so it also persists extraction_id and refuses an extraction that belongs to a different invoice; everything else is unchanged from 473.",
     "No GL, AP, owner-ledger, journal or homeowner data is created or changed."
@@ -40,6 +40,8 @@
       "column:legal_invoice_extractions.line_map",
       "column:legal_invoice_extractions.matters",
       "column:legal_invoice_extractions.model",
+      "column:legal_invoice_extractions.payable_fingerprint",
+      "column:legal_invoice_extractions.payable_snapshot",
       "column:legal_invoice_extractions.problems",
       "column:legal_invoice_extractions.prompt_version",
       "column:legal_invoice_extractions.raw",
@@ -47,6 +49,7 @@
       "column:legal_invoice_extractions.source_storage_path",
       "column:legal_invoice_extractions.status",
       "column:legal_invoice_items.extraction_id",
+      "constraint:legal_invoice_extractions.legal_extraction_payable_fingerprint_format",
       "constraint:legal_invoice_extractions.legal_extraction_status_detail",
       "constraint:legal_invoice_extractions.legal_invoice_extractions_ap_invoice_id_fkey",
       "constraint:legal_invoice_extractions.legal_invoice_extractions_community_id_fkey",

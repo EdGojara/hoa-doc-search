@@ -101,13 +101,17 @@ if (r.status === 'applied') {
   const canon = (s) => { const o = JSON.parse(s); return JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]])); };
   check('apply: the existing draft item is unchanged (new column null)', canon(itemAfter.j) === canon(itemBefore.j) && itemAfter.extraction_id === null, itemAfter.j + ' vs ' + itemBefore.j);
 
-  const ins = (status, raw, error) => tryErr(`INSERT INTO legal_invoice_extractions (ap_invoice_id, community_id, model, prompt_version, status, raw, error) VALUES ($1, $2, 'm', 'v1', $3, $4::jsonb, $5)`, [INV2, C, status, raw, error]);
+  const FP = 'a'.repeat(64);
+  const ins = (status, raw, error, fp = FP, snap = '{}') => tryErr(`INSERT INTO legal_invoice_extractions (ap_invoice_id, community_id, model, prompt_version, status, raw, error, payable_fingerprint, payable_snapshot) VALUES ($1, $2, 'm', 'v1', $3, $4::jsonb, $5, $6, $7::jsonb)`, [INV2, C, status, raw, error, fp, snap]);
+  check('rule: a read must be bound to a payable fingerprint (missing / malformed rejected)',
+    /null value in column "payable_fingerprint"/.test(await ins('valid', '{}', null, null) || '') && /legal_extraction_payable_fingerprint_format/.test(await ins('valid', '{}', null, 'not-a-hash') || '')
+    && /null value in column "payable_snapshot"/.test(await ins('valid', '{}', null, FP, null) || ''));
   check('rule: a failed read must say why', /legal_extraction_status_detail/.test(await ins('failed', null, null) || ''));
   check('rule: a completed read must keep the raw output', /legal_extraction_status_detail/.test(await ins('valid', null, null) || ''));
   check('rule: an unknown status is rejected', /status_check/.test(await ins('approved', '{}', null) || ''));
   check('rule: a valid read with raw output is accepted', (await ins('valid', '{"matters":[]}', null)) === null);
   const ext = await q1(`SELECT id FROM legal_invoice_extractions WHERE ap_invoice_id = '${INV2}' LIMIT 1`);
-  const otherExt = (await q1(`INSERT INTO legal_invoice_extractions (ap_invoice_id, community_id, model, prompt_version, status, raw) VALUES ('${INV}', '${C}', 'm', 'v1', 'valid', '{}') RETURNING id`)).id;
+  const otherExt = (await q1(`INSERT INTO legal_invoice_extractions (ap_invoice_id, community_id, model, prompt_version, status, raw, payable_fingerprint, payable_snapshot) VALUES ('${INV}', '${C}', 'm', 'v1', 'valid', '{}', '${FP}', '{}') RETURNING id`)).id;
 
   const save = async (base, items) => (await db.query(`SELECT legal_review_save_draft($1, $2, $3, 'staff@example.test', $4::jsonb, '{}'::jsonb) r`, [INV2, C, base, JSON.stringify(items)])).rows[0].r;
   const s1 = await save(0, [{ source_line_ids: [], amount_cents: 5000, service_period_start: '2026-08-03', service_period_end: '2026-08-12', service_date_source: 'pdf_entry', extraction_id: ext.id,
