@@ -107,6 +107,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.16",
     "lucide-static": "^1.48.0"
   }
 }

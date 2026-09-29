@@ -896,6 +896,10 @@ app.get('/app/communities/:id', (req, res) => res.sendFile(require('path').join(
 app.get('/app/financial', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'financial.html')));
 // Operations home (Issue #6). Read-only.
 app.get('/app/operations', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'operations.html')));
+// Legal Invoice Review (Issue #9 step 2). Draft only: no GL or owner postings.
+app.get('/app/financial/legal', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'legal.html')));
+// The review page reconciles with the SAME module the server uses (one rule set).
+app.get('/app/legal-suggest.js', (req, res) => res.type('application/javascript').sendFile(require('path').join(__dirname, 'lib', 'legal', 'review_suggest.js')));
 
 // Static assets. HTML files (the staff app, portal pages) get `no-cache` so the
 // browser MUST revalidate against the server before reusing a copy — otherwise
@@ -1313,6 +1317,8 @@ app.use('/api/today', todayRouter);
 app.use('/api/readiness', require('./api/readiness'));
 // Operations overview — read-only, staff sign-in (Issue #6).
 app.use('/api/ops', require('./api/ops'));
+// Legal Invoice Review — staff sign-in; draft saves only (Issue #9 step 2).
+app.use('/api/legal-review', require('./api/legal_review'));
 
 // ARC historical decisions — structured library of past approvals/denials
 // (informational context for the AI assessment engine; never binding precedent)

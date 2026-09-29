@@ -1,0 +1,203 @@
+{
+  "migration": "473_legal_invoice_review.sql",
+  "summary": "Draft-only Legal Invoice Review state (Issue #9 step 2): legal_invoice_reviews, legal_invoice_items (matters), legal_invoice_allocations (revisioned), legal_invoice_review_events, the atomic save function legal_review_save_draft, and vendors.is_legal_counsel set for the three attorney vendors. No GL, AP, owner-ledger or homeowner data is created or changed.",
+  "requires": [
+    "469_payments_safe_foundation.sql",
+    "472_vendor_invoice_document_unique.sql"
+  ],
+  "preflight": [
+    {
+      "name": "the new tables do not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('legal_invoice_reviews', 'legal_invoice_items', 'legal_invoice_allocations', 'legal_invoice_review_events')",
+      "expect": 0
+    },
+    {
+      "name": "vendors.is_legal_counsel does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'vendors' AND column_name = 'is_legal_counsel'",
+      "expect": 0
+    },
+    {
+      "name": "the three attorney vendors exist by id",
+      "sql": "SELECT count(*)::int FROM vendors WHERE id IN ('22488091-2642-489d-a84a-50c72fb05645', '35f76d51-0753-4f9f-b46d-df3c73d6092a', 'ee565db3-2c94-4830-8855-ccea1740dfa7')",
+      "expect": 3
+    },
+    {
+      "name": "the updated_at trigger function exists",
+      "sql": "SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = 'trusted_set_updated_at'",
+      "expect": 1
+    }
+  ],
+  "expected_changes": [
+    "Adds vendors.is_legal_counsel (boolean, default false) and sets it true for Winstead PC, Daughtry & Farine P.C. and RMWBH (3 rows updated, none added).",
+    "Creates 4 empty tables: legal_invoice_reviews, legal_invoice_items, legal_invoice_allocations, legal_invoice_review_events, with CHECK constraints, 5 indexes plus primary keys and the unique ap_invoice_id key, and the house updated_at trigger on legal_invoice_reviews.",
+    "Grants the service role SELECT/INSERT/UPDATE on the review tables and SELECT/INSERT on the events table (no DELETE: history is never deleted).",
+    "Adds legal_review_save_draft(...): one atomic draft save (claim review under a row lock, refuse a stale base revision, supersede the prior active set, insert the new revision, record the event). Guards that the invoice, properties and tenures belong to the community. Service role only; row-level security on and browser roles revoked on all four tables.",
+    "No GL, AP, owner-ledger, journal or homeowner data is created or changed."
+  ],
+  "objects": {
+    "added": [
+      "column:legal_invoice_allocations.amount_cents",
+      "column:legal_invoice_allocations.bankruptcy_stop",
+      "column:legal_invoice_allocations.charge_category",
+      "column:legal_invoice_allocations.classification",
+      "column:legal_invoice_allocations.community_id",
+      "column:legal_invoice_allocations.confidence",
+      "column:legal_invoice_allocations.created_at",
+      "column:legal_invoice_allocations.created_by",
+      "column:legal_invoice_allocations.evidence",
+      "column:legal_invoice_allocations.id",
+      "column:legal_invoice_allocations.is_active",
+      "column:legal_invoice_allocations.item_id",
+      "column:legal_invoice_allocations.note",
+      "column:legal_invoice_allocations.property_id",
+      "column:legal_invoice_allocations.review_id",
+      "column:legal_invoice_allocations.revision",
+      "column:legal_invoice_allocations.suggested",
+      "column:legal_invoice_allocations.superseded_at",
+      "column:legal_invoice_allocations.tenure_id",
+      "column:legal_invoice_allocations.tenure_match",
+      "column:legal_invoice_items.amount_cents",
+      "column:legal_invoice_items.community_id",
+      "column:legal_invoice_items.created_at",
+      "column:legal_invoice_items.created_by",
+      "column:legal_invoice_items.id",
+      "column:legal_invoice_items.is_active",
+      "column:legal_invoice_items.matter_ref",
+      "column:legal_invoice_items.review_id",
+      "column:legal_invoice_items.revision",
+      "column:legal_invoice_items.service_date",
+      "column:legal_invoice_items.service_date_source",
+      "column:legal_invoice_items.sort_order",
+      "column:legal_invoice_items.source_line_ids",
+      "column:legal_invoice_items.source_text",
+      "column:legal_invoice_items.superseded_at",
+      "column:legal_invoice_review_events.action",
+      "column:legal_invoice_review_events.actor",
+      "column:legal_invoice_review_events.community_id",
+      "column:legal_invoice_review_events.created_at",
+      "column:legal_invoice_review_events.id",
+      "column:legal_invoice_review_events.review_id",
+      "column:legal_invoice_review_events.revision",
+      "column:legal_invoice_review_events.summary",
+      "column:legal_invoice_reviews.ap_invoice_id",
+      "column:legal_invoice_reviews.community_id",
+      "column:legal_invoice_reviews.created_at",
+      "column:legal_invoice_reviews.created_by",
+      "column:legal_invoice_reviews.id",
+      "column:legal_invoice_reviews.revision",
+      "column:legal_invoice_reviews.status",
+      "column:legal_invoice_reviews.updated_at",
+      "column:legal_invoice_reviews.updated_by",
+      "column:vendors.is_legal_counsel",
+      "constraint:legal_invoice_allocations.legal_alloc_category_only_recoverable",
+      "constraint:legal_invoice_allocations.legal_alloc_recoverable_has_property",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_amount_cents_check",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_charge_category_check",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_classification_check",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_community_id_fkey",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_confidence_check",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_item_id_fkey",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_pkey",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_property_id_fkey",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_review_id_fkey",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_revision_check",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_tenure_id_fkey",
+      "constraint:legal_invoice_allocations.legal_invoice_allocations_tenure_match_check",
+      "constraint:legal_invoice_items.legal_invoice_items_amount_cents_check",
+      "constraint:legal_invoice_items.legal_invoice_items_community_id_fkey",
+      "constraint:legal_invoice_items.legal_invoice_items_pkey",
+      "constraint:legal_invoice_items.legal_invoice_items_review_id_fkey",
+      "constraint:legal_invoice_items.legal_invoice_items_revision_check",
+      "constraint:legal_invoice_items.legal_invoice_items_service_date_source_check",
+      "constraint:legal_invoice_review_events.legal_invoice_review_events_action_check",
+      "constraint:legal_invoice_review_events.legal_invoice_review_events_community_id_fkey",
+      "constraint:legal_invoice_review_events.legal_invoice_review_events_pkey",
+      "constraint:legal_invoice_review_events.legal_invoice_review_events_review_id_fkey",
+      "constraint:legal_invoice_reviews.legal_invoice_reviews_ap_invoice_id_fkey",
+      "constraint:legal_invoice_reviews.legal_invoice_reviews_ap_invoice_id_key",
+      "constraint:legal_invoice_reviews.legal_invoice_reviews_community_id_fkey",
+      "constraint:legal_invoice_reviews.legal_invoice_reviews_pkey",
+      "constraint:legal_invoice_reviews.legal_invoice_reviews_revision_check",
+      "constraint:legal_invoice_reviews.legal_invoice_reviews_status_check",
+      "function:legal_review_save_draft",
+      "index:idx_legal_invoice_allocations_item",
+      "index:idx_legal_invoice_allocations_property",
+      "index:idx_legal_invoice_items_review",
+      "index:idx_legal_invoice_review_events_review",
+      "index:idx_legal_invoice_reviews_community",
+      "index:legal_invoice_allocations_pkey",
+      "index:legal_invoice_items_pkey",
+      "index:legal_invoice_review_events_pkey",
+      "index:legal_invoice_reviews_ap_invoice_id_key",
+      "index:legal_invoice_reviews_pkey",
+      "table:legal_invoice_allocations",
+      "table:legal_invoice_items",
+      "table:legal_invoice_review_events",
+      "table:legal_invoice_reviews",
+      "trigger:legal_invoice_reviews.trg_legal_invoice_reviews_updated_at"
+    ],
+    "changed": [],
+    "removed": []
+  },
+  "row_changes": {
+    "vendors": 0,
+    "legal_invoice_reviews": 0,
+    "legal_invoice_items": 0,
+    "legal_invoice_allocations": 0,
+    "legal_invoice_review_events": 0
+  },
+  "protected": [
+    {
+      "table": "ap_invoices",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_invoice_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "library_documents",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the three attorney vendors are flagged legal counsel",
+      "sql": "SELECT count(*)::int FROM vendors WHERE is_legal_counsel",
+      "expect": 3
+    },
+    {
+      "name": "the four review tables exist and are empty",
+      "sql": "SELECT ((SELECT count(*) FROM legal_invoice_reviews) + (SELECT count(*) FROM legal_invoice_items) + (SELECT count(*) FROM legal_invoice_allocations) + (SELECT count(*) FROM legal_invoice_review_events))::int",
+      "expect": 0
+    },
+    {
+      "name": "the updated_at trigger is attached",
+      "sql": "SELECT count(*)::int FROM pg_trigger WHERE tgname = 'trg_legal_invoice_reviews_updated_at' AND NOT tgisinternal",
+      "expect": 1
+    }
+  ],
+  "api_checks": [
+    {
+      "table": "legal_invoice_reviews",
+      "expect_count": 0
+    },
+    {
+      "table": "legal_invoice_allocations",
+      "expect_count": 0
+    }
+  ],
+  "reload_schema": true
+}

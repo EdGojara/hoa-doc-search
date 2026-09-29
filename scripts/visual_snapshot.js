@@ -26,6 +26,8 @@ const PAGES = [
   { name: 'community-leaving', path: '/app/community.html?fixture=1&id=00000000-0000-4000-8000-00000000000d' },
   { name: 'financial', path: '/app/financial.html?fixture=1' },
   { name: 'operations', path: '/app/operations.html?fixture=1' },
+  { name: 'legal', path: '/app/legal.html?fixture=1&id=00000000-0000-4000-8000-0000000000e1' },
+  { name: 'legal-list', path: '/app/legal.html?fixture=1' },
 ];
 const WIDTHS = [
   { name: 'desktop', width: 1440, height: 900 },
@@ -46,6 +48,8 @@ const OUT = path.join(ROOT, 'visual-snapshots');
 
   // Static server for public/ only; bound to localhost on a random port.
   const app = express();
+  // Served from lib/ in production too (server.js), so the page and server share one rule set.
+  app.get('/app/legal-suggest.js', (req, res) => res.type('application/javascript').sendFile(path.join(ROOT, 'lib', 'legal', 'review_suggest.js')));
   app.use(express.static(path.join(ROOT, 'public')));
   const server = await new Promise((resolve) => { const srv = app.listen(0, '127.0.0.1', () => resolve(srv)); });
   const base = 'http://127.0.0.1:' + server.address().port;
