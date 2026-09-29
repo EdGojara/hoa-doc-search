@@ -22,7 +22,7 @@
     ['communities', 'Communities', '/app/communities'],
     ['owners', 'Owners', '/#tab=ownerar'],
     ['financial', 'Financial', '/app/financial'],
-    ['operations', 'Operations', '/#tab=inspect'],
+    ['operations', 'Operations', '/app/operations'],
     ['projects', 'Projects', '/#tab=status'],
     ['governance', 'Governance', '/#tab=meetings'],
     ['team', 'Team', '/#tab=roster'],
