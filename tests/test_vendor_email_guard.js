@@ -44,6 +44,18 @@ t('Emma creating a vendor from a forwarded bill that shows a staff address store
   assert.strictEqual(inserted[inserted.length - 1].contact_email, 'ap@otherpools.com');
 });
 
+t('the vendor edit check covers EVERY email field, including account_manager_email', () => {
+  for (const f of G.EMAIL_FIELDS) {
+    assert.ok(G.touchesStaffEmail({ [f]: 'cdeleon@bedrocktx.com' }), f);
+    assert.deepStrictEqual(G.refusedStaffEmailFields({ [f]: 'cdeleon@bedrocktx.com' }, 'Star Protection Agency LLC'), [f]);
+  }
+  assert.ok(G.EMAIL_FIELDS.includes('account_manager_email'));
+  assert.strictEqual(G.touchesStaffEmail({ account_manager_email: 'rep@vendor.com', contact_name: 'x' }), false);
+  const src = require('fs').readFileSync(require.resolve('../api/vendors'), 'utf8');
+  assert.ok(/if \(touchesStaffEmail\(update\)\)/.test(src), 'PATCH pre-check uses the all-fields helper');
+  assert.ok(!/\['email', 'contact_email'\]\.some/.test(src), 'the two-field pre-check is gone');
+});
+
 t('every vendor write path goes through the guard (source contract)', () => {
   const fs = require('fs');
   const vendors = fs.readFileSync(require.resolve('../api/vendors'), 'utf8');

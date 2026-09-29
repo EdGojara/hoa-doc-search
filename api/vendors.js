@@ -437,8 +437,8 @@ router.patch('/:vendorId', async (req, res) => {
   try {
     // A Bedrock staff address never goes on a vendor (only Bedrock itself may
     // carry one). Refused with a clear message rather than silently dropped.
-    const { refusedStaffEmailFields, isStaffEmail } = require('../lib/ap/vendor_email_guard');
-    if (['email', 'contact_email'].some((k) => isStaffEmail(update[k]))) {
+    const { refusedStaffEmailFields, touchesStaffEmail } = require('../lib/ap/vendor_email_guard');
+    if (touchesStaffEmail(update)) {
       const { data: cur, error: ce } = await supabase.from('vendors').select('name').eq('id', vendorId).maybeSingle();
       if (ce) throw ce;
       const refused = refusedStaffEmailFields(update, (update.name || (cur && cur.name) || ''));
