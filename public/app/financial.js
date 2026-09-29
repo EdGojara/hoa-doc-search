@@ -45,7 +45,12 @@
   function sum(list) { return list.reduce(function (a, i) { return a + Number(i.total_cents || 0); }, 0); }
 
   function problemOrUnavailable(key, label, s, out) {
-    if (s && !s.ok && (s.status === 403 || s.status === 401)) {
+    // 401 = the session expired mid-use: a sign-in problem, not a role limit.
+    if (s && !s.ok && s.status === 401) {
+      out.problems.push({ key: key, label: label, message: 'Your sign-in expired, so ' + label + ' didn’t load. Sign in again and refresh.', error: 'session_expired' });
+      return true;
+    }
+    if (s && !s.ok && s.status === 403) {
       out.unavailable.push({ key: key, label: label, message: label + ' isn’t available to your role, so it isn’t counted here.' });
       return true;
     }

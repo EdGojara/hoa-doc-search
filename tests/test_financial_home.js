@@ -56,6 +56,13 @@ t('403 source is "not available", never quiet, not a problem', () => {
   assert.strictEqual(r.problems.length, 0);
 });
 
+t('401 (session expired) is a sign-in problem, not "not available to your role"', () => {
+  const r = build(Object.assign({}, clear, { managerQueue: { ok: false, status: 401, error: 'authentication required' } }));
+  assert.ok(r.problems.some((p) => p.key === 'manager' && /sign-in expired/.test(p.message)));
+  assert.ok(!r.unavailable.some((u) => u.key === 'manager'));
+  assert.ok(!r.quiet.some((q) => q.key === 'manager'));
+});
+
 t('cash not computed → "cash not checked", never treated as covered', () => {
   const r = build(Object.assign({}, clear, { edQueue: ok({ invoices: [{ total_cents: 1000, community: 'Alpha' }], cash: [{ community: 'Alpha', count: 1, pending_cents: 1000, operating_cash_cents: null, covered: null }] }) }));
   const rel = r.attention.find((a) => a.key === 'release');
