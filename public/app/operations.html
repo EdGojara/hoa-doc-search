@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operations · Trusted</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/app/tx.css">
+<style>
+  .op-wrap { padding: 34px 32px 48px; max-width: 1240px; }
+  .op-head h1 { margin: 6px 0 6px; font-family: var(--font-serif); font-weight: 600; font-size: clamp(34px, 4vw, 46px); color: var(--navy); line-height: 1.05; }
+  .op-head p { margin: 0; color: var(--tx-text-2); font-size: 15px; max-width: 800px; }
+  .op-brief { margin-top: 22px; }
+  .op-human { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--tx-bad); background: var(--tx-bad-bg); border-radius: 10px; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
+  .op-mx { overflow-x: auto; }
+  .op-mx table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .op-mx th { text-align: right; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--tx-muted); font-weight: 600; padding: 12px 12px; border-bottom: 1px solid var(--tx-rule-soft); vertical-align: bottom; line-height: 1.3; }
+  .op-mx th:first-child, .op-mx td:first-child { text-align: left; }
+  .op-mx td { padding: 11px 12px; border-top: 1px solid var(--tx-rule-soft); text-align: right; font-variant-numeric: tabular-nums; }
+  .op-mx tr:first-child td { border-top: 0; }
+  .op-mx td.op-name a { font-weight: 600; color: var(--navy); }
+  .op-zero { color: var(--tx-rule); }
+  .op-hot { font-weight: 700; color: var(--tx-bad); }
+  .op-info { color: var(--tx-muted); }
+  .op-other { font-size: 13px; color: var(--tx-text-2); padding: 14px 20px; border-top: 1px solid var(--tx-rule-soft); }
+  .op-other:first-child { border-top: 0; }
+  .op-work { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; margin-top: 12px; }
+  .op-tile { padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; }
+  .op-tile h3 { margin: 0 0 2px; font-size: 15px; color: var(--navy); display: flex; align-items: center; gap: 8px; }
+  .op-tile a { font-size: 13.5px; display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; }
+  .op-tile a:hover { color: var(--navy); text-decoration: underline; text-decoration-color: var(--gold); }
+  .op-tile a span { color: var(--tx-muted); font-size: 11.5px; white-space: nowrap; }
+  @media (max-width: 760px) { .op-wrap { padding: 22px 16px 40px; } }
+</style>
+</head>
+<body class="tx-body">
+<div class="tx-shell" id="tx-shell">
+  <main class="tx-main" id="tx-main">
+    <div class="tx-top">
+      <button class="tx-menu-btn" id="tx-menu-btn" aria-label="Open navigation"></button>
+      <span class="tx-switch" style="cursor:default">Operations</span>
+      <div style="margin-left:auto;display:flex;gap:14px;align-items:center">
+        <span class="tx-muted" style="font-size:12px" id="op-stamp"></span>
+        <button id="op-refresh" type="button" class="tx-btn tx-btn--sec" style="height:32px"></button>
+      </div>
+    </div>
+    <div class="op-wrap">
+      <div class="op-head">
+        <span class="tx-lbl">Operations</span>
+        <h1 id="op-headline">Checking open work…</h1>
+        <p>Letters, enforcement, architectural reviews, callbacks, email drafts and tasks, across every community. Overdue only means past a time the system has on record. Certified §209, fines and 10-day self-help are human decisions: shown here, never acted on from here.</p>
+      </div>
+
+      <section class="tx-card tx-brief op-brief" aria-labelledby="op-att">
+        <div class="tx-brief-head"><div><div id="op-att" style="font-size:15px;font-weight:600;color:var(--navy)">Needs attention</div><div class="tx-muted" style="font-size:12.5px">Overdue first, then what's waiting on someone</div></div></div>
+        <div id="op-items"><div class="tx-brief-row"><span class="tx-num">1</span><div><div class="tx-skel" style="height:16px;width:55%"></div><div class="tx-skel" style="height:12px;width:75%;margin-top:8px"></div></div><span></span></div></div>
+      </section>
+
+      <div style="margin-top:22px"><div class="tx-okstrip" id="op-ok"><span class="tx-lbl">Clear</span></div></div>
+
+      <div class="tx-section-h"><h2>By community</h2><span class="tx-muted" style="font-size:13px">Red = past a recorded due time</span></div>
+      <div class="tx-card op-mx" id="op-matrix"><div style="padding:18px"><div class="tx-skel" style="height:14px;width:70%"></div></div></div>
+      <div id="op-other-wrap"></div>
+
+      <div class="tx-section-h"><h2>Where the work lives</h2><span class="tx-muted" style="font-size:13px">These open the current screens while they move into the new design</span></div>
+      <div class="op-work" id="op-work"></div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/app/tx-icons.js"></script>
+<script src="/app/tx.js"></script>
+<script>if (TX.fixture) document.write('<script src="/app/fixtures/operations.fixture.js"><\/script>');</script>
+<script>
+(async function () {
+  'use strict';
+  var esc = TX.esc, icon = TX.icon, $ = function (id) { return document.getElementById(id); };
+  var user = await TX.boot({ active: 'operations' });
+  if (!user) return;
+  $('op-refresh').innerHTML = icon('refresh', { size: 14 }) + '<span>Refresh</span>';
+  $('op-refresh').addEventListener('click', load);
+
+  var WORK = [
+    ['mail', 'Enforcement letters', [['Drafts and Mail Queue', '/#tab=inspect'], ['Violations list', '/admin/violations-list'], ['Notices not sent', '/admin/notices-not-sent']]],
+    ['alert', 'Cures and certified §209', [['Cures and certified', '/#tab=cures'], ['Certified reinspection', '/cert-reinspect.html'], ['Enforcement health', '/admin/enforcement-health']]],
+    ['projects', 'Architectural review', [['Resident ACC', '/#tab=acc'], ['Builder ARC', '/builder-arc-review.html']]],
+    ['inbox', 'Homeowner contact', [['Calls and callbacks', '/#tab=calls'], ['Email draft queue', '/admin/draft-queue'], ['Communications', '/admin/communications']]],
+    ['operations', 'Mail and tasks', [['Team Status', '/#tab=status'], ['Mail Scan', '/mail-scan.html']]],
+    ['communities', 'Amenities', [['Rental requests', '/amenity-rentals-review.html'], ['Pool access', '/admin/pool-access']]],
+  ];
+  $('op-work').innerHTML = WORK.map(function (w) {
+    return '<div class="tx-card op-tile"><h3>' + icon(w[0], { size: 17, color: 'var(--tx-gold-ink)' }) + esc(w[1]) + '</h3>' +
+      w[2].map(function (l) { return '<a href="' + esc(l[1]) + '">' + esc(l[0]) + '<span>current screen</span></a>'; }).join('') + '</div>';
+  }).join('');
+
+  function fmtDate(iso) {
+    if (!iso) return '';
+    var d = new Date(iso); if (isNaN(d)) return '';
+    return d.toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' });
+  }
+  var LATE = { calls_overdue: 1, builder_overdue: 1, work_overdue: 1, certified_cure_ended: 1 };
+
+  function render(o) {
+    var total = o.items.reduce(function (s, i) { return s + i.count; }, 0);
+    var comms = {};
+    o.items.forEach(function (i) { i.communities.forEach(function (c) { comms[c.name] = 1; }); });
+    var nc = Object.keys(comms).length;
+    $('op-headline').textContent = o.problems.length && !total ? 'Some operational data didn’t load.' : total ? total + ' items waiting across ' + nc + ' ' + (nc === 1 ? 'community' : 'communities') + '.' : 'No operational work is waiting.';
+
+    var html = '', n = 0;
+    o.problems.forEach(function (p) {
+      n += 1;
+      html += '<div class="tx-brief-row"><span class="tx-num" style="background:var(--tx-warn-bg);color:var(--tx-warn)">' + n + '</span><div><div class="tx-brief-title">' + esc(p.message) + '</div><div class="tx-brief-detail">Refresh to try again. Nothing is assumed.</div></div><span></span></div>';
+    });
+    o.items.forEach(function (i) {
+      n += 1;
+      var late = LATE[i.key];
+      var who = i.communities.slice(0, 4).map(function (c) { return esc(c.name) + ' ' + c.count; }).join(' · ') + (i.communities.length > 4 ? ' · +' + (i.communities.length - 4) + ' more' : '');
+      var extra = i.key === 'letters_unrecorded' ? ' Some may have been mailed without the mailing being recorded; run the post-print check, then record it in the Mail Queue.' : '';
+      html += '<div class="tx-brief-row"><span class="tx-num"' + (late ? ' style="background:var(--tx-bad-bg);color:var(--tx-bad)"' : '') + '>' + n + '</span><div>' +
+        '<div class="tx-brief-title">' + i.count + ' · ' + esc(i.title) + (i.humanOnly ? '<span class="op-human">' + icon('alert', { size: 12 }) + 'Human decision</span>' : '') + '</div>' +
+        '<div class="tx-brief-detail">' + who + (i.oldest ? ' · oldest ' + esc(fmtDate(i.oldest)) : '') + '.' + esc(extra) + '</div></div>' +
+        '<a class="tx-btn ' + (n === 1 ? 'tx-btn--pri' : 'tx-btn--sec') + '" href="' + esc(i.href) + '">' + (i.humanOnly ? 'View' : 'Open') + '</a></div>';
+    });
+    if (!n) html = '<div style="padding:18px 0 14px;border-top:1px solid var(--tx-rule-soft);display:flex;gap:10px;align-items:center;color:var(--tx-ok);font-weight:600">' + icon('check', { size: 18 }) + 'No operational work is waiting.</div>';
+    $('op-items').innerHTML = html;
+
+    var ok = '<span class="tx-lbl">Clear</span>';
+    if (o.quiet.length) ok += '<div class="tx-ok"><span class="tx-ok-d">' + o.quiet.map(function (q) { return esc(q.title); }).join(' · ') + '</span></div>';
+    else ok += '<div class="tx-ok"><span class="tx-ok-d">Every tracked area has open work. See above.</span></div>';
+    $('op-ok').innerHTML = ok;
+
+    var COLS = [
+      ['letters_draft', 'Letters to approve'], ['letters_print', 'Ready to print'], ['letters_unrecorded', 'Mailing not recorded'],
+      ['certified_cure_ended', 'Certified past cure'], ['acc_pending', 'ACC to review'], ['builder_overdue', 'Builder ARC late'],
+      ['calls_overdue', 'Callbacks late'], ['email_drafts', 'Email drafts'], ['work_overdue', 'Tasks late'],
+      ['courtesy_cure_ended', 'Cure ended, awaiting inspection'],
+    ];
+    var unknown = {}; o.areas.forEach(function (a) { if (a.unknown) unknown[a.key] = 1; });
+    function cell(b, key) {
+      if (unknown[key]) return '<td class="op-info" title="Couldn’t load">?</td>';
+      var v = b.areas[key].count;
+      if (!v) return '<td class="op-zero">—</td>';
+      var cls = LATE[key] ? 'op-hot' : key === 'courtesy_cure_ended' ? 'op-info' : '';
+      return '<td class="' + cls + '"' + (b.areas[key].oldest ? ' title="oldest ' + esc(fmtDate(b.areas[key].oldest)) + '"' : '') + '>' + v + '</td>';
+    }
+    var head = '<tr><th>Community</th>' + COLS.map(function (c) { return '<th>' + esc(c[1]) + '</th>'; }).join('') + '</tr>';
+    var body = o.managed.map(function (b) {
+      var name = b.community.id ? '<a href="/app/communities/' + encodeURIComponent(b.community.id) + '">' + esc(b.community.name) + '</a>' : esc(b.community.name);
+      return '<tr><td class="op-name">' + name + '</td>' + COLS.map(function (c) { return cell(b, c[0]); }).join('') + '</tr>';
+    }).join('');
+    $('op-matrix').innerHTML = o.managed.length ? '<table><thead>' + head + '</thead><tbody>' + body + '</tbody></table>' : '<div style="padding:18px" class="tx-muted">No managed communities.</div>';
+
+    if (o.other.length) {
+      $('op-other-wrap').innerHTML = '<div class="tx-section-h"><span class="tx-lbl">Not counted</span><span class="tx-muted" style="font-size:12.5px">Prospects and communities leaving Bedrock. Existing records stay as they are.</span></div>' +
+        '<div class="tx-card">' + o.other.map(function (b) {
+          var parts = o.areas.filter(function (a) { return b.areas[a.key].count; }).map(function (a) { return b.areas[a.key].count + ' ' + a.title.toLowerCase(); });
+          var label = b.group === 'leaving' ? 'Leaving' + (b.community.management_end_date ? ' (last day ' + b.community.management_end_date + ')' : '') : 'Prospect';
+          return '<div class="op-other"><b>' + esc(b.community.name) + '</b> · ' + esc(label) + (parts.length ? ': ' + esc(parts.join(', ')) : ': nothing open') + '</div>';
+        }).join('') + '</div>';
+    } else { $('op-other-wrap').innerHTML = ''; }
+  }
+
+  async function load() {
+    $('op-headline').textContent = 'Checking open work…';
+    var r = await TX.get('/api/ops/overview');
+    if (!r.ok) {
+      $('op-headline').textContent = r.status === 401 ? 'Your sign-in expired.' : 'Couldn’t load operations.';
+      $('op-items').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc(r.error) + '. Nothing is assumed; refresh to try again.</span></div>';
+      return;
+    }
+    render(r.data);
+    $('op-stamp').textContent = 'Checked ' + new Date(r.data.generated_at || Date.now()).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+  }
+  load();
+})();
+</script>
+</body>
+</html>

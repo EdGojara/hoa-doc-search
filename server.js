@@ -885,6 +885,8 @@ app.get('/app/communities', (req, res) => res.sendFile(require('path').join(__di
 app.get('/app/communities/:id', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'community.html')));
 // Financial home (Issue #6). Read-only aggregation of existing endpoints.
 app.get('/app/financial', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'financial.html')));
+// Operations home (Issue #6). Read-only.
+app.get('/app/operations', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'app', 'operations.html')));
 
 // Static assets. HTML files (the staff app, portal pages) get `no-cache` so the
 // browser MUST revalidate against the server before reusing a copy — otherwise
@@ -1300,6 +1302,8 @@ const todayRouter = require('./api/today');
 app.use('/api/today', todayRouter);
 // Community Data Readiness — read-only, staff sign-in (Issue #6).
 app.use('/api/readiness', require('./api/readiness'));
+// Operations overview — read-only, staff sign-in (Issue #6).
+app.use('/api/ops', require('./api/ops'));
 
 // ARC historical decisions — structured library of past approvals/denials
 // (informational context for the AI assessment engine; never binding precedent)
