@@ -40,6 +40,7 @@
     var s = state.summaries && state.summaries[inv.id];
     if (!s) return inv.review && inv.review.revision ? pill('info', 'Draft saved') : pill('mute', state.summaries ? 'Not checked' : 'Checking…');
     if (s.error) return pill('bad', 'Couldn’t check');
+    if (s.stale) return pill('warn', 'Draft out of date');
     var n = s.summary.exceptions.count;
     if (n) return pill('warn', n + (n === 1 ? ' exception' : ' exceptions'));
     if (!s.summary.reconciled) return pill('bad', 'Doesn’t balance');
@@ -54,7 +55,7 @@
     if (!d.invoices.length) { $('lg-list').innerHTML = '<div class="tx-muted" style="padding:18px">No attorney invoices on file.</div>'; return; }
     var sm = state.summaries || {};
     var need = d.invoices.filter(function (i) { var s = sm[i.id]; return !i.read_only && s && s.summary && s.summary.exceptions.count; }).length;
-    var ready = d.invoices.filter(function (i) { var s = sm[i.id]; return !i.read_only && s && s.summary && s.summary.can_accept && s.source !== 'draft'; }).length;
+    var ready = d.invoices.filter(function (i) { var s = sm[i.id]; return !i.read_only && s && s.summary && s.summary.can_accept && s.source !== 'draft' && !s.stale; }).length;
     $('lg-count').textContent = d.invoices.length + ' invoices' + (state.summaries ? ' · ' + need + ' with exceptions · ' + ready + ' ready to accept' : '') + (d.truncated ? ' · showing the newest ' + d.invoices.length : '');
     $('lg-list').innerHTML = d.invoices.map(function (i) {
       return '<a class="lg-row' + (i.id === currentId ? ' is-on' : '') + '" href="?id=' + encodeURIComponent(i.id) + '" data-id="' + esc(i.id) + '">' +
@@ -97,6 +98,7 @@
     state.items = clone((d.draft || d.suggestion).items);
     state.items.forEach(function (it) { it._staffDate = it.service_date_source === 'staff'; it._wasException = TXLegalSuggest.triageItem(it).status === 'exception'; });
     state.open = {}; state.showAll = false;
+    state.fromDraft = !!d.draft;
     state.dirty = false; state.errors = []; state.notice = notice;
     renderDetail();
   }
@@ -139,7 +141,7 @@
     if ($('lg-pdf')) $('lg-pdf').addEventListener('click', openPdf);
     if ($('lg-reset')) $('lg-reset').addEventListener('click', function () {
       if (!confirm('Replace the working copy with fresh suggestions? Nothing is saved until you press Save draft.')) return;
-      state.items = clone(d.suggestion.items); markDirty(); renderItems();
+      state.items = clone(d.suggestion.items); state.fromDraft = false; markDirty(); renderItems();
     });
     renderPdfRead(); renderItems(); renderRecon(); renderFooter();
   }
@@ -202,14 +204,18 @@
   function renderRecon() {
     var d = state.detail, ed = editable();
     var s = TXLegalSuggest.summarize(d.invoice.total_cents, state.items);
+    var stale = state.fromDraft && d.draft && d.draft.freshness && d.draft.freshness.stale;
+    if (stale) s.can_accept = false;
     var n = s.exceptions.count;
     var stat = function (label, cents, sub, tone) { return '<div class="lg-sum-stat' + (tone ? ' lg-sum-' + tone : '') + '"><span class="tx-lbl">' + esc(label) + '</span><span class="lg-sum-v">' + money(cents) + '</span><span class="tx-muted">' + esc(sub) + '</span></div>'; };
     var cta = '';
-    if (n) cta = '<button type="button" class="tx-btn tx-btn--pri" id="lg-go-exc">Review exceptions (' + n + ')</button>';
+    if (stale && ed) cta = '<button type="button" class="tx-btn tx-btn--pri" id="lg-refresh-draft">Start over from the current evidence</button>';
+    else if (n) cta = '<button type="button" class="tx-btn tx-btn--pri" id="lg-go-exc">Review exceptions (' + n + ')</button>';
     else if (ed && s.can_accept) cta = '<button type="button" class="tx-btn tx-btn--pri" id="lg-accept"' + (state.saving ? ' disabled' : '') + '>' + (state.saving ? 'Saving…' : (d.draft && !state.dirty ? 'Accepted' : 'Accept proposed treatment')) + '</button>';
     $('lg-recon').innerHTML =
+      (stale ? '<div class="lg-tri lg-tri-exc" style="margin-bottom:10px">' + icon('alert', { size: 15 }) + '<div><strong>This saved draft is out of date</strong><ul>' + d.draft.freshness.reasons.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') + '</ul>It can’t be accepted as it stands. Start over from the current evidence (your saved revision stays in the history).</div></div>' : '') +
       '<div class="lg-sum-top"><div><span class="tx-lbl">Proposed treatment</span><div class="lg-sum-head">' +
-        (n ? esc(n + (n === 1 ? ' matter needs' : ' matters need') + ' a decision. Everything else is handled.') : s.reconciled ? 'Nothing needs a decision.' : 'The split doesn’t balance to the invoice yet.') +
+        (stale ? 'Out of date: re-review against the current evidence.' : n ? esc(n + (n === 1 ? ' matter needs' : ' matters need') + ' a decision. Everything else is handled.') : s.reconciled ? 'Nothing needs a decision.' : 'The split doesn’t balance to the invoice yet.') +
       '</div></div>' + cta + '</div>' +
       '<div class="lg-sum-grid">' +
         stat('Homeowners owe', s.recoverable.cents, s.recoverable.count + (s.recoverable.count === 1 ? ' matter' : ' matters')) +
@@ -220,6 +226,8 @@
       '<div class="tx-muted" style="font-size:12px">Accepting saves this treatment as a draft. Nothing posts to the books or charges an owner yet; that is a later, separately approved step.</div>';
     var go = $('lg-go-exc');
     if (go) go.addEventListener('click', function () { var t = $('lg-exc'); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+    var rf = $('lg-refresh-draft');
+    if (rf) rf.addEventListener('click', function () { state.items = clone(d.suggestion.items); state.items.forEach(function (it) { it._wasException = TXLegalSuggest.triageItem(it).status === 'exception'; }); state.fromDraft = false; markDirty(); renderItems(); });
     var acc = $('lg-accept');
     if (acc) acc.addEventListener('click', function () { if (!(d.draft && !state.dirty)) save(); });
   }

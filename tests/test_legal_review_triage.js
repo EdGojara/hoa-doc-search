@@ -41,8 +41,26 @@ t('accepted: high-confidence, current owner, supported work type, category, no b
   const r = S.triageItem(item([good()]));
   assert.strictEqual(r.status, 'accepted'); assert.deepStrictEqual(r.reasons, []);
 });
-t('accepted: association legal expense with no property', () => {
-  assert.strictEqual(S.triageItem(item([good({ classification: 'association_legal_expense', property_id: null, charge_category: null, confidence: 'medium', tenure_match: 'not_applicable', evidence: [] })])).status, 'accepted');
+const assoc = (ev, over) => good(Object.assign({ classification: 'association_legal_expense', property_id: null, charge_category: null, confidence: 'medium', tenure_match: 'not_applicable', evidence: ev }, over || {}));
+t('association: supported by a general-matter heading → accepted', () => {
+  assert.strictEqual(S.triageItem(item([assoc([{ kind: 'work_type', value: 'general / association matter per the invoice PDF: supported by the heading / title' }])])).status, 'accepted');
+  assert.strictEqual(S.triageItem(item([assoc([{ kind: 'work_type', value: 'association / corporate work, no property named: supported by the line text' }])])).status, 'accepted');
+});
+t('association: NOT accepted merely because no property is named (no evidence → soft exception)', () => {
+  const r = S.triageItem(item([assoc([])]));
+  assert.strictEqual(r.status, 'exception'); assert.strictEqual(r.confirmable, true); assert.ok(/no printed support/.test(r.reasons[0]));
+});
+t('association: a model-only general label → soft exception; a confirmation clears it', () => {
+  const ev = [{ kind: 'work_type', value: 'general / association matter per the invoice PDF: the model’s label only; the heading and entry text don’t confirm it (confirm before any posting)' }];
+  assert.strictEqual(S.triageItem(item([assoc(ev)])).status, 'exception');
+  assert.strictEqual(S.triageItem(item([assoc(ev.concat([CONFIRMED]))])).status, 'accepted');
+});
+t('association: contradicted by the text → exception', () => {
+  const r = S.triageItem(item([assoc([{ kind: 'work_type', value: 'general / association matter per the invoice PDF: contradicted by the entry text, which reads as collection work' }])]));
+  assert.strictEqual(r.status, 'exception'); assert.ok(r.reasons.some((x) => /conflicts/.test(x)));
+});
+t('association: a confirmation never clears a hard stop on an association item', () => {
+  assert.strictEqual(S.triageItem(item([assoc([CONFIRMED], { bankruptcy_stop: true })])).status, 'exception');
 });
 t('accepted: a staff-chosen property is a human decision, not a weak match', () => {
   assert.strictEqual(S.triageItem(item([good({ suggested: false, confidence: 'none' })])).status, 'accepted');
@@ -82,7 +100,7 @@ t('hard + soft together: confirming clears only the soft part', () => {
 });
 
 t('summarize: buckets in money; can_accept only when balanced and no exceptions', () => {
-  const items = [item([good({ amount_cents: 5000 })]), item([good({ classification: 'association_legal_expense', property_id: null, charge_category: null, amount_cents: 2000, evidence: [] })])];
+  const items = [item([good({ amount_cents: 5000 })]), item([good({ classification: 'association_legal_expense', property_id: null, charge_category: null, amount_cents: 2000, evidence: [{ kind: 'work_type', value: 'general / association matter per the invoice PDF: supported by the heading / title' }] })])];
   const s = S.summarize(7000, items);
   assert.deepStrictEqual([s.recoverable.cents, s.association.cents, s.exceptions.count, s.accepted.count, s.can_accept], [5000, 2000, 0, 2, true]);
   assert.strictEqual(S.summarize(7001, items).can_accept, false);   // off by a cent
@@ -114,6 +132,30 @@ t('engine: a bankruptcy on file turns exactly that matter into an exception', ()
   assert.strictEqual(S.summarize(inv.total_cents, items).can_accept, false);
 });
 
+// ---- engine: association support from the PDF ---------------------------------------
+const matterOf = (over) => Object.assign({ index: 0, matter_ref: 'x', section_heading: null, title: 'Matter', parties: [], property_address: null, owner_account_number: null,
+  work_type: 'general', entries: [{ description: 'Telephone conference.', amount_cents: 100 }] }, over);
+const assocEvidence = (m) => {
+  const a = S.itemSignals(S.buildIndex({}), { invoice_date: '2026-08-31' }, [{ id: 'L1', description: 'Fees' }], { id: 'x', matters: [m], line_map: { L1: 0 } });
+  return { ev: a.match.evidence.find((e) => e.kind === 'work_type'), cls: a.cls };
+};
+t('engine: a "General Matters" heading supports association treatment', () => {
+  const r = assocEvidence(matterOf({ section_heading: 'General Matters' }));
+  assert.ok(/supported by the heading/.test(r.ev.value)); assert.strictEqual(r.cls.association, true);
+});
+t('engine: a general label on a matter that names a homeowner is contradicted (not association)', () => {
+  const r = assocEvidence(matterOf({ parties: ['Farrow, Juniper'], property_address: '9903 Fixture Bend Ct' }));
+  assert.ok(/contradicted/.test(r.ev.value)); assert.strictEqual(r.cls.association, false);
+});
+t('engine: a general label whose entries read as collection work is contradicted', () => {
+  const r = assocEvidence(matterOf({ entries: [{ description: 'Prepare demand letter re delinquent assessments and lien.', amount_cents: 100 }] }));
+  assert.ok(/contradicted by the entry text/.test(r.ev.value)); assert.strictEqual(r.cls.association, false);
+});
+t('engine: a general label with nothing supporting it is the model’s label only', () => {
+  const r = assocEvidence(matterOf({}));
+  assert.ok(/model’s label only/.test(r.ev.value)); assert.strictEqual(r.cls.association, true);
+});
+
 // ---- server: confirmations are recorded with the actor -----------------------------
 const loaded = (ctx) => ({ invoice: { id: 'inv', invoice_date: inv.invoice_date, total_cents: inv.total_cents, service_period_start: null, service_period_end: null, community_id: 'c1' },
   lines: fx.ap_lines.map((l) => ({ id: l.id, line_number: l.line_number, description: l.description, amount_cents: l.amount_cents })), ctx, readOnly: null, schemaReady: true });
@@ -129,6 +171,62 @@ t('save: a confirmation is recorded with the signed-in actor and clears only sof
   assert.ok(conf && /confirmed by ed@example\.test on \d{4}-\d{2}-\d{2}/.test(conf.value));
   assert.strictEqual(S.triageItem(b.items[1]).status, 'exception');   // bankruptcy stays an exception even "confirmed"
   assert.ok(!b.items[2].allocations[0].evidence.some((e) => e.kind === 'staff_confirmed'));   // not confirmed → nothing recorded
+});
+
+// ---- stale saved drafts never read as Accepted / Ready -----------------------------
+// A draft saved from the engine's own output, then the world changes under it.
+function savedFrom(ctx, extractionId) {
+  const d = loaded(ctx);
+  const sug = S.suggestReview(d.invoice, d.lines, ctx);
+  const items = sug.items.map((it) => Object.assign({}, it, { extraction_id: extractionId || null, allocations: it.allocations.map((a) => Object.assign({}, a)) }));
+  return { d, saved: { review: { id: 'r', revision: 1 }, items, reads: [], events: [] } };
+}
+const usableRead = (id) => ({ extraction: { id, status: 'valid', matters: [], line_map: {}, problems: [] }, extractionUse: { ok: true } });
+const noRead = { extraction: null, extractionUse: { ok: false, reason: 'not read' } };
+t('fresh: a draft that still matches the payable and the read it used is current (and acceptable)', () => {
+  const { d, saved } = savedFrom(ctxFor(false), 'read-A');
+  const full = Object.assign({}, d, { saved }, usableRead('read-A'));
+  assert.strictEqual(R.draftFreshness(full).stale, false);
+  const p = R.detailPayload(full);
+  assert.strictEqual(p.draft.summary.can_accept, true); assert.ok(!p.draft.summary.stale);
+});
+const edits = [
+  ['a line amount changed', (d) => { d.lines = d.lines.map((l, i) => (i === 0 ? Object.assign({}, l, { amount_cents: l.amount_cents + 1 }) : l)); }],
+  ['a line description changed', (d) => { d.lines = d.lines.map((l, i) => (i === 0 ? Object.assign({}, l, { description: l.description + ' (recoded)' }) : l)); }],
+  ['a line added', (d) => { d.lines = d.lines.concat([{ id: 'L9', line_number: 9, description: 'New', amount_cents: 100 }]); }],
+  ['a line removed', (d) => { d.lines = d.lines.slice(1); }],
+];
+edits.forEach(([what, edit]) => {
+  t('stale: ' + what + ' after the draft was saved → out of date, never acceptable', () => {
+    const { d, saved } = savedFrom(ctxFor(false), null);
+    edit(d);
+    const full = Object.assign({}, d, { saved }, noRead);
+    const f = R.draftFreshness(full);
+    assert.strictEqual(f.stale, true); assert.ok(/payable changed/.test(f.reasons[0]));
+    const p = R.detailPayload(full);
+    assert.strictEqual(p.draft.summary.can_accept, false); assert.strictEqual(p.draft.summary.stale, true);
+  });
+});
+t('stale: the draft relied on read A but read B is now current → out of date', () => {
+  const { d, saved } = savedFrom(ctxFor(false), 'read-A');
+  const f = R.draftFreshness(Object.assign({}, d, { saved }, usableRead('read-B')));
+  assert.strictEqual(f.stale, true); assert.ok(/read again/.test(f.reasons[0]));
+});
+t('stale: the read the draft relied on no longer describes the payable → out of date', () => {
+  const { d, saved } = savedFrom(ctxFor(false), 'read-A');
+  const f = R.draftFreshness(Object.assign({}, d, { saved }, { extraction: { id: 'read-A', status: 'valid' }, extractionUse: { ok: false, stale: true } }));
+  assert.strictEqual(f.stale, true); assert.ok(/no longer describes/.test(f.reasons[0]));
+});
+t('stale: a draft made without the PDF, now that a usable read exists → re-review', () => {
+  const { d, saved } = savedFrom(ctxFor(false), null);
+  const f = R.draftFreshness(Object.assign({}, d, { saved }, usableRead('read-A')));
+  assert.strictEqual(f.stale, true); assert.ok(/has been read since/.test(f.reasons[0]));
+});
+t('list: a stale draft reports stale (the badge can never say Accepted / Ready)', () => {
+  const { d, saved } = savedFrom(ctxFor(false), null);
+  d.lines = d.lines.map((l, i) => (i === 0 ? Object.assign({}, l, { amount_cents: l.amount_cents + 1 }) : l));
+  const p = R.detailPayload(Object.assign({}, d, { saved }, noRead));
+  assert.strictEqual(p.draft.freshness.stale, true); assert.strictEqual(p.draft.summary.can_accept, false);
 });
 
 console.log(`\n${pass} passed${process.exitCode ? ', FAILURES above' : ''}`);
