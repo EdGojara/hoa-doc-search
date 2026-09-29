@@ -10,8 +10,8 @@ const t = (name, fn) => results.push({ name, fn });
 
 t('two violations sharing one combined PDF are one envelope; singles stay one row each', () => {
   const r = groupManifestEnvelopes([
-    { id: 'a1', address: '4819 Harbor Glen Lane', category: 'Mildew / mold (visible)', letter_type: 'Courtesy 1', content: 'p1/bundle-x.pdf', property_id: 'p1' },
-    { id: 'a2', address: '4819 Harbor Glen Lane', category: 'Dead or dying tree', letter_type: 'Courtesy 1', content: 'p1/bundle-x.pdf', property_id: 'p1' },
+    { id: 'a1', address: '4819 Harbor Glen Lane', category: 'Mildew / mold (visible)', letter_type: 'Courtesy 1', content: 'p1/bundle-x.pdf', property_id: 'p1', bundle_id: 'B1' },
+    { id: 'a2', address: '4819 Harbor Glen Lane', category: 'Dead or dying tree', letter_type: 'Courtesy 1', content: 'p1/bundle-x.pdf', property_id: 'p1', bundle_id: 'B1' },
     { id: 'b1', address: '4822 Bonny Loch Lane', category: 'Weeds in Flower Beds', letter_type: 'Courtesy 1', content: 'v9/courtesy_1.pdf', property_id: 'p2' },
   ]);
   assert.strictEqual(r.envelope_count, 2);
@@ -31,6 +31,47 @@ t('a house with two DIFFERENT PDFs (e.g. two stages) is two envelopes and is fla
   assert.strictEqual(r.envelope_count, 2); assert.strictEqual(r.combined_envelopes, 0); assert.strictEqual(r.properties_with_multiple_envelopes, 1);
 });
 
+t('normal bundle: same bundle_id + property + content is ONE envelope with no warning', () => {
+  const r = groupManifestEnvelopes([
+    { id: 'n1', address: '9 N St', category: 'A', letter_type: 'Courtesy 1', content: 'pn/bundle.pdf', property_id: 'pn', bundle_id: 'BN' },
+    { id: 'n2', address: '9 N St', category: 'B', letter_type: 'Courtesy 1', content: 'pn/bundle.pdf', property_id: 'pn', bundle_id: 'BN' },
+  ]);
+  assert.strictEqual(r.envelope_count, 1); assert.strictEqual(r.integrity_warnings, 0);
+  assert.strictEqual(r.envelopes[0].violation_count, 2); assert.strictEqual(r.envelopes[0].integrity_warning, null);
+});
+
+t('same content path on two DIFFERENT properties is NOT collapsed: two envelopes, both flagged', () => {
+  const r = groupManifestEnvelopes([
+    { id: 'x1', address: '1 X St', category: 'A', letter_type: 'Courtesy 1', content: 'shared/file.pdf', property_id: 'px1' },
+    { id: 'x2', address: '2 X St', category: 'B', letter_type: 'Courtesy 1', content: 'shared/file.pdf', property_id: 'px2' },
+  ]);
+  assert.strictEqual(r.envelope_count, 2);
+  assert.strictEqual(r.combined_envelopes, 0);
+  assert.strictEqual(r.integrity_warnings, 2);
+  assert.ok(r.envelopes.every((e) => /also used by another envelope/.test(e.integrity_warning)));
+});
+
+t('same bundle_id with mismatched content or property is NOT merged: each member its own flagged row', () => {
+  const content = groupManifestEnvelopes([
+    { id: 'm1', address: '3 M St', category: 'A', letter_type: 'Courtesy 1', content: 'pm/bundle-a.pdf', property_id: 'pm', bundle_id: 'BM' },
+    { id: 'm2', address: '3 M St', category: 'B', letter_type: 'Courtesy 1', content: 'pm/bundle-b.pdf', property_id: 'pm', bundle_id: 'BM' },
+  ]);
+  assert.strictEqual(content.envelope_count, 2); assert.strictEqual(content.combined_envelopes, 0);
+  assert.ok(content.envelopes.every((e) => /disagree on content/.test(e.integrity_warning)));
+  const prop = groupManifestEnvelopes([
+    { id: 'q1', address: '4 Q St', category: 'A', letter_type: 'Courtesy 1', content: 'q/bundle.pdf', property_id: 'pq1', bundle_id: 'BQ' },
+    { id: 'q2', address: '5 Q St', category: 'B', letter_type: 'Courtesy 1', content: 'q/bundle.pdf', property_id: 'pq2', bundle_id: 'BQ' },
+  ]);
+  assert.strictEqual(prop.envelope_count, 2);
+  assert.ok(prop.envelopes.every((e) => /disagree on property_id/.test(e.integrity_warning)));
+  assert.strictEqual(prop.integrity_warnings, 2);
+  const stage = groupManifestEnvelopes([
+    { id: 's1', address: '6 S St', category: 'A', letter_type: 'Courtesy 1', content: 's/b.pdf', property_id: 'ps', bundle_id: 'BS' },
+    { id: 's2', address: '6 S St', category: 'B', letter_type: 'Courtesy 2', content: 's/b.pdf', property_id: 'ps', bundle_id: 'BS' },
+  ]);
+  assert.ok(stage.envelopes.every((e) => /letter_type/.test(e.integrity_warning)));
+});
+
 t('a letter with no PDF stays its own row (never merged into another)', () => {
   const r = groupManifestEnvelopes([{ id: 'd1', address: '2 B St', category: 'Z', letter_type: 'Courtesy 1', content: null, property_id: 'p4' }, { id: 'd2', address: '2 B St', category: 'W', letter_type: 'Courtesy 1', content: null, property_id: 'p4' }]);
   assert.strictEqual(r.envelope_count, 2); assert.ok(r.envelopes.every((e) => !e.has_pdf));
@@ -38,7 +79,9 @@ t('a letter with no PDF stays its own row (never merged into another)', () => {
 
 t('the manifest API and UI use envelopes (source contract)', () => {
   const fs = require('fs');
-  assert.ok(/groupManifestEnvelopes\(/.test(fs.readFileSync(require.resolve('../api/enforcement'), 'utf8')));
+  const api = fs.readFileSync(require.resolve('../api/enforcement'), 'utf8');
+  assert.ok(/groupManifestEnvelopes\(/.test(api));
+  assert.ok(/bundle_id: i\._bundle_id/.test(api), 'the manifest passes bundle_id into the grouping');
   const ui = fs.readFileSync(require('path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   assert.ok(!/each a separate notice/.test(ui), 'the misleading label is gone');
   assert.ok(/combined into one letter/.test(ui));
