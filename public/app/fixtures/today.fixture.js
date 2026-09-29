@@ -16,7 +16,7 @@ window.TX_FIXTURE = {
   ], cash: [{ community_id: '00000000-0000-4000-8000-000000000001', count: 1, pending_cents: 3572, operating_cash_cents: 1250000, covered: true }] } },
   '/api/today': { ok: true, data: {
     inbox: { count: 2, capped: false, items: [{ sla: 'red' }, { sla: 'green' }] },
-    calls: { items: [{ started_at: new Date(Date.now() - 3600e3).toISOString(), brief: 'Homeowner asked when the pool reopens for the season.' }] },
+    calls: { items: [{ started_at: new Date(Date.now() - 3600e3).toISOString(), brief_concern: 'Homeowner asked when the pool reopens for the season.' }] },
     uploads: { items: [{ imported_at: new Date(Date.now() - 7200e3).toISOString(), report_type: 'ar_aging', status: 'committed' }] },
     section_errors: {},
   } },

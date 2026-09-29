@@ -181,11 +181,15 @@
     var d = today.ok ? today.data : null;
     if (!d) { $('th-activity').innerHTML = '<div class="tx-err">' + icon('alert', { size: 16 }) + '<span>Couldn’t load recent activity.</span></div>'; return; }
     var ev = [];
-    ((d.calls && d.calls.items) || []).forEach(function (x) { if (!c || !x.community_id || x.community_id === c.id) ev.push({ at: x.started_at, text: '<b>Call</b> ' + esc(x.brief ? String(x.brief).slice(0, 110) : 'from a homeowner'), done: true }); });
-    ((d.uploads && d.uploads.items) || []).forEach(function (x) { if (!c || !x.community_id || x.community_id === c.id) ev.push({ at: x.imported_at, text: '<b>Import</b> ' + esc(String(x.report_type || 'Vantaca report').replace(/_/g, ' ')) + ' · ' + esc(x.status || ''), done: x.status === 'committed' || x.status === 'completed' }); });
+    // /api/today?community_id= scopes calls and imports server-side (capped reads).
+    ((d.calls && d.calls.items) || []).forEach(function (x) { ev.push({ at: x.started_at, text: '<b>Call</b> ' + esc(x.brief_concern ? String(x.brief_concern).slice(0, 110) : 'from a homeowner'), done: true }); });
+    ((d.uploads && d.uploads.items) || []).forEach(function (x) { ev.push({ at: x.imported_at, text: '<b>Import</b> ' + esc(String(x.report_type || 'Vantaca report').replace(/_/g, ' ')) + ' · ' + esc(x.status || ''), done: x.status === 'committed' || x.status === 'completed' }); });
     ev = ev.filter(function (e) { return e.at; }).sort(function (a, b) { return new Date(b.at) - new Date(a.at); }).slice(0, 6);
-    if (!ev.length) { $('th-activity').innerHTML = '<div class="tx-muted" style="font-size:13px">No calls or imports recorded recently.</div>'; return; }
-    $('th-activity').innerHTML = ev.map(function (e) {
+    var se = d.section_errors || {};
+    var failed = ['calls', 'uploads'].filter(function (k) { return se[k]; }).map(function (k) { return k === 'calls' ? 'calls' : 'imports'; });
+    var warn = failed.length ? '<div class="tx-err" style="margin-bottom:8px">' + icon('alert', { size: 16 }) + '<span>Couldn’t load recent ' + failed.join(' or ') + '. This list may be incomplete.</span></div>' : '';
+    if (!ev.length) { $('th-activity').innerHTML = warn + (failed.length === 2 ? '' : '<div class="tx-muted" style="font-size:13px">No calls or imports recorded recently.</div>'); return; }
+    $('th-activity').innerHTML = warn + ev.map(function (e) {
       var t = new Date(e.at);
       var sameDay = t.toDateString() === new Date().toDateString();
       var stamp = sameDay ? t.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' }) : t.toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' });

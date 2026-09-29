@@ -176,6 +176,8 @@ const CHECKS = [
   'tests/test_mail_queue_bundle_print.js',
   'tests/test_mail_manifest_envelopes.js',
   'tests/test_operator_briefing.js',
+  'tests/test_reconciliation_ar_readiness.js',
+  'scripts/check_brand_token_parity.js',
   'tests/test_emma_reimbursement.js',
   'tests/test_ownership_history.js',
   'tests/test_ap_commit_review_flag.js',

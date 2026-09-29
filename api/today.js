@@ -42,9 +42,11 @@ router.get('/', async (req, res) => {
     const demoIds = await require('../lib/demo/demo_guard').demoCommunityIds();
     const notDemo = (q) => (demoIds.length ? q.not('community_id', 'in', '(' + demoIds.join(',') + ')') : q);
     // Optional scope (Operator Home is per community). Filtering server-side
-    // matters: the inbox read is capped at 10, so filtering a portfolio-wide
-    // top 10 in the browser would under-count a single community.
-    const scopeCommunityId = /^[0-9a-f-]{36}$/i.test(String(req.query.community_id || '')) ? String(req.query.community_id) : null;
+    // matters: the inbox, calls and imports reads are capped, so filtering a
+    // portfolio-wide top N in the browser would drop a quiet community's rows.
+    // Strict UUID (same pattern as api/ar.js); anything else = portfolio view.
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const scopeCommunityId = UUID.test(String(req.query.community_id || '')) ? String(req.query.community_id) : null;
     const scoped = (q) => (scopeCommunityId ? q.eq('community_id', scopeCommunityId) : q);
 
     const [
@@ -64,17 +66,17 @@ router.get('/', async (req, res) => {
         .order('created_at', { ascending: false })
         .limit(10))),
       // Recent calls — last 10 inbound
-      notDemo(supabase
+      scoped(notDemo(supabase
         .from('homeowner_calls')
         .select('call_sid, community_id, caller_phone, caller_homeowner_id, started_at, ended_at, duration_seconds, brief')
         .order('started_at', { ascending: false })
-        .limit(10)),
+        .limit(10))),
       // Recent Vantaca imports — last 5 of any status
-      notDemo(supabase
+      scoped(notDemo(supabase
         .from('vantaca_imports')
         .select('id, community_id, report_type, source_filename, status, as_of_date, extraction_row_count, imported_at')
         .order('imported_at', { ascending: false })
-        .limit(5)),
+        .limit(5))),
       // AR freshness — committed transaction batches grouped by community.
       // We'll merge with full community list below.
       notDemo(supabase
