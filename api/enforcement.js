@@ -3100,7 +3100,7 @@ router.get('/mail-queue/batch-manifest', async (req, res) => {
     let letters = [], fromRow = 0;
     for (;;) {
       let q = supabase.from('interactions')
-        .select('id, type, content, postmark_date, property_id, properties(street_address), violations(enforcement_categories(label))')
+        .select('id, type, content, postmark_date, property_id, bundle_id, properties(street_address), violations(enforcement_categories(label))')
         .in('type', _MAIL_LETTER_TYPES)
         .eq('delivery_method', deliveryMethod)
         .eq('printed_at', printedAt)
@@ -3122,11 +3122,22 @@ router.get('/mail-queue/batch-manifest', async (req, res) => {
         category: (L.violations && L.violations.enforcement_categories && L.violations.enforcement_categories.label) || null,
         letter_type: _MAIL_TYPE_LABEL[L.type] || L.type,
         has_pdf: !!L.content,
+        _content: L.content || null, _property_id: L.property_id || null, _bundle_id: L.bundle_id || null,
       };
     });
     items.sort((a, b) => String(a.address || '').localeCompare(String(b.address || ''), undefined, { numeric: true }));
+    // One row per PRINTED envelope: letters sharing one combined PDF are one
+    // envelope (the same rule Re-download uses to print each house once).
+    const { groupManifestEnvelopes } = require('../lib/enforcement/mail_manifest');
+    const env = groupManifestEnvelopes(items.map((i) => ({ id: i.id, address: i.address, category: i.category, letter_type: i.letter_type, content: i._content, property_id: i._property_id, bundle_id: i._bundle_id })));
+    for (const i of items) { delete i._content; delete i._property_id; delete i._bundle_id; }
     res.json({
       count: items.length,
+      envelope_count: env.envelope_count,
+      combined_envelopes: env.combined_envelopes,
+      properties_with_multiple_envelopes: env.properties_with_multiple_envelopes,
+      integrity_warnings: env.integrity_warnings,
+      envelopes: env.envelopes.map(({ property_id, content, bundle_id, ...e }) => e),
       distinct_properties: Object.keys(propsSeen).length,
       properties_with_multiple: Object.values(propsSeen).filter((n) => n > 1).length,
       missing_pdf: items.filter((i) => !i.has_pdf).length,
