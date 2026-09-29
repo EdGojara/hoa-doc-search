@@ -182,6 +182,7 @@ const CHECKS = [
   'tests/test_financial_home.js',
   'tests/test_ops_overview.js',
   'tests/test_ap_upload_intake.js',
+  'tests/test_ap_invoice_document.js',
   'tests/test_landing.js',
   'tests/test_login_next.js',
   'scripts/check_brand_token_parity.js',
