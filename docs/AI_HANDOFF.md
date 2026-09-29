@@ -15,7 +15,15 @@ Shared state between Ed and the AI engineers (Claude, ChatGPT). Update before en
 - **Defect found by the replay (RESOLVED):** the payable was created with no ap_invoice_lines row (the reimbursement line used amount_cents, but code_lines reads amount in dollars). A latent issue was also found: a single-account staff directive could be overridden by per-line classifier coding. Both were fixed in main 329a8045, and Gloria's line was added (line bae57751, $35.72 → 5900; header unchanged).
   - Fix: fix/ap-staff-directed-lines @ 6e5baf5a (sticky header needs_review; returned = persisted; staff-directed provenance). ChatGPT cleared; Ed approved in chat; merged to main.
   - Gloria's line patch DONE (approved by Ed in chat): one line $35.72 → 5900; still awaiting_approval, needs_review=true, cutover_review=PENDING, no JE. ChatGPT post-merge review: no blocker.
-- **Remaining for Gloria (operational):** confirm the mailing address on the payee, decide the pre-cutover treatment, then approve.
+- **Gloria readied (Ed approved "address + cutover only" in chat):**
+  - payee address set from the staff instruction;
+  - cutover NOT_IN_CONVERTED_BOOKS via reviewPreCutoverInvoice → JE-2026-00245 dated 8/1, Dr 5900 / Cr 2000 $35.72;
+  - still awaiting_approval. **Ed approves in Payables.**
+  - Note: reviewPreCutoverInvoice clears needs_review on NOT_IN. That was correct here; making it sticky generally is only proposed.
+- **Vendors (Ed: "celina email is not to be used for any vendor"):**
+  - staff address/name cleared from Star Protection, S&L Solutions, Sweetwater (email) and Prepared Publications (name);
+  - 0 left;
+  - the guard is on fix/vendor-no-staff-email @ 424080ed (NOT merged).
 - **Star Protection (vendor a3dea309):** contact_email = a Bedrock staff address, contact_name = a staff member. Proposed: NULL both (or move the staff address to account_manager_email); split remit_address_line1. NOT changed.
 - **Mailbox lag → Issue #4:** ingest is manual-only since 2026-07-07 (EMAIL_INGEST_AUTO gate); every mailbox lags between Pull inbox presses. Decision needed.
 
