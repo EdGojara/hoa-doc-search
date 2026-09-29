@@ -1,0 +1,46 @@
+{
+  "description": "Daughtry & Farine shape: several matters under section headings (Deed Restriction / Collection / General Matters); each matter has the firm's account number, 'Surname, Given - address', dated fee and expense entries; a no-charge entry; AP lines are per matter split into Fees and Expenses, and two matters bill the same fee amount so the mapping must use the text.",
+  "invoice": { "vendor_invoice_number": "900594", "invoice_date": "2026-08-31", "total_cents": 72006 },
+  "ap_lines": [
+    { "line_number": 1, "description": "Farrow, Juniper - 9903 Fixture Bend Ct. - Fees", "amount_cents": 32400 },
+    { "line_number": 2, "description": "Farrow, Juniper - 9903 Fixture Bend Ct. - Expenses", "amount_cents": 1206 },
+    { "line_number": 3, "description": "Pemberton, Quill O. - 4202 Example Hollow Ct. - Fees", "amount_cents": 32400 },
+    { "line_number": 4, "description": "General Matters - Fees", "amount_cents": 6000 }
+  ],
+  "raw": {
+    "invoice_number": "900594", "invoice_date": "2026-08-31", "total": 720.06,
+    "matters": [
+      { "matter_ref": "9999.0004", "section_heading": "Deed Restriction Matters", "title": "Farrow, Juniper - 9903 Fixture Bend Ct.",
+        "parties": ["Farrow, Juniper"], "property_address": "9903 Fixture Bend Ct.", "owner_account_number": null, "work_type": "deed_restriction",
+        "fees": 324.00, "expenses": 12.06, "total": 336.06,
+        "entries": [
+          { "date": "2026-08-03", "kind": "fee", "description": "Preparation of 10 Day - Force Removal of Tree letter.", "amount": 132.00 },
+          { "date": "2026-08-03", "kind": "fee", "description": "Review of DCCRs regarding maintenance and self help remedies.", "amount": 120.00 },
+          { "date": "2026-08-03", "kind": "fee", "description": "Review of 10 day Forced Removal letter.", "amount": 72.00 },
+          { "date": "2026-08-03", "kind": "expense", "description": "Copies", "amount": 0.30 },
+          { "date": "2026-08-03", "kind": "expense", "description": "Postage", "amount": 11.76 }
+        ], "referenced_dates": [] },
+      { "matter_ref": "9999.0007", "section_heading": "Collection Matters", "title": "Pemberton, Quill O. - 4202 Example Hollow Ct.",
+        "parties": ["Pemberton, Quill O."], "property_address": "4202 Example Hollow Ct.", "owner_account_number": null, "work_type": "collection",
+        "fees": 324.00, "expenses": 0, "total": 324.00,
+        "entries": [
+          { "date": "2026-08-10", "kind": "fee", "description": "Prepare demand letter re delinquent assessments.", "amount": 204.00 },
+          { "date": "2026-08-24", "kind": "fee", "description": "Review account ledger and payment history.", "amount": 120.00 }
+        ], "referenced_dates": [] },
+      { "matter_ref": "9999.0001", "section_heading": "General Matters", "title": "General Matters",
+        "parties": [], "property_address": null, "owner_account_number": null, "work_type": "general",
+        "fees": 60.00, "expenses": 0, "total": 60.00,
+        "entries": [
+          { "date": "2026-08-12", "kind": "fee", "description": "Prepare deed restriction status report.", "amount": 60.00 },
+          { "date": "2026-08-12", "kind": "fee", "description": "Review deed restriction status report. [NO CHARGE]", "amount": null, "no_charge": true }
+        ], "referenced_dates": [] }
+    ],
+    "other_dates": []
+  },
+  "expect": {
+    "status": "valid", "matters": 3,
+    "line_map": { "1": 0, "2": 0, "3": 1, "4": 2 },
+    "service_basis": [{ "date": "2026-08-03", "source": "pdf_entry" }, { "start": "2026-08-10", "end": "2026-08-24", "source": "pdf_entry" }, { "date": "2026-08-12", "source": "pdf_entry" }],
+    "work_types": ["deed_restriction", "collection", "general"], "referenced_dates": [0, 0, 0]
+  }
+}

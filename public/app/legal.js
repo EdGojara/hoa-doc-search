@@ -110,6 +110,7 @@
         '<div class="lg-draftline">' + icon('info', { size: 14 }) + '<span>Showing: ' + esc(src) + '. Draft only: saving never posts to the books or charges an owner.</span>' +
         (d.draft && ed ? '<button type="button" class="lg-link" id="lg-reset">Start over from suggestions</button>' : '') + '</div>' +
       '</div>' +
+      '<div class="tx-card lg-pdfread" id="lg-pdfread"></div>' +
       '<div class="tx-card lg-recon" id="lg-recon"></div>' +
       '<div id="lg-items"></div>' +
       '<div class="lg-foot" id="lg-foot"></div>' +
@@ -123,7 +124,53 @@
       if (!confirm('Replace the working copy with fresh suggestions? Nothing is saved until you press Save draft.')) return;
       state.items = clone(d.suggestion.items); markDirty(); renderItems();
     });
-    renderItems(); renderRecon(); renderFooter();
+    renderPdfRead(); renderItems(); renderRecon(); renderFooter();
+  }
+
+  // ---- the attorney's PDF (step 2b) ------------------------------------------------
+  var WT = { collection: 'Collection', deed_restriction: 'Deed restriction', bankruptcy: 'Bankruptcy', general: 'General / association', unknown: 'Work type unclear' };
+  function renderPdfRead() {
+    var d = state.detail, x = d.extraction, inv = d.invoice;
+    var canRead = !d.read_only && inv.has_file;
+    var btn = function (label, force) { return canRead ? '<button type="button" class="tx-btn tx-btn--sec" id="lg-read" data-force="' + (force ? 1 : 0) + '"' + (state.reading ? ' disabled' : '') + '>' + (state.reading ? 'Reading the PDF… (about 30 seconds)' : label) + '</button>' : ''; };
+    var html;
+    if (!x) {
+      html = '<div class="lg-pdf-top"><div><span class="tx-lbl">Attorney’s PDF</span><div class="lg-pdf-msg lg-warnmsg">' + icon('alert', { size: 14 }) +
+        '<span>Not read yet. Suggestions below use the bill’s line text only, which often has no owner, address or matter.</span></div></div>' + btn('Read invoice PDF', false) + '</div>';
+    } else {
+      var tone = x.used ? 'ok' : x.status === 'failed' ? 'bad' : 'warn';
+      var label = x.used ? 'Read and reconciled: in use' : x.status === 'failed' ? 'Read failed' : x.status === 'valid' ? 'Read, not in use' : 'Read, didn’t reconcile';
+      html = '<div class="lg-pdf-top"><div><span class="tx-lbl">Attorney’s PDF</span><div class="lg-pdf-msg">' + pill(tone, label) +
+        '<span class="tx-muted">Read ' + esc(fmtTime(x.created_at)) + (x.created_by ? ' by ' + esc(x.created_by) : '') + '</span></div>' +
+        (x.note ? '<div class="lg-pdf-note">' + esc(x.note) + '</div>' : '<div class="lg-pdf-note">Matters, owners, addresses and the dates of the attorney’s time entries come from the PDF, and every payable line is tied to one matter to the cent.</div>') +
+        '</div>' + btn('Read again', true) + '</div>' +
+        (x.problems && x.problems.length ? '<ul class="lg-reasons">' + x.problems.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul>' : '') +
+        (x.error ? '<div class="tx-err" style="margin-top:8px">' + icon('alert', { size: 15 }) + '<span>' + esc(x.error) + '</span></div>' : '') +
+        (x.matters && x.matters.length ? '<details class="lg-matters"><summary>' + x.matters.length + (x.matters.length === 1 ? ' matter' : ' matters') + ' on the PDF</summary>' + x.matters.map(function (m) {
+          return '<div class="lg-matter"><div class="lg-matter-top"><strong>' + esc(m.title || 'Untitled matter') + '</strong><span class="lg-amt">' + money(m.total_cents) + '</span></div>' +
+            '<div class="tx-muted">' + [m.matter_ref ? 'File ' + m.matter_ref : null, m.section_heading, WT[m.work_type] || m.work_type, m.entries + (m.entries === 1 ? ' entry' : ' entries')].filter(Boolean).map(esc).join(' · ') + '</div>' +
+            (m.service_basis ? '<div>When: ' + esc(m.service_basis) + '</div>' : '') +
+            (m.referenced_dates && m.referenced_dates.length ? '<div class="tx-muted">Dates mentioned in the narrative, not used as service dates: ' + m.referenced_dates.map(function (r) { return esc(r.date + (r.context ? ' (' + r.context + ')' : '')); }).join('; ') + '</div>' : '') +
+          '</div>';
+        }).join('') + '</details>' : '');
+    }
+    $('lg-pdfread').innerHTML = html;
+    var b = $('lg-read');
+    if (b) b.addEventListener('click', function () { readPdf(b.getAttribute('data-force') === '1'); });
+  }
+  async function readPdf(force) {
+    if (state.reading) return;
+    if (state.dirty && !confirm('Reading the PDF refreshes the suggestions and discards your unsaved changes on this invoice. Continue?')) return;
+    state.reading = true; renderPdfRead();
+    var r = await TX.post('/api/legal-review/invoices/' + encodeURIComponent(state.detail.invoice.id) + '/read-pdf', { force: !!force });
+    state.reading = false;
+    if (r.ok) {
+      var x = r.data.extraction;
+      var msg = r.data.read && r.data.read.reused ? 'This PDF was already read; showing that read.' : x && x.used ? 'Read the PDF: ' + x.matters.length + (x.matters.length === 1 ? ' matter' : ' matters') + ', reconciled to the payable. Suggestions now use it.' : 'Read the PDF, but it didn’t reconcile to the payable, so suggestions still use the line text. See the reasons above.';
+      setDetail(r.data, msg); loadList(); return;
+    }
+    renderPdfRead();
+    alert(r.status === 401 || r.status === 403 ? 'Your session has expired. Sign in again.' : 'Couldn’t read the PDF: ' + (r.body && r.body.detail ? r.body.detail : r.error));
   }
 
   async function openPdf() {
@@ -194,6 +241,7 @@
           '<label><span class="tx-lbl">Specific service date</span><input type="date" class="lg-in" data-f="service_date" value="' + esc(it.service_date || '') + '"' + (ed ? '' : ' disabled') + ' title="Optional. Leave blank to use the date on the line or the invoice service period."></label>' +
           '<label><span class="tx-lbl">Matter / reference</span><input class="lg-in" data-f="matter_ref" value="' + esc(it.matter_ref || '') + '" placeholder="Optional"' + (ed ? '' : ' disabled') + '></label>' +
         '</div></div>' +
+      readLine(it) +
       '<div class="lg-when">' + icon('info', { size: 13 }) + '<span>When: ' + esc(it._dateEdited ? (it.service_date ? 'service date ' + it.service_date + ', entered by staff (owner period rechecked on save)' : 'from the line text or invoice service period (rechecked on save)') : (it.service_basis || 'no service date on the line or the invoice')) + '</span></div>' +
       '<div class="lg-lines">' + lines.map(function (l) {
         return '<div class="lg-line"><span class="lg-ln">L' + l.line_number + '</span><span class="lg-lt">' + esc(l.description || '') + '</span><span class="lg-la">' + money(l.amount_cents) + '</span>' +
@@ -204,6 +252,17 @@
       (ed ? '<div class="lg-item-actions"><button type="button" class="tx-btn tx-btn--sec" data-act="split">Split amount</button>' +
         (i < state.items.length - 1 ? '<button type="button" class="lg-link" data-act="merge">Combine with the next item</button>' : '') + '</div>' : '') +
     '</section>';
+  }
+  // Provenance of a saved item: the exact PDF read it relied on (as saved).
+  function readLine(it) {
+    var d = state.detail;
+    if (!it.extraction_id) return '';
+    var reads = (d.draft && d.draft.reads) || [];
+    var r = reads.filter(function (x) { return x.id === it.extraction_id; })[0];
+    var latest = d.extraction && d.extraction.id === it.extraction_id;
+    var when = r ? fmtTime(r.created_at) : (latest && d.extraction ? fmtTime(d.extraction.created_at) : '');
+    return '<div class="lg-when">' + icon('receipt', { size: 13 }) + '<span>Based on the PDF read' + (when ? ' of ' + esc(when) : '') + ' (read ' + esc(String(it.extraction_id).slice(0, 8)) + ')' +
+      (r && !r.is_latest && d.extraction ? '. A newer read exists; this saved item still points at the read it used.' : '') + '</span></div>';
   }
   function renderItems() {
     $('lg-items').innerHTML = state.items.map(itemHtml).join('');

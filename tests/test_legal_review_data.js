@@ -184,7 +184,9 @@ async function apiTests() {
   const writes = [];
   let rpcResult = { data: { ok: true, review_id: 'r1', revision: 1 }, error: null };
   let current = loaded();
-  const stubR = Object.assign({}, R, { loadInvoice: async () => current, legalVendors: async () => ({ vendors: [], flag_ready: true }) });
+  let readResult = { extraction_id: 'ext-1', status: 'valid', reused: false }; const readCalls = [];
+  const stubR = Object.assign({}, R, { loadInvoice: async () => current, legalVendors: async () => ({ vendors: [], flag_ready: true }),
+    readInvoicePdf: async (sb, d, actor, opts) => { readCalls.push({ actor, force: opts.force }); return readResult; } });
   const fakeSb = { rpc: async (name, args) => { writes.push({ name, args }); return rpcResult; }, from: (tbl) => { writes.push({ from: tbl }); throw new Error('no direct table access expected'); } };
   const origLoad = Module._load;
   Module._load = function (req, parent, isMain) {
@@ -232,6 +234,22 @@ async function apiTests() {
       assert.strictEqual(a.p_actor, 'staff@example.test'); assert.strictEqual(a.p_base_revision, 0); assert.strictEqual(a.p_community_id, 'c1');
       assert.strictEqual(a.p_items[1].allocations[0].bankruptcy_stop, true);
       assert.strictEqual(a.p_summary.items, 2);
+    });
+    const readUrl = url.replace(/\/draft$/, '/read-pdf');
+    const postRead = async (body) => { const r = await fetch(readUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() }; };
+    await run('api read-pdf: view-only community → 409, reader not called', async () => {
+      current = loaded({ readOnly: 'Leaving Bedrock: view only.' }); readCalls.length = 0;
+      const r = await postRead({}); assert.strictEqual(r.status, 409); assert.strictEqual(readCalls.length, 0);
+    });
+    await run('api read-pdf: success → the session actor, force passed through, fresh payload with the read result', async () => {
+      current = loaded(); readCalls.length = 0; readResult = { extraction_id: 'ext-1', status: 'valid', reused: false };
+      const r = await postRead({ force: true });
+      assert.strictEqual(r.status, 200, JSON.stringify(r.body)); assert.deepStrictEqual(readCalls, [{ actor: 'staff@example.test', force: true }]);
+      assert.strictEqual(r.body.read.extraction_id, 'ext-1'); assert.ok(r.body.suggestion);
+    });
+    await run('api read-pdf: migration not applied → 409 migration_pending', async () => {
+      current = loaded(); readResult = { http: 409, error: 'migration_pending', detail: 'x' };
+      const r = await postRead({}); assert.strictEqual(r.status, 409); assert.strictEqual(r.body.error, 'migration_pending');
     });
     await run('api: an RPC error → 500 with a safe message', async () => {
       current = loaded(); rpcResult = { data: null, error: { message: 'legal_review_property_not_in_community' } };

@@ -12,6 +12,11 @@
 //                                     community (for overriding a match)
 //   POST /invoices/:id/draft          save the draft (revisioned; 409 when
 //                                     someone else saved first)
+//   POST /invoices/:id/read-pdf       read the stored attorney PDF into
+//                                     matters (step 2b; one model call; a
+//                                     prior read of the same file is reused
+//                                     unless {force:true}); writes only the
+//                                     append-only extraction workpaper
 //
 // Nothing here posts to the GL, reclassifies an accrual or charges a
 // homeowner. The save writes only the review workpaper tables, through the
@@ -105,6 +110,23 @@ router.post('/invoices/:id/draft', express.json({ limit: '256kb' }), async (req,
     res.json(Object.assign({ saved: true }, R.detailPayload(fresh)));
   } catch (err) {
     console.error('[legal-review] save failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/invoices/:id/read-pdf', express.json({ limit: '4kb' }), async (req, res) => {
+  const staff = await requireStaff(req, res); if (!staff) return;
+  try {
+    if (!UUID.test(req.params.id)) return res.status(400).json({ error: 'invoice_id_invalid' });
+    const d = await R.loadInvoice(supabase, req.params.id);
+    if (!d) return res.status(404).json({ error: 'not_a_legal_invoice' });
+    if (d.readOnly) return res.status(409).json({ error: 'read_only', detail: d.readOnly });
+    const out = await R.readInvoicePdf(supabase, d, staff.email || staff.id || 'staff', { force: !!(req.body && req.body.force) });
+    if (out.error) return res.status(out.http || 409).json({ error: out.error, detail: out.detail });
+    const fresh = await R.loadInvoice(supabase, req.params.id);
+    res.json(Object.assign({ read: { extraction_id: out.extraction_id, status: out.status, reused: out.reused } }, R.detailPayload(fresh)));
+  } catch (err) {
+    console.error('[legal-review] read-pdf failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

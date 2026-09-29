@@ -1,0 +1,127 @@
+{
+  "migration": "474_legal_invoice_extractions.sql",
+  "summary": "Attorney-PDF reads for Legal Invoice Review (Issue #9 step 2b): append-only legal_invoice_extractions (raw model output, normalized matters, AP line map, validation problems, status), legal_invoice_items.extraction_id, the 'pdf_entry' service-date source, and the draft-save function persisting extraction_id. No GL, AP, owner-ledger or homeowner data is created or changed.",
+  "requires": [
+    "473_legal_invoice_review.sql"
+  ],
+  "preflight": [
+    {
+      "name": "legal_invoice_extractions does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'legal_invoice_extractions'",
+      "expect": 0
+    },
+    {
+      "name": "legal_invoice_items.extraction_id does not exist yet",
+      "sql": "SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'legal_invoice_items' AND column_name = 'extraction_id'",
+      "expect": 0
+    },
+    {
+      "name": "no saved item uses a source value the new constraint would reject",
+      "sql": "SELECT count(*)::int FROM legal_invoice_items WHERE service_date_source NOT IN ('line_text', 'invoice_service_period', 'pdf_entry', 'staff', 'none')",
+      "expect": 0
+    }
+  ],
+  "expected_changes": [
+    "Creates the empty, append-only table legal_invoice_extractions (service role SELECT/INSERT only; row-level security on; browser roles revoked) bound to both the PDF (source_sha256) and the payable as it stood at read time (payable_fingerprint + payable_snapshot, both required), with its status and fingerprint CHECKs and an index on (ap_invoice_id, created_at).",
+    "Adds legal_invoice_items.extraction_id (nullable FK) and widens the service-date source CHECK to include 'pdf_entry'. Existing items are untouched.",
+    "Replaces legal_review_save_draft() so it also persists extraction_id and refuses an extraction that belongs to a different invoice; everything else is unchanged from 473.",
+    "No GL, AP, owner-ledger, journal or homeowner data is created or changed."
+  ],
+  "objects": {
+    "added": [
+      "column:legal_invoice_extractions.ap_invoice_id",
+      "column:legal_invoice_extractions.community_id",
+      "column:legal_invoice_extractions.created_at",
+      "column:legal_invoice_extractions.created_by",
+      "column:legal_invoice_extractions.duration_ms",
+      "column:legal_invoice_extractions.error",
+      "column:legal_invoice_extractions.header",
+      "column:legal_invoice_extractions.id",
+      "column:legal_invoice_extractions.line_map",
+      "column:legal_invoice_extractions.matters",
+      "column:legal_invoice_extractions.model",
+      "column:legal_invoice_extractions.payable_fingerprint",
+      "column:legal_invoice_extractions.payable_snapshot",
+      "column:legal_invoice_extractions.problems",
+      "column:legal_invoice_extractions.prompt_version",
+      "column:legal_invoice_extractions.raw",
+      "column:legal_invoice_extractions.source_sha256",
+      "column:legal_invoice_extractions.source_storage_path",
+      "column:legal_invoice_extractions.status",
+      "column:legal_invoice_items.extraction_id",
+      "constraint:legal_invoice_extractions.legal_extraction_payable_fingerprint_format",
+      "constraint:legal_invoice_extractions.legal_extraction_status_detail",
+      "constraint:legal_invoice_extractions.legal_invoice_extractions_ap_invoice_id_fkey",
+      "constraint:legal_invoice_extractions.legal_invoice_extractions_community_id_fkey",
+      "constraint:legal_invoice_extractions.legal_invoice_extractions_pkey",
+      "constraint:legal_invoice_extractions.legal_invoice_extractions_status_check",
+      "constraint:legal_invoice_items.legal_invoice_items_extraction_id_fkey",
+      "index:idx_legal_invoice_extractions_invoice",
+      "index:legal_invoice_extractions_pkey",
+      "table:legal_invoice_extractions"
+    ],
+    "changed": [
+      "constraint:legal_invoice_items.legal_invoice_items_service_date_source_check",
+      "function:legal_review_save_draft"
+    ],
+    "removed": []
+  },
+  "row_changes": {
+    "legal_invoice_extractions": 0,
+    "legal_invoice_items": 0
+  },
+  "protected": [
+    {
+      "table": "ap_invoices",
+      "order_by": "id"
+    },
+    {
+      "table": "ap_invoice_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entries",
+      "order_by": "id"
+    },
+    {
+      "table": "journal_entry_lines",
+      "order_by": "id"
+    },
+    {
+      "table": "homeowner_transactions",
+      "order_by": "id"
+    },
+    {
+      "table": "legal_invoice_reviews",
+      "order_by": "id"
+    },
+    {
+      "table": "legal_invoice_allocations",
+      "order_by": "id"
+    }
+  ],
+  "verify": [
+    {
+      "name": "legal_invoice_extractions exists and is empty",
+      "sql": "SELECT count(*)::int FROM legal_invoice_extractions",
+      "expect": 0
+    },
+    {
+      "name": "the service-date source accepts pdf_entry",
+      "sql": "SELECT count(*)::int FROM pg_constraint WHERE conname = 'legal_invoice_items_service_date_source_check' AND pg_get_constraintdef(oid) LIKE '%pdf_entry%'",
+      "expect": 1
+    },
+    {
+      "name": "the save function carries the extraction guard",
+      "sql": "SELECT count(*)::int FROM pg_proc WHERE proname = 'legal_review_save_draft' AND prosrc LIKE '%legal_review_extraction_not_for_invoice%'",
+      "expect": 1
+    }
+  ],
+  "api_checks": [
+    {
+      "table": "legal_invoice_extractions",
+      "expect_count": 0
+    }
+  ],
+  "reload_schema": true
+}

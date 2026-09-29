@@ -1,0 +1,21 @@
+{
+  "description": "Winstead shape: matter title 'CLTN - Surname - number street' with no street type and a surname-only party; one dated entry; the AP line names nothing; the PDF carries an OUTSTANDING INVOICES list and a 'services rendered through' date that must never become service dates.",
+  "invoice": { "vendor_invoice_number": "9071916", "invoice_date": "2026-08-26", "total_cents": 17000 },
+  "ap_lines": [ { "line_number": 1, "description": "Lien Enforcement Notice", "amount_cents": 17000 } ],
+  "raw": {
+    "invoice_number": "9071916", "invoice_date": "2026-08-26", "total": 170.00,
+    "matters": [{
+      "matter_ref": "099999.000016", "section_heading": null, "title": "CLTN - Farrow - 9903 Fixture Bend",
+      "parties": ["Farrow"], "property_address": "9903 Fixture Bend", "owner_account_number": null, "work_type": "collection",
+      "fees": 170.00, "expenses": null, "total": 170.00,
+      "entries": [ { "date": "2026-08-26", "kind": "fee", "description": "Lien Enforcement Notice", "amount": 170.00 } ],
+      "referenced_dates": []
+    }],
+    "other_dates": [ { "date": "2026-07-13", "context": "outstanding invoice 9063616" }, { "date": "2026-08-26", "context": "services rendered through" } ]
+  },
+  "expect": {
+    "status": "valid", "matters": 1, "line_map": { "1": 0 },
+    "service_basis": [{ "date": "2026-08-26", "source": "pdf_entry" }],
+    "work_types": ["collection"], "referenced_dates": [0]
+  }
+}
