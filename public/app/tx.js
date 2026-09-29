@@ -16,6 +16,8 @@
 (function () {
   'use strict';
   var FIXTURE = /[?&]fixture=1\b/.test(location.search) || location.protocol === 'file:';
+  // The explicit way into the legacy app (never bare "/", which can land here).
+  var LEGACY_URL = '/?workspace=legacy';
 
   var NAV = [
     ['today', 'Today', '/app/today'],
@@ -74,9 +76,13 @@
     var host = document.getElementById('tx-shell');
     var main = document.getElementById('tx-main');
     if (!host || !main) throw new Error('tx: page needs #tx-shell and #tx-main');
+    // Areas not yet in the new design open the legacy workspace; say so, so a
+    // click never silently drops someone into the old app.
     var nav = NAV.map(function (n) {
-      return '<a class="tx-nav' + (n[0] === active ? ' is-on' : '') + '" href="' + n[2] + '"' + (n[0] === active ? ' aria-current="page"' : '') + '>' +
-        icon(n[0]) + '<span>' + n[1] + '</span></a>';
+      var legacy = n[2].indexOf('/app/') !== 0;
+      return '<a class="tx-nav' + (n[0] === active ? ' is-on' : '') + '" href="' + n[2] + '"' + (n[0] === active ? ' aria-current="page"' : '') +
+        (legacy ? ' title="Opens the legacy workspace"' : '') + '>' +
+        icon(n[0]) + '<span>' + n[1] + '</span>' + (legacy ? '<span class="tx-nav-legacy">legacy</span>' : '') + '</a>';
     }).join('');
     var side = document.createElement('aside');
     side.className = 'tx-side';
@@ -85,6 +91,8 @@
       '<div class="tx-logo">' + mark() + '<span>TRUSTED</span></div>' + nav +
       // Ask Amanda opens askEd in the main app until the command palette ships.
       '<a class="tx-cmd" href="/#tab=asked" title="Ask Amanda (Ctrl K)">' + icon('sparkles', { size: 15 }) + '<span>Ask Amanda</span><span class="tx-kbd">Ctrl K</span></a>' +
+      // Explicit legacy entry: ?workspace=legacy keeps this tab in the old app.
+      '<a class="tx-nav tx-nav-out" href="' + LEGACY_URL + '" title="Open the legacy workspace (all tabs)">' + icon('arrowRight', { size: 16 }) + '<span>Legacy workspace</span></a>' +
       '<div class="tx-me"><div class="tx-av">' + esc(initials(user.full_name)) + '</div>' +
       '<div style="min-width:0"><div class="tx-me-name">' + esc(user.full_name || user.email || 'Signed in') + '</div>' +
       '<div class="tx-me-role">' + esc(user.role === 'admin' ? 'Owner' : 'Staff') + '</div></div></div>';
@@ -119,13 +127,17 @@
     opts = opts || {};
     var user;
     try { user = await resolveUser(); } catch (e) {
-      document.getElementById('tx-main').innerHTML = '<div style="padding:40px"><div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc(e.message) + ' <a class="tx-src" href="/">Open the main app</a></span></div></div>';
+      // Never bare "/": once "/" lands on Today, that would loop back here.
+      document.getElementById('tx-main').innerHTML = '<div style="padding:40px"><div class="tx-err">' + icon('alert', { size: 16 }) + '<span>' + esc(e.message) + ' <a class="tx-src" href="' + LEGACY_URL + '">Open the legacy workspace</a></span></div></div>';
       throw e;
     }
     if (!user) return null;
+    // Coming back to the new shell ends this tab's legacy mode, so "/" (e.g.
+    // a "Back to trustEd" link) lands here again. The per-device choice stays.
+    try { sessionStorage.removeItem('tx.legacy'); } catch (_) {}
     renderShell(opts.active, user);
     return user;
   }
 
-  window.TX = { boot: boot, get: get, icon: icon, esc: esc, fixture: FIXTURE, mark: mark };
+  window.TX = { boot: boot, get: get, icon: icon, esc: esc, fixture: FIXTURE, mark: mark, LEGACY_URL: LEGACY_URL };
 })();

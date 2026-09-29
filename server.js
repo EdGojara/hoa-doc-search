@@ -875,6 +875,14 @@ app.get('/', (req, res, next) => {
 // not linked from the main app yet. Reversible: set TRUSTED_APP_DISABLED=1 to
 // send /app/* back to the main app. Registered BEFORE express.static so the
 // kill switch also covers the raw /app/*.html files.
+// Staff landing (Issue #6): index.html loads this synchronously at the top of
+// <head> to decide whether a plain "/" lands on /app/today. Default OFF until
+// TRUSTED_LANDING=1; hash / query / OAuth callbacks always stay in the legacy
+// app. Outside /app so TRUSTED_APP_DISABLED can't turn it into a redirect.
+app.get('/app-landing.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('application/javascript').send(require('./lib/app/landing_script').landingScript(process.env));
+});
 app.use('/app', (req, res, next) => {
   if (process.env.TRUSTED_APP_DISABLED === '1') return res.redirect('/');
   return next();

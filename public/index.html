@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- Staff landing (Issue #6): may send a plain "/" to the new Trusted home
+       (/app/today) before this page renders. Off unless TRUSTED_LANDING=1;
+       /#tab= deep links, ?params and ?workspace=legacy always stay here. -->
+  <script src="/app-landing.js"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>trustEd — A bEdrock intelligence platform</title>
@@ -462,6 +466,9 @@
     </div>
     <button onclick="authSignOut()" title="Sign out" style="background:none; border:0; color:#fff; cursor:pointer; padding:2px 6px; border-radius:4px; font-size:11px; opacity:0.85;">↪ Sign out</button>
   </div>
+  <a class="header-voice-link" href="/app/today" title="Open the new Trusted home (Today, Communities, Financial, Operations)">
+    ✦ New Trusted home
+  </a>
   <a class="header-voice-link" href="javascript:void(0)" onclick="switchTab('home')" title="Jump back to the Home tab from anywhere in the app">
     🏠 Home
   </a>
