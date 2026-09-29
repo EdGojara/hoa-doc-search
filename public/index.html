@@ -46800,41 +46800,34 @@ ${questionsPage}
           fd.append('pdf', r.file);
           fd.append('community_id', apCommunityId);
           r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#315A87;"> — extracting + auto-coding (~30s)…</span>`;
-          const resp = await fetch('/api/ap/invoices/upload', { method: 'POST', body: fd });
-          let j = await resp.json();
+          // Same intake rail as Emma's email door (Issue #9): stored PDF + SHA,
+          // vendor/community resolution, dedup, review flags, canonical accrual.
+          const resp = await (window._authFetch || fetch)('/api/ap/invoices/upload', { method: 'POST', body: fd });
+          const j = await resp.json();
           if (!resp.ok) {
             if (resp.status === 409 && j.status === 'duplicate_invoice') {
               r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#d97706;"> — already in payables: ${apEsc(j.message || '')}</span>`;
               continue;
             }
-            if (resp.status === 409 && j.status === 'suspected_duplicate') {
-              const ok = confirm(`Possible duplicate of a bill already in payables:\n\n${j.message || ''}\n\nAdd it anyway?`);
-              if (!ok) { r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#d97706;"> — skipped (possible duplicate: ${apEsc(j.message || '')})</span>`; continue; }
-              const fd2 = new FormData();
-              fd2.append('pdf', r.file); fd2.append('community_id', apCommunityId); fd2.append('allow_duplicate', 'true');
-              const resp2 = await fetch('/api/ap/invoices/upload', { method: 'POST', body: fd2 });
-              j = await resp2.json();
-              if (!resp2.ok) throw new Error((j.error || 'upload failed') + (j.stage ? ` (step: ${j.stage})` : ''));
-            } else {
-              throw new Error((j.error || 'upload failed') + (j.stage ? ` (step: ${j.stage})` : ''));
-            }
+            throw new Error((j.error || 'upload failed') + (j.stage ? ` (step: ${j.stage})` : ''));
           }
-          if (j.status === 'needs_community') {
-            r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#dc2626;"> — could not match community; retry with community pre-selected</span>`;
+          if (j.status === 'needs_review') {
+            r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#d97706;"> — needs a person: ${apEsc(j.reason || '')} ${j.exception_recorded ? '(waiting in Payables exceptions with its PDF)' : ''}</span>`;
             continue;
           }
           const inv = j.invoice;
           const conf = j.coding_confidence;
           const vendor = j.vendor?.name || '?';
-          const vendorTag = j.vendor_created ? ' (new)' : '';
           const total = apFmtCents(inv.total_cents);
           const confTag = apConfidenceBadge(conf);
+          const heldTag = j.status === 'held_duplicate' ? ' <span style="color:#d97706;">— added ON HOLD: possible duplicate, confirm in Payables before it can be paid</span>' : '';
+          const reviewTag = j.needs_review && j.status !== 'held_duplicate' ? ' <span style="color:#d97706;">— flagged for review</span>' : '';
           r.div.innerHTML = `
             <div style="display:flex; justify-content:space-between; gap:10px;">
               <div>
                 <strong>${apEsc(r.file.name)}</strong>
                 <div style="color:#666; font-size:11.5px; margin-top:2px;">
-                  ${apEsc(vendor)}${vendorTag} · ${apEsc(inv.vendor_invoice_number || '')} · ${total} · ${confTag}${j.auto_coded ? '' : ' <span style="color:#dc2626;">— GL coding incomplete</span>'}
+                  ${apEsc(vendor)} · ${apEsc(inv.vendor_invoice_number || '')} · ${total} · ${confTag}${j.auto_coded ? '' : ' <span style="color:#dc2626;">— GL coding incomplete</span>'}${heldTag}${reviewTag}
                 </div>
               </div>
               <button class="secondary-btn" onclick="apOpenInvoice('${inv.id}')" style="font-size:11px; padding:4px 10px; align-self:flex-start;">View</button>

@@ -192,11 +192,17 @@ const { findOrCreateReimbursementPayee } = require('../lib/ap/intake');
 // POST /api/ap/invoices/upload — the main intake endpoint
 // ---------------------------------------------------------------------------
 router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
-  // Stage marker so a failure names WHERE it broke (extraction / community /
-  // vendor / posting). Staff hit "upload failed" with no way to say why and the
-  // route returned its own 500, bypassing the admin error log — so the cause was
-  // invisible to everyone. Now every failure is captured with its stage +
-  // filename, queryable from system_errors. (Ed 2026-07-28.)
+  // ONE door (Issue #9 prerequisite). This used to be a second intake with its
+  // own extractor, exact-name vendor find-or-create, no stored SHA and a JE
+  // posted before the invoice insert (an orphan JE on a unique-violation retry).
+  // It now runs the SAME rail as Emma's email intake: lib/ap/intake.js
+  // autoIntake → stageInvoice (stored PDF + SHA) → vendor/community resolution →
+  // commitInvoice (dedup, review flags, approval path, canonical AP accrual).
+  // The community a staffer picks on this screen is authoritative when the bill
+  // names none; a disagreement with the bill's bill-to is held for a person.
+  //
+  // Stage marker so a failure names WHERE it broke, captured to the admin error
+  // log (Ed 2026-07-28).
   let stage = 'received';
   const fileName = (req.file && req.file.originalname) || 'unknown.pdf';
   try {
@@ -204,168 +210,51 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
     if (req.file.mimetype !== 'application/pdf') {
       return res.status(400).json({ error: 'must_be_pdf' });
     }
-
-    const overrideCommunityId = req.body?.community_id || null;
-    const postedByUserId = req.body?.posted_by_user_id || null;
-    const fileBuffer = req.file.buffer;
-
-    // 1. Store PDF in storage + library_documents for audit
-    stage = 'store_pdf';
-    const sha = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-    const safeName = (req.file.originalname || 'invoice.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storagePath = `ap-invoices/${sha.slice(0, 12)}-${safeName}`;
-    try {
-      await supabase.storage.from('documents').upload(storagePath, fileBuffer, {
-        contentType: 'application/pdf', upsert: false,
-      });
-    } catch (_) { /* non-fatal — may already exist */ }
-
-    // 2. Extract via Claude
-    stage = 'extract';
-    const extracted = await extractInvoice(fileBuffer);
-
-    // 3. Match community (use override if provided)
-    stage = 'match_community';
-    let community = null;
-    if (overrideCommunityId) {
-      const { data } = await supabase.from('communities').select('id, name').eq('id', overrideCommunityId).maybeSingle();
-      community = data;
-    } else {
-      community = await matchCommunity(extracted.bill_to_name);
+    const pickedCommunityId = req.body?.community_id || null;
+    if (pickedCommunityId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pickedCommunityId)) {
+      return res.status(400).json({ error: 'community_id_invalid' });
     }
-    if (!community) {
-      return res.json({
-        status: 'needs_community',
-        message: 'Could not match a community — please supply community_id and resubmit.',
-        extraction: extracted,
-      });
-    }
+    const sha = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    const sourceRef = `upload:${sha.slice(0, 16)}`;
 
-    // 4. Insert library_documents row — RETENTION: the invoice stays on file and
-    //    links to the bill via source_document_id. Correct schema columns +
-    //    required management_company_id (the prior insert used wrong column names
-    //    and omitted mgmt co, so it silently never archived).
-    const { data: commFull } = await supabase.from('communities').select('management_company_id').eq('id', community.id).maybeSingle();
-    const { data: libDoc, error: libErr } = await supabase.from('library_documents').insert({
-      management_company_id: commFull ? commFull.management_company_id : null,
-      community_id: community.id,
-      category: 'vendor_invoice',
-      title: `AP Invoice — ${extracted.vendor_name} #${extracted.vendor_invoice_number || ''}`.trim(),
-      file_name_original: req.file.originalname || null,
-      file_name_normalized: `${(community.name || '').trim()} - Vendor Invoice - ${extracted.vendor_name} - ${extracted.vendor_invoice_number || extracted.invoice_date || ''}.pdf`.replace(/\s+/g, ' '),
-      file_path: storagePath,
-      file_hash: sha,
-      file_size_bytes: req.file.size,
-      created_by_mgmt_company: 'Bedrock',
-    }).select('id').single();
-    if (libErr) console.warn('[ap] library_documents retention insert failed:', libErr.message);
-
-    // 5. Find/create vendor — mgmt-co-level, NOT community-scoped
-    stage = 'find_vendor';
-    const vendorResult = await findOrCreateVendor({
-      vendor_name: extracted.vendor_name,
-      vendor_email: extracted.vendor_email,
-      vendor_phone: extracted.vendor_phone,
-      suggested_category: extracted.suggested_category,
-      vendor_addr: {
-        line1: extracted.vendor_address_line1,
-        city: extracted.vendor_city,
-        state: extracted.vendor_state,
-        zip: extracted.vendor_zip,
-      },
+    stage = 'intake';
+    const { autoIntake } = require('../lib/ap/intake');
+    const result = await autoIntake({
+      buffer: req.file.buffer, filename: req.file.originalname || 'invoice.pdf',
+      intakeMethod: 'manual_upload', sourceRef, pickedCommunityId,
     });
-    if (!vendorResult) {
-      return res.json({
-        status: 'vendor_create_failed',
-        extraction: extracted,
-        source_document_id: libDoc?.id,
-      });
-    }
 
-    // 5b. Duplicate guard — the SAME dedup the email/scan door uses, so a bill
-    // can't slip in twice regardless of which door it arrives through. Before
-    // this, upload relied only on the per-community UNIQUE(community,vendor,
-    // invoice#) constraint, which NULL invoice numbers and cross-community
-    // filings both slip past. Certain (same file, or same vendor+invoice# in any
-    // community) and suspected (same amount+date) both stop here with the match
-    // shown; staff can confirm a genuine separate bill and re-send with
-    // allow_duplicate. (Ed 2026-08-10 — "we should never have duplicate bills".)
-    stage = 'dedup';
-    if (req.body?.allow_duplicate !== 'true' && req.body?.allow_duplicate !== true) {
-      const { findDuplicates } = require('../lib/ap/dedup');
-      const dup = await findDuplicates(supabase, {
-        communityId: community.id, vendorId: vendorResult.vendor.id,
-        invoiceNumber: extracted.vendor_invoice_number, totalCents: extracted.total_cents,
-        invoiceDate: extracted.invoice_date, fileSha256: sha,
-        accountNumber: extracted.account_number,
-        servicePeriodStart: extracted.service_period_start, servicePeriodEnd: extracted.service_period_end,
+    const { mapUploadOutcome } = require('../lib/ap/upload_outcome');
+    const ctx = {};
+    if (result && (result.outcome === 'needs_review' || result.outcome === 'not_an_invoice')) {
+      // Same straggler list as email: the PDF and the reason wait in Payables
+      // exceptions for a person, never a dead-end message on this screen.
+      stage = 'record_exception';
+      const { recordException } = require('../lib/ap/intake_exceptions');
+      const ex = await recordException({
+        sourceRef, reason: result.outcome === 'not_an_invoice' ? 'not an invoice' : result.reason,
+        extracted: result.extracted || {}, storagePath: result.storage_path || null, sha256: result.sha256 || sha,
+        communityId: pickedCommunityId,
       });
-      if (dup.verdict !== 'unique' && dup.matches.length) {
-        const m = dup.matches[0];
-        return res.status(409).json({
-          status: dup.verdict === 'certain' ? 'duplicate_invoice' : 'suspected_duplicate',
-          message: `${m.reason}${m.invoice && m.invoice.total_cents != null ? ` ($${(m.invoice.total_cents / 100).toFixed(2)})` : ''}.`,
-          duplicate_of: m.invoice ? m.invoice.id : null,
-          matches: dup.matches.map((x) => ({ id: x.invoice.id, reason: x.reason, confidence: x.confidence, total_cents: x.invoice.total_cents, invoice_date: x.invoice.invoice_date, status: x.invoice.status })),
-          extraction: extracted,
-        });
-      }
+      if (!ex.ok) console.warn('[ap] upload exception not recorded:', ex.reason);
+      ctx.exceptionId = ex.ok ? ex.id : null;
+    } else if (result && result.invoice_id) {
+      stage = 'load_result';
+      const { data: inv, error: ie } = await supabase.from('ap_invoices')
+        .select('id, community_id, vendor_id, vendor_invoice_number, invoice_date, total_cents, status, needs_review, auto_coded, auto_coding_confidence, posting_journal_entry_id, source_storage_path, intake_method, vendors(id, name)')
+        .eq('id', result.invoice_id).maybeSingle();
+      if (ie) throw ie;
+      ctx.invoice = inv || { id: result.invoice_id };
+      ctx.vendor = inv && inv.vendors ? inv.vendors : null;
+      const { data: lines, error: le } = await supabase.from('ap_invoice_lines')
+        .select('id, line_number, description, amount_cents, gl_account_id').eq('invoice_id', result.invoice_id).order('line_number');
+      if (le) throw le;
+      ctx.lines = lines || [];
     }
-
-    // 6. Create the invoice via the engine — auto-codes + posts JE
-    stage = 'create_invoice';
-    try {
-      const result = await createInvoice({
-        community_id: community.id,
-        vendor_id: vendorResult.vendor.id,
-        vendor_name: vendorResult.vendor.name,
-        vendor_invoice_number: extracted.vendor_invoice_number,
-        invoice_date: extracted.invoice_date,
-        due_date: extracted.due_date,
-        terms: extracted.terms,
-        subtotal_cents: extracted.subtotal_cents,
-        tax_cents: extracted.tax_cents,
-        total_cents: extracted.total_cents,
-        source_document_id: libDoc?.id || null,
-        source_filename: req.file.originalname || null,
-        lines: extracted.lines.map((ln) => ({
-          description: ln.description,
-          quantity: ln.quantity,
-          unit_price_cents: ln.unit_price_cents,
-          amount_cents: ln.amount_cents,
-          is_taxable: ln.is_taxable,
-          tax_amount_cents: 0,  // line-level tax not separated by extractor; total tax sits at header
-        })),
-        notes: null,
-        posted_by_user_id: postedByUserId,
-      });
-      res.json({
-        status: 'ok',
-        community,
-        vendor: vendorResult.vendor,
-        vendor_created: vendorResult.created,
-        invoice: result.invoice,
-        lines: result.lines,
-        auto_coded: result.auto_coded,
-        coding_confidence: result.coding_confidence,
-        warnings: extracted.warnings,
-        source_document_id: libDoc?.id,
-      });
-    } catch (e) {
-      // Duplicate (UNIQUE on community_id + vendor_id + vendor_invoice_number)?
-      if (e.message && /duplicate key|unique/i.test(e.message)) {
-        return res.status(409).json({
-          status: 'duplicate_invoice',
-          message: `Invoice ${extracted.vendor_invoice_number} from ${extracted.vendor_name} already exists for this community.`,
-          extraction: extracted,
-        });
-      }
-      throw e;
-    }
+    const out = mapUploadOutcome(result, ctx);
+    return res.status(out.http).json(out.body);
   } catch (err) {
     console.error(`[ap] invoice upload failed at stage=${stage} file=${fileName}:`, err);
-    // Capture to the admin error log so the cause is one query away instead of a
-    // fleeting red line no one can read back. Fire-and-forget.
     captureServerError({
       method: 'POST', path: '/api/ap/invoices/upload',
       statusCode: 500, message: `stage=${stage} file=${fileName} :: ${err && err.message}`,
