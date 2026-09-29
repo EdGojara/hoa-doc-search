@@ -3704,7 +3704,9 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         }
         continue;
       }
-      _bundleRender.set(bid, { pdfBuffer: rr.pdfBuffer, letterPath: bundlePath });
+      // Keep a SHA-256 of the combined bytes: every member is checked against it
+      // before anything is sealed or printed (Issue #5).
+      _bundleRender.set(bid, require('../lib/enforcement/bundle_print_guard').bundleRecord(rr.pdfBuffer, bundlePath));
     }
     // Each once-per-envelope action (add to printout, admin fee, supplemental
     // email/SMS) fires on the FIRST bundle member that actually succeeds — never
@@ -3900,8 +3902,12 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
         // the ONE consolidated PDF instead of rendering this violation alone.
         const _br = L.bundle_id ? _bundleRender.get(L.bundle_id) : null;
         let pdfBuffer, letterPath;
-        if (_br) { pdfBuffer = _br.pdfBuffer; letterPath = _br.letterPath; }
-        if (!_br && isSelfHelp10Day) {
+        // ONE chain (Issue #5): a bundle member uses the combined letter and is
+        // NEVER re-rendered alone. The old separate `if (!_br && selfHelp) … else`
+        // let the else overwrite every bundle member with a one-violation letter.
+        if (_br) {
+          pdfBuffer = _br.pdfBuffer; letterPath = _br.letterPath;
+        } else if (isSelfHelp10Day) {
           const remedyMode = selfHelpSlug === 'trash_cleanup_10day' ? 'cleanup'
                            : selfHelpSlug === 'tree_hazard_10day'    ? 'tree'
                            : 'lawn';
@@ -3971,6 +3977,16 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
               sender_title: community.letter_sender_title,
             },
           });
+        }
+
+        // FAIL CLOSED (Issue #5): a bundle member may only seal / count / print the
+        // combined letter's exact bytes (SHA-256, not object identity). Checked
+        // here, BEFORE any upload, fee, status='sent', seal, receipt, notice or
+        // batch append for this member.
+        if (_br && !require('../lib/enforcement/bundle_print_guard').bundleBytesIntact(pdfBuffer, _br)) {
+          console.error('[lock-and-batch] bundle integrity check FAILED; member held', L.id, L.bundle_id);
+          skipped.push({ id: L.id, reason: 'combined letter integrity check failed (bytes differ from the reviewed combined letter): held, nothing printed or recorded for it' });
+          continue;
         }
 
         // Upload the per-violation PDF (bundle members are already uploaded once
