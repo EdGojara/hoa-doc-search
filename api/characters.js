@@ -111,7 +111,8 @@ router.get('/:id', async (req, res) => {
         changes: Object.fromEntries(d.versions.filter((v) => v.parent_version_id).map((v) => {
           const parent = d.versions.find((p) => p.id === v.parent_version_id);
           return [v.id, parent ? { parent_version_no: parent.version_no, fields: approval.specChanges(parent.spec, v.spec),
-            same_assets: JSON.stringify(parent.assets.map((a) => a.role + a.sha256).sort()) === JSON.stringify(v.assets.map((a) => a.role + a.sha256).sort()) } : null];
+            // What identity rests on is the CANONICAL file; candidates/copies may differ.
+            same_canonical: JSON.stringify(parent.assets.filter((a) => a.role === 'canonical').map((a) => a.sha256).sort()) === JSON.stringify(v.assets.filter((a) => a.role === 'canonical').map((a) => a.sha256).sort()) } : null];
         })),
       },
     });
