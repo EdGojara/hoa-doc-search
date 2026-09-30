@@ -153,12 +153,14 @@ function render(d){
     const legacyBlocking = legacy.flatMap((r)=>((AP.releases[r.id]||{}).blocking||[]).filter((b)=>b.status==='proposed'));
     const pkgOk = rev.package_approvable && !legacyBlocking.length;
     const cvs = new Set(); [...legacy, target].forEach((r)=>Object.values(r.components).forEach((id)=>{ if (byId.get(id).status==='proposed') cvs.add(id); }));
-    const rows = rev.components.map((x)=>{
+    const rows = (rev.decision || rev.components).map((x)=>{
       const canon = (x.assets||[]).filter((a)=>a.role==='canonical');
       const thumb = canon.map((a)=>d.asset_urls[a.sha256]?`<a href="${esc(d.asset_urls[a.sha256])}" target="_blank" rel="noopener"><img class="thumb" src="${esc(d.asset_urls[a.sha256])}" alt=""></a>`:'').join('');
       const state = x.approved ? badge('approved') : x.approvable ? badge('approvable','ready to approve') : x.status==='proposed' ? badge('needs_decision','needs a decision') : badge(x.status);
       const action = x.approvable ? `<button class="btn ghost" data-approve="${esc(x.version_id)}" data-label="${esc(x.component+' v'+x.version_no)}">Approve</button>` : '';
-      return `<tr><td><b style="text-transform:capitalize">${esc(x.component)}</b> v${x.version_no}${AP.visual_components.includes(x.component)?' <span class="muted small">(visual)</span>':''}</td>
+      const newer = x.replaces ? `<div class="small muted">Newer than release ${x.replaces.release_no}, which has v${x.replaces.version_no} (kept in the history; not the decision).</div>` +
+        (x.changes && x.changes.fields.length ? `<details><summary>Changes from v${x.changes.parent_version_no}</summary><table class="small"><tbody>${x.changes.fields.map((f)=>`<tr><td><b>${esc(f.field.replace(/_/g,' '))}</b></td><td>${esc(Array.isArray(f.before)?f.before.join(' · '):f.before==null?'—':typeof f.before==='object'?JSON.stringify(f.before):f.before)}</td><td class="chg">${esc(Array.isArray(f.after)?f.after.join(' · '):f.after==null?'—':typeof f.after==='object'?JSON.stringify(f.after):f.after)}</td></tr>`).join('')}</tbody></table></details>` : '') : '';
+      return `<tr><td><b style="text-transform:capitalize">${esc(x.component)}</b> v${x.version_no}${AP.visual_components.includes(x.component)?' <span class="muted small">(visual)</span>':''}${newer}</td>
         <td>${state}</td>
         <td>${x.open_questions.length?`<ul class="oq">${x.open_questions.map((q)=>`<li><b>${esc(q.field)}</b>: ${esc(q.reason)}</li>`).join('')}</ul>`:'<span class="muted small">nothing open</span>'}</td>
         <td>${thumb}<div class="small">${(x.assets||[]).map((a)=>esc(a.role.replace(/_/g,' '))+(a.width?' '+a.width+'×'+a.height:'')).join(' · ')||'<span class="muted">no files</span>'}</div>
