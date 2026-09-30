@@ -5576,6 +5576,24 @@
         st.lines.push({ source: 'owner_charge', source_ref_id: null, category: cat, description: rc.description, qty: q, unit_price: unit, amount: Math.round(q * unit * 100) / 100, sort_order: 2000 });
         applied.push(`${rc.description} = ${q}`);
       });
+      // Postage follows first-class volume. A draft starts from last month's
+      // billed lines (qty > 0 only), so after a month with no first-class mail
+      // the postage line is missing and the letters went unbilled (Ed 2026-09-30,
+      // Eaglewood Aug: 122 letters, no postage). Add it from the rate card.
+      const fcSent = Number(c.first_class_sent) || 0;
+      if (fcSent > 0 && !st.lines.some((l) => l.category === 'postage_drv_notices')) {
+        const rc = (billingPiCatalog || []).find((it) => it.category === 'postage_drv_notices');
+        if (rc) {
+          const li = { source: 'reimbursable', source_ref_id: null, category: 'postage_drv_notices', description: rc.description, qty: fcSent, unit_price: Number(rc.unit_price || 0), amount: 0, sort_order: 2000 };
+          const pp = billingPostagePerPiece(li, c);
+          if (pp != null) li.unit_price = pp;
+          li.amount = Math.round(fcSent * li.unit_price * 100) / 100;
+          st.lines.push(li);
+          applied.push(`${li.description} = ${fcSent}`);
+        } else {
+          applied.push(`${fcSent} first-class letters mailed but this contract has no DRV postage rate; add postage manually`);
+        }
+      }
       const rateStr = (c.postage_rate_cents != null ? '$' + (c.postage_rate_cents / 100).toFixed(2) : null);
       st.note = applied.length
         ? `⚡ Auto-filled from activity for ${period}: ${applied.join(' · ')}.${rateStr ? ` All postage priced date-aware at ${rateStr} (USPS rate for this period).` : ''} Review and override any quantity before generating. Pages = color copies by default; staffing and one-offs stay manual.`
