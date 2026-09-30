@@ -106,7 +106,7 @@ router.get('/:id', async (req, res) => {
           const r = approval.versionReview(v); const sup = approval.supersededBy(d, v);
           return [v.id, Object.assign(r, sup ? { superseded_by: sup, approvable: false } : {})];
         })),
-        releases: Object.fromEntries(d.releases.map((r) => [r.id, approval.reviewRelease(d, r.id)])),
+        releases: Object.fromEntries(d.releases.map((r) => [r.id, Object.assign(approval.reviewRelease(d, r.id), { decision: approval.decisionComponents(d, r.id) })])),
         visual_canon: approval.visualCanon(d),
         changes: Object.fromEntries(d.versions.filter((v) => v.parent_version_id).map((v) => {
           const parent = d.versions.find((p) => p.id === v.parent_version_id);

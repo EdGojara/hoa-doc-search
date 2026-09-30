@@ -147,6 +147,36 @@ t('visual canon: follows the newest APPROVED version per component, not the rele
   assert.strictEqual(A.reviewRelease(d2, d2.releases[1].id).package_approvable, false);   // voice still open; no release promoted
 });
 
+t('review decisions: a newer face candidate outside the release is the face decision (release version kept as history)', () => {
+  const seed = JSON.parse(JSON.stringify(SEED('amanda_albright')));
+  seed.components.splice(2, 0, { component: 'face', spec: PROPOSAL.spec });   // face v3, in no release
+  const d = detailFrom(seed, (comp, key) => (['body.v1', 'wardrobe.v1', 'guardrails.v1', 'persona.v1'].includes(key) ? 'approved' : 'proposed'));
+  const face2 = d.versions.find((v) => v.component === 'face' && v.version_no === 2);
+  d.versions.find((v) => v.component === 'face' && v.version_no === 3).parent_version_id = face2.id;
+  const r2 = d.releases[1];
+  const dec = A.decisionComponents(d, r2.id);
+  const face = dec.find((c) => c.component === 'face');
+  assert.strictEqual(face.version_no, 3); assert.strictEqual(face.approvable, true);
+  assert.deepStrictEqual([face.replaces.release_no, face.replaces.version_no], [2, 2]);
+  assert.deepStrictEqual(face.changes.fields.map((f) => f.field).sort(), ['canonical_image_notes', 'distinguishing', 'eyes', 'skin_tone']);
+  assert.strictEqual(dec.find((c) => c.component === 'voice').version_no, 1);             // non-visual: the release's own version
+  assert.strictEqual(dec.find((c) => c.component === 'body').approved, true);
+  assert.ok(!dec.find((c) => c.component === 'body').replaces);
+  assert.strictEqual(A.reviewRelease(d, r2.id).components.find((c) => c.component === 'face').version_no, 2);   // release itself unchanged
+  // once face v3 is approved it is shown as approved (still replacing v2 in the review)
+  const d3 = detailFrom(seed, (comp, key) => (['face.v3', 'body.v1', 'wardrobe.v1', 'guardrails.v1'].includes(key) ? 'approved' : 'proposed'));
+  const f3 = A.decisionComponents(d3, d3.releases[1].id).find((c) => c.component === 'face');
+  assert.strictEqual(f3.version_no, 3); assert.strictEqual(f3.approved, true);
+});
+t('review decisions: no newer candidate → the release’s own components, unchanged', () => {
+  const d = detailFrom(SEED('amanda_albright'));
+  assert.deepStrictEqual(A.decisionComponents(d, d.releases[1].id).map((c) => c.component + c.version_no), A.reviewRelease(d, d.releases[1].id).components.map((c) => c.component + c.version_no));
+  assert.strictEqual(A.decisionComponents(d, 'nope'), null);
+  // newest face (v2) still open, older face (v1) resolved: v1 is NOT a candidate (it is superseded)
+  const face = A.visualCanon(d).components.find((c) => c.component === 'face');
+  assert.strictEqual(face.candidate, null); assert.strictEqual(face.approved, null);
+});
+
 t('superseded: an older face is never approvable on its own once a newer (non-rejected) face exists', () => {
   const d = detailFrom(SEED('amanda_albright'));
   const v1 = d.versions.find((v) => v.component === 'face' && v.version_no === 1);
