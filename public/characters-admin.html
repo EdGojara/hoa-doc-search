@@ -67,6 +67,11 @@
   .asset .role{font-weight:700;color:var(--ink);}
   details summary{cursor:pointer;font-weight:700;color:var(--navy);font-size:13px;}
   #err{display:none;} .hide{display:none;}
+  .b-unresolved,.b-needs_decision{background:var(--crit-bg);color:var(--crit);}
+  .b-approvable{background:var(--info-bg);color:var(--accent);}
+  .oq{margin:4px 0 0 16px;padding:0;font-size:12.5px;color:var(--crit);}
+  .review td{vertical-align:top;} .review .thumb{width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block;}
+  .visual{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;margin:8px 0 2px;}
 </style>
 </head>
 <body>
@@ -125,22 +130,53 @@ function render(d){
   const faceV = byId.get(faceCanon); const canonAsset = faceV && faceV.assets.find((a)=>a.role==='canonical');
   const vlabel = (id) => { const v = byId.get(id); return v ? 'v'+v.version_no : ''; };
 
-  // Package approval: the latest proposed release becomes current, earlier proposed ones are legacy.
+  // Approval review: for the release that would become current, show each
+  // component's status, what is still unresolved, and exactly what becomes
+  // canonical. Nothing unresolved can be approved (the server refuses too).
   let pend = '';
+  const AP = d.approval || { releases:{}, versions:{}, visual_components:[] };
   if (proposedReleases.length){
     const target = proposedReleases[proposedReleases.length-1];
     const legacy = proposedReleases.slice(0,-1);
+    const rev = AP.releases[target.id] || { components:[], blocking:[], visual:{ blocking:[], missing:[] } };
+    const legacyBlocking = legacy.flatMap((r)=>((AP.releases[r.id]||{}).blocking||[]).filter((b)=>b.status==='proposed'));
+    const pkgOk = rev.package_approvable && !legacyBlocking.length;
     const cvs = new Set(); [...legacy, target].forEach((r)=>Object.values(r.components).forEach((id)=>{ if (byId.get(id).status==='proposed') cvs.add(id); }));
-    pend = `<div class="banner pend"><b>Awaiting your approval.</b> Approving this package will:
+    const rows = rev.components.map((x)=>{
+      const canon = (x.assets||[]).filter((a)=>a.role==='canonical');
+      const thumb = canon.map((a)=>d.asset_urls[a.sha256]?`<a href="${esc(d.asset_urls[a.sha256])}" target="_blank" rel="noopener"><img class="thumb" src="${esc(d.asset_urls[a.sha256])}" alt=""></a>`:'').join('');
+      const state = x.approved ? badge('approved') : x.approvable ? badge('approvable','ready to approve') : x.status==='proposed' ? badge('needs_decision','needs a decision') : badge(x.status);
+      const action = x.approvable ? `<button class="btn ghost" data-approve="${esc(x.version_id)}" data-label="${esc(x.component+' v'+x.version_no)}">Approve</button>` : '';
+      return `<tr><td><b style="text-transform:capitalize">${esc(x.component)}</b> v${x.version_no}${AP.visual_components.includes(x.component)?' <span class="muted small">(visual)</span>':''}</td>
+        <td>${state}</td>
+        <td>${x.open_questions.length?`<ul class="oq">${x.open_questions.map((q)=>`<li><b>${esc(q.field)}</b>: ${esc(q.reason)}</li>`).join('')}</ul>`:'<span class="muted small">nothing open</span>'}</td>
+        <td>${thumb}<div class="small">${(x.assets||[]).map((a)=>esc(a.role.replace(/_/g,' '))+(a.width?' '+a.width+'×'+a.height:'')).join(' · ')||'<span class="muted">no files</span>'}</div>
+          <div class="mono muted">spec ${short(x.spec_sha256)}</div><details><summary>Spec that becomes canonical</summary>${specHtml(x.spec||{})}</details></td>
+        <td>${action}</td></tr>`;
+    }).join('');
+    const vc = AP.visual_canon;
+    const vis = rev.visual || {};
+    const visLine = vc ? (vc.ready ? badge('approved','visual canon approved') + ' <span class="small">' + esc(vc.components.map((x)=>x.component+' v'+x.approved.version_no).join(', ')) + ' are approved: visual production work can pin these exact versions.</span>'
+      : badge(vc.next.length?'approvable':'needs_decision', vc.next.length?'visual canon: approvals pending':'visual canon blocked') + ' <span class="small">' + esc(vc.components.map((x)=>x.component+': '+(x.approved?'v'+x.approved.version_no+' approved':x.candidate?'v'+x.candidate.version_no+' ready to approve':x.defined?'needs a new version':'not defined')).join(' · ')) + '</span>')
+      : vis.ready ? badge('approved','visual canon approved') + ' <span class="small">Face, body, wardrobe and guardrails are approved: visual production work can derive from these versions.</span>'
+      : vis.approvable ? badge('approvable','visual canon ready to approve') + ' <span class="small">Approve the visual components below; voice can stay under evaluation for non-speaking work.</span>'
+      : badge('needs_decision','visual canon blocked') + ' <span class="small">' + esc([...(vis.missing||[]).map((m)=>m+' is not defined'), ...(vis.blocking||[]).map((b)=>b.component+' v'+b.version_no)].join(', ')) + ' still need a decision.</span>';
+    pend = `<div class="card"><h2 style="margin-top:0">Approval review: release ${target.release_no}</h2>
+      <div class="small muted">Exactly what would become canonical for ${esc(c.display_name)}, and what still needs your decision. Nothing is approved until you click, and nothing unresolved can be approved.</div>
+      <div class="visual">${visLine}</div>
+      <div class="scroll"><table class="review"><thead><tr><th>Component</th><th>Status</th><th>Still open</th><th>What becomes canonical</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="small muted" style="margin-top:6px">Unresolved text cannot be edited in place: a confirmed answer is recorded as a new version, and the old one stays in the history.</div>
+      <div class="banner ${pkgOk?'pend':'warn'}" style="margin-bottom:0">${pkgOk?`<b>Whole package ready.</b> Approving it will:
       <ul class="small" style="margin:6px 0">
         <li>approve ${cvs.size} component version${cvs.size===1?'':'s'}: ${[...cvs].map((id)=>{const v=byId.get(id);return esc(v.component+' v'+v.version_no);}).join(', ')}</li>
         ${legacy.map((r)=>`<li>record release ${r.release_no} as <b>legacy</b> (preserved, not current)</li>`).join('')}
         <li>make <b>release ${target.release_no}</b> the current ${esc(c.display_name)}</li>
       </ul>
       <div class="small muted">Nothing in production changes. HeyGen, voices and existing videos stay exactly as they are.</div>
-      <input class="reason" id="pkgReason" value="Approved canonical package (Phase A)">
-      <div><button class="btn" id="pkgBtn">Approve ${esc(c.display_name)}</button></div></div>`;
-    setTimeout(()=>{ $('pkgBtn').onclick = async ()=>{
+      <input class="reason" id="pkgReason" value="Approved canonical package">
+      <div><button class="btn" id="pkgBtn">Approve ${esc(c.display_name)}</button></div>`
+      : `<b>The whole package can't be approved yet.</b> <span class="small">${esc([...rev.blocking, ...legacyBlocking].map((b)=>b.component+' v'+b.version_no).filter((v,i,a)=>a.indexOf(v)===i).join(', '))} still ${([...rev.blocking, ...legacyBlocking].length===1)?'has':'have'} open questions. The release can become current once every component is approved.</span>`}</div></div>`;
+    setTimeout(()=>{ if (!$('pkgBtn')) return; $('pkgBtn').onclick = async ()=>{
       const reason = $('pkgReason').value.trim(); if (!reason) return showErr('A reason is required.');
       if (!confirm(`Approve ${c.display_name}'s canonical package?`)) return;
       $('pkgBtn').disabled = true; $('pkgBtn').textContent = 'Approving…';
@@ -168,6 +204,11 @@ function render(d){
       <div class="ver"><div class="vh"><b>v${v.version_no}</b> ${badge(v.status)} ${current&&current.components[k]===v.id?badge('current','in current release'):''}
         <span class="mono muted">spec ${short(v.spec_sha256)} ${v.spec_hash_ok?'✓':'✗'}</span></div>
         <div class="small muted">${esc(v.change_reason)}</div>
+        ${(AP.changes||{})[v.id]&&AP.changes[v.id].fields.length?`<details open><summary>Changes from v${AP.changes[v.id].parent_version_no}${AP.changes[v.id].same_assets?' (same image files)':' (files differ)'}</summary>
+          <table class="small" style="margin-top:4px"><thead><tr><th>Field</th><th>v${AP.changes[v.id].parent_version_no}</th><th>v${v.version_no}</th></tr></thead><tbody>${AP.changes[v.id].fields.map((f)=>`<tr><td><b>${esc(f.field.replace(/_/g,' '))}</b></td><td>${esc(Array.isArray(f.before)?f.before.join(' · '):typeof f.before==='object'&&f.before?JSON.stringify(f.before):f.before==null?'—':f.before)}</td><td class="chg">${esc(Array.isArray(f.after)?f.after.join(' · '):typeof f.after==='object'&&f.after?JSON.stringify(f.after):f.after==null?'—':f.after)}</td></tr>`).join('')}</tbody></table></details>`:''}
+        ${(AP.versions[v.id]||{}).approvable?`<div style="margin:6px 0"><button class="btn ghost" data-approve="${esc(v.id)}" data-label="${esc(k+' v'+v.version_no)}">Approve ${esc(k)} v${v.version_no}</button></div>`:''}
+        ${(AP.versions[v.id]||{}).superseded_by&&v.status==='proposed'?`<div class="small muted">Superseded by v${AP.versions[v.id].superseded_by.version_no}: approve that version instead. This one stays in the history.</div>`:''}
+        ${((AP.versions[v.id]||{}).open_questions||[]).length?`<div>${badge('unresolved')}<ul class="oq">${AP.versions[v.id].open_questions.map((q)=>`<li><b>${esc(q.field)}</b>: ${esc(q.reason)}</li>`).join('')}</ul></div>`:''}
         ${specHtml(v.spec)}
         ${v.assets.length?`<div class="assets">${v.assets.map((a)=>{const x=assetBy.get(a.sha256)||{}; const u=d.asset_urls[a.sha256];
           return `<div class="asset">${u?`<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="" loading="lazy"></a>`:''}
@@ -228,6 +269,15 @@ function render(d){
     catch(e){ $('verifyOut').textContent = 'Verify failed: '+e.message; }
     $('verifyBtn').disabled = false;
   };
+  // One handler for every Approve button (review panel and component cards).
+  document.querySelectorAll('[data-approve]').forEach((b)=>b.onclick = async ()=>{
+    const reason = prompt(`Approve ${b.dataset.label} as canonical?\n\nReason:`);
+    if (!reason || !reason.trim()) return;
+    b.disabled = true;
+    try { await api(`/api/characters/${c.character_id}/components/${b.dataset.approve}/status`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ event:'approved', reason }) });
+          showErr(''); await openCharacter(c.character_id); await loadRoster(); }
+    catch(e){ showErr('Approval failed: '+esc(e.message)); b.disabled = false; }
+  });
   document.querySelectorAll('[data-promote]').forEach((b)=>b.onclick = async ()=>{
     const reason = prompt(`Make release ${b.dataset.no} current again? This is a rollback; the current release is preserved.\n\nReason:`);
     if (!reason || !reason.trim()) return;
